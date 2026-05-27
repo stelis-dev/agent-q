@@ -1,0 +1,363 @@
+# AGENTS.md
+
+This file is the root operating contract for coding agents working in this
+repository. Read it from disk before every task.
+
+Behavioral guidelines reduce common LLM coding mistakes. Project-specific rules
+are included only where they affect how this repository should be edited.
+
+Tradeoff: these guidelines bias toward caution over speed. For trivial tasks,
+use judgment.
+
+## Minimal Product Context
+
+Agent-Q separates AI agent execution from signing authority.
+
+The goal is to let agents request signatures through a local Gateway while a
+separate device keeps keys and policies, evaluates each request, and decides
+whether to sign automatically, ask for physical approval, or reject the request.
+
+Product context lives in `README.md`. The shared communication contract between
+Gateway and the software running on the device lives in `specs/PROTOCOL.md`.
+
+Terms used in this document:
+
+- Gateway means the local server process that exposes MCP and web endpoints.
+- MCP means Model Context Protocol.
+- Firmware means the software running on a separate signing device.
+- Admin Page means the local web UI served by Gateway.
+
+Write documentation so a new agent or human can understand it without prior chat
+context.
+
+Avoid project-made terminology when an ordinary industry term works. If a
+project term is unavoidable, define it at first use and state exactly what it
+does and does not mean.
+
+## Product Boundary
+
+Non-negotiable boundaries:
+
+- Agent-Q Gateway is a local MCP server and local web server.
+- Agent-Q Gateway must not store signing keys.
+- Agent-Q Gateway must not make signing or policy decisions.
+- Admin is a Gateway capability, not a separate product area.
+- Agent-Q Firmware is the signing authority.
+- Agent-Q Firmware stores keys and policies locally.
+- First connection and sensitive write actions must be physically approved
+  according to Firmware policy.
+- External MCP clients, AI agents, Admin Page requests, and CLI inputs are
+  requests, not authority.
+- Agent-Q cannot observe or verify what happened inside an agent, application,
+  or host environment before a signing request was created.
+- Agent-Q must not claim to detect user intent, prompt injection, compromised
+  agent behavior, or any other upstream cause of a signing request.
+- Treat all external requests as untrusted inputs. Firmware policy must evaluate
+  request contents and constrain risk through explicit rules such as allowlists,
+  spending limits, rate limits, required physical approval, and rejection.
+- Do not present planned signing, policy, chain, transport, hardware, or Admin
+  behavior as implemented behavior.
+- Do not create separate chain-specific product APIs. Chains must be exposed as
+  supported methods in the shared protocol.
+
+## 1. Start From Evidence
+
+Do not work from imagination or unchecked assumptions.
+
+Before editing:
+
+- Read the relevant files from disk.
+- Inspect the current repository state.
+- Check package metadata, scripts, lockfiles, source code, and docs before
+  making claims about them.
+- Keep external source checkouts, downloaded references, vendor investigations,
+  and other evidence sources under `.WORK/`.
+- Use `.WORK/` only as local evidence and scratch space. Do not make tracked
+  build scripts, user instructions, or CI workflows depend on `.WORK/` paths.
+- Treat README text and comments as hints. Source files, package metadata, and
+  direct command output win.
+- If evidence is missing, say what is missing and gather it before editing.
+
+Do not rely on memory, previous turns, or summaries as a substitute.
+
+## 2. Think Before Coding
+
+Do not assume. Do not hide confusion. Surface tradeoffs.
+
+Before implementing:
+
+- State assumptions explicitly when they affect architecture, security, public
+  API, protocol meaning, or product boundaries.
+- If multiple interpretations exist, present them instead of picking silently.
+- If a simpler approach exists, say so.
+- Push back when the requested shape appears overcomplicated or inconsistent
+  with the repository direction.
+- If something is unclear and a wrong assumption would be costly, stop and ask.
+
+## 3. Scope And Planning
+
+Treat work as non-trivial when it touches multiple files, changes protocol
+behavior, changes product-boundary docs, creates package structure, affects
+public commands, follows an accepted plan, revisits incomplete work, or responds
+to a previous incorrect completion claim.
+
+For non-trivial work:
+
+1. State the current task goal.
+2. Identify the boundary that must not be crossed.
+3. Inspect affected files, docs, protocol messages, commands, and failure paths
+   before editing.
+4. Establish a specification baseline from the user request, accepted plan,
+   promised behavior, and required cleanup found during investigation.
+5. Compare reasonable implementation directions when architecture, protocol,
+   security, public API, or product authority is affected.
+6. Map each baseline requirement to an implementation surface and verification
+   point.
+7. Implement the complete change for the verified boundary.
+8. Re-check the affected boundary from product purpose, files, docs, protocol,
+   tests, and user flows.
+
+Do not interpret a user request as the lowest-effort literal edit that satisfies
+the words in isolation. Interpret it by the product outcome, affected boundary,
+and adjacent invariants that must hold for the work to be complete.
+
+## 4. Simplicity First
+
+Minimum code or documentation that solves the problem. Nothing speculative.
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No flexibility or configurability that was not requested.
+- No broad folder trees before implementation needs them.
+- Add helpers only when they name a real shared concept, preserve an invariant,
+  or remove meaningful repetition.
+- Avoid generic frameworks, registries, plugin layers, event buses, background
+  schedulers, or broad configurability unless the verified requirement needs
+  them.
+
+Simple never means hardcoded, temporary, case-specific, or test-only. A simple
+implementation must still validate inputs and outputs, handle errors, preserve
+shared invariants, and cover affected paths with verification when available.
+
+## 5. Surgical Changes
+
+Touch only what you must. Clean up only your own changes.
+
+When editing existing files:
+
+- Do not improve adjacent code, comments, formatting, or wording unless it is
+  part of the request.
+- Do not refactor things that are not broken.
+- Match existing style, even if you would do it differently.
+- If you notice unrelated dead code or stale docs, mention it instead of
+  deleting it.
+
+When your changes create orphans:
+
+- Remove imports, variables, functions, docs, or files that your changes made
+  unused.
+- Do not remove pre-existing dead code unless asked.
+
+Every changed line should trace directly to the user request, the agreed
+specification baseline, or an affected shared invariant.
+
+## 6. Commands And Verification
+
+Inspect `package.json` before running project commands. Do not invent scripts.
+
+Current state: this repository does not yet have a root `package.json`. If one
+is added, inspect it before running project commands. If package scripts are
+added intentionally, update this section.
+
+Never claim a test, build, lint, pack, flash, or verification step passed unless
+it was actually run and observed successfully.
+
+If a check cannot be run, state:
+
+- the exact check that was skipped
+- why it was unavailable, unsafe, or not applicable
+- what risk remains
+
+Check `git status --short` before the final response and classify unexpected
+files.
+
+## 7. Documentation Quality
+
+When editing `AGENTS.md`, `README.md`, `specs/`, `docs/`, package READMEs, or
+user-facing instructions, do a first-reader pass before calling the work
+complete.
+
+Read the changed document as if you have no prior conversation context. Verify
+that it communicates:
+
+- the purpose the document supports
+- what is implemented, planned, unsupported, or intentionally out of scope
+- the authority and boundary of every product, protocol, API, package, command,
+  or workflow it mentions
+- what the reader should do and what they must not infer
+
+If the intended meaning depends on hidden chat context or vague shorthand,
+rewrite it.
+
+Repository-visible documentation, code comments, user-facing strings, package
+metadata, protocols, tests, and release-facing copy should be written in
+English. Ignored planning notes under `.WORK/` may use Korean when useful.
+
+Use ordinary industry terms when available. Define unavoidable project terms at
+first use and state what they do and do not mean.
+
+## 8. Communication Rules
+
+- Answer with verified facts and concise conclusions.
+- Separate facts, assumptions, and recommendations.
+- State uncertainty plainly when evidence is incomplete.
+- Do not soften missing work, removed behavior, or incorrect prior claims.
+- If work was not done, say it was not done.
+- If a previous answer claimed completion incorrectly, say the claim was
+  incorrect and state what is actually complete.
+- Do not present planned behavior as implemented behavior.
+
+## 9. Review Discipline
+
+When asked for a review, prioritize defect discovery.
+
+- Report findings first, ordered by severity.
+- Cite file and line evidence for each finding.
+- Check actual behavior instead of trusting comments or docs.
+- Mark speculation clearly when evidence is incomplete.
+- Review against the requested or planned behavior, not against a smaller
+  behavior that happened to be implemented.
+- Passing tests are useful evidence, not proof that every affected path is
+  correct.
+- If history shows prior behavior, classify the current work as restoration,
+  replacement, or intentional removal before reviewing it as new functionality.
+
+## 10. Implementation Integrity
+
+- Reuse existing source-of-truth modules and established infrastructure when
+  they own the boundary.
+- Add new code only when no suitable source exists or the existing source is
+  demonstrably insufficient.
+- Do not duplicate logic, protocol metadata, parsers, policy checks, or SDK
+  behavior without a clear reason.
+- Do not hardcode values to bypass real validation, protocol checks, or product
+  boundaries.
+- Do not add temporary branches solely to satisfy one failing case.
+- Do not manipulate tests, fixtures, generated files, package metadata,
+  snapshots, or docs just to make checks pass.
+- Test doubles, placeholders, and fixtures are allowed only when their scope is
+  explicit and they are not presented as product functionality.
+- Do not fake signatures, transactions, wallet state, key storage, policy
+  enforcement, physical approval, chain support, transport support, or hardware
+  readiness.
+- Do not add production secrets or real key material.
+- If technical debt remains, name it explicitly and explain the blocker.
+
+## 11. Numeric, Signing, And Protocol Safety
+
+Treat signable data and protocol-facing data as safety-critical.
+
+- Keep raw amounts, gas values, object versions, nonces, chain ids, key ids,
+  request ids, session ids, and protocol integers as strings or `BigInt` values
+  when precision matters.
+- Do not use floating point arithmetic for signable quantities or protocol
+  integers.
+- Keep display values presentation-only. Do not feed display strings back into
+  signing or policy evaluation without an explicit conversion step.
+- Do not infer decimals, asset identity, chain identity, ownership, signing
+  readiness, or hardware readiness from symbols, UI labels, memory, or
+  convenience defaults.
+- If a protocol, SDK, firmware source, or hardware document does not define a
+  term, quantity, status, or behavior clearly enough, mark it as unsupported,
+  unavailable, or requiring verification.
+
+## 12. Repository Notes
+
+Current protocol session flow:
+
+```text
+get_status
+  -> connect
+    -> get_capabilities
+    -> get_accounts
+    -> call_method*
+  -> disconnect
+```
+
+`call_method*` means zero or more method calls during an active session.
+
+Current intended structure:
+
+```text
+specs/
+  PROTOCOL.md
+
+products/
+  gateway/
+  firmware/
+    README.md
+    src/
+    build/
+
+tools/
+third_party/
+```
+
+Empty directories may not be tracked by Git until they contain files.
+
+Project-specific rules:
+
+- Keep planning notes, scratch files, investigation material, external source
+  checkouts, downloaded references, and vendor source snapshots under `.WORK/`.
+- Use this `.WORK/` layout:
+  - `.WORK/notes/` for planning notes, investigation summaries, and temporary
+    project memos.
+  - `.WORK/sources/` for upstream application, firmware, or example source
+    checkouts used as references.
+  - `.WORK/libraries/` for upstream library source checkouts used as
+    references.
+  - `.WORK/toolchains/` for SDK or toolchain source trees.
+  - `.WORK/tools/` for installed local tools, tool caches, and downloaded
+    tool archives.
+  - `.WORK/artifacts/` for temporary logs, captures, generated fixtures, or
+    one-off outputs that should not be committed.
+- Do not commit files from `.WORK/`.
+- Treat `.WORK/` sources as evidence context. They are not tracked project
+  source unless a separate decision moves them into the repository.
+- Do not use `.WORK/` as a source root for user-facing build instructions or
+  GitHub workflows. CI and user builds must start from tracked repository files
+  and explicit dependency setup steps.
+- Do not commit firmware build artifacts.
+- `products/firmware/build/` is ignored and is for build output only.
+- Firmware source is organized by hardware under
+  `products/firmware/src/<hardware-id>/`.
+- Treat Admin as a Gateway capability, not a separate product area.
+- Avoid hardware-specific wording in common documents.
+- Use concrete hardware names only in hardware-specific source, plans, or notes.
+
+Avoid unless explicitly requested:
+
+- `products/admin/`
+- `packages/` for internal concepts
+- separate chain-specific protocol documents
+- broad speculative folder trees
+- production secrets or real key material
+
+## 13. Completion Criteria
+
+Work is complete only when:
+
+- the requested behavior is implemented, not merely planned or reported
+- affected code, docs, interfaces, user flows, and product claims have been
+  reviewed after the change
+- the affected boundary still looks robust from product purpose, files, docs,
+  protocol, tests, and user flows
+- relevant checks, tests, builds, or manual verification have been run when
+  available
+- errors introduced by the change have been fixed
+- remaining limitations or skipped checks are stated plainly
+- non-trivial work is compared against the specification baseline, with every
+  baseline requirement classified as implemented and verified, missing,
+  weakened, or unverified
+- final `git status --short` has been checked and unexpected files are
+  classified or cleaned up
