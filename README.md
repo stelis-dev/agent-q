@@ -25,15 +25,15 @@ Agent-Q has two deployable products:
 - Agent-Q Gateway
 - Agent-Q Firmware
 
-Admin is not a separate product. The Admin Page and Admin API are Gateway
-capabilities.
+Admin is not a separate product. The Admin Page and Admin API are intended
+Gateway capabilities, not yet implemented (see Current Status below).
 
 ## Agent-Q Gateway
 
 Agent-Q Gateway is distributed as an npm package.
 
-It runs locally through `npx`, exposes an MCP server for agents, serves the
-Admin Page, and communicates with Agent-Q Firmware over a supported transport.
+It runs locally through `npx`, exposes an MCP server for agents, and
+communicates with Agent-Q Firmware over a supported transport.
 
 Gateway does not store keys and does not make signing or policy decisions.
 

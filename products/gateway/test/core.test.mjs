@@ -131,6 +131,29 @@ test("returns cached status for known device when live request times out", async
   });
 });
 
+test("core bounds a driver that ignores its handshake timeout", async () => {
+  await withStore(async (store) => {
+    await store.rememberUsbStatus(device, "/dev/cu.usbmodem1", {
+      observedAt: new Date("2026-05-28T00:00:00.000Z"),
+      setActive: true,
+    });
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        requestStatus() {
+          // Hangs and ignores its timeout argument; the GatewayCore driver wrapper
+          // (deadlineEnforcingDriver) must still bound it within timeoutMs.
+          return new Promise(() => {});
+        },
+      }),
+    );
+
+    const result = await core.getDeviceStatus({ timeoutMs: 50 });
+    assert.equal(result.source, "cached");
+    assert.equal(result.unavailableReason, "timeout");
+  });
+});
+
 test("falls back to scan when stored port hint is stale", async () => {
   await withStore(async (store) => {
     await store.rememberUsbStatus(device, "/dev/cu.stale", {
@@ -176,6 +199,27 @@ test("scan stores live device without selecting it", async () => {
     assert.equal(result.activeDeviceId, null);
     assert.equal((await store.load()).devices[0].deviceId, device.deviceId);
     assert.equal((await store.load()).activeDeviceId, null);
+  });
+});
+
+test("scan sanitizes an OS-supplied port path before returning or storing it", async () => {
+  await withStore(async (store) => {
+    const weirdPath = "/dev/cu." + String.fromCharCode(7) + "usbmodem9";
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async listPorts() {
+          return [{ path: weirdPath, vendorId: "303a", productId: "1001", manufacturer: "Espressif" }];
+        },
+        async requestStatus() {
+          return status;
+        },
+      }),
+    );
+    const result = await core.scanDevices();
+    assert.equal(result.devices.length, 1);
+    assert.equal(result.devices[0].portPath, "/dev/cu.usbmodem9", "control char stripped from live port path");
+    assert.equal((await store.load()).devices[0].lastPortHint, "/dev/cu.usbmodem9");
   });
 });
 
@@ -293,6 +337,39 @@ test("identify reports per-device errors without failing the whole request", asy
     assert.equal(result.devices[0].status, "displayed");
     assert.equal(result.devices[1].status, "error");
     assert.equal(result.devices[1].error.code, "timeout");
+  });
+});
+
+test("identify bounds the whole call to timeoutMs across multiple devices", async () => {
+  await withStore(async (store) => {
+    // Injected virtual clock: the first identify advances time past the budget, so
+    // the second device is reported as a timeout deterministically (no real wait).
+    let now = new Date("2026-05-28T00:00:00.000Z");
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async listPorts() {
+          return [
+            { path: "/dev/cu.usbmodem1", vendorId: "303a", productId: "1001", manufacturer: "Espressif" },
+            { path: "/dev/cu.usbmodem2", vendorId: "303a", productId: "1001", manufacturer: "Espressif" },
+          ];
+        },
+        async requestStatus(portPath) {
+          return portPath === "/dev/cu.usbmodem1" ? status : secondStatus;
+        },
+        async identifyDevice(portPath, code) {
+          now = new Date(now.getTime() + 60);
+          return identifyResponse(code, portPath === "/dev/cu.usbmodem1" ? device : secondDevice);
+        },
+      }),
+      () => now,
+    );
+
+    const result = await core.identifyDevices({ timeoutMs: 50, durationMs: 10000 });
+    assert.equal(result.devices.length, 2);
+    assert.deepEqual(result.devices.map((entry) => entry.status).sort(), ["displayed", "error"]);
+    const errored = result.devices.find((entry) => entry.status === "error");
+    assert.equal(errored.error.code, "timeout");
   });
 });
 
@@ -642,6 +719,7 @@ test("disconnectDevice without a runtime session returns not_connected", async (
     const result = await core.disconnectDevice({});
     assert.equal(result.source, "not_connected");
     assert.equal(result.deviceId, device.deviceId);
+    assert.equal(result.reason, "not_connected");
   });
 });
 
@@ -669,6 +747,7 @@ test("disconnectDevice clears the runtime session after Firmware confirms", asyn
     const result = await core.disconnectDevice({});
     assert.equal(disconnectCalls, 1);
     assert.equal(result.source, "disconnected");
+    assert.equal(result.reason, "firmware_confirmed");
 
     const listed = await core.listDevices();
     assert.equal(listed.devices[0].runtimeSession, null);
@@ -691,6 +770,7 @@ test("disconnectDevice clears the runtime session when Firmware reports invalid_
 
     const result = await core.disconnectDevice({});
     assert.equal(result.source, "disconnected");
+    assert.equal(result.reason, "invalid_session");
     const listed = await core.listDevices();
     assert.equal(listed.devices[0].runtimeSession, null);
   });
@@ -723,7 +803,70 @@ test("disconnectDevice clears local session when transport is gone", async () =>
 
     const result = await core.disconnectDevice({});
     assert.equal(result.source, "disconnected");
+    assert.equal(result.reason, "transport_unavailable");
     const listed = await core.listDevices();
     assert.equal(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("disconnectDevice clears the local session and reports timeout when Firmware never confirms", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        // Firmware accepts the disconnect frame but never answers. The driver
+        // ignores its timeout; deadlineEnforcingDriver (wired in GatewayCore's
+        // constructor) bounds the hang and surfaces a GatewayError("timeout").
+        disconnectDevice() {
+          return new Promise(() => {});
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.disconnectDevice({ timeoutMs: 50 });
+    assert.equal(result.source, "disconnected");
+    assert.equal(result.reason, "timeout");
+    // Gateway cannot confirm Firmware observed the disconnect, but it must not
+    // keep reusing a session it can no longer verify, so the local view clears.
+    const listed = await core.listDevices();
+    assert.equal(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("after a disconnect timeout, connectDevice contacts Firmware again instead of reusing the cleared session", async () => {
+  await withStore(async (store) => {
+    let connectCalls = 0;
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async connectDevice() {
+          connectCalls += 1;
+          return approvedConnectResponse({
+            sessionId: `session_${connectCalls.toString(16).padStart(2, "0")}`,
+          });
+        },
+        disconnectDevice() {
+          return new Promise(() => {});
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+
+    const first = await core.connectDevice({});
+    assert.equal(connectCalls, 1);
+    assert.equal(first.reused, false);
+
+    const disconnect = await core.disconnectDevice({ timeoutMs: 50 });
+    assert.equal(disconnect.reason, "timeout");
+
+    // The cleared session must not be reused: a fresh connect re-contacts
+    // Firmware rather than short-circuiting to reused: true.
+    const second = await core.connectDevice({});
+    assert.equal(connectCalls, 2);
+    assert.equal(second.reused, false);
   });
 });

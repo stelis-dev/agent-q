@@ -61,6 +61,12 @@ export interface UsbStatusScanResult {
   failures: UsbStatusFailure[];
 }
 
+// Transport contract: each call should resolve or reject within its timeout
+// argument. Gateway does not rely on that alone — GatewayCore wraps the driver in
+// deadlineEnforcingDriver, which races every timeout-bearing call against its own
+// timeout argument, so a driver that ignores it still cannot exceed the budget.
+// listPorts has no timeout argument and is bounded by the shared scan deadline in
+// scanUsbDeviceStatuses. A new timeout-bearing method must be added to the wrapper.
 export interface UsbSerialDriver {
   listPorts(): Promise<PortInfo[]>;
   requestStatus(portPath: string, timeoutMs: number): Promise<StatusResponse>;
@@ -161,19 +167,105 @@ export async function scanUsbDevices(
   return (await scanUsbDeviceStatuses(driver, timeoutMs)).devices;
 }
 
+// Enforce a Gateway-side deadline on a transport call so a slow or uncooperative
+// driver — one that ignores its timeout argument, or a stuck listPorts() — cannot
+// push the scan past its budget. A genuine rejection from `work` propagates
+// UNCHANGED, so callers can still tell an enumeration/transport error apart from
+// "no device present"; swallowing the error (returning []) would conflate the two.
+function raceDeadline<T>(work: Promise<T>, remainingMs: number, timeoutMessage: string): Promise<T> {
+  // Swallow only a LATE rejection from the losing branch to avoid an unhandled
+  // rejection; an early rejection still propagates through the race below.
+  work.catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new GatewayError("timeout", timeoutMessage, true)),
+      Math.max(0, remainingMs),
+    );
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
+// Single enforcement boundary for the transport timeout contract. Wrapping a
+// driver here races every timeout-bearing call against its own timeout argument,
+// so a driver that ignores the argument still cannot exceed the budget. Applied
+// once in GatewayCore, this bounds every present and future timeout-bearing call
+// in one place instead of relying on each call site to remember to race.
+// listPorts has no timeout argument and is bounded by the shared scan deadline in
+// scanUsbDeviceStatuses.
+export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDriver {
+  return {
+    listPorts: () => driver.listPorts(),
+    requestStatus: (portPath, timeoutMs) =>
+      raceDeadline(
+        driver.requestStatus(portPath, timeoutMs),
+        timeoutMs,
+        "USB status handshake exceeded its timeout.",
+      ),
+    identifyDevice: (portPath, code, timeoutMs, durationMs) =>
+      raceDeadline(
+        driver.identifyDevice(portPath, code, timeoutMs, durationMs),
+        timeoutMs,
+        "USB identify exceeded its timeout.",
+      ),
+    connectDevice: (portPath, gatewayName, timeoutMs, approvalTimeoutMs) =>
+      raceDeadline(
+        driver.connectDevice(portPath, gatewayName, timeoutMs, approvalTimeoutMs),
+        timeoutMs,
+        "USB connect exceeded its timeout.",
+      ),
+    disconnectDevice: (portPath, sessionId, timeoutMs) =>
+      raceDeadline(
+        driver.disconnectDevice(portPath, sessionId, timeoutMs),
+        timeoutMs,
+        "USB disconnect exceeded its timeout.",
+      ),
+  };
+}
+
 export async function scanUsbDeviceStatuses(
   driver: UsbSerialDriver,
   timeoutMs = DEFAULT_SCAN_TIMEOUT_MS,
+  now: () => number = () => Date.now(),
 ): Promise<UsbStatusScanResult> {
-  const normalizedTimeoutMs = validateTimeoutMs(timeoutMs);
-  const ports = await driver.listPorts();
+  // timeoutMs is a total wall-clock budget for the whole scan, not a per-candidate
+  // limit. Port enumeration AND every handshake draw from one shared deadline, so
+  // a slow listPorts() or many candidates cannot push the call past timeoutMs.
+  // `now` is injectable so the deadline is deterministically testable.
+  const totalTimeoutMs = validateTimeoutMs(timeoutMs);
+  const deadline = now() + totalTimeoutMs;
+  // Enumeration is bounded by the deadline but its errors propagate (a failed
+  // listPorts is not the same as "no devices"; the caller maps it).
+  const ports = await raceDeadline(
+    driver.listPorts(),
+    deadline - now(),
+    "USB port enumeration exceeded the scan deadline.",
+  );
   const candidates = ports.filter(isLikelyAgentQUsbPort);
   const results: UsbStatusResult[] = [];
   const failures: UsbStatusFailure[] = [];
 
   for (const candidate of candidates) {
+    const remainingMs = deadline - now();
+    if (remainingMs <= 0) {
+      // Budget exhausted before this candidate was reached.
+      failures.push({
+        portPath: candidate.path,
+        unavailableReason: "timeout",
+      });
+      continue;
+    }
     try {
-      const protocolResponse = await driver.requestStatus(candidate.path, normalizedTimeoutMs);
+      // scanUsbDeviceStatuses OWNS the total scan budget, so it bounds each
+      // handshake itself by the time remaining until the deadline. A raw/direct
+      // caller is therefore safe even without the GatewayCore driver wrapper; the
+      // wrapper adds the same bound for Core's non-scan transport calls and the
+      // overlap on this path is harmless (same timeout, whichever fires first).
+      const protocolResponse = await raceDeadline(
+        driver.requestStatus(candidate.path, remainingMs),
+        remainingMs,
+        "USB status handshake exceeded the scan deadline.",
+      );
       results.push({
         portPath: candidate.path,
         protocolResponse,

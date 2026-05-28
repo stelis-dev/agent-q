@@ -1,13 +1,34 @@
 import { randomBytes } from "node:crypto";
+import {
+  IDENTIFICATION_CODE_PATTERN,
+  MAX_FIRMWARE_NAME_LENGTH,
+  MAX_FIRMWARE_VERSION_LENGTH,
+  MAX_HARDWARE_ID_LENGTH,
+  isDeviceState,
+  isGatewayName,
+  isSafeDeviceId,
+  isSafeRequestId,
+  isSessionId,
+  sanitizeDisplayText,
+  type DeviceState,
+} from "./safe-text.js";
+
+// These boundary helpers are defined once in safe-text.ts (the single source of
+// truth) and re-exported here because protocol.ts is the wire-ingress boundary
+// that applies them; existing importers and tests resolve them via protocol.ts.
+export { isGatewayName, isSafeDeviceId, isSafeRequestId, isSessionId, sanitizeDisplayText };
+export type { DeviceState };
 
 export const PROTOCOL_VERSION = 1;
-export const REQUEST_ID_PATTERN = /^[A-Za-z0-9_.-]{1,79}$/;
-export const SESSION_ID_PATTERN = /^session_[0-9a-f]{1,128}$/;
-export const GATEWAY_NAME_PATTERN = /^[\x20-\x7E]{1,64}$/;
 export const MAX_APPROVAL_TIMEOUT_MS = 60000;
 export const DEFAULT_APPROVAL_TIMEOUT_MS = 30000;
-
-export type DeviceState = "idle" | "busy" | "awaiting_approval" | "locked" | "error";
+// sessionTtlMs is a uint32 millisecond counter on the wire (see the firmware's
+// kSessionTtlMs). A value outside that range cannot come from a conformant
+// device, so the wire boundary rejects it as malformed. Bounding it here also
+// keeps Gateway's session-expiry arithmetic (connectedAt + sessionTtlMs) far
+// inside the representable Date range, so recording a session can never throw a
+// RangeError after the connect was physically approved.
+export const MAX_SESSION_TTL_MS = 4_294_967_295;
 
 export interface DeviceStatus {
   deviceId: string;
@@ -127,10 +148,6 @@ export class ProtocolError extends Error {
     this.name = "ProtocolError";
     this.code = code;
   }
-}
-
-export function isSafeRequestId(value: unknown): value is string {
-  return typeof value === "string" && REQUEST_ID_PATTERN.test(value);
 }
 
 export function createRequestId(): string {
@@ -270,8 +287,8 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
   }
 
   if (value.type === "status") {
-    const device = value.device;
-    if (!isDeviceStatus(device)) {
+    const device = sanitizeDeviceStatus(value.device);
+    if (device === null) {
       throw new ProtocolError("protocol_error", "Status response device object is malformed.");
     }
     if (typeof value.id !== "string") {
@@ -287,8 +304,8 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
   }
 
   if (value.type === "identify_device_result") {
-    const device = value.device;
-    if (!isDeviceStatus(device)) {
+    const device = sanitizeDeviceStatus(value.device);
+    if (device === null) {
       throw new ProtocolError("protocol_error", "Identify response device object is malformed.");
     }
     if (typeof value.id !== "string" || value.status !== "displayed" || !isIdentificationCode(value.code)) {
@@ -311,8 +328,8 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     }
 
     if (value.status === "approved") {
-      const device = value.device;
-      if (!isDeviceStatus(device)) {
+      const device = sanitizeDeviceStatus(value.device);
+      if (device === null) {
         throw new ProtocolError("protocol_error", "Connect response device object is malformed.");
       }
       if (!isSessionId(value.sessionId)) {
@@ -321,7 +338,8 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
       if (
         typeof value.sessionTtlMs !== "number" ||
         !Number.isInteger(value.sessionTtlMs) ||
-        value.sessionTtlMs <= 0
+        value.sessionTtlMs <= 0 ||
+        value.sessionTtlMs > MAX_SESSION_TTL_MS
       ) {
         throw new ProtocolError("protocol_error", "Connect response sessionTtlMs is malformed.");
       }
@@ -411,39 +429,26 @@ export function assertDisconnectResponse(response: ProtocolResponse): Disconnect
   return response;
 }
 
-export function isSessionId(value: unknown): value is string {
-  return typeof value === "string" && SESSION_ID_PATTERN.test(value);
-}
-
-export function isGatewayName(value: unknown): value is string {
-  return typeof value === "string" && GATEWAY_NAME_PATTERN.test(value);
-}
-
-function isDeviceStatus(value: unknown): value is DeviceStatus {
-  if (!isRecord(value)) {
-    return false;
+// Reduce an untrusted wire or stored device object to a safe DeviceStatus, or
+// null when its identity fields are unusable. deviceId and state are REJECTED
+// when malformed (returns null); the display strings are sanitized to bounded
+// printable ASCII. Shared by the wire boundary (above) and the disk boundary
+// (config.ts) so both apply the identical policy.
+export function sanitizeDeviceStatus(value: unknown): DeviceStatus | null {
+  if (!isRecord(value) || !isSafeDeviceId(value.deviceId) || !isDeviceState(value.state)) {
+    return null;
   }
-  return (
-    typeof value.deviceId === "string" &&
-    isDeviceState(value.state) &&
-    typeof value.firmwareName === "string" &&
-    typeof value.hardware === "string" &&
-    typeof value.firmwareVersion === "string"
-  );
-}
-
-function isDeviceState(value: unknown): value is DeviceState {
-  return (
-    value === "idle" ||
-    value === "busy" ||
-    value === "awaiting_approval" ||
-    value === "locked" ||
-    value === "error"
-  );
+  return {
+    deviceId: value.deviceId,
+    state: value.state,
+    firmwareName: sanitizeDisplayText(value.firmwareName, MAX_FIRMWARE_NAME_LENGTH),
+    hardware: sanitizeDisplayText(value.hardware, MAX_HARDWARE_ID_LENGTH),
+    firmwareVersion: sanitizeDisplayText(value.firmwareVersion, MAX_FIRMWARE_VERSION_LENGTH),
+  };
 }
 
 function isIdentificationCode(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9]{4}$/.test(value);
+  return typeof value === "string" && IDENTIFICATION_CODE_PATTERN.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

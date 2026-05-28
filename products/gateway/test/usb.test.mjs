@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  deadlineEnforcingDriver,
   isLikelyAgentQUsbPort,
+  scanUsbDeviceStatuses,
   scanUsbDevices,
   tryParseMatchingResponseLine,
   validateTimeoutMs,
 } from "../dist/usb.js";
 import { assertStatusResponse } from "../dist/protocol.js";
+import { GatewayError } from "../dist/errors.js";
 
 const status = {
   id: "req_1",
@@ -105,4 +108,82 @@ test("surfaces id-less Firmware error responses for the in-flight request", () =
       code: "invalid_json",
     },
   );
+});
+
+test("scan applies a shrinking per-candidate timeout under one shared deadline", async () => {
+  // Injected virtual clock: each handshake advances time by 100ms, so the test is
+  // deterministic instead of depending on real scheduler timing.
+  let now = 1000;
+  const seenTimeouts = [];
+  const driver = {
+    async listPorts() {
+      return ["1", "2", "3"].map((suffix) => ({
+        path: `/dev/cu.usbmodem${suffix}`,
+        vendorId: "303a",
+        productId: "1001",
+        manufacturer: "Espressif",
+      }));
+    },
+    async requestStatus(_portPath, timeoutMs) {
+      seenTimeouts.push(timeoutMs);
+      now += 100;
+      return status;
+    },
+  };
+
+  await scanUsbDeviceStatuses(driver, 2000, () => now);
+  // deadline = 1000 + 2000 = 3000; each handshake's timeout is the time remaining
+  // until that shared deadline, so it shrinks rather than resetting to 2000.
+  assert.deepEqual(seenTimeouts, [2000, 1900, 1800]);
+});
+
+test("scan surfaces a port-enumeration error instead of silently reporting no devices", async () => {
+  const driver = {
+    async listPorts() {
+      throw new GatewayError("transport_closed", "enumeration failed", true);
+    },
+    async requestStatus() {
+      return status;
+    },
+  };
+  // The error propagates (it is not swallowed to an empty port list), so the
+  // caller can distinguish "enumeration failed" from "no device present".
+  await assert.rejects(
+    () => scanUsbDeviceStatuses(driver, 2000),
+    (error) => error instanceof GatewayError && error.code === "transport_closed",
+  );
+});
+
+test("deadlineEnforcingDriver bounds a call whose driver ignores its timeout", async () => {
+  // Single enforcement boundary: a hanging call is bounded by its timeout argument
+  // even though this driver ignores it. GatewayCore wraps its driver with this, so
+  // every timeout-bearing transport call is bounded in one place.
+  const driver = {
+    requestStatus() {
+      return new Promise(() => {});
+    },
+  };
+  const bounded = deadlineEnforcingDriver(driver);
+  await assert.rejects(
+    () => bounded.requestStatus("/dev/cu.usbmodem1", 50),
+    (error) => error instanceof GatewayError && error.code === "timeout",
+  );
+});
+
+test("scanUsbDeviceStatuses self-enforces the scan budget on a raw driver", async () => {
+  // No GatewayCore wrapper here: the scan function owns its budget and must bound
+  // a hanging handshake itself, so a direct/raw export caller is also safe.
+  const driver = {
+    async listPorts() {
+      return [{ path: "/dev/cu.usbmodem1", vendorId: "303a", productId: "1001", manufacturer: "Espressif" }];
+    },
+    requestStatus() {
+      return new Promise(() => {});
+    },
+  };
+
+  const result = await scanUsbDeviceStatuses(driver, 50);
+  assert.equal(result.devices.length, 0);
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.failures[0].unavailableReason, "timeout");
 });

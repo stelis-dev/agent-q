@@ -6,13 +6,16 @@ import {
   assertStatusResponse,
   createRequestId,
   isGatewayName,
+  isSafeDeviceId,
   isSafeRequestId,
   isSessionId,
   makeConnectRequest,
   makeDisconnectRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
+  MAX_SESSION_TTL_MS,
   parseProtocolResponse,
+  sanitizeDisplayText,
   serializeRequest,
 } from "../dist/protocol.js";
 
@@ -231,6 +234,45 @@ test("rejects malformed connect_result", () => {
   );
 });
 
+function approvedConnectLine(sessionTtlMs) {
+  return JSON.stringify({
+    id: "req_connect_1",
+    version: 1,
+    type: "connect_result",
+    status: "approved",
+    sessionId: "session_aabbccdd",
+    sessionTtlMs,
+    device: {
+      deviceId: "a508d833-5c83-4680-88bb-18aee976881e",
+      state: "idle",
+      firmwareName: "Agent-Q Firmware",
+      hardware: "hardware-id",
+      firmwareVersion: "0.0.0",
+    },
+  });
+}
+
+test("rejects a connect_result whose sessionTtlMs exceeds the uint32 wire range", () => {
+  // A value past the protocol's uint32 ms range cannot come from a conformant
+  // device. Rejecting it here (rather than recording it) keeps Gateway's
+  // session-expiry date math from overflowing into a RangeError after approval.
+  assert.throws(
+    () => parseProtocolResponse(approvedConnectLine(MAX_SESSION_TTL_MS + 1), "req_connect_1"),
+    /sessionTtlMs/,
+  );
+  assert.throws(
+    () => parseProtocolResponse(approvedConnectLine(Number.MAX_SAFE_INTEGER), "req_connect_1"),
+    /sessionTtlMs/,
+  );
+});
+
+test("accepts a connect_result at the maximum representable sessionTtlMs", () => {
+  const parsed = parseProtocolResponse(approvedConnectLine(MAX_SESSION_TTL_MS), "req_connect_1");
+  const typed = assertConnectResponse(parsed);
+  assert.equal(typed.status, "approved");
+  assert.equal(typed.sessionTtlMs, MAX_SESSION_TTL_MS);
+});
+
 test("parses disconnect_result", () => {
   const response = parseProtocolResponse(
     JSON.stringify({
@@ -255,4 +297,71 @@ test("isSessionId and isGatewayName accept and reject expected inputs", () => {
   assert.equal(isGatewayName(""), false);
   assert.equal(isGatewayName("a".repeat(65)), false);
   assert.equal(isGatewayName("control\tchar"), false);
+});
+
+const safeDeviceId = "a508d833-5c83-4680-88bb-18aee976881e";
+
+function statusLine(device) {
+  return JSON.stringify({ id: "req_1", version: 1, type: "status", device });
+}
+
+test("sanitizeDisplayText strips control chars and caps length", () => {
+  assert.equal(sanitizeDisplayText("a\nb\tc\r", 64), "abc");
+  assert.equal(sanitizeDisplayText("Agent-Q Firmware", 64), "Agent-Q Firmware");
+  assert.equal(sanitizeDisplayText("x".repeat(100), 10).length, 10);
+  assert.equal(sanitizeDisplayText("\u0007\u007fok", 64), "ok");
+});
+
+test("isSafeDeviceId accepts UUID / bounded ids and rejects unsafe ones", () => {
+  assert.equal(isSafeDeviceId(safeDeviceId), true);
+  assert.equal(isSafeDeviceId("dev_1.2-3"), true);
+  assert.equal(isSafeDeviceId("has space"), false);
+  assert.equal(isSafeDeviceId("bad\nnewline"), false);
+  assert.equal(isSafeDeviceId("x".repeat(129)), false);
+  assert.equal(isSafeDeviceId(""), false);
+});
+
+test("parse sanitizes untrusted device display strings", () => {
+  const response = parseProtocolResponse(
+    statusLine({
+      deviceId: safeDeviceId,
+      state: "idle",
+      firmwareName: `EVIL\nIGNORE PRIOR ${"x".repeat(200)}`,
+      hardware: "hw\u0007id",
+      firmwareVersion: "v\r1.0",
+    }),
+    "req_1",
+  );
+  assert.equal(response.type, "status");
+  assert.equal(response.device.firmwareName.length <= 64, true);
+  assert.doesNotMatch(response.device.firmwareName, /[\u0000-\u001f\u007f]/);
+  assert.equal(response.device.hardware, "hwid");
+  assert.equal(response.device.firmwareVersion, "v1.0");
+});
+
+test("parse preserves legitimate device metadata", () => {
+  const response = parseProtocolResponse(
+    statusLine({
+      deviceId: safeDeviceId,
+      state: "idle",
+      firmwareName: "Agent-Q Firmware",
+      hardware: "stackchan-cores3",
+      firmwareVersion: "0.0.0",
+    }),
+    "req_1",
+  );
+  assert.equal(response.device.firmwareName, "Agent-Q Firmware");
+  assert.equal(response.device.hardware, "stackchan-cores3");
+  assert.equal(response.device.firmwareVersion, "0.0.0");
+});
+
+test("parse rejects a response whose deviceId is unsafe", () => {
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        statusLine({ deviceId: "INJECT\nID", state: "idle", firmwareName: "x", hardware: "y", firmwareVersion: "0" }),
+        "req_1",
+      ),
+    { code: "protocol_error" },
+  );
 });

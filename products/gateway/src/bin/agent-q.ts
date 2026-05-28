@@ -20,8 +20,10 @@ if (args.length > 0) {
   process.exit(1);
 }
 
-startStdioGateway().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`Agent-Q Gateway failed: ${message}`);
+startStdioGateway().catch(() => {
+  // Do not interpolate the raw error: a startup failure can carry OS/transport
+  // text, and stderr is a shared diagnostic channel. A fixed line signals the
+  // failure; the non-zero exit code is the machine-readable signal.
+  console.error("Agent-Q Gateway failed to start.");
   process.exit(1);
 });

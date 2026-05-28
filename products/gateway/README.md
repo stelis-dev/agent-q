@@ -61,6 +61,48 @@ physical approval. `disconnect_device` ends the runtime session.
 - Not yet implemented: signing, policy evaluation, account discovery, public
   key discovery, Admin Page, and chain-specific transaction logic.
 
+## MCP Output Boundary
+
+MCP clients and agents are untrusted request sources. Gateway limits what its
+MCP output can contain, but it does **not** judge agent or prompt intent and
+does **not** claim to detect prompt injection. Concretely:
+
+- Secret material (signing keys, seeds, mnemonics) is never produced, and the
+  Firmware session token (`sessionId`) is kept inside Gateway and never returned
+  to clients.
+- Error output carries a stable `{ code, message, retryable }`. The `message` is
+  a fixed, code-derived string; raw OS, serial, or Firmware error text is not
+  forwarded. Unknown error codes collapse to `gateway_error`.
+- Device-supplied display strings (`firmwareName`, `hardware`,
+  `firmwareVersion`) are untrusted text. They are reduced to bounded, printable
+  text when parsed from the device, not used as a trust signal. `deviceId` is a
+  bounded safe identifier; a device that sends an unsafe one is rejected.
+- `label` is a local display name supplied by the user; it is rejected if it is
+  empty, too long, or contains control characters.
+- The display-text and identifier rules are defined once, in `src/safe-text.ts`,
+  and enforced at every boundary that handles untrusted text: the device wire
+  response, the stored on-disk registry (which may be hand-edited), and the MCP
+  output schema. A stored device record whose `deviceId` is unsafe is dropped on
+  load; its display strings and port hint are sanitized, an invalid `label` is
+  reset to null, and a malformed timestamp is replaced, so the stored registry
+  cannot carry control characters or unsafe identifiers into MCP output.
+- The public error policy (`src/public-error.ts`) is the single source for what
+  any output boundary may emit: an allowlisted error `code` with its canonical
+  message. Gateway core deliberately throws a raw `GatewayError` whose `message`
+  may carry OS, serial, or Firmware text; safety comes from the output boundary,
+  not from core pre-sanitizing. The contract is therefore that **every output
+  adapter must project errors through `public-error.ts` before returning or
+  logging them**. The MCP adapter does this in one place — its `run()` wrapper
+  for results and `logToolDiagnostic` for stderr — and any future adapter (CLI,
+  Admin/web API) must do the same. Diagnostic logging goes to stderr (never
+  stdout, the MCP channel) and carries only the allowlisted `code`, its canonical
+  message, and `retryable`; raw device/OS/Firmware text is never written to a log,
+  even sanitized. Operator-controlled local config (such as the config file path)
+  is not untrusted request input and may be logged as-is.
+
+This is output hygiene at an untrusted boundary, not intent detection. All
+authority over what may be signed remains with Firmware policy.
+
 ## Commands
 
 Requires Node.js 22 or newer.

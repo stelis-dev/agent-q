@@ -7,6 +7,8 @@ import {
   type DeviceRecord,
 } from "./config.js";
 import { GatewayError, toGatewayError } from "./errors.js";
+import { isGatewayName, isSafeDeviceId, sanitizePortHint } from "./safe-text.js";
+import { normalizeErrorCode, toPublicError } from "./public-error.js";
 import {
   createIdentificationCode,
   DEFAULT_APPROVAL_TIMEOUT_MS,
@@ -16,6 +18,7 @@ import {
 } from "./protocol.js";
 import {
   DEFAULT_SCAN_TIMEOUT_MS,
+  deadlineEnforcingDriver,
   mapErrorToUnavailableReason,
   scanUsbDeviceStatuses,
   scanUsbDevices,
@@ -43,18 +46,11 @@ export interface CachedDeviceStatus {
   };
 }
 
-export interface ErrorDeviceStatus {
-  source: "error";
-  connected: false;
-  error: {
-    code: string;
-    message: string;
-    retryable: boolean;
-  };
-}
-
 export type DeviceStatusResult = LiveDeviceStatus | CachedDeviceStatus;
-export type DeviceStatusToolResult = DeviceStatusResult | ErrorDeviceStatus;
+// getDeviceStatus only ever returns a live or cached result, or throws; it never
+// returns an error-shaped value. The error surfaces as a thrown GatewayError that
+// the adapter boundary (run()) projects through public-error.ts.
+export type DeviceStatusToolResult = DeviceStatusResult;
 
 export interface ScanDevicesResult {
   source: "live";
@@ -138,9 +134,22 @@ export interface ConnectDeviceResult {
   device: StatusResponse["device"];
 }
 
+// Why a disconnect ended (or did not establish) Gateway's local session view.
+// Single-sourced so the MCP output schema enumerates exactly these values and a
+// future adapter cannot invent its own.
+export const DISCONNECT_REASONS = [
+  "firmware_confirmed",
+  "invalid_session",
+  "transport_unavailable",
+  "timeout",
+  "not_connected",
+] as const;
+export type DisconnectReason = (typeof DISCONNECT_REASONS)[number];
+
 export interface DisconnectDeviceResult {
   source: "disconnected" | "not_connected";
   deviceId: string;
+  reason: DisconnectReason;
 }
 
 export const DEFAULT_IDENTIFY_DURATION_MS = 10000;
@@ -155,12 +164,18 @@ export const DEFAULT_DISCONNECT_TIMEOUT_MS = DEFAULT_SCAN_TIMEOUT_MS;
 
 export class GatewayCore {
   private readonly runtimeSessions = new Map<string, RuntimeSession>();
+  private readonly usbDriver: UsbSerialDriver;
 
   constructor(
     private readonly configStore: ConfigStore,
-    private readonly usbDriver: UsbSerialDriver,
+    usbDriver: UsbSerialDriver,
     private readonly clock: () => Date = () => new Date(),
-  ) {}
+  ) {
+    // Wrap the driver once so every timeout-bearing transport call is bounded by
+    // its timeout argument at a single boundary, regardless of whether the
+    // injected driver honors it.
+    this.usbDriver = deadlineEnforcingDriver(usbDriver);
+  }
 
   async scanDevices(input: { timeoutMs?: number } = {}): Promise<ScanDevicesResult> {
     const timeoutMs = validateTimeoutMs(input.timeoutMs);
@@ -185,17 +200,36 @@ export class GatewayCore {
   async identifyDevices(input: { timeoutMs?: number; durationMs?: number } = {}): Promise<IdentifyDevicesResult> {
     const timeoutMs = validateTimeoutMs(input.timeoutMs);
     const durationMs = validateIdentifyDurationMs(input.durationMs);
+    // timeoutMs is the total transport budget for the whole call (discovery plus
+    // every identify handshake), not a per-device limit, so identifying N devices
+    // cannot multiply the wait. durationMs is separate: it is the on-device
+    // display time owned by Firmware, not a Gateway-side wait.
+    const deadline = this.clock().getTime() + timeoutMs;
     const liveDevices = await scanUsbDevices(this.usbDriver, timeoutMs);
     const devices: Array<IdentifiedDevice | IdentifyDeviceFailure> = [];
     const usedCodes = new Set<string>();
 
     for (const liveDevice of liveDevices) {
+      const remainingMs = deadline - this.clock().getTime();
+      if (remainingMs <= 0) {
+        // Transport budget exhausted before this device was reached. The nested
+        // error is already public (canonical code + message) at the source.
+        devices.push({
+          source: "error",
+          connected: false,
+          portPath: sanitizePortHint(liveDevice.portPath),
+          deviceId: liveDevice.protocolResponse.device.deviceId,
+          status: "error",
+          error: toPublicError("timeout", true),
+        });
+        continue;
+      }
       const code = createUniqueIdentificationCode(usedCodes);
       try {
         const response = await this.usbDriver.identifyDevice(
           liveDevice.portPath,
           code,
-          timeoutMs,
+          remainingMs,
           durationMs,
         );
         if (response.device.deviceId !== liveDevice.protocolResponse.device.deviceId) {
@@ -213,24 +247,22 @@ export class GatewayCore {
         devices.push({
           source: "live",
           connected: true,
-          portPath: liveDevice.portPath,
+          portPath: sanitizePortHint(liveDevice.portPath),
           status: "displayed",
           code,
           protocolResponse: response,
         });
       } catch (error) {
         const gatewayError = toGatewayError(error);
+        // Canonicalize the nested error at the source so the returned data is
+        // public-safe for ANY adapter, not only after MCP re-sanitizes it.
         devices.push({
           source: "error",
           connected: false,
-          portPath: liveDevice.portPath,
+          portPath: sanitizePortHint(liveDevice.portPath),
           deviceId: liveDevice.protocolResponse.device.deviceId,
           status: "error",
-          error: {
-            code: gatewayError.code,
-            message: gatewayError.message,
-            retryable: gatewayError.retryable,
-          },
+          error: toPublicError(gatewayError.code, gatewayError.retryable),
         });
       }
     }
@@ -244,8 +276,8 @@ export class GatewayCore {
   }
 
   async selectDevice(input: { deviceId: string; purpose?: string }): Promise<SelectDeviceResult> {
-    if (input.deviceId.length === 0) {
-      throw new GatewayError("invalid_device_id", "deviceId must not be empty.", false);
+    if (!isSafeDeviceId(input.deviceId)) {
+      throw new GatewayError("invalid_device_id", "deviceId is not a valid device identifier.", false);
     }
 
     let record: DeviceRecord;
@@ -282,8 +314,8 @@ export class GatewayCore {
     deviceId: string;
     label?: string | null;
   }): Promise<SetDeviceMetadataResult> {
-    if (input.deviceId.length === 0) {
-      throw new GatewayError("invalid_device_id", "deviceId must not be empty.", false);
+    if (!isSafeDeviceId(input.deviceId)) {
+      throw new GatewayError("invalid_device_id", "deviceId is not a valid device identifier.", false);
     }
 
     let record: DeviceRecord;
@@ -392,23 +424,20 @@ export class GatewayCore {
 
     const session = this.peekRuntimeSession(target.deviceId);
     if (session === null) {
-      return {
-        source: "not_connected",
-        deviceId: target.deviceId,
-      };
+      return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
     }
 
     let matchingPort: UsbStatusResult | undefined;
     try {
       matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
     } catch (error) {
-      // Transport is gone but Gateway still owns its local view of the session.
-      if (isTransportUnavailable(error)) {
+      // The device could not be located. localSessionClearReason owns the policy
+      // for which disconnect failures end Gateway's local session view; clearing
+      // it here prevents reusing a session Gateway can no longer confirm.
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
         this.runtimeSessions.delete(target.deviceId);
-        return {
-          source: "disconnected",
-          deviceId: target.deviceId,
-        };
+        return { source: "disconnected", deviceId: target.deviceId, reason };
       }
       throw error;
     }
@@ -416,28 +445,16 @@ export class GatewayCore {
     try {
       await this.usbDriver.disconnectDevice(matchingPort.portPath, session.sessionId, scanTimeoutMs);
     } catch (error) {
-      if (error instanceof GatewayError && error.code === "invalid_session") {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
         this.runtimeSessions.delete(target.deviceId);
-        return {
-          source: "disconnected",
-          deviceId: target.deviceId,
-        };
-      }
-      if (isTransportUnavailable(error)) {
-        this.runtimeSessions.delete(target.deviceId);
-        return {
-          source: "disconnected",
-          deviceId: target.deviceId,
-        };
+        return { source: "disconnected", deviceId: target.deviceId, reason };
       }
       throw error;
     }
 
     this.runtimeSessions.delete(target.deviceId);
-    return {
-      source: "disconnected",
-      deviceId: target.deviceId,
-    };
+    return { source: "disconnected", deviceId: target.deviceId, reason: "firmware_confirmed" };
   }
 
   private peekRuntimeSession(deviceId: string): RuntimeSession | null {
@@ -490,7 +507,10 @@ export class GatewayCore {
     if (input.deviceId !== undefined && input.deviceId.length > 0) {
       deviceId = input.deviceId;
     } else if (input.purpose !== undefined) {
-      deviceId = config.activeDeviceIdsByPurpose[input.purpose];
+      // Own-property lookup: an inherited name must not resolve to a prototype value.
+      deviceId = Object.prototype.hasOwnProperty.call(config.activeDeviceIdsByPurpose, input.purpose)
+        ? config.activeDeviceIdsByPurpose[input.purpose]
+        : undefined;
     } else if (config.activeDeviceId !== null) {
       deviceId = config.activeDeviceId;
     }
@@ -578,23 +598,13 @@ export class GatewayCore {
   }
 }
 
-export function toErrorToolResult(error: GatewayError): ErrorDeviceStatus {
-  return {
-    source: "error",
-    connected: false,
-    error: {
-      code: error.code,
-      message: error.message,
-      retryable: error.retryable,
-    },
-  };
-}
-
 function toLiveStatus(liveDevice: UsbStatusResult): LiveDeviceStatus {
   return {
     source: "live",
     connected: true,
-    portPath: liveDevice.portPath,
+    // portPath is an OS-supplied string; sanitize the copy that reaches MCP
+    // output. The raw path is still used for I/O elsewhere via UsbStatusResult.
+    portPath: sanitizePortHint(liveDevice.portPath),
     protocolResponse: liveDevice.protocolResponse,
   };
 }
@@ -609,7 +619,9 @@ function toCachedStatus(
     connected: false,
     statusObservedAt: record.lastSeenAt,
     unavailableReason,
-    ...(firmwareErrorCode === undefined ? {} : { firmwareErrorCode }),
+    // Normalize the Firmware diagnostic code to an allowlisted public code at the
+    // source, so the cached result is public-safe for any adapter.
+    ...(firmwareErrorCode === undefined ? {} : { firmwareErrorCode: normalizeErrorCode(firmwareErrorCode) }),
     cachedStatus: record.lastStatus,
   };
 }
@@ -652,7 +664,7 @@ function validateGatewayName(value: unknown): string {
   if (value === undefined) {
     return DEFAULT_GATEWAY_NAME;
   }
-  if (typeof value !== "string" || value.length === 0 || value.length > 64 || !/^[\x20-\x7E]+$/.test(value)) {
+  if (!isGatewayName(value)) {
     throw new GatewayError(
       "invalid_gateway_name",
       "gatewayName must be 1-64 printable ASCII characters.",
@@ -680,15 +692,29 @@ function toRuntimeSessionView(session: RuntimeSession | null): RuntimeSessionVie
   };
 }
 
-function isTransportUnavailable(error: unknown): boolean {
+// Single owner of the disconnect-failure session policy (see specs/PROTOCOL.md):
+// these failures mean Gateway can no longer confirm the session, so it clears its
+// local view to avoid reusing a session Firmware may have already dropped. The
+// returned reason explains why; an unrecognized error returns null, so the caller
+// rethrows and keeps the session.
+function localSessionClearReason(
+  error: unknown,
+): "invalid_session" | "timeout" | "transport_unavailable" | null {
   if (!(error instanceof GatewayError)) {
-    return false;
+    return null;
   }
-  return (
-    error.code === "port_not_found" ||
-    error.code === "transport_closed" ||
-    error.code === "port_in_use"
-  );
+  switch (error.code) {
+    case "invalid_session":
+      return "invalid_session";
+    case "timeout":
+      return "timeout";
+    case "port_not_found":
+    case "transport_closed":
+    case "port_in_use":
+      return "transport_unavailable";
+    default:
+      return null;
+  }
 }
 
 function createUniqueIdentificationCode(usedCodes: Set<string>): string {

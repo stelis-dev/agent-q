@@ -25,7 +25,6 @@ creating separate product-level protocols.
 Agent-Q Gateway:
 
 - exposes MCP tools
-- serves the local Admin Page
 - sends protocol messages to Firmware
 - relays Firmware responses
 - does not store keys
@@ -37,7 +36,10 @@ Agent-Q Firmware:
 - evaluates signing requests
 - asks for physical approval when required
 - signs, rejects, or times out requests
-- stores approved admin changes
+
+Intended but not yet implemented: a local Admin Page served by Gateway, and
+Firmware persistence of approved admin changes. Both depend on the admin methods
+in [Admin Methods](#admin-methods), which are not implemented yet.
 
 ## Message Envelope
 
@@ -133,8 +135,11 @@ Flow rules:
 - `disconnect` ends the session.
 - Firmware should reject session-scoped requests with an unknown or expired
   `sessionId`.
-- Gateway should treat disconnect, timeout, transport close, or Firmware reboot
-  as the end of the session.
+- When Gateway has an active runtime session and a disconnect attempt ends with
+  `invalid_session`, `timeout`, `port_not_found`, `port_in_use`, or
+  `transport_closed`, Gateway must clear its local session view. This does not
+  prove Firmware observed disconnect; it prevents Gateway from reusing a session
+  it can no longer confirm.
 
 Implemented: `get_status`, `identify_device`, `connect`, `disconnect`, explicit
 local Gateway device selection, local Gateway caching of discovered devices, and
@@ -229,6 +234,16 @@ public key, or signing key.
 
 `firmwareName` is a descriptive label for display and diagnostics. It is not a
 security boundary and must not be treated as proof that the device is trusted.
+
+Device metadata strings are untrusted input and Gateway bounds them when
+parsing a response:
+
+- `deviceId`: a safe identifier of `[A-Za-z0-9_.-]`, 1-128 characters. A
+  response whose `deviceId` is outside this set is rejected as malformed.
+- `firmwareName`, `hardware`, `firmwareVersion`: display strings. Gateway keeps
+  printable ASCII only and caps length (64, 64, and 32 characters), dropping
+  control characters and newlines. These are display values, not a trust
+  signal, so they are sanitized rather than rejected.
 
 ## Identify Device
 
@@ -425,7 +440,10 @@ Connect rules:
 - `sessionId` must be derived from device RNG. It must not be derived from MAC
   address, USB serial number, `deviceId`, account public key, or signing key.
 - `sessionTtlMs` is Firmware-owned. Firmware may end a session earlier (for
-  example on reboot) regardless of the advertised TTL.
+  example on reboot) regardless of the advertised TTL. `sessionTtlMs` is a
+  uint32 millisecond value; Gateway treats a `connect_result` whose
+  `sessionTtlMs` is not a positive integer within the uint32 range
+  (`1`..`4294967295`) as a malformed response.
 - Approving a new connect replaces any previously active Firmware session.
 - A Gateway runtime session is held in memory only. Gateway must not persist
   `sessionId` to disk. `sessionId` is a Firmware-issued token kept internal to
@@ -596,7 +614,8 @@ Possible method result statuses:
 ## Admin Methods
 
 Admin is not a separate protocol. Admin actions are methods exposed through
-capabilities.
+capabilities. Like `get_capabilities`, `get_accounts`, and `call_method`, these
+admin methods are designed but not yet implemented.
 
 Example methods:
 
