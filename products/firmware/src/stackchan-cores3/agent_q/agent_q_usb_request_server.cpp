@@ -4,7 +4,6 @@
 #include <string.h>
 
 #include <ArduinoJson.h>
-#include "assets/assets.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -45,12 +44,12 @@ constexpr size_t kIdentifyCodeSize = 5;
 constexpr size_t kSessionIdSize = 26;
 constexpr size_t kGatewayNameSize = 65;
 constexpr size_t kGatewayDisplayBufferSize = 65;
-constexpr int kModalWidth = 304;
-constexpr int kApprovalModalHeight = 206;
+constexpr int kModalWidth = 312;
+constexpr int kApprovalModalHeight = 228;
 constexpr int kIdentifyModalHeight = 168;
-constexpr int kModalContentWidth = 268;
-constexpr int kChoiceButtonWidth = 118;
-constexpr int kChoiceButtonHeight = 48;
+constexpr int kModalContentWidth = 286;
+constexpr int kChoiceButtonWidth = 126;
+constexpr int kChoiceButtonHeight = 54;
 
 char g_line_buffer[kLineBufferSize];
 size_t g_line_size = 0;
@@ -414,7 +413,7 @@ void make_choice_button(lv_obj_t* parent, const char* text, int x, lv_color_t co
 {
     lv_obj_t* button = lv_button_create(parent);
     lv_obj_set_size(button, kChoiceButtonWidth, kChoiceButtonHeight);
-    lv_obj_align(button, LV_ALIGN_BOTTOM_MID, x, -16);
+    lv_obj_align(button, LV_ALIGN_BOTTOM_MID, x, -18);
     lv_obj_set_style_radius(button, 8, 0);
     lv_obj_set_style_bg_color(button, color, 0);
     lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
@@ -431,11 +430,6 @@ void clear_panel_locked()
     }
 }
 
-void play_modal_open_chime()
-{
-    hal_bridge::app_play_sound(OGG_NEW_NOTIFICATION);
-}
-
 void show_pending_request_signal(const char* message)
 {
     g_showing_identification = false;
@@ -448,7 +442,7 @@ void show_pending_request_signal(const char* message)
 
         g_panel = lv_obj_create(lv_screen_active());
         lv_obj_set_size(g_panel, kModalWidth, kApprovalModalHeight);
-        lv_obj_align(g_panel, LV_ALIGN_CENTER, 0, 6);
+        lv_obj_align(g_panel, LV_ALIGN_CENTER, 0, 0);
         lv_obj_remove_flag(g_panel, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_radius(g_panel, 12, 0);
         lv_obj_set_style_border_width(g_panel, 2, 0);
@@ -462,7 +456,7 @@ void show_pending_request_signal(const char* message)
         lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
         lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 14);
+        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 18);
 
         lv_obj_t* subtitle = lv_label_create(g_panel);
         lv_label_set_text(subtitle, message != nullptr && message[0] != '\0' ? message : "USB request");
@@ -472,7 +466,7 @@ void show_pending_request_signal(const char* message)
         lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_line_space(subtitle, 3, 0);
         lv_obj_set_style_text_color(subtitle, lv_color_hex(0xD7DEE6), 0);
-        lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 50);
+        lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 58);
 
         lv_obj_t* hint = lv_label_create(g_panel);
         lv_label_set_text(hint, "Choose YES or NO");
@@ -480,14 +474,13 @@ void show_pending_request_signal(const char* message)
         lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(hint, lv_color_hex(0x91D8FF), 0);
-        lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 116);
+        lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 138);
 
         make_choice_button(g_panel, "NO", -66, lv_color_hex(0xA53B3B), on_no_clicked);
         make_choice_button(g_panel, "YES", 66, lv_color_hex(0x24875A), on_yes_clicked);
 
         lv_obj_move_foreground(g_panel);
     }
-    play_modal_open_chime();
 }
 
 void show_identification_code(const char* code, uint32_t duration_ms)
@@ -502,7 +495,7 @@ void show_identification_code(const char* code, uint32_t duration_ms)
 
         g_panel = lv_obj_create(lv_screen_active());
         lv_obj_set_size(g_panel, kModalWidth, kIdentifyModalHeight);
-        lv_obj_align(g_panel, LV_ALIGN_CENTER, 0, 6);
+        lv_obj_align(g_panel, LV_ALIGN_CENTER, 0, 0);
         lv_obj_remove_flag(g_panel, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_radius(g_panel, 12, 0);
         lv_obj_set_style_border_width(g_panel, 2, 0);
@@ -537,7 +530,6 @@ void show_identification_code(const char* code, uint32_t duration_ms)
 
         lv_obj_move_foreground(g_panel);
     }
-    play_modal_open_chime();
 }
 
 void clear_identification_if_needed()
@@ -593,7 +585,7 @@ void show_connect_approval(const char* gateway_name)
 
         g_panel = lv_obj_create(lv_screen_active());
         lv_obj_set_size(g_panel, kModalWidth, kApprovalModalHeight);
-        lv_obj_align(g_panel, LV_ALIGN_CENTER, 0, 6);
+        lv_obj_align(g_panel, LV_ALIGN_CENTER, 0, 0);
         lv_obj_remove_flag(g_panel, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_radius(g_panel, 12, 0);
         lv_obj_set_style_border_width(g_panel, 2, 0);
@@ -607,7 +599,7 @@ void show_connect_approval(const char* gateway_name)
         lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
         lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 14);
+        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 18);
 
         lv_obj_t* subtitle = lv_label_create(g_panel);
         lv_label_set_text(subtitle, display_label);
@@ -617,7 +609,7 @@ void show_connect_approval(const char* gateway_name)
         lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_line_space(subtitle, 3, 0);
         lv_obj_set_style_text_color(subtitle, lv_color_hex(0xD7DEE6), 0);
-        lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 50);
+        lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 58);
 
         lv_obj_t* hint = lv_label_create(g_panel);
         lv_label_set_text(hint, "Allow connection?");
@@ -625,14 +617,13 @@ void show_connect_approval(const char* gateway_name)
         lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(hint, lv_color_hex(0xFFE2A8), 0);
-        lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 116);
+        lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 138);
 
         make_choice_button(g_panel, "NO", -66, lv_color_hex(0xA53B3B), on_no_clicked);
         make_choice_button(g_panel, "YES", 66, lv_color_hex(0x24875A), on_yes_clicked);
 
         lv_obj_move_foreground(g_panel);
     }
-    play_modal_open_chime();
 }
 
 void poll_touch_fallback()
