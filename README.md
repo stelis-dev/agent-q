@@ -46,6 +46,12 @@ approval, and returns signatures or rejections to Gateway.
 
 Firmware source is organized by hardware under `products/firmware/src/`.
 
+Firmware builds must not depend on `.WORK/`. Shared firmware dependency pins
+live in `products/firmware/source.env`; hardware-specific host firmware pins
+live under `products/firmware/src/<hardware-id>/source.env`. Tracked tools fetch
+those pinned sources into the ignored `.firmware-cache/` directory, apply the
+tracked Agent-Q overlay, and build.
+
 ## Protocol
 
 Gateway and Firmware communicate through the shared protocol in
@@ -74,6 +80,24 @@ Device discovery does not silently select an active device. Gateway first finds
 candidate devices, asks them to show short identification codes, and saves the
 selected device only after the user chooses one.
 
+## Current Status
+
+Implemented:
+
+- Device discovery, identification, and selection over USB.
+- Gateway-local device registry with human-readable labels.
+- Gateway-local routing assignments by purpose name. Purpose routing is local
+  Gateway metadata, not Firmware policy.
+- Connection sessions. A `connect_device` call requests physical approval on
+  Firmware, and an approved session is held in Gateway memory only.
+- Disconnect.
+
+Not yet implemented: signing, policy evaluation, account discovery, public key
+discovery, Admin Page, and chain-specific transaction logic. Connection is not
+signing approval and does not authorize signing. A connection session does not
+prove agent identity. Labels and purpose names are local Gateway metadata and
+are not security boundaries.
+
 ## Repository Layout
 
 ```text
@@ -88,8 +112,12 @@ products/
     build/
 
 tools/
-third_party/
+  firmware/
+    <hardware-id>/
 ```
 
 `.WORK/` is for local planning, scratch files, and investigation materials. It is
 not tracked by Git.
+
+`.firmware-cache/` is for pinned firmware build dependencies downloaded by
+tracked helper scripts. It is not tracked by Git.

@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  gateway:
+    name: Gateway
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: products/gateway/package-lock.json
+      - name: Install Gateway dependencies
+        working-directory: products/gateway
+        run: npm ci
+      - name: Test Gateway
+        working-directory: products/gateway
+        run: npm test
+
+  firmware-stackchan-cores3:
+    name: Firmware StackChan CoreS3
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read firmware source metadata
+        id: source
+        shell: bash
+        run: |
+          source products/firmware/src/stackchan-cores3/source.env
+          echo "esp_idf_version=${AGENT_Q_ESP_IDF_VERSION}" >> "${GITHUB_OUTPUT}"
+      - name: Build firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: ${{ steps.source.outputs.esp_idf_version }}
+          target: esp32s3
+          path: .
+          command: /github/workspace/tools/firmware/stackchan-cores3/build.sh

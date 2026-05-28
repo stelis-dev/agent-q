@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertConnectResponse,
+  assertDisconnectResponse,
   assertStatusResponse,
   createRequestId,
+  isGatewayName,
   isSafeRequestId,
+  isSessionId,
+  makeConnectRequest,
+  makeDisconnectRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
   parseProtocolResponse,
@@ -122,4 +128,131 @@ test("parses status response and rejects incompatible version", () => {
       ),
     /Unsupported protocol response version/,
   );
+});
+
+test("makeConnectRequest validates gatewayName and approvalTimeoutMs", () => {
+  const request = makeConnectRequest("Agent-Q Gateway", 30000, "req_connect_1");
+  assert.deepEqual(request, {
+    id: "req_connect_1",
+    version: 1,
+    type: "connect",
+    params: {
+      gatewayName: "Agent-Q Gateway",
+      approvalTimeoutMs: 30000,
+    },
+  });
+
+  assert.throws(() => makeConnectRequest("", 30000), /gatewayName/);
+  assert.throws(() => makeConnectRequest("a".repeat(65), 30000), /gatewayName/);
+  assert.throws(() => makeConnectRequest("Hello ÿ", 30000), /gatewayName/);
+  assert.throws(() => makeConnectRequest("Agent-Q Gateway", 0), /approvalTimeoutMs/);
+  assert.throws(() => makeConnectRequest("Agent-Q Gateway", 60001), /approvalTimeoutMs/);
+  assert.throws(() => makeConnectRequest("Agent-Q Gateway", 1.5), /approvalTimeoutMs/);
+});
+
+test("makeDisconnectRequest validates sessionId", () => {
+  const request = makeDisconnectRequest("session_abcdef0123456789", "req_disconnect_1");
+  assert.deepEqual(request, {
+    id: "req_disconnect_1",
+    version: 1,
+    type: "disconnect",
+    sessionId: "session_abcdef0123456789",
+  });
+
+  assert.throws(() => makeDisconnectRequest("not_a_session"), /Invalid sessionId/);
+  assert.throws(() => makeDisconnectRequest("session_AABB"), /Invalid sessionId/);
+  assert.throws(() => makeDisconnectRequest("session_"), /Invalid sessionId/);
+});
+
+test("parses connect_result approved and rejected responses", () => {
+  const approved = parseProtocolResponse(
+    JSON.stringify({
+      id: "req_connect_1",
+      version: 1,
+      type: "connect_result",
+      status: "approved",
+      sessionId: "session_aabbccdd",
+      sessionTtlMs: 1800000,
+      device: {
+        deviceId: "a508d833-5c83-4680-88bb-18aee976881e",
+        state: "idle",
+        firmwareName: "Agent-Q Firmware",
+        hardware: "hardware-id",
+        firmwareVersion: "0.0.0",
+      },
+    }),
+    "req_connect_1",
+  );
+  const approvedTyped = assertConnectResponse(approved);
+  assert.equal(approvedTyped.status, "approved");
+  assert.equal(approvedTyped.sessionId, "session_aabbccdd");
+  assert.equal(approvedTyped.sessionTtlMs, 1800000);
+
+  const rejected = parseProtocolResponse(
+    JSON.stringify({
+      id: "req_connect_1",
+      version: 1,
+      type: "connect_result",
+      status: "rejected",
+      error: {
+        code: "rejected",
+        message: "Connection rejected.",
+      },
+    }),
+    "req_connect_1",
+  );
+  const rejectedTyped = assertConnectResponse(rejected);
+  assert.equal(rejectedTyped.status, "rejected");
+  assert.equal(rejectedTyped.error.code, "rejected");
+});
+
+test("rejects malformed connect_result", () => {
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        JSON.stringify({
+          id: "req_connect_1",
+          version: 1,
+          type: "connect_result",
+          status: "approved",
+          sessionId: "not_session",
+          sessionTtlMs: 1800000,
+          device: {
+            deviceId: "a508d833-5c83-4680-88bb-18aee976881e",
+            state: "idle",
+            firmwareName: "Agent-Q Firmware",
+            hardware: "hardware-id",
+            firmwareVersion: "0.0.0",
+          },
+        }),
+        "req_connect_1",
+      ),
+    /sessionId/,
+  );
+});
+
+test("parses disconnect_result", () => {
+  const response = parseProtocolResponse(
+    JSON.stringify({
+      id: "req_disconnect_1",
+      version: 1,
+      type: "disconnect_result",
+      status: "disconnected",
+    }),
+    "req_disconnect_1",
+  );
+  const typed = assertDisconnectResponse(response);
+  assert.equal(typed.status, "disconnected");
+});
+
+test("isSessionId and isGatewayName accept and reject expected inputs", () => {
+  assert.equal(isSessionId("session_abcdef01"), true);
+  assert.equal(isSessionId("session_ABCDEF"), false);
+  assert.equal(isSessionId("notsession_aa"), false);
+  assert.equal(isSessionId(""), false);
+
+  assert.equal(isGatewayName("Agent-Q Gateway"), true);
+  assert.equal(isGatewayName(""), false);
+  assert.equal(isGatewayName("a".repeat(65)), false);
+  assert.equal(isGatewayName("control\tchar"), false);
 });

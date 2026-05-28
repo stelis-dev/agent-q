@@ -1,4 +1,5 @@
 .WORK/
+.firmware-cache/
 products/firmware/build/
 products/gateway/dist/
 products/gateway/node_modules/

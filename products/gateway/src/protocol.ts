@@ -2,6 +2,10 @@ import { randomBytes } from "node:crypto";
 
 export const PROTOCOL_VERSION = 1;
 export const REQUEST_ID_PATTERN = /^[A-Za-z0-9_.-]{1,79}$/;
+export const SESSION_ID_PATTERN = /^session_[0-9a-f]{1,128}$/;
+export const GATEWAY_NAME_PATTERN = /^[\x20-\x7E]{1,64}$/;
+export const MAX_APPROVAL_TIMEOUT_MS = 60000;
+export const DEFAULT_APPROVAL_TIMEOUT_MS = 30000;
 
 export type DeviceState = "idle" | "busy" | "awaiting_approval" | "locked" | "error";
 
@@ -29,7 +33,28 @@ export interface IdentifyDeviceRequest {
   };
 }
 
-export type ProtocolRequest = GetStatusRequest | IdentifyDeviceRequest;
+export interface ConnectRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "connect";
+  params: {
+    gatewayName: string;
+    approvalTimeoutMs: number;
+  };
+}
+
+export interface DisconnectRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "disconnect";
+  sessionId: string;
+}
+
+export type ProtocolRequest =
+  | GetStatusRequest
+  | IdentifyDeviceRequest
+  | ConnectRequest
+  | DisconnectRequest;
 
 export interface StatusResponse {
   id: string;
@@ -47,6 +72,36 @@ export interface IdentifyDeviceResponse {
   device: DeviceStatus;
 }
 
+export interface ConnectApprovedResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "connect_result";
+  status: "approved";
+  sessionId: string;
+  sessionTtlMs: number;
+  device: DeviceStatus;
+}
+
+export interface ConnectRejectedResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "connect_result";
+  status: "rejected";
+  error: {
+    code: string;
+    message: string;
+  };
+}
+
+export type ConnectResponse = ConnectApprovedResponse | ConnectRejectedResponse;
+
+export interface DisconnectResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "disconnect_result";
+  status: "disconnected";
+}
+
 export interface ProtocolErrorResponse {
   id?: string;
   version: typeof PROTOCOL_VERSION;
@@ -57,7 +112,12 @@ export interface ProtocolErrorResponse {
   };
 }
 
-export type ProtocolResponse = StatusResponse | IdentifyDeviceResponse | ProtocolErrorResponse;
+export type ProtocolResponse =
+  | StatusResponse
+  | IdentifyDeviceResponse
+  | ConnectResponse
+  | DisconnectResponse
+  | ProtocolErrorResponse;
 
 export class ProtocolError extends Error {
   readonly code: string;
@@ -115,6 +175,56 @@ export function makeIdentifyDeviceRequest(
 
 export function createIdentificationCode(): string {
   return (randomBytes(2).readUInt16BE(0) % 10000).toString().padStart(4, "0");
+}
+
+export function makeConnectRequest(
+  gatewayName: string,
+  approvalTimeoutMs: number = DEFAULT_APPROVAL_TIMEOUT_MS,
+  id = createRequestId(),
+): ConnectRequest {
+  if (!isSafeRequestId(id)) {
+    throw new ProtocolError("invalid_id", "Invalid request id.");
+  }
+  if (!isGatewayName(gatewayName)) {
+    throw new ProtocolError(
+      "invalid_gateway_name",
+      "gatewayName must be 1-64 printable ASCII characters.",
+    );
+  }
+  if (
+    !Number.isInteger(approvalTimeoutMs) ||
+    approvalTimeoutMs <= 0 ||
+    approvalTimeoutMs > MAX_APPROVAL_TIMEOUT_MS
+  ) {
+    throw new ProtocolError(
+      "invalid_approval_timeout",
+      `approvalTimeoutMs must be a positive integer <= ${MAX_APPROVAL_TIMEOUT_MS}.`,
+    );
+  }
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "connect",
+    params: {
+      gatewayName,
+      approvalTimeoutMs,
+    },
+  };
+}
+
+export function makeDisconnectRequest(sessionId: string, id = createRequestId()): DisconnectRequest {
+  if (!isSafeRequestId(id)) {
+    throw new ProtocolError("invalid_id", "Invalid request id.");
+  }
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "disconnect",
+    sessionId,
+  };
 }
 
 export function serializeRequest(request: ProtocolRequest): string {
@@ -195,6 +305,69 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
+  if (value.type === "connect_result") {
+    if (typeof value.id !== "string") {
+      throw new ProtocolError("protocol_error", "Connect response id is malformed.");
+    }
+
+    if (value.status === "approved") {
+      const device = value.device;
+      if (!isDeviceStatus(device)) {
+        throw new ProtocolError("protocol_error", "Connect response device object is malformed.");
+      }
+      if (!isSessionId(value.sessionId)) {
+        throw new ProtocolError("protocol_error", "Connect response sessionId is malformed.");
+      }
+      if (
+        typeof value.sessionTtlMs !== "number" ||
+        !Number.isInteger(value.sessionTtlMs) ||
+        value.sessionTtlMs <= 0
+      ) {
+        throw new ProtocolError("protocol_error", "Connect response sessionTtlMs is malformed.");
+      }
+      return {
+        id: value.id,
+        version: PROTOCOL_VERSION,
+        type: "connect_result",
+        status: "approved",
+        sessionId: value.sessionId,
+        sessionTtlMs: value.sessionTtlMs,
+        device,
+      };
+    }
+
+    if (value.status === "rejected") {
+      const error = value.error;
+      if (!isRecord(error) || typeof error.code !== "string" || typeof error.message !== "string") {
+        throw new ProtocolError("protocol_error", "Connect rejected response error object is malformed.");
+      }
+      return {
+        id: value.id,
+        version: PROTOCOL_VERSION,
+        type: "connect_result",
+        status: "rejected",
+        error: {
+          code: error.code,
+          message: error.message,
+        },
+      };
+    }
+
+    throw new ProtocolError("protocol_error", "Connect response status is unsupported.");
+  }
+
+  if (value.type === "disconnect_result") {
+    if (typeof value.id !== "string" || value.status !== "disconnected") {
+      throw new ProtocolError("protocol_error", "Disconnect response is malformed.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "disconnect_result",
+      status: "disconnected",
+    };
+  }
+
   throw new ProtocolError("protocol_error", "Protocol response type is unsupported.");
 }
 
@@ -216,6 +389,34 @@ export function assertIdentifyDeviceResponse(response: ProtocolResponse): Identi
     throw new ProtocolError("protocol_error", "Protocol response type is not identify_device_result.");
   }
   return response;
+}
+
+export function assertConnectResponse(response: ProtocolResponse): ConnectResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "connect_result") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not connect_result.");
+  }
+  return response;
+}
+
+export function assertDisconnectResponse(response: ProtocolResponse): DisconnectResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "disconnect_result") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not disconnect_result.");
+  }
+  return response;
+}
+
+export function isSessionId(value: unknown): value is string {
+  return typeof value === "string" && SESSION_ID_PATTERN.test(value);
+}
+
+export function isGatewayName(value: unknown): value is string {
+  return typeof value === "string" && GATEWAY_NAME_PATTERN.test(value);
 }
 
 function isDeviceStatus(value: unknown): value is DeviceStatus {

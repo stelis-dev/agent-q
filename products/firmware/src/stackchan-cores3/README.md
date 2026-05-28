@@ -18,11 +18,44 @@ The current implementation includes:
   physical approval UI.
 - a USB JSONL `identify_device` request that shows a short temporary code over
   the current screen and then returns to the previous device state.
+- a USB JSONL `connect` request that shows a physical approval modal labeled
+  with the Gateway display name and, on YES, returns a Firmware-generated
+  session id with a Firmware-owned TTL. NO or timeout returns `rejected`. The
+  modal replaces any previously active Firmware session only after physical
+  YES.
+- a USB JSONL `disconnect` request that clears the active Firmware session when
+  the supplied session id matches.
+
+Sessions live in RAM. Firmware reboot clears the active session. Session ids
+are derived from device RNG and are not derived from MAC address, USB serial
+number, `deviceId`, account public key, or signing key. Sessions do not
+authorize signing.
 
 This is not the signing product yet. It does not persist keys, store policies,
 parse signable transactions, expose MCP directly, or apply signing policy. The
 only persisted value in this target implementation is the protocol `deviceId`
 used by Gateway for reconnect hints.
+
+## Source And Build
+
+This directory is an Agent-Q overlay for the upstream StackChan firmware host
+tree. It is not a complete standalone ESP-IDF project.
+
+The pinned upstream host source and ESP-IDF version live in this directory's
+`source.env`. Shared firmware dependency pins live in
+`products/firmware/source.env`. Tracked tools use those files so local builds
+and GitHub Actions use the same inputs:
+
+```bash
+source /path/to/esp-idf-v5.5.4/export.sh
+tools/firmware/stackchan-cores3/build.sh
+```
+
+The build script downloads the pinned upstream firmware and signing-source
+checkouts into `.firmware-cache/` when needed, copies this overlay into the
+firmware checkout, and builds. It does not require `.WORK/`. A developer may
+still use `.WORK/` as a local investigation cache, but that cache is not source
+of truth and is not used by CI.
 
 ## Current Integration Points
 
@@ -37,11 +70,11 @@ In the hardware firmware tree:
   initialization.
 - Initialize NVS during the host firmware boot sequence before Agent-Q
   initialization.
-- Call `agent_q::init_usb_request_mvp()` once after boot checks and NVS
+- Call `agent_q::init_usb_request_server()` once after boot checks and NVS
   initialization.
-- `agent_q::init_usb_request_mvp()` starts the USB request task. The task keeps
-  protocol handling available even when another firmware mode takes over the
-  main app loop.
+- `agent_q::init_usb_request_server()` starts the USB request task. The task
+  keeps protocol handling available even when another firmware mode takes over
+  the main app loop.
 
 ## Persistent Storage
 

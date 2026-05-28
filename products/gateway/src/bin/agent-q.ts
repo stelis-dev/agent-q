@@ -10,7 +10,8 @@ Usage:
   agent-q          Start the stdio MCP server
   agent-q --help   Show this help
 
-M1 exposes only device scan, identification, selection, and status MCP tools.`);
+Exposes device discovery, identification, selection, status, registry, and
+connection-session MCP tools. Connection sessions do not authorize signing.`);
   process.exit(0);
 }
 

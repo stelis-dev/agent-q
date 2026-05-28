@@ -1,14 +1,20 @@
 import { SerialPort } from "serialport";
 import { GatewayError } from "./errors.js";
 import {
+  assertConnectResponse,
+  assertDisconnectResponse,
   assertIdentifyDeviceResponse,
   assertStatusResponse,
+  makeConnectRequest,
+  makeDisconnectRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
   parseJsonLine,
   parseProtocolResponse,
   ProtocolError,
   serializeRequest,
+  type ConnectResponse,
+  type DisconnectResponse,
   type IdentifyDeviceResponse,
   type ProtocolRequest,
   type ProtocolResponse,
@@ -64,6 +70,17 @@ export interface UsbSerialDriver {
     timeoutMs: number,
     durationMs: number,
   ): Promise<IdentifyDeviceResponse>;
+  connectDevice(
+    portPath: string,
+    gatewayName: string,
+    timeoutMs: number,
+    approvalTimeoutMs: number,
+  ): Promise<ConnectResponse>;
+  disconnectDevice(
+    portPath: string,
+    sessionId: string,
+    timeoutMs: number,
+  ): Promise<DisconnectResponse>;
 }
 
 export class SerialPortUsbDriver implements UsbSerialDriver {
@@ -82,6 +99,23 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     durationMs: number,
   ): Promise<IdentifyDeviceResponse> {
     return identifyDeviceOverSerial(portPath, code, timeoutMs, durationMs);
+  }
+
+  async connectDevice(
+    portPath: string,
+    gatewayName: string,
+    timeoutMs: number,
+    approvalTimeoutMs: number,
+  ): Promise<ConnectResponse> {
+    return connectDeviceOverSerial(portPath, gatewayName, timeoutMs, approvalTimeoutMs);
+  }
+
+  async disconnectDevice(
+    portPath: string,
+    sessionId: string,
+    timeoutMs: number,
+  ): Promise<DisconnectResponse> {
+    return disconnectDeviceOverSerial(portPath, sessionId, timeoutMs);
   }
 }
 
@@ -196,6 +230,25 @@ async function identifyDeviceOverSerial(
 ): Promise<IdentifyDeviceResponse> {
   const request = makeIdentifyDeviceRequest(code, durationMs);
   return requestOverSerial(portPath, request, timeoutMs, (response) => assertIdentifyDeviceResponse(response));
+}
+
+async function connectDeviceOverSerial(
+  portPath: string,
+  gatewayName: string,
+  timeoutMs: number,
+  approvalTimeoutMs: number,
+): Promise<ConnectResponse> {
+  const request = makeConnectRequest(gatewayName, approvalTimeoutMs);
+  return requestOverSerial(portPath, request, timeoutMs, (response) => assertConnectResponse(response));
+}
+
+async function disconnectDeviceOverSerial(
+  portPath: string,
+  sessionId: string,
+  timeoutMs: number,
+): Promise<DisconnectResponse> {
+  const request = makeDisconnectRequest(sessionId);
+  return requestOverSerial(portPath, request, timeoutMs, (response) => assertDisconnectResponse(response));
 }
 
 async function requestOverSerial<TResponse extends ProtocolResponse>(

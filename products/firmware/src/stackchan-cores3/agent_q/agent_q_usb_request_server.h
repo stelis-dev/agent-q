@@ -2,6 +2,6 @@
 
 namespace agent_q {
 
-void init_usb_request_mvp();
+void init_usb_request_server();
 
 }

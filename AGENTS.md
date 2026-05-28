@@ -73,8 +73,11 @@ Before editing:
 - Inspect the current repository state.
 - Check package metadata, scripts, lockfiles, source code, and docs before
   making claims about them.
-- Keep external source checkouts, downloaded references, vendor investigations,
-  and other evidence sources under `.WORK/`.
+- Keep investigation-only source checkouts, downloaded references, vendor
+  investigations, and other evidence sources under `.WORK/`.
+- Firmware build dependency caches may use ignored, task-specific directories
+  such as `.firmware-cache/` when the source repositories and commits are pinned
+  in tracked files.
 - Use `.WORK/` only as local evidence and scratch space. Do not make tracked
   build scripts, user instructions, or CI workflows depend on `.WORK/` paths.
 - Treat README text and comments as hints. Source files, package metadata, and
@@ -176,6 +179,13 @@ Current Gateway package commands:
 - Install: `cd products/gateway && npm install`
 - Build: `cd products/gateway && npm run build`
 - Test: `cd products/gateway && npm test`
+
+Current firmware helper commands:
+
+- Fetch StackChan CoreS3 host firmware:
+  `tools/firmware/stackchan-cores3/fetch.sh`
+- Build StackChan CoreS3 firmware after ESP-IDF v5.5.4 is active:
+  `tools/firmware/stackchan-cores3/build.sh`
 
 If a root `package.json` is added, inspect it before running project commands
 and update this section.
@@ -311,14 +321,15 @@ products/
     build/
 
 tools/
-third_party/
+  firmware/
+    <hardware-id>/
 ```
 
 Empty directories may not be tracked by Git until they contain files.
 
 Project-specific rules:
 
-- Keep planning notes, scratch files, investigation material, external source
+- Keep planning notes, scratch files, investigation material, reference source
   checkouts, downloaded references, and vendor source snapshots under `.WORK/`.
 - Use this `.WORK/` layout:
   - `.WORK/notes/` for planning notes, investigation summaries, and temporary
@@ -338,6 +349,9 @@ Project-specific rules:
 - Do not use `.WORK/` as a source root for user-facing build instructions or
   GitHub workflows. CI and user builds must start from tracked repository files
   and explicit dependency setup steps.
+- `.firmware-cache/` is an ignored local cache for pinned firmware build
+  dependencies downloaded by tracked build scripts. Do not commit files from
+  `.firmware-cache/`.
 - Do not commit firmware build artifacts.
 - `products/firmware/build/` is ignored and is for build output only.
 - Firmware source is organized by hardware under

@@ -85,15 +85,19 @@ Example:
 }
 ```
 
-M1 protocol error codes:
+Protocol error codes:
 
 - `invalid_json`
 - `invalid_id`
 - `invalid_code`
 - `invalid_duration`
+- `invalid_gateway_name`
+- `invalid_approval_timeout`
+- `invalid_session`
 - `unsupported_version`
 - `unsupported_type`
 - `busy`
+- `rejected`
 - `timeout`
 
 Transport-layer errors are owned by Gateway and are not Firmware protocol
@@ -124,8 +128,7 @@ Flow rules:
 - Gateway may store the selected `deviceId` and transport hint locally.
 - A stored transport hint is not identity. Gateway must confirm identity with
   Firmware before treating a device as live.
-- `connect` starts a session.
-- The first `connect` from a Gateway should require physical approval.
+- `connect` establishes a session and requires physical approval.
 - `get_capabilities`, `get_accounts`, and `call_method` require `sessionId`.
 - `disconnect` ends the session.
 - Firmware should reject session-scoped requests with an unknown or expired
@@ -133,10 +136,16 @@ Flow rules:
 - Gateway should treat disconnect, timeout, transport close, or Firmware reboot
   as the end of the session.
 
-M1 implements `get_status`, `identify_device`, explicit local Gateway device
-selection, local Gateway caching of discovered devices, and a hardware
-diagnostic request. Session messages remain protocol design, not implemented M1
-behavior.
+Implemented: `get_status`, `identify_device`, `connect`, `disconnect`, explicit
+local Gateway device selection, local Gateway caching of discovered devices, and
+a hardware diagnostic request.
+
+`connect` and `disconnect` establish and end a runtime communication session
+between Gateway and Firmware. A connection session does not authorize signing,
+does not prove agent identity, and does not change Firmware policy.
+
+Designed but not yet implemented: the session-scoped requests
+`get_capabilities`, `get_accounts`, and `call_method`.
 
 ## Device Discovery And Selection
 
@@ -210,9 +219,9 @@ Device states:
 - `locked`: device requires local unlock before sensitive actions.
 - `error`: device is running but cannot currently serve requests.
 
-M1 Firmware may emit only `idle` and `awaiting_approval`. `busy` is returned as
-an error code instead of a status state in M1. Other states are reserved for
-later behavior.
+The current Firmware emits only `idle` and `awaiting_approval`. `busy` is
+returned as an error code instead of a status state. Other states are reserved
+for later behavior.
 
 `deviceId` is a Firmware-generated UUID stored in device-local persistent
 storage. It must not be derived from MAC address, USB serial number, account
@@ -264,11 +273,11 @@ Response:
 }
 ```
 
-M1 identification codes are four decimal digits. M1 identification display
-duration must be a positive integer no greater than `30000` milliseconds.
+Identification codes are four decimal digits. Identification display duration
+must be a positive integer no greater than `30000` milliseconds.
 
 Identification display is Firmware-owned temporary UI. Gateway may stop waiting
-earlier than the requested display duration, but M1 has no cancel message.
+earlier than the requested display duration; there is no cancel message.
 
 Identification display is temporary UI. Firmware must return to the previous
 device state after the display duration or when another request replaces the
@@ -319,53 +328,119 @@ Rejected or timed-out response:
 ```
 
 The `display_signal` approval lifetime is Firmware-owned temporary UI. Gateway
-is permitted to stop waiting earlier than the Firmware timeout, but M1 has no
+is permitted to stop waiting earlier than the Firmware timeout; there is no
 cancel message. A late physical response may be ignored by Gateway if the
 transport request already timed out.
 
 ## Connect
 
-Gateway must connect before calling account or method requests.
-
-The first connection from a Gateway should require physical approval on
-Firmware. Firmware may remember an approved Gateway according to local policy,
-but Gateway cannot assume approval.
+Gateway opens a communication session by sending `connect`. Connect requires
+physical approval on Firmware every time. Connect is not signing approval and
+does not authorize signing.
 
 Request:
 
 ```json
 {
-  "id": "req_002",
+  "id": "req_connect_001",
   "version": 1,
   "type": "connect",
-  "client": {
-    "name": "Agent-Q Gateway",
-    "origin": "local"
+  "params": {
+    "gatewayName": "Agent-Q Gateway",
+    "approvalTimeoutMs": 30000
   }
 }
 ```
 
-Response:
+Request rules:
+
+- `gatewayName` is a Gateway-supplied display label. It is not a security
+  boundary and Firmware must not treat it as proof that the requester is
+  trusted.
+- `gatewayName` is required, 1-64 characters of printable ASCII.
+- `approvalTimeoutMs` is a positive integer with maximum `60000`.
+- Default `approvalTimeoutMs` when Gateway omits it is `30000`.
+
+Approved response:
 
 ```json
 {
-  "id": "req_002",
+  "id": "req_connect_001",
   "version": 1,
   "type": "connect_result",
   "status": "approved",
-  "session": {
-    "id": "session_001"
+  "sessionId": "session_...",
+  "sessionTtlMs": 1800000,
+  "device": {
+    "deviceId": "uuid-string",
+    "state": "idle",
+    "firmwareName": "Agent-Q Firmware",
+    "hardware": "hardware-id",
+    "firmwareVersion": "0.0.0"
   }
 }
 ```
 
-Possible connect statuses:
+Rejected response:
 
-- `approved`
-- `rejected`
-- `requires_physical_approval`
-- `timed_out`
-- `error`
+```json
+{
+  "id": "req_connect_001",
+  "version": 1,
+  "type": "connect_result",
+  "status": "rejected",
+  "error": {
+    "code": "rejected",
+    "message": "Connection rejected."
+  }
+}
+```
+
+Timeout response uses the rejected shape with:
+
+```json
+{
+  "code": "timeout",
+  "message": "Connection approval timed out."
+}
+```
+
+Connect rules:
+
+- Establishing a session requires physical approval every time a Firmware
+  `connect` request is sent. Firmware does not remember a previously approved
+  Gateway.
+- Reuse is a Gateway-local optimization, not a Firmware behavior. While Gateway
+  holds a non-expired runtime session for the target device, a `connect_device`
+  call returns that session from local memory without sending a Firmware
+  `connect` request and without re-approval. The session was already physically
+  approved when it was established. Reuse reflects Gateway's local view only:
+  Gateway does not re-verify with Firmware and cannot detect Firmware-side
+  session loss (for example after a reboot). Such loss surfaces as
+  `invalid_session` on the next disconnect or session-scoped request.
+- `connect` does not authorize signing.
+- `connect` does not prove which agent or upstream user triggered the request.
+- `sessionId` is generated by Firmware. The format is `session_` followed by
+  random hex.
+- `sessionId` must be derived from device RNG. It must not be derived from MAC
+  address, USB serial number, `deviceId`, account public key, or signing key.
+- `sessionTtlMs` is Firmware-owned. Firmware may end a session earlier (for
+  example on reboot) regardless of the advertised TTL.
+- Approving a new connect replaces any previously active Firmware session.
+- A Gateway runtime session is held in memory only. Gateway must not persist
+  `sessionId` to disk. `sessionId` is a Firmware-issued token kept internal to
+  Gateway; Gateway must not return it to untrusted MCP clients.
+- Gateway restart and explicit disconnect end Gateway's view of the session;
+  Firmware reboot ends the session on the device. Gateway restart clears only
+  Gateway's in-memory record. Firmware cannot observe a Gateway restart and
+  keeps its active session until its TTL, a reboot, an explicit disconnect, or
+  replacement by a new approved connect.
+- Gateway TTL checks are local guards; Firmware remains the session authority.
+  Gateway evicts an expired runtime session lazily, on the next access after
+  `connectedAt + sessionTtlMs`, not on a timer.
+- Firmware should return `busy` for UI-affecting or session-changing requests
+  (including `connect` and `disconnect`) while an approval UI is already open.
+  `get_status` remains read-only and must not trigger or change approval UI.
 
 ## Disconnect
 
@@ -378,18 +453,24 @@ Request:
 
 ```json
 {
-  "id": "req_003",
+  "id": "req_disconnect_001",
   "version": 1,
   "type": "disconnect",
-  "sessionId": "session_001"
+  "sessionId": "session_..."
 }
 ```
+
+Disconnect rules:
+
+- `disconnect` does not require physical approval.
+- Firmware returns `invalid_session` when `sessionId` is missing, expired,
+  unknown, or does not match the active Firmware session.
 
 Response:
 
 ```json
 {
-  "id": "req_003",
+  "id": "req_disconnect_001",
   "version": 1,
   "type": "disconnect_result",
   "status": "disconnected"

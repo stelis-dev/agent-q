@@ -34,6 +34,41 @@ or manual testing. Source code should not live in this directory.
 Firmware implementations follow the shared Agent-Q communication protocol in
 `specs/PROTOCOL.md`.
 
+## Build Policy
+
+Firmware build and CI paths must start from tracked repository files, not from a
+developer's `.WORK/` checkout.
+
+Shared firmware dependency pins live in `products/firmware/source.env`.
+Hardware-specific targets that require an upstream host firmware tree must keep
+that dependency pinned under `src/<hardware-id>/source.env`. The build flow is:
+
+```text
+fetch pinned upstream host firmware
+  -> apply tracked Agent-Q hardware overlay
+  -> fetch pinned signing source
+  -> build
+```
+
+Tracked build scripts download firmware build dependencies into
+`.firmware-cache/`. Local developers may keep ESP-IDF installs or
+investigation-only source checkouts under `.WORK/`, but `.WORK/` paths must not
+appear in user-facing build commands or GitHub workflows.
+
+For the current StackChan CoreS3 target:
+
+```bash
+source /path/to/esp-idf-v5.5.4/export.sh
+tools/firmware/stackchan-cores3/build.sh
+```
+
+The build script downloads the pinned host firmware and signing source into the
+ignored `.firmware-cache/` directory when needed, applies the tracked hardware
+overlay, and then builds. `AGENT_Q_SIGNING_CRYPTO_ROOT` may be used to point at
+a different local signing-source checkout for investigation, but the default
+tracked build path uses the pinned cache. GitHub Actions uses the same tracked
+script.
+
 ## Common Firmware UX Policy
 
 These rules apply to every hardware-specific Firmware implementation.
