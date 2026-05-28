@@ -77,7 +77,14 @@ test("returns cached status for known device when live request times out", async
 
     const core = new GatewayCore(store, {
       async listPorts() {
-        return [];
+        return [
+          {
+            path: "/dev/cu.usbmodem1",
+            vendorId: "303a",
+            productId: "1001",
+            manufacturer: "Espressif",
+          },
+        ];
       },
       async requestStatus() {
         throw new GatewayError("timeout", "Timed out.", true);
@@ -107,6 +114,7 @@ test("falls back to scan when stored port hint is stale", async () => {
       setActive: true,
     });
 
+    const requestedPorts = [];
     const core = new GatewayCore(store, {
       async listPorts() {
         return [
@@ -119,9 +127,8 @@ test("falls back to scan when stored port hint is stale", async () => {
         ];
       },
       async requestStatus(portPath) {
-        if (portPath === "/dev/cu.stale") {
-          throw new GatewayError("port_not_found", "Stale port.", true);
-        }
+        requestedPorts.push(portPath);
+        assert.notEqual(portPath, "/dev/cu.stale");
         return status;
       },
       async identifyDevice(_portPath, code) {
@@ -132,6 +139,7 @@ test("falls back to scan when stored port hint is stale", async () => {
     const result = await core.getDeviceStatus();
     assert.equal(result.source, "live");
     assert.equal(result.portPath, "/dev/cu.usbmodem2");
+    assert.deepEqual(requestedPorts, ["/dev/cu.usbmodem2"]);
     assert.equal((await store.load()).devices[0].lastPortHint, "/dev/cu.usbmodem2");
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -242,9 +250,53 @@ test("identifies devices without selecting one", async () => {
 
     const result = await core.identifyDevices({ durationMs: 10000 });
     assert.equal(result.devices.length, 2);
+    assert.equal(result.devices.every((candidate) => candidate.status === "displayed"), true);
     assert.equal(new Set(identifiedCodes).size, 2);
     assert.equal(result.activeDeviceId, null);
     assert.equal((await store.load()).activeDeviceId, null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("identify reports per-device errors without failing the whole request", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-core-test-"));
+  try {
+    const store = new ConfigStore(join(dir, "config.json"));
+    const core = new GatewayCore(store, {
+      async listPorts() {
+        return [
+          {
+            path: "/dev/cu.usbmodem1",
+            vendorId: "303a",
+            productId: "1001",
+            manufacturer: "Espressif",
+          },
+          {
+            path: "/dev/cu.usbmodem2",
+            vendorId: "303a",
+            productId: "1001",
+            manufacturer: "Espressif",
+          },
+        ];
+      },
+      async requestStatus(portPath) {
+        return portPath === "/dev/cu.usbmodem1" ? status : secondStatus;
+      },
+      async identifyDevice(portPath, code) {
+        if (portPath === "/dev/cu.usbmodem2") {
+          throw new GatewayError("timeout", "Timed out.", true);
+        }
+        return identifyResponse(code);
+      },
+    });
+
+    const result = await core.identifyDevices({ durationMs: 10000 });
+    assert.equal(result.source, "live");
+    assert.equal(result.devices.length, 2);
+    assert.equal(result.devices[0].status, "displayed");
+    assert.equal(result.devices[1].status, "error");
+    assert.equal(result.devices[1].error.code, "timeout");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

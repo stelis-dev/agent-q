@@ -3,8 +3,10 @@ import test from "node:test";
 import {
   isLikelyAgentQUsbPort,
   scanUsbDevices,
+  tryParseMatchingResponseLine,
   validateTimeoutMs,
 } from "../dist/usb.js";
+import { assertStatusResponse } from "../dist/protocol.js";
 
 const status = {
   id: "req_1",
@@ -68,10 +70,39 @@ test("recognizes observed Espressif USB serial metadata", () => {
     }),
     true,
   );
+
+  assert.equal(
+    isLikelyAgentQUsbPort({
+      path: "/dev/tty.usbmodem21301",
+      manufacturer: "Espressif",
+    }),
+    false,
+  );
 });
 
 test("rejects invalid timeout values", () => {
   assert.equal(validateTimeoutMs(undefined), 2000);
   assert.throws(() => validateTimeoutMs(0), /timeoutMs/);
   assert.throws(() => validateTimeoutMs(10001), /timeoutMs/);
+});
+
+test("surfaces id-less Firmware error responses for the in-flight request", () => {
+  assert.throws(
+    () =>
+      tryParseMatchingResponseLine(
+        JSON.stringify({
+          version: 1,
+          type: "error",
+          error: {
+            code: "invalid_json",
+            message: "Invalid JSON.",
+          },
+        }),
+        "req_1",
+        assertStatusResponse,
+      ),
+    {
+      code: "invalid_json",
+    },
+  );
 });

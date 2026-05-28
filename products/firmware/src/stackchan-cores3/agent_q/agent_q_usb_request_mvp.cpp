@@ -14,7 +14,6 @@
 #include "hal/hal.h"
 #include "lvgl.h"
 #include "nvs.h"
-#include "nvs_flash.h"
 
 namespace {
 
@@ -203,12 +202,6 @@ void load_or_create_device_id()
 
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
-    if (result == ESP_ERR_NVS_NOT_INITIALIZED) {
-        result = nvs_flash_init();
-        if (result == ESP_OK) {
-            result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
-        }
-    }
     if (result != ESP_OK) {
         ESP_LOGW(kTag, "NVS open failed for device id: %s", esp_err_to_name(result));
         format_uuid_v4(g_device_id, sizeof(g_device_id));
@@ -625,12 +618,6 @@ void init_usb_request_mvp()
         }
     }
     ESP_LOGI(kTag, "USB request MVP ready");
-}
-
-void update_usb_request_mvp()
-{
-    // USB request handling runs in its own task so it remains available when
-    // another firmware mode takes over the main app loop.
 }
 
 }  // namespace agent_q

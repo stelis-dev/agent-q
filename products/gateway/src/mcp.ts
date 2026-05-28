@@ -52,9 +52,74 @@ const identifiedDeviceShape = z.object({
   source: z.literal("live"),
   connected: z.literal(true),
   portPath: z.string(),
+  status: z.literal("displayed"),
   code: z.string(),
   protocolResponse: identifyResponseShape,
 });
+
+const failedIdentificationShape = z.object({
+  source: z.literal("error"),
+  connected: z.literal(false),
+  portPath: z.string(),
+  deviceId: z.string(),
+  status: z.literal("error"),
+  error: errorShape,
+});
+
+const errorToolResultShape = z.object({
+  source: z.literal("error"),
+  connected: z.literal(false),
+  error: errorShape,
+});
+
+const scanDevicesOutputShape = z.discriminatedUnion("source", [
+  z.object({
+    source: z.literal("live"),
+    devices: z.array(liveStatusShape),
+    activeDeviceId: z.string().nullable(),
+  }),
+  errorToolResultShape,
+]);
+
+const identifyDevicesOutputShape = z.discriminatedUnion("source", [
+  z.object({
+    source: z.literal("live"),
+    devices: z.array(z.discriminatedUnion("source", [identifiedDeviceShape, failedIdentificationShape])),
+    activeDeviceId: z.string().nullable(),
+  }),
+  errorToolResultShape,
+]);
+
+const selectDeviceOutputShape = z.discriminatedUnion("source", [
+  z.object({
+    source: z.literal("selected"),
+    activeDeviceId: z.string(),
+    device: deviceShape,
+  }),
+  errorToolResultShape,
+]);
+
+const getDeviceStatusOutputShape = z.discriminatedUnion("source", [
+  liveStatusShape,
+  z.object({
+    source: z.literal("cached"),
+    connected: z.literal(false),
+    statusObservedAt: z.string(),
+    unavailableReason: z.enum([
+      "timeout",
+      "port_not_found",
+      "port_in_use",
+      "handshake_failed",
+      "incompatible_version",
+      "transport_closed",
+    ]),
+    firmwareErrorCode: z.string().optional(),
+    cachedStatus: z.object({
+      device: deviceShape,
+    }),
+  }),
+  errorToolResultShape,
+]);
 
 export const gatewayToolDefinitions = {
   scanDevices: {
@@ -62,13 +127,7 @@ export const gatewayToolDefinitions = {
     inputSchema: {
       timeoutMs: z.number().int().positive().max(MAX_SCAN_TIMEOUT_MS).optional(),
     },
-    outputSchema: {
-      source: z.enum(["live", "error"]),
-      devices: z.array(liveStatusShape).optional(),
-      activeDeviceId: z.string().nullable().optional(),
-      connected: z.literal(false).optional(),
-      error: errorShape.optional(),
-    },
+    outputSchema: scanDevicesOutputShape,
   },
   identifyDevices: {
     name: "identify_devices",
@@ -76,55 +135,22 @@ export const gatewayToolDefinitions = {
       timeoutMs: z.number().int().positive().max(MAX_SCAN_TIMEOUT_MS).optional(),
       durationMs: z.number().int().positive().max(MAX_IDENTIFY_DURATION_MS).optional(),
     },
-    outputSchema: {
-      source: z.enum(["live", "error"]),
-      devices: z.array(identifiedDeviceShape).optional(),
-      activeDeviceId: z.string().nullable().optional(),
-      connected: z.literal(false).optional(),
-      error: errorShape.optional(),
-    },
+    outputSchema: identifyDevicesOutputShape,
   },
   selectDevice: {
     name: "select_device",
     inputSchema: {
       deviceId: z.string().min(1),
     },
-    outputSchema: {
-      source: z.enum(["selected", "error"]),
-      activeDeviceId: z.string().optional(),
-      device: deviceShape.optional(),
-      connected: z.literal(false).optional(),
-      error: errorShape.optional(),
-    },
+    outputSchema: selectDeviceOutputShape,
   },
   getDeviceStatus: {
     name: "get_device_status",
     inputSchema: {
       deviceId: z.string().optional(),
+      timeoutMs: z.number().int().positive().max(MAX_SCAN_TIMEOUT_MS).optional(),
     },
-    outputSchema: {
-      source: z.enum(["live", "cached", "error"]),
-      connected: z.boolean(),
-      portPath: z.string().optional(),
-      protocolResponse: statusResponseShape.optional(),
-      statusObservedAt: z.string().optional(),
-      unavailableReason: z
-        .enum([
-          "timeout",
-          "port_not_found",
-          "port_in_use",
-          "handshake_failed",
-          "incompatible_version",
-          "transport_closed",
-        ])
-        .optional(),
-      cachedStatus: z
-        .object({
-          device: deviceShape,
-        })
-        .optional(),
-      error: errorShape.optional(),
-    },
+    outputSchema: getDeviceStatusOutputShape,
   },
 } as const;
 
@@ -138,7 +164,8 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
     gatewayToolDefinitions.scanDevices.name,
     {
       title: "Scan devices",
-      description: "Find USB-connected Agent-Q Firmware devices.",
+      description:
+        "Find USB-connected Agent-Q Firmware devices by writing a status handshake to candidate USB serial ports.",
       inputSchema: gatewayToolDefinitions.scanDevices.inputSchema,
       outputSchema: gatewayToolDefinitions.scanDevices.outputSchema,
     },
@@ -195,13 +222,14 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
     gatewayToolDefinitions.getDeviceStatus.name,
     {
       title: "Get device status",
-      description: "Read live or cached status for a known Agent-Q Firmware device.",
+      description:
+        "Read live or cached status for a known Agent-Q Firmware device by writing a status handshake to candidate USB serial ports.",
       inputSchema: gatewayToolDefinitions.getDeviceStatus.inputSchema,
       outputSchema: gatewayToolDefinitions.getDeviceStatus.outputSchema,
     },
-    async ({ deviceId }) => {
+    async ({ deviceId, timeoutMs }) => {
       try {
-        const structuredContent = await core.getDeviceStatus({ deviceId });
+        const structuredContent = await core.getDeviceStatus({ deviceId, timeoutMs });
         return withStructuredContent(structuredContent);
       } catch (error) {
         const structuredContent = toErrorToolResult(toGatewayError(error));

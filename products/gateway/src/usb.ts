@@ -43,6 +43,18 @@ export interface UsbStatusResult {
   protocolResponse: StatusResponse;
 }
 
+export interface UsbStatusFailure {
+  portPath: string;
+  unavailableReason: UnavailableReason;
+  firmwareErrorCode?: string;
+}
+
+export interface UsbStatusScanResult {
+  ports: PortInfo[];
+  devices: UsbStatusResult[];
+  failures: UsbStatusFailure[];
+}
+
 export interface UsbSerialDriver {
   listPorts(): Promise<PortInfo[]>;
   requestStatus(portPath: string, timeoutMs: number): Promise<StatusResponse>;
@@ -92,9 +104,11 @@ export function isLikelyAgentQUsbPort(port: PortInfo): boolean {
 
   const manufacturer = port.manufacturer?.toLowerCase() ?? "";
   const pnpId = port.pnpId?.toLowerCase() ?? "";
+  const serialNumber = port.serialNumber ?? "";
   const hasLikelyDescriptor =
     manufacturer.includes("espressif") || pnpId.includes("303a") || pnpId.includes("esp");
   const hasUsbSerialPath = /(^|[/\\])(cu|tty)\.usbmodem/i.test(port.path);
+  const hasDeviceSerial = serialNumber.length > 0;
 
   if (vendorId.length > 0 || productId.length > 0) {
     if (vendorId !== AGENT_Q_USB_VENDOR_ID || productId !== AGENT_Q_USB_PRODUCT_ID) {
@@ -103,17 +117,25 @@ export function isLikelyAgentQUsbPort(port: PortInfo): boolean {
     return manufacturer.length === 0 && pnpId.length === 0 ? true : hasLikelyDescriptor;
   }
 
-  return hasLikelyDescriptor && hasUsbSerialPath;
+  return hasLikelyDescriptor && hasUsbSerialPath && hasDeviceSerial;
 }
 
 export async function scanUsbDevices(
   driver: UsbSerialDriver,
   timeoutMs = DEFAULT_SCAN_TIMEOUT_MS,
 ): Promise<UsbStatusResult[]> {
+  return (await scanUsbDeviceStatuses(driver, timeoutMs)).devices;
+}
+
+export async function scanUsbDeviceStatuses(
+  driver: UsbSerialDriver,
+  timeoutMs = DEFAULT_SCAN_TIMEOUT_MS,
+): Promise<UsbStatusScanResult> {
   const normalizedTimeoutMs = validateTimeoutMs(timeoutMs);
   const ports = await driver.listPorts();
   const candidates = ports.filter(isLikelyAgentQUsbPort);
   const results: UsbStatusResult[] = [];
+  const failures: UsbStatusFailure[] = [];
 
   for (const candidate of candidates) {
     try {
@@ -122,13 +144,22 @@ export async function scanUsbDevices(
         portPath: candidate.path,
         protocolResponse,
       });
-    } catch {
-      // Scan only reports confirmed Agent-Q devices. Callers can surface cached
-      // status for known devices when a direct status request fails.
+    } catch (error) {
+      failures.push({
+        portPath: candidate.path,
+        unavailableReason: mapErrorToUnavailableReason(error),
+        firmwareErrorCode: getFirmwareErrorCode(error),
+      });
+      // Scan only reports confirmed Agent-Q devices. Callers can use failures
+      // to explain why a previously known device is not live now.
     }
   }
 
-  return results;
+  return {
+    ports,
+    devices: results,
+    failures,
+  };
 }
 
 export function mapErrorToUnavailableReason(error: unknown): UnavailableReason {
@@ -182,6 +213,9 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
   await openPort(port);
 
   try {
+    // Flush discards only OS-side serial buffers. Bytes already in transit on
+    // the USB wire may still arrive after this call.
+    await flushPort(port);
     return await new Promise<TResponse>((resolve, reject) => {
       let settled = false;
       let buffer = "";
@@ -247,7 +281,8 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
   }
 }
 
-function tryParseMatchingResponseLine<TResponse extends ProtocolResponse>(
+/** @internal Exported for focused protocol-line tests; not part of Gateway's public API. */
+export function tryParseMatchingResponseLine<TResponse extends ProtocolResponse>(
   line: string,
   expectedId: string,
   assertResponse: (response: ProtocolResponse) => TResponse,
@@ -259,7 +294,21 @@ function tryParseMatchingResponseLine<TResponse extends ProtocolResponse>(
     return undefined;
   }
 
-  if (!isRecord(parsed) || parsed.id !== expectedId) {
+  if (!isRecord(parsed)) {
+    return undefined;
+  }
+
+  if (parsed.id !== expectedId) {
+    if (parsed.id === undefined && parsed.type === "error") {
+      const response = parseProtocolResponse(line);
+      if (response.type === "error") {
+        throw new GatewayError(
+          response.error.code,
+          response.error.message,
+          isRetryableIdlessFirmwareError(response.error.code),
+        );
+      }
+    }
     return undefined;
   }
 
@@ -276,6 +325,18 @@ function tryParseMatchingResponseLine<TResponse extends ProtocolResponse>(
 function openPort(port: SerialPort): Promise<void> {
   return new Promise((resolve, reject) => {
     port.open((error) => {
+      if (error) {
+        reject(mapSerialOpenError(error));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function flushPort(port: SerialPort): Promise<void> {
+  return new Promise((resolve, reject) => {
+    port.flush((error) => {
       if (error) {
         reject(mapSerialOpenError(error));
         return;
@@ -324,6 +385,22 @@ function isUnavailableReason(value: string): value is UnavailableReason {
     value === "incompatible_version" ||
     value === "transport_closed"
   );
+}
+
+function isRetryableIdlessFirmwareError(code: string): boolean {
+  // Current Firmware does not emit id-less transient errors. Keep this narrow
+  // for future transient codes that cannot be correlated to a request id.
+  return code === "busy" || code === "timeout";
+}
+
+function getFirmwareErrorCode(error: unknown): string | undefined {
+  if (error instanceof GatewayError && !isUnavailableReason(error.code)) {
+    return error.code;
+  }
+  if (error instanceof ProtocolError) {
+    return error.code;
+  }
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

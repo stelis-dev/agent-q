@@ -10,6 +10,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "declaration": true,
+    "stripInternal": true,
     "sourceMap": true
   },
   "include": [

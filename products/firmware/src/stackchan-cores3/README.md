@@ -35,7 +35,19 @@ In the hardware firmware tree:
   for the USB JSONL smoke path.
 - Call `agent_q::run_signing_self_test()` once during boot after hardware
   initialization.
-- Call `agent_q::init_usb_request_mvp()` once after boot checks.
+- Initialize NVS during the host firmware boot sequence before Agent-Q
+  initialization.
+- Call `agent_q::init_usb_request_mvp()` once after boot checks and NVS
+  initialization.
 - `agent_q::init_usb_request_mvp()` starts the USB request task. The task keeps
   protocol handling available even when another firmware mode takes over the
   main app loop.
+
+## Persistent Storage
+
+This target stores the protocol `deviceId` in NVS namespace `agent_q` with key
+`device_id`.
+
+Agent-Q-owned modules are sources under `agent_q/` in this target tree. These
+modules may share the `agent_q` namespace. New keys should be named by feature,
+such as `<feature>_<name>`, to avoid collisions.

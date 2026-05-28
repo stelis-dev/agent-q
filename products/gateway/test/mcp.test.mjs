@@ -9,13 +9,10 @@ test("registers only M1 MCP tools", () => {
   );
 });
 
-test("tool schemas do not expose secret fields", () => {
+test("tool input schemas do not expose secret fields", () => {
   const schemaKeys = new Set();
   for (const tool of Object.values(gatewayToolDefinitions)) {
     for (const key of Object.keys(tool.inputSchema)) {
-      schemaKeys.add(key.toLowerCase());
-    }
-    for (const key of Object.keys(tool.outputSchema)) {
       schemaKeys.add(key.toLowerCase());
     }
   }
@@ -23,6 +20,24 @@ test("tool schemas do not expose secret fields", () => {
   for (const forbidden of ["privatekey", "private_key", "seed", "mnemonic", "signingkey", "signing_key"]) {
     assert.equal(schemaKeys.has(forbidden), false);
   }
+});
+
+test("status output schema rejects unreachable source combinations", () => {
+  const result = gatewayToolDefinitions.getDeviceStatus.outputSchema.safeParse({
+    source: "live",
+    connected: false,
+    error: {
+      code: "no_active_device",
+      message: "No active device is configured.",
+      retryable: false,
+    },
+  });
+
+  assert.equal(result.success, false);
+});
+
+test("get_device_status exposes timeoutMs", () => {
+  assert.equal("timeoutMs" in gatewayToolDefinitions.getDeviceStatus.inputSchema, true);
 });
 
 test("can construct the MCP server", () => {

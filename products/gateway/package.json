@@ -2,7 +2,13 @@
   "name": "@stelis/agent-q",
   "version": "0.0.0",
   "description": "Local Agent-Q Gateway MCP server for USB-connected Firmware discovery and status.",
+  "license": "UNLICENSED",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stelis-dev/agent-q.git",
+    "directory": "products/gateway"
+  },
   "bin": {
     "agent-q": "./dist/bin/agent-q.js"
   },

@@ -144,6 +144,10 @@ Gateway discovers Firmware candidates by scanning supported transports and
 calling `get_status` only on likely candidates. Gateway must avoid blind writes
 to unrelated ports or devices.
 
+USB discovery writes a `get_status` handshake only to candidate serial ports
+selected from currently observed USB metadata. A stored port path is only a
+hint; it must be rechecked against current port metadata before any write.
+
 Gateway must not silently change the active device after discovery. Even when
 one Firmware candidate is found, Gateway should ask the device to show an
 identification code before saving it as the active device. If more than one
@@ -206,12 +210,16 @@ Device states:
 - `locked`: device requires local unlock before sensitive actions.
 - `error`: device is running but cannot currently serve requests.
 
-M1 Firmware may emit only `idle`, `busy`, and `awaiting_approval`. Other states
-are reserved for later behavior.
+M1 Firmware may emit only `idle` and `awaiting_approval`. `busy` is returned as
+an error code instead of a status state in M1. Other states are reserved for
+later behavior.
 
 `deviceId` is a Firmware-generated UUID stored in device-local persistent
 storage. It must not be derived from MAC address, USB serial number, account
 public key, or signing key.
+
+`firmwareName` is a descriptive label for display and diagnostics. It is not a
+security boundary and must not be treated as proof that the device is trusted.
 
 ## Identify Device
 
@@ -258,6 +266,9 @@ Response:
 
 M1 identification codes are four decimal digits. M1 identification display
 duration must be a positive integer no greater than `30000` milliseconds.
+
+Identification display is Firmware-owned temporary UI. Gateway may stop waiting
+earlier than the requested display duration, but M1 has no cancel message.
 
 Identification display is temporary UI. Firmware must return to the previous
 device state after the display duration or when another request replaces the
@@ -306,6 +317,11 @@ Rejected or timed-out response:
   }
 }
 ```
+
+The `display_signal` approval lifetime is Firmware-owned temporary UI. Gateway
+is permitted to stop waiting earlier than the Firmware timeout, but M1 has no
+cancel message. A late physical response may be ignored by Gateway if the
+transport request already timed out.
 
 ## Connect
 

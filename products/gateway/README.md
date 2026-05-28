@@ -19,6 +19,8 @@ decisions.
 
 ## Commands
 
+Requires Node.js 22 or newer.
+
 Install dependencies:
 
 ```sh
@@ -37,8 +39,16 @@ Test:
 npm test
 ```
 
+The automated tests use mocked Gateway drivers and do not exercise the live
+`SerialPortUsbDriver` path. When hardware is available, run a manual USB smoke
+check for `scan_devices`, `get_device_status`, `identify_devices`, and
+`display_signal` after serial transport changes.
+
 Run the stdio MCP server:
 
 ```sh
-npx @stelis/agent-q
+node dist/bin/agent-q.js
 ```
+
+The intended published command is `npx @stelis/agent-q`, but this package is
+not published yet.

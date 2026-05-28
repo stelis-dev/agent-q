@@ -1,5 +1,5 @@
 import { ConfigStore, type DeviceRecord } from "./config.js";
-import { GatewayError } from "./errors.js";
+import { GatewayError, toGatewayError } from "./errors.js";
 import {
   createIdentificationCode,
   type IdentifyDeviceResponse,
@@ -8,6 +8,7 @@ import {
 import {
   DEFAULT_SCAN_TIMEOUT_MS,
   mapErrorToUnavailableReason,
+  scanUsbDeviceStatuses,
   scanUsbDevices,
   validateTimeoutMs,
   type UnavailableReason,
@@ -27,6 +28,7 @@ export interface CachedDeviceStatus {
   connected: false;
   statusObservedAt: string;
   unavailableReason: UnavailableReason;
+  firmwareErrorCode?: string;
   cachedStatus: {
     device: StatusResponse["device"];
   };
@@ -55,13 +57,27 @@ export interface IdentifiedDevice {
   source: "live";
   connected: true;
   portPath: string;
+  status: "displayed";
   code: string;
   protocolResponse: IdentifyDeviceResponse;
 }
 
+export interface IdentifyDeviceFailure {
+  source: "error";
+  connected: false;
+  portPath: string;
+  deviceId: string;
+  status: "error";
+  error: {
+    code: string;
+    message: string;
+    retryable: boolean;
+  };
+}
+
 export interface IdentifyDevicesResult {
   source: "live";
-  devices: IdentifiedDevice[];
+  devices: Array<IdentifiedDevice | IdentifyDeviceFailure>;
   activeDeviceId: string | null;
 }
 
@@ -104,32 +120,53 @@ export class GatewayCore {
     const timeoutMs = validateTimeoutMs(input.timeoutMs);
     const durationMs = validateIdentifyDurationMs(input.durationMs);
     const liveDevices = await scanUsbDevices(this.usbDriver, timeoutMs);
-    const devices: IdentifiedDevice[] = [];
+    const devices: Array<IdentifiedDevice | IdentifyDeviceFailure> = [];
     const usedCodes = new Set<string>();
 
     for (const liveDevice of liveDevices) {
       const code = createUniqueIdentificationCode(usedCodes);
-      const response = await this.usbDriver.identifyDevice(
-        liveDevice.portPath,
-        code,
-        timeoutMs,
-        durationMs,
-      );
-      if (response.device.deviceId !== liveDevice.protocolResponse.device.deviceId) {
-        throw new GatewayError("handshake_failed", "Identify response device id did not match status response.", true);
-      }
-      if (response.code !== code) {
-        throw new GatewayError("handshake_failed", "Identify response code did not match request.", true);
-      }
+      try {
+        const response = await this.usbDriver.identifyDevice(
+          liveDevice.portPath,
+          code,
+          timeoutMs,
+          durationMs,
+        );
+        if (response.device.deviceId !== liveDevice.protocolResponse.device.deviceId) {
+          throw new GatewayError(
+            "handshake_failed",
+            `Identify response device id did not match status response. Expected ${liveDevice.protocolResponse.device.deviceId}, got ${response.device.deviceId}.`,
+            true,
+          );
+        }
+        if (response.code !== code) {
+          throw new GatewayError("handshake_failed", "Identify response code did not match request.", true);
+        }
 
-      await this.configStore.rememberUsbStatus(response.device, liveDevice.portPath);
-      devices.push({
-        source: "live",
-        connected: true,
-        portPath: liveDevice.portPath,
-        code,
-        protocolResponse: response,
-      });
+        await this.configStore.rememberUsbStatus(response.device, liveDevice.portPath);
+        devices.push({
+          source: "live",
+          connected: true,
+          portPath: liveDevice.portPath,
+          status: "displayed",
+          code,
+          protocolResponse: response,
+        });
+      } catch (error) {
+        const gatewayError = toGatewayError(error);
+        devices.push({
+          source: "error",
+          connected: false,
+          portPath: liveDevice.portPath,
+          deviceId: liveDevice.protocolResponse.device.deviceId,
+          status: "error",
+          error: {
+            code: gatewayError.code,
+            message: gatewayError.message,
+            retryable: gatewayError.retryable,
+          },
+        });
+      }
     }
 
     const config = await this.configStore.load();
@@ -172,36 +209,32 @@ export class GatewayCore {
     }
 
     try {
-      const protocolResponse = await this.usbDriver.requestStatus(record.lastPortHint, timeoutMs);
-      if (protocolResponse.device.deviceId !== record.deviceId) {
-        throw new GatewayError("handshake_failed", "Device id did not match cached record.", true);
-      }
-      await this.configStore.rememberUsbStatus(protocolResponse.device, record.lastPortHint);
-      return {
-        source: "live",
-        connected: true,
-        portPath: record.lastPortHint,
-        protocolResponse,
-      };
-    } catch (directError) {
-      try {
-        const liveDevices = await scanUsbDevices(this.usbDriver, timeoutMs);
-        const matchingDevice = liveDevices.find(
-          (candidate) => candidate.protocolResponse.device.deviceId === record.deviceId,
+      const scanResult = await scanUsbDeviceStatuses(this.usbDriver, timeoutMs);
+      const matchingDevice = scanResult.devices.find(
+        (candidate) => candidate.protocolResponse.device.deviceId === record.deviceId,
+      );
+
+      if (matchingDevice !== undefined) {
+        await this.configStore.rememberUsbStatus(
+          matchingDevice.protocolResponse.device,
+          matchingDevice.portPath,
         );
-
-        if (matchingDevice !== undefined) {
-          await this.configStore.rememberUsbStatus(
-            matchingDevice.protocolResponse.device,
-            matchingDevice.portPath,
-          );
-          return toLiveStatus(matchingDevice);
-        }
-      } catch (scanError) {
-        return toCachedStatus(record, mapErrorToUnavailableReason(scanError));
+        return toLiveStatus(matchingDevice);
       }
 
-      return toCachedStatus(record, mapErrorToUnavailableReason(directError));
+      const knownPortFailure = scanResult.failures.find((failure) => failure.portPath === record.lastPortHint);
+      if (knownPortFailure !== undefined) {
+        return toCachedStatus(record, knownPortFailure.unavailableReason, knownPortFailure.firmwareErrorCode);
+      }
+
+      const knownPortExists = scanResult.ports.some((port) => port.path === record.lastPortHint);
+      if (!knownPortExists) {
+        return toCachedStatus(record, "port_not_found");
+      }
+
+      return toCachedStatus(record, "handshake_failed");
+    } catch (scanError) {
+      return toCachedStatus(record, mapErrorToUnavailableReason(scanError));
     }
   }
 }
@@ -227,12 +260,17 @@ function toLiveStatus(liveDevice: UsbStatusResult): LiveDeviceStatus {
   };
 }
 
-function toCachedStatus(record: DeviceRecord, unavailableReason: UnavailableReason): CachedDeviceStatus {
+function toCachedStatus(
+  record: DeviceRecord,
+  unavailableReason: UnavailableReason,
+  firmwareErrorCode?: string,
+): CachedDeviceStatus {
   return {
     source: "cached",
     connected: false,
     statusObservedAt: record.lastSeenAt,
     unavailableReason,
+    ...(firmwareErrorCode === undefined ? {} : { firmwareErrorCode }),
     cachedStatus: record.lastStatus,
   };
 }
@@ -258,5 +296,14 @@ function createUniqueIdentificationCode(usedCodes: Set<string>): string {
       return code;
     }
   }
+
+  for (let value = 0; value <= 9999; value += 1) {
+    const code = value.toString().padStart(4, "0");
+    if (!usedCodes.has(code)) {
+      usedCodes.add(code);
+      return code;
+    }
+  }
+
   throw new GatewayError("identification_code_exhausted", "Could not create a unique identification code.", true);
 }
