@@ -1,2 +1,4 @@
 .WORK/
 products/firmware/build/
+products/gateway/dist/
+products/gateway/node_modules/

@@ -33,3 +33,42 @@ or manual testing. Source code should not live in this directory.
 
 Firmware implementations follow the shared Agent-Q communication protocol in
 `specs/PROTOCOL.md`.
+
+## Common Firmware UX Policy
+
+These rules apply to every hardware-specific Firmware implementation.
+
+Firmware must not force the device into a dedicated Agent-Q mode for normal
+requests. The device should keep its current mode, app, screen, or idle state
+running whenever possible.
+
+Request UI should be temporary:
+
+- normal boot must not show Agent-Q installation or self-test popups;
+- read-only status and discovery requests must not show physical approval UI;
+- device identification may show a short temporary code, then return to the
+  previous state;
+- automatic approvals may show brief result feedback, then return to the
+  previous state;
+- requests that require physical approval must show an approval layer over the
+  current state, wait for approve, reject, or timeout, send the result, show
+  brief result feedback when useful, and remove the layer;
+- timeout is a rejection result;
+- hardware-specific input controls must map back to the shared outcomes:
+  approve, reject, or timeout.
+
+The expected lifecycle is:
+
+```text
+current device state
+  -> request received
+  -> policy decision
+     -> auto approve: brief result feedback
+     -> needs approval: approval layer
+     -> reject: brief result feedback when useful
+  -> response sent
+  -> previous device state continues
+```
+
+Firmware may use hardware-specific rendering and controls, but the product
+behavior must remain the same across hardware targets.

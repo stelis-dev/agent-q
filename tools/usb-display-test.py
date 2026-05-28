@@ -37,7 +37,8 @@ def main() -> int:
     request_id = f"usb-test-{uuid.uuid4().hex[:12]}"
     request = {
         "id": request_id,
-        "method": "display_signal",
+        "version": 1,
+        "type": "display_signal",
         "params": {
             "message": args.message,
         },
@@ -59,11 +60,13 @@ def main() -> int:
 
 
 def response_matches_expectation(response: dict[str, object], expected: str) -> bool:
+    if response.get("version") != 1 or response.get("type") != "display_signal_result":
+        return False
     if expected == "any":
         return response.get("status") in ("approved", "rejected")
     if expected == "yes":
-        return response.get("ok") is True and response.get("status") == "approved"
-    return response.get("ok") is False and response.get("status") == "rejected"
+        return response.get("status") == "approved"
+    return response.get("status") == "rejected"
 
 
 def autodetect_port() -> str:

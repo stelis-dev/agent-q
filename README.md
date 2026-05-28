@@ -55,6 +55,7 @@ The protocol has a clear session flow:
 
 ```text
 get_status
+  -> identify_device?
   -> connect
     -> get_capabilities
     -> get_accounts
@@ -64,6 +65,14 @@ get_status
 
 Chains, transports, and hardware targets must fit this protocol instead of
 creating separate product-level APIs.
+
+Firmware request UI should preserve the device's current state. Agent-Q should
+use temporary identification, approval, and result layers instead of forcing the
+device into a dedicated Agent-Q mode for normal requests.
+
+Device discovery does not silently select an active device. Gateway first finds
+candidate devices, asks them to show short identification codes, and saves the
+selected device only after the user chooses one.
 
 ## Repository Layout
 

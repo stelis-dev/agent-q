@@ -46,6 +46,9 @@ Non-negotiable boundaries:
 - Agent-Q Firmware stores keys and policies locally.
 - First connection and sensitive write actions must be physically approved
   according to Firmware policy.
+- Firmware request UI must preserve the device's current mode or screen whenever
+  possible. Use temporary identification, approval, and result layers instead of
+  forcing a dedicated Agent-Q mode for normal requests.
 - External MCP clients, AI agents, Admin Page requests, and CLI inputs are
   requests, not authority.
 - Agent-Q cannot observe or verify what happened inside an agent, application,
@@ -165,9 +168,17 @@ specification baseline, or an affected shared invariant.
 
 Inspect `package.json` before running project commands. Do not invent scripts.
 
-Current state: this repository does not yet have a root `package.json`. If one
-is added, inspect it before running project commands. If package scripts are
-added intentionally, update this section.
+Current state: this repository does not yet have a root `package.json`. Gateway
+package commands live under `products/gateway/`.
+
+Current Gateway package commands:
+
+- Install: `cd products/gateway && npm install`
+- Build: `cd products/gateway && npm run build`
+- Test: `cd products/gateway && npm test`
+
+If a root `package.json` is added, inspect it before running project commands
+and update this section.
 
 Never claim a test, build, lint, pack, flash, or verification step passed unless
 it was actually run and observed successfully.
