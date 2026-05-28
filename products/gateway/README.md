@@ -48,7 +48,7 @@ physical approval. `disconnect_device` ends the runtime session.
 - Session ids are held in Gateway memory only and are never returned to MCP
   clients. A Gateway restart or explicit disconnect ends Gateway's view of the
   session; a Firmware reboot ends it on the device. A Gateway restart clears
-  only the local record — Firmware cannot observe it and keeps its session
+  only the local record - Firmware cannot observe it and keeps its session
   until its TTL, a reboot, a disconnect, or replacement by a new approved
   connect.
 - While Gateway holds a non-expired runtime session, `connect_device` returns
@@ -92,8 +92,8 @@ does **not** claim to detect prompt injection. Concretely:
   may carry OS, serial, or Firmware text; safety comes from the output boundary,
   not from core pre-sanitizing. The contract is therefore that **every output
   adapter must project errors through `public-error.ts` before returning or
-  logging them**. The MCP adapter does this in one place — its `run()` wrapper
-  for results and `logToolDiagnostic` for stderr — and any future adapter (CLI,
+  logging them**. The MCP adapter does this in one place - its `run()` wrapper
+  for results and `logToolDiagnostic` for stderr - and any future adapter (CLI,
   Admin/web API) must do the same. Diagnostic logging goes to stderr (never
   stdout, the MCP channel) and carries only the allowlisted `code`, its canonical
   message, and `retryable`; raw device/OS/Firmware text is never written to a log,
