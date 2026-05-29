@@ -315,7 +315,8 @@ launcher = launcher_path.read_text()
 launcher = insert_after_once(
     launcher,
     "#include <stackchan/stackchan.h>\n",
-    "#include <agent_q/agent_q_usb_request_server.h>\n",
+    "#include <agent_q/agent_q_usb_request_server.h>\n"
+    "#include <agent_q/agent_q_display_power.h>\n",
     "app_launcher.cpp Agent-Q provisioning UI include",
 )
 launcher = replace_any_once(
@@ -362,6 +363,7 @@ launcher = replace_any_once(
         GetStackChan().attachAvatar(std::move(default_avatar));
         GetStackChan().addModifier(std::make_unique<stackchan::BlinkModifier>());
         GetStackChan().addModifier(std::make_unique<stackchan::IdleExpressionModifier>(8000, 20000));
+        GetStackChan().motion().moveWithSpeed(0, 540, 500);
         agent_q::show_provisioning_welcome_if_needed();
         _view.reset();
     } else {
@@ -395,18 +397,59 @@ launcher = replace_any_once(
     ],
     """    if (_view) {
         _view->update();
-        screensaver_update();
     }
+    screensaver_update();
 
     GetStackChan().update();
 """,
     "app_launcher.cpp startup worker loop disabled",
+)
+launcher = replace_once(
+    launcher,
+    """void AppLauncher::screensaver_update()
+{
+    const uint32_t SCREENSAVER_TIMEOUT_MS = 30000;
+
+    uint32_t idle_time = lv_display_get_inactive_time(NULL);
+    if (idle_time >= SCREENSAVER_TIMEOUT_MS) {
+        if (!_screensaver) {
+            _screensaver = std::make_unique<view::Screensaver>();
+            _screensaver->init();
+        }
+    } else if (_screensaver) {
+        _screensaver.reset();
+    }
+
+    // Update in 30ms interval
+    if (_screensaver && GetHAL().millis() - _screensaver_timecount > 30) {
+        _screensaver_timecount = GetHAL().millis();
+        _screensaver->update();
+    }
+}
+""",
+    """void AppLauncher::screensaver_update()
+{
+    uint32_t idle_time = lv_display_get_inactive_time(NULL);
+    if (_screensaver) {
+        _screensaver.reset();
+    }
+
+    agent_q::update_display_power(idle_time);
+}
+""",
+    "app_launcher.cpp Agent-Q screen sleep without screensaver",
 )
 assert_not_contains(launcher, "_startup_worker", "app_launcher.cpp setup startup worker")
 launcher_path.write_text(launcher)
 
 board_path = firmware_dir / "main/hal/board/stackchan.cc"
 board = board_path.read_text()
+board = insert_after_once(
+    board,
+    "#include \"hal_bridge.h\"\n",
+    "#include \"agent_q/agent_q_display_power.h\"\n",
+    "stackchan.cc Agent-Q display power include",
+)
 board = replace_once(
     board,
     "    StackChanCamera* camera_;\n",
@@ -420,6 +463,120 @@ board = replace_once(
     "stackchan.cc camera init disabled",
 )
 assert_not_contains(board, "InitializeCamera();", "stackchan.cc camera initialization")
+board = replace_once(
+    board,
+    """    bool IsExternalPowerConnected()
+    {
+        const uint8_t power_status      = ReadReg(0x01);
+        const uint8_t current_direction = (power_status & 0b01100000) >> 5;
+        const bool is_charging_done     = (power_status & 0b00000111) == 0b00000100;
+
+        // Treat any non-discharging state as externally powered so a plugged-in cable
+        // still counts even after the battery is full.
+        return current_direction != 2 || is_charging_done;
+    }
+};
+""",
+    """    void EnablePowerKeyIrqs()
+    {
+        const uint8_t irq_enable = ReadReg(0x41);
+        WriteReg(0x41, irq_enable | 0x0C);
+        WriteReg(0x49, 0x0C);
+    }
+
+    uint8_t ConsumePowerKeyIrqs()
+    {
+        const uint8_t irq_status = ReadReg(0x49) & 0x0C;
+        if (irq_status != 0) {
+            WriteReg(0x49, irq_status);
+        }
+        return irq_status;
+    }
+
+    bool IsExternalPowerConnected()
+    {
+        const uint8_t power_status      = ReadReg(0x01);
+        const uint8_t current_direction = (power_status & 0b01100000) >> 5;
+        const bool is_charging_done     = (power_status & 0b00000111) == 0b00000100;
+
+        // Treat any non-discharging state as externally powered so a plugged-in cable
+        // still counts even after the battery is full.
+        return current_direction != 2 || is_charging_done;
+    }
+};
+""",
+    "stackchan.cc AXP2101 power key IRQ helpers",
+)
+board = insert_after_once(
+    board,
+    "    static constexpr int kPowerStatePollIntervalMs   = 1000;\n",
+    "    static constexpr int kPowerKeyPollIntervalMs     = 100;\n",
+    "stackchan.cc power key poll constant",
+)
+board = insert_after_once(
+    board,
+    "    int64_t last_power_state_check_ms_ = 0;\n",
+    "    int64_t last_power_key_check_ms_   = 0;\n",
+    "stackchan.cc power key poll timestamp",
+)
+board = insert_after_once(
+    board,
+    """    void UpdatePowerSaveEnabled(bool has_external_power, bool is_discharging)
+    {
+        const bool should_enable_power_save = ShouldEnablePowerSave(has_external_power, is_discharging);
+        if (should_enable_power_save == last_power_save_enabled_) {
+            return;
+        }
+
+        ESP_LOGI(TAG, "Power save timer %s: external_power=%d, discharging=%d, allowShutdownWhenCharging=%d",
+                 should_enable_power_save ? "enabled" : "disabled", has_external_power, is_discharging,
+                 xiaozhi_config_.allowShutdownWhenCharging);
+        power_save_timer_->SetEnabled(should_enable_power_save);
+        last_power_save_enabled_ = should_enable_power_save;
+    }
+
+""",
+    """    void PollPowerKeyState(int64_t now_ms)
+    {
+        if (last_power_key_check_ms_ != 0 && (now_ms - last_power_key_check_ms_) < kPowerKeyPollIntervalMs) {
+            return;
+        }
+        last_power_key_check_ms_ = now_ms;
+
+        const uint8_t power_key_irqs = pmic_->ConsumePowerKeyIrqs();
+        if ((power_key_irqs & 0x04) != 0) {
+            ESP_LOGI(TAG, "Power key long press: powering off");
+            pmic_->PowerOff();
+            return;
+        }
+        if ((power_key_irqs & 0x08) != 0) {
+            ESP_LOGI(TAG, "Power key short press: toggling display power");
+            agent_q::request_display_power_toggle();
+        }
+    }
+
+""",
+    "stackchan.cc Agent-Q power key polling",
+)
+board = insert_after_once(
+    board,
+    """    void PollPowerSaveState()
+    {
+        const int64_t now_ms = esp_timer_get_time() / 1000;
+""",
+    """        PollPowerKeyState(now_ms);
+
+""",
+    "stackchan.cc polls power key before power-save throttle",
+)
+board = insert_after_once(
+    board,
+    """        pmic_ = new Pmic(i2c_bus_, 0x34);
+""",
+    """        pmic_->EnablePowerKeyIrqs();
+""",
+    "stackchan.cc enables AXP2101 power key IRQs",
+)
 board_path.write_text(board)
 
 mcp_path = firmware_dir / "xiaozhi-esp32/main/mcp_server.cc"

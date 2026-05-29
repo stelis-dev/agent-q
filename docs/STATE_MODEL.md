@@ -34,32 +34,63 @@ are not authority.
 stateDiagram-v2
     [*] --> Unprovisioned: boot, no root signing material
     Unprovisioned --> Unprovisioned: start_provisioning + phrase display
-    Unprovisioned --> Unprovisioned: confirm/cancel/timeout + scratch wipe
+    Unprovisioned --> Provisioned: confirm backup + root material stored
+    Unprovisioned --> Unprovisioned: cancel/timeout/failure + scratch wipe
     Unprovisioned --> Provisioning: future persistent setup step
     Provisioning --> Unprovisioned: cancel_provisioning + physical approval
     Provisioning --> Provisioned: future setup complete, root material stored
     Provisioned --> Locked: future local lock condition
     Locked --> Provisioned: future local unlock
-    Provisioned --> Unprovisioned: future factory reset or reprovisioning
+    Provisioned --> Unprovisioned: factory_reset + physical approval
 
     Unprovisioned: get_status, identify_device
     Unprovisioned: start_provisioning
     Unprovisioned: cancel_provisioning and confirm_recovery_phrase_backup while mnemonic UI scratch is active
-    Provisioning: get_status, connect, disconnect
+    Provisioning: get_status
     Provisioning: cancel_provisioning
     Provisioned: get_status, identify_device, connect, disconnect
+    Provisioned: factory_reset
     Provisioned: get_capabilities, get_accounts, call_method
     Locked: get_status, identify_device, unlock flow
 ```
 
-Current StackChan CoreS3 mnemonic UI flow keeps the persistent state
+Current StackChan CoreS3 persistent root material flow starts from
 `unprovisioned`. It generates recovery phrase scratch in RAM, displays only
 up-to-4-letter BIP-39 word prefixes on the device in a 3-column by 4-row grid,
+stores the binary BIP-39 root entropy only after physical backup confirmation,
 and wipes scratch on confirmation, cancellation, timeout, failure, or display
-expiry. Three-letter BIP-39 words are displayed as the full word. The
-`provisioning`, `provisioned`, and `locked` states remain design
-targets for later persistent setup and must not be reported until their required
-storage and unlock models exist.
+expiry. Three-letter BIP-39 words are displayed as the full word.
+`provisioned` may be reported only when the persisted state and stored root
+material both exist. `locked` remains a design target until an unlock model
+exists.
+
+If persisted state and stored root material disagree, Firmware reports device
+`error` and fails closed for normal setup and session requests. `factory_reset`
+is the recovery path for that consistency-error condition: after physical
+approval, Firmware erases root material, clears volatile scratch and RAM
+sessions, persists `unprovisioned`, and clears the error only after storage
+cleanup succeeds.
+
+## State Layers And Owners
+
+Agent-Q separates product state from target-local runtime state. Product state
+is common across hardware targets. Target-local runtime state may differ by
+hardware and must be documented in each target's `SPEC.md`.
+
+| Layer | Examples | Owner | May gate protocol APIs? |
+|---|---|---|---:|
+| Persistent device state | provisioning state, stored root material, policy, account availability | Firmware | Yes |
+| Volatile sensitive scratch | generated recovery phrase, setup entropy, pending backup confirmation | Firmware | Yes |
+| Pending approval state | active physical approval request, timeout, requested action | Firmware | Yes |
+| Runtime session state | active protocol session id and expiry | Firmware; Gateway mirrors its own client session state | Yes |
+| Target-local display state | screen on/off, brightness, screensaver replacement | Firmware target display module | No |
+| Target-local posture state | servo position, haptics, LEDs, temporary expression feedback | Firmware target UI/motion module | No |
+| UI object lifetime | speech bubble, modal, setup panel, decorator id | Firmware target UI module | No |
+
+UI objects, display power, avatar expressions, servo movement, LEDs, and sounds
+may represent or notify about product state. They must not be the source of
+truth for provisioning, sessions, accounts, policy, signing, sensitive scratch,
+or pending approval.
 
 ## Product States
 
@@ -88,9 +119,9 @@ Rejected:
 - signing
 - external evidence or price fetch
 
-Current mnemonic UI setup is a volatile substate under `unprovisioned`, not a
-claim that provisioning is complete. The host never receives the phrase or its
-up-to-4-letter prefixes.
+Current mnemonic setup is a volatile substate under `unprovisioned` until the
+user physically confirms backup and Firmware stores root material. The host
+never receives the phrase or its up-to-4-letter prefixes.
 
 ### `provisioning`
 
@@ -100,8 +131,6 @@ Allowed:
 
 - `get_status`
 - `identify_device` only when it does not disrupt setup UI
-- `connect`
-- `disconnect`
 - `cancel_provisioning`
 
 Rejected:
@@ -119,14 +148,16 @@ Current StackChan CoreS3 source limits recovery phrase scratch material to RAM
 and tracks it with a volatile substate: `none`, `displayed`, or
 `backup_confirmation_pending`. That scratch substate is separate from the
 persistent `provisioning.state`, pending approval state, and UI panel state.
-The source keeps `provisioning.state` at `provisioning`; it does not store root
-material or report `provisioned`. This is reserved for later persistent setup;
-the current StackChan CoreS3 mnemonic UI slice resets stale `provisioning`
-state to `unprovisioned` and does not enter this state.
+The current StackChan CoreS3 persistent root material slice resets stale
+`provisioning` state to `unprovisioned` when no valid root material exists and
+does not enter this state for the normal generate-and-confirm flow.
 
 ### `provisioned`
 
-Root signing material exists.
+Root signing material exists in device-local storage. In the current StackChan
+CoreS3 DEV_PROFILE implementation this means a binary BIP-39 entropy blob is
+stored in NVS and `prov_state` is `provisioned`; account derivation, signing,
+policy, and USER_PROFILE secure storage gates are still separate work.
 
 Allowed:
 
@@ -134,13 +165,13 @@ Allowed:
 - `identify_device`
 - `connect`
 - `disconnect`
-- `get_capabilities`
-- `get_accounts`
-- `call_method`
-- policy read/update according to Firmware policy-update authorization
+- `get_capabilities`, `get_accounts`, `call_method`, and policy read/update
+  only after those protocol surfaces are implemented
 
 This state is not blanket signing approval. Policy still decides whether each
-request signs, rejects, or asks.
+request signs, rejects, or asks. In the current StackChan CoreS3
+implementation, `provisioned` restores only `connect` and `disconnect`;
+accounts, policy, and signing remain unavailable.
 
 ### `locked`
 
@@ -167,11 +198,12 @@ This state is reserved until an unlock model is implemented.
 |---|---:|---:|---:|---:|---|
 | `get_status` | O | O | O | O | Firmware |
 | `identify_device` | O | O* | O | O | Firmware |
-| `connect` | X | O | O | TBD | Firmware |
-| `disconnect` | X | O | O | O | Firmware |
+| `connect` | X | X | O | TBD | Firmware |
+| `disconnect` | X | X | O | O | Firmware |
 | `start_provisioning` | O | X | X | X | Firmware |
 | `cancel_provisioning` | O* | O | X | X | Firmware |
 | `confirm_recovery_phrase_backup` | O* | X | X | X | Firmware |
+| `factory_reset` | O | O | O | TBD | Firmware |
 | `get_capabilities` | X | X | O | X | Firmware |
 | `get_accounts` | X | X | O | X | Firmware |
 | `call_method` | X | X | O | X | Firmware |
@@ -181,6 +213,9 @@ This state is reserved until an unlock model is implemented.
 `O*`: allowed only while volatile mnemonic setup scratch or its confirmation
 prompt is active. Other `O` operations may still return `busy` while a physical
 approval prompt or device-only setup material display is active.
+`factory_reset` is also allowed from Firmware's internal consistency-error
+state even though that error state is reported as `device.state = error`, not as
+a separate `provisioning.state` value.
 
 Gateway may hide unavailable operations, but Firmware must still reject them.
 
@@ -198,11 +233,9 @@ Boot
 -> generate mnemonic on device
 -> show up-to-4-letter prefixes once on device
 -> user confirms backup or cancels
+-> if confirmed, store root material locally
+-> only after storage succeeds, provisioned
 -> wipe volatile scratch
--> still unprovisioned
--> future persistent root material storage step
--> store root material
--> provisioned
 -> ready
 ```
 
@@ -241,6 +274,38 @@ Rules:
 - Temporary UI should close and return control to the previous device mode when
   possible.
 - Read-only requests must not open physical approval UI.
+
+## Target-Local Display Power State
+
+Display power state is not product state and must not gate protocol APIs,
+provisioning, sessions, accounts, policy, or signing. It only controls whether
+the local screen, backlight, or equivalent display surface is active.
+
+Display power states:
+
+- `screen_active`: backlight is on.
+- `screen_off`: backlight is off; Firmware and protocol state continue running.
+
+`screen_off` must not clear provisioning scratch, pending approvals, sessions,
+or root material. Those states are owned by their explicit Firmware modules.
+Agent-Q request UI should wake the screen before showing setup material,
+notifications, or physical approval prompts when the target has a screen.
+
+Hardware-specific timing, buttons, and power-off behavior are target-local. The
+current StackChan CoreS3 behavior is documented in
+`products/firmware/src/stackchan-cores3/SPEC.md`.
+
+## Target-Local Posture State
+
+Physical posture is not product state and must not gate protocol APIs,
+provisioning, sessions, accounts, policy, or signing. It only controls the
+target's optional motion, LED, haptic, sound, or expression feedback.
+
+Posture changes must not clear provisioning scratch, pending approvals,
+sessions, root material, or display power state.
+Hardware-specific posture ownership and boot feedback are target-local. The
+current StackChan CoreS3 behavior is documented in
+`products/firmware/src/stackchan-cores3/SPEC.md`.
 
 ## Request Patterns
 

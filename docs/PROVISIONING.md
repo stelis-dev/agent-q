@@ -121,18 +121,20 @@ Target provisioning states:
 - `provisioned`: root signing material exists.
 - `locked`: sensitive actions require local unlock.
 
-Runtime v0 implements the current StackChan CoreS3 mnemonic UI flow while
-keeping the persistent state `unprovisioned`. It loads and reports
-`provisioning.state`, but this slice does not persist `provisioning`, does not
-store root material, and does not move to `provisioned`.
+Runtime v0 implements the current StackChan CoreS3 mnemonic UI flow and
+persistent root material slice. It loads and reports `provisioning.state`, but
+does not persist `provisioning` during the normal create-new-mnemonic flow.
+After physical backup confirmation, Firmware stores the binary BIP-39 root
+entropy in ordinary DEV_PROFILE device-local NVS and only then moves to
+`provisioned`.
 
-Runtime v0 does not import, persist, export, or derive from root signing
-material. Current StackChan CoreS3 source can generate a BIP-39 recovery phrase
-only as RAM scratch, display its up-to-4-letter word prefixes on device in a
+Runtime v0 does not import, export, derive accounts from, or sign with root
+signing material. Current StackChan CoreS3 source can generate a BIP-39 recovery
+phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
 3-column by 4-row grid, and wipe scratch on confirm, cancel, timeout, failure,
 or display expiry. Three-letter BIP-39 words are displayed as the full word.
-This is DEV_PROFILE scaffolding and is not USER_PROFILE key
-provisioning. Firmware must not set `provisioned` until root signing material
+This is DEV_PROFILE storage scaffolding and is not USER_PROFILE key
+provisioning. Firmware must not set `provisioned` unless root signing material
 exists in device-local storage. Firmware must not set `locked` until an unlock
 model exists.
 
@@ -142,12 +144,15 @@ Runtime v0 state transitions:
 stateDiagram-v2
     [*] --> Unprovisioned: boot default or stored state
     Unprovisioned --> Unprovisioned: start_provisioning approved, phrase displayed
-    Unprovisioned --> Unprovisioned: confirm/cancel/timeout/failure, scratch wiped
+    Unprovisioned --> Provisioned: backup confirmed, root material stored
+    Unprovisioned --> Unprovisioned: cancel/timeout/failure, scratch wiped
+    Provisioned --> Unprovisioned: factory_reset approved, root material erased
 
     Unprovisioned --> Unprovisioned: start rejected or timeout
 
     Unprovisioned: no root signing material
     Unprovisioned: optional volatile mnemonic setup scratch only
+    Provisioned: root material stored, accounts/signing still unavailable
 ```
 
 `start_provisioning` is valid only when persistent state is `unprovisioned` and
@@ -164,12 +169,13 @@ Current StackChan CoreS3 source enters recovery phrase setup through approved
 and do not require `sessionId`; the local setup speech bubble touch is already a physical
 device action.
 
-Approved `start_provisioning` generates a 12-word BIP-39 recovery phrase from
-an Agent-Q CSPRNG seeded from early boot entropy before HAL initialization and
-BIP-39 checksum logic. Firmware stores the phrase only in RAM and displays only
-the up-to-4-letter word prefixes on the device. Three-letter BIP-39 words are
-displayed as the full word. The prefixes are shown as 12 numbered cells in 3
-columns by 4 rows so they fit on one StackChan CoreS3 screen. BIP-39 English
+Approved `start_provisioning` generates 128-bit BIP-39 root entropy from an
+Agent-Q CSPRNG seeded from early boot entropy before HAL initialization, then
+uses BIP-39 checksum logic to render a 12-word recovery phrase. Firmware keeps
+the root entropy and phrase only in RAM until backup confirmation and displays
+only the up-to-4-letter word prefixes on the device. Three-letter BIP-39 words
+are displayed as the full word. The prefixes are shown as 12 numbered cells in
+3 columns by 4 rows so they fit on one StackChan CoreS3 screen. BIP-39 English
 word prefixes identify the words and are secret material; Gateway never
 receives them. The response reports only `recovery_phrase_result` with status
 `displayed` and `provisioning.state = unprovisioned`. The response never
@@ -186,10 +192,13 @@ wiping or invalidating the phrase.
 `confirm_recovery_phrase_backup` is accepted only after a phrase has been
 displayed. Accepting the request moves the scratch substate from `displayed` to
 `backup_confirmation_pending`; approval, rejection, or timeout always wipes the
-volatile phrase and returns the scratch substate to `none`. In this v0 slice,
-approval leaves the device `unprovisioned`; it does not persist root material
-and does not move to `provisioned`. Rejection or timeout also wipes the volatile
-phrase, so the user must generate a new phrase to continue.
+volatile phrase and returns the scratch substate to `none`. On approval,
+Firmware first stores the binary root entropy, then persists
+`provisioning.state = provisioned`, then wipes volatile scratch. If root
+material storage or state persistence fails, Firmware wipes volatile scratch,
+returns `storage_error`, and must not report `provisioned`. Rejection or timeout
+also wipes the volatile phrase, so the user must generate a new phrase to
+continue.
 
 The recovery phrase is backup-ready only while its device display is still the
 active setup UI. If that display is removed or replaced, Firmware wipes or
@@ -208,10 +217,19 @@ interrupted a recovery phrase display. If the user rejects cancellation or the
 cancel approval times out, the persistent state remains `unprovisioned`, but
 the displayed phrase is gone and must not be treated as recoverable.
 
-This v0 flow deliberately stops before USER_PROFILE key storage. Real user
-signing material remains blocked by the security-profile gates in
-`docs/SECURITY_MODEL.md`: secure firmware profile, encrypted storage, verified
-RNG readiness, destructive hardware rehearsal, and hardware smoke.
+This v0 flow deliberately stops before accounts, policy, signing, and
+USER_PROFILE secure provisioning. USER_PROFILE signing material remains blocked
+by the security-profile gates in `docs/SECURITY_MODEL.md`: secure firmware
+profile, encrypted storage, verified RNG readiness, destructive hardware
+rehearsal, and hardware smoke.
+
+`factory_reset` is the destructive recovery path for this DEV_PROFILE storage
+slice. It requires physical approval, clears any RAM session, wipes volatile
+setup scratch, erases the stored root entropy blob, persists
+`provisioning.state = unprovisioned`, and is also valid when Firmware has failed
+closed because stored state and root material disagree. If erase or state
+persistence fails, Firmware returns `storage_error` and must not claim reset
+success.
 
 ## Implementation Order
 
@@ -221,19 +239,17 @@ Recommended first slice:
 2. Add setup-step messages that still store no persistent assets.
 3. Add DEV_PROFILE BIP-39 recovery phrase display with volatile wipe and no
    host exposure.
-4. Add USER_PROFILE storage and backup confirmation only after the secure
-   profile gates pass.
+4. Add DEV_PROFILE persistent root material storage after backup confirmation.
 5. Add Sui Ed25519 account derivation.
 6. Add `get_accounts`.
 7. Add Sui `sign_personal_message`.
 
 Do not jump directly from mnemonic generation to user transaction signing.
 
-Current implementation status: step 1 is implemented as provisioning status
-reporting without signing readiness. Step 2 is implemented as the current
-StackChan CoreS3 mnemonic UI source plus Gateway protocol parsing; hardware
-smoke is still required. Mnemonic import, persistent root storage, account
-derivation, and signing APIs are not implemented.
+Current implementation status: steps 1 through 4 are implemented for the
+StackChan CoreS3 DEV_PROFILE source path, with hardware smoke still required.
+Mnemonic import, account derivation, signing APIs, policy, and USER_PROFILE
+secure provisioning are not implemented.
 
 ## Completion Criteria
 

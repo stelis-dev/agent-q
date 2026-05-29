@@ -22,10 +22,12 @@ This document tracks implementation status only. The wire protocol is defined in
 |---|---:|---|
 | `get_status` | O | Implemented by the current StackChan CoreS3 target and used by Gateway discovery. |
 | Provisioning status reporting | O | `get_status` includes `provisioning.state`; Gateway parses and preserves it. This is not signing readiness. |
-| Mnemonic UI flow v0 | △ | `start_provisioning` or the local setup speech bubble generates a DEV_PROFILE BIP-39 phrase into RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and keeps persistent state `unprovisioned`. Three-letter BIP-39 words are displayed as the full word. `confirm_recovery_phrase_backup` and `cancel_provisioning` wipe volatile scratch. Gateway parser tests cover host-side shape and strict rejection of unsupported recovery phrase response fields. Hardware smoke is still required. |
+| Mnemonic UI flow v0 | △ | `start_provisioning` or the local setup speech bubble generates a DEV_PROFILE BIP-39 phrase into RAM from an early-boot-seeded Agent-Q CSPRNG and displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid. Three-letter BIP-39 words are displayed as the full word. `confirm_recovery_phrase_backup` stores root material after physical confirmation and wipes volatile scratch; `cancel_provisioning` wipes volatile scratch. Gateway parser tests cover host-side shape and strict rejection of unsupported recovery phrase response fields. Hardware smoke is still required. |
+| Persistent root material | △ | StackChan CoreS3 source stores the confirmed BIP-39 root entropy as an ordinary DEV_PROFILE NVS blob and reports `provisioned` only when that blob and `prov_state=provisioned` agree. This is not USER_PROFILE encrypted storage. Hardware smoke is still required. |
+| Factory reset / root wipe | △ | StackChan CoreS3 source adds a physical-approval `factory_reset` path that clears RAM sessions, wipes volatile setup scratch, erases the DEV_PROFILE root entropy blob, persists `unprovisioned`, and recovers from root/state consistency error. Hardware smoke is still required. |
 | `identify_device` | O | Implemented as temporary device UI for explicit user selection. |
-| `connect` | △ | Protocol and Gateway parser support exist, but the current StackChan CoreS3 mnemonic UI slice returns `invalid_state` until persistent root material and `provisioned` exist. |
-| `disconnect` | △ | Protocol and Gateway parser support exist. The current StackChan CoreS3 mnemonic UI slice has no active Firmware sessions because `connect` is unavailable, so the target returns `invalid_session` after validating the request envelope. |
+| `connect` | △ | Protocol and Gateway parser support exist. StackChan CoreS3 source restores provisioned-only Firmware sessions after persistent root material exists. Hardware smoke is still required. |
+| `disconnect` | △ | Protocol and Gateway parser support exist. StackChan CoreS3 source clears a matching active Firmware session after `provisioned`. Hardware smoke is still required. |
 | `get_capabilities` | X | Designed session-scoped request; not implemented. |
 | `get_accounts` | X | Designed session-scoped request; not implemented. |
 | `call_method` | X | Designed session-scoped dispatch for all chains and methods; not implemented. |
@@ -45,6 +47,7 @@ This document tracks implementation status only. The wire protocol is defined in
 | Cached device status | O | Exposed only for previously seen devices and marked non-live. |
 | Provisioning transition parser | O | Gateway can build and parse provisioning transition protocol messages. `start_provisioning` success is a recovery phrase display result in the current mnemonic UI flow. It does not expose a provisioning write MCP tool. |
 | Recovery phrase setup parser | O | Gateway can parse recovery phrase setup results and rejects recovery phrase responses that carry unsupported fields or secret material. It does not expose these requests as MCP tools. |
+| Factory reset parser | O | Gateway can build and parse the physical-approval `factory_reset` protocol messages. It does not expose this destructive request as a normal MCP signing tool. |
 | MCP output sanitization | O | Tool outputs and public errors are schema-bounded before reaching clients. |
 | Admin Page | X | Intended Gateway capability; not implemented. |
 | Firmware update/admin command path | X | Not exposed through MCP. |
@@ -60,7 +63,7 @@ Current MCP tools:
 | `get_device_status` | O | Returns live or clearly marked cached status. |
 | `list_devices` | O | Lists Gateway-known devices and local metadata. |
 | `set_device_metadata` | O | Sets or clears local label. |
-| `connect_device` | △ | Gateway tool exists, but the current StackChan CoreS3 mnemonic UI slice returns `invalid_state` until persistent root material and `provisioned` exist. |
+| `connect_device` | △ | Gateway tool exists. StackChan CoreS3 source accepts Firmware `connect` only after persistent root material and `provisioned` exist; hardware smoke is still required. |
 | `disconnect_device` | △ | Ends a runtime session or clears stale local session state when a session exists. |
 
 ## Firmware Targets
@@ -70,17 +73,20 @@ Current MCP tools:
 | USB transport | O | X | X | StackChan CoreS3 target is the only implemented firmware target. |
 | Persistent `deviceId` | O | X | X | Stored in device-local NVS for the implemented target. |
 | `get_status` | O | X | X | Common protocol request. |
-| Provisioning status reporting | △ | X | X | StackChan CoreS3 firmware reports `unprovisioned` for the current mnemonic UI slice. Hardware smoke is still required. |
-| Mnemonic UI flow v0 | △ | X | X | StackChan CoreS3 source adds DEV_PROFILE 12-word BIP-39 recovery phrase generation into RAM from an early-boot-seeded Agent-Q CSPRNG, device-only up-to-4-letter prefix display in 3 columns by 4 rows, volatile backup confirmation, and wipe on cancel/confirm/reject/display expiry/timeout. Hardware smoke is still required. |
+| Provisioning status reporting | △ | X | X | StackChan CoreS3 firmware source reports `unprovisioned` or material-backed `provisioned`. Hardware smoke is still required. |
+| Mnemonic UI flow v0 | △ | X | X | StackChan CoreS3 source adds DEV_PROFILE 12-word BIP-39 recovery phrase generation into RAM from an early-boot-seeded Agent-Q CSPRNG, device-only up-to-4-letter prefix display in 3 columns by 4 rows, persistent root material storage on confirmed backup, and wipe on cancel/confirm/reject/display expiry/timeout. Hardware smoke is still required. |
 | `identify_device` | O | X | X | Uses temporary avatar speech bubble on StackChan CoreS3. |
-| `connect` physical approval | △ | X | X | Protocol support exists, but the current target returns `invalid_state` before `provisioned` exists. |
-| `disconnect` | △ | X | X | Protocol support exists, but the current target has no active Firmware session path before `provisioned`; matching-session disconnect is future work. |
+| `connect` physical approval | △ | X | X | StackChan CoreS3 source supports physical approval only after material-backed `provisioned`; before that it returns `invalid_state`. Hardware smoke is still required. |
+| `disconnect` | △ | X | X | StackChan CoreS3 source clears a matching active Firmware session after `provisioned`. Hardware smoke is still required. |
+| `factory_reset` | △ | X | X | StackChan CoreS3 source supports physical-approval wipe back to `unprovisioned`, including material/state consistency-error recovery. Hardware smoke is still required. |
 | Request/result UI | O | X | X | StackChan CoreS3 uses Agent-Q-owned avatar speech bubble and top decision strip. |
+| Display power control | O | X | X | StackChan CoreS3 turns the screen backlight off after one minute of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. |
+| Boot posture | O | X | X | StackChan CoreS3 centers yaw and raises pitch when the default avatar is attached at boot. |
 | Per-request `ask` approval | X | N/A | X | Not implemented for signing requests because signing requests are not implemented. |
 | Automatic `sign` / `reject` policy action | X | X | X | Requires policy evaluator and signing method support. |
-| Persistent signing material | X | X | X | Current signing code is only a boot-time self-test with a temporary seed. |
+| Persistent signing material | △ | X | X | StackChan CoreS3 source stores DEV_PROFILE BIP-39 root entropy after backup confirmation. It does not derive accounts or sign. |
 | Policy storage | X | X | X | Not implemented. |
-| Provisioning flow | △ | X | X | DEV_PROFILE mnemonic UI source exists for StackChan CoreS3 and deliberately leaves the device `unprovisioned`. Mnemonic import, persistent root storage, account derivation, and key storage are not implemented. |
+| Provisioning flow | △ | X | X | DEV_PROFILE mnemonic UI and persistent root material storage source exists for StackChan CoreS3. Mnemonic import, account derivation, signing use, and USER_PROFILE secure provisioning are not implemented. |
 | Secure user profile | X | X | X | Secure Boot, Flash Encryption, anti-rollback, and provisioning flow are documented but not implemented. |
 | StackChan/Xiaozhi remote AI runtime | N/A | N/A | N/A | Disabled in the Agent-Q StackChan build; not part of Agent-Q signing firmware. |
 | Camera / remote upload surfaces | N/A | N/A | N/A | Disabled in the Agent-Q StackChan build. |
@@ -124,12 +130,12 @@ session-scoped `call_method` protocol.
 | State model document | O | See `docs/STATE_MODEL.md`. It defines product states, state-gated protocol functions, and responsibility boundaries. |
 | Provisioning flow document | O | See `docs/PROVISIONING.md`. USER_PROFILE mnemonic/key provisioning is not implemented. |
 | Provisioning status reporting | O | Firmware reports `provisioning.state`; Gateway exposes it without treating it as signing readiness. |
-| Mnemonic UI flow v0 | △ | StackChan CoreS3 source adds DEV_PROFILE BIP-39 recovery phrase generation from an early-boot-seeded Agent-Q CSPRNG and device-only up-to-4-letter prefix display while keeping persistent state `unprovisioned`. It stores no seed, private key, account, or policy, and does not move to `provisioned`. Hardware smoke is still required. |
+| Mnemonic UI flow v0 | △ | StackChan CoreS3 source adds DEV_PROFILE BIP-39 recovery phrase generation from an early-boot-seeded Agent-Q CSPRNG, device-only up-to-4-letter prefix display, and confirmed root material storage. It stores no mnemonic text, private key, account, or policy. Hardware smoke is still required. |
 | Deny-by-default policy model | △ | Documented target behavior; evaluator not implemented. |
 | Policy evaluator | X | Not implemented. |
 | Policy storage | X | Not implemented. |
 | Policy update authorization | X | Not implemented. |
-| Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display source exists for StackChan CoreS3. Mnemonic import, USER_PROFILE persistent root storage, account derivation, and signing use remain unimplemented. |
+| Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display and persistent root material storage source exists for StackChan CoreS3. Mnemonic import, USER_PROFILE secure root storage, account derivation, and signing use remain unimplemented. |
 | Request replay protection | X | Not implemented. |
 | Secure Boot profile | X | Documented target behavior; not implemented. |
 | Flash Encryption profile | X | Documented target behavior; not implemented. |

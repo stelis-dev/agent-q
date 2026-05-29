@@ -37,29 +37,34 @@ Implemented today:
 
 - USB device discovery, status handshake, and identification.
 - Gateway-local device selection and registry (labels, purpose routing).
-- A connect/disconnect runtime session held only in Gateway memory.
+- A connect/disconnect runtime session held in Firmware RAM after
+  material-backed `provisioned` state. The session does not authorize signing.
 - A physical approval modal on the StackChan CoreS3 target for `connect`: the
   user accepts or rejects on the device's screen.
-- A device-local provisioning state flag on the StackChan CoreS3 target. It can
-  move between `unprovisioned` and `provisioning` only after physical approval.
-  This is not signing readiness and stores no mnemonic, seed, private key,
-  account, or policy.
+- A material-backed provisioning state on the StackChan CoreS3 target. It
+  reports `provisioned` only when the persisted state and valid DEV_PROFILE root
+  entropy blob both exist. This is not signing readiness and stores no account
+  or policy. The current build stores that DEV_PROFILE root entropy in ordinary
+  NVS; Secure Boot, Flash Encryption, and NVS Encryption are not configured.
 - A DEV_PROFILE recovery phrase setup path in StackChan CoreS3 source. It can
-  generate a BIP-39 recovery phrase into RAM from an Agent-Q CSPRNG seeded from
-  early boot entropy while `provisioning`, display it on the device only, and
-  wipe it on cancel, confirmation, rejection, display expiry, or timeout.
-  Firmware build passes, hardware smoke is still required, and this is not
-  USER_PROFILE key provisioning.
+  generate BIP-39 root entropy into RAM from an Agent-Q CSPRNG seeded from
+  early boot entropy, display only up-to-4-letter word prefixes on the device,
+  store the root entropy after physical backup confirmation, and wipe volatile
+  scratch on cancel, confirmation, rejection, display expiry, or timeout.
+  Firmware build verification is required for each change, hardware smoke is
+  still required, and this is not USER_PROFILE key provisioning.
+- A physical-approval `factory_reset` source path for StackChan CoreS3 that
+  erases the DEV_PROFILE root entropy blob, clears RAM session/setup scratch,
+  persists `unprovisioned`, and recovers from material/state consistency error.
+  Hardware smoke is still required.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
 Designed but not implemented (do not treat as present):
 
-- Persistent signing keys and on-device key generation.
+- USER_PROFILE persistent signing keys and on-device key generation.
 - Key import.
 - USER_PROFILE first-install mnemonic generation or import.
-- Persistent root-material storage and backup-confirmed transition to
-  `provisioned`.
 - zkLogin signing material.
 - Policy storage and evaluation.
 - Account and public-key discovery.
@@ -161,6 +166,8 @@ DEV_PROFILE - the default development path:
 - Free, reversible flashing and debugging.
 - Test signing material only; no real assets.
 - No Secure Boot or Flash Encryption requirement.
+- Current StackChan CoreS3 DEV_PROFILE root entropy persistence uses ordinary
+  NVS unless the platform build is separately configured for encrypted storage.
 - Makes no security claim. Tools and docs must show a "do not use with real
   assets" warning.
 

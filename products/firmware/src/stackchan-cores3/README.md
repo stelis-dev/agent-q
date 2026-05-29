@@ -20,14 +20,19 @@ The current implementation includes:
   physical approval UI.
 - a USB JSONL `identify_device` request that shows a short temporary code over
   the current screen and then returns to the previous device state.
-- protocol error handling for `connect` and `disconnect`. The current target
-  returns `invalid_state` for `connect` before persistent root material and
-  `provisioned` exist, so it has no active Firmware session path in this slice.
+- protocol handling for `connect` and `disconnect`. The current target accepts
+  `connect` only after material-backed `provisioned` state and physical
+  approval. Firmware sessions are RAM-only and do not authorize signing.
 - USB JSONL mnemonic UI requests for `start_provisioning`,
   `cancel_provisioning`, and `confirm_recovery_phrase_backup`.
-  `start_provisioning` generates a DEV_PROFILE BIP-39 phrase only in RAM,
+  `start_provisioning` generates DEV_PROFILE BIP-39 root entropy in RAM,
   displays only the up-to-4-letter word prefixes on device in a 3-column by
-  4-row grid, and does not persist root material or move to `provisioned`.
+  4-row grid, and stores the root entropy only after physical backup
+  confirmation.
+- a USB JSONL `factory_reset` request that requires physical approval, clears
+  RAM sessions and volatile setup scratch, erases the DEV_PROFILE root entropy
+  blob, persists `unprovisioned`, and recovers from material/state consistency
+  errors.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP
@@ -38,16 +43,20 @@ The current implementation includes:
   visible, the upstream default speech bubble is hidden by default, and Agent-Q
   requests use an Agent-Q-owned speech-bubble decorator with state-specific
   colors plus a small confirmation strip when physical input is required.
+- target-local display-power handling that turns the screen backlight off after
+  one minute of inactivity, wakes for Agent-Q request UI, toggles display power
+  on side-button short press, and powers off on side-button long press.
+- StackChan-specific boot posture feedback that centers yaw and raises pitch
+  after the default avatar is attached.
 
-Runtime Firmware sessions are future work for this target. Gateway protocol
-support still exists, but this mnemonic UI slice does not create session ids.
-Sessions do not authorize signing when they are added later.
+Runtime Firmware sessions are implemented only as RAM-held protocol sessions
+after material-backed provisioning. Sessions do not authorize signing.
 
-This is not the signing product yet. It does not persist keys, store policies,
-parse signable transactions, expose MCP directly, or apply signing policy. The
-only persisted values in this target implementation are the protocol `deviceId`
-used by Gateway for reconnect hints and the provisioning state flag; the current
-mnemonic UI flow keeps that state `unprovisioned`.
+This is not the signing product yet. It does not derive accounts, store
+policies, parse signable transactions, expose MCP directly, or apply signing
+policy. The persisted values in this target implementation are the protocol
+`deviceId`, provisioning state flag, and DEV_PROFILE root entropy blob after
+backup confirmation.
 
 Agent-Q firmware is intentionally not a general StackChan AI firmware. It does
 not include StackChan World login, Xiaozhi cloud sessions, camera upload, screen
@@ -116,18 +125,21 @@ In the hardware firmware tree:
 
 ## Persistent Storage
 
-This target stores the protocol `deviceId` and provisioning state in NVS
-namespace `agent_q`.
+This target stores the protocol `deviceId`, provisioning state, and DEV_PROFILE
+root entropy in NVS namespace `agent_q`.
 
 | Key | Purpose |
 |---|---|
 | `device_id` | Gateway reconnect and device-selection identity |
-| `prov_state` | Provisioning state flag; current mnemonic UI flow keeps it `unprovisioned` |
+| `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy present |
+| `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
 
-Recovery phrase setup v0 stores generated phrase text only in RAM, displays only
-up-to-4-letter prefixes on device, and wipes the phrase on cancel, backup
-confirmation, rejection, display expiry, timeout, or firmware restart. Three-
-letter BIP-39 words are displayed as the full word.
+Recovery phrase setup v0 stores generated phrase text only in RAM, displays
+only up-to-4-letter prefixes on device, and wipes the phrase on cancel, backup
+confirmation, rejection, display expiry, timeout, or firmware restart.
+Backup-confirmed root entropy is stored as DEV_PROFILE scaffolding only; this
+build does not enable USER_PROFILE encrypted storage. Three-letter BIP-39 words
+are displayed as the full word.
 
 Agent-Q-owned modules are sources under `agent_q/` in this target tree. These
 modules may share the `agent_q` namespace. New keys should be named by feature,

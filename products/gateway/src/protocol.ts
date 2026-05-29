@@ -111,6 +111,15 @@ export interface ConfirmRecoveryPhraseBackupRequest {
   };
 }
 
+export interface FactoryResetRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "factory_reset";
+  params: {
+    approvalTimeoutMs: number;
+  };
+}
+
 export type ProtocolRequest =
   | GetStatusRequest
   | IdentifyDeviceRequest
@@ -118,7 +127,8 @@ export type ProtocolRequest =
   | DisconnectRequest
   | StartProvisioningRequest
   | CancelProvisioningRequest
-  | ConfirmRecoveryPhraseBackupRequest;
+  | ConfirmRecoveryPhraseBackupRequest
+  | FactoryResetRequest;
 
 export interface StatusResponse {
   id: string;
@@ -183,6 +193,14 @@ export interface RecoveryPhraseResponse {
   provisioning: ProvisioningStatus;
 }
 
+export interface FactoryResetResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "factory_reset_result";
+  status: "reset";
+  provisioning: ProvisioningStatus;
+}
+
 export interface ProtocolErrorResponse {
   id?: string;
   version: typeof PROTOCOL_VERSION;
@@ -200,6 +218,7 @@ export type ProtocolResponse =
   | DisconnectResponse
   | ProvisioningResponse
   | RecoveryPhraseResponse
+  | FactoryResetResponse
   | ProtocolErrorResponse;
 
 export class ProtocolError extends Error {
@@ -331,6 +350,22 @@ export function makeConfirmRecoveryPhraseBackupRequest(
     id,
     version: PROTOCOL_VERSION,
     type: "confirm_recovery_phrase_backup",
+    params: {
+      approvalTimeoutMs,
+    },
+  };
+}
+
+export function makeFactoryResetRequest(
+  approvalTimeoutMs: number = DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS,
+  id = createRequestId(),
+): FactoryResetRequest {
+  validateRequestId(id);
+  validateApprovalTimeoutMs(approvalTimeoutMs);
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "factory_reset",
     params: {
       approvalTimeoutMs,
     },
@@ -524,14 +559,41 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     if (provisioning === null) {
       throw new ProtocolError("protocol_error", "Recovery phrase response state is malformed.");
     }
-    if (provisioning.state !== "unprovisioned") {
-      throw new ProtocolError("protocol_error", "Recovery phrase response requires unprovisioned state.");
+    const expectedState = value.status === "displayed" ? "unprovisioned" : "provisioned";
+    if (provisioning.state !== expectedState) {
+      throw new ProtocolError("protocol_error", "Recovery phrase response status and state disagree.");
     }
     return {
       id: value.id,
       version: PROTOCOL_VERSION,
       type: "recovery_phrase_result",
       status: value.status,
+      provisioning,
+    };
+  }
+
+  if (value.type === "factory_reset_result") {
+    if (typeof value.id !== "string" || value.status !== "reset") {
+      throw new ProtocolError("protocol_error", "Factory reset response is malformed.");
+    }
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "provisioning"])) {
+      throw new ProtocolError("protocol_error", "Factory reset response contains unsupported fields.");
+    }
+    if (!isRecord(value.provisioning) || !hasOnlyObjectKeys(value.provisioning, ["state"])) {
+      throw new ProtocolError("protocol_error", "Factory reset response state is malformed.");
+    }
+    const provisioning = sanitizeProvisioningStatus(value.provisioning);
+    if (provisioning === null) {
+      throw new ProtocolError("protocol_error", "Factory reset response state is malformed.");
+    }
+    if (provisioning.state !== "unprovisioned") {
+      throw new ProtocolError("protocol_error", "Factory reset response requires unprovisioned state.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "factory_reset_result",
+      status: "reset",
       provisioning,
     };
   }
@@ -595,6 +657,16 @@ export function assertRecoveryPhraseResponse(response: ProtocolResponse): Recove
   }
   if (response.type !== "recovery_phrase_result") {
     throw new ProtocolError("protocol_error", "Protocol response type is not recovery_phrase_result.");
+  }
+  return response;
+}
+
+export function assertFactoryResetResponse(response: ProtocolResponse): FactoryResetResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "factory_reset_result") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not factory_reset_result.");
   }
   return response;
 }

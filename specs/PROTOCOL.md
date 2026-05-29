@@ -148,19 +148,21 @@ Flow rules:
   prove Firmware observed disconnect; it prevents Gateway from reusing a session
   it can no longer confirm.
 
-Implemented: `get_status`, `identify_device`, `start_provisioning`,
-`cancel_provisioning`, explicit local Gateway device selection, local Gateway
-caching of discovered devices, and a hardware diagnostic request.
+Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
+`start_provisioning`, `cancel_provisioning`, explicit local Gateway device
+selection, local Gateway caching of discovered devices, and a hardware
+diagnostic request.
 
 Source-level implementation added, with hardware smoke still pending:
-`confirm_recovery_phrase_backup`. The current StackChan CoreS3 mnemonic UI flow
-uses `start_provisioning` to generate and display setup material; it does not
-expose `generate_recovery_phrase` or the previous `provisioning_setup_check`
-boundary-check request.
+`confirm_recovery_phrase_backup` with persistent root material storage and
+`factory_reset` for physical-approval root wipe/recovery. The current StackChan
+CoreS3 mnemonic UI flow uses `start_provisioning` to generate and display setup
+material; it does not expose `generate_recovery_phrase` or the previous
+`provisioning_setup_check` boundary-check request.
 
 `connect` and `disconnect` are defined by the protocol and parsed by Gateway.
-The current StackChan CoreS3 mnemonic UI slice returns `invalid_state` for
-`connect` until persistent root material and a `provisioned` state exist.
+The current StackChan CoreS3 target accepts `connect` only after persistent root
+material and a `provisioned` state exist.
 
 `connect` and `disconnect` establish and end a runtime communication session
 between Gateway and Firmware. A connection session does not authorize signing,
@@ -244,10 +246,11 @@ Device states:
 - `locked`: device requires local unlock before sensitive actions.
 - `error`: device is running but cannot currently serve requests.
 
-The current Firmware emits `idle`, `busy`, and `awaiting_approval`. It reports
-`busy` while device-only setup material is displayed, and also uses `busy` as an
-error code for requests that cannot run while another operation owns the device
-UI. Other states are reserved for later behavior.
+The current Firmware emits `idle`, `busy`, `awaiting_approval`, and `error`. It
+reports `busy` while device-only setup material is displayed, reports `error`
+for material/state consistency failure, and also uses `busy` as an error code
+for requests that cannot run while another operation owns the device UI. Other
+states are reserved for later behavior.
 
 `deviceId` is a Firmware-generated UUID stored in device-local persistent
 storage. It must not be derived from MAC address, USB serial number, account
@@ -268,12 +271,12 @@ signing readiness, it does not prove that account or signing APIs exist, and it
 does not authorize Gateway to make policy decisions. Gateway must preserve and
 display the value without treating it as authority.
 
-The current StackChan CoreS3 target persists and reports only
-`unprovisioned` and `provisioning`. It must not report `provisioned` until root
-signing material exists, and it does not use `locked` because no unlock model is
-implemented. Source-level DEV_PROFILE recovery phrase display exists only as a
-volatile setup step. Runtime mnemonic import, persistent user signing material,
-account derivation, and signing APIs are not implemented.
+The current StackChan CoreS3 target persists and reports `unprovisioned` and
+`provisioned`. It may report `provisioned` only when `prov_state` and the
+device-local root material blob both exist. It does not use `locked` because no
+unlock model is implemented. Source-level DEV_PROFILE recovery phrase display
+and persistent root material storage exist. Runtime mnemonic import, account
+derivation, policy, and signing APIs are not implemented.
 
 Device metadata strings are untrusted input and Gateway bounds them when
 parsing a response:
@@ -289,16 +292,16 @@ parsing a response:
 
 Mnemonic UI flow v0 is a hardware-confirmation setup slice. It lets Firmware
 generate a 12-word BIP-39 recovery phrase in RAM, display up-to-4-letter word
-prefixes on the device in a 3-column by 4-row grid, and then wipe the volatile
-scratch material after confirmation, cancellation, timeout, or failure.
-Three-letter BIP-39 words are displayed as the full word.
+prefixes on the device in a 3-column by 4-row grid, store binary root material
+only after backup confirmation, and then wipe the volatile scratch material
+after confirmation, cancellation, timeout, or failure. Three-letter BIP-39 words
+are displayed as the full word.
 
-This flow is not provisioning completion. It does not store root material, does
-not derive accounts, does not install policy, does not make signing available,
-and must not report `provisioned`. The persistent provisioning state remains
-`unprovisioned` throughout this v0 slice. USER_PROFILE generation remains
-blocked until the firmware integrity and encrypted storage gates in
-`docs/SECURITY_MODEL.md` are satisfied.
+This flow completes only DEV_PROFILE root material persistence. It does not
+derive accounts, install policy, make signing available, or satisfy
+USER_PROFILE generation. USER_PROFILE generation remains blocked until the
+firmware integrity and encrypted storage gates in `docs/SECURITY_MODEL.md` are
+satisfied.
 
 Gateway must not receive the phrase, the displayed prefixes, entropy, seed,
 private key, account data, policy data, or import text. BIP-39 English word
@@ -327,10 +330,10 @@ to `none` by wiping or invalidating the volatile phrase.
 ### Start Provisioning
 
 `start_provisioning` starts the current mnemonic UI flow from `unprovisioned`.
-After physical approval, Firmware generates the BIP-39 phrase from its secure
-RNG, stores it only in RAM, and displays only the up-to-4-letter prefixes on the
-device. It does not persist `provisioning`, and it does not return a
-`provisioning_result` on success in this v0 slice.
+After physical approval, Firmware generates BIP-39 root entropy from its secure
+RNG, renders the BIP-39 phrase in RAM, and displays only the up-to-4-letter
+prefixes on the device. It does not persist `provisioning`, and it does not
+return a `provisioning_result` on success in this v0 slice.
 
 Request:
 
@@ -428,9 +431,9 @@ source state and setup-step guards before request parameters such as
 `invalid_state` without showing approval UI.
 
 Canceling provisioning wipes setup scratch state before reporting success and
-must not return it to the host. Legacy targets that still persist a
-`provisioning` flag must set it back to `unprovisioned`; the current StackChan
-CoreS3 mnemonic UI flow already keeps the persistent state `unprovisioned`.
+must not return it to the host. It does not erase already-confirmed root
+material; once the device is `provisioned`, use `factory_reset` to erase local
+root material and return to `unprovisioned`.
 
 While a provisioning approval UI is active, Firmware should return `busy` for
 new UI-affecting or session-changing requests. `get_status` remains read-only
@@ -474,16 +477,18 @@ Approved backup confirmation response:
   "type": "recovery_phrase_result",
   "status": "confirmed",
   "provisioning": {
-    "state": "unprovisioned"
+    "state": "provisioned"
   }
 }
 ```
 
-In v0, backup confirmation wipes the volatile phrase and still leaves the
-device `unprovisioned`; it is not proof that root material was persisted.
-If the user rejects or approval times out, Firmware returns the common `error`
-shape with `rejected` or `timeout` and wipes the volatile phrase. The user must
-start again to generate a new phrase.
+In v0, backup confirmation stores root material first, then persists
+`provisioned`, then wipes the volatile phrase. If root material storage or
+state persistence fails, Firmware returns `storage_error`, wipes volatile
+scratch, and must not report `provisioned`. If the user rejects or approval
+times out, Firmware returns the common `error` shape with `rejected` or
+`timeout` and wipes the volatile phrase. The user must start again to generate a
+new phrase.
 Accepting a backup confirmation request transitions `displayed` to
 `backup_confirmation_pending`; approval, rejection, or timeout transitions
 `backup_confirmation_pending` to `none` and always wipes the phrase.
@@ -506,6 +511,58 @@ confirmation prompt that replaced a visible recovery phrase display after
 validating `confirm_recovery_phrase_backup`; that prompt owns the
 `backup_confirmation_pending` substate and must end by confirming and wiping the
 phrase, or by rejecting/timing out and wiping it.
+
+## Factory Reset
+
+`factory_reset` is a destructive Firmware-owned recovery path. It requires
+physical approval and is valid even when Firmware is in an internal
+root-material/provisioning-state consistency error, because that error state is
+one of the reasons a reset is needed.
+
+Request:
+
+```json
+{
+  "id": "req_factory_reset_001",
+  "version": 1,
+  "type": "factory_reset",
+  "params": {
+    "approvalTimeoutMs": 30000
+  }
+}
+```
+
+Request rules:
+
+- `approvalTimeoutMs` is a positive integer with maximum `60000`.
+- Default `approvalTimeoutMs` when omitted is `30000`.
+- The request carries no mnemonic, seed, private key, import text, account
+  data, or policy data.
+- Firmware must reject it with `busy` while another physical approval is
+  pending or device-only setup material is active.
+- Firmware must not expose root material, mnemonic text, or displayed prefixes
+  before, during, or after reset.
+
+Approved response:
+
+```json
+{
+  "id": "req_factory_reset_001",
+  "version": 1,
+  "type": "factory_reset_result",
+  "status": "reset",
+  "provisioning": {
+    "state": "unprovisioned"
+  }
+}
+```
+
+On physical approval, Firmware clears any RAM session, wipes volatile setup
+scratch, erases stored root material, persists `provisioning.state =
+unprovisioned`, and clears the consistency-error condition only after those
+operations succeed. If erasing root material or writing state fails, Firmware
+returns `storage_error` and must not report reset success. Reject and timeout
+leave persistent root material and provisioning state unchanged.
 
 ## Identify Device
 
@@ -631,6 +688,8 @@ Request:
 
 Request rules:
 
+- `connect` is valid only after Firmware reports `provisioned` from stored root
+  material.
 - `gatewayName` is a Gateway-supplied display label. It is not a security
   boundary and Firmware must not treat it as proof that the requester is
   trusted.

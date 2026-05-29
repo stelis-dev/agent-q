@@ -6,7 +6,9 @@
 #include <ArduinoJson.h>
 #include <memory>
 #include "agent_q_bip39.h"
+#include "agent_q_display_power.h"
 #include "agent_q_entropy.h"
+#include "agent_q_root_material.h"
 #include "agent_q_speech_bubble.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_err.h"
@@ -33,12 +35,17 @@ constexpr const char* kDeviceIdKey = "device_id";
 constexpr const char* kProvisioningStateKey = "prov_state";
 constexpr const char* kProvisioningStateUnprovisioned = "unprovisioned";
 constexpr const char* kProvisioningStateProvisioning = "provisioning";
+constexpr const char* kProvisioningStateProvisioned = "provisioned";
 constexpr uint32_t kDisplaySignalTimeoutMs = 30000;
 constexpr uint32_t kIdentifyDisplayDefaultMs = 10000;
 constexpr uint32_t kIdentifyDisplayMaxMs = 30000;
+constexpr uint32_t kConnectApprovalDefaultMs = 30000;
+constexpr uint32_t kConnectApprovalMaxMs = 60000;
 constexpr uint32_t kProvisioningApprovalDefaultMs = 30000;
 constexpr uint32_t kProvisioningApprovalMaxMs = 60000;
 constexpr uint32_t kRecoveryPhraseDisplayMs = kProvisioningApprovalMaxMs;
+constexpr uint32_t kSessionTtlMs = 1800000;
+constexpr uint32_t kSessionExpiryCheckMs = 5000;
 constexpr size_t kLineBufferSize = 512;
 constexpr size_t kResponseBufferSize = 512;
 constexpr size_t kMaxRequestIdSize = 80;
@@ -46,6 +53,8 @@ constexpr size_t kDeviceIdSize = 37;
 constexpr size_t kProvisioningStateSize = 16;
 constexpr size_t kIdentifyCodeSize = 5;
 constexpr size_t kSessionIdSize = 26;
+constexpr size_t kGatewayNameSize = 65;
+constexpr size_t kConnectDisplayMessageSize = 96;
 constexpr size_t kPendingDisplayMessageSize = kLineBufferSize;
 constexpr size_t kRecoveryPhrasePrefixCellCount = 12;
 constexpr size_t kRecoveryPhrasePrefixCellSize = 8;
@@ -102,6 +111,8 @@ struct AgentQUiEvent {
 enum class PendingKind {
     none,
     display_signal,
+    connect,
+    factory_reset,
     start_provisioning,
     cancel_provisioning,
     confirm_recovery_phrase_backup,
@@ -110,6 +121,7 @@ enum class PendingKind {
 enum class ProvisioningRuntimeState {
     unprovisioned,
     provisioning,
+    provisioned,
 };
 
 // Firmware-owned state is kept separate from StackChan-owned avatar/app state.
@@ -117,6 +129,7 @@ enum class ProvisioningRuntimeState {
 // references for temporary objects it created and must remove.
 struct PendingApprovalState {
     char id[kMaxRequestIdSize] = {};
+    char gateway_name[kGatewayNameSize] = {};
     char display_message[kPendingDisplayMessageSize] = {};
     bool active = false;
     bool touch_armed = false;
@@ -132,12 +145,23 @@ struct PendingApprovalState {
     void clear()
     {
         id[0] = '\0';
+        gateway_name[0] = '\0';
         display_message[0] = '\0';
         active = false;
         touch_armed = false;
         deadline = 0;
         choice = PendingChoice::none;
         kind = PendingKind::none;
+    }
+
+    void begin_connect(const char* request_id, const char* request_gateway_name, uint32_t timeout_ms)
+    {
+        clear();
+        strlcpy(id, request_id, sizeof(id));
+        strlcpy(gateway_name, request_gateway_name, sizeof(gateway_name));
+        active = true;
+        kind = PendingKind::connect;
+        deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
     }
 
     void begin_display_signal(const char* request_id, const char* message)
@@ -157,6 +181,11 @@ struct PendingApprovalState {
         active = true;
         kind = request_kind;
         deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
+    }
+
+    void begin_factory_reset(const char* request_id, uint32_t timeout_ms)
+    {
+        begin_provisioning_transition(request_id, PendingKind::factory_reset, timeout_ms);
     }
 
     void begin_recovery_phrase_step(const char* request_id, PendingKind request_kind, uint32_t timeout_ms)
@@ -189,6 +218,23 @@ struct IdentificationState {
     }
 };
 
+struct SessionState {
+    char id[kSessionIdSize] = {};
+    TickType_t expiry = 0;
+    TickType_t next_expiry_check = 0;
+
+    void clear()
+    {
+        id[0] = '\0';
+        expiry = 0;
+    }
+
+    bool active() const
+    {
+        return id[0] != '\0' && expiry != 0;
+    }
+};
+
 struct AgentQUiState {
     lv_obj_t* panel = nullptr;
     AgentQUiPanelKind panel_kind = AgentQUiPanelKind::none;
@@ -213,6 +259,7 @@ enum class RecoveryPhraseGenerationResult {
 };
 
 struct ProvisioningScratchState {
+    uint8_t root_material[agent_q::kRootMaterialBytes] = {};
     char recovery_phrase[agent_q::kBip39MnemonicMaxChars] = {};
     char recovery_phrase_prefix_cells[kRecoveryPhrasePrefixCellCount][kRecoveryPhrasePrefixCellSize] = {};
     RecoveryPhraseScratchStage recovery_phrase_stage = RecoveryPhraseScratchStage::none;
@@ -220,6 +267,7 @@ struct ProvisioningScratchState {
 
     void wipe()
     {
+        agent_q::wipe_sensitive_buffer(root_material, sizeof(root_material));
         agent_q::wipe_sensitive_buffer(recovery_phrase, sizeof(recovery_phrase));
         agent_q::wipe_sensitive_buffer(
             recovery_phrase_prefix_cells,
@@ -238,8 +286,10 @@ char g_line_buffer[kLineBufferSize];
 size_t g_line_size = 0;
 char g_device_id[kDeviceIdSize];
 ProvisioningRuntimeState g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
+bool g_root_material_consistency_error = false;
 PendingApprovalState g_pending;
 IdentificationState g_identification;
+SessionState g_session;
 AgentQUiState g_ui;
 ProvisioningScratchState g_provisioning_scratch;
 bool g_usb_ready = false;
@@ -249,6 +299,7 @@ QueueHandle_t g_ui_event_queue = nullptr;
 
 bool recovery_phrase_display_active();
 bool recovery_phrase_flow_active();
+bool persist_provisioning_state(ProvisioningRuntimeState next_state);
 
 void wipe_recovery_phrase_scratch(const char* reason)
 {
@@ -353,6 +404,24 @@ bool is_safe_identification_code(const char* value)
         }
     }
     return value[4] == '\0';
+}
+
+bool is_printable_ascii_gateway_name(const char* value)
+{
+    if (value == nullptr || value[0] == '\0') {
+        return false;
+    }
+    size_t length = 0;
+    for (const char* cursor = value; *cursor != '\0'; ++cursor) {
+        if (++length >= kGatewayNameSize) {
+            return false;
+        }
+        const unsigned char c = static_cast<unsigned char>(*cursor);
+        if (c < 0x20 || c > 0x7E) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void wipe_recovery_phrase_prefix_cells(char cells[kRecoveryPhrasePrefixCellCount][kRecoveryPhrasePrefixCellSize])
@@ -463,6 +532,9 @@ void write_error_response(const char* id, const char* code, const char* message)
 
 const char* current_device_state()
 {
+    if (g_root_material_consistency_error) {
+        return "error";
+    }
     if (g_pending.active) {
         return "awaiting_approval";
     }
@@ -475,6 +547,8 @@ const char* current_device_state()
 const char* provisioning_state_to_string(ProvisioningRuntimeState state)
 {
     switch (state) {
+        case ProvisioningRuntimeState::provisioned:
+            return kProvisioningStateProvisioned;
         case ProvisioningRuntimeState::provisioning:
             return kProvisioningStateProvisioning;
         case ProvisioningRuntimeState::unprovisioned:
@@ -494,6 +568,10 @@ bool parse_provisioning_state(const char* value, ProvisioningRuntimeState* outpu
     }
     if (strcmp(value, kProvisioningStateProvisioning) == 0) {
         *output = ProvisioningRuntimeState::provisioning;
+        return true;
+    }
+    if (strcmp(value, kProvisioningStateProvisioned) == 0) {
+        *output = ProvisioningRuntimeState::provisioned;
         return true;
     }
     return false;
@@ -544,6 +622,56 @@ void write_display_signal_result(const char* id, const char* status, const char*
     write_json_document(response);
 }
 
+void write_connect_approved_response(const char* id)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "connect_result";
+    response["status"] = "approved";
+    response["sessionId"] = g_session.id;
+    response["sessionTtlMs"] = kSessionTtlMs;
+    response["device"]["deviceId"] = g_device_id;
+    response["device"]["state"] = "idle";
+    response["device"]["firmwareName"] = kFirmwareName;
+    response["device"]["hardware"] = kHardwareId;
+    response["device"]["firmwareVersion"] = kFirmwareVersion;
+    write_json_document(response);
+}
+
+void write_connect_rejected_response(const char* id, const char* error_code, const char* error_message)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "connect_result";
+    response["status"] = "rejected";
+    response["error"]["code"] = error_code;
+    response["error"]["message"] = error_message;
+    write_json_document(response);
+}
+
+void write_disconnect_result(const char* id)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "disconnect_result";
+    response["status"] = "disconnected";
+    write_json_document(response);
+}
+
+void write_factory_reset_result(const char* id)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "factory_reset_result";
+    response["status"] = "reset";
+    response["provisioning"]["state"] = provisioning_state_to_string(g_provisioning_state);
+    write_json_document(response);
+}
+
 void write_provisioning_result(const char* id, const char* status)
 {
     JsonDocument response;
@@ -574,6 +702,58 @@ bool fill_protocol_random(void* output, size_t size, const char* purpose)
 
     ESP_LOGE(kTag, "Secure RNG unavailable for %s", purpose != nullptr ? purpose : "protocol random");
     return false;
+}
+
+bool format_session_id(char* output, size_t output_size)
+{
+    uint8_t bytes[8] = {};
+    if (!fill_protocol_random(bytes, sizeof(bytes), "session id")) {
+        return false;
+    }
+    snprintf(output,
+             output_size,
+             "session_%02x%02x%02x%02x%02x%02x%02x%02x",
+             bytes[0],
+             bytes[1],
+             bytes[2],
+             bytes[3],
+             bytes[4],
+             bytes[5],
+             bytes[6],
+             bytes[7]);
+    agent_q::wipe_sensitive_buffer(bytes, sizeof(bytes));
+    return true;
+}
+
+void clear_active_session()
+{
+    g_session.clear();
+}
+
+bool replace_active_session()
+{
+    char next_id[kSessionIdSize] = {};
+    if (!format_session_id(next_id, sizeof(next_id))) {
+        return false;
+    }
+    snprintf(g_session.id, sizeof(g_session.id), "%s", next_id);
+    g_session.expiry = xTaskGetTickCount() + pdMS_TO_TICKS(kSessionTtlMs);
+    return true;
+}
+
+void expire_session_if_needed()
+{
+    if (!tick_reached(g_session.next_expiry_check)) {
+        return;
+    }
+    g_session.next_expiry_check = xTaskGetTickCount() + pdMS_TO_TICKS(kSessionExpiryCheckMs);
+
+    if (!g_session.active()) {
+        return;
+    }
+    if (tick_reached(g_session.expiry)) {
+        clear_active_session();
+    }
 }
 
 bool format_uuid_v4(char* output, size_t output_size)
@@ -649,11 +829,13 @@ void load_or_create_device_id()
 void load_provisioning_state()
 {
     g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
+    g_root_material_consistency_error = false;
 
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
     if (result != ESP_OK) {
         ESP_LOGW(kTag, "NVS open failed for provisioning state: %s", esp_err_to_name(result));
+        g_root_material_consistency_error = true;
         return;
     }
 
@@ -663,21 +845,52 @@ void load_provisioning_state()
     nvs_close(nvs);
 
     if (result == ESP_ERR_NVS_NOT_FOUND) {
+        if (agent_q::has_root_material()) {
+            g_root_material_consistency_error = true;
+            ESP_LOGE(kTag, "Root material exists without provisioning state; failing closed");
+        }
         ESP_LOGI(kTag, "Provisioning state not found in NVS; using unprovisioned");
         return;
     }
     if (result != ESP_OK) {
+        g_root_material_consistency_error = true;
+        ESP_LOGE(kTag, "Provisioning state could not be read; failing closed");
         ESP_LOGW(kTag, "NVS read failed for provisioning state: %s", esp_err_to_name(result));
         return;
     }
 
     ProvisioningRuntimeState parsed = ProvisioningRuntimeState::unprovisioned;
     if (!parse_provisioning_state(stored_state, &parsed)) {
-        ESP_LOGW(kTag, "Unknown provisioning state in NVS; using unprovisioned");
+        if (agent_q::has_root_material()) {
+            g_root_material_consistency_error = true;
+            ESP_LOGE(kTag, "Unknown provisioning state with root material present; failing closed");
+        } else {
+            ESP_LOGW(kTag, "Unknown provisioning state in NVS; resetting to unprovisioned");
+            persist_provisioning_state(ProvisioningRuntimeState::unprovisioned);
+        }
         return;
     }
 
-    g_provisioning_state = parsed;
+    const bool has_root = agent_q::has_root_material();
+    if (parsed == ProvisioningRuntimeState::provisioned) {
+        if (has_root) {
+            g_provisioning_state = ProvisioningRuntimeState::provisioned;
+        } else {
+            g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
+            g_root_material_consistency_error = true;
+            ESP_LOGE(kTag, "Stored provisioned state has no valid root material; failing closed");
+        }
+    } else if (has_root) {
+        g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
+        g_root_material_consistency_error = true;
+        ESP_LOGE(kTag, "Root material exists without provisioned state; failing closed");
+    } else if (parsed == ProvisioningRuntimeState::provisioning) {
+        g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
+        ESP_LOGW(kTag, "Resetting legacy provisioning state for persistent root material flow");
+        persist_provisioning_state(ProvisioningRuntimeState::unprovisioned);
+    } else {
+        g_provisioning_state = parsed;
+    }
     ESP_LOGI(kTag, "Loaded provisioning state from NVS: %s", provisioning_state_to_string(g_provisioning_state));
 }
 
@@ -712,17 +925,23 @@ bool wipe_provisioning_scratch_state()
     return true;
 }
 
-void reset_legacy_provisioning_state_for_mnemonic_ui_flow()
+bool reset_device_to_unprovisioned()
 {
-    if (g_provisioning_state == ProvisioningRuntimeState::unprovisioned) {
-        return;
+    clear_active_session();
+    wipe_provisioning_scratch_state();
+
+    if (!agent_q::wipe_root_material()) {
+        g_root_material_consistency_error = true;
+        return false;
     }
 
-    ESP_LOGW(kTag, "Resetting legacy provisioning state for mnemonic UI flow");
     if (!persist_provisioning_state(ProvisioningRuntimeState::unprovisioned)) {
-        g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
-        ESP_LOGE(kTag, "Could not persist legacy provisioning reset; using volatile unprovisioned state");
+        g_root_material_consistency_error = true;
+        return false;
     }
+
+    g_root_material_consistency_error = false;
+    return true;
 }
 
 bool provisioning_transition_allowed(PendingKind request_kind)
@@ -730,12 +949,14 @@ bool provisioning_transition_allowed(PendingKind request_kind)
     switch (request_kind) {
         case PendingKind::start_provisioning:
             return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
+                   !g_root_material_consistency_error &&
                    !recovery_phrase_flow_active();
         case PendingKind::cancel_provisioning:
             return g_provisioning_state == ProvisioningRuntimeState::provisioning ||
                    recovery_phrase_flow_active();
         case PendingKind::none:
         case PendingKind::display_signal:
+        case PendingKind::factory_reset:
         case PendingKind::confirm_recovery_phrase_backup:
         default:
             return false;
@@ -750,6 +971,7 @@ bool recovery_phrase_flow_active()
 bool start_provisioning_busy()
 {
     return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
+           !g_root_material_consistency_error &&
            recovery_phrase_flow_active();
 }
 
@@ -1009,6 +1231,7 @@ bool show_agent_q_message(
     const AgentQMessagePresentation presentation = agent_q_message_presentation(kind);
 
     LvglLockGuard lock;
+    agent_q::request_display_power_wake();
     if (!GetStackChan().hasAvatar()) {
         return false;
     }
@@ -1040,6 +1263,7 @@ bool provisioning_welcome_available()
     }
 
     return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
+           !g_root_material_consistency_error &&
            !g_pending.active &&
            !g_identification.active &&
            !recovery_phrase_flow_active() &&
@@ -1162,6 +1386,24 @@ void show_display_signal_decision(const char* message)
     ESP_LOGW(kTag, "display_signal could not show Agent-Q avatar decision UI");
 }
 
+void format_connect_message(const char* gateway_name, char* output, size_t output_size)
+{
+    if (gateway_name == nullptr || gateway_name[0] == '\0') {
+        gateway_name = "Agent-Q Gateway";
+    }
+    snprintf(output, output_size, "Connect %s?", gateway_name);
+}
+
+void show_connect_decision(const char* gateway_name)
+{
+    char message[kConnectDisplayMessageSize];
+    format_connect_message(gateway_name, message, sizeof(message));
+    if (show_avatar_decision(message)) {
+        return;
+    }
+    ESP_LOGW(kTag, "connect could not show Agent-Q avatar decision UI");
+}
+
 void show_start_provisioning_decision()
 {
     if (show_avatar_decision("Generate phrase?")) {
@@ -1184,6 +1426,14 @@ void show_confirm_recovery_phrase_backup_decision()
         return;
     }
     ESP_LOGW(kTag, "confirm_recovery_phrase_backup could not show Agent-Q avatar decision UI");
+}
+
+void show_factory_reset_decision()
+{
+    if (show_avatar_decision("Wipe device?")) {
+        return;
+    }
+    ESP_LOGW(kTag, "factory_reset could not show Agent-Q avatar decision UI");
 }
 
 bool show_recovery_phrase_display(const char* recovery_phrase)
@@ -1313,14 +1563,16 @@ RecoveryPhraseGenerationResult generate_recovery_phrase_scratch()
 {
     wipe_recovery_phrase_scratch("recovery phrase generation reset");
 
-    uint8_t entropy[agent_q::kBip39EntropyBytes] = {};
-    if (!agent_q::fill_secure_random(entropy, sizeof(entropy))) {
-        agent_q::wipe_sensitive_buffer(entropy, sizeof(entropy));
+    if (!agent_q::fill_secure_random(
+            g_provisioning_scratch.root_material,
+            sizeof(g_provisioning_scratch.root_material))) {
+        wipe_recovery_phrase_scratch("recovery phrase entropy failure");
         return RecoveryPhraseGenerationResult::rng_error;
     }
     const bool generated = agent_q::make_bip39_mnemonic_12_words(
-        entropy, g_provisioning_scratch.recovery_phrase, sizeof(g_provisioning_scratch.recovery_phrase));
-    agent_q::wipe_sensitive_buffer(entropy, sizeof(entropy));
+        g_provisioning_scratch.root_material,
+        g_provisioning_scratch.recovery_phrase,
+        sizeof(g_provisioning_scratch.recovery_phrase));
     if (!generated) {
         wipe_recovery_phrase_scratch("recovery phrase generation failure");
         return RecoveryPhraseGenerationResult::generation_error;
@@ -1489,6 +1741,14 @@ void ensure_pending_request_ui()
             show_display_signal_decision(g_pending.display_message);
             ESP_LOGW(kTag, "display_signal decision UI recovered: id=%s", g_pending.id);
             break;
+        case PendingKind::connect:
+            show_connect_decision(g_pending.gateway_name);
+            ESP_LOGW(kTag, "connect decision UI recovered: id=%s", g_pending.id);
+            break;
+        case PendingKind::factory_reset:
+            show_factory_reset_decision();
+            ESP_LOGW(kTag, "factory_reset decision UI recovered: id=%s", g_pending.id);
+            break;
         case PendingKind::start_provisioning:
             show_start_provisioning_decision();
             ESP_LOGW(kTag, "start_provisioning decision UI recovered: id=%s", g_pending.id);
@@ -1521,6 +1781,16 @@ void send_choice_response_if_needed()
                     write_display_signal_result(g_pending.id, "rejected", "timeout", "Request timed out.");
                     ESP_LOGI(kTag, "display_signal timed out: id=%s", g_pending.id);
                     show_result_and_clear_pending("Timed out", AgentQMessageKind::timeout);
+                    break;
+                case PendingKind::connect:
+                    write_connect_rejected_response(g_pending.id, "timeout", "Connection approval timed out.");
+                    ESP_LOGI(kTag, "connect timed out: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Connection timed out", AgentQMessageKind::timeout);
+                    break;
+                case PendingKind::factory_reset:
+                    write_error_response(g_pending.id, "timeout", "Factory reset approval timed out.");
+                    ESP_LOGI(kTag, "factory_reset timed out: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Reset timed out", AgentQMessageKind::timeout);
                     break;
                 case PendingKind::start_provisioning:
                     write_error_response(g_pending.id, "timeout", "Provisioning start approval timed out.");
@@ -1555,6 +1825,40 @@ void send_choice_response_if_needed()
             ESP_LOGI(kTag, "display_signal %s: id=%s", approved ? "approved" : "rejected", g_pending.id);
             show_result_and_clear_pending(approved ? "Approved" : "Rejected",
                                           approved ? AgentQMessageKind::success : AgentQMessageKind::rejected);
+            break;
+        case PendingKind::connect:
+            if (approved) {
+                if (!replace_active_session()) {
+                    write_error_response(g_pending.id, "rng_error", "Could not create session id.");
+                    ESP_LOGE(kTag, "connect could not create session id: id=%s", g_pending.id);
+                    show_result_and_clear_pending("RNG error", AgentQMessageKind::error);
+                    break;
+                }
+                write_connect_approved_response(g_pending.id);
+                ESP_LOGI(kTag, "connect approved: id=%s", g_pending.id);
+                show_result_and_clear_pending("Connected", AgentQMessageKind::success);
+            } else {
+                write_connect_rejected_response(g_pending.id, "rejected", "Connection rejected.");
+                ESP_LOGI(kTag, "connect rejected: id=%s", g_pending.id);
+                show_result_and_clear_pending("Connection rejected", AgentQMessageKind::rejected);
+            }
+            break;
+        case PendingKind::factory_reset:
+            if (approved) {
+                if (reset_device_to_unprovisioned()) {
+                    write_factory_reset_result(g_pending.id);
+                    ESP_LOGI(kTag, "factory_reset approved: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Device wiped", AgentQMessageKind::success);
+                } else {
+                    write_error_response(g_pending.id, "storage_error", "Could not reset device.");
+                    ESP_LOGW(kTag, "factory_reset storage error: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Reset error", AgentQMessageKind::error);
+                }
+            } else {
+                write_error_response(g_pending.id, "rejected", "Factory reset rejected.");
+                ESP_LOGI(kTag, "factory_reset rejected: id=%s", g_pending.id);
+                show_result_and_clear_pending("Reset rejected", AgentQMessageKind::rejected);
+            }
             break;
         case PendingKind::start_provisioning:
             if (approved) {
@@ -1618,10 +1922,30 @@ void send_choice_response_if_needed()
                     show_result_and_clear_pending("Phrase unavailable", AgentQMessageKind::error);
                     break;
                 }
+                if (!agent_q::store_root_material(
+                        g_provisioning_scratch.root_material,
+                        sizeof(g_provisioning_scratch.root_material))) {
+                    g_root_material_consistency_error = agent_q::has_root_material();
+                    wipe_recovery_phrase_scratch("confirm_recovery_phrase_backup storage failed");
+                    write_error_response(g_pending.id, "storage_error", "Could not store root material.");
+                    ESP_LOGW(kTag, "confirm_recovery_phrase_backup root material storage failed: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Storage error", AgentQMessageKind::error);
+                    break;
+                }
+                if (!persist_provisioning_state(ProvisioningRuntimeState::provisioned)) {
+                    agent_q::wipe_root_material();
+                    g_root_material_consistency_error = agent_q::has_root_material();
+                    wipe_recovery_phrase_scratch("confirm_recovery_phrase_backup state storage failed");
+                    write_error_response(g_pending.id, "storage_error", "Could not store provisioned state.");
+                    ESP_LOGW(kTag, "confirm_recovery_phrase_backup provisioned state storage failed: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Storage error", AgentQMessageKind::error);
+                    break;
+                }
+                g_root_material_consistency_error = false;
                 wipe_recovery_phrase_scratch("confirm_recovery_phrase_backup approved");
                 write_recovery_phrase_result(g_pending.id, "confirmed");
-                ESP_LOGI(kTag, "confirm_recovery_phrase_backup approved: id=%s", g_pending.id);
-                show_result_and_clear_pending("Backup confirmed", AgentQMessageKind::success);
+                ESP_LOGI(kTag, "confirm_recovery_phrase_backup approved and provisioned: id=%s", g_pending.id);
+                show_result_and_clear_pending("Provisioned", AgentQMessageKind::success);
             } else {
                 wipe_recovery_phrase_scratch("confirm_recovery_phrase_backup rejected");
                 write_error_response(g_pending.id, "rejected", "Recovery phrase backup confirmation rejected.");
@@ -1667,7 +1991,7 @@ void handle_line(const char* line)
             write_error_response(id, "busy", "Device is awaiting physical input.");
             return;
         }
-        if (recovery_phrase_display_active()) {
+        if (recovery_phrase_flow_active()) {
             write_error_response(id, "busy", "Device is showing setup material.");
             return;
         }
@@ -1691,19 +2015,44 @@ void handle_line(const char* line)
     }
 
     if (strcmp(type, "connect") == 0) {
+        if (g_provisioning_state != ProvisioningRuntimeState::provisioned ||
+            g_root_material_consistency_error) {
+            write_error_response(id, "invalid_state", "Connect is available only after provisioning is complete.");
+            return;
+        }
         if (g_pending.active) {
             write_error_response(id, "busy", "Device is awaiting physical input.");
             return;
         }
-        if (recovery_phrase_display_active()) {
+        if (recovery_phrase_flow_active()) {
             write_error_response(id, "busy", "Device is showing setup material.");
             return;
         }
-        write_error_response(id, "invalid_state", "Connect is unavailable until provisioning is complete.");
+
+        const char* gateway_name = request["params"]["gatewayName"] | "";
+        if (!is_printable_ascii_gateway_name(gateway_name)) {
+            write_error_response(id, "invalid_gateway_name", "gatewayName must be 1-64 printable ASCII characters.");
+            return;
+        }
+
+        uint32_t approval_timeout_ms = request["params"]["approvalTimeoutMs"] | kConnectApprovalDefaultMs;
+        if (approval_timeout_ms == 0 || approval_timeout_ms > kConnectApprovalMaxMs) {
+            write_error_response(id, "invalid_approval_timeout", "Invalid approval timeout.");
+            return;
+        }
+
+        g_pending.begin_connect(id, gateway_name, approval_timeout_ms);
+        show_connect_decision(g_pending.gateway_name);
+        ESP_LOGI(kTag, "connect waiting for YES/NO: id=%s gateway=%s", id, g_pending.gateway_name);
         return;
     }
 
     if (strcmp(type, "disconnect") == 0) {
+        if (g_provisioning_state != ProvisioningRuntimeState::provisioned ||
+            g_root_material_consistency_error) {
+            write_error_response(id, "invalid_state", "Disconnect is available only after provisioning is complete.");
+            return;
+        }
         // disconnect is session-changing; reject it while an approval UI is
         // active or setup material is displayed so it cannot mutate session
         // state mid-approval or while device-only setup material is visible.
@@ -1721,7 +2070,45 @@ void handle_line(const char* line)
             write_error_response(id, "invalid_session", "Invalid sessionId.");
             return;
         }
-        write_error_response(id, "invalid_session", "Session is unknown or already ended.");
+        if (!g_session.active()) {
+            clear_active_session();
+            write_error_response(id, "invalid_session", "Session is unknown or already ended.");
+            return;
+        }
+        if (tick_reached(g_session.expiry)) {
+            clear_active_session();
+            write_error_response(id, "invalid_session", "Session is unknown or already ended.");
+            return;
+        }
+        if (strcmp(session_id, g_session.id) != 0) {
+            write_error_response(id, "invalid_session", "Session is unknown or already ended.");
+            return;
+        }
+        clear_active_session();
+        write_disconnect_result(id);
+        ESP_LOGI(kTag, "disconnect: id=%s", id);
+        return;
+    }
+
+    if (strcmp(type, "factory_reset") == 0) {
+        if (g_pending.active) {
+            write_error_response(id, "busy", "Device is awaiting physical input.");
+            return;
+        }
+        if (recovery_phrase_flow_active()) {
+            write_error_response(id, "busy", "Device is showing setup material.");
+            return;
+        }
+
+        uint32_t approval_timeout_ms = request["params"]["approvalTimeoutMs"] | kProvisioningApprovalDefaultMs;
+        if (approval_timeout_ms == 0 || approval_timeout_ms > kProvisioningApprovalMaxMs) {
+            write_error_response(id, "invalid_approval_timeout", "Invalid approval timeout.");
+            return;
+        }
+
+        g_pending.begin_factory_reset(id, approval_timeout_ms);
+        show_factory_reset_decision();
+        ESP_LOGI(kTag, "factory_reset waiting for YES/NO: id=%s", id);
         return;
     }
 
@@ -1864,6 +2251,7 @@ void usb_request_task(void*)
         clear_identification_if_needed();
         clear_agent_q_message_if_needed();
         clear_recovery_phrase_if_needed();
+        expire_session_if_needed();
         send_choice_response_if_needed();
         ensure_pending_request_ui();
         if (g_usb_ready) {
@@ -1881,7 +2269,8 @@ void init_usb_request_server()
 {
     load_or_create_device_id();
     load_provisioning_state();
-    reset_legacy_provisioning_state_for_mnemonic_ui_flow();
+    g_session.clear();
+    g_session.next_expiry_check = 0;
     g_pending.clear();
     g_identification.clear();
     wipe_recovery_phrase_scratch("usb request server init");
