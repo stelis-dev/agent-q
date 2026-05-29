@@ -111,6 +111,24 @@ export interface ProvisioningSetupCheckRequest {
   };
 }
 
+export interface GenerateRecoveryPhraseRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "generate_recovery_phrase";
+  params: {
+    approvalTimeoutMs: number;
+  };
+}
+
+export interface ConfirmRecoveryPhraseBackupRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "confirm_recovery_phrase_backup";
+  params: {
+    approvalTimeoutMs: number;
+  };
+}
+
 export type ProtocolRequest =
   | GetStatusRequest
   | IdentifyDeviceRequest
@@ -118,7 +136,9 @@ export type ProtocolRequest =
   | DisconnectRequest
   | StartProvisioningRequest
   | CancelProvisioningRequest
-  | ProvisioningSetupCheckRequest;
+  | ProvisioningSetupCheckRequest
+  | GenerateRecoveryPhraseRequest
+  | ConfirmRecoveryPhraseBackupRequest;
 
 export interface StatusResponse {
   id: string;
@@ -183,6 +203,14 @@ export interface ProvisioningSetupCheckResponse {
   provisioning: ProvisioningStatus;
 }
 
+export interface RecoveryPhraseResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "recovery_phrase_result";
+  status: "displayed" | "confirmed";
+  provisioning: ProvisioningStatus;
+}
+
 export interface ProtocolErrorResponse {
   id?: string;
   version: typeof PROTOCOL_VERSION;
@@ -200,6 +228,7 @@ export type ProtocolResponse =
   | DisconnectResponse
   | ProvisioningResponse
   | ProvisioningSetupCheckResponse
+  | RecoveryPhraseResponse
   | ProtocolErrorResponse;
 
 export class ProtocolError extends Error {
@@ -331,6 +360,38 @@ export function makeProvisioningSetupCheckRequest(
     id,
     version: PROTOCOL_VERSION,
     type: "provisioning_setup_check",
+    params: {
+      approvalTimeoutMs,
+    },
+  };
+}
+
+export function makeGenerateRecoveryPhraseRequest(
+  approvalTimeoutMs: number = DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS,
+  id = createRequestId(),
+): GenerateRecoveryPhraseRequest {
+  validateRequestId(id);
+  validateApprovalTimeoutMs(approvalTimeoutMs);
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "generate_recovery_phrase",
+    params: {
+      approvalTimeoutMs,
+    },
+  };
+}
+
+export function makeConfirmRecoveryPhraseBackupRequest(
+  approvalTimeoutMs: number = DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS,
+  id = createRequestId(),
+): ConfirmRecoveryPhraseBackupRequest {
+  validateRequestId(id);
+  validateApprovalTimeoutMs(approvalTimeoutMs);
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "confirm_recovery_phrase_backup",
     params: {
       approvalTimeoutMs,
     },
@@ -525,6 +586,38 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
+  if (value.type === "recovery_phrase_result") {
+    if (
+      typeof value.id !== "string" ||
+      (value.status !== "displayed" && value.status !== "confirmed")
+    ) {
+      throw new ProtocolError("protocol_error", "Recovery phrase response is malformed.");
+    }
+    if (hasSecretPayloadKey(value)) {
+      throw new ProtocolError("protocol_error", "Recovery phrase response must not include secret material.");
+    }
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "provisioning"])) {
+      throw new ProtocolError("protocol_error", "Recovery phrase response contains unsupported fields.");
+    }
+    if (!isRecord(value.provisioning) || !hasOnlyObjectKeys(value.provisioning, ["state"])) {
+      throw new ProtocolError("protocol_error", "Recovery phrase response state is malformed.");
+    }
+    const provisioning = sanitizeProvisioningStatus(value.provisioning);
+    if (provisioning === null) {
+      throw new ProtocolError("protocol_error", "Recovery phrase response state is malformed.");
+    }
+    if (provisioning.state !== "provisioning") {
+      throw new ProtocolError("protocol_error", "Recovery phrase response requires provisioning state.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "recovery_phrase_result",
+      status: value.status,
+      provisioning,
+    };
+  }
+
   throw new ProtocolError("protocol_error", "Protocol response type is unsupported.");
 }
 
@@ -590,6 +683,16 @@ export function assertProvisioningSetupCheckResponse(
   return response;
 }
 
+export function assertRecoveryPhraseResponse(response: ProtocolResponse): RecoveryPhraseResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "recovery_phrase_result") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not recovery_phrase_result.");
+  }
+  return response;
+}
+
 // Reduce an untrusted wire or stored device object to a safe DeviceStatus, or
 // null when its identity fields are unusable. deviceId and state are REJECTED
 // when malformed (returns null); the display strings are sanitized to bounded
@@ -648,6 +751,28 @@ function validateApprovalTimeoutMs(approvalTimeoutMs: number): void {
       `approvalTimeoutMs must be a positive integer <= ${MAX_APPROVAL_TIMEOUT_MS}.`,
     );
   }
+}
+
+function hasSecretPayloadKey(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => hasSecretPayloadKey(item));
+  }
+  if (!isRecord(value)) {
+    return false;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (/^(mnemonic|seed|privateKey|secret|entropy|phrase|recoveryPhrase)$/i.test(key)) {
+      return true;
+    }
+    if (hasSecretPayloadKey(child)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasOnlyObjectKeys(value: Record<string, unknown>, allowedKeys: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowedKeys.includes(key));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

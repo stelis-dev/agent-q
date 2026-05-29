@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { PUBLIC_ERROR_MESSAGES } from "../dist/public-error.js";
+import { normalizeErrorCode, PUBLIC_ERROR_MESSAGES } from "../dist/public-error.js";
 
 // Drift guard: derive the set of error codes Gateway can actually throw straight
 // from source, and assert each one has a canonical message in the public-error
@@ -25,6 +25,12 @@ for (const file of SRC_FILES) {
 }
 
 const allowlist = new Set(Object.keys(PUBLIC_ERROR_MESSAGES));
+const firmwareProtocolCodes = [
+  "invalid_setup_step",
+  "rng_error",
+  "ui_error",
+  "generation_error",
+];
 
 test("every literal Gateway error code is registered in the public-error allowlist", () => {
   assert.ok(producedCodes.size > 5, "should discover the thrown error codes from source");
@@ -35,4 +41,11 @@ test("every literal Gateway error code is registered in the public-error allowli
     [],
     `error codes thrown in src but missing from PUBLIC_ERROR_MESSAGES: ${missing.join(", ")}`,
   );
+});
+
+test("Firmware-emitted setup error codes are public Gateway errors", () => {
+  for (const code of firmwareProtocolCodes) {
+    assert.ok(allowlist.has(code), `${code} should be registered`);
+    assert.equal(normalizeErrorCode(code), code);
+  }
 });

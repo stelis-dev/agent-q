@@ -32,6 +32,19 @@ mkdir -p "${FIRMWARE_DIR}/components"
 rm -rf "${FIRMWARE_DIR}/components/signing_crypto"
 cp -R "${TARGET_ROOT}/components/signing_crypto" "${FIRMWARE_DIR}/components/signing_crypto"
 
+BIP39_WORDLIST_FILE="${AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE:-}"
+if [[ -z "${BIP39_WORDLIST_FILE}" && -n "${AGENT_Q_BIP39_WORDLIST_ROOT:-}" && -n "${AGENT_Q_BIP39_ENGLISH_WORDLIST_PATH:-}" ]]; then
+  BIP39_WORDLIST_FILE="${AGENT_Q_BIP39_WORDLIST_ROOT}/${AGENT_Q_BIP39_ENGLISH_WORDLIST_PATH}"
+fi
+if [[ -z "${BIP39_WORDLIST_FILE}" || ! -f "${BIP39_WORDLIST_FILE}" ]]; then
+  echo "Missing pinned BIP-39 English wordlist. Run tools/firmware/stackchan-cores3/build.sh or set AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE." >&2
+  exit 1
+fi
+
+python3 "${SCRIPT_DIR}/generate_bip39_wordlist.py" \
+  "${BIP39_WORDLIST_FILE}" \
+  "${FIRMWARE_DIR}/main/agent_q/agent_q_bip39_wordlist.cpp"
+
 python3 - "${FIRMWARE_DIR}/main/CMakeLists.txt" "${FIRMWARE_DIR}/main/main.cpp" <<'PY'
 from __future__ import annotations
 
@@ -155,14 +168,32 @@ cmake = insert_after_once(
     "                        signing_crypto\n",
     "main/CMakeLists.txt signing dependency",
 )
+cmake = insert_after_once(
+    cmake,
+    "                        signing_crypto\n",
+    "                        mbedtls\n",
+    "main/CMakeLists.txt BIP-39 checksum dependency",
+)
+cmake = insert_after_once(
+    cmake,
+    "                        mbedtls\n",
+    "                        bootloader_support\n",
+    "main/CMakeLists.txt early entropy dependency",
+)
 cmake_path.write_text(cmake)
 
 main_cpp = main_path.read_text()
 main_cpp = insert_after_once(
     main_cpp,
     "#include <hal/hal.h>\n",
-    "#include <agent_q/agent_q_signing_self_test.h>\n#include <agent_q/agent_q_usb_request_server.h>\n",
+    "#include <agent_q/agent_q_entropy.h>\n#include <agent_q/agent_q_signing_self_test.h>\n#include <agent_q/agent_q_usb_request_server.h>\n",
     "main.cpp includes",
+)
+main_cpp = insert_after_once(
+    main_cpp,
+    "    // HAL init\n",
+    "    if (!agent_q::init_secure_random_from_early_boot_entropy()) {\n        mclog::tagError(\"AgentQ\", \"secure RNG init failed\");\n    }\n\n",
+    "main.cpp early entropy",
 )
 main_cpp = insert_after_once(
     main_cpp,

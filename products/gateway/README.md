@@ -67,9 +67,10 @@ MCP clients and agents are untrusted request sources. Gateway limits what its
 MCP output can contain, but it does **not** judge agent or prompt intent and
 does **not** claim to detect prompt injection. Concretely:
 
-- Secret material (signing keys, seeds, mnemonics) is never produced, and the
-  Firmware session token (`sessionId`) is kept inside Gateway and never returned
-  to clients.
+- Secret material (signing keys, seeds, recovery phrases, mnemonics) is never
+  produced by Gateway and is never returned to MCP clients. The Firmware
+  session token (`sessionId`) is kept inside Gateway and never returned to
+  clients.
 - Error output carries a stable `{ code, message, retryable }`. The `message` is
   a fixed, code-derived string; raw OS, serial, or Firmware error text is not
   forwarded. Unknown error codes collapse to `gateway_error`.

@@ -44,6 +44,7 @@ stateDiagram-v2
     Unprovisioned: start_provisioning
     Provisioning: get_status, connect, disconnect
     Provisioning: provisioning_setup_check, cancel_provisioning
+    Provisioning: generate_recovery_phrase, confirm_recovery_phrase_backup
     Provisioned: get_status, identify_device, connect, disconnect
     Provisioned: get_capabilities, get_accounts, call_method
     Locked: get_status, identify_device, unlock flow
@@ -90,6 +91,8 @@ Allowed:
 - `connect`
 - `disconnect`
 - `provisioning_setup_check` setup-step message
+- `generate_recovery_phrase` setup-step message
+- `confirm_recovery_phrase_backup` setup-step message
 - `cancel_provisioning`
 
 Rejected:
@@ -101,9 +104,14 @@ Rejected:
 - signing
 - external evidence or price fetch
 
-Scratch signing material may exist only inside Firmware during future setup
-steps. Canceling setup must wipe scratch material before returning to
-`unprovisioned`.
+Scratch signing material may exist only inside Firmware during setup steps.
+Canceling setup must wipe scratch material before returning to `unprovisioned`.
+Current StackChan CoreS3 source limits recovery phrase scratch material to RAM
+and tracks it with a volatile substate: `none`, `displayed`, or
+`backup_confirmation_pending`. That scratch substate is separate from the
+persistent `provisioning.state`, pending approval state, and UI panel state.
+The source keeps `provisioning.state` at `provisioning`; it does not store root
+material or report `provisioned`.
 
 ### `provisioned`
 
@@ -153,13 +161,17 @@ This state is reserved until an unlock model is implemented.
 | `start_provisioning` | O | X | X | X | Firmware |
 | `cancel_provisioning` | X | O | X | X | Firmware |
 | `provisioning_setup_check` | X | O | X | X | Firmware |
+| `generate_recovery_phrase` | X | O | X | X | Firmware |
+| `confirm_recovery_phrase_backup` | X | O | X | X | Firmware |
 | `get_capabilities` | X | X | O | X | Firmware |
 | `get_accounts` | X | X | O | X | Firmware |
 | `call_method` | X | X | O | X | Firmware |
 | policy read | X | X | O | X | Firmware |
 | policy update | X | X | O, with authorization | X | Firmware |
 
-`O*`: allowed only when it does not disrupt setup UI.
+`O*`: allowed only when it does not disrupt setup UI. Other `O` operations may
+still return `busy` while a physical approval prompt or device-only setup
+material display is active.
 
 Gateway may hide unavailable operations, but Firmware must still reject them.
 
@@ -206,7 +218,7 @@ Common UI states:
 
 - welcome
 - idle avatar
-- mnemonic display
+- recovery phrase display
 - notification
 - decision prompt
 - result notification

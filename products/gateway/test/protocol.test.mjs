@@ -5,6 +5,7 @@ import {
   assertDisconnectResponse,
   assertProvisioningResponse,
   assertProvisioningSetupCheckResponse,
+  assertRecoveryPhraseResponse,
   assertStatusResponse,
   createRequestId,
   isGatewayName,
@@ -13,7 +14,9 @@ import {
   isSessionId,
   makeConnectRequest,
   makeCancelProvisioningRequest,
+  makeConfirmRecoveryPhraseBackupRequest,
   makeDisconnectRequest,
+  makeGenerateRecoveryPhraseRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
   makeProvisioningSetupCheckRequest,
@@ -81,7 +84,16 @@ test("creates and parses identify_device messages", () => {
 });
 
 test("preserves Firmware protocol error codes", () => {
-  for (const code of ["unsupported_type", "busy", "storage_error", "invalid_state"]) {
+  for (const code of [
+    "unsupported_type",
+    "busy",
+    "storage_error",
+    "invalid_state",
+    "invalid_setup_step",
+    "rng_error",
+    "ui_error",
+    "generation_error",
+  ]) {
     const response = parseProtocolResponse(
       JSON.stringify({
         id: "req_1",
@@ -140,6 +152,32 @@ test("parses status response and rejects incompatible version", () => {
       ),
     /Unsupported protocol response version/,
   );
+});
+
+test("parses busy status while setup material is displayed", () => {
+  const response = assertStatusResponse(
+    parseProtocolResponse(
+      JSON.stringify({
+        id: "req_busy",
+        version: 1,
+        type: "status",
+        device: {
+          deviceId: "a508d833-5c83-4680-88bb-18aee976881e",
+          state: "busy",
+          firmwareName: "Agent-Q Firmware",
+          hardware: "hardware-id",
+          firmwareVersion: "0.0.0",
+        },
+        provisioning: {
+          state: "provisioning",
+        },
+      }),
+      "req_busy",
+    ),
+  );
+
+  assert.equal(response.device.state, "busy");
+  assert.equal(response.provisioning.state, "provisioning");
 });
 
 test("status response requires provisioning and rejects invalid provisioning state", () => {
@@ -232,12 +270,39 @@ test("creates provisioning requests without secret fields", () => {
     },
   });
 
-  const serialized = serializeRequest(start) + serializeRequest(cancel) + serializeRequest(setupCheck);
+  const generateRecoveryPhrase = makeGenerateRecoveryPhraseRequest(30000, "req_generate_phrase");
+  assert.deepEqual(generateRecoveryPhrase, {
+    id: "req_generate_phrase",
+    version: 1,
+    type: "generate_recovery_phrase",
+    params: {
+      approvalTimeoutMs: 30000,
+    },
+  });
+
+  const confirmRecoveryPhraseBackup = makeConfirmRecoveryPhraseBackupRequest(30000, "req_confirm_phrase");
+  assert.deepEqual(confirmRecoveryPhraseBackup, {
+    id: "req_confirm_phrase",
+    version: 1,
+    type: "confirm_recovery_phrase_backup",
+    params: {
+      approvalTimeoutMs: 30000,
+    },
+  });
+
+  const serialized =
+    serializeRequest(start) +
+    serializeRequest(cancel) +
+    serializeRequest(setupCheck) +
+    serializeRequest(generateRecoveryPhrase) +
+    serializeRequest(confirmRecoveryPhraseBackup);
   assert.doesNotMatch(serialized, /mnemonic|seed|private|secret|import/i);
 
   assert.throws(() => makeStartProvisioningRequest(0), /approvalTimeoutMs/);
   assert.throws(() => makeCancelProvisioningRequest(60001), /approvalTimeoutMs/);
   assert.throws(() => makeProvisioningSetupCheckRequest(0), /approvalTimeoutMs/);
+  assert.throws(() => makeGenerateRecoveryPhraseRequest(0), /approvalTimeoutMs/);
+  assert.throws(() => makeConfirmRecoveryPhraseBackupRequest(60001), /approvalTimeoutMs/);
   assert.throws(() => makeStartProvisioningRequest(30000, "req/unsafe"), /Invalid request id/);
 });
 
@@ -373,6 +438,90 @@ test("parses provisioning setup check responses and rejects wrong state", () => 
     "req_setup_check",
   );
   assert.throws(() => assertProvisioningSetupCheckResponse(invalidState), { code: "invalid_state" });
+});
+
+test("parses recovery phrase responses and rejects host-carried secrets", () => {
+  for (const status of ["displayed", "confirmed"]) {
+    const response = assertRecoveryPhraseResponse(
+      parseProtocolResponse(
+        JSON.stringify({
+          id: `req_phrase_${status}`,
+          version: 1,
+          type: "recovery_phrase_result",
+          status,
+          provisioning: {
+            state: "provisioning",
+          },
+        }),
+        `req_phrase_${status}`,
+      ),
+    );
+
+    assert.equal(response.status, status);
+    assert.equal(response.provisioning.state, "provisioning");
+  }
+
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        JSON.stringify({
+          id: "req_phrase",
+          version: 1,
+          type: "recovery_phrase_result",
+          status: "displayed",
+          provisioning: {
+            state: "unprovisioned",
+          },
+        }),
+        "req_phrase",
+      ),
+    { code: "protocol_error" },
+  );
+
+  for (const extra of [
+    { mnemonic: "never accept this" },
+    { recoveryPhrase: "never accept this" },
+    { words: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" },
+    { payload: { seed: "never accept this" } },
+    {
+      provisioning: {
+        state: "provisioning",
+        words: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+      },
+    },
+  ]) {
+    assert.throws(
+      () =>
+        parseProtocolResponse(
+          JSON.stringify({
+            id: "req_phrase",
+            version: 1,
+            type: "recovery_phrase_result",
+            status: "displayed",
+            provisioning: {
+              state: "provisioning",
+            },
+            ...extra,
+          }),
+          "req_phrase",
+        ),
+      { code: "protocol_error" },
+    );
+  }
+
+  const invalidState = parseProtocolResponse(
+    JSON.stringify({
+      id: "req_phrase",
+      version: 1,
+      type: "error",
+      error: {
+        code: "invalid_state",
+        message: "Recovery phrase setup is valid only while provisioning.",
+      },
+    }),
+    "req_phrase",
+  );
+  assert.throws(() => assertRecoveryPhraseResponse(invalidState), { code: "invalid_state" });
 });
 
 test("parses connect_result approved and rejected responses", () => {

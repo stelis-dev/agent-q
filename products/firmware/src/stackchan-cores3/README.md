@@ -26,6 +26,11 @@ The current implementation includes:
   any previously active Firmware session only after physical YES.
 - a USB JSONL `disconnect` request that clears the active Firmware session when
   the supplied session id matches.
+- USB JSONL provisioning requests for `start_provisioning`,
+  `cancel_provisioning`, `provisioning_setup_check`, `generate_recovery_phrase`,
+  and `confirm_recovery_phrase_backup`. Recovery phrase setup v0 is DEV_PROFILE
+  scaffolding: it stores the generated phrase only in RAM, displays it only on
+  device, and does not persist root material or move to `provisioned`.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP
@@ -44,8 +49,8 @@ authorize signing.
 
 This is not the signing product yet. It does not persist keys, store policies,
 parse signable transactions, expose MCP directly, or apply signing policy. The
-only persisted value in this target implementation is the protocol `deviceId`
-used by Gateway for reconnect hints.
+only persisted values in this target implementation are the protocol `deviceId`
+used by Gateway for reconnect hints and the provisioning state flag.
 
 Agent-Q firmware is intentionally not a general StackChan AI firmware. It does
 not include StackChan World login, Xiaozhi cloud sessions, camera upload, screen
@@ -67,13 +72,19 @@ and GitHub Actions use the same inputs:
 ```bash
 source /path/to/esp-idf-v5.5.4/export.sh
 tools/firmware/stackchan-cores3/build.sh
+tools/firmware/stackchan-cores3/test_bip39_vectors.sh
 ```
 
-The build script downloads the pinned upstream firmware and signing-source
-checkouts into `.firmware-cache/` when needed, copies this overlay into the
-firmware checkout, and builds. It does not require `.WORK/`. A developer may
-still use `.WORK/` as a local investigation cache, but that cache is not source
-of truth and is not used by CI.
+The build script downloads the pinned upstream firmware, signing-source, and
+BIP-39 wordlist checkouts into `.firmware-cache/` when needed, copies this
+overlay into the firmware checkout, generates the wordlist source, and builds.
+It does not require `.WORK/`. A developer may still use `.WORK/` as a local
+investigation cache, but that cache is not source of truth and is not used by
+CI.
+
+The BIP-39 vector test is a host-side check. It compiles the tracked
+`agent_q_bip39.cpp` encoder with ESP-IDF mbedTLS SHA-256 sources and a
+generated wordlist source from the pinned BIP-39 English wordlist.
 
 During preparation, the tracked build tools also patch the pinned upstream host
 tree so the Agent-Q build does not start the StackChan/Xiaozhi remote AI
@@ -87,8 +98,15 @@ In the hardware firmware tree:
 - Add `agent_q/*.cpp` to the main firmware component sources.
 - Add the `signing_crypto` component to the main firmware component
   dependencies.
+- Add `mbedtls` to the main firmware component dependencies for BIP-39
+  checksum generation.
+- Add `bootloader_support` to seed the Agent-Q CSPRNG from early boot entropy
+  before HAL initialization.
 - Add `esp_driver_usb_serial_jtag` to the main firmware component dependencies
   for the USB JSONL smoke path.
+- Call `agent_q::init_secure_random_from_early_boot_entropy()` before HAL
+  initialization so recovery phrase generation never depends on late direct
+  `esp_fill_random()` while RF/ADC entropy is unavailable.
 - Call `agent_q::run_signing_self_test()` once during boot after hardware
   initialization.
 - Initialize NVS during the host firmware boot sequence before Agent-Q
@@ -101,8 +119,17 @@ In the hardware firmware tree:
 
 ## Persistent Storage
 
-This target stores the protocol `deviceId` in NVS namespace `agent_q` with key
-`device_id`.
+This target stores the protocol `deviceId` and provisioning state in NVS
+namespace `agent_q`.
+
+| Key | Purpose |
+|---|---|
+| `device_id` | Gateway reconnect and device-selection identity |
+| `prov_state` | Current provisioning state: `unprovisioned` or `provisioning` |
+
+Recovery phrase setup v0 stores generated phrase text only in RAM and wipes it
+on cancel, backup confirmation, rejection, display expiry, timeout, or firmware
+restart.
 
 Agent-Q-owned modules are sources under `agent_q/` in this target tree. These
 modules may share the `agent_q` namespace. New keys should be named by feature,

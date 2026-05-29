@@ -3,8 +3,8 @@
 This document defines the target first-install flow for Agent-Q signing
 material.
 
-This is target design, not implemented behavior. Current implementation status
-lives in `docs/IMPLEMENTATION_STATUS.md`.
+This document separates target design from implemented setup slices. Current
+implementation status lives in `docs/IMPLEMENTATION_STATUS.md`.
 
 ## Purpose
 
@@ -86,8 +86,11 @@ Provisioning UX depends on hardware:
 - Button-only or LED-only: cannot safely show or enter mnemonics; setup needs a
   weaker assisted flow or external secure setup tooling.
 
-StackChan CoreS3 has display and touch hardware, but local mnemonic generation,
-backup confirmation, and mnemonic entry are not implemented.
+StackChan CoreS3 has display and touch hardware. Source-level DEV_PROFILE
+recovery phrase generation and volatile backup confirmation are implemented as
+setup scaffolding. Firmware build passes; hardware smoke is still pending.
+Mnemonic import, persistent root storage, account derivation, and signing are
+not implemented.
 
 ## Chain Accounts
 
@@ -123,9 +126,12 @@ Runtime v0 implements only the state flag for `unprovisioned` and
 device-local storage, reports it through `get_status`, and changes it through
 physical approval for `start_provisioning` and `cancel_provisioning`.
 
-Runtime v0 does not generate, import, store, export, or derive from root signing
-material. Firmware must not set `provisioned` until root signing material
-exists. Firmware must not set `locked` until an unlock model exists.
+Runtime v0 does not import, persist, export, or derive from root signing
+material. Current StackChan CoreS3 source can generate and display a BIP-39
+recovery phrase only as RAM scratch while staying in `provisioning`; this is
+DEV_PROFILE scaffolding and is not USER_PROFILE key provisioning. Firmware must
+not set `provisioned` until root signing material exists in device-local
+storage. Firmware must not set `locked` until an unlock model exists.
 
 Runtime v0 state transitions:
 
@@ -139,7 +145,7 @@ stateDiagram-v2
     Provisioning --> Provisioning: cancel rejected, timeout, or storage_error
 
     Unprovisioned: no root signing material
-    Provisioning: setup flag only in Runtime v0
+    Provisioning: state flag plus volatile setup scratch only
 ```
 
 `start_provisioning` is valid only from `unprovisioned`. `cancel_provisioning`
@@ -148,7 +154,7 @@ without opening approval UI.
 
 ## Setup-Step v0
 
-Runtime v0 source defines one setup-step message:
+Runtime v0 source defines the first setup-step message:
 `provisioning_setup_check`.
 
 This request is a physical-approval boundary check for setup UI and state-gate
@@ -164,27 +170,88 @@ Canceling provisioning still calls the provisioning scratch wipe hook before
 returning to `unprovisioned`, so future setup scratch material has one required
 wipe point.
 
+## Recovery Phrase Setup v0
+
+Current StackChan CoreS3 source adds two setup-step messages:
+
+- `generate_recovery_phrase`
+- `confirm_recovery_phrase_backup`
+
+These messages are valid only while Firmware is in `provisioning`. They require
+physical approval on the device and do not require `sessionId`.
+
+`generate_recovery_phrase` generates a 12-word BIP-39 recovery phrase from an
+Agent-Q CSPRNG seeded from early boot entropy before HAL initialization and
+BIP-39 checksum logic, stores it only in Firmware RAM, and displays it on the
+device. Its response reports only `recovery_phrase_result` with status
+`displayed` and `provisioning.state = provisioning`. The response never carries
+the phrase, entropy, seed, private key, account data, or policy data.
+
+Firmware tracks the volatile recovery phrase with an explicit scratch substate:
+`none`, `displayed`, or `backup_confirmation_pending`. This RAM-only substate is
+separate from the persistent `provisioning.state`, pending approval state, and
+LVGL panel state. The UI is not the source of truth; panel deletion or
+replacement is treated as an event that must move `displayed` to `none` by
+wiping or invalidating the phrase.
+
+`confirm_recovery_phrase_backup` is accepted only after a phrase has been
+displayed. Accepting the request moves the scratch substate from `displayed` to
+`backup_confirmation_pending`; approval, rejection, or timeout always wipes the
+volatile phrase and returns the scratch substate to `none`. In this v0 slice,
+approval leaves the device in `provisioning`; it does not persist root material
+and does not move to `provisioned`. Rejection or timeout also wipes the volatile
+phrase, so the user must generate a new phrase to continue.
+
+The recovery phrase is backup-ready only while its device display is still the
+active setup UI. If that display is removed or replaced, Firmware wipes or
+invalidates the volatile phrase so a later backup confirmation cannot confirm
+material that is no longer visible. The active physical backup-confirmation
+prompt is the only exception: it may replace the phrase display after validating
+that the phrase was visible, but it must end by wiping the phrase whether the
+user confirms, rejects, or lets the prompt time out.
+
+While the phrase display is active, `get_status` remains available and reports
+`device.state = busy`. The display has a finite lifetime; expiry clears the
+setup panel and wipes the volatile phrase.
+
+`cancel_provisioning` also wipes volatile setup scratch once its approval UI has
+interrupted a recovery phrase display. If the user rejects cancellation or the
+cancel approval times out, the persistent state remains `provisioning`, but the
+displayed phrase is gone and must not be treated as recoverable. If cancellation
+is approved and scratch wipe succeeds but storing `unprovisioned` fails, the
+device reports `storage_error`, remains in the previous persistent state, and
+still keeps the scratch wiped.
+
+This v0 flow deliberately stops before USER_PROFILE key storage. Real user
+signing material remains blocked by the security-profile gates in
+`docs/SECURITY_MODEL.md`: secure firmware profile, encrypted storage, verified
+RNG readiness, destructive hardware rehearsal, and hardware smoke.
+
 ## Implementation Order
 
 Recommended first slice:
 
 1. Report whether a device is provisioned.
 2. Store provisioning state without real mnemonic material.
-3. Add setup-step messages that still store no real assets.
-4. Add real BIP-39 generation only after storage, wipe, UI, and verification
-   paths are specified and tested.
-5. Add Sui Ed25519 account derivation.
-6. Add `get_accounts`.
-7. Add Sui `sign_personal_message`.
+3. Add setup-step messages that still store no persistent assets.
+4. Add DEV_PROFILE BIP-39 recovery phrase display with volatile wipe and no
+   host exposure.
+5. Add USER_PROFILE storage and backup confirmation only after the secure
+   profile gates pass.
+6. Add Sui Ed25519 account derivation.
+7. Add `get_accounts`.
+8. Add Sui `sign_personal_message`.
 
 Do not jump directly from mnemonic generation to user transaction signing.
 
 Current implementation status: steps 1 and 2 are implemented only as
 provisioning state reporting and approved state start/cancel. Step 3 is
 limited to Gateway parser support and the StackChan CoreS3 source path for the
-`provisioning_setup_check` boundary check described above; firmware build and
-hardware smoke are still required. Mnemonic generation/import, account
-derivation, and signing APIs are not implemented.
+`provisioning_setup_check` boundary check described above; firmware build
+passes, and hardware smoke is still required. Step 4 is implemented as
+StackChan CoreS3 source plus Gateway protocol parsing; firmware build passes,
+and hardware smoke is still required. Mnemonic import, persistent root storage,
+account derivation, and signing APIs are not implemented.
 
 ## Completion Criteria
 

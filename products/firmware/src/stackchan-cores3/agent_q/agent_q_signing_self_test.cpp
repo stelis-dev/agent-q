@@ -3,8 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "agent_q_entropy.h"
 #include "esp_log.h"
-#include "esp_random.h"
 
 extern "C" {
 #include "sign.h"
@@ -31,10 +31,14 @@ namespace agent_q {
 
 void run_signing_self_test()
 {
-    uint8_t seed[32];
-    uint8_t sui_signature[97];
+    uint8_t seed[32] = {};
+    uint8_t sui_signature[97] = {};
 
-    esp_fill_random(seed, sizeof(seed));
+    if (!agent_q::fill_secure_random(seed, sizeof(seed))) {
+        ESP_LOGE(kTag, "Ed25519 signing self-test skipped: secure RNG unavailable");
+        wipe_bytes(seed, sizeof(seed));
+        return;
+    }
 
     const int sign_result =
         sui_signing_sign_ed25519(sui_signature, kSelfTestMessage, sizeof(kSelfTestMessage), seed);

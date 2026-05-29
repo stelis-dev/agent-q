@@ -8,8 +8,8 @@ Usage: tools/firmware/stackchan-cores3/build.sh [path-to-StackChan-or-firmware] 
 ESP-IDF must already be installed and active in the shell, so idf.py is on PATH.
 By default, the script downloads the pinned StackChan host firmware into the
 ignored .firmware-cache directory, applies the tracked Agent-Q overlay, and
-downloads the pinned signing source into .firmware-cache before building. It
-does not depend on .WORK paths.
+downloads the pinned signing and BIP-39 wordlist sources into .firmware-cache
+before building. It does not depend on .WORK paths.
 EOF
 }
 
@@ -24,6 +24,7 @@ COMMON_SOURCE_ENV="${REPO_ROOT}/products/firmware/source.env"
 TARGET_SOURCE_ENV="${REPO_ROOT}/products/firmware/src/stackchan-cores3/source.env"
 DEFAULT_CHECKOUT_DIR="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan"
 DEFAULT_SIGNING_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
+DEFAULT_BIP39_WORDLIST_DIR="${REPO_ROOT}/.firmware-cache/bip39/bips"
 INPUT_PATH="${1:-${DEFAULT_CHECKOUT_DIR}}"
 BUILD_DIR="${2:-build-agentq-stackchan-cores3}"
 
@@ -77,6 +78,20 @@ if [[ ! -f "${AGENT_Q_SIGNING_CRYPTO_ROOT}/src/microsui_core/sign.c" ]]; then
   echo "AGENT_Q_SIGNING_CRYPTO_ROOT does not point to the pinned signing source: ${AGENT_Q_SIGNING_CRYPTO_ROOT}" >&2
   exit 1
 fi
+
+if [[ -z "${AGENT_Q_BIP39_WORDLIST_ROOT:-}" ]]; then
+  fetch_pinned_repo "${AGENT_Q_BIP39_WORDLIST_REPOSITORY}" "${AGENT_Q_BIP39_WORDLIST_COMMIT}" "${DEFAULT_BIP39_WORDLIST_DIR}"
+  export AGENT_Q_BIP39_WORDLIST_ROOT="${DEFAULT_BIP39_WORDLIST_DIR}"
+else
+  export AGENT_Q_BIP39_WORDLIST_ROOT
+fi
+
+AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE="${AGENT_Q_BIP39_WORDLIST_ROOT}/${AGENT_Q_BIP39_ENGLISH_WORDLIST_PATH}"
+if [[ ! -f "${AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE}" ]]; then
+  echo "AGENT_Q_BIP39_WORDLIST_ROOT does not point to the pinned BIP-39 wordlist source: ${AGENT_Q_BIP39_WORDLIST_ROOT}" >&2
+  exit 1
+fi
+export AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE
 
 "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
 

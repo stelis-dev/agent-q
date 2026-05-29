@@ -133,11 +133,16 @@ A state-scoped plan must state:
 
 - the current/source device state;
 - the target device state, if the work changes state;
+- each state owner, separating persistent device state, volatile sensitive
+  scratch state, pending approval state, and UI/display state when more than one
+  exists;
 - APIs that are allowed in each affected state;
 - APIs that must remain unavailable in each affected state;
 - the authority that enforces the rule: Firmware or Gateway;
 - the UI requirement: silent handling, notification, or physical approval;
 - persistence and wipe requirements;
+- transition triggers, guards, side effects, failure behavior, and cleanup for
+  each affected state transition;
 - verification for each affected state.
 
 Do not implement a new API, state transition, account path, signing path, policy
@@ -146,6 +151,23 @@ explicitly classified.
 
 Gateway may hide unavailable operations, but Firmware must enforce device-state
 gates.
+
+Do not use UI object lifetime as the source of truth for security, provisioning,
+signing, account, policy, session, or sensitive scratch state. UI may display,
+request, or mirror state, but explicit state variables owned by the responsible
+module must decide whether an operation is allowed and what cleanup is required.
+
+For state-scoped APIs, validate the protocol envelope enough to identify the
+operation, then check the source-state and setup-step guards before validating
+operation parameters that are irrelevant when the state is wrong. A request in
+the wrong state should fail with the state error defined by the protocol instead
+of a parameter error caused by an operation that is unavailable in that state.
+
+When a transition can fail partway through, define the post-failure state
+explicitly. Sensitive volatile scratch must either remain valid and visible for
+the next allowed step, or be wiped and made impossible to confirm or use. Do not
+leave hidden scratch, stale approvals, or responses that claim a transition
+succeeded after the state that justifies it was cleared.
 
 Do not interpret a user request as the lowest-effort literal edit that satisfies
 the words in isolation. Interpret it by the product outcome, affected boundary,
@@ -210,6 +232,8 @@ Current firmware helper commands:
   `tools/firmware/stackchan-cores3/fetch.sh`
 - Build StackChan CoreS3 firmware after ESP-IDF v5.5.4 is active:
   `tools/firmware/stackchan-cores3/build.sh`
+- Test BIP-39 mnemonic vectors after ESP-IDF v5.5.4 is active:
+  `tools/firmware/stackchan-cores3/test_bip39_vectors.sh`
 
 If a root `package.json` is added, inspect it before running project commands
 and update this section.

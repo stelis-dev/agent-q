@@ -44,6 +44,12 @@ Implemented today:
   move between `unprovisioned` and `provisioning` only after physical approval.
   This is not signing readiness and stores no mnemonic, seed, private key,
   account, or policy.
+- A DEV_PROFILE recovery phrase setup path in StackChan CoreS3 source. It can
+  generate a BIP-39 recovery phrase into RAM from an Agent-Q CSPRNG seeded from
+  early boot entropy while `provisioning`, display it on the device only, and
+  wipe it on cancel, confirmation, rejection, display expiry, or timeout.
+  Firmware build passes, hardware smoke is still required, and this is not
+  USER_PROFILE key provisioning.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
@@ -51,7 +57,9 @@ Designed but not implemented (do not treat as present):
 
 - Persistent signing keys and on-device key generation.
 - Key import.
-- First-install mnemonic generation or import.
+- USER_PROFILE first-install mnemonic generation or import.
+- Persistent root-material storage and backup-confirmed transition to
+  `provisioned`.
 - zkLogin signing material.
 - Policy storage and evaluation.
 - Account and public-key discovery.
