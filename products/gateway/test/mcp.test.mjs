@@ -36,6 +36,9 @@ const noOpCore = {
           hardware: "hardware-id",
           firmwareVersion: "0.0.0",
         },
+        provisioning: {
+          state: "unprovisioned",
+        },
       },
     };
   },
@@ -212,7 +215,7 @@ test("exported output schema rejects raw error text and unknown firmware codes",
     statusObservedAt: "2026-05-28T00:00:00.000Z",
     unavailableReason: "handshake_failed",
     firmwareErrorCode: "weird_raw_code",
-    cachedStatus: { device },
+    cachedStatus: { device, provisioning: { state: "unprovisioned" } },
   };
   assert.equal(
     gatewayToolDefinitions.getDeviceStatus.outputSchema.safeParse(cachedRawCode).success,
@@ -390,6 +393,7 @@ const leakyCore = {
         version: 1,
         type: "status",
         device: { deviceId: "device-1", state: "idle", firmwareName: "f", hardware: "h", firmwareVersion: "0" },
+        provisioning: { state: "unprovisioned" },
       },
       ...SECRET_EXTRAS,
     };
@@ -441,6 +445,14 @@ test("get_device_status error-shaped success cannot leak out as a success", asyn
     assert.equal(result.structuredContent.source, "error");
     assert.equal(result.structuredContent.error.code, "internal_output_error");
   }, errorShapedCore);
+});
+
+test("get_device_status exposes live provisioning state", async () => {
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "get_device_status", arguments: {} });
+    assert.equal(result.structuredContent.source, "live");
+    assert.equal(result.structuredContent.protocolResponse.provisioning.state, "unprovisioned");
+  }, noOpCore);
 });
 
 test("error path canonicalizes message and code; raw text never reaches the client", async () => {
@@ -610,6 +622,7 @@ test("MCP boundary fails closed on an unsanitized live port path", async () => {
               version: 1,
               type: "status",
               device: { deviceId: "device-1", state: "idle", firmwareName: "f", hardware: "h", firmwareVersion: "0" },
+              provisioning: { state: "unprovisioned" },
             },
           },
         ],
@@ -716,6 +729,9 @@ function cachedStatusWithFirmwareCode(firmwareErrorCode) {
         firmwareName: "Agent-Q Firmware",
         hardware: "hardware-id",
         firmwareVersion: "0.0.0",
+      },
+      provisioning: {
+        state: "unprovisioned",
       },
     },
   };

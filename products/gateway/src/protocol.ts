@@ -6,18 +6,20 @@ import {
   MAX_HARDWARE_ID_LENGTH,
   isDeviceState,
   isGatewayName,
+  isProvisioningState,
   isSafeDeviceId,
   isSafeRequestId,
   isSessionId,
   sanitizeDisplayText,
   type DeviceState,
+  type ProvisioningState,
 } from "./safe-text.js";
 
 // These boundary helpers are defined once in safe-text.ts (the single source of
 // truth) and re-exported here because protocol.ts is the wire-ingress boundary
 // that applies them; existing importers and tests resolve them via protocol.ts.
 export { isGatewayName, isSafeDeviceId, isSafeRequestId, isSessionId, sanitizeDisplayText };
-export type { DeviceState };
+export type { DeviceState, ProvisioningState };
 
 export const PROTOCOL_VERSION = 1;
 export const MAX_APPROVAL_TIMEOUT_MS = 60000;
@@ -36,6 +38,15 @@ export interface DeviceStatus {
   firmwareName: string;
   hardware: string;
   firmwareVersion: string;
+}
+
+export interface ProvisioningStatus {
+  state: ProvisioningState;
+}
+
+export interface DeviceStatusSnapshot {
+  device: DeviceStatus;
+  provisioning: ProvisioningStatus;
 }
 
 export interface GetStatusRequest {
@@ -82,6 +93,7 @@ export interface StatusResponse {
   version: typeof PROTOCOL_VERSION;
   type: "status";
   device: DeviceStatus;
+  provisioning: ProvisioningStatus;
 }
 
 export interface IdentifyDeviceResponse {
@@ -291,6 +303,10 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     if (device === null) {
       throw new ProtocolError("protocol_error", "Status response device object is malformed.");
     }
+    const provisioning = sanitizeProvisioningStatus(value.provisioning);
+    if (provisioning === null) {
+      throw new ProtocolError("protocol_error", "Status response provisioning object is malformed.");
+    }
     if (typeof value.id !== "string") {
       throw new ProtocolError("protocol_error", "Status response id is malformed.");
     }
@@ -300,6 +316,7 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
       version: PROTOCOL_VERSION,
       type: "status",
       device,
+      provisioning,
     };
   }
 
@@ -445,6 +462,25 @@ export function sanitizeDeviceStatus(value: unknown): DeviceStatus | null {
     hardware: sanitizeDisplayText(value.hardware, MAX_HARDWARE_ID_LENGTH),
     firmwareVersion: sanitizeDisplayText(value.firmwareVersion, MAX_FIRMWARE_VERSION_LENGTH),
   };
+}
+
+export function sanitizeProvisioningStatus(value: unknown): ProvisioningStatus | null {
+  if (!isRecord(value) || !isProvisioningState(value.state)) {
+    return null;
+  }
+  return { state: value.state };
+}
+
+export function sanitizeDeviceStatusSnapshot(value: unknown): DeviceStatusSnapshot | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const device = sanitizeDeviceStatus(value.device);
+  const provisioning = sanitizeProvisioningStatus(value.provisioning);
+  if (device === null || provisioning === null) {
+    return null;
+  }
+  return { device, provisioning };
 }
 
 function isIdentificationCode(value: unknown): value is string {

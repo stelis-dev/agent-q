@@ -1,7 +1,11 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { sanitizeDeviceStatus, type DeviceStatus } from "./protocol.js";
+import {
+  sanitizeDeviceStatusSnapshot,
+  type DeviceStatus,
+  type DeviceStatusSnapshot,
+} from "./protocol.js";
 import {
   MAX_LABEL_LENGTH,
   PURPOSE_PATTERN,
@@ -13,7 +17,7 @@ import {
   sanitizePortHint,
 } from "./safe-text.js";
 
-export const CONFIG_SCHEMA_VERSION = 2;
+export const CONFIG_SCHEMA_VERSION = 3;
 
 // The label/purpose policy is defined once in safe-text.ts (the single source of
 // truth) and re-exported here so existing importers and tests continue to
@@ -33,9 +37,7 @@ export interface DeviceRecord {
   lastPortHint: string;
   lastSeenAt: string;
   label: string | null;
-  lastStatus: {
-    device: DeviceStatus;
-  };
+  lastStatus: DeviceStatusSnapshot;
 }
 
 export interface GatewayConfig {
@@ -51,9 +53,7 @@ export interface DeviceListing {
   lastPortHint: string;
   lastSeenAt: string;
   label: string | null;
-  lastStatus: {
-    device: DeviceStatus;
-  };
+  lastStatus: DeviceStatusSnapshot;
   assignedPurposes: string[];
   isDefaultActive: boolean;
 }
@@ -160,7 +160,7 @@ export class ConfigStore {
   private async writeConfig(config: GatewayConfig): Promise<void> {
     const normalized = normalizeGatewayConfig(config);
     if (normalized === undefined) {
-      // Unreachable: writeConfig only ever receives a schema-v2 config built by
+      // Unreachable: writeConfig only ever receives a current-schema config built by
       // this store. Fail loudly rather than silently writing defaults (which
       // would drop data) if that assumption ever breaks.
       throw new ConfigError("internal_output_error", "Refusing to write an unrecognized config shape.");
@@ -192,7 +192,7 @@ export class ConfigStore {
   }
 
   async rememberUsbStatus(
-    device: DeviceStatus,
+    status: DeviceStatusSnapshot,
     portPath: string,
     options: RememberUsbStatusOptions = {},
   ): Promise<GatewayConfig> {
@@ -201,13 +201,15 @@ export class ConfigStore {
     // portPath is an OS-supplied diagnostic string; sanitize it before it is
     // stored and later surfaced as lastPortHint in MCP output.
     const lastPortHint = sanitizePortHint(portPath);
-    // Defensive: callers pass a wire-parsed (already sanitized) device, but the
+    // Defensive: callers pass a wire-parsed (already sanitized) status, but the
     // write boundary re-applies the same policy so the stored registry can never
-    // hold an unsafe identity or unsanitized display string.
-    const safeDevice = sanitizeDeviceStatus(device);
-    if (safeDevice === null) {
+    // hold an unsafe identity, invalid provisioning state, or unsanitized display
+    // string.
+    const safeStatus = sanitizeDeviceStatusSnapshot(status);
+    if (safeStatus === null) {
       throw new ConfigError("invalid_device", "Refusing to store a device with an unsafe identity.");
     }
+    const safeDevice = safeStatus.device;
     const index = config.devices.findIndex((candidate) => candidate.deviceId === safeDevice.deviceId);
 
     if (index >= 0) {
@@ -218,9 +220,7 @@ export class ConfigStore {
         transport: "usb",
         lastPortHint,
         lastSeenAt,
-        lastStatus: {
-          device: safeDevice,
-        },
+        lastStatus: safeStatus,
       };
     } else {
       config.devices.push({
@@ -229,9 +229,7 @@ export class ConfigStore {
         lastPortHint,
         lastSeenAt,
         label: null,
-        lastStatus: {
-          device: safeDevice,
-        },
+        lastStatus: safeStatus,
       });
     }
 
@@ -432,10 +430,11 @@ function normalizeGatewayConfig(
   return { config, report };
 }
 
-// Top-level envelope gate shared by v1 and v2. A config whose envelope is wrong
-// is treated as foreign (the caller uses defaults); individual device records and
-// routing entries are normalized later rather than rejected wholesale, so one bad
-// record cannot discard the whole registry.
+// Top-level envelope gate. A config whose envelope is wrong or whose schema
+// version is not current is treated as foreign (the caller uses defaults);
+// individual current-schema device records and routing entries are normalized
+// later rather than rejected wholesale, so one bad record cannot discard the
+// whole registry.
 function recognizeConfigShape(value: unknown): RecognizedConfig | undefined {
   if (!isRecord(value)) {
     return undefined;
@@ -452,14 +451,6 @@ function recognizeConfigShape(value: unknown): RecognizedConfig | undefined {
       activeDeviceIdsByPurpose: value.activeDeviceIdsByPurpose,
       devices: value.devices,
     };
-  }
-  if (value.schemaVersion === 1) {
-    // v1 had no purpose routing and no labels; records are normalized and labels
-    // reset to null by normalizeDeviceRecord.
-    if (!Array.isArray(value.devices)) {
-      return undefined;
-    }
-    return { activeDeviceId: value.activeDeviceId, activeDeviceIdsByPurpose: {}, devices: value.devices };
   }
   return undefined;
 }
@@ -558,12 +549,14 @@ function normalizeDeviceRecord(value: unknown, report: NormalizationReport): Dev
     report.droppedRecords += 1;
     return null;
   }
-  const rawDevice = value.lastStatus.device;
-  const device = sanitizeDeviceStatus(rawDevice);
-  if (device === null) {
+  const rawStatus = value.lastStatus;
+  const status = sanitizeDeviceStatusSnapshot(rawStatus);
+  if (status === null) {
     report.droppedRecords += 1;
     return null;
   }
+  const rawDevice = rawStatus.device;
+  const device = status.device;
   // Identity invariant: the record id and the cached device id must name the same
   // device. A hand-edited config that splits them would route/select one id while
   // exposing cached status for another, so the record is dropped.
@@ -612,7 +605,7 @@ function normalizeDeviceRecord(value: unknown, report: NormalizationReport): Dev
     lastPortHint,
     lastSeenAt,
     label,
-    lastStatus: { device },
+    lastStatus: status,
   };
 }
 

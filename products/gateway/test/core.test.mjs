@@ -20,6 +20,9 @@ const status = {
   version: 1,
   type: "status",
   device,
+  provisioning: {
+    state: "unprovisioned",
+  },
 };
 
 const secondDevice = {
@@ -108,7 +111,7 @@ test("returns no_active_device when no active device exists", async () => {
 
 test("returns cached status for known device when live request times out", async () => {
   await withStore(async (store) => {
-    await store.rememberUsbStatus(device, "/dev/cu.usbmodem1", {
+    await store.rememberUsbStatus(status, "/dev/cu.usbmodem1", {
       observedAt: new Date("2026-05-28T00:00:00.000Z"),
       setActive: true,
     });
@@ -128,12 +131,13 @@ test("returns cached status for known device when live request times out", async
     assert.equal(result.unavailableReason, "timeout");
     assert.equal(result.statusObservedAt, "2026-05-28T00:00:00.000Z");
     assert.equal(result.cachedStatus.device.deviceId, device.deviceId);
+    assert.equal(result.cachedStatus.provisioning.state, "unprovisioned");
   });
 });
 
 test("core bounds a driver that ignores its handshake timeout", async () => {
   await withStore(async (store) => {
-    await store.rememberUsbStatus(device, "/dev/cu.usbmodem1", {
+    await store.rememberUsbStatus(status, "/dev/cu.usbmodem1", {
       observedAt: new Date("2026-05-28T00:00:00.000Z"),
       setActive: true,
     });
@@ -156,7 +160,7 @@ test("core bounds a driver that ignores its handshake timeout", async () => {
 
 test("falls back to scan when stored port hint is stale", async () => {
   await withStore(async (store) => {
-    await store.rememberUsbStatus(device, "/dev/cu.stale", {
+    await store.rememberUsbStatus(status, "/dev/cu.stale", {
       observedAt: new Date("2026-05-28T00:00:00.000Z"),
       setActive: true,
     });
@@ -375,7 +379,7 @@ test("identify bounds the whole call to timeoutMs across multiple devices", asyn
 
 test("selects default and purpose-specific active devices", async () => {
   await withStore(async (store) => {
-    await store.rememberUsbStatus(device, "/dev/cu.usbmodem1");
+    await store.rememberUsbStatus(status, "/dev/cu.usbmodem1");
     const core = new GatewayCore(store, defaultDriver());
 
     const defaultResult = await core.selectDevice({ deviceId: device.deviceId });
@@ -391,7 +395,7 @@ test("selects default and purpose-specific active devices", async () => {
 
 test("selectDevice rejects reserved purpose 'default'", async () => {
   await withStore(async (store) => {
-    await store.rememberUsbStatus(device, "/dev/cu.usbmodem1");
+    await store.rememberUsbStatus(status, "/dev/cu.usbmodem1");
     const core = new GatewayCore(store, defaultDriver());
     await assert.rejects(
       () => core.selectDevice({ deviceId: device.deviceId, purpose: "default" }),
@@ -419,7 +423,7 @@ test("listDevices reports purposes and runtime session state", async () => {
 
 test("setDeviceMetadata updates label via core", async () => {
   await withStore(async (store) => {
-    await store.rememberUsbStatus(device, "/dev/cu.usbmodem1");
+    await store.rememberUsbStatus(status, "/dev/cu.usbmodem1");
     const core = new GatewayCore(store, defaultDriver());
     const result = await core.setDeviceMetadata({ deviceId: device.deviceId, label: "Desk device" });
     assert.equal(result.label, "Desk device");
@@ -619,6 +623,7 @@ test("getDeviceStatus resolves by purpose", async () => {
     const result = await core.getDeviceStatus({ purpose: "payment" });
     assert.equal(result.source, "live");
     assert.equal(result.protocolResponse.device.deviceId, device.deviceId);
+    assert.equal(result.protocolResponse.provisioning.state, "unprovisioned");
   });
 });
 

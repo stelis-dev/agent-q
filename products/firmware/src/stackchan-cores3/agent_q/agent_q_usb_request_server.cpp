@@ -383,6 +383,7 @@ void write_status_response(const char* id)
     response["device"]["firmwareName"] = kFirmwareName;
     response["device"]["hardware"] = kHardwareId;
     response["device"]["firmwareVersion"] = kFirmwareVersion;
+    response["provisioning"]["state"] = "unprovisioned";
     write_json_document(response);
 }
 

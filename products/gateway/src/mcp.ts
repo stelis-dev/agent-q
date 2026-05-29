@@ -29,6 +29,7 @@ import {
   MAX_PORT_HINT_LENGTH,
   PRINTABLE_ASCII_ONLY,
   PURPOSE_PATTERN,
+  PROVISIONING_STATES,
   REQUEST_ID_PATTERN,
   isValidLabel,
   isValidPurpose,
@@ -78,12 +79,20 @@ const deviceShape = z.object({
   hardware: displayTextShape(MAX_HARDWARE_ID_LENGTH),
   firmwareVersion: displayTextShape(MAX_FIRMWARE_VERSION_LENGTH),
 });
+const provisioningShape = z.object({
+  state: z.enum(PROVISIONING_STATES),
+});
+const deviceStatusSnapshotShape = z.object({
+  device: deviceShape,
+  provisioning: provisioningShape,
+});
 
 const statusResponseShape = z.object({
   id: requestIdShape,
   version: z.literal(1),
   type: z.literal("status"),
   device: deviceShape,
+  provisioning: provisioningShape,
 });
 
 const identifyResponseShape = z.object({
@@ -140,9 +149,7 @@ const deviceListEntryShape = z.object({
   lastPortHint: portHintShape,
   lastSeenAt: isoInstantShape,
   label: safeLabelShape.nullable(),
-  lastStatus: z.object({
-    device: deviceShape,
-  }),
+  lastStatus: deviceStatusSnapshotShape,
   assignedPurposes: z.array(safePurposeShape),
   isDefaultActive: z.boolean(),
   runtimeSession: runtimeSessionShape.nullable(),
@@ -255,9 +262,7 @@ const cachedDeviceStatusOutputShape = z.object({
     .string()
     .refine((code) => Object.prototype.hasOwnProperty.call(PUBLIC_ERROR_MESSAGES, code))
     .optional(),
-  cachedStatus: z.object({
-    device: deviceShape,
-  }),
+  cachedStatus: deviceStatusSnapshotShape,
 });
 const getDeviceStatusSuccessOutputShape = z.discriminatedUnion("source", [
   liveStatusShape,

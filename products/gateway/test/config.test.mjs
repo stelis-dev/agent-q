@@ -21,6 +21,22 @@ const sampleDevice = {
   firmwareVersion: "0.0.0",
 };
 
+const sampleStatus = {
+  device: sampleDevice,
+  provisioning: {
+    state: "unprovisioned",
+  },
+};
+
+function statusForDevice(device) {
+  return {
+    device,
+    provisioning: {
+      state: "unprovisioned",
+    },
+  };
+}
+
 test("uses XDG config path with home fallback", () => {
   assert.equal(
     getConfigPath({ env: { XDG_CONFIG_HOME: "/tmp/xdg" }, homeDir: "/home/test" }),
@@ -32,7 +48,7 @@ test("uses XDG config path with home fallback", () => {
   );
 });
 
-test("loads defaults at v2 and remembers usb status", async () => {
+test("loads defaults at current schema and remembers usb status", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
@@ -43,7 +59,7 @@ test("loads defaults at v2 and remembers usb status", async () => {
       devices: [],
     });
 
-    await store.rememberUsbStatus(sampleDevice, "/dev/cu.usbmodem1", {
+    await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1", {
       observedAt: new Date("2026-05-28T00:00:00.000Z"),
       setActive: true,
     });
@@ -54,6 +70,24 @@ test("loads defaults at v2 and remembers usb status", async () => {
     assert.equal(config.devices[0].lastPortHint, "/dev/cu.usbmodem1");
     assert.equal(config.devices[0].label, null);
     assert.equal(config.devices[0].lastStatus.device.deviceId, sampleDevice.deviceId);
+    assert.equal(config.devices[0].lastStatus.provisioning.state, "unprovisioned");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("remembers provisioning status in cached usb status", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  try {
+    const store = new ConfigStore(join(dir, "config.json"));
+    await store.rememberUsbStatus(
+      { device: sampleDevice, provisioning: { state: "locked" } },
+      "/dev/cu.usbmodem1",
+    );
+
+    const config = await store.load();
+    assert.equal(config.devices[0].lastStatus.device.deviceId, sampleDevice.deviceId);
+    assert.equal(config.devices[0].lastStatus.provisioning.state, "locked");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -63,7 +97,7 @@ test("remembers usb status without changing active device unless requested", asy
   const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
-    await store.rememberUsbStatus(sampleDevice, "/dev/cu.usbmodem1");
+    await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
 
     const config = await store.load();
     assert.equal(config.activeDeviceId, null);
@@ -77,39 +111,7 @@ test("remembers usb status without changing active device unless requested", asy
   }
 });
 
-test("migrates v1 config to v2 preserving devices and active device", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
-  try {
-    const path = join(dir, "config.json");
-    const v1Config = {
-      schemaVersion: 1,
-      activeDeviceId: sampleDevice.deviceId,
-      devices: [
-        {
-          deviceId: sampleDevice.deviceId,
-          transport: "usb",
-          lastPortHint: "/dev/cu.usbmodem1",
-          lastSeenAt: "2026-05-28T00:00:00.000Z",
-          lastStatus: { device: sampleDevice },
-        },
-      ],
-    };
-    await writeFile(path, JSON.stringify(v1Config), "utf8");
-
-    const store = new ConfigStore(path);
-    const config = await store.load();
-    assert.equal(config.schemaVersion, CONFIG_SCHEMA_VERSION);
-    assert.equal(config.activeDeviceId, sampleDevice.deviceId);
-    assert.deepEqual(config.activeDeviceIdsByPurpose, {});
-    assert.equal(config.devices.length, 1);
-    assert.equal(config.devices[0].label, null);
-    assert.equal(config.devices[0].lastPortHint, "/dev/cu.usbmodem1");
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("falls back to default v2 for malformed config json", async () => {
+test("falls back to default current schema for malformed config json", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
   try {
     const path = join(dir, "config.json");
@@ -123,11 +125,29 @@ test("falls back to default v2 for malformed config json", async () => {
   }
 });
 
-test("falls back to default v2 for unknown schema version", async () => {
+test("falls back to default current schema for unsupported schema version", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
   try {
     const path = join(dir, "config.json");
-    await writeFile(path, JSON.stringify({ schemaVersion: 99 }), "utf8");
+    await writeFile(
+      path,
+      JSON.stringify({
+        schemaVersion: 2,
+        activeDeviceId: sampleDevice.deviceId,
+        activeDeviceIdsByPurpose: {},
+        devices: [
+          {
+            deviceId: sampleDevice.deviceId,
+            transport: "usb",
+            lastPortHint: "/dev/cu.usbmodem1",
+            lastSeenAt: "2026-05-28T00:00:00.000Z",
+            label: null,
+            lastStatus: sampleStatus,
+          },
+        ],
+      }),
+      "utf8",
+    );
 
     const store = new ConfigStore(path);
     const config = await store.load();
@@ -141,7 +161,7 @@ test("setDeviceMetadata sets and clears label", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
-    await store.rememberUsbStatus(sampleDevice, "/dev/cu.usbmodem1");
+    await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
 
     const labeled = await store.setDeviceMetadata({
       deviceId: sampleDevice.deviceId,
@@ -165,7 +185,7 @@ test("setDeviceMetadata rejects unknown device and oversized label", async () =>
   const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
-    await store.rememberUsbStatus(sampleDevice, "/dev/cu.usbmodem1");
+    await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
 
     await assert.rejects(
       () =>
@@ -193,9 +213,9 @@ test("label survives a subsequent rememberUsbStatus call", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
-    await store.rememberUsbStatus(sampleDevice, "/dev/cu.usbmodem1");
+    await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
     await store.setDeviceMetadata({ deviceId: sampleDevice.deviceId, label: "Desk device" });
-    await store.rememberUsbStatus(sampleDevice, "/dev/cu.usbmodem2", {
+    await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem2", {
       observedAt: new Date("2026-05-29T00:00:00.000Z"),
     });
 
@@ -211,7 +231,7 @@ test("setActiveDevice routes by purpose and rejects reserved or invalid purpose"
   const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
-    await store.rememberUsbStatus(sampleDevice, "/dev/cu.usbmodem1");
+    await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
 
     await store.setActiveDevice(sampleDevice.deviceId, "payment");
     let config = await store.load();
@@ -240,7 +260,7 @@ test("getActiveDevice returns default or purpose-specific record", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
-    await store.rememberUsbStatus(sampleDevice, "/dev/cu.usbmodem1");
+    await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
     await store.setActiveDevice(sampleDevice.deviceId);
     await store.setActiveDevice(sampleDevice.deviceId, "payment");
 
@@ -259,7 +279,7 @@ test("listDevices reports assigned purposes and default-active flag", async () =
   const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
-    await store.rememberUsbStatus(sampleDevice, "/dev/cu.usbmodem1");
+    await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
     await store.setActiveDevice(sampleDevice.deviceId);
     await store.setActiveDevice(sampleDevice.deviceId, "payment");
 
@@ -278,7 +298,7 @@ test("rememberUsbStatus does not write sessionId to config", async () => {
   try {
     const path = join(dir, "config.json");
     const store = new ConfigStore(path);
-    await store.rememberUsbStatus(sampleDevice, "/dev/cu.usbmodem1");
+    await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
     const raw = await readFile(path, "utf8");
     assert.equal(raw.includes("session"), false, "config must not persist session state");
   } finally {
@@ -304,7 +324,7 @@ test("prunes dangling active device and purpose references on load", async () =>
           lastPortHint: "/dev/cu.usbmodem1",
           lastSeenAt: "2026-05-28T00:00:00.000Z",
           label: null,
-          lastStatus: { device: sampleDevice },
+          lastStatus: sampleStatus,
         },
       ],
     };
@@ -367,7 +387,7 @@ function storedRecord(overrides = {}) {
     lastPortHint: "/dev/cu.usbmodem1",
     lastSeenAt: "2026-05-28T00:00:00.000Z",
     label: null,
-    lastStatus: { device: { ...sampleDevice } },
+    lastStatus: statusForDevice({ ...sampleDevice }),
     ...overrides,
   };
 }
@@ -417,14 +437,12 @@ test("load sanitizes untrusted stored device display strings", async () => {
   const config = await loadStored(
     storedConfig([
       storedRecord({
-        lastStatus: {
-          device: {
-            ...sampleDevice,
-            firmwareName: "EVIL" + CTRL_NL + "IGNORE " + "x".repeat(200),
-            hardware: "hw" + CTRL_BEL + "id",
-            firmwareVersion: "v" + CTRL_DEL + "1.0",
-          },
-        },
+        lastStatus: statusForDevice({
+          ...sampleDevice,
+          firmwareName: "EVIL" + CTRL_NL + "IGNORE " + "x".repeat(200),
+          hardware: "hw" + CTRL_BEL + "id",
+          firmwareVersion: "v" + CTRL_DEL + "1.0",
+        }),
       }),
     ]),
   );
@@ -440,7 +458,7 @@ test("load drops a stored record whose deviceId is unsafe and keeps valid ones",
   const unsafeId = "INJECT" + CTRL_NL + "ID";
   const config = await loadStored(
     storedConfig([
-      storedRecord({ deviceId: unsafeId, lastStatus: { device: { ...sampleDevice, deviceId: unsafeId } } }),
+      storedRecord({ deviceId: unsafeId, lastStatus: statusForDevice({ ...sampleDevice, deviceId: unsafeId }) }),
       storedRecord(),
     ]),
   );
@@ -451,8 +469,14 @@ test("load drops a stored record whose deviceId is unsafe and keeps valid ones",
 test("load drops a stored record whose cached device identity is unsafe", async () => {
   const config = await loadStored(
     storedConfig([
-      storedRecord({ lastStatus: { device: { ...sampleDevice, state: "not_a_state" } } }),
-      storedRecord({ deviceId: "b508d833-5c83-4680-88bb-18aee976881e", lastStatus: { device: { ...sampleDevice, deviceId: "b508d833-5c83-4680-88bb-18aee976881e" } } }),
+      storedRecord({ lastStatus: statusForDevice({ ...sampleDevice, state: "not_a_state" }) }),
+      storedRecord({
+        deviceId: "b508d833-5c83-4680-88bb-18aee976881e",
+        lastStatus: statusForDevice({
+          ...sampleDevice,
+          deviceId: "b508d833-5c83-4680-88bb-18aee976881e",
+        }),
+      }),
     ]),
   );
   assert.equal(config.devices.length, 1, "record with an invalid cached state is dropped");
@@ -463,7 +487,13 @@ test("load drops a non-usb transport record but keeps the rest of the registry",
   const config = await loadStored(
     storedConfig([
       storedRecord({ transport: "bluetooth" }),
-      storedRecord({ deviceId: "b508d833-5c83-4680-88bb-18aee976881e", lastStatus: { device: { ...sampleDevice, deviceId: "b508d833-5c83-4680-88bb-18aee976881e" } } }),
+      storedRecord({
+        deviceId: "b508d833-5c83-4680-88bb-18aee976881e",
+        lastStatus: statusForDevice({
+          ...sampleDevice,
+          deviceId: "b508d833-5c83-4680-88bb-18aee976881e",
+        }),
+      }),
     ]),
   );
   assert.equal(config.devices.length, 1);
@@ -513,11 +543,17 @@ test("load drops a stored record whose record id and cached device id disagree",
   const config = await loadStored(
     storedConfig([
       storedRecord({
-        lastStatus: { device: { ...sampleDevice, deviceId: "b508d833-5c83-4680-88bb-18aee976881e" } },
+        lastStatus: statusForDevice({
+          ...sampleDevice,
+          deviceId: "b508d833-5c83-4680-88bb-18aee976881e",
+        }),
       }),
       storedRecord({
         deviceId: "c508d833-5c83-4680-88bb-18aee976881e",
-        lastStatus: { device: { ...sampleDevice, deviceId: "c508d833-5c83-4680-88bb-18aee976881e" } },
+        lastStatus: statusForDevice({
+          ...sampleDevice,
+          deviceId: "c508d833-5c83-4680-88bb-18aee976881e",
+        }),
       }),
     ]),
   );
@@ -538,7 +574,14 @@ test("rememberUsbStatus refuses to store a device with an unsafe identity", asyn
   try {
     const store = new ConfigStore(join(dir, "config.json"));
     await assert.rejects(
-      () => store.rememberUsbStatus({ ...sampleDevice, deviceId: "bad" + CTRL_NL + "id" }, "/dev/cu.usbmodem1"),
+      () =>
+        store.rememberUsbStatus(
+          {
+            device: { ...sampleDevice, deviceId: "bad" + CTRL_NL + "id" },
+            provisioning: { state: "unprovisioned" },
+          },
+          "/dev/cu.usbmodem1",
+        ),
       (error) => error instanceof ConfigError && error.code === "invalid_device",
     );
   } finally {
@@ -612,9 +655,10 @@ test("load reports sanitized device display text in the normalization warning", 
     loadStored(
       storedConfig([
         storedRecord({
-          lastStatus: {
-            device: { ...sampleDevice, firmwareName: "Agent-Q" + CTRL_BEL + "Firmware" },
-          },
+          lastStatus: statusForDevice({
+            ...sampleDevice,
+            firmwareName: "Agent-Q" + CTRL_BEL + "Firmware",
+          }),
         }),
       ]),
     ),
@@ -634,6 +678,29 @@ test("load reports a sanitized port hint in the normalization warning", async ()
   assert.equal(hasControlOrHighByte(result.devices[0].lastPortHint), false);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /sanitizedPortHints=1[,)]/);
+});
+
+test("load drops a stored record whose provisioning status is missing", async () => {
+  const { result, warnings } = await captureNormalizeWarnings(() =>
+    loadStored(
+      storedConfig([
+        storedRecord({
+          lastStatus: { device: { ...sampleDevice } },
+        }),
+        storedRecord({
+          deviceId: "b508d833-5c83-4680-88bb-18aee976881e",
+          lastStatus: statusForDevice({
+            ...sampleDevice,
+            deviceId: "b508d833-5c83-4680-88bb-18aee976881e",
+          }),
+        }),
+      ]),
+    ),
+  );
+  assert.equal(result.devices.length, 1);
+  assert.equal(result.devices[0].deviceId, "b508d833-5c83-4680-88bb-18aee976881e");
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /droppedRecords=1,/);
 });
 
 test("load does not warn for an already-clean stored config", async () => {

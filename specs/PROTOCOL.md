@@ -185,7 +185,7 @@ device state after showing the code.
 
 ## Status
 
-Gateway can ask whether Firmware is available and ready.
+Gateway can ask whether Firmware is available and what status Firmware reports.
 
 Read-only status requests must not show physical approval UI.
 
@@ -212,6 +212,9 @@ Response:
     "firmwareName": "Agent-Q Firmware",
     "hardware": "hardware-id",
     "firmwareVersion": "0.0.0"
+  },
+  "provisioning": {
+    "state": "unprovisioned"
   }
 }
 ```
@@ -234,6 +237,22 @@ public key, or signing key.
 
 `firmwareName` is a descriptive label for display and diagnostics. It is not a
 security boundary and must not be treated as proof that the device is trusted.
+
+Provisioning states:
+
+- `unprovisioned`: root signing material is not present.
+- `provisioning`: local provisioning is in progress.
+- `provisioned`: root signing material is present.
+- `locked`: the provisioning state cannot be used until the device is unlocked.
+
+`provisioning.state` reports only the Firmware's provisioning state. It is not
+signing readiness, it does not prove that account or signing APIs exist, and it
+does not authorize Gateway to make policy decisions. Gateway must preserve and
+display the value without treating it as authority.
+
+The current StackChan CoreS3 target always returns `unprovisioned`. Runtime
+mnemonic generation, mnemonic import, persistent user signing material, account
+derivation, and signing APIs are not implemented.
 
 Device metadata strings are untrusted input and Gateway bounds them when
 parsing a response:

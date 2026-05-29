@@ -111,12 +111,16 @@ test("parses status response and rejects incompatible version", () => {
         hardware: "hardware-id",
         firmwareVersion: "0.0.0",
       },
+      provisioning: {
+        state: "unprovisioned",
+      },
     }),
     "req_1",
   );
 
   assert.equal(response.type, "status");
   assert.equal(response.device.state, "idle");
+  assert.equal(response.provisioning.state, "unprovisioned");
 
   assert.throws(
     () =>
@@ -131,6 +135,31 @@ test("parses status response and rejects incompatible version", () => {
       ),
     /Unsupported protocol response version/,
   );
+});
+
+test("status response requires provisioning and rejects invalid provisioning state", () => {
+  for (const provisioning of [undefined, { state: "signing_ready" }]) {
+    assert.throws(
+      () =>
+        parseProtocolResponse(
+          JSON.stringify({
+            id: "req_1",
+            version: 1,
+            type: "status",
+            device: {
+              deviceId: "a508d833-5c83-4680-88bb-18aee976881e",
+              state: "idle",
+              firmwareName: "Agent-Q Firmware",
+              hardware: "hardware-id",
+              firmwareVersion: "0.0.0",
+            },
+            ...(provisioning === undefined ? {} : { provisioning }),
+          }),
+          "req_1",
+        ),
+      { code: "protocol_error" },
+    );
+  }
 });
 
 test("makeConnectRequest validates gatewayName and approvalTimeoutMs", () => {
@@ -302,7 +331,15 @@ test("isSessionId and isGatewayName accept and reject expected inputs", () => {
 const safeDeviceId = "a508d833-5c83-4680-88bb-18aee976881e";
 
 function statusLine(device) {
-  return JSON.stringify({ id: "req_1", version: 1, type: "status", device });
+  return JSON.stringify({
+    id: "req_1",
+    version: 1,
+    type: "status",
+    device,
+    provisioning: {
+      state: "unprovisioned",
+    },
+  });
 }
 
 test("sanitizeDisplayText strips control chars and caps length", () => {

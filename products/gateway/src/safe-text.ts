@@ -20,8 +20,10 @@
 // than by a regex literal, so this source file never contains raw control bytes.
 
 export const DEVICE_STATES = ["idle", "busy", "awaiting_approval", "locked", "error"] as const;
+export const PROVISIONING_STATES = ["unprovisioned", "provisioning", "provisioned", "locked"] as const;
 
 export type DeviceState = (typeof DEVICE_STATES)[number];
+export type ProvisioningState = (typeof PROVISIONING_STATES)[number];
 
 // Identifier formats. deviceId and requestId share a character class but differ
 // in length bound, so each boundary states its own limit explicitly.
@@ -89,6 +91,10 @@ function containsControlChar(value: string): boolean {
 
 export function isDeviceState(value: unknown): value is DeviceState {
   return typeof value === "string" && (DEVICE_STATES as readonly string[]).includes(value);
+}
+
+export function isProvisioningState(value: unknown): value is ProvisioningState {
+  return typeof value === "string" && (PROVISIONING_STATES as readonly string[]).includes(value);
 }
 
 export function isSafeDeviceId(value: unknown): value is string {

@@ -13,6 +13,7 @@ import {
   createIdentificationCode,
   DEFAULT_APPROVAL_TIMEOUT_MS,
   MAX_APPROVAL_TIMEOUT_MS,
+  type DeviceStatusSnapshot,
   type IdentifyDeviceResponse,
   type StatusResponse,
 } from "./protocol.js";
@@ -41,9 +42,7 @@ export interface CachedDeviceStatus {
   statusObservedAt: string;
   unavailableReason: UnavailableReason;
   firmwareErrorCode?: string;
-  cachedStatus: {
-    device: StatusResponse["device"];
-  };
+  cachedStatus: DeviceStatusSnapshot;
 }
 
 export type DeviceStatusResult = LiveDeviceStatus | CachedDeviceStatus;
@@ -183,7 +182,7 @@ export class GatewayCore {
     const devices: LiveDeviceStatus[] = [];
 
     for (const liveDevice of liveDevices) {
-      await this.configStore.rememberUsbStatus(liveDevice.protocolResponse.device, liveDevice.portPath, {
+      await this.configStore.rememberUsbStatus(liveDevice.protocolResponse, liveDevice.portPath, {
         setActive: false,
       });
       devices.push(toLiveStatus(liveDevice));
@@ -243,7 +242,10 @@ export class GatewayCore {
           throw new GatewayError("handshake_failed", "Identify response code did not match request.", true);
         }
 
-        await this.configStore.rememberUsbStatus(response.device, liveDevice.portPath);
+        await this.configStore.rememberUsbStatus(
+          { device: response.device, provisioning: liveDevice.protocolResponse.provisioning },
+          liveDevice.portPath,
+        );
         devices.push({
           source: "live",
           connected: true,
@@ -369,7 +371,7 @@ export class GatewayCore {
     // Record the live device before sending connect so a rejected or timed-out
     // attempt still refreshes lastSeenAt and the cached status for this device.
     await this.configStore.rememberUsbStatus(
-      matchingPort.protocolResponse.device,
+      matchingPort.protocolResponse,
       matchingPort.portPath,
       { observedAt: this.clock() },
     );
@@ -575,7 +577,7 @@ export class GatewayCore {
 
       if (matchingDevice !== undefined) {
         await this.configStore.rememberUsbStatus(
-          matchingDevice.protocolResponse.device,
+          matchingDevice.protocolResponse,
           matchingDevice.portPath,
         );
         return toLiveStatus(matchingDevice);

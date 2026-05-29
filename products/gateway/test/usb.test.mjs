@@ -23,6 +23,9 @@ const status = {
     hardware: "hardware-id",
     firmwareVersion: "0.0.0",
   },
+  provisioning: {
+    state: "unprovisioned",
+  },
 };
 
 test("prefilters likely usb ports before handshake", async () => {

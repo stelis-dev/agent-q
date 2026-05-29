@@ -36,7 +36,8 @@ Legend:
 |---|---:|---|
 | USB JSONL transport | O | Uses ESP32-S3 USB Serial/JTAG. |
 | Persistent protocol `deviceId` | O | Stored in NVS namespace `agent_q`, key `device_id`. |
-| `get_status` | O | Returns device id and current state without approval UI. |
+| `get_status` | O | Returns device id, current state, and provisioning status without approval UI. |
+| Provisioning status reporting | O | Always returns `unprovisioned` in `get_status`; this is not signing readiness. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `display_signal` diagnostic | O | Shows a decision UI and returns after touch approval, rejection, or timeout. |
 | `connect` | O | Requires touch approval and returns a Firmware-generated runtime session id. |
@@ -49,7 +50,8 @@ Legend:
 | `get_capabilities` | X | Not implemented. |
 | `get_accounts` | X | Not implemented. |
 | `call_method` | X | Not implemented. |
-| Persistent signing keys | X | Not implemented. |
+| Persistent signing material | X | Not implemented. |
+| Mnemonic generation/import | X | Not implemented. |
 | Provisioning flow | X | Not implemented. The target has display/touch hardware suitable for a future local backup-confirmation flow. |
 | Policy storage/evaluation | X | Not implemented. |
 | Secure user profile | X | Not implemented. |
@@ -145,7 +147,9 @@ for future session-scoped protocol requests.
 
 ## Persistent Storage
 
-This target currently persists only the protocol `deviceId`.
+This target currently persists only the protocol `deviceId`. Provisioning state
+is not stored in NVS yet; `get_status` reports the constant state
+`unprovisioned`.
 
 | Namespace | Key | Purpose |
 |---|---|---|
@@ -157,7 +161,13 @@ such as `<feature>_<name>`, to avoid collisions.
 
 ## Provisioning Capability
 
-Provisioning is not implemented on this target.
+Provisioning status reporting is implemented on this target. `get_status`
+returns `provisioning.state: "unprovisioned"` so Gateway can preserve and show
+the state. This does not mean the device is ready to sign, and it does not imply
+that account or signing APIs are implemented.
+
+Mnemonic generation, mnemonic import, persistent signing material, and runtime
+provisioning are not implemented on this target.
 
 StackChan CoreS3 has a display and touch input, so it is a candidate for a
 future local provisioning flow:
