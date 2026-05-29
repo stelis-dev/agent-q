@@ -13,6 +13,7 @@ import {
   createIdentificationCode,
   DEFAULT_APPROVAL_TIMEOUT_MS,
   MAX_APPROVAL_TIMEOUT_MS,
+  type Account,
   type DeviceStatusSnapshot,
   type IdentifyDeviceResponse,
   type StatusResponse,
@@ -145,11 +146,33 @@ export const DISCONNECT_REASONS = [
 ] as const;
 export type DisconnectReason = (typeof DISCONNECT_REASONS)[number];
 
-export interface DisconnectDeviceResult {
-  source: "disconnected" | "not_connected";
-  deviceId: string;
-  reason: DisconnectReason;
-}
+export const DISCONNECT_ENDED_REASONS = [
+  "firmware_confirmed",
+  "invalid_session",
+  "transport_unavailable",
+  "timeout",
+] as const;
+export type DisconnectEndedReason = (typeof DISCONNECT_ENDED_REASONS)[number];
+
+export const GET_ACCOUNTS_SESSION_ENDED_REASONS = [
+  "invalid_session",
+  "transport_unavailable",
+  "timeout",
+] as const;
+export type GetAccountsSessionEndedReason = (typeof GET_ACCOUNTS_SESSION_ENDED_REASONS)[number];
+
+export type DisconnectDeviceResult =
+  | { source: "disconnected"; deviceId: string; reason: DisconnectEndedReason }
+  | { source: "not_connected"; deviceId: string; reason: "not_connected" };
+
+// get_accounts is read-only and session-scoped. "live" carries the public
+// accounts; "not_connected"/"session_ended" carry only a reason (no accounts),
+// mirroring disconnect's session-lifecycle reporting. No session id or private
+// material is ever included.
+export type GetAccountsResult =
+  | { source: "live"; deviceId: string; accounts: Account[] }
+  | { source: "not_connected"; deviceId: string; reason: "not_connected" }
+  | { source: "session_ended"; deviceId: string; reason: GetAccountsSessionEndedReason };
 
 export const DEFAULT_IDENTIFY_DURATION_MS = 10000;
 export const MAX_IDENTIFY_DURATION_MS = 30000;
@@ -457,6 +480,53 @@ export class GatewayCore {
 
     this.runtimeSessions.delete(target.deviceId);
     return { source: "disconnected", deviceId: target.deviceId, reason: "firmware_confirmed" };
+  }
+
+  async getAccounts(input: {
+    deviceId?: string;
+    purpose?: string;
+    timeoutMs?: number;
+  } = {}): Promise<GetAccountsResult> {
+    const target = await this.resolveTargetDevice(input);
+    const scanTimeoutMs = validateTimeoutMs(input.timeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS);
+
+    const session = this.peekRuntimeSession(target.deviceId);
+    if (session === null) {
+      return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
+    }
+
+    let matchingPort: UsbStatusResult | undefined;
+    try {
+      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+    } catch (error) {
+      // A transport/session failure while locating the device may end Gateway's
+      // local session view; localSessionClearReason owns that policy. get_accounts
+      // is read-only, so a recognized clearing reason is reported as session_ended
+      // (the firmware session is presumed gone) rather than throwing.
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+
+    try {
+      const response = await this.usbDriver.getAccounts(
+        matchingPort.portPath,
+        session.sessionId,
+        scanTimeoutMs,
+      );
+      // Read-only: the session is retained on success.
+      return { source: "live", deviceId: target.deviceId, accounts: response.accounts };
+    } catch (error) {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
   }
 
   private peekRuntimeSession(deviceId: string): RuntimeSession | null {

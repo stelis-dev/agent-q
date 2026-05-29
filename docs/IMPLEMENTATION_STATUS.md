@@ -29,9 +29,9 @@ This document tracks implementation status only. The wire protocol is defined in
 | `connect` | △ | Protocol and Gateway parser support exist. StackChan CoreS3 source restores provisioned-only Firmware sessions after persistent root material exists. Hardware smoke is still required. |
 | `disconnect` | △ | Protocol and Gateway parser support exist. StackChan CoreS3 source clears a matching active Firmware session after `provisioned`. Hardware smoke is still required. |
 | `get_capabilities` | X | Designed session-scoped request; not implemented. |
-| `get_accounts` | X | Designed session-scoped request; not implemented. |
+| `get_accounts` | △ | StackChan CoreS3 source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from stored root material and returns it over an approved session while `provisioned`. Read-only: no mnemonic, seed, entropy, or private key in responses, logs, or UI. Derivation verified against Sui SDK address vectors on host (`test_sui_account_vectors.sh`); hardware smoke is still required. |
 | `call_method` | X | Designed session-scoped dispatch for all chains and methods; not implemented. |
-| Hardware diagnostic `display_signal` | O | Implemented for firmware/UI smoke testing. Not a public signing API. |
+| Hardware diagnostic `display_signal` | O | Implemented for firmware/UI smoke testing after material-backed `provisioned`. Not a public signing API. |
 
 ## Gateway
 
@@ -65,6 +65,7 @@ Current MCP tools:
 | `set_device_metadata` | O | Sets or clears local label. |
 | `connect_device` | △ | Gateway tool exists. StackChan CoreS3 source accepts Firmware `connect` only after persistent root material and `provisioned` exist; hardware smoke is still required. |
 | `disconnect_device` | △ | Ends a runtime session or clears stale local session state when a session exists. |
+| `get_accounts` | △ | Gateway tool and protocol parser exist. Returns public accounts over an active runtime session, strictly re-validates the account shape, recomputes the Sui address/public-key relationship, rejects secret-like fields, and never exposes the session id to MCP. Hardware smoke is still required. |
 
 ## Firmware Targets
 
@@ -78,15 +79,16 @@ Current MCP tools:
 | `identify_device` | O | X | X | Uses temporary avatar speech bubble on StackChan CoreS3. |
 | `connect` physical approval | △ | X | X | StackChan CoreS3 source supports physical approval only after material-backed `provisioned`; before that it returns `invalid_state`. Hardware smoke is still required. |
 | `disconnect` | △ | X | X | StackChan CoreS3 source clears a matching active Firmware session after `provisioned`. Hardware smoke is still required. |
+| `get_accounts` | △ | X | X | StackChan CoreS3 source derives and returns the Sui Ed25519 account 0 over an approved session while `provisioned`; read-only, no private material emitted. Hardware smoke is still required. |
 | `factory_reset` | △ | X | X | StackChan CoreS3 source supports physical-approval wipe back to `unprovisioned`, including material/state consistency-error recovery. Hardware smoke is still required. |
 | Request/result UI | O | X | X | StackChan CoreS3 uses Agent-Q-owned top avatar speech bubble and bottom decision strip. |
 | Display power control | O | X | X | StackChan CoreS3 turns the screen backlight off after one minute of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. |
 | Boot posture | O | X | X | StackChan CoreS3 centers yaw and raises pitch when the default avatar is attached at boot. |
 | Per-request `ask` approval | X | N/A | X | Not implemented for signing requests because signing requests are not implemented. |
 | Automatic `sign` / `reject` policy action | X | X | X | Requires policy evaluator and signing method support. |
-| Persistent signing material | △ | X | X | StackChan CoreS3 source stores DEV_PROFILE BIP-39 root entropy after backup confirmation. It does not derive accounts or sign. |
+| Persistent signing material | △ | X | X | StackChan CoreS3 source stores DEV_PROFILE BIP-39 root entropy after backup confirmation. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0); it does not sign. |
 | Policy storage | X | X | X | Not implemented. |
-| Provisioning flow | △ | X | X | DEV_PROFILE mnemonic UI and persistent root material storage source exists for StackChan CoreS3. Mnemonic import, account derivation, signing use, and USER_PROFILE secure provisioning are not implemented. |
+| Provisioning flow | △ | X | X | DEV_PROFILE mnemonic UI and persistent root material storage source exists for StackChan CoreS3. Public Sui account derivation is implemented via `get_accounts`; mnemonic import, signing use, policy, and USER_PROFILE secure provisioning are not implemented. |
 | Secure user profile | X | X | X | Secure Boot, Flash Encryption, anti-rollback, and provisioning flow are documented but not implemented. |
 | StackChan/Xiaozhi remote AI runtime | N/A | N/A | N/A | Disabled in the Agent-Q StackChan build; not part of Agent-Q signing firmware. |
 | Camera / remote upload surfaces | N/A | N/A | N/A | Disabled in the Agent-Q StackChan build. |
@@ -102,7 +104,7 @@ target-specific notes live in each target's `SPEC.md`.
 
 | Hardware target | Sui Ed25519 | Sui zkLogin | EVM | Solana | Notes |
 |---|---:|---:|---:|---:|---|
-| StackChan CoreS3 | △ | X | X | X | Has only a boot-time Sui Ed25519 self-test with a temporary seed. No account or signing API exists yet. |
+| StackChan CoreS3 | △ | X | X | X | Boot-time Sui Ed25519 self-test plus read-only `get_accounts` account-0 derivation; no signing API exists yet. |
 | Minimal LED-only Device | X | X | X | X | Planned target; no firmware implementation yet. |
 | Button/Display Approval Device | X | X | X | X | Planned target class; no firmware implementation yet. |
 
@@ -135,7 +137,7 @@ session-scoped `call_method` protocol.
 | Policy evaluator | X | Not implemented. |
 | Policy storage | X | Not implemented. |
 | Policy update authorization | X | Not implemented. |
-| Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display and persistent root material storage source exists for StackChan CoreS3. Mnemonic import, USER_PROFILE secure root storage, account derivation, and signing use remain unimplemented. |
+| Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display and persistent root material storage source exists for StackChan CoreS3. Mnemonic import, USER_PROFILE secure root storage, and signing use remain unimplemented. |
 | Request replay protection | X | Not implemented. |
 | Secure Boot profile | X | Documented target behavior; not implemented. |
 | Flash Encryption profile | X | Documented target behavior; not implemented. |

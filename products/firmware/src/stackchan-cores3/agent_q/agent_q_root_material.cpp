@@ -108,4 +108,36 @@ bool wipe_root_material()
     return true;
 }
 
+bool read_root_material(uint8_t* root_material_out, size_t root_material_size)
+{
+    if (root_material_out != nullptr && root_material_size > 0) {
+        wipe_sensitive_buffer(root_material_out, root_material_size);
+    }
+    if (root_material_out == nullptr || root_material_size != kRootMaterialBytes) {
+        return false;
+    }
+
+    nvs_handle_t nvs = 0;
+    esp_err_t result = nvs_open(kNvsNamespace, NVS_READONLY, &nvs);
+    if (result != ESP_OK) {
+        wipe_sensitive_buffer(root_material_out, root_material_size);
+        ESP_LOGW(kTag, "NVS open failed while reading root material: %s", esp_err_to_name(result));
+        return false;
+    }
+
+    size_t blob_size = root_material_size;
+    result = nvs_get_blob(nvs, kRootMaterialKey, root_material_out, &blob_size);
+    nvs_close(nvs);
+
+    if (result != ESP_OK || blob_size != kRootMaterialBytes) {
+        wipe_sensitive_buffer(root_material_out, root_material_size);
+        ESP_LOGW(kTag, "Root material read failed: %s size=%u",
+                 esp_err_to_name(result),
+                 static_cast<unsigned>(blob_size));
+        return false;
+    }
+
+    return true;
+}
+
 }  // namespace agent_q

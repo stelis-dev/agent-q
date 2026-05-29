@@ -4,10 +4,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { GatewayError } from "../dist/errors.js";
 import { createGatewayMcpServer, gatewayToolDefinitions } from "../dist/mcp.js";
+import { FORBIDDEN_SECRET_FIELD_NAMES } from "../dist/protocol.js";
 
 const expectedToolNames = [
   "connect_device",
   "disconnect_device",
+  "get_accounts",
   "get_device_status",
   "identify_devices",
   "list_devices",
@@ -85,6 +87,21 @@ const noOpCore = {
   async disconnectDevice() {
     return { source: "disconnected", deviceId: "device-1", reason: "firmware_confirmed" };
   },
+  async getAccounts() {
+    return {
+      source: "live",
+      deviceId: "device-1",
+      accounts: [
+        {
+          chain: "sui",
+          address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+          publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=",
+          keyScheme: "ed25519",
+          derivationPath: "m/44'/784'/0'/0'/0'",
+        },
+      ],
+    };
+  },
 };
 
 test("registers the full device tool set", () => {
@@ -102,17 +119,8 @@ test("tool input schemas do not expose secret fields", () => {
     }
   }
 
-  for (const forbidden of [
-    "privatekey",
-    "private_key",
-    "seed",
-    "mnemonic",
-    "signingkey",
-    "signing_key",
-    "sessionid",
-    "session_id",
-  ]) {
-    assert.equal(schemaKeys.has(forbidden), false, `forbidden key ${forbidden} must not appear`);
+  for (const forbidden of [...FORBIDDEN_SECRET_FIELD_NAMES, "sessionId", "session_id"]) {
+    assert.equal(schemaKeys.has(forbidden.toLowerCase()), false, `forbidden key ${forbidden} must not appear`);
   }
 });
 
@@ -161,7 +169,7 @@ test("connect_device output omits sessionId and secret fields", () => {
     gatewayToolDefinitions.listDevices.outputSchema,
   ]) {
     const flat = JSON.stringify(shape).toLowerCase();
-    for (const forbidden of ["privatekey", "mnemonic", "seed", "signingkey", "sessionid"]) {
+    for (const forbidden of [...FORBIDDEN_SECRET_FIELD_NAMES, "sessionId"]) {
       assert.equal(flat.includes(forbidden), false, `${forbidden} must not appear in schema`);
     }
   }
@@ -284,16 +292,12 @@ async function withConnectedClient(run, core = noOpCore) {
 // sources; no Firmware session token or key-like field may reach them.
 function assertNoSecretFields(result, toolName) {
   const flat = JSON.stringify(result).toLowerCase();
-  for (const forbidden of [
-    "sessionid",
-    "privatekey",
-    "private_key",
-    "seed",
-    "mnemonic",
-    "signingkey",
-    "signing_key",
-  ]) {
-    assert.equal(flat.includes(forbidden), false, `${toolName}: '${forbidden}' must not appear in the dispatched result`);
+  for (const forbidden of [...FORBIDDEN_SECRET_FIELD_NAMES, "sessionId", "session_id"]) {
+    assert.equal(
+      flat.includes(forbidden.toLowerCase()),
+      false,
+      `${toolName}: '${forbidden}' must not appear in the dispatched result`,
+    );
   }
 }
 
@@ -308,6 +312,7 @@ const dispatchCases = [
   { name: "set_device_metadata", arguments: { deviceId: "device-1", label: null } },
   { name: "connect_device", arguments: {} },
   { name: "disconnect_device", arguments: {} },
+  { name: "get_accounts", arguments: {} },
 ];
 
 test("MCP client lists exactly the Agent-Q tool set over a real transport", async () => {
@@ -348,6 +353,20 @@ test("connect_device dispatch returns a connected result without a session token
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "connect_device", arguments: {} });
     assert.equal(result.structuredContent.source, "connected");
+    assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
+  });
+});
+
+test("get_accounts dispatch returns the public Sui account without a session token", async () => {
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "get_accounts", arguments: {} });
+    assert.equal(result.structuredContent.source, "live");
+    assert.equal(result.structuredContent.accounts.length, 1);
+    assert.equal(result.structuredContent.accounts[0].chain, "sui");
+    assert.equal(
+      result.structuredContent.accounts[0].address,
+      "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+    );
     assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
   });
 });
@@ -419,6 +438,22 @@ const leakyCore = {
   async disconnectDevice() {
     return { source: "disconnected", deviceId: "device-1", reason: "firmware_confirmed", ...SECRET_EXTRAS };
   },
+  async getAccounts() {
+    return {
+      source: "live",
+      deviceId: "device-1",
+      accounts: [
+        {
+          chain: "sui",
+          address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+          publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=",
+          keyScheme: "ed25519",
+          derivationPath: "m/44'/784'/0'/0'/0'",
+        },
+      ],
+      ...SECRET_EXTRAS,
+    };
+  },
 };
 
 test("MCP boundary strips secret-like extra fields from every success result", async () => {
@@ -445,6 +480,98 @@ test("get_device_status error-shaped success cannot leak out as a success", asyn
     assert.equal(result.structuredContent.source, "error");
     assert.equal(result.structuredContent.error.code, "internal_output_error");
   }, errorShapedCore);
+});
+
+test("get_accounts unreachable shape (live without accounts) cannot leak out as a success", async () => {
+  const malformedCore = {
+    ...noOpCore,
+    async getAccounts() {
+      // A "live" result must carry accounts. The egress guard must reject this
+      // unreachable shape instead of dispatching it as a success.
+      return { source: "live", deviceId: "device-1" };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "get_accounts", arguments: {} });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, "internal_output_error");
+  }, malformedCore);
+});
+
+test("get_accounts unreachable shape (live with no accounts) cannot leak out as a success", async () => {
+  const malformedCore = {
+    ...noOpCore,
+    async getAccounts() {
+      // The current target has exactly one Sui account; an empty live result is
+      // as unreachable as a missing accounts field.
+      return { source: "live", deviceId: "device-1", accounts: [] };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "get_accounts", arguments: {} });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, "internal_output_error");
+  }, malformedCore);
+});
+
+test("get_accounts rejects a public key that does not match the Sui address", async () => {
+  const malformedCore = {
+    ...noOpCore,
+    async getAccounts() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        accounts: [
+          {
+            chain: "sui",
+            address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+            publicKey: "vG6hEnkYNIpdmWa/WaLivd1FWBkxG+HfhXkyWgs9uP4=",
+            keyScheme: "ed25519",
+            derivationPath: "m/44'/784'/0'/0'/0'",
+          },
+        ],
+      };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "get_accounts", arguments: {} });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, "internal_output_error");
+  }, malformedCore);
+});
+
+test("session lifecycle result reasons are source-specific at the MCP boundary", async () => {
+  const cases = [
+    {
+      name: "disconnect_device",
+      result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
+    },
+    {
+      name: "get_accounts",
+      result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
+    },
+    {
+      name: "get_accounts",
+      result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const malformedCore = {
+      ...noOpCore,
+      async disconnectDevice() {
+        return testCase.result;
+      },
+      async getAccounts() {
+        return testCase.result;
+      },
+    };
+    await withConnectedClient(async (client) => {
+      const result = await client.callTool({ name: testCase.name, arguments: {} });
+      assert.equal(result.isError, true, `${testCase.name}: source/reason mismatch must fail closed`);
+      assert.equal(result.structuredContent.error.code, "internal_output_error");
+    }, malformedCore);
+  }
 });
 
 test("get_device_status exposes live provisioning state", async () => {

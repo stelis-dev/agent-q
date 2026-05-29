@@ -108,6 +108,7 @@ Protocol error codes:
 - `rng_error`
 - `ui_error`
 - `generation_error`
+- `account_error`
 
 Transport-layer errors are owned by Gateway and are not Firmware protocol
 errors.
@@ -168,8 +169,10 @@ material and a `provisioned` state exist.
 between Gateway and Firmware. A connection session does not authorize signing,
 does not prove agent identity, and does not change Firmware policy.
 
-Designed but not yet implemented: the session-scoped requests
-`get_capabilities`, `get_accounts`, and `call_method`.
+`get_accounts` is implemented as a read-only, session-scoped identity request
+for the Sui Ed25519 account at index 0 in the `provisioned` state; hardware smoke
+is still pending. Designed but not yet implemented: the session-scoped requests
+`get_capabilities` and `call_method`.
 
 ## Device Discovery And Selection
 
@@ -267,16 +270,17 @@ Provisioning states:
 - `locked`: the provisioning state cannot be used until the device is unlocked.
 
 `provisioning.state` reports only the Firmware's provisioning state. It is not
-signing readiness, it does not prove that account or signing APIs exist, and it
-does not authorize Gateway to make policy decisions. Gateway must preserve and
+signing readiness, it does not prove that signing APIs exist, and it does not
+authorize Gateway to make policy decisions. Gateway must preserve and
 display the value without treating it as authority.
 
 The current StackChan CoreS3 target persists and reports `unprovisioned` and
 `provisioned`. It may report `provisioned` only when `prov_state` and the
 device-local root material blob both exist. It does not use `locked` because no
 unlock model is implemented. Source-level DEV_PROFILE recovery phrase display
-and persistent root material storage exist. Runtime mnemonic import, account
-derivation, policy, and signing APIs are not implemented.
+and persistent root material storage exist, and read-only `get_accounts` Sui
+account derivation is implemented. Runtime mnemonic import, policy, and signing
+APIs are not implemented.
 
 Device metadata strings are untrusted input and Gateway bounds them when
 parsing a response:
@@ -297,9 +301,9 @@ only after backup confirmation, and then wipe the volatile scratch material
 after confirmation, cancellation, timeout, or failure. Three-letter BIP-39 words
 are displayed as the full word.
 
-This flow completes only DEV_PROFILE root material persistence. It does not
-derive accounts, install policy, make signing available, or satisfy
-USER_PROFILE generation. USER_PROFILE generation remains blocked until the
+This flow completes only DEV_PROFILE root material persistence. Read-only public
+account identity is then available via `get_accounts`; this flow does not install
+policy, make signing available, or satisfy USER_PROFILE generation. USER_PROFILE generation remains blocked until the
 firmware integrity and encrypted storage gates in `docs/SECURITY_MODEL.md` are
 satisfied.
 
@@ -469,6 +473,9 @@ Request rules:
   the mnemonic UI scratch substate is `displayed`.
 - Firmware must have recovery phrase scratch in the `displayed` substate and the
   phrase must not have been invalidated by display removal.
+- Display power state is not part of this gate. If the screen/backlight slept
+  while the recovery phrase panel is still active and not expired, Firmware
+  wakes the request UI before showing the confirmation prompt.
 - If no phrase is pending confirmation, Firmware returns `invalid_setup_step`
   without opening approval UI.
 - The request does not require `sessionId`.
@@ -510,10 +517,12 @@ Firmware must not keep recovery phrase scratch marked `displayed` after the
 display is no longer visible. If the recovery phrase display panel is removed or
 replaced while the scratch substate is `displayed`, Firmware must wipe or
 invalidate the volatile phrase for new requests so a later
-`confirm_recovery_phrase_backup` request cannot confirm material the user can no
-longer see. The only allowed exception is the already-started physical
-confirmation prompt that replaced a visible recovery phrase display after
-validating `confirm_recovery_phrase_backup`; that prompt owns the
+`confirm_recovery_phrase_backup` request cannot confirm material whose setup
+panel no longer exists. Screen/backlight sleep alone does not invalidate the
+scratch substate; request UI should wake the display before prompting. The only
+allowed exception is the already-started physical confirmation prompt that
+replaced a valid recovery phrase display after validating
+`confirm_recovery_phrase_backup`; that prompt owns the
 `backup_confirmation_pending` substate and must end by confirming and wiping the
 phrase, or by rejecting/timing out and wiping it.
 
@@ -629,7 +638,8 @@ temporary layer.
 ## Hardware Diagnostic Request
 
 `display_signal` is a hardware diagnostic request for local smoke tests. It is
-not a public Gateway/MCP signing API.
+accepted only while `provisioning.state` is `provisioned`, and it is not a
+public Gateway/MCP signing API.
 
 Request:
 
@@ -673,7 +683,8 @@ Rejected or timed-out response:
 The `display_signal` approval lifetime is Firmware-owned temporary UI. Gateway
 is permitted to stop waiting earlier than the Firmware timeout; there is no
 cancel message. A late physical response may be ignored by Gateway if the
-transport request already timed out.
+transport request already timed out. Before material-backed provisioning,
+Firmware returns `invalid_state`.
 
 ## Connect
 
@@ -864,7 +875,11 @@ Response:
 
 ## Accounts
 
-Gateway can ask for addresses and public keys exposed by Firmware.
+`get_accounts` is a session-scoped read-only request that returns the public
+account identity Firmware derives from its stored root material. It exposes only
+public material: address, public key, key scheme, and derivation path. It never
+returns a mnemonic, seed, entropy, private key, or any signing key, and it does
+not perform signing.
 
 Request:
 
@@ -877,7 +892,7 @@ Request:
 }
 ```
 
-Response:
+Approved response:
 
 ```json
 {
@@ -888,19 +903,36 @@ Response:
     {
       "chain": "sui",
       "address": "0x...",
-      "publicKey": {
-        "scheme": "ed25519",
-        "encoding": "base64",
-        "value": "..."
-      },
-      "methods": [
-        "sign_transaction",
-        "sign_personal_message"
-      ]
+      "publicKey": "base64...",
+      "keyScheme": "ed25519",
+      "derivationPath": "m/44'/784'/0'/0'/0'"
     }
   ]
 }
 ```
+
+Rules:
+
+- `publicKey` is the raw 32-byte Ed25519 public key encoded as base64. The scheme
+  is reported separately as `keyScheme`; the address is
+  `0x` + lowercase hex of `blake2b256(0x00 || publicKey)`.
+- Firmware returns accounts only when `provisioning.state` is `provisioned` and
+  the stored root material is consistent. Before that it returns `invalid_state`.
+- The request requires `sessionId`. A missing, expired, or mismatched session
+  returns `invalid_session`; an expired session is also cleared.
+- Account derivation runs in Firmware on demand and wipes all intermediate secret
+  material. A derivation failure returns `account_error` with no partial account.
+- Gateway parses and re-validates the account shape, rejects any response that
+  carries a secret-like field, and recomputes the Sui Ed25519 address from
+  `publicKey` to reject mismatched public identities. Firmware still owns account
+  derivation; Gateway validation is consistency checking, not signing authority.
+  The Gateway MCP `get_accounts` tool never exposes the session id.
+- The current StackChan CoreS3 target implements the Sui Ed25519 account at index
+  0 (`m/44'/784'/0'/0'/0'`) and returns exactly one `accounts[]` entry. Gateway
+  rejects any other account count for this target. Additional chains and accounts
+  are added as more `accounts[]` entries only after the protocol and Gateway
+  bounds are updated. Hardware smoke is still required. Signing methods listed
+  under capabilities remain unimplemented; `get_accounts` reads identity only.
 
 ## Method Request
 
@@ -947,8 +979,9 @@ Possible method result statuses:
 ## Admin Methods
 
 Admin is not a separate protocol. Admin actions are methods exposed through
-capabilities. Like `get_capabilities`, `get_accounts`, and `call_method`, these
-admin methods are designed but not yet implemented.
+capabilities. Like `get_capabilities` and `call_method`, these admin methods are
+designed but not yet implemented. `get_accounts` is implemented as a read-only
+identity request and does not perform any admin or signing action.
 
 Example methods:
 

@@ -87,10 +87,9 @@ Provisioning UX depends on hardware:
   weaker assisted flow or external secure setup tooling.
 
 StackChan CoreS3 has display and touch hardware. Source-level DEV_PROFILE
-recovery phrase generation and volatile backup confirmation are implemented as
-setup scaffolding. Hardware smoke is still pending.
-Mnemonic import, persistent root storage, account derivation, and signing are
-not implemented.
+recovery phrase generation, backup confirmation, persistent root storage, and
+read-only `get_accounts` Sui account derivation are implemented. Hardware smoke
+is still pending. Mnemonic import and signing are not implemented.
 
 ## Chain Accounts
 
@@ -128,8 +127,9 @@ After physical backup confirmation, Firmware stores the binary BIP-39 root
 entropy in ordinary DEV_PROFILE device-local NVS and only then moves to
 `provisioned`.
 
-Runtime v0 does not import, export, derive accounts from, or sign with root
-signing material. Current StackChan CoreS3 source can generate a BIP-39 recovery
+Runtime v0 does not import, export, or sign with root signing material; read-only
+public Sui account derivation is available via `get_accounts`. Current StackChan
+CoreS3 source can generate a BIP-39 recovery
 phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
 3-column by 4-row grid, and wipe scratch on confirm, cancel, timeout, failure,
 or display expiry. Three-letter BIP-39 words are displayed as the full word.
@@ -152,7 +152,7 @@ stateDiagram-v2
 
     Unprovisioned: no root signing material
     Unprovisioned: optional volatile mnemonic setup scratch only
-    Provisioned: root material stored, accounts/signing still unavailable
+    Provisioned: root material stored; read-only get_accounts available, signing still unavailable
 ```
 
 `start_provisioning` is valid only when persistent state is `unprovisioned` and
@@ -200,13 +200,16 @@ scratch, returns `storage_error`, and must not report `provisioned`. Rejection
 or timeout also wipes the volatile phrase, so the user must generate a new
 phrase to continue.
 
-The recovery phrase is backup-ready only while its device display is still the
-active setup UI. If that display is removed or replaced, Firmware wipes or
-invalidates the volatile phrase so a later backup confirmation cannot confirm
-material that is no longer visible. The active physical backup-confirmation
-prompt is the only exception: it may replace the phrase display after validating
-that the phrase was visible, but it must end by wiping the phrase whether the
-user confirms, rejects, or lets the prompt time out.
+The recovery phrase is backup-ready only while its recovery phrase setup panel
+is still active and not expired. If that panel is removed or replaced, Firmware
+wipes or invalidates the volatile phrase so a later backup confirmation cannot
+confirm material whose setup UI is gone. Display power state is not part of this
+security state: screen/backlight sleep does not invalidate scratch by itself,
+and request UI should wake the display before showing a prompt. The active
+physical backup-confirmation prompt is the only exception: it may replace the
+phrase display after validating that the setup panel was still active, but it
+must end by wiping the phrase whether the user confirms, rejects, or lets the
+prompt time out.
 
 While the phrase display is active, `get_status` remains available and reports
 `device.state = busy`. The display has a finite lifetime; expiry clears the
@@ -217,8 +220,8 @@ interrupted a recovery phrase display. If the user rejects cancellation or the
 cancel approval times out, the persistent state remains `unprovisioned`, but
 the displayed phrase is gone and must not be treated as recoverable.
 
-This v0 flow deliberately stops before accounts, policy, signing, and
-USER_PROFILE secure provisioning. USER_PROFILE signing material remains blocked
+This v0 flow provides read-only `get_accounts` but deliberately stops before
+signing, policy, and USER_PROFILE secure provisioning. USER_PROFILE signing material remains blocked
 by the security-profile gates in `docs/SECURITY_MODEL.md`: secure firmware
 profile, encrypted storage, verified RNG readiness, destructive hardware
 rehearsal, and hardware smoke.
@@ -248,10 +251,10 @@ Recommended first slice:
 
 Do not jump directly from mnemonic generation to user transaction signing.
 
-Current implementation status: steps 1 through 4 are implemented for the
+Current implementation status: steps 1 through 6 are implemented for the
 StackChan CoreS3 DEV_PROFILE source path, with hardware smoke still required.
-Mnemonic import, account derivation, signing APIs, policy, and USER_PROFILE
-secure provisioning are not implemented.
+Sui `sign_personal_message` (step 7), mnemonic import, signing APIs, policy, and
+USER_PROFILE secure provisioning are not implemented.
 
 ## Completion Criteria
 

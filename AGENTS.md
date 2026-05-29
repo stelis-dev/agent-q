@@ -234,6 +234,8 @@ Current firmware helper commands:
   `tools/firmware/stackchan-cores3/build.sh`
 - Test BIP-39 mnemonic vectors after ESP-IDF v5.5.4 is active:
   `tools/firmware/stackchan-cores3/test_bip39_vectors.sh`
+- Test Sui Ed25519 account derivation vectors (host C/C++ compiler only; does not
+  require ESP-IDF): `tools/firmware/stackchan-cores3/test_sui_account_vectors.sh`
 
 If a root `package.json` is added, inspect it before running project commands
 and update this section.

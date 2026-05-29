@@ -11,7 +11,9 @@
 //
 // It exercises the actual agent-facing path:
 //   scan_devices -> identify_devices -> select_device -> connect_device (YES)
-//   -> disconnect_device
+//   -> get_accounts -> disconnect_device
+//
+// The device must already be provisioned for connect_device/get_accounts.
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,12 +24,13 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ConfigStore } from "../dist/config.js";
 import { GatewayCore } from "../dist/core.js";
 import { createGatewayMcpServer } from "../dist/mcp.js";
+import { FORBIDDEN_SECRET_FIELD_NAMES } from "../dist/protocol.js";
 import { SerialPortUsbDriver } from "../dist/usb.js";
 
 const hardwareEnabled = process.env.AGENTQ_HW === "1";
 
 test(
-  "hardware: scan -> identify -> select -> connect -> disconnect over MCP",
+  "hardware: scan -> identify -> select -> connect -> get_accounts -> disconnect over MCP",
   { skip: hardwareEnabled ? false : "set AGENTQ_HW=1 with a device connected" },
   async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-q-hw-smoke-"));
@@ -60,6 +63,18 @@ test(
       });
       assert.equal(connect.structuredContent.source, "connected", "connect must be physically approved");
       assert.equal("sessionId" in connect.structuredContent, false, "sessionId must not reach the client");
+
+      console.log("[hw-smoke] requesting public accounts...");
+      const accounts = await client.callTool({ name: "get_accounts", arguments: { deviceId } });
+      assert.equal(accounts.structuredContent.source, "live", "get_accounts requires a provisioned device");
+      assert.equal(accounts.structuredContent.accounts.length, 1);
+      assert.equal(accounts.structuredContent.accounts[0].chain, "sui");
+      assert.equal(accounts.structuredContent.accounts[0].keyScheme, "ed25519");
+      assert.equal("sessionId" in accounts.structuredContent, false, "sessionId must not reach the client");
+      const accountsJson = JSON.stringify(accounts.structuredContent).toLowerCase();
+      for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
+        assert.equal(accountsJson.includes(fieldName.toLowerCase()), false, `${fieldName} must not reach the client`);
+      }
 
       console.log("[hw-smoke] disconnecting...");
       const disconnect = await client.callTool({ name: "disconnect_device", arguments: { deviceId } });

@@ -10,6 +10,8 @@
 #include "agent_q_entropy.h"
 #include "agent_q_root_material.h"
 #include "agent_q_speech_bubble.h"
+#include "agent_q_sui_account.h"
+#include "agent_q_sui_account_store.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -20,6 +22,10 @@
 #include "hal/hal.h"
 #include "lvgl.h"
 #include "nvs.h"
+
+extern "C" {
+#include "byte_conversions.h"
+}
 
 #include "stackchan/stackchan.h"
 
@@ -306,8 +312,8 @@ TaskHandle_t g_usb_task = nullptr;
 QueueHandle_t g_pending_choice_queue = nullptr;
 QueueHandle_t g_ui_event_queue = nullptr;
 
-bool recovery_phrase_display_active();
 bool recovery_phrase_flow_active();
+bool refresh_root_material_consistency();
 bool persist_provisioning_state(ProvisioningRuntimeState next_state);
 
 void wipe_recovery_phrase_scratch(const char* reason)
@@ -547,7 +553,7 @@ const char* current_device_state()
     if (g_pending.active) {
         return "awaiting_approval";
     }
-    if (recovery_phrase_display_active()) {
+    if (recovery_phrase_flow_active()) {
         return "busy";
     }
     return "idle";
@@ -588,6 +594,8 @@ bool parse_provisioning_state(const char* value, ProvisioningRuntimeState* outpu
 
 void write_status_response(const char* id)
 {
+    refresh_root_material_consistency();
+
     JsonDocument response;
     response["id"] = id;
     response["version"] = kProtocolVersion;
@@ -701,6 +709,51 @@ void write_recovery_phrase_result(const char* id, const char* status)
     response["status"] = status;
     response["provisioning"]["state"] = provisioning_state_to_string(g_provisioning_state);
     write_json_document(response);
+}
+
+// Writes the Sui Ed25519 account (index 0, m/44'/784'/0'/0'/0') response after
+// account derivation has completed inside the account module. Returns false
+// without writing when stored root material is unavailable or derivation fails,
+// so the caller emits a single error response (no partial account).
+bool write_accounts_response(const char* id)
+{
+    uint8_t public_key[agent_q::kSuiEd25519PublicKeyBytes] = {};
+    char address[agent_q::kSuiAddressBufferSize] = {};
+    const agent_q::SuiAccountDerivationResult account_result =
+        agent_q::derive_sui_ed25519_account_from_stored_root(public_key, address, sizeof(address));
+    if (account_result == agent_q::SuiAccountDerivationResult::root_material_unavailable) {
+        // A provisioned device whose stored root material is no longer readable
+        // is inconsistent. Fail closed so get_status reports "error" and
+        // connect/get_accounts stop treating it as provisioned until
+        // factory_reset, instead of silently staying provisioned until reboot.
+        g_root_material_consistency_error = true;
+        ESP_LOGE(kTag, "Root material unreadable while provisioned; failing closed");
+        return false;
+    }
+    if (account_result != agent_q::SuiAccountDerivationResult::ok) {
+        return false;
+    }
+
+    // Raw 32-byte Ed25519 public key as base64 (44 chars + NUL). The scheme is
+    // reported separately as keyScheme, matching Sui SDK getPublicKey().toBase64().
+    char public_key_base64[48] = {};
+    if (bytes_to_base64(public_key, sizeof(public_key), public_key_base64, sizeof(public_key_base64)) != 0) {
+        return false;
+    }
+
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "accounts";
+    JsonArray accounts = response["accounts"].to<JsonArray>();
+    JsonObject account = accounts.add<JsonObject>();
+    account["chain"] = "sui";
+    account["address"] = address;
+    account["publicKey"] = public_key_base64;
+    account["keyScheme"] = "ed25519";
+    account["derivationPath"] = "m/44'/784'/0'/0'/0'";
+    write_json_document(response);
+    return true;
 }
 
 bool fill_protocol_random(void* output, size_t size, const char* purpose)
@@ -955,6 +1008,10 @@ bool reset_device_to_unprovisioned()
 
 bool provisioning_transition_allowed(PendingKind request_kind)
 {
+    if (!refresh_root_material_consistency()) {
+        return false;
+    }
+
     switch (request_kind) {
         case PendingKind::start_provisioning:
             return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
@@ -984,6 +1041,74 @@ bool start_provisioning_busy()
            recovery_phrase_flow_active();
 }
 
+bool refresh_root_material_consistency()
+{
+    if (g_root_material_consistency_error) {
+        return false;
+    }
+
+    const bool has_root = agent_q::has_root_material();
+    if (g_provisioning_state == ProvisioningRuntimeState::provisioned) {
+        if (has_root) {
+            return true;
+        }
+        g_root_material_consistency_error = true;
+        clear_active_session();
+        ESP_LOGE(kTag, "Provisioned state lost root material; failing closed");
+        return false;
+    }
+
+    if (has_root) {
+        g_root_material_consistency_error = true;
+        clear_active_session();
+        ESP_LOGE(kTag, "Root material exists outside provisioned state; failing closed");
+        return false;
+    }
+    return true;
+}
+
+bool provisioned_material_ready()
+{
+    return g_provisioning_state == ProvisioningRuntimeState::provisioned &&
+           refresh_root_material_consistency();
+}
+
+bool write_busy_if_pending_or_setup_flow_active(const char* id)
+{
+    if (g_pending.active) {
+        write_error_response(id, "busy", "Device is awaiting physical input.");
+        return true;
+    }
+    if (recovery_phrase_flow_active()) {
+        write_error_response(id, "busy", "Device is showing setup material.");
+        return true;
+    }
+    return false;
+}
+
+bool require_active_matching_session(const char* id, const char* session_id)
+{
+    if (!is_safe_session_id(session_id)) {
+        write_error_response(id, "invalid_session", "Invalid sessionId.");
+        return false;
+    }
+    if (!g_session.active()) {
+        clear_active_session();
+        write_error_response(id, "invalid_session", "Session is unknown or already ended.");
+        return false;
+    }
+    if (tick_reached(g_session.expiry)) {
+        clear_active_session();
+        write_error_response(id, "invalid_session", "Session is unknown or already ended.");
+        return false;
+    }
+    if (strcmp(session_id, g_session.id) != 0) {
+        write_error_response(id, "invalid_session", "Session is unknown or already ended.");
+        return false;
+    }
+    return true;
+}
+
 bool recovery_phrase_confirmation_pending()
 {
     return g_provisioning_scratch.recovery_phrase_stage == RecoveryPhraseScratchStage::backup_confirmation_pending &&
@@ -1000,11 +1125,6 @@ bool recovery_phrase_backup_confirmation_ready()
 {
     return g_provisioning_scratch.recovery_phrase_stage == RecoveryPhraseScratchStage::displayed &&
            recovery_phrase_display_panel_active();
-}
-
-bool recovery_phrase_display_active()
-{
-    return recovery_phrase_backup_confirmation_ready();
 }
 
 void write_invalid_provisioning_state_response(const char* id, PendingKind request_kind)
@@ -2126,12 +2246,7 @@ void handle_line(const char* line)
     }
 
     if (strcmp(type, "identify_device") == 0) {
-        if (g_pending.active) {
-            write_error_response(id, "busy", "Device is awaiting physical input.");
-            return;
-        }
-        if (recovery_phrase_flow_active()) {
-            write_error_response(id, "busy", "Device is showing setup material.");
+        if (write_busy_if_pending_or_setup_flow_active(id)) {
             return;
         }
 
@@ -2154,17 +2269,11 @@ void handle_line(const char* line)
     }
 
     if (strcmp(type, "connect") == 0) {
-        if (g_provisioning_state != ProvisioningRuntimeState::provisioned ||
-            g_root_material_consistency_error) {
+        if (!provisioned_material_ready()) {
             write_error_response(id, "invalid_state", "Connect is available only after provisioning is complete.");
             return;
         }
-        if (g_pending.active) {
-            write_error_response(id, "busy", "Device is awaiting physical input.");
-            return;
-        }
-        if (recovery_phrase_flow_active()) {
-            write_error_response(id, "busy", "Device is showing setup material.");
+        if (write_busy_if_pending_or_setup_flow_active(id)) {
             return;
         }
 
@@ -2187,40 +2296,16 @@ void handle_line(const char* line)
     }
 
     if (strcmp(type, "disconnect") == 0) {
-        if (g_provisioning_state != ProvisioningRuntimeState::provisioned ||
-            g_root_material_consistency_error) {
+        if (!provisioned_material_ready()) {
             write_error_response(id, "invalid_state", "Disconnect is available only after provisioning is complete.");
             return;
         }
-        // disconnect is session-changing; reject it while an approval UI is
-        // active or setup material is displayed so it cannot mutate session
-        // state mid-approval or while device-only setup material is visible.
-        if (g_pending.active) {
-            write_error_response(id, "busy", "Device is awaiting physical input.");
-            return;
-        }
-        if (recovery_phrase_display_active()) {
-            write_error_response(id, "busy", "Device is showing setup material.");
+        if (write_busy_if_pending_or_setup_flow_active(id)) {
             return;
         }
 
         const char* session_id = request["sessionId"] | "";
-        if (!is_safe_session_id(session_id)) {
-            write_error_response(id, "invalid_session", "Invalid sessionId.");
-            return;
-        }
-        if (!g_session.active()) {
-            clear_active_session();
-            write_error_response(id, "invalid_session", "Session is unknown or already ended.");
-            return;
-        }
-        if (tick_reached(g_session.expiry)) {
-            clear_active_session();
-            write_error_response(id, "invalid_session", "Session is unknown or already ended.");
-            return;
-        }
-        if (strcmp(session_id, g_session.id) != 0) {
-            write_error_response(id, "invalid_session", "Session is unknown or already ended.");
+        if (!require_active_matching_session(id, session_id)) {
             return;
         }
         clear_active_session();
@@ -2229,13 +2314,34 @@ void handle_line(const char* line)
         return;
     }
 
-    if (strcmp(type, "factory_reset") == 0) {
-        if (g_pending.active) {
-            write_error_response(id, "busy", "Device is awaiting physical input.");
+    if (strcmp(type, "get_accounts") == 0) {
+        // get_accounts is a session-scoped read-only request. State and session
+        // guards are checked before deriving; no approval UI and no pending
+        // state are involved.
+        if (!provisioned_material_ready()) {
+            write_error_response(id, "invalid_state", "Accounts are available only after provisioning is complete.");
             return;
         }
-        if (recovery_phrase_flow_active()) {
-            write_error_response(id, "busy", "Device is showing setup material.");
+        if (write_busy_if_pending_or_setup_flow_active(id)) {
+            return;
+        }
+
+        const char* session_id = request["sessionId"] | "";
+        if (!require_active_matching_session(id, session_id)) {
+            return;
+        }
+
+        if (!write_accounts_response(id)) {
+            write_error_response(id, "account_error", "Could not derive accounts.");
+            ESP_LOGW(kTag, "get_accounts derivation failed: id=%s", id);
+            return;
+        }
+        ESP_LOGI(kTag, "get_accounts: id=%s", id);
+        return;
+    }
+
+    if (strcmp(type, "factory_reset") == 0) {
+        if (write_busy_if_pending_or_setup_flow_active(id)) {
             return;
         }
 
@@ -2332,12 +2438,12 @@ void handle_line(const char* line)
         return;
     }
 
-    if (g_pending.active) {
-        write_error_response(id, "busy", "Device is awaiting physical input.");
+    if (!provisioned_material_ready()) {
+        write_error_response(id, "invalid_state", "display_signal is available only after provisioning is complete.");
         return;
     }
-    if (recovery_phrase_display_active()) {
-        write_error_response(id, "busy", "Device is showing setup material.");
+
+    if (write_busy_if_pending_or_setup_flow_active(id)) {
         return;
     }
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertAccountsResponse,
   assertConnectResponse,
   assertDisconnectResponse,
   assertFactoryResetResponse,
@@ -8,15 +9,18 @@ import {
   assertRecoveryPhraseResponse,
   assertStatusResponse,
   createRequestId,
+  FORBIDDEN_SECRET_FIELD_NAMES,
   isGatewayName,
   isSafeDeviceId,
   isSafeRequestId,
   isSessionId,
+  isSuiAddressForPublicKey,
   makeConnectRequest,
   makeCancelProvisioningRequest,
   makeConfirmRecoveryPhraseBackupRequest,
   makeDisconnectRequest,
   makeFactoryResetRequest,
+  makeGetAccountsRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
   makeStartProvisioningRequest,
@@ -236,6 +240,131 @@ test("makeDisconnectRequest validates sessionId", () => {
   assert.throws(() => makeDisconnectRequest("not_a_session"), /Invalid sessionId/);
   assert.throws(() => makeDisconnectRequest("session_AABB"), /Invalid sessionId/);
   assert.throws(() => makeDisconnectRequest("session_"), /Invalid sessionId/);
+});
+
+test("makeGetAccountsRequest validates sessionId", () => {
+  const request = makeGetAccountsRequest("session_abcdef0123456789", "req_get_accounts_1");
+  assert.deepEqual(request, {
+    id: "req_get_accounts_1",
+    version: 1,
+    type: "get_accounts",
+    sessionId: "session_abcdef0123456789",
+  });
+
+  assert.throws(() => makeGetAccountsRequest("not_a_session"), /Invalid sessionId/);
+  assert.throws(() => makeGetAccountsRequest("session_"), /Invalid sessionId/);
+});
+
+const accountsLine = (accountOverrides = {}) =>
+  JSON.stringify({
+    id: "req_accounts",
+    version: 1,
+    type: "accounts",
+    accounts: [
+      {
+        chain: "sui",
+        address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+        publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=",
+        keyScheme: "ed25519",
+        derivationPath: "m/44'/784'/0'/0'/0'",
+        ...accountOverrides,
+      },
+    ],
+  });
+
+test("parseProtocolResponse accepts a valid Sui accounts response", () => {
+  const response = assertAccountsResponse(parseProtocolResponse(accountsLine(), "req_accounts"));
+  assert.equal(response.type, "accounts");
+  assert.equal(response.accounts.length, 1);
+  assert.equal(response.accounts[0].chain, "sui");
+  assert.equal(
+    response.accounts[0].address,
+    "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+  );
+  assert.equal(response.accounts[0].keyScheme, "ed25519");
+  assert.equal(response.accounts[0].derivationPath, "m/44'/784'/0'/0'/0'");
+  assert.equal(
+    isSuiAddressForPublicKey(response.accounts[0].address, response.accounts[0].publicKey),
+    true,
+  );
+});
+
+test("parseProtocolResponse rejects an accounts response carrying secret material", () => {
+  for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
+    assert.throws(
+      () => parseProtocolResponse(accountsLine({ [fieldName]: "secret-like value" }), "req_accounts"),
+      { code: "protocol_error" },
+      `secret-like account field ${fieldName} must be rejected`,
+    );
+  }
+});
+
+test("parseProtocolResponse rejects malformed or unsupported accounts", () => {
+  assert.throws(
+    () => parseProtocolResponse(accountsLine({ address: "0xnothex" }), "req_accounts"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () => parseProtocolResponse(accountsLine({ chain: "ethereum" }), "req_accounts"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () => parseProtocolResponse(accountsLine({ keyScheme: "secp256k1" }), "req_accounts"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () => parseProtocolResponse(accountsLine({ derivationPath: "m/44'/0'/0'/0'/0'" }), "req_accounts"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        accountsLine({ publicKey: "vG6hEnkYNIpdmWa/WaLivd1FWBkxG+HfhXkyWgs9uP4=" }),
+        "req_accounts",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        accountsLine({ address: "0x1ada6e6f3f3e4055096f606c746690f1108fcc2ca479055cc434a3e1d3f758aa" }),
+        "req_accounts",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        accountsLine({ publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGl=" }),
+        "req_accounts",
+      ),
+    { code: "protocol_error" },
+  );
+});
+
+test("parseProtocolResponse rejects an accounts response exceeding the supported count", () => {
+  const account = {
+    chain: "sui",
+    address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+    publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=",
+    keyScheme: "ed25519",
+    derivationPath: "m/44'/784'/0'/0'/0'",
+  };
+  const tooMany = JSON.stringify({
+    id: "req_accounts",
+    version: 1,
+    type: "accounts",
+    accounts: [account, account],
+  });
+  assert.throws(() => parseProtocolResponse(tooMany, "req_accounts"), { code: "protocol_error" });
+
+  const empty = JSON.stringify({
+    id: "req_accounts",
+    version: 1,
+    type: "accounts",
+    accounts: [],
+  });
+  assert.throws(() => parseProtocolResponse(empty, "req_accounts"), { code: "protocol_error" });
 });
 
 test("creates provisioning requests without secret fields", () => {

@@ -54,9 +54,9 @@ The current implementation includes:
 Runtime Firmware sessions are implemented only as RAM-held protocol sessions
 after material-backed provisioning. Sessions do not authorize signing.
 
-This is not the signing product yet. It does not derive accounts, store
-policies, parse signable transactions, expose MCP directly, or apply signing
-policy. The persisted values in this target implementation are the protocol
+This is not the signing product yet. It derives only read-only public account
+identity (`get_accounts`); it does not sign, store policies, parse signable
+transactions, expose MCP directly, or apply signing policy. The persisted values in this target implementation are the protocol
 `deviceId`, provisioning state flag, and DEV_PROFILE root entropy blob after
 backup confirmation.
 
@@ -81,6 +81,7 @@ and GitHub Actions use the same inputs:
 source /path/to/esp-idf-v5.5.4/export.sh
 tools/firmware/stackchan-cores3/build.sh
 tools/firmware/stackchan-cores3/test_bip39_vectors.sh
+tools/firmware/stackchan-cores3/test_sui_account_vectors.sh
 ```
 
 The build script downloads the pinned upstream firmware, signing-source, and
@@ -93,6 +94,10 @@ CI.
 The BIP-39 vector test is a host-side check. It compiles the tracked
 `agent_q_bip39.cpp` encoder with ESP-IDF mbedTLS SHA-256 sources and a
 generated wordlist source from the pinned BIP-39 English wordlist.
+
+The Sui account vector test is also host-side. It compiles the tracked
+`agent_q_sui_account.cpp` derivation module with the pinned MicroSui signing
+source and checks known Sui SDK address/public-key vectors.
 
 During preparation, the tracked build tools also patch the pinned upstream host
 tree so the Agent-Q build does not start the StackChan/Xiaozhi remote AI

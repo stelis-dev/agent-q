@@ -30,6 +30,7 @@ const firmwareProtocolCodes = [
   "rng_error",
   "ui_error",
   "generation_error",
+  "account_error",
 ];
 
 test("every literal Gateway error code is registered in the public-error allowlist", () => {

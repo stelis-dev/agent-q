@@ -49,8 +49,10 @@ stateDiagram-v2
     Provisioning: get_status
     Provisioning: cancel_provisioning
     Provisioned: get_status, identify_device, connect, disconnect
+    Provisioned: get_accounts (read-only, session-scoped)
+    Provisioned: display_signal diagnostic
     Provisioned: factory_reset
-    Provisioned: get_capabilities, get_accounts, call_method
+    Provisioned: get_capabilities, call_method (designed, not implemented)
     Locked: get_status, identify_device, unlock flow
 ```
 
@@ -116,6 +118,7 @@ Rejected:
 - `get_capabilities`
 - `get_accounts`
 - `call_method`
+- `display_signal`
 - policy read/write
 - signing
 - external evidence or price fetch
@@ -157,8 +160,9 @@ does not enter this state for the normal generate-and-confirm flow.
 
 Root signing material exists in device-local storage. In the current StackChan
 CoreS3 DEV_PROFILE implementation this means a binary BIP-39 entropy blob is
-stored in NVS and `prov_state` is `provisioned`; account derivation, signing,
-policy, and USER_PROFILE secure storage gates are still separate work.
+stored in NVS and `prov_state` is `provisioned`; read-only Sui account
+derivation is implemented, while signing, policy, and USER_PROFILE secure
+storage gates are still separate work.
 
 Allowed:
 
@@ -166,13 +170,16 @@ Allowed:
 - `identify_device`
 - `connect`
 - `disconnect`
-- `get_capabilities`, `get_accounts`, `call_method`, and policy read/update
+- `display_signal` diagnostic
+- `get_accounts` (read-only, session-scoped)
+- `get_capabilities`, `call_method`, and policy read/update
   only after those protocol surfaces are implemented
 
 This state is not blanket signing approval. Policy still decides whether each
 request signs, rejects, or asks. In the current StackChan CoreS3
-implementation, `provisioned` restores only `connect` and `disconnect`;
-accounts, policy, and signing remain unavailable.
+implementation, `provisioned` enables `connect`, `disconnect`, read-only
+`get_accounts` (Sui Ed25519 account 0), and the `display_signal` diagnostic;
+policy and signing remain unavailable.
 
 ### `locked`
 
@@ -205,6 +212,7 @@ This state is reserved until an unlock model is implemented.
 | `cancel_provisioning` | O* | O | X | X | Firmware |
 | `confirm_recovery_phrase_backup` | O* | X | X | X | Firmware |
 | `factory_reset` | O | O | O | TBD | Firmware |
+| `display_signal` | X | X | O | X | Firmware |
 | `get_capabilities` | X | X | O | X | Firmware |
 | `get_accounts` | X | X | O | X | Firmware |
 | `call_method` | X | X | O | X | Firmware |

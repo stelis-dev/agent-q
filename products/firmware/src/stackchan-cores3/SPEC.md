@@ -37,10 +37,10 @@ Legend:
 | USB JSONL transport | O | Uses ESP32-S3 USB Serial/JTAG. |
 | Persistent protocol `deviceId` | O | Stored in NVS namespace `agent_q`, key `device_id`. |
 | `get_status` | O | Returns device id, current state, and provisioning status without approval UI. |
-| Provisioning status reporting | △ | Reports `unprovisioned` or material-backed `provisioned`; hardware smoke is still required. This is not signing readiness because accounts, policy, and signing are unavailable. |
+| Provisioning status reporting | △ | Reports `unprovisioned` or material-backed `provisioned`; hardware smoke is still required. This is not signing readiness: read-only `get_accounts` exposes public identity only, while policy and signing remain unavailable. |
 | Mnemonic UI flow v0 | △ | Approved `start_provisioning` or the local setup speech bubble generates DEV_PROFILE BIP-39 root entropy into RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and stores the root entropy only after physical backup confirmation. Three-letter BIP-39 words are displayed as the full word. `confirm_recovery_phrase_backup` and `cancel_provisioning` wipe scratch. Hardware smoke is still required. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
-| `display_signal` diagnostic | O | Shows a decision UI and returns after touch approval, rejection, or timeout. |
+| `display_signal` diagnostic | O | Shows a decision UI and returns after touch approval, rejection, or timeout, only after material-backed `provisioned`. |
 | `connect` | △ | Accepted only after material-backed `provisioned` state and physical approval. The session is RAM-only and does not authorize signing. Hardware smoke is still required. |
 | `disconnect` | △ | Clears a matching RAM-only Firmware session after material-backed `provisioned` state. Hardware smoke is still required. |
 | `factory_reset` | △ | Requires physical approval, erases DEV_PROFILE root entropy, clears RAM session/setup scratch, persists `unprovisioned`, and recovers from material/state consistency errors. Hardware smoke is still required. |
@@ -51,11 +51,11 @@ Legend:
 | Boot posture | O | Centers yaw and raises pitch when the default avatar is attached at boot. |
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
 | `get_capabilities` | X | Not implemented. |
-| `get_accounts` | X | Not implemented. |
+| `get_accounts` | △ | Derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation verified against Sui SDK address vectors on host; hardware smoke is still required. |
 | `call_method` | X | Not implemented. |
-| Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation. Account derivation, signing use, USER_PROFILE secure storage, and import are not implemented. |
+| Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display and backup-confirmed root entropy storage source exists. Mnemonic import and USER_PROFILE secure provisioning are not implemented. |
-| Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Account derivation, policy, signing, and USER_PROFILE secure provisioning are not implemented. |
+| Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Public account derivation is implemented via `get_accounts`; policy, signing, and USER_PROFILE secure provisioning are not implemented. |
 | Policy storage/evaluation | X | Not implemented. |
 | Secure user profile | X | Not implemented. |
 
@@ -247,9 +247,11 @@ The LVGL panel is not the source of truth for recovery phrase validity. If the
 recovery phrase display panel is removed or replaced while the scratch substate
 is `displayed`, the target treats that UI event as a transition to `none` and
 wipes the volatile phrase. A later backup confirmation request must not succeed
-for a phrase that is no longer visible. The active
+for a phrase whose setup panel is gone. Display power state is not part of this
+security state: screen/backlight sleep alone does not invalidate scratch, and
+request UI should wake the display before showing prompts. The active
 `confirm_recovery_phrase_backup` approval prompt may replace the phrase display
-only after validating that it was visible, and it must wipe the phrase on
+only after validating that the panel was active, and it must wipe the phrase on
 approval, rejection, or timeout.
 
 The phrase display has a finite lifetime. When it expires, the target clears the
@@ -270,8 +272,9 @@ unchanged. This is a DEV_PROFILE development and recovery operation; Gateway
 must not expose it as a normal agent-facing MCP tool, and USER_PROFILE reset
 must be kept behind a local recovery/setup path with physical approval.
 
-Mnemonic import, account derivation, policy, signing APIs, and USER_PROFILE
-secure root-material handling are not implemented on this target.
+Read-only public account derivation (`get_accounts`) is implemented. Mnemonic
+import, policy, signing APIs, and USER_PROFILE secure root-material handling are
+not implemented on this target.
 
 StackChan CoreS3 has a display and touch input, so it is a candidate for a
 future local provisioning flow:
@@ -282,8 +285,8 @@ future local provisioning flow:
 - accept imported mnemonic input only through an explicitly weaker setup path;
 - expose only public keys and addresses after provisioning.
 
-Until account derivation and signing policy exist, this target must not be
-described as signing-ready.
+Until signing and signing policy exist, this target must not be described as
+signing-ready.
 
 ## Build Inputs
 
@@ -313,7 +316,9 @@ Current verification expectations for this target:
 - flash to a StackChan CoreS3 device when hardware is available;
 - smoke-test `get_status`;
 - smoke-test `identify_device`;
-- smoke-test `display_signal` approval, rejection, and timeout behavior;
+- smoke-test `display_signal` returns `invalid_state` before `provisioned`;
+- smoke-test `display_signal` approval, rejection, and timeout behavior after
+  `provisioned`;
 - smoke-test `connect` returns `invalid_state` before `provisioned`;
 - smoke-test `connect` after backup-confirmed root material storage requires
   physical approval and returns a RAM-only session id;

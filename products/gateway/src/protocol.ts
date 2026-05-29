@@ -84,6 +84,13 @@ export interface DisconnectRequest {
   sessionId: string;
 }
 
+export interface GetAccountsRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "get_accounts";
+  sessionId: string;
+}
+
 export interface StartProvisioningRequest {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -125,6 +132,7 @@ export type ProtocolRequest =
   | IdentifyDeviceRequest
   | ConnectRequest
   | DisconnectRequest
+  | GetAccountsRequest
   | StartProvisioningRequest
   | CancelProvisioningRequest
   | ConfirmRecoveryPhraseBackupRequest
@@ -177,6 +185,25 @@ export interface DisconnectResponse {
   status: "disconnected";
 }
 
+// Public account identity only. Never carries mnemonic, seed, entropy, or any
+// private/signing key material. publicKey is the raw 32-byte Ed25519 key as
+// base64; the scheme is reported separately as keyScheme. The shape is
+// chain-agnostic so future chains are added as additional accounts[] entries.
+export interface Account {
+  chain: string;
+  address: string;
+  publicKey: string;
+  keyScheme: string;
+  derivationPath: string;
+}
+
+export interface AccountsResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "accounts";
+  accounts: Account[];
+}
+
 export interface ProvisioningResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -216,6 +243,7 @@ export type ProtocolResponse =
   | IdentifyDeviceResponse
   | ConnectResponse
   | DisconnectResponse
+  | AccountsResponse
   | ProvisioningResponse
   | RecoveryPhraseResponse
   | FactoryResetResponse
@@ -304,6 +332,19 @@ export function makeDisconnectRequest(sessionId: string, id = createRequestId())
     id,
     version: PROTOCOL_VERSION,
     type: "disconnect",
+    sessionId,
+  };
+}
+
+export function makeGetAccountsRequest(sessionId: string, id = createRequestId()): GetAccountsRequest {
+  validateRequestId(id);
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "get_accounts",
     sessionId,
   };
 }
@@ -598,6 +639,30 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
+  if (value.type === "accounts") {
+    if (typeof value.id !== "string") {
+      throw new ProtocolError("protocol_error", "Accounts response id is malformed.");
+    }
+    if (hasSecretPayloadKey(value)) {
+      throw new ProtocolError("protocol_error", "Accounts response must not include secret material.");
+    }
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "accounts"])) {
+      throw new ProtocolError("protocol_error", "Accounts response contains unsupported fields.");
+    }
+    if (!Array.isArray(value.accounts)) {
+      throw new ProtocolError("protocol_error", "Accounts response accounts must be an array.");
+    }
+    if (value.accounts.length !== MAX_ACCOUNTS_PER_RESPONSE) {
+      throw new ProtocolError("protocol_error", "Accounts response has an unsupported account count.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "accounts",
+      accounts: value.accounts.map((entry) => sanitizeAccount(entry)),
+    };
+  }
+
   throw new ProtocolError("protocol_error", "Protocol response type is unsupported.");
 }
 
@@ -637,6 +702,16 @@ export function assertDisconnectResponse(response: ProtocolResponse): Disconnect
   }
   if (response.type !== "disconnect_result") {
     throw new ProtocolError("protocol_error", "Protocol response type is not disconnect_result.");
+  }
+  return response;
+}
+
+export function assertAccountsResponse(response: ProtocolResponse): AccountsResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "accounts") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not accounts.");
   }
   return response;
 }
@@ -696,6 +771,215 @@ export function sanitizeProvisioningStatus(value: unknown): ProvisioningStatus |
   return { state: value.state };
 }
 
+export const SUI_ADDRESS_PATTERN = /^0x[0-9a-f]{64}$/;
+// Raw 32-byte Ed25519 public key as base64 is exactly 43 payload chars + one "=".
+export const ED25519_PUBLIC_KEY_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
+export const SUI_DERIVATION_PATH = "m/44'/784'/0'/0'/0'";
+// The current target implements exactly one account (Sui Ed25519 account 0). Bound
+// the accounts array so a buggy or spoofed device cannot inflate the MCP result or
+// imply multi-account support that does not exist. Raise this as more accounts or
+// chains are actually implemented.
+export const MAX_ACCOUNTS_PER_RESPONSE = 1;
+export const FORBIDDEN_SECRET_FIELD_NAMES = [
+  "entropy",
+  "mnemonic",
+  "phrase",
+  "prefixes",
+  "privateKey",
+  "private_key",
+  "privateMaterial",
+  "private_material",
+  "recoveryPhrase",
+  "recovery_phrase",
+  "rootEntropy",
+  "root_entropy",
+  "rootMaterial",
+  "root_material",
+  "secret",
+  "seed",
+  "signingKey",
+  "signing_key",
+  "words",
+] as const;
+const FORBIDDEN_SECRET_FIELD_NAME_SET = new Set(
+  FORBIDDEN_SECRET_FIELD_NAMES.map((fieldName) => fieldName.toLowerCase()),
+);
+
+const U64_MASK = (1n << 64n) - 1n;
+const BLAKE2B_BLOCK_BYTES = 128;
+const BLAKE2B_256_BYTES = 32;
+const BLAKE2B_IV = [
+  0x6a09e667f3bcc908n,
+  0xbb67ae8584caa73bn,
+  0x3c6ef372fe94f82bn,
+  0xa54ff53a5f1d36f1n,
+  0x510e527fade682d1n,
+  0x9b05688c2b3e6c1fn,
+  0x1f83d9abfb41bd6bn,
+  0x5be0cd19137e2179n,
+] as const;
+const BLAKE2B_SIGMA = [
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
+  [11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4],
+  [7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8],
+  [9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13],
+  [2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9],
+  [12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11],
+  [13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10],
+  [6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5],
+  [10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0],
+] as const;
+
+function add64(...values: bigint[]): bigint {
+  return values.reduce((sum, value) => (sum + value) & U64_MASK, 0n);
+}
+
+function rotr64(value: bigint, shift: number): bigint {
+  return ((value >> BigInt(shift)) | (value << BigInt(64 - shift))) & U64_MASK;
+}
+
+function readU64Le(input: Uint8Array, offset: number): bigint {
+  let value = 0n;
+  for (let index = 0; index < 8; ++index) {
+    value |= BigInt(input[offset + index] ?? 0) << BigInt(index * 8);
+  }
+  return value;
+}
+
+function writeU64Le(output: Uint8Array, offset: number, value: bigint): void {
+  for (let index = 0; index < 8; ++index) {
+    output[offset + index] = Number((value >> BigInt(index * 8)) & 0xffn);
+  }
+}
+
+function blake2bCompress(h: bigint[], block: Uint8Array, bytesCompressed: bigint, isLast: boolean): void {
+  const m = Array.from({ length: 16 }, (_, index) => readU64Le(block, index * 8));
+  const v = [...h, ...BLAKE2B_IV];
+  v[12] ^= bytesCompressed & U64_MASK;
+  v[13] ^= bytesCompressed >> 64n;
+  if (isLast) {
+    v[14] ^= U64_MASK;
+  }
+
+  const g = (a: number, b: number, c: number, d: number, x: number, y: number) => {
+    v[a] = add64(v[a], v[b], m[x]);
+    v[d] = rotr64(v[d] ^ v[a], 32);
+    v[c] = add64(v[c], v[d]);
+    v[b] = rotr64(v[b] ^ v[c], 24);
+    v[a] = add64(v[a], v[b], m[y]);
+    v[d] = rotr64(v[d] ^ v[a], 16);
+    v[c] = add64(v[c], v[d]);
+    v[b] = rotr64(v[b] ^ v[c], 63);
+  };
+
+  for (let round = 0; round < 12; ++round) {
+    const sigma = BLAKE2B_SIGMA[round % BLAKE2B_SIGMA.length];
+    g(0, 4, 8, 12, sigma[0], sigma[1]);
+    g(1, 5, 9, 13, sigma[2], sigma[3]);
+    g(2, 6, 10, 14, sigma[4], sigma[5]);
+    g(3, 7, 11, 15, sigma[6], sigma[7]);
+    g(0, 5, 10, 15, sigma[8], sigma[9]);
+    g(1, 6, 11, 12, sigma[10], sigma[11]);
+    g(2, 7, 8, 13, sigma[12], sigma[13]);
+    g(3, 4, 9, 14, sigma[14], sigma[15]);
+  }
+
+  for (let index = 0; index < h.length; ++index) {
+    h[index] = (h[index] ^ v[index] ^ v[index + 8]) & U64_MASK;
+  }
+}
+
+function blake2b256(input: Uint8Array): Uint8Array {
+  const h = [...BLAKE2B_IV];
+  h[0] ^= 0x01010000n ^ BigInt(BLAKE2B_256_BYTES);
+
+  let offset = 0;
+  let bytesCompressed = 0n;
+  while (offset + BLAKE2B_BLOCK_BYTES < input.length) {
+    bytesCompressed += BigInt(BLAKE2B_BLOCK_BYTES);
+    blake2bCompress(h, input.subarray(offset, offset + BLAKE2B_BLOCK_BYTES), bytesCompressed, false);
+    offset += BLAKE2B_BLOCK_BYTES;
+  }
+
+  const finalBlock = new Uint8Array(BLAKE2B_BLOCK_BYTES);
+  const remaining = input.subarray(offset);
+  finalBlock.set(remaining);
+  bytesCompressed += BigInt(remaining.length);
+  blake2bCompress(h, finalBlock, bytesCompressed, true);
+
+  const digest = new Uint8Array(BLAKE2B_256_BYTES);
+  for (let index = 0; index < BLAKE2B_256_BYTES / 8; ++index) {
+    writeU64Le(digest, index * 8, h[index]);
+  }
+  return digest;
+}
+
+function hexLower(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function deriveSuiAddressFromPublicKey(publicKeyBase64: string): string | null {
+  const publicKey = Buffer.from(publicKeyBase64, "base64");
+  if (publicKey.length !== 32 || publicKey.toString("base64") !== publicKeyBase64) {
+    return null;
+  }
+
+  const addressInput = new Uint8Array(33);
+  addressInput[0] = 0x00; // Sui Ed25519 scheme flag.
+  addressInput.set(publicKey, 1);
+  return `0x${hexLower(blake2b256(addressInput))}`;
+}
+
+export function isSuiAddressForPublicKey(address: string, publicKeyBase64: string): boolean {
+  if (!SUI_ADDRESS_PATTERN.test(address) || !ED25519_PUBLIC_KEY_BASE64_PATTERN.test(publicKeyBase64)) {
+    return false;
+  }
+  const expectedAddress = deriveSuiAddressFromPublicKey(publicKeyBase64);
+  return expectedAddress !== null && address === expectedAddress;
+}
+
+// Reduce an untrusted account entry to a safe Account or throw. Enforces the Sui
+// Ed25519 account-0 shape, rejects any secret-like or unexpected field, and
+// rejects unknown chains rather than passing them through, so an unsupported
+// chain never looks supported. Extend per chain as more chains are implemented.
+function sanitizeAccount(value: unknown): Account {
+  if (!isRecord(value)) {
+    throw new ProtocolError("protocol_error", "Account entry is malformed.");
+  }
+  if (hasSecretPayloadKey(value)) {
+    throw new ProtocolError("protocol_error", "Account entry must not include secret material.");
+  }
+  if (!hasOnlyObjectKeys(value, ["chain", "address", "publicKey", "keyScheme", "derivationPath"])) {
+    throw new ProtocolError("protocol_error", "Account entry contains unsupported fields.");
+  }
+  if (value.chain !== "sui") {
+    throw new ProtocolError("protocol_error", "Account chain is unsupported.");
+  }
+  if (typeof value.address !== "string" || !SUI_ADDRESS_PATTERN.test(value.address)) {
+    throw new ProtocolError("protocol_error", "Account address is malformed.");
+  }
+  if (typeof value.publicKey !== "string" || !ED25519_PUBLIC_KEY_BASE64_PATTERN.test(value.publicKey)) {
+    throw new ProtocolError("protocol_error", "Account publicKey is malformed.");
+  }
+  if (!isSuiAddressForPublicKey(value.address, value.publicKey)) {
+    throw new ProtocolError("protocol_error", "Account address does not match publicKey.");
+  }
+  if (value.keyScheme !== "ed25519") {
+    throw new ProtocolError("protocol_error", "Account keyScheme is unsupported.");
+  }
+  if (value.derivationPath !== SUI_DERIVATION_PATH) {
+    throw new ProtocolError("protocol_error", "Account derivationPath is unsupported.");
+  }
+  return {
+    chain: value.chain,
+    address: value.address,
+    publicKey: value.publicKey,
+    keyScheme: value.keyScheme,
+    derivationPath: value.derivationPath,
+  };
+}
+
 export function sanitizeDeviceStatusSnapshot(value: unknown): DeviceStatusSnapshot | null {
   if (!isRecord(value)) {
     return null;
@@ -739,7 +1023,7 @@ function hasSecretPayloadKey(value: unknown): boolean {
     return false;
   }
   for (const [key, child] of Object.entries(value)) {
-    if (/^(mnemonic|seed|privateKey|secret|entropy|phrase|recoveryPhrase)$/i.test(key)) {
+    if (FORBIDDEN_SECRET_FIELD_NAME_SET.has(key.toLowerCase())) {
       return true;
     }
     if (hasSecretPayloadKey(child)) {

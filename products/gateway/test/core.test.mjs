@@ -88,6 +88,22 @@ function defaultDriver(overrides = {}) {
         status: "disconnected",
       };
     },
+    async getAccounts() {
+      return {
+        id: "req_accounts",
+        version: 1,
+        type: "accounts",
+        accounts: [
+          {
+            chain: "sui",
+            address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+            publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=",
+            keyScheme: "ed25519",
+            derivationPath: "m/44'/784'/0'/0'/0'",
+          },
+        ],
+      };
+    },
     ...overrides,
   };
 }
@@ -873,5 +889,62 @@ test("after a disconnect timeout, connectDevice contacts Firmware again instead 
     const second = await core.connectDevice({});
     assert.equal(connectCalls, 2);
     assert.equal(second.reused, false);
+  });
+});
+
+test("getAccounts without a runtime session returns not_connected", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(store, defaultDriver());
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+
+    const result = await core.getAccounts({});
+    assert.equal(result.source, "not_connected");
+    assert.equal(result.reason, "not_connected");
+    assert.equal(result.accounts, undefined);
+  });
+});
+
+test("getAccounts returns the Sui account over an active session and keeps the session", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(store, defaultDriver());
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.getAccounts({});
+    assert.equal(result.source, "live");
+    assert.equal(result.accounts.length, 1);
+    assert.equal(result.accounts[0].chain, "sui");
+    assert.equal(
+      result.accounts[0].address,
+      "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+    );
+
+    // Read-only: the session is retained after get_accounts.
+    const listed = await core.listDevices();
+    assert.notEqual(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("getAccounts clears the local session when Firmware reports invalid_session", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async getAccounts() {
+          throw new GatewayError("invalid_session", "Session is unknown or already ended.", false);
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.getAccounts({});
+    assert.equal(result.source, "session_ended");
+    assert.equal(result.reason, "invalid_session");
+    const listed = await core.listDevices();
+    assert.equal(listed.devices[0].runtimeSession, null);
   });
 });

@@ -3,7 +3,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import * as z from "zod/v4";
 import { ConfigStore } from "./config.js";
 import {
+  DISCONNECT_ENDED_REASONS,
   DISCONNECT_REASONS,
+  GET_ACCOUNTS_SESSION_ENDED_REASONS,
   GatewayCore,
   MAX_IDENTIFY_DURATION_MS,
   type ConnectDeviceResult,
@@ -14,7 +16,14 @@ import {
 } from "./core.js";
 import { GatewayError, toGatewayError } from "./errors.js";
 import { PUBLIC_ERROR_MESSAGES, normalizeErrorCode, toPublicError } from "./public-error.js";
-import { MAX_APPROVAL_TIMEOUT_MS } from "./protocol.js";
+import {
+  ED25519_PUBLIC_KEY_BASE64_PATTERN,
+  MAX_ACCOUNTS_PER_RESPONSE,
+  MAX_APPROVAL_TIMEOUT_MS,
+  SUI_ADDRESS_PATTERN,
+  SUI_DERIVATION_PATH,
+  isSuiAddressForPublicKey,
+} from "./protocol.js";
 import { SerialPortUsbDriver, MAX_SCAN_TIMEOUT_MS } from "./usb.js";
 import {
   DEVICE_ID_PATTERN,
@@ -228,13 +237,64 @@ const connectDeviceToolOutputShape = z.discriminatedUnion("source", [
   errorToolResultShape,
 ]);
 
-const disconnectDeviceSuccessOutputShape = z.object({
-  source: z.enum(["disconnected", "not_connected"]),
-  deviceId: safeDeviceIdShape,
-  reason: z.enum(DISCONNECT_REASONS),
-});
+const disconnectDeviceSuccessOutputShape = z
+  .object({
+    source: z.enum(["disconnected", "not_connected"]),
+    deviceId: safeDeviceIdShape,
+    reason: z.enum(DISCONNECT_REASONS),
+  })
+  .refine(
+    (result) =>
+      (result.source === "not_connected" && result.reason === "not_connected") ||
+      (result.source === "disconnected" &&
+        DISCONNECT_ENDED_REASONS.includes(result.reason as (typeof DISCONNECT_ENDED_REASONS)[number])),
+    { message: "disconnect source and reason disagree" },
+  );
 const disconnectDeviceToolOutputShape = z.discriminatedUnion("source", [
   disconnectDeviceSuccessOutputShape,
+  errorToolResultShape,
+]);
+
+// Public account identity only. sessionId and any private/signing material are
+// never part of this shape, so they cannot reach an MCP client.
+const accountShape = z.object({
+  chain: z.literal("sui"),
+  address: z.string().regex(SUI_ADDRESS_PATTERN),
+  publicKey: z.string().regex(ED25519_PUBLIC_KEY_BASE64_PATTERN),
+  keyScheme: z.literal("ed25519"),
+  derivationPath: z.literal(SUI_DERIVATION_PATH),
+}).refine((account) => isSuiAddressForPublicKey(account.address, account.publicKey), {
+  message: "Sui address must match publicKey",
+});
+// State-specific shapes so the run() egress guard cannot pass an unreachable
+// result: `live` must carry accounts (and no reason); `not_connected` /
+// `session_ended` must carry only a reason (no accounts). Like get_device_status,
+// the success is a discriminated union, so this tool is registered without an SDK
+// outputSchema and sanitized at the run() boundary instead.
+const liveAccountsOutputShape = z.object({
+  source: z.literal("live"),
+  deviceId: safeDeviceIdShape,
+  accounts: z.array(accountShape).length(MAX_ACCOUNTS_PER_RESPONSE),
+});
+const notConnectedAccountsOutputShape = z.object({
+  source: z.literal("not_connected"),
+  deviceId: safeDeviceIdShape,
+  reason: z.literal("not_connected"),
+});
+const sessionEndedAccountsOutputShape = z.object({
+  source: z.literal("session_ended"),
+  deviceId: safeDeviceIdShape,
+  reason: z.enum(GET_ACCOUNTS_SESSION_ENDED_REASONS),
+});
+const getAccountsSuccessOutputShape = z.discriminatedUnion("source", [
+  liveAccountsOutputShape,
+  notConnectedAccountsOutputShape,
+  sessionEndedAccountsOutputShape,
+]);
+const getAccountsToolOutputShape = z.discriminatedUnion("source", [
+  liveAccountsOutputShape,
+  notConnectedAccountsOutputShape,
+  sessionEndedAccountsOutputShape,
   errorToolResultShape,
 ]);
 
@@ -396,6 +456,19 @@ export const gatewayToolDefinitions = {
     outputSchema: disconnectDeviceToolOutputShape,
     successOutputSchema: disconnectDeviceSuccessOutputShape,
   },
+  getAccounts: {
+    name: "get_accounts",
+    title: "Get accounts",
+    description:
+      "List the public accounts (chain, address, public key) held by a provisioned Agent-Q Firmware device over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Read-only: no signing, no private material, and no session id is ever returned.",
+    inputSchema: {
+      deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
+      purpose: purposeSchema.optional(),
+      timeoutMs: scanTimeoutSchema,
+    },
+    outputSchema: getAccountsToolOutputShape,
+    successOutputSchema: getAccountsSuccessOutputShape,
+  },
 } as const;
 
 export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpServer {
@@ -545,6 +618,22 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
     async ({ deviceId, purpose, timeoutMs }) =>
       run(gatewayToolDefinitions.disconnectDevice.successOutputSchema, () =>
         core.disconnectDevice({ deviceId, purpose, timeoutMs }),
+      ),
+  );
+
+  server.registerTool(
+    gatewayToolDefinitions.getAccounts.name,
+    {
+      title: gatewayToolDefinitions.getAccounts.title,
+      description: gatewayToolDefinitions.getAccounts.description,
+      inputSchema: gatewayToolDefinitions.getAccounts.inputSchema,
+      // Success is a discriminated union (live | not_connected | session_ended),
+      // which the SDK outputSchema model cannot represent; it is sanitized at the
+      // run() boundary below instead.
+    },
+    async ({ deviceId, purpose, timeoutMs }) =>
+      run(gatewayToolDefinitions.getAccounts.successOutputSchema, () =>
+        core.getAccounts({ deviceId, purpose, timeoutMs }),
       ),
   );
 

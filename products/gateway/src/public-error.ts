@@ -48,6 +48,7 @@ export const PUBLIC_ERROR_MESSAGES: Record<string, string> = {
   rng_error: "The device secure random generator is unavailable.",
   ui_error: "The device could not show the required confirmation UI.",
   generation_error: "The device could not generate the requested setup material.",
+  account_error: "The device could not derive the requested accounts.",
   handshake_failed: "The device did not respond to a status handshake.",
   port_not_found: "The device is not connected.",
   port_in_use: "The device port is in use by another process.",
