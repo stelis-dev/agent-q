@@ -13,6 +13,7 @@ The protocol only needs enough structure for Gateway and Firmware to agree on:
 - device discovery and selection
 - connection approval
 - Firmware status
+- provisioning setup-step boundary checks
 - supported chains and methods
 - addresses and public keys
 - method requests and method results
@@ -147,6 +148,9 @@ Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
 `start_provisioning`, `cancel_provisioning`, explicit local Gateway device
 selection, local Gateway caching of discovered devices, and a hardware
 diagnostic request.
+
+Source-level implementation added but pending firmware build and hardware smoke:
+`provisioning_setup_check`.
 
 `connect` and `disconnect` establish and end a runtime communication session
 between Gateway and Firmware. A connection session does not authorize signing,
@@ -383,6 +387,65 @@ policy scratch state, so there is no signing material to wipe in this slice.
 While a provisioning approval UI is active, Firmware should return `busy` for
 new UI-affecting or session-changing requests. `get_status` remains read-only
 and must keep working without changing approval UI.
+
+## Provisioning Setup Check v0
+
+`provisioning_setup_check` is the first provisioning setup-step message. It
+exists to verify the state gate and temporary setup UI before mnemonic
+generation exists.
+
+This request does not create, import, store, export, derive, or reveal
+mnemonics, seeds, private keys, accounts, or policies. It does not move the
+device to `provisioned`, does not make signing ready, and must not be exposed as
+a normal agent-facing MCP signing tool.
+
+The request is valid only while Firmware reports `provisioning.state` as
+`provisioning`. If Firmware is in any other provisioning state, it returns
+`invalid_state` without showing approval UI and preserves the current state.
+
+Request:
+
+```json
+{
+  "id": "req_setup_check_001",
+  "version": 1,
+  "type": "provisioning_setup_check",
+  "params": {
+    "approvalTimeoutMs": 30000
+  }
+}
+```
+
+Request rules:
+
+- `approvalTimeoutMs` is a positive integer with maximum `60000`.
+- Default `approvalTimeoutMs` when omitted is `30000`.
+- The request contains no mnemonic, seed, private key, import text, account
+  data, or policy data.
+- The request does not require `sessionId`. Firmware state and physical device
+  approval are the authority for this setup step.
+
+Approved response:
+
+```json
+{
+  "id": "req_setup_check_001",
+  "version": 1,
+  "type": "provisioning_setup_check_result",
+  "status": "checked",
+  "provisioning": {
+    "state": "provisioning"
+  }
+}
+```
+
+If the user rejects or approval times out, Firmware returns the common `error`
+shape with `rejected` or `timeout`, and the previous provisioning state is
+preserved.
+
+While a provisioning setup check approval UI is active, Firmware should return
+`busy` for new UI-affecting or session-changing requests. `get_status` remains
+read-only and must keep working without changing approval UI.
 
 ## Identify Device
 

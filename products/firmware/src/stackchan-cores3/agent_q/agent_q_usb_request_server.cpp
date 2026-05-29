@@ -98,6 +98,7 @@ enum class PendingKind {
     connect,
     start_provisioning,
     cancel_provisioning,
+    provisioning_setup_check,
 };
 
 enum class ProvisioningRuntimeState {
@@ -161,6 +162,15 @@ struct PendingApprovalState {
         strlcpy(id, request_id, sizeof(id));
         active = true;
         kind = request_kind;
+        deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
+    }
+
+    void begin_provisioning_setup_check(const char* request_id, uint32_t timeout_ms)
+    {
+        clear();
+        strlcpy(id, request_id, sizeof(id));
+        active = true;
+        kind = PendingKind::provisioning_setup_check;
         deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
     }
 };
@@ -517,6 +527,17 @@ void write_provisioning_result(const char* id, const char* status)
     write_json_document(response);
 }
 
+void write_provisioning_setup_check_result(const char* id)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "provisioning_setup_check_result";
+    response["status"] = "checked";
+    response["provisioning"]["state"] = provisioning_state_to_string(g_provisioning_state);
+    write_json_document(response);
+}
+
 void format_session_id(char* output, size_t output_size)
 {
     uint8_t bytes[8];
@@ -698,9 +719,15 @@ bool provisioning_transition_allowed(PendingKind request_kind)
         case PendingKind::none:
         case PendingKind::display_signal:
         case PendingKind::connect:
+        case PendingKind::provisioning_setup_check:
         default:
             return false;
     }
+}
+
+bool provisioning_setup_check_allowed()
+{
+    return g_provisioning_state == ProvisioningRuntimeState::provisioning;
 }
 
 void write_invalid_provisioning_state_response(const char* id, PendingKind request_kind)
@@ -714,6 +741,11 @@ void write_invalid_provisioning_state_response(const char* id, PendingKind reque
         return;
     }
     write_error_response(id, "invalid_state", "Invalid provisioning state transition.");
+}
+
+void write_invalid_provisioning_setup_check_state_response(const char* id)
+{
+    write_error_response(id, "invalid_state", "Provisioning setup check is valid only while provisioning.");
 }
 
 void on_yes_clicked(lv_event_t*)
@@ -1031,6 +1063,14 @@ void show_cancel_provisioning_decision()
     ESP_LOGW(kTag, "cancel_provisioning could not show Agent-Q avatar decision UI");
 }
 
+void show_provisioning_setup_check_decision()
+{
+    if (show_avatar_decision("Run setup check?")) {
+        return;
+    }
+    ESP_LOGW(kTag, "provisioning_setup_check could not show Agent-Q avatar decision UI");
+}
+
 void poll_touch_fallback()
 {
     if (!g_pending.awaiting_choice()) {
@@ -1101,6 +1141,10 @@ void ensure_pending_request_ui()
             show_cancel_provisioning_decision();
             ESP_LOGW(kTag, "cancel_provisioning decision UI recovered: id=%s", g_pending.id);
             break;
+        case PendingKind::provisioning_setup_check:
+            show_provisioning_setup_check_decision();
+            ESP_LOGW(kTag, "provisioning_setup_check decision UI recovered: id=%s", g_pending.id);
+            break;
         case PendingKind::none:
             break;
     }
@@ -1135,6 +1179,11 @@ void send_choice_response_if_needed()
                     write_error_response(g_pending.id, "timeout", "Provisioning cancellation timed out.");
                     ESP_LOGI(kTag, "cancel_provisioning timed out: id=%s", g_pending.id);
                     show_result_and_clear_pending("Cancel timed out", AgentQMessageKind::timeout);
+                    break;
+                case PendingKind::provisioning_setup_check:
+                    write_error_response(g_pending.id, "timeout", "Provisioning setup check timed out.");
+                    ESP_LOGI(kTag, "provisioning_setup_check timed out: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Setup check timed out", AgentQMessageKind::timeout);
                     break;
                 case PendingKind::none:
                     clear_pending_state();
@@ -1198,6 +1247,17 @@ void send_choice_response_if_needed()
                 write_error_response(g_pending.id, "rejected", "Provisioning cancellation rejected.");
                 ESP_LOGI(kTag, "cancel_provisioning rejected: id=%s", g_pending.id);
                 show_result_and_clear_pending("Cancel rejected", AgentQMessageKind::rejected);
+            }
+            break;
+        case PendingKind::provisioning_setup_check:
+            if (approved) {
+                write_provisioning_setup_check_result(g_pending.id);
+                ESP_LOGI(kTag, "provisioning_setup_check approved: id=%s", g_pending.id);
+                show_result_and_clear_pending("Setup checked", AgentQMessageKind::success);
+            } else {
+                write_error_response(g_pending.id, "rejected", "Provisioning setup check rejected.");
+                ESP_LOGI(kTag, "provisioning_setup_check rejected: id=%s", g_pending.id);
+                show_result_and_clear_pending("Setup check rejected", AgentQMessageKind::rejected);
             }
             break;
         case PendingKind::none:
@@ -1334,6 +1394,29 @@ void handle_line(const char* line)
         g_pending.begin_provisioning_transition(id, request_kind, approval_timeout_ms);
         show_cancel_provisioning_decision();
         ESP_LOGI(kTag, "cancel_provisioning waiting for YES/NO: id=%s", id);
+        return;
+    }
+
+    if (strcmp(type, "provisioning_setup_check") == 0) {
+        if (g_pending.active) {
+            write_error_response(id, "busy", "Device is awaiting physical input.");
+            return;
+        }
+
+        uint32_t approval_timeout_ms = request["params"]["approvalTimeoutMs"] | kProvisioningApprovalDefaultMs;
+        if (approval_timeout_ms == 0 || approval_timeout_ms > kProvisioningApprovalMaxMs) {
+            write_error_response(id, "invalid_approval_timeout", "Invalid approval timeout.");
+            return;
+        }
+
+        if (!provisioning_setup_check_allowed()) {
+            write_invalid_provisioning_setup_check_state_response(id);
+            return;
+        }
+
+        g_pending.begin_provisioning_setup_check(id, approval_timeout_ms);
+        show_provisioning_setup_check_decision();
+        ESP_LOGI(kTag, "provisioning_setup_check waiting for YES/NO: id=%s", id);
         return;
     }
 

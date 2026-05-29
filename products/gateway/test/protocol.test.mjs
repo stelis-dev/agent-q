@@ -4,6 +4,7 @@ import {
   assertConnectResponse,
   assertDisconnectResponse,
   assertProvisioningResponse,
+  assertProvisioningSetupCheckResponse,
   assertStatusResponse,
   createRequestId,
   isGatewayName,
@@ -15,6 +16,7 @@ import {
   makeDisconnectRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
+  makeProvisioningSetupCheckRequest,
   makeStartProvisioningRequest,
   MAX_SESSION_TTL_MS,
   parseProtocolResponse,
@@ -199,7 +201,7 @@ test("makeDisconnectRequest validates sessionId", () => {
   assert.throws(() => makeDisconnectRequest("session_"), /Invalid sessionId/);
 });
 
-test("creates provisioning transition requests without secret fields", () => {
+test("creates provisioning requests without secret fields", () => {
   const start = makeStartProvisioningRequest(30000, "req_start_setup");
   assert.deepEqual(start, {
     id: "req_start_setup",
@@ -220,11 +222,22 @@ test("creates provisioning transition requests without secret fields", () => {
     },
   });
 
-  const serialized = serializeRequest(start) + serializeRequest(cancel);
+  const setupCheck = makeProvisioningSetupCheckRequest(30000, "req_setup_check");
+  assert.deepEqual(setupCheck, {
+    id: "req_setup_check",
+    version: 1,
+    type: "provisioning_setup_check",
+    params: {
+      approvalTimeoutMs: 30000,
+    },
+  });
+
+  const serialized = serializeRequest(start) + serializeRequest(cancel) + serializeRequest(setupCheck);
   assert.doesNotMatch(serialized, /mnemonic|seed|private|secret|import/i);
 
   assert.throws(() => makeStartProvisioningRequest(0), /approvalTimeoutMs/);
   assert.throws(() => makeCancelProvisioningRequest(60001), /approvalTimeoutMs/);
+  assert.throws(() => makeProvisioningSetupCheckRequest(0), /approvalTimeoutMs/);
   assert.throws(() => makeStartProvisioningRequest(30000, "req/unsafe"), /Invalid request id/);
 });
 
@@ -310,6 +323,56 @@ test("parses provisioning transition responses and rejects malformed state", () 
     "req_start_setup",
   );
   assert.throws(() => assertProvisioningResponse(rejected), { code: "rejected" });
+});
+
+test("parses provisioning setup check responses and rejects wrong state", () => {
+  const checked = assertProvisioningSetupCheckResponse(
+    parseProtocolResponse(
+      JSON.stringify({
+        id: "req_setup_check",
+        version: 1,
+        type: "provisioning_setup_check_result",
+        status: "checked",
+        provisioning: {
+          state: "provisioning",
+        },
+      }),
+      "req_setup_check",
+    ),
+  );
+  assert.equal(checked.status, "checked");
+  assert.equal(checked.provisioning.state, "provisioning");
+
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        JSON.stringify({
+          id: "req_setup_check",
+          version: 1,
+          type: "provisioning_setup_check_result",
+          status: "checked",
+          provisioning: {
+            state: "unprovisioned",
+          },
+        }),
+        "req_setup_check",
+      ),
+    { code: "protocol_error" },
+  );
+
+  const invalidState = parseProtocolResponse(
+    JSON.stringify({
+      id: "req_setup_check",
+      version: 1,
+      type: "error",
+      error: {
+        code: "invalid_state",
+        message: "Provisioning setup check is valid only while provisioning.",
+      },
+    }),
+    "req_setup_check",
+  );
+  assert.throws(() => assertProvisioningSetupCheckResponse(invalidState), { code: "invalid_state" });
 });
 
 test("parses connect_result approved and rejected responses", () => {

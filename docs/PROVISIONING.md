@@ -146,6 +146,24 @@ stateDiagram-v2
 is valid only from `provisioning`. Invalid transitions return `invalid_state`
 without opening approval UI.
 
+## Setup-Step v0
+
+Runtime v0 source defines one setup-step message:
+`provisioning_setup_check`.
+
+This request is a physical-approval boundary check for setup UI and state-gate
+behavior. It is valid only while Firmware is in `provisioning`; all other
+provisioning states return `invalid_state` without opening approval UI. An
+approved request returns `provisioning_setup_check_result` with
+`provisioning.state` still set to `provisioning`.
+
+`provisioning_setup_check` is not backup confirmation, mnemonic generation,
+mnemonic import, account creation, policy setup, or signing readiness. It stores
+no mnemonic, seed, private key, account, policy, or setup scratch state.
+Canceling provisioning still calls the provisioning scratch wipe hook before
+returning to `unprovisioned`, so future setup scratch material has one required
+wipe point.
+
 ## Implementation Order
 
 Recommended first slice:
@@ -162,8 +180,11 @@ Recommended first slice:
 Do not jump directly from mnemonic generation to user transaction signing.
 
 Current implementation status: steps 1 and 2 are implemented only as
-provisioning state reporting and approved state start/cancel. Step 3 and later
-are not implemented.
+provisioning state reporting and approved state start/cancel. Step 3 is
+limited to Gateway parser support and the StackChan CoreS3 source path for the
+`provisioning_setup_check` boundary check described above; firmware build and
+hardware smoke are still required. Mnemonic generation/import, account
+derivation, and signing APIs are not implemented.
 
 ## Completion Criteria
 

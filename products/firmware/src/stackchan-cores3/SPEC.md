@@ -39,6 +39,7 @@ Legend:
 | `get_status` | O | Returns device id, current state, and provisioning status without approval UI. |
 | Provisioning status reporting | △ | Reports NVS-backed `unprovisioned` or `provisioning`; hardware smoke of the NVS-backed path is still required. This is not signing readiness. |
 | `start_provisioning` / `cancel_provisioning` | △ | Requires touch approval and stores only the provisioning state flag. Hardware smoke is still required. |
+| `provisioning_setup_check` | △ | Source adds a handler valid only while `provisioning`; it requires touch approval and stores no signing material. Firmware build and hardware smoke are still required. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `display_signal` diagnostic | O | Shows a decision UI and returns after touch approval, rejection, or timeout. |
 | `connect` | O | Requires touch approval and returns a Firmware-generated runtime session id. |
@@ -128,6 +129,7 @@ Current UI behavior:
 | `connect` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
 | `start_provisioning` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
 | `cancel_provisioning` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
+| `provisioning_setup_check` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
 | Approved result | Temporary success speech and emotion | `idle` |
 | Rejected result | Temporary rejected speech and emotion | `idle` |
 | Timeout result | Temporary timeout speech and emotion | `idle` |
@@ -180,6 +182,13 @@ combinations return `invalid_state` without opening approval UI. `provisioned`
 is not set because no root signing material exists. `locked` is not used
 because no unlock model exists.
 
+The setup-step v0 source path is `provisioning_setup_check`. It is accepted only
+from `provisioning`, requires touch approval, returns
+`provisioning_setup_check_result`, and leaves the provisioning state unchanged.
+Firmware build and hardware smoke are still required for this path. It is not
+backup confirmation and does not generate, import, derive, store, or return
+mnemonics, seeds, private keys, accounts, policies, or signing material.
+
 Mnemonic generation, mnemonic import, persistent signing material, account
 derivation, and signing APIs are not implemented on this target.
 
@@ -223,5 +232,8 @@ Current verification expectations for this target:
   across reboot, and `invalid_state` from the wrong state;
 - smoke-test `cancel_provisioning` approval, rejection, timeout, persistence
   across reboot, and `invalid_state` from the wrong state;
+- smoke-test `provisioning_setup_check` approval, rejection, timeout,
+  `invalid_state` from `unprovisioned`, and unchanged `provisioning` state after
+  approval;
 - visually verify that Agent-Q temporary UI does not leave the avatar in an
   Agent-Q-specific mode after completion.

@@ -43,7 +43,7 @@ stateDiagram-v2
     Unprovisioned: get_status, identify_device, connect, disconnect
     Unprovisioned: start_provisioning
     Provisioning: get_status, connect, disconnect
-    Provisioning: setup-step messages, cancel_provisioning
+    Provisioning: provisioning_setup_check, cancel_provisioning
     Provisioned: get_status, identify_device, connect, disconnect
     Provisioned: get_capabilities, get_accounts, call_method
     Locked: get_status, identify_device, unlock flow
@@ -89,7 +89,7 @@ Allowed:
 - `identify_device` only when it does not disrupt setup UI
 - `connect`
 - `disconnect`
-- setup-step messages
+- `provisioning_setup_check` setup-step message
 - `cancel_provisioning`
 
 Rejected:
@@ -152,6 +152,7 @@ This state is reserved until an unlock model is implemented.
 | `disconnect` | O | O | O | O | Firmware |
 | `start_provisioning` | O | X | X | X | Firmware |
 | `cancel_provisioning` | X | O | X | X | Firmware |
+| `provisioning_setup_check` | X | O | X | X | Firmware |
 | `get_capabilities` | X | X | O | X | Firmware |
 | `get_accounts` | X | X | O | X | Firmware |
 | `call_method` | X | X | O | X | Firmware |

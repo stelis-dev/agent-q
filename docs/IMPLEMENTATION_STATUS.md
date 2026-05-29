@@ -23,6 +23,7 @@ This document tracks implementation status only. The wire protocol is defined in
 | `get_status` | O | Implemented by the current StackChan CoreS3 target and used by Gateway discovery. |
 | Provisioning status reporting | O | `get_status` includes `provisioning.state`; Gateway parses and preserves it. This is not signing readiness. |
 | Provisioning state transitions | △ | `start_provisioning` and `cancel_provisioning` are defined, Gateway validates the response, and StackChan CoreS3 firmware builds with approved state changes. Hardware smoke is still required. They do not create signing material and are not exposed as MCP setup tools. |
+| Provisioning setup-step v0 | △ | `provisioning_setup_check` is defined for the `provisioning` state only. Gateway parser tests pass, and StackChan CoreS3 source adds the state-gated handler. Firmware build and hardware smoke are still required. |
 | `identify_device` | O | Implemented as temporary device UI for explicit user selection. |
 | `connect` | O | Implemented as a runtime communication session with physical approval on supported targets. |
 | `disconnect` | O | Implemented for active runtime sessions. |
@@ -44,6 +45,7 @@ This document tracks implementation status only. The wire protocol is defined in
 | Runtime connection sessions | O | Held in Gateway memory only; session id is not exposed to MCP clients. |
 | Cached device status | O | Exposed only for previously seen devices and marked non-live. |
 | Provisioning transition parser | O | Gateway can build and parse provisioning transition protocol messages. It does not expose a provisioning write MCP tool. |
+| Provisioning setup-step parser | O | Gateway can build and parse `provisioning_setup_check` protocol messages. It does not expose a setup-step MCP tool. |
 | MCP output sanitization | O | Tool outputs and public errors are schema-bounded before reaching clients. |
 | Admin Page | X | Intended Gateway capability; not implemented. |
 | Firmware update/admin command path | X | Not exposed through MCP. |
@@ -71,6 +73,7 @@ Current MCP tools:
 | `get_status` | O | X | X | Common protocol request. |
 | Provisioning status reporting | △ | X | X | StackChan CoreS3 firmware reports the NVS-backed `unprovisioned` or `provisioning` state. Hardware smoke of the NVS-backed path is still required. |
 | Provisioning state transitions | △ | X | X | StackChan CoreS3 implements approved start/cancel between `unprovisioned` and `provisioning` and stores no signing material. Hardware smoke is still required. |
+| Provisioning setup-step v0 | △ | X | X | StackChan CoreS3 source adds `provisioning_setup_check` only while `provisioning`; it stores no signing material. Firmware build and hardware smoke are still required. |
 | `identify_device` | O | X | X | Uses temporary avatar speech bubble on StackChan CoreS3. |
 | `connect` physical approval | O | X | X | StackChan CoreS3 uses touch approval. |
 | `disconnect` | O | X | X | StackChan CoreS3 clears matching runtime session. |
@@ -124,6 +127,7 @@ session-scoped `call_method` protocol.
 | Provisioning flow document | O | See `docs/PROVISIONING.md`. Mnemonic/key provisioning is not implemented. |
 | Provisioning status reporting | O | Firmware reports `provisioning.state`; Gateway exposes it without treating it as signing readiness. |
 | Provisioning state transitions | △ | StackChan CoreS3 can start/cancel the local `provisioning` state after physical approval. This stores no mnemonic, seed, private key, account, or policy. |
+| Provisioning setup-step v0 | △ | StackChan CoreS3 source adds a physical-approval setup check only in `provisioning`; firmware build and hardware smoke are still required. This stores no mnemonic, seed, private key, account, or policy. |
 | Deny-by-default policy model | △ | Documented target behavior; evaluator not implemented. |
 | Policy evaluator | X | Not implemented. |
 | Policy storage | X | Not implemented. |

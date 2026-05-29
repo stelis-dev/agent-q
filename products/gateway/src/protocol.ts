@@ -102,13 +102,23 @@ export interface CancelProvisioningRequest {
   };
 }
 
+export interface ProvisioningSetupCheckRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "provisioning_setup_check";
+  params: {
+    approvalTimeoutMs: number;
+  };
+}
+
 export type ProtocolRequest =
   | GetStatusRequest
   | IdentifyDeviceRequest
   | ConnectRequest
   | DisconnectRequest
   | StartProvisioningRequest
-  | CancelProvisioningRequest;
+  | CancelProvisioningRequest
+  | ProvisioningSetupCheckRequest;
 
 export interface StatusResponse {
   id: string;
@@ -165,6 +175,14 @@ export interface ProvisioningResponse {
   provisioning: ProvisioningStatus;
 }
 
+export interface ProvisioningSetupCheckResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "provisioning_setup_check_result";
+  status: "checked";
+  provisioning: ProvisioningStatus;
+}
+
 export interface ProtocolErrorResponse {
   id?: string;
   version: typeof PROTOCOL_VERSION;
@@ -181,6 +199,7 @@ export type ProtocolResponse =
   | ConnectResponse
   | DisconnectResponse
   | ProvisioningResponse
+  | ProvisioningSetupCheckResponse
   | ProtocolErrorResponse;
 
 export class ProtocolError extends Error {
@@ -296,6 +315,22 @@ export function makeCancelProvisioningRequest(
     id,
     version: PROTOCOL_VERSION,
     type: "cancel_provisioning",
+    params: {
+      approvalTimeoutMs,
+    },
+  };
+}
+
+export function makeProvisioningSetupCheckRequest(
+  approvalTimeoutMs: number = DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS,
+  id = createRequestId(),
+): ProvisioningSetupCheckRequest {
+  validateRequestId(id);
+  validateApprovalTimeoutMs(approvalTimeoutMs);
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "provisioning_setup_check",
     params: {
       approvalTimeoutMs,
     },
@@ -470,6 +505,26 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
+  if (value.type === "provisioning_setup_check_result") {
+    if (typeof value.id !== "string" || value.status !== "checked") {
+      throw new ProtocolError("protocol_error", "Provisioning setup check response is malformed.");
+    }
+    const provisioning = sanitizeProvisioningStatus(value.provisioning);
+    if (provisioning === null) {
+      throw new ProtocolError("protocol_error", "Provisioning setup check response state is malformed.");
+    }
+    if (provisioning.state !== "provisioning") {
+      throw new ProtocolError("protocol_error", "Provisioning setup check response requires provisioning state.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "provisioning_setup_check_result",
+      status: "checked",
+      provisioning,
+    };
+  }
+
   throw new ProtocolError("protocol_error", "Protocol response type is unsupported.");
 }
 
@@ -519,6 +574,18 @@ export function assertProvisioningResponse(response: ProtocolResponse): Provisio
   }
   if (response.type !== "provisioning_result") {
     throw new ProtocolError("protocol_error", "Protocol response type is not provisioning_result.");
+  }
+  return response;
+}
+
+export function assertProvisioningSetupCheckResponse(
+  response: ProtocolResponse,
+): ProvisioningSetupCheckResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "provisioning_setup_check_result") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not provisioning_setup_check_result.");
   }
   return response;
 }
