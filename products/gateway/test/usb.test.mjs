@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   deadlineEnforcingDriver,
   isLikelyAgentQUsbPort,
+  resolveUsbCalloutPath,
   scanUsbDeviceStatuses,
   scanUsbDevices,
   tryParseMatchingResponseLine,
@@ -52,6 +53,21 @@ test("prefilters likely usb ports before handshake", async () => {
   const results = await scanUsbDevices(driver, 2000);
   assert.deepEqual(requestedPorts, ["/dev/cu.usbmodem1"]);
   assert.equal(results.length, 1);
+});
+
+test("resolves macOS tty usbmodem ports to callout cu ports when available", () => {
+  assert.equal(
+    resolveUsbCalloutPath("/dev/tty.usbmodem21301", "darwin", (path) => path === "/dev/cu.usbmodem21301"),
+    "/dev/cu.usbmodem21301",
+  );
+  assert.equal(
+    resolveUsbCalloutPath("/dev/tty.usbmodem21301", "darwin", () => false),
+    "/dev/tty.usbmodem21301",
+  );
+  assert.equal(
+    resolveUsbCalloutPath("/dev/tty.usbmodem21301", "linux", () => true),
+    "/dev/tty.usbmodem21301",
+  );
 });
 
 test("recognizes observed Espressif USB serial metadata", () => {

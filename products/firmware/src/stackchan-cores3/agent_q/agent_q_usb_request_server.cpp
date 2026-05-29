@@ -4,6 +4,8 @@
 #include <string.h>
 
 #include <ArduinoJson.h>
+#include <memory>
+#include "agent_q_speech_bubble.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -47,31 +49,35 @@ constexpr size_t kSessionIdSize = 26;
 constexpr size_t kGatewayNameSize = 65;
 constexpr size_t kConnectDisplayMessageSize = 96;
 constexpr size_t kPendingDisplayMessageSize = kLineBufferSize;
-constexpr int kModalWidth = 312;
 constexpr int kScreenWidth = 320;
-constexpr int kApprovalModalHeight = 228;
-constexpr int kIdentifyModalHeight = 168;
 constexpr int kTopDecisionStripHeight = 34;
-constexpr int kTopDecisionCornerRadius = 12;
-constexpr int kTopDecisionPanelHeight = kTopDecisionStripHeight + kTopDecisionCornerRadius;
-constexpr int kModalContentWidth = 286;
-constexpr int kChoiceButtonWidth = 126;
-constexpr int kChoiceButtonHeight = 54;
-constexpr int kChoiceButtonDefaultBottomOffset = -18;
+constexpr int kTopDecisionPanelHeight = kTopDecisionStripHeight;
 constexpr int kTopDecisionButtonWidth = kScreenWidth / 2;
+constexpr int kTopDecisionCornerRadius = 10;
+constexpr uint32_t kAgentQResultDisplayMs = 1800;
+constexpr uint32_t kAgentQHeadLiftMs = 900;
+constexpr int kAgentQHeadLiftPitchDelta = 160;
+constexpr int kAgentQHeadLiftSpeed = 280;
 
 enum class AgentQUiPanelKind {
     none,
-    modal_decision,
     top_decision,
-    notification,
-    identification,
 };
 
 enum class AgentQUiMode {
     none,
-    notification,
     decision,
+    result,
+    identification,
+};
+
+enum class AgentQMessageKind {
+    info,
+    approval,
+    success,
+    rejected,
+    timeout,
+    error,
 };
 
 enum class PendingChoice {
@@ -178,7 +184,11 @@ struct AgentQUiState {
     lv_obj_t* panel = nullptr;
     AgentQUiPanelKind panel_kind = AgentQUiPanelKind::none;
     stackchan::avatar::Avatar* speech_avatar = nullptr;
+    int speech_decorator_id = -1;
     AgentQUiMode speech_mode = AgentQUiMode::none;
+    stackchan::avatar::Emotion previous_emotion = stackchan::avatar::Emotion::Neutral;
+    bool owns_emotion = false;
+    TickType_t message_deadline = 0;
 };
 
 char g_line_buffer[kLineBufferSize];
@@ -193,13 +203,65 @@ TaskHandle_t g_usb_task = nullptr;
 
 bool is_decision_panel_kind(AgentQUiPanelKind kind)
 {
-    return kind == AgentQUiPanelKind::modal_decision || kind == AgentQUiPanelKind::top_decision;
+    return kind == AgentQUiPanelKind::top_decision;
 }
 
 bool tick_reached(TickType_t deadline)
 {
     return static_cast<int32_t>(xTaskGetTickCount() - deadline) >= 0;
 }
+
+int clamp_int(int value, int min_value, int max_value)
+{
+    if (value < min_value) {
+        return min_value;
+    }
+    if (value > max_value) {
+        return max_value;
+    }
+    return value;
+}
+
+class AgentQHeadLiftModifier : public stackchan::TimedEventModifier {
+public:
+    AgentQHeadLiftModifier() : stackchan::TimedEventModifier(kAgentQHeadLiftMs)
+    {
+    }
+
+    void _on_start(stackchan::Modifiable& stackchan) override
+    {
+        auto& motion = stackchan.motion();
+        if (motion.isModifyLocked() || motion.isMoving()) {
+            return;
+        }
+
+        const auto current = motion.getCurrentAngles();
+        previous_yaw_ = current.x;
+        previous_pitch_ = current.y;
+        active_ = true;
+
+        motion.setModifyLock(true);
+        const int target_pitch = clamp_int(previous_pitch_ + kAgentQHeadLiftPitchDelta, 0, 540);
+        motion.moveWithSpeed(previous_yaw_, target_pitch, kAgentQHeadLiftSpeed);
+    }
+
+    void _on_end(stackchan::Modifiable& stackchan) override
+    {
+        if (!active_) {
+            return;
+        }
+
+        auto& motion = stackchan.motion();
+        motion.moveWithSpeed(previous_yaw_, previous_pitch_, kAgentQHeadLiftSpeed);
+        motion.setModifyLock(false);
+        active_ = false;
+    }
+
+private:
+    bool active_ = false;
+    int previous_yaw_ = 0;
+    int previous_pitch_ = 0;
+};
 
 bool is_safe_id(const char* value)
 {
@@ -510,65 +572,55 @@ void on_no_clicked(lv_event_t*)
     }
 }
 
-void on_notification_close_clicked(lv_event_t*);
 void clear_agent_q_avatar_ui();
 
 void make_button_label_with_font(lv_obj_t* button, const char* text, const lv_font_t* font, lv_event_cb_t callback)
 {
     lv_obj_t* label = lv_label_create(button);
+    lv_obj_remove_style_all(label);
     lv_label_set_text(label, text);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_remove_flag(label, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(label, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_text_font(label, font, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(label, LV_OPA_TRANSP, 0);
     lv_obj_center(label);
     lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(label, callback, LV_EVENT_CLICKED, nullptr);
 }
 
-void make_button_label(lv_obj_t* button, const char* text, lv_event_cb_t callback)
-{
-    make_button_label_with_font(button, text, &lv_font_montserrat_20, callback);
-}
-
-void make_choice_button_sized_at(
-    lv_obj_t* parent, const char* text, int x, int y, int width, int height, lv_color_t color, lv_event_cb_t callback)
-{
-    lv_obj_t* button = lv_button_create(parent);
-    lv_obj_set_size(button, width, height);
-    lv_obj_align(button, LV_ALIGN_BOTTOM_MID, x, y);
-    lv_obj_set_style_radius(button, 8, 0);
-    lv_obj_set_style_bg_color(button, color, 0);
-    lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(button, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, nullptr);
-    make_button_label(button, text, callback);
-}
-
-void make_choice_button_at(lv_obj_t* parent, const char* text, int x, int y, lv_color_t color, lv_event_cb_t callback)
-{
-    make_choice_button_sized_at(parent, text, x, y, kChoiceButtonWidth, kChoiceButtonHeight, color, callback);
-}
-
-void make_choice_button(lv_obj_t* parent, const char* text, int x, lv_color_t color, lv_event_cb_t callback)
-{
-    make_choice_button_at(parent, text, x, kChoiceButtonDefaultBottomOffset, color, callback);
-}
-
 void make_top_decision_button(lv_obj_t* parent, const char* text, int x, lv_color_t color, lv_event_cb_t callback)
 {
-    lv_obj_t* button = lv_button_create(parent);
+    // A plain clickable object avoids themed button shadows/scrollbars that can
+    // show up as stray vertical lines over the avatar.
+    lv_obj_t* button = lv_obj_create(parent);
+    lv_obj_remove_style_all(button);
     lv_obj_set_size(button, kTopDecisionButtonWidth, kTopDecisionStripHeight);
-    lv_obj_align(button, LV_ALIGN_TOP_LEFT, x, kTopDecisionCornerRadius);
+    lv_obj_align(button, LV_ALIGN_TOP_LEFT, x, 0);
+    lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(button, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_radius(button, 0, 0);
     lv_obj_set_style_border_width(button, 0, 0);
+    lv_obj_set_style_outline_width(button, 0, 0);
+    lv_obj_set_style_shadow_width(button, 0, 0);
+    lv_obj_set_style_pad_all(button, 0, 0);
     lv_obj_set_style_bg_color(button, color, 0);
     lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(button, lv_color_hex(0xFFFFFF), 0);
     lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, nullptr);
     make_button_label_with_font(button, text, &lv_font_montserrat_14, callback);
 }
 
-void make_close_button(lv_obj_t* parent)
+bool should_lift_head_for_message(AgentQMessageKind kind)
 {
-    make_choice_button_at(parent, "Close", 0, kChoiceButtonDefaultBottomOffset, lv_color_hex(0x24875A), on_notification_close_clicked);
+    return kind == AgentQMessageKind::info || kind == AgentQMessageKind::approval ||
+           kind == AgentQMessageKind::success;
+}
+
+void trigger_agent_q_head_lift()
+{
+    GetStackChan().addModifier(std::make_unique<AgentQHeadLiftModifier>());
 }
 
 void on_agent_q_panel_deleted(lv_event_t* event)
@@ -601,109 +653,89 @@ void clear_panel_locked()
     }
 }
 
-void show_modal_decision(const char* title_text, const char* message, const char* hint_text, lv_color_t border_color)
+struct AgentQMessageStyle {
+    lv_color_t background;
+    lv_color_t foreground;
+    stackchan::avatar::Emotion emotion;
+};
+
+AgentQMessageStyle message_style(AgentQMessageKind kind)
 {
-    clear_agent_q_avatar_ui();
-    g_identification.clear();
-
-    {
-        LvglLockGuard lock;
-        clear_panel_locked();
-
-        g_ui.panel = lv_obj_create(lv_screen_active());
-        register_agent_q_panel_locked(AgentQUiPanelKind::modal_decision);
-        lv_obj_set_size(g_ui.panel, kModalWidth, kApprovalModalHeight);
-        lv_obj_align(g_ui.panel, LV_ALIGN_CENTER, 0, 0);
-        lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_style_radius(g_ui.panel, 12, 0);
-        lv_obj_set_style_border_width(g_ui.panel, 2, 0);
-        lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(g_ui.panel, lv_color_hex(0x123242), 0);
-        lv_obj_set_style_border_color(g_ui.panel, border_color, 0);
-
-        lv_obj_t* title = lv_label_create(g_ui.panel);
-        lv_label_set_text(title, title_text != nullptr && title_text[0] != '\0' ? title_text : "Agent-Q request");
-        lv_obj_set_width(title, kModalContentWidth);
-        lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
-        lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 18);
-
-        lv_obj_t* subtitle = lv_label_create(g_ui.panel);
-        lv_label_set_text(subtitle, message != nullptr && message[0] != '\0' ? message : "USB request");
-        lv_obj_set_width(subtitle, kModalContentWidth);
-        lv_label_set_long_mode(subtitle, LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_text_align(subtitle, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_line_space(subtitle, 3, 0);
-        lv_obj_set_style_text_color(subtitle, lv_color_hex(0xD7DEE6), 0);
-        lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 58);
-
-        lv_obj_t* hint = lv_label_create(g_ui.panel);
-        lv_label_set_text(hint, hint_text != nullptr && hint_text[0] != '\0' ? hint_text : "Choose YES or NO");
-        lv_obj_set_width(hint, kModalContentWidth);
-        lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(hint, lv_color_hex(0x91D8FF), 0);
-        lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 138);
-
-        make_choice_button(g_ui.panel, "NO", -66, lv_color_hex(0xA53B3B), on_no_clicked);
-        make_choice_button(g_ui.panel, "YES", 66, lv_color_hex(0x24875A), on_yes_clicked);
-
-        lv_obj_move_foreground(g_ui.panel);
+    switch (kind) {
+        case AgentQMessageKind::approval:
+            return {lv_color_hex(0xFFD166), lv_color_hex(0x3A2B00), stackchan::avatar::Emotion::Neutral};
+        case AgentQMessageKind::success:
+            return {lv_color_hex(0x7DE2A6), lv_color_hex(0x063A1D), stackchan::avatar::Emotion::Happy};
+        case AgentQMessageKind::rejected:
+            return {lv_color_hex(0xF28B82), lv_color_hex(0x3C0505), stackchan::avatar::Emotion::Sad};
+        case AgentQMessageKind::timeout:
+            return {lv_color_hex(0xD0D5DD), lv_color_hex(0x2B2D33), stackchan::avatar::Emotion::Sleepy};
+        case AgentQMessageKind::error:
+            return {lv_color_hex(0xE25B5B), lv_color_hex(0xFFFFFF), stackchan::avatar::Emotion::Angry};
+        case AgentQMessageKind::info:
+        default:
+            return {lv_color_hex(0x91D8FF), lv_color_hex(0x05324A), stackchan::avatar::Emotion::Doubt};
     }
 }
 
-void show_display_signal_modal_decision(const char* message)
+void clear_agent_q_avatar_ui()
 {
-    show_modal_decision("Signal received", message, "Choose YES or NO", lv_color_hex(0x48B3FF));
+    if (g_ui.speech_avatar == nullptr) {
+        g_ui.speech_mode = AgentQUiMode::none;
+        g_ui.speech_decorator_id = -1;
+        g_ui.message_deadline = 0;
+        return;
+    }
+
+    auto* speech_avatar = g_ui.speech_avatar;
+    LvglLockGuard lock;
+    if (GetStackChan().hasAvatar()) {
+        auto& current_avatar = GetStackChan().avatar();
+        if (&current_avatar == speech_avatar) {
+            if (g_ui.speech_decorator_id >= 0) {
+                current_avatar.removeDecorator(g_ui.speech_decorator_id);
+            }
+            if (g_ui.owns_emotion) {
+                current_avatar.setEmotion(g_ui.previous_emotion);
+                current_avatar.setModifyLock(false);
+            }
+        } else {
+            ESP_LOGI(kTag, "Agent-Q avatar owner changed; dropping stale UI owner");
+        }
+    }
+    g_ui.speech_avatar = nullptr;
+    g_ui.speech_decorator_id = -1;
+    g_ui.speech_mode = AgentQUiMode::none;
+    g_ui.owns_emotion = false;
+    g_ui.message_deadline = 0;
 }
 
-void show_modal_notification(const char* message)
+bool show_agent_q_message(const char* message, AgentQMessageKind kind, AgentQUiMode mode, uint32_t duration_ms)
 {
     clear_agent_q_avatar_ui();
-    g_identification.clear();
+    const AgentQMessageStyle style = message_style(kind);
 
-    {
-        LvglLockGuard lock;
-        clear_panel_locked();
-
-        g_ui.panel = lv_obj_create(lv_screen_active());
-        register_agent_q_panel_locked(AgentQUiPanelKind::notification);
-        lv_obj_set_size(g_ui.panel, kModalWidth, kIdentifyModalHeight);
-        lv_obj_align(g_ui.panel, LV_ALIGN_CENTER, 0, 0);
-        lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_style_radius(g_ui.panel, 12, 0);
-        lv_obj_set_style_border_width(g_ui.panel, 2, 0);
-        lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(g_ui.panel, lv_color_hex(0x123242), 0);
-        lv_obj_set_style_border_color(g_ui.panel, lv_color_hex(0x48B3FF), 0);
-
-        lv_obj_t* title = lv_label_create(g_ui.panel);
-        lv_label_set_text(title, "Agent-Q");
-        lv_obj_set_width(title, kModalContentWidth);
-        lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
-        lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 16);
-
-        lv_obj_t* subtitle = lv_label_create(g_ui.panel);
-        lv_label_set_text(subtitle, message != nullptr && message[0] != '\0' ? message : "Done");
-        lv_obj_set_width(subtitle, kModalContentWidth);
-        lv_label_set_long_mode(subtitle, LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_text_align(subtitle, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_line_space(subtitle, 3, 0);
-        lv_obj_set_style_text_color(subtitle, lv_color_hex(0xD7DEE6), 0);
-        lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 58);
-
-        make_close_button(g_ui.panel);
-
-        lv_obj_move_foreground(g_ui.panel);
+    LvglLockGuard lock;
+    if (!GetStackChan().hasAvatar()) {
+        return false;
     }
+    auto& avatar = GetStackChan().avatar();
+    g_ui.previous_emotion = avatar.getEmotion();
+    g_ui.owns_emotion = true;
+    avatar.setModifyLock(true);
+    avatar.setEmotion(style.emotion);
+    g_ui.speech_decorator_id = avatar.addDecorator(std::make_unique<agent_q::AgentQSpeechBubbleDecorator>(
+        lv_screen_active(), message != nullptr && message[0] != '\0' ? message : "Agent-Q", style.background, style.foreground));
+    if (should_lift_head_for_message(kind)) {
+        trigger_agent_q_head_lift();
+    }
+    g_ui.speech_avatar = &avatar;
+    g_ui.speech_mode = mode;
+    g_ui.message_deadline = duration_ms > 0 ? xTaskGetTickCount() + pdMS_TO_TICKS(duration_ms) : 0;
+    return g_ui.speech_decorator_id >= 0;
 }
 
-void clear_agent_q_modal()
+void clear_agent_q_panel()
 {
     LvglLockGuard lock;
     clear_panel_locked();
@@ -712,12 +744,7 @@ void clear_agent_q_modal()
 void clear_agent_q_request_ui()
 {
     clear_agent_q_avatar_ui();
-    clear_agent_q_modal();
-}
-
-void on_notification_close_clicked(lv_event_t*)
-{
-    clear_agent_q_request_ui();
+    clear_agent_q_panel();
 }
 
 void show_top_decision_panel()
@@ -730,12 +757,17 @@ void show_top_decision_panel()
 
         g_ui.panel = lv_obj_create(lv_screen_active());
         register_agent_q_panel_locked(AgentQUiPanelKind::top_decision);
+        lv_obj_remove_style_all(g_ui.panel);
         lv_obj_set_size(g_ui.panel, kScreenWidth, kTopDecisionPanelHeight);
-        lv_obj_align(g_ui.panel, LV_ALIGN_TOP_MID, 0, -kTopDecisionCornerRadius);
+        lv_obj_align(g_ui.panel, LV_ALIGN_TOP_MID, 0, 0);
         lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+        lv_obj_set_scrollbar_mode(g_ui.panel, LV_SCROLLBAR_MODE_OFF);
         lv_obj_set_style_radius(g_ui.panel, kTopDecisionCornerRadius, 0);
         lv_obj_set_style_clip_corner(g_ui.panel, true, 0);
         lv_obj_set_style_border_width(g_ui.panel, 0, 0);
+        lv_obj_set_style_outline_width(g_ui.panel, 0, 0);
+        lv_obj_set_style_shadow_width(g_ui.panel, 0, 0);
         lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_TRANSP, 0);
         lv_obj_set_style_pad_all(g_ui.panel, 0, 0);
 
@@ -751,47 +783,10 @@ void show_identification_code(const char* code, uint32_t duration_ms)
     clear_agent_q_request_ui();
     g_identification.begin(code, duration_ms);
 
-    {
-        LvglLockGuard lock;
-        clear_panel_locked();
-
-        g_ui.panel = lv_obj_create(lv_screen_active());
-        register_agent_q_panel_locked(AgentQUiPanelKind::identification);
-        lv_obj_set_size(g_ui.panel, kModalWidth, kIdentifyModalHeight);
-        lv_obj_align(g_ui.panel, LV_ALIGN_CENTER, 0, 0);
-        lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_style_radius(g_ui.panel, 12, 0);
-        lv_obj_set_style_border_width(g_ui.panel, 2, 0);
-        lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(g_ui.panel, lv_color_hex(0x123242), 0);
-        lv_obj_set_style_border_color(g_ui.panel, lv_color_hex(0x48B3FF), 0);
-
-        lv_obj_t* title = lv_label_create(g_ui.panel);
-        lv_label_set_text(title, "Identify device");
-        lv_obj_set_width(title, kModalContentWidth);
-        lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
-        lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 14);
-
-        lv_obj_t* code_label = lv_label_create(g_ui.panel);
-        lv_label_set_text(code_label, code);
-        lv_obj_set_width(code_label, kModalContentWidth);
-        lv_obj_set_style_text_align(code_label, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_font(code_label, &lv_font_montserrat_20, 0);
-        lv_obj_set_style_text_color(code_label, lv_color_hex(0x91D8FF), 0);
-        lv_obj_align(code_label, LV_ALIGN_TOP_MID, 0, 58);
-
-        lv_obj_t* hint = lv_label_create(g_ui.panel);
-        lv_label_set_text(hint, "Confirm this code in Gateway");
-        lv_obj_set_width(hint, kModalContentWidth);
-        lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(hint, lv_color_hex(0xD7DEE6), 0);
-        lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 102);
-
-        lv_obj_move_foreground(g_ui.panel);
+    char message[40];
+    snprintf(message, sizeof(message), "Device code: %s", code);
+    if (!show_agent_q_message(message, AgentQMessageKind::info, AgentQUiMode::identification, duration_ms)) {
+        ESP_LOGW(kTag, "identify_device could not show Agent-Q speech bubble");
     }
 }
 
@@ -802,70 +797,38 @@ void clear_identification_if_needed()
         return;
     }
 
-    {
-        LvglLockGuard lock;
-        clear_panel_locked();
-    }
+    clear_agent_q_request_ui();
     g_identification.clear();
 }
 
-// Uses StackChan's native speech bubble when the live avatar is available.
-// StackChan exposes setSpeech()/clearSpeech() without a speech ownership token,
-// so Agent-Q scopes cleanup to the same avatar object it touched and never
-// attempts to restore unrelated StackChan speech or application state.
-void clear_agent_q_avatar_ui()
+void clear_agent_q_message_if_needed()
 {
-    if (g_ui.speech_avatar == nullptr) {
-        g_ui.speech_mode = AgentQUiMode::none;
+    if (g_ui.message_deadline == 0 || !tick_reached(g_ui.message_deadline)) {
         return;
     }
-    auto* speech_avatar = g_ui.speech_avatar;
-    LvglLockGuard lock;
-    if (GetStackChan().hasAvatar()) {
-        auto& current_avatar = GetStackChan().avatar();
-        if (&current_avatar == speech_avatar) {
-            current_avatar.clearSpeech();
-        } else {
-            ESP_LOGI(kTag, "Agent-Q speech owner changed; dropping stale speech owner");
-        }
-    }
-    g_ui.speech_avatar = nullptr;
-    g_ui.speech_mode = AgentQUiMode::none;
-}
-
-bool show_agent_q_speech(const char* message, AgentQUiMode mode)
-{
-    clear_agent_q_avatar_ui();  // clear-before-show, mirroring the modal path
-    LvglLockGuard lock;
-    if (!GetStackChan().hasAvatar()) {
-        return false;
-    }
-    auto& avatar = GetStackChan().avatar();
-    avatar.setSpeech(message != nullptr && message[0] != '\0' ? message : "USB request");
-    g_ui.speech_avatar = &avatar;
-    g_ui.speech_mode = mode;
-    return true;
-}
-
-bool show_avatar_notification(const char* message)
-{
-    return show_agent_q_speech(message, AgentQUiMode::notification);
+    clear_agent_q_avatar_ui();
 }
 
 bool show_avatar_decision(const char* message)
 {
-    if (!show_agent_q_speech(message, AgentQUiMode::decision)) {
+    if (!show_agent_q_message(message, AgentQMessageKind::approval, AgentQUiMode::decision, 0)) {
         return false;
     }
     show_top_decision_panel();
     return true;
 }
 
-void clear_pending_request()
+void clear_pending_state()
 {
-    clear_agent_q_request_ui();
     g_pending.clear();
     g_identification.clear();
+}
+
+void show_result_and_clear_pending(const char* message, AgentQMessageKind kind)
+{
+    clear_agent_q_panel();
+    show_agent_q_message(message, kind, AgentQUiMode::result, kAgentQResultDisplayMs);
+    clear_pending_state();
 }
 
 void format_connect_message(const char* gateway_name, char* output, size_t output_size)
@@ -876,13 +839,6 @@ void format_connect_message(const char* gateway_name, char* output, size_t outpu
     snprintf(output, output_size, "Connect %s?", gateway_name);
 }
 
-void show_connect_modal_decision(const char* gateway_name)
-{
-    char message[kConnectDisplayMessageSize];
-    format_connect_message(gateway_name, message, sizeof(message));
-    show_modal_decision("Connect Gateway", message, "Allow connection?", lv_color_hex(0xFFB347));
-}
-
 void show_connect_decision(const char* gateway_name)
 {
     char message[kConnectDisplayMessageSize];
@@ -890,7 +846,7 @@ void show_connect_decision(const char* gateway_name)
     if (show_avatar_decision(message)) {
         return;
     }
-    show_connect_modal_decision(gateway_name);
+    ESP_LOGW(kTag, "connect could not show Agent-Q avatar decision UI");
 }
 
 void show_display_signal_decision(const char* message)
@@ -898,15 +854,7 @@ void show_display_signal_decision(const char* message)
     if (show_avatar_decision(message)) {
         return;
     }
-    show_display_signal_modal_decision(message);
-}
-
-[[maybe_unused]] void show_notification_ui(const char* message)
-{
-    if (show_avatar_notification(message)) {
-        return;
-    }
-    show_modal_notification(message);
+    ESP_LOGW(kTag, "display_signal could not show Agent-Q avatar decision UI");
 }
 
 void poll_touch_fallback()
@@ -925,13 +873,11 @@ void poll_touch_fallback()
     }
 
     lv_area_t panel_area;
-    AgentQUiPanelKind panel_kind = AgentQUiPanelKind::none;
     {
         LvglLockGuard lock;
         if (g_ui.panel == nullptr || !is_decision_panel_kind(g_ui.panel_kind)) {
             return;
         }
-        panel_kind = g_ui.panel_kind;
         lv_obj_get_coords(g_ui.panel, &panel_area);
     }
 
@@ -942,12 +888,6 @@ void poll_touch_fallback()
     const bool inside_panel = relative_x >= 0 && relative_y >= 0 &&
                               relative_x < panel_width && relative_y < panel_height;
     if (!inside_panel) {
-        return;
-    }
-
-    // Modal decisions keep buttons in the lower half. The avatar-mode top strip
-    // is all buttons, so any touch inside it is a decision.
-    if (panel_kind == AgentQUiPanelKind::modal_decision && relative_y < panel_height / 2) {
         return;
     }
 
@@ -997,15 +937,17 @@ void send_choice_response_if_needed()
                 case PendingKind::display_signal:
                     write_display_signal_result(g_pending.id, "rejected", "timeout", "Request timed out.");
                     ESP_LOGI(kTag, "display_signal timed out: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Timed out", AgentQMessageKind::timeout);
                     break;
                 case PendingKind::connect:
                     write_connect_rejected_response(g_pending.id, "timeout", "Connection approval timed out.");
                     ESP_LOGI(kTag, "connect timed out: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Connection timed out", AgentQMessageKind::timeout);
                     break;
                 case PendingKind::none:
+                    clear_pending_state();
                     break;
             }
-            clear_pending_request();
         }
         return;
     }
@@ -1016,21 +958,25 @@ void send_choice_response_if_needed()
         case PendingKind::display_signal:
             write_display_signal_result(g_pending.id, approved ? "approved" : "rejected", nullptr, nullptr);
             ESP_LOGI(kTag, "display_signal %s: id=%s", approved ? "approved" : "rejected", g_pending.id);
+            show_result_and_clear_pending(approved ? "Approved" : "Rejected",
+                                          approved ? AgentQMessageKind::success : AgentQMessageKind::rejected);
             break;
         case PendingKind::connect:
             if (approved) {
                 replace_active_session();
                 write_connect_approved_response(g_pending.id);
                 ESP_LOGI(kTag, "connect approved: id=%s", g_pending.id);
+                show_result_and_clear_pending("Connected", AgentQMessageKind::success);
             } else {
                 write_connect_rejected_response(g_pending.id, "rejected", "Connection rejected.");
                 ESP_LOGI(kTag, "connect rejected: id=%s", g_pending.id);
+                show_result_and_clear_pending("Connection rejected", AgentQMessageKind::rejected);
             }
             break;
         case PendingKind::none:
+            clear_pending_state();
             break;
     }
-    clear_pending_request();
 }
 
 void handle_line(const char* line)
@@ -1109,8 +1055,8 @@ void handle_line(const char* line)
     }
 
     if (strcmp(type, "disconnect") == 0) {
-        // disconnect is session-changing; reject it while an approval modal is
-        // open so it cannot mutate session state mid-approval.
+        // disconnect is session-changing; reject it while an approval UI is
+        // active so it cannot mutate session state mid-approval.
         if (g_pending.active) {
             write_error_response(id, "busy", "Device is awaiting physical input.");
             return;
@@ -1187,6 +1133,7 @@ void usb_request_task(void*)
     // in-flight approval response has been written in the same loop pass.
     while (true) {
         clear_identification_if_needed();
+        clear_agent_q_message_if_needed();
         expire_session_if_needed();
         send_choice_response_if_needed();
         ensure_pending_request_ui();

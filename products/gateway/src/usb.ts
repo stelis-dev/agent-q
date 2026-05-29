@@ -1,4 +1,5 @@
 import { SerialPort } from "serialport";
+import { existsSync } from "node:fs";
 import { GatewayError } from "./errors.js";
 import {
   assertConnectResponse,
@@ -91,7 +92,10 @@ export interface UsbSerialDriver {
 
 export class SerialPortUsbDriver implements UsbSerialDriver {
   async listPorts(): Promise<PortInfo[]> {
-    return SerialPort.list();
+    return (await SerialPort.list()).map((port) => ({
+      ...port,
+      path: resolveUsbCalloutPath(port.path),
+    }));
   }
 
   async requestStatus(portPath: string, timeoutMs: number): Promise<StatusResponse> {
@@ -123,6 +127,18 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
   ): Promise<DisconnectResponse> {
     return disconnectDeviceOverSerial(portPath, sessionId, timeoutMs);
   }
+}
+
+export function resolveUsbCalloutPath(
+  path: string,
+  platform = process.platform,
+  pathExists: (path: string) => boolean = existsSync,
+): string {
+  if (platform !== "darwin" || !path.startsWith("/dev/tty.")) {
+    return path;
+  }
+  const calloutPath = `/dev/cu.${path.slice("/dev/tty.".length)}`;
+  return pathExists(calloutPath) ? calloutPath : path;
 }
 
 export function validateTimeoutMs(value: unknown): number {

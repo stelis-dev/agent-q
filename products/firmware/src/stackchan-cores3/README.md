@@ -18,13 +18,22 @@ The current implementation includes:
   physical approval UI.
 - a USB JSONL `identify_device` request that shows a short temporary code over
   the current screen and then returns to the previous device state.
-- a USB JSONL `connect` request that shows a physical approval modal labeled
-  with the Gateway display name and, on YES, returns a Firmware-generated
-  session id with a Firmware-owned TTL. NO or timeout returns `rejected`. The
-  modal replaces any previously active Firmware session only after physical
-  YES.
+- a USB JSONL `connect` request that shows a physical approval prompt with the
+  Gateway display name and, on YES, returns a Firmware-generated session id with
+  a Firmware-owned TTL. NO or timeout returns `rejected`. The request replaces
+  any previously active Firmware session only after physical YES.
 - a USB JSONL `disconnect` request that clears the active Firmware session when
   the supplied session id matches.
+- a locked-down Agent-Q firmware profile that keeps only the local launcher,
+  local default avatar idle surface, and USB Agent-Q request server. It does not
+  start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP
+  tools, does not initialize the camera, does not start the setup/login worker,
+  ignores Xiaozhi vision capabilities, and disables the remote WebSocket avatar
+  service.
+- an Agent-Q-only avatar UI layer. The StackChan default avatar face stays
+  visible, the upstream default speech bubble is hidden by default, and Agent-Q
+  requests use an Agent-Q-owned speech-bubble decorator with state-specific
+  colors plus a small confirmation strip when physical input is required.
 
 Sessions live in RAM. Firmware reboot clears the active session. Session ids
 are derived from device RNG and are not derived from MAC address, USB serial
@@ -35,6 +44,13 @@ This is not the signing product yet. It does not persist keys, store policies,
 parse signable transactions, expose MCP directly, or apply signing policy. The
 only persisted value in this target implementation is the protocol `deviceId`
 used by Gateway for reconnect hints.
+
+Agent-Q firmware is intentionally not a general StackChan AI firmware. It does
+not include StackChan World login, Xiaozhi cloud sessions, camera upload, screen
+snapshot upload, remote video, app center, setup, EzData, or other non-Agent-Q
+remote surfaces. Developers who need those upstream StackChan features should
+flash the upstream firmware separately and must not treat that firmware as an
+Agent-Q signing device.
 
 ## Source And Build
 
@@ -56,6 +72,11 @@ checkouts into `.firmware-cache/` when needed, copies this overlay into the
 firmware checkout, and builds. It does not require `.WORK/`. A developer may
 still use `.WORK/` as a local investigation cache, but that cache is not source
 of truth and is not used by CI.
+
+During preparation, the tracked build tools also patch the pinned upstream host
+tree so the Agent-Q build does not start the StackChan/Xiaozhi remote AI
+runtime, does not register Xiaozhi remote MCP tools, does not initialize the
+camera, and does not start remote avatar WebSocket service.
 
 ## Current Integration Points
 
