@@ -4,7 +4,6 @@ import {
   assertConnectResponse,
   assertDisconnectResponse,
   assertProvisioningResponse,
-  assertProvisioningSetupCheckResponse,
   assertRecoveryPhraseResponse,
   assertStatusResponse,
   createRequestId,
@@ -16,10 +15,8 @@ import {
   makeCancelProvisioningRequest,
   makeConfirmRecoveryPhraseBackupRequest,
   makeDisconnectRequest,
-  makeGenerateRecoveryPhraseRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
-  makeProvisioningSetupCheckRequest,
   makeStartProvisioningRequest,
   MAX_SESSION_TTL_MS,
   parseProtocolResponse,
@@ -169,7 +166,7 @@ test("parses busy status while setup material is displayed", () => {
           firmwareVersion: "0.0.0",
         },
         provisioning: {
-          state: "provisioning",
+          state: "unprovisioned",
         },
       }),
       "req_busy",
@@ -177,7 +174,7 @@ test("parses busy status while setup material is displayed", () => {
   );
 
   assert.equal(response.device.state, "busy");
-  assert.equal(response.provisioning.state, "provisioning");
+  assert.equal(response.provisioning.state, "unprovisioned");
 });
 
 test("status response requires provisioning and rejects invalid provisioning state", () => {
@@ -260,26 +257,6 @@ test("creates provisioning requests without secret fields", () => {
     },
   });
 
-  const setupCheck = makeProvisioningSetupCheckRequest(30000, "req_setup_check");
-  assert.deepEqual(setupCheck, {
-    id: "req_setup_check",
-    version: 1,
-    type: "provisioning_setup_check",
-    params: {
-      approvalTimeoutMs: 30000,
-    },
-  });
-
-  const generateRecoveryPhrase = makeGenerateRecoveryPhraseRequest(30000, "req_generate_phrase");
-  assert.deepEqual(generateRecoveryPhrase, {
-    id: "req_generate_phrase",
-    version: 1,
-    type: "generate_recovery_phrase",
-    params: {
-      approvalTimeoutMs: 30000,
-    },
-  });
-
   const confirmRecoveryPhraseBackup = makeConfirmRecoveryPhraseBackupRequest(30000, "req_confirm_phrase");
   assert.deepEqual(confirmRecoveryPhraseBackup, {
     id: "req_confirm_phrase",
@@ -293,37 +270,16 @@ test("creates provisioning requests without secret fields", () => {
   const serialized =
     serializeRequest(start) +
     serializeRequest(cancel) +
-    serializeRequest(setupCheck) +
-    serializeRequest(generateRecoveryPhrase) +
     serializeRequest(confirmRecoveryPhraseBackup);
   assert.doesNotMatch(serialized, /mnemonic|seed|private|secret|import/i);
 
   assert.throws(() => makeStartProvisioningRequest(0), /approvalTimeoutMs/);
   assert.throws(() => makeCancelProvisioningRequest(60001), /approvalTimeoutMs/);
-  assert.throws(() => makeProvisioningSetupCheckRequest(0), /approvalTimeoutMs/);
-  assert.throws(() => makeGenerateRecoveryPhraseRequest(0), /approvalTimeoutMs/);
   assert.throws(() => makeConfirmRecoveryPhraseBackupRequest(60001), /approvalTimeoutMs/);
   assert.throws(() => makeStartProvisioningRequest(30000, "req/unsafe"), /Invalid request id/);
 });
 
 test("parses provisioning transition responses and rejects malformed state", () => {
-  const started = assertProvisioningResponse(
-    parseProtocolResponse(
-      JSON.stringify({
-        id: "req_start_setup",
-        version: 1,
-        type: "provisioning_result",
-        status: "started",
-        provisioning: {
-          state: "provisioning",
-        },
-      }),
-      "req_start_setup",
-    ),
-  );
-  assert.equal(started.status, "started");
-  assert.equal(started.provisioning.state, "provisioning");
-
   const canceled = assertProvisioningResponse(
     parseProtocolResponse(
       JSON.stringify({
@@ -365,9 +321,9 @@ test("parses provisioning transition responses and rejects malformed state", () 
           id: "req_start_setup",
           version: 1,
           type: "provisioning_result",
-          status: "started",
+          status: "canceled",
           provisioning: {
-            state: "unprovisioned",
+            state: "provisioning",
           },
         }),
         "req_start_setup",
@@ -390,56 +346,6 @@ test("parses provisioning transition responses and rejects malformed state", () 
   assert.throws(() => assertProvisioningResponse(rejected), { code: "rejected" });
 });
 
-test("parses provisioning setup check responses and rejects wrong state", () => {
-  const checked = assertProvisioningSetupCheckResponse(
-    parseProtocolResponse(
-      JSON.stringify({
-        id: "req_setup_check",
-        version: 1,
-        type: "provisioning_setup_check_result",
-        status: "checked",
-        provisioning: {
-          state: "provisioning",
-        },
-      }),
-      "req_setup_check",
-    ),
-  );
-  assert.equal(checked.status, "checked");
-  assert.equal(checked.provisioning.state, "provisioning");
-
-  assert.throws(
-    () =>
-      parseProtocolResponse(
-        JSON.stringify({
-          id: "req_setup_check",
-          version: 1,
-          type: "provisioning_setup_check_result",
-          status: "checked",
-          provisioning: {
-            state: "unprovisioned",
-          },
-        }),
-        "req_setup_check",
-      ),
-    { code: "protocol_error" },
-  );
-
-  const invalidState = parseProtocolResponse(
-    JSON.stringify({
-      id: "req_setup_check",
-      version: 1,
-      type: "error",
-      error: {
-        code: "invalid_state",
-        message: "Provisioning setup check is valid only while provisioning.",
-      },
-    }),
-    "req_setup_check",
-  );
-  assert.throws(() => assertProvisioningSetupCheckResponse(invalidState), { code: "invalid_state" });
-});
-
 test("parses recovery phrase responses and rejects host-carried secrets", () => {
   for (const status of ["displayed", "confirmed"]) {
     const response = assertRecoveryPhraseResponse(
@@ -450,7 +356,7 @@ test("parses recovery phrase responses and rejects host-carried secrets", () => 
           type: "recovery_phrase_result",
           status,
           provisioning: {
-            state: "provisioning",
+            state: "unprovisioned",
           },
         }),
         `req_phrase_${status}`,
@@ -458,7 +364,7 @@ test("parses recovery phrase responses and rejects host-carried secrets", () => 
     );
 
     assert.equal(response.status, status);
-    assert.equal(response.provisioning.state, "provisioning");
+    assert.equal(response.provisioning.state, "unprovisioned");
   }
 
   assert.throws(
@@ -470,7 +376,7 @@ test("parses recovery phrase responses and rejects host-carried secrets", () => 
           type: "recovery_phrase_result",
           status: "displayed",
           provisioning: {
-            state: "unprovisioned",
+            state: "provisioning",
           },
         }),
         "req_phrase",
@@ -485,7 +391,7 @@ test("parses recovery phrase responses and rejects host-carried secrets", () => 
     { payload: { seed: "never accept this" } },
     {
       provisioning: {
-        state: "provisioning",
+        state: "unprovisioned",
         words: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
       },
     },
@@ -499,7 +405,7 @@ test("parses recovery phrase responses and rejects host-carried secrets", () => 
             type: "recovery_phrase_result",
             status: "displayed",
             provisioning: {
-              state: "provisioning",
+              state: "unprovisioned",
             },
             ...extra,
           }),
@@ -516,7 +422,7 @@ test("parses recovery phrase responses and rejects host-carried secrets", () => 
       type: "error",
       error: {
         code: "invalid_state",
-        message: "Recovery phrase setup is valid only while provisioning.",
+        message: "Recovery phrase backup confirmation is valid only during mnemonic setup.",
       },
     }),
     "req_phrase",

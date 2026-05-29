@@ -32,10 +32,24 @@ int map_width_to_offset(int width)
     return kBubbleMinOffsetX + ((width - kBubbleMinWidth) * to_span / from_span);
 }
 
+void make_clickable(lv_obj_t* object, lv_event_cb_t callback)
+{
+    if (object == nullptr || callback == nullptr) {
+        return;
+    }
+
+    lv_obj_add_flag(object, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(object, callback, LV_EVENT_CLICKED, nullptr);
+}
+
 }  // namespace
 
 AgentQSpeechBubbleDecorator::AgentQSpeechBubbleDecorator(
-    lv_obj_t* parent, const char* text, lv_color_t background, lv_color_t foreground)
+    lv_obj_t* parent,
+    const char* text,
+    lv_color_t background,
+    lv_color_t foreground,
+    lv_event_cb_t click_callback)
 {
     const char* display_text = text != nullptr && text[0] != '\0' ? text : "Agent-Q";
 
@@ -53,12 +67,14 @@ AgentQSpeechBubbleDecorator::AgentQSpeechBubbleDecorator(
     lv_obj_set_style_border_width(container_, 0, 0);
     lv_obj_set_style_bg_opa(container_, LV_OPA_TRANSP, 0);
     lv_obj_set_style_pad_all(container_, 0, 0);
+    make_clickable(container_, click_callback);
 
     arrow_ = lv_image_create(container_);
     lv_image_set_src(arrow_, &default_bubble_arrow);
     lv_obj_align(arrow_, LV_ALIGN_CENTER, kArrowX, kArrowY);
     lv_obj_set_style_image_recolor_opa(arrow_, LV_OPA_COVER, 0);
     lv_obj_set_style_image_recolor(arrow_, background, 0);
+    make_clickable(arrow_, click_callback);
 
     bubble_ = lv_obj_create(container_);
     lv_obj_set_size(bubble_, kBubbleMaxWidth, kBubbleHeight);
@@ -69,6 +85,7 @@ AgentQSpeechBubbleDecorator::AgentQSpeechBubbleDecorator(
     lv_obj_set_style_border_width(bubble_, 0, 0);
     lv_obj_set_style_bg_color(bubble_, background, 0);
     lv_obj_set_style_bg_opa(bubble_, LV_OPA_COVER, 0);
+    make_clickable(bubble_, click_callback);
 
     label_ = lv_label_create(bubble_);
     lv_label_set_text(label_, display_text);
@@ -78,6 +95,7 @@ AgentQSpeechBubbleDecorator::AgentQSpeechBubbleDecorator(
     lv_obj_set_style_text_font(label_, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(label_, foreground, 0);
     lv_obj_align(label_, LV_ALIGN_CENTER, 0, 0);
+    make_clickable(label_, click_callback);
 
     lv_point_t text_size;
     lv_text_get_size(&text_size,

@@ -7,7 +7,12 @@ namespace agent_q {
 
 class AgentQSpeechBubbleDecorator : public stackchan::avatar::Decorator {
 public:
-    AgentQSpeechBubbleDecorator(lv_obj_t* parent, const char* text, lv_color_t background, lv_color_t foreground);
+    AgentQSpeechBubbleDecorator(
+        lv_obj_t* parent,
+        const char* text,
+        lv_color_t background,
+        lv_color_t foreground,
+        lv_event_cb_t click_callback = nullptr);
     ~AgentQSpeechBubbleDecorator() override;
 
 private:

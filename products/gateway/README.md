@@ -31,7 +31,10 @@ as the active device for a named routing purpose.
 assignments, and any in-memory connection session. `set_device_metadata`
 updates a device's human-readable label. `connect_device` opens a
 communication session by sending a Firmware connect request that requires
-physical approval. `disconnect_device` ends the runtime session.
+physical approval when the target supports sessions. The current StackChan
+CoreS3 mnemonic UI slice returns `invalid_state` for `connect` until persistent
+root material and `provisioned` exist. `disconnect_device` ends the runtime
+session when one exists.
 
 ## Boundaries
 

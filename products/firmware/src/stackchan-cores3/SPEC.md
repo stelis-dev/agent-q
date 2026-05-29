@@ -37,15 +37,12 @@ Legend:
 | USB JSONL transport | O | Uses ESP32-S3 USB Serial/JTAG. |
 | Persistent protocol `deviceId` | O | Stored in NVS namespace `agent_q`, key `device_id`. |
 | `get_status` | O | Returns device id, current state, and provisioning status without approval UI. |
-| Provisioning status reporting | △ | Reports NVS-backed `unprovisioned` or `provisioning`; hardware smoke of the NVS-backed path is still required. This is not signing readiness. |
-| `start_provisioning` / `cancel_provisioning` | △ | Requires touch approval and stores only the provisioning state flag. Hardware smoke is still required. |
-| `provisioning_setup_check` | △ | Source adds a handler valid only while `provisioning`; it requires touch approval and stores no signing material. Firmware build passes; hardware smoke is still required. |
-| Recovery phrase setup v0 | △ | Source adds `generate_recovery_phrase` and `confirm_recovery_phrase_backup` only while `provisioning`; it generates a DEV_PROFILE BIP-39 phrase into RAM from an early-boot-seeded Agent-Q CSPRNG, displays it only on device, and wipes it on cancel/confirm/reject/display expiry/timeout. Firmware build passes; hardware smoke is still required. |
+| Provisioning status reporting | △ | Reports `unprovisioned` for the current mnemonic UI slice; hardware smoke is still required. This is not signing readiness. |
+| Mnemonic UI flow v0 | △ | Approved `start_provisioning` or the local setup speech bubble generates a DEV_PROFILE BIP-39 phrase into RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and keeps persistent state `unprovisioned`. Three-letter BIP-39 words are displayed as the full word. `confirm_recovery_phrase_backup` and `cancel_provisioning` wipe scratch. Hardware smoke is still required. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `display_signal` diagnostic | O | Shows a decision UI and returns after touch approval, rejection, or timeout. |
-| `connect` | O | Requires touch approval and returns a Firmware-generated runtime session id. |
-| `disconnect` | O | Clears the active session when the supplied session id matches. |
-| Runtime session storage | O | RAM only; reboot clears the session. |
+| `connect` | △ | Protocol support exists, but this target returns `invalid_state` before `provisioned` exists. |
+| `disconnect` | △ | Protocol support exists, but this target has no active Firmware session path before `provisioned`; matching-session disconnect is future work. |
 | Agent-Q avatar UI | O | Uses an Agent-Q-owned speech-bubble decorator and top decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
@@ -55,7 +52,7 @@ Legend:
 | `call_method` | X | Not implemented. |
 | Persistent signing material | X | Not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display source exists. Mnemonic import and USER_PROFILE persistent root storage are not implemented. |
-| Provisioning flow | △ | Runtime state start/cancel and DEV_PROFILE recovery phrase display source exist. Signing material storage is not implemented. |
+| Provisioning flow | △ | DEV_PROFILE mnemonic UI source exists and deliberately keeps persistent state `unprovisioned`. Signing material storage is not implemented. |
 | Policy storage/evaluation | X | Not implemented. |
 | Secure user profile | X | Not implemented. |
 
@@ -124,15 +121,13 @@ Current UI behavior:
 
 | Request or state | UI behavior | Firmware state |
 |---|---|---|
+| `unprovisioned` idle | Touchable setup speech bubble | `idle` |
 | `get_status` | No UI | `idle` unless approval UI is active |
 | `identify_device` | Temporary speech bubble with short code | `idle` |
 | `display_signal` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
-| `connect` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
 | `start_provisioning` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
 | `cancel_provisioning` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
-| `provisioning_setup_check` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
-| `generate_recovery_phrase` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
-| Recovery phrase displayed | Temporary setup panel with device-only phrase text | `busy` |
+| Recovery phrase displayed | Temporary setup panel with 12 numbered up-to-4-letter prefixes in 3 columns by 4 rows | `busy` |
 | `confirm_recovery_phrase_backup` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
 | Approved result | Temporary success speech and emotion | `idle` |
 | Rejected result | Temporary rejected speech and emotion | `idle` |
@@ -148,9 +143,10 @@ bubble decorator so request UI ownership is explicit.
 
 ## Session Model
 
-`connect` creates one active Firmware runtime session after physical approval.
-The session id is generated by Firmware and held in RAM. A new approved
-`connect` replaces the previous Firmware session.
+`connect` is defined by the shared protocol, but this target currently returns
+`invalid_state` before `provisioned` exists. The future session id will be
+generated by Firmware and held in RAM. A new approved `connect` will replace
+the previous Firmware session.
 
 `disconnect` clears the session only when the supplied session id matches the
 active Firmware session.
@@ -162,14 +158,14 @@ for future session-scoped protocol requests.
 
 This target persists the protocol `deviceId` and the provisioning state flag.
 The provisioning state flag is not signing material and does not make the
-device ready to sign. Recovery phrase setup v0 stores generated phrase text only
-in RAM while `provisioning`; it does not write root material, seed, account, or
-policy data to NVS.
+device ready to sign. The current mnemonic UI flow keeps the persistent state
+`unprovisioned` and stores generated phrase text only in RAM; it does not write
+root material, seed, account, or policy data to NVS.
 
 | Namespace | Key | Purpose |
 |---|---|---|
 | `agent_q` | `device_id` | Gateway reconnect and device-selection identity |
-| `agent_q` | `prov_state` | Current provisioning state: `unprovisioned` or `provisioning` |
+| `agent_q` | `prov_state` | Provisioning state flag; current mnemonic UI flow keeps it `unprovisioned` |
 
 Agent-Q-owned modules are sources under `agent_q/` in this target tree. These
 modules may share the `agent_q` namespace. New keys should be named by feature,
@@ -179,34 +175,29 @@ longer protocol field name `provisioning.state`.
 
 ## Provisioning Capability
 
-Provisioning status reporting and runtime state start/cancel are implemented in
-the target firmware code and build successfully. Hardware smoke is still
-required. `get_status` returns the NVS-backed `provisioning.state`, and the USB
-protocol requests `start_provisioning` and `cancel_provisioning` change that
-state only after touch approval on the device.
+Provisioning status reporting and the mnemonic UI flow are implemented in the
+target firmware source. Hardware smoke is still required. `get_status` returns
+`provisioning.state`, and the current `start_provisioning` path keeps that
+persistent state `unprovisioned` while it generates and displays volatile setup
+material.
 
-The implemented runtime states are `unprovisioned` and `provisioning`.
-`start_provisioning` is accepted only from `unprovisioned`, and
-`cancel_provisioning` is accepted only from `provisioning`; other state
-combinations return `invalid_state` without opening approval UI. `provisioned`
-is not set because no root signing material exists. `locked` is not used
-because no unlock model exists.
+`start_provisioning` is accepted only while persistent state is
+`unprovisioned` and no mnemonic setup scratch is active. `cancel_provisioning`
+is accepted only while mnemonic setup scratch or its confirmation prompt is
+active; other state combinations return `invalid_state` without opening
+approval UI. `provisioned` is not set because no root signing material exists.
+`locked` is not used because no unlock model exists.
 
-The setup-step v0 source path is `provisioning_setup_check`. It is accepted only
-from `provisioning`, requires touch approval, returns
-`provisioning_setup_check_result`, and leaves the provisioning state unchanged.
-Firmware build passes for this path, and hardware smoke is still required. It is
-not backup confirmation and does not generate, import, derive, store, or return
-mnemonics, seeds, private keys, accounts, policies, or signing material.
-
-Recovery phrase setup v0 source paths are `generate_recovery_phrase` and
-`confirm_recovery_phrase_backup`. They are accepted only from `provisioning` and
-require touch approval. `generate_recovery_phrase` uses an Agent-Q CSPRNG seeded
-from early boot entropy before HAL initialization plus BIP-39 checksum logic to
-create a 12-word DEV_PROFILE recovery phrase in RAM, then displays it on the
-device only. The response contains only
-`recovery_phrase_result`, status metadata, and `provisioning.state`. It never
-contains the phrase, entropy, seed, private key, account data, or policy data.
+Recovery phrase setup v0 source paths are approved `start_provisioning`,
+`confirm_recovery_phrase_backup`, and `cancel_provisioning`. `start_provisioning`
+uses an Agent-Q CSPRNG seeded from early boot entropy before HAL initialization
+plus BIP-39 checksum logic to create a 12-word DEV_PROFILE recovery phrase in
+RAM, then displays only the up-to-4-letter word prefixes on the device in a
+3-column by 4-row grid. Three-letter BIP-39 words are displayed as the full
+word. BIP-39 English prefixes identify the words and are secret material. The
+response contains only `recovery_phrase_result`, status
+metadata, and `provisioning.state = unprovisioned`. It never contains the
+phrase, prefixes, entropy, seed, private key, account data, or policy data.
 The target tracks the volatile phrase with a RAM-only scratch substate:
 `none`, `displayed`, or `backup_confirmation_pending`. This substate is
 separate from persistent `provisioning.state`, pending approval, and the LVGL
@@ -215,9 +206,9 @@ panel pointer.
 `confirm_recovery_phrase_backup` is accepted only after the scratch substate is
 `displayed`. Accepting the request moves it to `backup_confirmation_pending`;
 approval, rejection, or timeout wipes the volatile phrase and returns the
-scratch substate to `none`. In this v0 slice it leaves the device in
-`provisioning` rather than storing root material or moving to `provisioned`.
-Firmware build passes for this path, and hardware smoke is still required.
+scratch substate to `none`. In this v0 slice it leaves the device
+`unprovisioned` rather than storing root material or moving to `provisioned`.
+Hardware smoke is still required.
 
 The LVGL panel is not the source of truth for recovery phrase validity. If the
 recovery phrase display panel is removed or replaced while the scratch substate
@@ -234,10 +225,8 @@ that phrase.
 
 `cancel_provisioning` wipes volatile setup scratch once its approval UI has
 interrupted a recovery phrase display. If cancellation is rejected or times out,
-the persistent state remains `provisioning`, but the displayed phrase is gone and
-must be generated again. If scratch wipe succeeds but storing `unprovisioned`
-fails after approval, the target reports `storage_error`, keeps the previous
-persistent state, and does not restore the wiped phrase.
+the persistent state remains `unprovisioned`, but the displayed phrase is gone
+and must be generated again.
 
 Mnemonic import, persistent signing material, account derivation, and signing
 APIs are not implemented on this target.
@@ -283,23 +272,19 @@ Current verification expectations for this target:
 - smoke-test `get_status`;
 - smoke-test `identify_device`;
 - smoke-test `display_signal` approval, rejection, and timeout behavior;
-- smoke-test `connect` approval, rejection, timeout, and `disconnect`;
-- smoke-test `start_provisioning` approval, rejection, timeout, persistence
-  across reboot, and `invalid_state` from the wrong state;
-- smoke-test `cancel_provisioning` approval, rejection, timeout, persistence
-  across reboot, and `invalid_state` from the wrong state;
-- smoke-test `provisioning_setup_check` approval, rejection, timeout,
-  `invalid_state` from `unprovisioned`, and unchanged `provisioning` state after
-  approval;
-- smoke-test `generate_recovery_phrase` approval, rejection, timeout,
-  `invalid_state` from `unprovisioned`, no phrase in the host response, and
-  device-only phrase display while state remains `provisioning`;
+- smoke-test `connect` returns `invalid_state` before `provisioned`;
+- smoke-test `start_provisioning` approval, rejection, timeout, displayed
+  3-column by 4-row prefix UI, unchanged `unprovisioned` state, and `busy`
+  while setup scratch is active;
+- smoke-test `cancel_provisioning` approval, rejection, timeout,
+  `invalid_state` when no setup flow is active, unchanged `unprovisioned`
+  state, and scratch wipe;
 - smoke-test `get_status` reports `device.state = busy` while a recovery phrase
   is displayed;
 - smoke-test recovery phrase display expiry clears the setup panel, wipes
   scratch, and makes backup confirmation return `invalid_setup_step`;
 - smoke-test `confirm_recovery_phrase_backup` approval, rejection, timeout,
-  `invalid_setup_step` before phrase display, unchanged `provisioning` state
+  `invalid_setup_step` before phrase display, unchanged `unprovisioned` state
   after approval, and scratch wipe;
 - smoke-test `cancel_provisioning` wipes any displayed recovery phrase scratch;
 - visually verify that Agent-Q temporary UI does not leave the avatar in an

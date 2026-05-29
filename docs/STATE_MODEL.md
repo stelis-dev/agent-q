@@ -33,26 +33,33 @@ are not authority.
 ```mermaid
 stateDiagram-v2
     [*] --> Unprovisioned: boot, no root signing material
-    Unprovisioned --> Provisioning: start_provisioning + physical approval
+    Unprovisioned --> Unprovisioned: start_provisioning + phrase display
+    Unprovisioned --> Unprovisioned: confirm/cancel/timeout + scratch wipe
+    Unprovisioned --> Provisioning: future persistent setup step
     Provisioning --> Unprovisioned: cancel_provisioning + physical approval
     Provisioning --> Provisioned: future setup complete, root material stored
     Provisioned --> Locked: future local lock condition
     Locked --> Provisioned: future local unlock
     Provisioned --> Unprovisioned: future factory reset or reprovisioning
 
-    Unprovisioned: get_status, identify_device, connect, disconnect
+    Unprovisioned: get_status, identify_device
     Unprovisioned: start_provisioning
+    Unprovisioned: cancel_provisioning and confirm_recovery_phrase_backup while mnemonic UI scratch is active
     Provisioning: get_status, connect, disconnect
-    Provisioning: provisioning_setup_check, cancel_provisioning
-    Provisioning: generate_recovery_phrase, confirm_recovery_phrase_backup
+    Provisioning: cancel_provisioning
     Provisioned: get_status, identify_device, connect, disconnect
     Provisioned: get_capabilities, get_accounts, call_method
     Locked: get_status, identify_device, unlock flow
 ```
 
-Current implementation only persists and transitions between `unprovisioned`
-and `provisioning`. The `provisioned` and `locked` states are design targets and
-must not be reported until their required storage and unlock models exist.
+Current StackChan CoreS3 mnemonic UI flow keeps the persistent state
+`unprovisioned`. It generates recovery phrase scratch in RAM, displays only
+up-to-4-letter BIP-39 word prefixes on the device in a 3-column by 4-row grid,
+and wipes scratch on confirmation, cancellation, timeout, failure, or display
+expiry. Three-letter BIP-39 words are displayed as the full word. The
+`provisioning`, `provisioned`, and `locked` states remain design
+targets for later persistent setup and must not be reported until their required
+storage and unlock models exist.
 
 ## Product States
 
@@ -64,12 +71,16 @@ Allowed:
 
 - `get_status`
 - `identify_device`
-- `connect`
-- `disconnect`
 - `start_provisioning`
+- `cancel_provisioning` only while volatile mnemonic setup scratch or its
+  confirmation prompt is active
+- `confirm_recovery_phrase_backup` only while volatile mnemonic setup scratch is
+  displayed
 
 Rejected:
 
+- `connect` until persistent root material exists and the device is
+  `provisioned`
 - `get_capabilities`
 - `get_accounts`
 - `call_method`
@@ -77,8 +88,9 @@ Rejected:
 - signing
 - external evidence or price fetch
 
-`connect` may establish a communication session, but it is not signing
-permission.
+Current mnemonic UI setup is a volatile substate under `unprovisioned`, not a
+claim that provisioning is complete. The host never receives the phrase or its
+up-to-4-letter prefixes.
 
 ### `provisioning`
 
@@ -90,9 +102,6 @@ Allowed:
 - `identify_device` only when it does not disrupt setup UI
 - `connect`
 - `disconnect`
-- `provisioning_setup_check` setup-step message
-- `generate_recovery_phrase` setup-step message
-- `confirm_recovery_phrase_backup` setup-step message
 - `cancel_provisioning`
 
 Rejected:
@@ -111,7 +120,9 @@ and tracks it with a volatile substate: `none`, `displayed`, or
 `backup_confirmation_pending`. That scratch substate is separate from the
 persistent `provisioning.state`, pending approval state, and UI panel state.
 The source keeps `provisioning.state` at `provisioning`; it does not store root
-material or report `provisioned`.
+material or report `provisioned`. This is reserved for later persistent setup;
+the current StackChan CoreS3 mnemonic UI slice resets stale `provisioning`
+state to `unprovisioned` and does not enter this state.
 
 ### `provisioned`
 
@@ -156,22 +167,20 @@ This state is reserved until an unlock model is implemented.
 |---|---:|---:|---:|---:|---|
 | `get_status` | O | O | O | O | Firmware |
 | `identify_device` | O | O* | O | O | Firmware |
-| `connect` | O | O | O | TBD | Firmware |
-| `disconnect` | O | O | O | O | Firmware |
+| `connect` | X | O | O | TBD | Firmware |
+| `disconnect` | X | O | O | O | Firmware |
 | `start_provisioning` | O | X | X | X | Firmware |
-| `cancel_provisioning` | X | O | X | X | Firmware |
-| `provisioning_setup_check` | X | O | X | X | Firmware |
-| `generate_recovery_phrase` | X | O | X | X | Firmware |
-| `confirm_recovery_phrase_backup` | X | O | X | X | Firmware |
+| `cancel_provisioning` | O* | O | X | X | Firmware |
+| `confirm_recovery_phrase_backup` | O* | X | X | X | Firmware |
 | `get_capabilities` | X | X | O | X | Firmware |
 | `get_accounts` | X | X | O | X | Firmware |
 | `call_method` | X | X | O | X | Firmware |
 | policy read | X | X | O | X | Firmware |
 | policy update | X | X | O, with authorization | X | Firmware |
 
-`O*`: allowed only when it does not disrupt setup UI. Other `O` operations may
-still return `busy` while a physical approval prompt or device-only setup
-material display is active.
+`O*`: allowed only while volatile mnemonic setup scratch or its confirmation
+prompt is active. Other `O` operations may still return `busy` while a physical
+approval prompt or device-only setup material display is active.
 
 Gateway may hide unavailable operations, but Firmware must still reject them.
 
@@ -184,12 +193,14 @@ Boot
 -> load provisioning state
 -> no root signing material
 -> unprovisioned
--> welcome
--> start setup
--> provisioning
+-> welcome with touchable setup speech bubble
+-> setup speech bubble touch or start_provisioning request
 -> generate mnemonic on device
--> show mnemonic once
--> user confirms backup
+-> show up-to-4-letter prefixes once on device
+-> user confirms backup or cancels
+-> wipe volatile scratch
+-> still unprovisioned
+-> future persistent root material storage step
 -> store root material
 -> provisioned
 -> ready

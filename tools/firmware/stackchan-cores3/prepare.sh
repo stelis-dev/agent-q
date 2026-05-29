@@ -140,19 +140,32 @@ cmake = insert_after_once(
 # Agent-Q firmware is a local USB signing-device build, not a general
 # StackChan/Xiaozhi AI firmware. Remove upstream app/cloud/camera sources from
 # the hardware-specific StackChan source glob so those surfaces are not linked
-# into this build.
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*/apps/app_ai_agent/.*")
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*/apps/app_avatar/.*")
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*/apps/app_ezdata/.*")
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*/apps/app_setup/.*")
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*/apps/app_app_center/.*")
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*/apps/app_espnow_ctrl/.*")
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*/apps/app_dance/.*")
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*/hal/hal_account\\.cpp$")
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*/hal/hal_ezdata\\.cpp$")
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*/hal/hal_mcp\\.cpp$")
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*/hal/hal_ws_avatar\\.cpp$")
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*/hal/board/stackchan_camera\\.cc$")
+# into this build. The glob may contain relative or absolute paths depending on
+# CMake configuration, so each pattern must match either form.
+set(AGENT_Q_FORBIDDEN_STACKCHAN_SOURCE_PATTERNS
+    "(^|.*/)apps/app_ai_agent/.*"
+    "(^|.*/)apps/app_avatar/.*"
+    "(^|.*/)apps/app_ezdata/.*"
+    "(^|.*/)apps/app_setup/.*"
+    "(^|.*/)apps/app_app_center/.*"
+    "(^|.*/)apps/app_espnow_ctrl/.*"
+    "(^|.*/)apps/app_dance/.*"
+    "(^|.*/)hal/hal_account\\.cpp$"
+    "(^|.*/)hal/hal_ezdata\\.cpp$"
+    "(^|.*/)hal/hal_mcp\\.cpp$"
+    "(^|.*/)hal/hal_ws_avatar\\.cpp$"
+    "(^|.*/)hal/board/stackchan_camera\\.cc$"
+)
+foreach(AGENT_Q_FORBIDDEN_PATTERN IN LISTS AGENT_Q_FORBIDDEN_STACKCHAN_SOURCE_PATTERNS)
+    list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "${AGENT_Q_FORBIDDEN_PATTERN}")
+endforeach()
+foreach(AGENT_Q_SOURCE_FILE IN LISTS STACK_CHAN_SOURCES)
+    foreach(AGENT_Q_FORBIDDEN_PATTERN IN LISTS AGENT_Q_FORBIDDEN_STACKCHAN_SOURCE_PATTERNS)
+        if(AGENT_Q_SOURCE_FILE MATCHES "${AGENT_Q_FORBIDDEN_PATTERN}")
+            message(FATAL_ERROR "Agent-Q forbidden StackChan source still included: ${AGENT_Q_SOURCE_FILE}")
+        endif()
+    endforeach()
+endforeach()
 ''',
     "main/CMakeLists.txt Agent-Q source filters",
 )
@@ -299,6 +312,12 @@ assert_not_contains(launcher_header, "apps/app_setup/workers/workers.h", "app_la
 launcher_header_path.write_text(launcher_header)
 
 launcher = launcher_path.read_text()
+launcher = insert_after_once(
+    launcher,
+    "#include <stackchan/stackchan.h>\n",
+    "#include <agent_q/agent_q_usb_request_server.h>\n",
+    "app_launcher.cpp Agent-Q provisioning UI include",
+)
 launcher = replace_any_once(
     launcher,
     [
@@ -343,6 +362,7 @@ launcher = replace_any_once(
         GetStackChan().attachAvatar(std::move(default_avatar));
         GetStackChan().addModifier(std::make_unique<stackchan::BlinkModifier>());
         GetStackChan().addModifier(std::make_unique<stackchan::IdleExpressionModifier>(8000, 20000));
+        agent_q::show_provisioning_welcome_if_needed();
         _view.reset();
     } else {
         create_launcher_view();
@@ -450,6 +470,31 @@ ws_avatar = replace_function(
     "hal_ws_avatar.cpp websocket avatar disabled",
 )
 ws_avatar_path.write_text(ws_avatar)
+PY
+
+python3 - "${FIRMWARE_DIR}/sdkconfig.defaults" "${FIRMWARE_DIR}/sdkconfig" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+
+def enable_unscii_8(config_path: Path) -> None:
+    if not config_path.exists():
+        return
+
+    text = config_path.read_text()
+    if "CONFIG_LV_FONT_UNSCII_8=y" in text:
+        return
+    text = text.replace("# CONFIG_LV_FONT_UNSCII_8 is not set\n", "")
+    if not text.endswith("\n"):
+        text += "\n"
+    text += "CONFIG_LV_FONT_UNSCII_8=y\n"
+    config_path.write_text(text)
+
+
+for arg in sys.argv[1:]:
+    enable_unscii_8(Path(arg))
 PY
 
 echo "Prepared StackChan CoreS3 firmware at ${FIRMWARE_DIR}"

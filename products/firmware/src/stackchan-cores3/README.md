@@ -20,17 +20,14 @@ The current implementation includes:
   physical approval UI.
 - a USB JSONL `identify_device` request that shows a short temporary code over
   the current screen and then returns to the previous device state.
-- a USB JSONL `connect` request that shows a physical approval prompt with the
-  Gateway display name and, on YES, returns a Firmware-generated session id with
-  a Firmware-owned TTL. NO or timeout returns `rejected`. The request replaces
-  any previously active Firmware session only after physical YES.
-- a USB JSONL `disconnect` request that clears the active Firmware session when
-  the supplied session id matches.
-- USB JSONL provisioning requests for `start_provisioning`,
-  `cancel_provisioning`, `provisioning_setup_check`, `generate_recovery_phrase`,
-  and `confirm_recovery_phrase_backup`. Recovery phrase setup v0 is DEV_PROFILE
-  scaffolding: it stores the generated phrase only in RAM, displays it only on
-  device, and does not persist root material or move to `provisioned`.
+- protocol error handling for `connect` and `disconnect`. The current target
+  returns `invalid_state` for `connect` before persistent root material and
+  `provisioned` exist, so it has no active Firmware session path in this slice.
+- USB JSONL mnemonic UI requests for `start_provisioning`,
+  `cancel_provisioning`, and `confirm_recovery_phrase_backup`.
+  `start_provisioning` generates a DEV_PROFILE BIP-39 phrase only in RAM,
+  displays only the up-to-4-letter word prefixes on device in a 3-column by
+  4-row grid, and does not persist root material or move to `provisioned`.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP
@@ -42,15 +39,15 @@ The current implementation includes:
   requests use an Agent-Q-owned speech-bubble decorator with state-specific
   colors plus a small confirmation strip when physical input is required.
 
-Sessions live in RAM. Firmware reboot clears the active session. Session ids
-are derived from device RNG and are not derived from MAC address, USB serial
-number, `deviceId`, account public key, or signing key. Sessions do not
-authorize signing.
+Runtime Firmware sessions are future work for this target. Gateway protocol
+support still exists, but this mnemonic UI slice does not create session ids.
+Sessions do not authorize signing when they are added later.
 
 This is not the signing product yet. It does not persist keys, store policies,
 parse signable transactions, expose MCP directly, or apply signing policy. The
 only persisted values in this target implementation are the protocol `deviceId`
-used by Gateway for reconnect hints and the provisioning state flag.
+used by Gateway for reconnect hints and the provisioning state flag; the current
+mnemonic UI flow keeps that state `unprovisioned`.
 
 Agent-Q firmware is intentionally not a general StackChan AI firmware. It does
 not include StackChan World login, Xiaozhi cloud sessions, camera upload, screen
@@ -125,11 +122,12 @@ namespace `agent_q`.
 | Key | Purpose |
 |---|---|
 | `device_id` | Gateway reconnect and device-selection identity |
-| `prov_state` | Current provisioning state: `unprovisioned` or `provisioning` |
+| `prov_state` | Provisioning state flag; current mnemonic UI flow keeps it `unprovisioned` |
 
-Recovery phrase setup v0 stores generated phrase text only in RAM and wipes it
-on cancel, backup confirmation, rejection, display expiry, timeout, or firmware
-restart.
+Recovery phrase setup v0 stores generated phrase text only in RAM, displays only
+up-to-4-letter prefixes on device, and wipes the phrase on cancel, backup
+confirmation, rejection, display expiry, timeout, or firmware restart. Three-
+letter BIP-39 words are displayed as the full word.
 
 Agent-Q-owned modules are sources under `agent_q/` in this target tree. These
 modules may share the `agent_q` namespace. New keys should be named by feature,

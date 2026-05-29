@@ -26,12 +26,12 @@ export const MAX_APPROVAL_TIMEOUT_MS = 60000;
 export const DEFAULT_APPROVAL_TIMEOUT_MS = 30000;
 export const MAX_PROVISIONING_APPROVAL_TIMEOUT_MS = MAX_APPROVAL_TIMEOUT_MS;
 export const DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS = DEFAULT_APPROVAL_TIMEOUT_MS;
-// sessionTtlMs is a uint32 millisecond counter on the wire (see the firmware's
-// kSessionTtlMs). A value outside that range cannot come from a conformant
-// device, so the wire boundary rejects it as malformed. Bounding it here also
-// keeps Gateway's session-expiry arithmetic (connectedAt + sessionTtlMs) far
-// inside the representable Date range, so recording a session can never throw a
-// RangeError after the connect was physically approved.
+// sessionTtlMs is a uint32 millisecond counter on the wire. A value outside
+// that range cannot come from a conformant device, so the wire boundary rejects
+// it as malformed. Bounding it here also keeps Gateway's session-expiry
+// arithmetic (connectedAt + sessionTtlMs) far inside the representable Date
+// range, so recording a session can never throw a RangeError after the connect
+// was physically approved.
 export const MAX_SESSION_TTL_MS = 4_294_967_295;
 
 export interface DeviceStatus {
@@ -102,24 +102,6 @@ export interface CancelProvisioningRequest {
   };
 }
 
-export interface ProvisioningSetupCheckRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "provisioning_setup_check";
-  params: {
-    approvalTimeoutMs: number;
-  };
-}
-
-export interface GenerateRecoveryPhraseRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "generate_recovery_phrase";
-  params: {
-    approvalTimeoutMs: number;
-  };
-}
-
 export interface ConfirmRecoveryPhraseBackupRequest {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -136,8 +118,6 @@ export type ProtocolRequest =
   | DisconnectRequest
   | StartProvisioningRequest
   | CancelProvisioningRequest
-  | ProvisioningSetupCheckRequest
-  | GenerateRecoveryPhraseRequest
   | ConfirmRecoveryPhraseBackupRequest;
 
 export interface StatusResponse {
@@ -191,15 +171,7 @@ export interface ProvisioningResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
   type: "provisioning_result";
-  status: "started" | "canceled";
-  provisioning: ProvisioningStatus;
-}
-
-export interface ProvisioningSetupCheckResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "provisioning_setup_check_result";
-  status: "checked";
+  status: "canceled";
   provisioning: ProvisioningStatus;
 }
 
@@ -227,7 +199,6 @@ export type ProtocolResponse =
   | ConnectResponse
   | DisconnectResponse
   | ProvisioningResponse
-  | ProvisioningSetupCheckResponse
   | RecoveryPhraseResponse
   | ProtocolErrorResponse;
 
@@ -344,38 +315,6 @@ export function makeCancelProvisioningRequest(
     id,
     version: PROTOCOL_VERSION,
     type: "cancel_provisioning",
-    params: {
-      approvalTimeoutMs,
-    },
-  };
-}
-
-export function makeProvisioningSetupCheckRequest(
-  approvalTimeoutMs: number = DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS,
-  id = createRequestId(),
-): ProvisioningSetupCheckRequest {
-  validateRequestId(id);
-  validateApprovalTimeoutMs(approvalTimeoutMs);
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "provisioning_setup_check",
-    params: {
-      approvalTimeoutMs,
-    },
-  };
-}
-
-export function makeGenerateRecoveryPhraseRequest(
-  approvalTimeoutMs: number = DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS,
-  id = createRequestId(),
-): GenerateRecoveryPhraseRequest {
-  validateRequestId(id);
-  validateApprovalTimeoutMs(approvalTimeoutMs);
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "generate_recovery_phrase",
     params: {
       approvalTimeoutMs,
     },
@@ -546,42 +485,21 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
   }
 
   if (value.type === "provisioning_result") {
-    if (typeof value.id !== "string" || (value.status !== "started" && value.status !== "canceled")) {
+    if (typeof value.id !== "string" || value.status !== "canceled") {
       throw new ProtocolError("protocol_error", "Provisioning response is malformed.");
     }
     const provisioning = sanitizeProvisioningStatus(value.provisioning);
     if (provisioning === null) {
       throw new ProtocolError("protocol_error", "Provisioning response state is malformed.");
     }
-    const expectedState = value.status === "started" ? "provisioning" : "unprovisioned";
-    if (provisioning.state !== expectedState) {
-      throw new ProtocolError("protocol_error", "Provisioning response status and state disagree.");
+    if (provisioning.state !== "unprovisioned") {
+      throw new ProtocolError("protocol_error", "Provisioning cancellation response requires unprovisioned state.");
     }
     return {
       id: value.id,
       version: PROTOCOL_VERSION,
       type: "provisioning_result",
       status: value.status,
-      provisioning,
-    };
-  }
-
-  if (value.type === "provisioning_setup_check_result") {
-    if (typeof value.id !== "string" || value.status !== "checked") {
-      throw new ProtocolError("protocol_error", "Provisioning setup check response is malformed.");
-    }
-    const provisioning = sanitizeProvisioningStatus(value.provisioning);
-    if (provisioning === null) {
-      throw new ProtocolError("protocol_error", "Provisioning setup check response state is malformed.");
-    }
-    if (provisioning.state !== "provisioning") {
-      throw new ProtocolError("protocol_error", "Provisioning setup check response requires provisioning state.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "provisioning_setup_check_result",
-      status: "checked",
       provisioning,
     };
   }
@@ -606,8 +524,8 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     if (provisioning === null) {
       throw new ProtocolError("protocol_error", "Recovery phrase response state is malformed.");
     }
-    if (provisioning.state !== "provisioning") {
-      throw new ProtocolError("protocol_error", "Recovery phrase response requires provisioning state.");
+    if (provisioning.state !== "unprovisioned") {
+      throw new ProtocolError("protocol_error", "Recovery phrase response requires unprovisioned state.");
     }
     return {
       id: value.id,
@@ -667,18 +585,6 @@ export function assertProvisioningResponse(response: ProtocolResponse): Provisio
   }
   if (response.type !== "provisioning_result") {
     throw new ProtocolError("protocol_error", "Protocol response type is not provisioning_result.");
-  }
-  return response;
-}
-
-export function assertProvisioningSetupCheckResponse(
-  response: ProtocolResponse,
-): ProvisioningSetupCheckResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "provisioning_setup_check_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not provisioning_setup_check_result.");
   }
   return response;
 }
