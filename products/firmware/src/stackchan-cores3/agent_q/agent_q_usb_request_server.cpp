@@ -711,6 +711,25 @@ void write_recovery_phrase_result(const char* id, const char* status)
     write_json_document(response);
 }
 
+void clear_active_session()
+{
+    g_session.clear();
+}
+
+void enter_root_material_consistency_error(const char* message)
+{
+    g_root_material_consistency_error = true;
+    clear_active_session();
+    ESP_LOGE(kTag, "%s", message != nullptr ? message : "Root material consistency error; failing closed");
+}
+
+void enter_root_material_consistency_error_if_root_remains(const char* message)
+{
+    if (agent_q::has_root_material()) {
+        enter_root_material_consistency_error(message);
+    }
+}
+
 // Writes the Sui Ed25519 account (index 0, m/44'/784'/0'/0'/0') response after
 // account derivation has completed inside the account module. Returns false
 // without writing when stored root material is unavailable or derivation fails,
@@ -726,8 +745,7 @@ bool write_accounts_response(const char* id)
         // is inconsistent. Fail closed so get_status reports "error" and
         // connect/get_accounts stop treating it as provisioned until
         // factory_reset, instead of silently staying provisioned until reboot.
-        g_root_material_consistency_error = true;
-        ESP_LOGE(kTag, "Root material unreadable while provisioned; failing closed");
+        enter_root_material_consistency_error("Root material unreadable while provisioned; failing closed");
         return false;
     }
     if (account_result != agent_q::SuiAccountDerivationResult::ok) {
@@ -785,11 +803,6 @@ bool format_session_id(char* output, size_t output_size)
              bytes[7]);
     agent_q::wipe_sensitive_buffer(bytes, sizeof(bytes));
     return true;
-}
-
-void clear_active_session()
-{
-    g_session.clear();
 }
 
 bool replace_active_session()
@@ -897,7 +910,7 @@ void load_provisioning_state()
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
     if (result != ESP_OK) {
         ESP_LOGW(kTag, "NVS open failed for provisioning state: %s", esp_err_to_name(result));
-        g_root_material_consistency_error = true;
+        enter_root_material_consistency_error("Provisioning state could not be opened; failing closed");
         return;
     }
 
@@ -907,16 +920,13 @@ void load_provisioning_state()
     nvs_close(nvs);
 
     if (result == ESP_ERR_NVS_NOT_FOUND) {
-        if (agent_q::has_root_material()) {
-            g_root_material_consistency_error = true;
-            ESP_LOGE(kTag, "Root material exists without provisioning state; failing closed");
-        }
+        enter_root_material_consistency_error_if_root_remains(
+            "Root material exists without provisioning state; failing closed");
         ESP_LOGI(kTag, "Provisioning state not found in NVS; using unprovisioned");
         return;
     }
     if (result != ESP_OK) {
-        g_root_material_consistency_error = true;
-        ESP_LOGE(kTag, "Provisioning state could not be read; failing closed");
+        enter_root_material_consistency_error("Provisioning state could not be read; failing closed");
         ESP_LOGW(kTag, "NVS read failed for provisioning state: %s", esp_err_to_name(result));
         return;
     }
@@ -924,8 +934,7 @@ void load_provisioning_state()
     ProvisioningRuntimeState parsed = ProvisioningRuntimeState::unprovisioned;
     if (!parse_provisioning_state(stored_state, &parsed)) {
         if (agent_q::has_root_material()) {
-            g_root_material_consistency_error = true;
-            ESP_LOGE(kTag, "Unknown provisioning state with root material present; failing closed");
+            enter_root_material_consistency_error("Unknown provisioning state with root material present; failing closed");
         } else {
             ESP_LOGW(kTag, "Unknown provisioning state in NVS; resetting to unprovisioned");
             persist_provisioning_state(ProvisioningRuntimeState::unprovisioned);
@@ -939,13 +948,11 @@ void load_provisioning_state()
             g_provisioning_state = ProvisioningRuntimeState::provisioned;
         } else {
             g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
-            g_root_material_consistency_error = true;
-            ESP_LOGE(kTag, "Stored provisioned state has no valid root material; failing closed");
+            enter_root_material_consistency_error("Stored provisioned state has no valid root material; failing closed");
         }
     } else if (has_root) {
         g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
-        g_root_material_consistency_error = true;
-        ESP_LOGE(kTag, "Root material exists without provisioned state; failing closed");
+        enter_root_material_consistency_error("Root material exists without provisioned state; failing closed");
     } else if (parsed == ProvisioningRuntimeState::provisioning) {
         g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
         ESP_LOGW(kTag, "Resetting legacy provisioning state for persistent root material flow");
@@ -993,12 +1000,12 @@ bool reset_device_to_unprovisioned()
     wipe_provisioning_scratch_state();
 
     if (!agent_q::wipe_root_material()) {
-        g_root_material_consistency_error = true;
+        enter_root_material_consistency_error("Root material wipe failed during factory reset; failing closed");
         return false;
     }
 
     if (!persist_provisioning_state(ProvisioningRuntimeState::unprovisioned)) {
-        g_root_material_consistency_error = true;
+        enter_root_material_consistency_error("Provisioning state reset failed during factory reset; failing closed");
         return false;
     }
 
@@ -1052,16 +1059,12 @@ bool refresh_root_material_consistency()
         if (has_root) {
             return true;
         }
-        g_root_material_consistency_error = true;
-        clear_active_session();
-        ESP_LOGE(kTag, "Provisioned state lost root material; failing closed");
+        enter_root_material_consistency_error("Provisioned state lost root material; failing closed");
         return false;
     }
 
     if (has_root) {
-        g_root_material_consistency_error = true;
-        clear_active_session();
-        ESP_LOGE(kTag, "Root material exists outside provisioned state; failing closed");
+        enter_root_material_consistency_error("Root material exists outside provisioned state; failing closed");
         return false;
     }
     return true;
@@ -1638,14 +1641,16 @@ RecoveryPhraseCommitResult store_recovery_phrase_and_mark_provisioned(const char
     if (!agent_q::store_root_material(
             g_provisioning_scratch.root_material,
             sizeof(g_provisioning_scratch.root_material))) {
-        g_root_material_consistency_error = agent_q::has_root_material();
+        enter_root_material_consistency_error_if_root_remains(
+            "Root material storage left partial material; failing closed");
         wipe_recovery_phrase_scratch(reason);
         return RecoveryPhraseCommitResult::root_storage_error;
     }
 
     if (!persist_provisioning_state(ProvisioningRuntimeState::provisioned)) {
         agent_q::wipe_root_material();
-        g_root_material_consistency_error = agent_q::has_root_material();
+        enter_root_material_consistency_error_if_root_remains(
+            "Provisioning state storage failed with root material present; failing closed");
         wipe_recovery_phrase_scratch(reason);
         return RecoveryPhraseCommitResult::state_storage_error;
     }

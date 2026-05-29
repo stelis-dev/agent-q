@@ -47,9 +47,12 @@ The current implementation includes:
   colors plus a small confirmation strip when physical input is required.
 - target-local display-power handling that turns the screen backlight off after
   one minute of inactivity, wakes for Agent-Q request UI, toggles display power
-  on side-button short press, and powers off on side-button long press.
-- StackChan-specific boot posture feedback that centers yaw and raises pitch
-  after the default avatar is attached.
+  on side-button short press, and powers off on side-button long press. Before
+  screen-off or power-off, the target moves to a rest posture; when the screen
+  wakes, it returns to awake posture.
+- StackChan-specific boot and sleep posture feedback that centers yaw and
+  raises pitch after the default avatar is attached or the screen wakes, then
+  moves to centered yaw and lowered pitch before screen-off or power-off.
 
 Runtime Firmware sessions are implemented only as RAM-held protocol sessions
 after material-backed provisioning. Sessions do not authorize signing.

@@ -47,8 +47,8 @@ Legend:
 | Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
-| Display power control | O | Turns the screen backlight off after one minute of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. |
-| Boot posture | O | Centers yaw and raises pitch when the default avatar is attached at boot. |
+| Display power control | O | Turns the screen backlight off after one minute of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. Before screen-off or power-off, the target moves to a rest posture; when the screen wakes, it returns to awake posture. |
+| Boot/sleep posture | O | Centers yaw and raises pitch when the default avatar is attached at boot or the screen wakes. Moves to centered yaw and lowered pitch before screen-off or power-off. |
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
 | `get_capabilities` | X | Not implemented. |
 | `get_accounts` | △ | Derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation verified against Sui SDK address vectors on host; hardware smoke is still required. |
@@ -168,6 +168,14 @@ attached, the Agent-Q build centers yaw and raises pitch (`yaw=0`, `pitch=540`).
 Temporary Agent-Q head movement feedback may run during local notifications and
 approvals, then returns control to StackChan motion.
 
+Sleep and wake posture are also StackChan-specific motion feedback. Before
+automatic screen-off, manual screen-off, or side-button power-off, the target
+moves to centered yaw and lowered pitch (`yaw=0`, `pitch=0`). When the screen
+wakes by touch, side-button toggle, or Agent-Q request UI, the target returns to
+centered yaw and raised pitch (`yaw=0`, `pitch=540`). These posture changes are
+not product state and must not clear sessions, provisioning scratch, accounts,
+or pending approvals.
+
 ## Session Model
 
 `connect` is defined by the shared protocol and is accepted only after the
@@ -271,6 +279,9 @@ storage cleanup succeeds. Rejection and timeout leave stored material and state
 unchanged. This is a DEV_PROFILE development and recovery operation; Gateway
 must not expose it as a normal agent-facing MCP tool, and USER_PROFILE reset
 must be kept behind a local recovery/setup path with physical approval.
+When the target detects a material/state consistency error before factory reset,
+it clears any active RAM session immediately and fails closed for session-scoped
+requests.
 
 Read-only public account derivation (`get_accounts`) is implemented. Mnemonic
 import, policy, signing APIs, and USER_PROFILE secure root-material handling are
@@ -334,6 +345,10 @@ Current verification expectations for this target:
   side-button long press powers off;
 - visually verify boot posture centers yaw and raises pitch after the default
   avatar attaches;
+- visually verify automatic screen-off, manual screen-off, and side-button
+  power-off move the target to centered yaw and lowered pitch first;
+- visually verify touch, side-button wake, and Agent-Q request UI wake return
+  the target to centered yaw and raised pitch;
 - smoke-test `start_provisioning` approval, rejection, timeout, displayed
   3-column by 4-row prefix UI, unchanged `unprovisioned` state, and `busy`
   while setup scratch is active;

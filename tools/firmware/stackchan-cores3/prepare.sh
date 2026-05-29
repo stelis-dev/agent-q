@@ -447,7 +447,7 @@ board = board_path.read_text()
 board = insert_after_once(
     board,
     "#include \"hal_bridge.h\"\n",
-    "#include \"agent_q/agent_q_display_power.h\"\n",
+    "#include \"agent_q/agent_q_display_power.h\"\n#include <freertos/FreeRTOS.h>\n#include <freertos/task.h>\n",
     "stackchan.cc Agent-Q display power include",
 )
 board = replace_once(
@@ -545,7 +545,9 @@ board = insert_after_once(
 
         const uint8_t power_key_irqs = pmic_->ConsumePowerKeyIrqs();
         if ((power_key_irqs & 0x04) != 0) {
-            ESP_LOGI(TAG, "Power key long press: powering off");
+            ESP_LOGI(TAG, "Power key long press: moving to rest posture and powering off");
+            agent_q::prepare_display_power_rest_posture();
+            vTaskDelay(pdMS_TO_TICKS(agent_q::display_power_rest_posture_delay_ms()));
             pmic_->PowerOff();
             return;
         }

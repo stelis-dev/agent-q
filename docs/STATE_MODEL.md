@@ -72,6 +72,9 @@ is the recovery path for that consistency-error condition: after physical
 approval, Firmware erases root material, clears volatile scratch and RAM
 sessions, persists `unprovisioned`, and clears the error only after storage
 cleanup succeeds.
+Detecting the consistency error also clears any active RAM session immediately,
+so a session created before the error is not retained as a stale local
+capability.
 
 ## State Layers And Owners
 
@@ -312,9 +315,12 @@ provisioning, sessions, accounts, policy, or signing. It only controls the
 target's optional motion, LED, haptic, sound, or expression feedback.
 
 Posture changes must not clear provisioning scratch, pending approvals,
-sessions, root material, or display power state.
-Hardware-specific posture ownership and boot feedback are target-local. The
-current StackChan CoreS3 behavior is documented in
+sessions, root material, or display power state. Hardware targets may move to a
+target-local rest posture before screen-off or power-off and return to an awake
+posture when the display wakes, but those postures are feedback only and must
+not gate protocol behavior.
+Hardware-specific posture ownership, boot feedback, sleep feedback, and wake
+feedback are target-local. The current StackChan CoreS3 behavior is documented in
 `products/firmware/src/stackchan-cores3/SPEC.md`.
 
 ## Request Patterns

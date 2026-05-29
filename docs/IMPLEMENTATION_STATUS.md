@@ -82,8 +82,8 @@ Current MCP tools:
 | `get_accounts` | △ | X | X | StackChan CoreS3 source derives and returns the Sui Ed25519 account 0 over an approved session while `provisioned`; read-only, no private material emitted. Hardware smoke is still required. |
 | `factory_reset` | △ | X | X | StackChan CoreS3 source supports physical-approval wipe back to `unprovisioned`, including material/state consistency-error recovery. Hardware smoke is still required. |
 | Request/result UI | O | X | X | StackChan CoreS3 uses Agent-Q-owned top avatar speech bubble and bottom decision strip. |
-| Display power control | O | X | X | StackChan CoreS3 turns the screen backlight off after one minute of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. |
-| Boot posture | O | X | X | StackChan CoreS3 centers yaw and raises pitch when the default avatar is attached at boot. |
+| Display power control | O | X | X | StackChan CoreS3 turns the screen backlight off after one minute of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. Before screen-off or power-off, it moves to a rest posture; when the screen wakes, it returns to awake posture. |
+| Boot/sleep posture | O | X | X | StackChan CoreS3 centers yaw and raises pitch when the default avatar is attached at boot or the screen wakes, and moves to centered yaw and lowered pitch before screen-off or power-off. |
 | Per-request `ask` approval | X | N/A | X | Not implemented for signing requests because signing requests are not implemented. |
 | Automatic `sign` / `reject` policy action | X | X | X | Requires policy evaluator and signing method support. |
 | Persistent signing material | △ | X | X | StackChan CoreS3 source stores DEV_PROFILE BIP-39 root entropy after backup confirmation. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0); it does not sign. |
