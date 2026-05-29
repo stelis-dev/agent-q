@@ -83,6 +83,8 @@ selected device only after the user chooses one.
 ## Current Status
 
 Detailed implementation status lives in `docs/IMPLEMENTATION_STATUS.md`.
+Provisioning and first-install signing-material setup are defined in
+`docs/PROVISIONING.md`.
 
 Implemented:
 

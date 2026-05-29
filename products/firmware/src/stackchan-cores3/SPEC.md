@@ -50,6 +50,7 @@ Legend:
 | `get_accounts` | X | Not implemented. |
 | `call_method` | X | Not implemented. |
 | Persistent signing keys | X | Not implemented. |
+| Provisioning flow | X | Not implemented. The target has display/touch hardware suitable for a future local backup-confirmation flow. |
 | Policy storage/evaluation | X | Not implemented. |
 | Secure user profile | X | Not implemented. |
 
@@ -153,6 +154,22 @@ This target currently persists only the protocol `deviceId`.
 Agent-Q-owned modules are sources under `agent_q/` in this target tree. These
 modules may share the `agent_q` namespace. New keys should be named by feature,
 such as `<feature>_<name>`, to avoid collisions.
+
+## Provisioning Capability
+
+Provisioning is not implemented on this target.
+
+StackChan CoreS3 has a display and touch input, so it is a candidate for a
+future local provisioning flow:
+
+- generate a new mnemonic on the device;
+- show the mnemonic on the device once for backup;
+- require local confirmation before storing it;
+- accept imported mnemonic input only through an explicitly weaker setup path;
+- expose only public keys and addresses after provisioning.
+
+Until that exists, this target must not be described as holding persistent user
+signing material.
 
 ## Build Inputs
 

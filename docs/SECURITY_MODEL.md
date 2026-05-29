@@ -12,7 +12,8 @@ description of current behavior.
 
 This document does not restate the product boundary or the wire protocol. See
 [../README.md](../README.md) for product context, [../specs/PROTOCOL.md](../specs/PROTOCOL.md)
-for the Gateway-Firmware contract, and [../AGENTS.md](../AGENTS.md) for the
+for the Gateway-Firmware contract, [PROVISIONING.md](PROVISIONING.md) for
+first-install signing-material setup, and [../AGENTS.md](../AGENTS.md) for the
 contributor operating rules.
 
 ## 1. Scope
@@ -46,6 +47,7 @@ Designed but not implemented (do not treat as present):
 
 - Persistent signing keys and on-device key generation.
 - Key import.
+- First-install mnemonic generation or import.
 - zkLogin signing material.
 - Policy storage and evaluation.
 - Account and public-key discovery.

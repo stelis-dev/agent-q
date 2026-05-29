@@ -74,6 +74,7 @@ Current MCP tools:
 | Automatic `sign` / `reject` policy action | X | X | X | Requires policy evaluator and signing method support. |
 | Local key storage | X | X | X | Current signing code is only a boot-time self-test with a temporary seed. |
 | Policy storage | X | X | X | Not implemented. |
+| Provisioning flow | X | X | X | Target design is documented in `docs/PROVISIONING.md`; runtime not implemented. |
 | Secure user profile | X | X | X | Secure Boot, Flash Encryption, anti-rollback, and provisioning flow are documented but not implemented. |
 | StackChan/Xiaozhi remote AI runtime | N/A | N/A | N/A | Disabled in the Agent-Q StackChan build; not part of Agent-Q signing firmware. |
 | Camera / remote upload surfaces | N/A | N/A | N/A | Disabled in the Agent-Q StackChan build. |
@@ -114,10 +115,12 @@ session-scoped `call_method` protocol.
 | Item | Status | Notes |
 |---|---:|---|
 | Security model document | O | See `docs/SECURITY_MODEL.md`. |
+| Provisioning flow document | O | See `docs/PROVISIONING.md`. Runtime provisioning is not implemented. |
 | Deny-by-default policy model | △ | Documented target behavior; evaluator not implemented. |
 | Policy evaluator | X | Not implemented. |
 | Policy storage | X | Not implemented. |
 | Policy update authorization | X | Not implemented. |
+| Mnemonic generation/import | X | Target provisioning flow is documented; no runtime implementation. |
 | Request replay protection | X | Not implemented. |
 | Secure Boot profile | X | Documented target behavior; not implemented. |
 | Flash Encryption profile | X | Documented target behavior; not implemented. |
