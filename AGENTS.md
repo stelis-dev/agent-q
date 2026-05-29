@@ -123,6 +123,30 @@ For non-trivial work:
 8. Re-check the affected boundary from product purpose, files, docs, protocol,
    tests, and user flows.
 
+For non-trivial work that touches protocol behavior, device state, Firmware
+state storage, Gateway/MCP API surface, provisioning, accounts, policy, signing,
+or product-boundary documentation, the plan must also classify the affected
+device states before implementation starts. Use `docs/STATE_MODEL.md` as the
+baseline for state names and state-gated behavior.
+
+A state-scoped plan must state:
+
+- the current/source device state;
+- the target device state, if the work changes state;
+- APIs that are allowed in each affected state;
+- APIs that must remain unavailable in each affected state;
+- the authority that enforces the rule: Firmware or Gateway;
+- the UI requirement: silent handling, notification, or physical approval;
+- persistence and wipe requirements;
+- verification for each affected state.
+
+Do not implement a new API, state transition, account path, signing path, policy
+path, or provisioning step unless its allowed and forbidden states are
+explicitly classified.
+
+Gateway may hide unavailable operations, but Firmware must enforce device-state
+gates.
+
 Do not interpret a user request as the lowest-effort literal edit that satisfies
 the words in isolation. Interpret it by the product outcome, affected boundary,
 and adjacent invariants that must hold for the work to be complete.

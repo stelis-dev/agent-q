@@ -84,7 +84,8 @@ selected device only after the user chooses one.
 
 Detailed implementation status lives in `docs/IMPLEMENTATION_STATUS.md`.
 Provisioning and first-install signing-material setup are defined in
-`docs/PROVISIONING.md`.
+`docs/PROVISIONING.md`. Product states and state-gated protocol functions are
+defined in `docs/STATE_MODEL.md`.
 
 Implemented:
 

@@ -118,8 +118,33 @@ Target provisioning states:
 - `provisioned`: root signing material exists.
 - `locked`: sensitive actions require local unlock.
 
-These states are not implemented yet. Current Firmware status still follows
-`specs/PROTOCOL.md`.
+Runtime v0 implements only the state flag for `unprovisioned` and
+`provisioning` on the StackChan CoreS3 target. It loads the state from
+device-local storage, reports it through `get_status`, and changes it through
+physical approval for `start_provisioning` and `cancel_provisioning`.
+
+Runtime v0 does not generate, import, store, export, or derive from root signing
+material. Firmware must not set `provisioned` until root signing material
+exists. Firmware must not set `locked` until an unlock model exists.
+
+Runtime v0 state transitions:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unprovisioned: boot default or stored state
+    Unprovisioned --> Provisioning: start_provisioning + physical approval
+    Provisioning --> Unprovisioned: cancel_provisioning + physical approval
+
+    Unprovisioned --> Unprovisioned: start rejected, timeout, or storage_error
+    Provisioning --> Provisioning: cancel rejected, timeout, or storage_error
+
+    Unprovisioned: no root signing material
+    Provisioning: setup flag only in Runtime v0
+```
+
+`start_provisioning` is valid only from `unprovisioned`. `cancel_provisioning`
+is valid only from `provisioning`. Invalid transitions return `invalid_state`
+without opening approval UI.
 
 ## Implementation Order
 
@@ -127,7 +152,7 @@ Recommended first slice:
 
 1. Report whether a device is provisioned.
 2. Store provisioning state without real mnemonic material.
-3. Add a DEV_PROFILE-only mock setup flow that stores no real assets.
+3. Add setup-step messages that still store no real assets.
 4. Add real BIP-39 generation only after storage, wipe, UI, and verification
    paths are specified and tested.
 5. Add Sui Ed25519 account derivation.
@@ -135,6 +160,10 @@ Recommended first slice:
 7. Add Sui `sign_personal_message`.
 
 Do not jump directly from mnemonic generation to user transaction signing.
+
+Current implementation status: steps 1 and 2 are implemented only as
+provisioning state reporting and approved state start/cancel. Step 3 and later
+are not implemented.
 
 ## Completion Criteria
 

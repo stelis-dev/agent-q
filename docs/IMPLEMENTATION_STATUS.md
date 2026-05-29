@@ -22,6 +22,7 @@ This document tracks implementation status only. The wire protocol is defined in
 |---|---:|---|
 | `get_status` | O | Implemented by the current StackChan CoreS3 target and used by Gateway discovery. |
 | Provisioning status reporting | O | `get_status` includes `provisioning.state`; Gateway parses and preserves it. This is not signing readiness. |
+| Provisioning state transitions | △ | `start_provisioning` and `cancel_provisioning` are defined, Gateway validates the response, and StackChan CoreS3 firmware builds with approved state changes. Hardware smoke is still required. They do not create signing material and are not exposed as MCP setup tools. |
 | `identify_device` | O | Implemented as temporary device UI for explicit user selection. |
 | `connect` | O | Implemented as a runtime communication session with physical approval on supported targets. |
 | `disconnect` | O | Implemented for active runtime sessions. |
@@ -42,6 +43,7 @@ This document tracks implementation status only. The wire protocol is defined in
 | Purpose routing | O | Gateway-local routing metadata only. Not Firmware policy. |
 | Runtime connection sessions | O | Held in Gateway memory only; session id is not exposed to MCP clients. |
 | Cached device status | O | Exposed only for previously seen devices and marked non-live. |
+| Provisioning transition parser | O | Gateway can build and parse provisioning transition protocol messages. It does not expose a provisioning write MCP tool. |
 | MCP output sanitization | O | Tool outputs and public errors are schema-bounded before reaching clients. |
 | Admin Page | X | Intended Gateway capability; not implemented. |
 | Firmware update/admin command path | X | Not exposed through MCP. |
@@ -67,7 +69,8 @@ Current MCP tools:
 | USB transport | O | X | X | StackChan CoreS3 target is the only implemented firmware target. |
 | Persistent `deviceId` | O | X | X | Stored in device-local NVS for the implemented target. |
 | `get_status` | O | X | X | Common protocol request. |
-| Provisioning status reporting | O | X | X | StackChan CoreS3 reports `unprovisioned`; no runtime setup flow changes this state yet. |
+| Provisioning status reporting | △ | X | X | StackChan CoreS3 firmware reports the NVS-backed `unprovisioned` or `provisioning` state. Hardware smoke of the NVS-backed path is still required. |
+| Provisioning state transitions | △ | X | X | StackChan CoreS3 implements approved start/cancel between `unprovisioned` and `provisioning` and stores no signing material. Hardware smoke is still required. |
 | `identify_device` | O | X | X | Uses temporary avatar speech bubble on StackChan CoreS3. |
 | `connect` physical approval | O | X | X | StackChan CoreS3 uses touch approval. |
 | `disconnect` | O | X | X | StackChan CoreS3 clears matching runtime session. |
@@ -76,7 +79,7 @@ Current MCP tools:
 | Automatic `sign` / `reject` policy action | X | X | X | Requires policy evaluator and signing method support. |
 | Persistent signing material | X | X | X | Current signing code is only a boot-time self-test with a temporary seed. |
 | Policy storage | X | X | X | Not implemented. |
-| Provisioning flow | X | X | X | Target design is documented in `docs/PROVISIONING.md`; runtime not implemented. |
+| Provisioning flow | △ | X | X | Runtime state start/cancel exists for StackChan CoreS3. Mnemonic generation/import and key storage are not implemented. |
 | Secure user profile | X | X | X | Secure Boot, Flash Encryption, anti-rollback, and provisioning flow are documented but not implemented. |
 | StackChan/Xiaozhi remote AI runtime | N/A | N/A | N/A | Disabled in the Agent-Q StackChan build; not part of Agent-Q signing firmware. |
 | Camera / remote upload surfaces | N/A | N/A | N/A | Disabled in the Agent-Q StackChan build. |
@@ -117,8 +120,10 @@ session-scoped `call_method` protocol.
 | Item | Status | Notes |
 |---|---:|---|
 | Security model document | O | See `docs/SECURITY_MODEL.md`. |
-| Provisioning flow document | O | See `docs/PROVISIONING.md`. Runtime provisioning is not implemented. |
+| State model document | O | See `docs/STATE_MODEL.md`. It defines product states, state-gated protocol functions, and responsibility boundaries. |
+| Provisioning flow document | O | See `docs/PROVISIONING.md`. Mnemonic/key provisioning is not implemented. |
 | Provisioning status reporting | O | Firmware reports `provisioning.state`; Gateway exposes it without treating it as signing readiness. |
+| Provisioning state transitions | △ | StackChan CoreS3 can start/cancel the local `provisioning` state after physical approval. This stores no mnemonic, seed, private key, account, or policy. |
 | Deny-by-default policy model | △ | Documented target behavior; evaluator not implemented. |
 | Policy evaluator | X | Not implemented. |
 | Policy storage | X | Not implemented. |

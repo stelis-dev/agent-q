@@ -37,7 +37,8 @@ Legend:
 | USB JSONL transport | O | Uses ESP32-S3 USB Serial/JTAG. |
 | Persistent protocol `deviceId` | O | Stored in NVS namespace `agent_q`, key `device_id`. |
 | `get_status` | O | Returns device id, current state, and provisioning status without approval UI. |
-| Provisioning status reporting | O | Always returns `unprovisioned` in `get_status`; this is not signing readiness. |
+| Provisioning status reporting | △ | Reports NVS-backed `unprovisioned` or `provisioning`; hardware smoke of the NVS-backed path is still required. This is not signing readiness. |
+| `start_provisioning` / `cancel_provisioning` | △ | Requires touch approval and stores only the provisioning state flag. Hardware smoke is still required. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `display_signal` diagnostic | O | Shows a decision UI and returns after touch approval, rejection, or timeout. |
 | `connect` | O | Requires touch approval and returns a Firmware-generated runtime session id. |
@@ -52,7 +53,7 @@ Legend:
 | `call_method` | X | Not implemented. |
 | Persistent signing material | X | Not implemented. |
 | Mnemonic generation/import | X | Not implemented. |
-| Provisioning flow | X | Not implemented. The target has display/touch hardware suitable for a future local backup-confirmation flow. |
+| Provisioning flow | △ | Runtime state start/cancel is implemented. Mnemonic generation/import and signing material storage are not implemented. |
 | Policy storage/evaluation | X | Not implemented. |
 | Secure user profile | X | Not implemented. |
 
@@ -125,6 +126,8 @@ Current UI behavior:
 | `identify_device` | Temporary speech bubble with short code | `idle` |
 | `display_signal` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
 | `connect` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
+| `start_provisioning` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
+| `cancel_provisioning` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
 | Approved result | Temporary success speech and emotion | `idle` |
 | Rejected result | Temporary rejected speech and emotion | `idle` |
 | Timeout result | Temporary timeout speech and emotion | `idle` |
@@ -147,27 +150,38 @@ for future session-scoped protocol requests.
 
 ## Persistent Storage
 
-This target currently persists only the protocol `deviceId`. Provisioning state
-is not stored in NVS yet; `get_status` reports the constant state
-`unprovisioned`.
+This target persists the protocol `deviceId` and the provisioning state flag.
+The provisioning state flag is not signing material and does not make the
+device ready to sign.
 
 | Namespace | Key | Purpose |
 |---|---|---|
 | `agent_q` | `device_id` | Gateway reconnect and device-selection identity |
+| `agent_q` | `prov_state` | Current provisioning state: `unprovisioned` or `provisioning` |
 
 Agent-Q-owned modules are sources under `agent_q/` in this target tree. These
 modules may share the `agent_q` namespace. New keys should be named by feature,
-such as `<feature>_<name>`, to avoid collisions.
+such as `<feature>_<name>`, to avoid collisions. ESP-IDF NVS key names are
+limited to 15 characters, so this target uses `prov_state` rather than the
+longer protocol field name `provisioning.state`.
 
 ## Provisioning Capability
 
-Provisioning status reporting is implemented on this target. `get_status`
-returns `provisioning.state: "unprovisioned"` so Gateway can preserve and show
-the state. This does not mean the device is ready to sign, and it does not imply
-that account or signing APIs are implemented.
+Provisioning status reporting and runtime state start/cancel are implemented in
+the target firmware code and build successfully. Hardware smoke is still
+required. `get_status` returns the NVS-backed `provisioning.state`, and the USB
+protocol requests `start_provisioning` and `cancel_provisioning` change that
+state only after touch approval on the device.
 
-Mnemonic generation, mnemonic import, persistent signing material, and runtime
-provisioning are not implemented on this target.
+The implemented runtime states are `unprovisioned` and `provisioning`.
+`start_provisioning` is accepted only from `unprovisioned`, and
+`cancel_provisioning` is accepted only from `provisioning`; other state
+combinations return `invalid_state` without opening approval UI. `provisioned`
+is not set because no root signing material exists. `locked` is not used
+because no unlock model exists.
+
+Mnemonic generation, mnemonic import, persistent signing material, account
+derivation, and signing APIs are not implemented on this target.
 
 StackChan CoreS3 has a display and touch input, so it is a candidate for a
 future local provisioning flow:
@@ -205,5 +219,9 @@ Current verification expectations for this target:
 - smoke-test `identify_device`;
 - smoke-test `display_signal` approval, rejection, and timeout behavior;
 - smoke-test `connect` approval, rejection, timeout, and `disconnect`;
+- smoke-test `start_provisioning` approval, rejection, timeout, persistence
+  across reboot, and `invalid_state` from the wrong state;
+- smoke-test `cancel_provisioning` approval, rejection, timeout, persistence
+  across reboot, and `invalid_state` from the wrong state;
 - visually verify that Agent-Q temporary UI does not leave the avatar in an
   Agent-Q-specific mode after completion.

@@ -96,11 +96,13 @@ Protocol error codes:
 - `invalid_gateway_name`
 - `invalid_approval_timeout`
 - `invalid_session`
+- `invalid_state`
 - `unsupported_version`
 - `unsupported_type`
 - `busy`
 - `rejected`
 - `timeout`
+- `storage_error`
 
 Transport-layer errors are owned by Gateway and are not Firmware protocol
 errors.
@@ -141,9 +143,10 @@ Flow rules:
   prove Firmware observed disconnect; it prevents Gateway from reusing a session
   it can no longer confirm.
 
-Implemented: `get_status`, `identify_device`, `connect`, `disconnect`, explicit
-local Gateway device selection, local Gateway caching of discovered devices, and
-a hardware diagnostic request.
+Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
+`start_provisioning`, `cancel_provisioning`, explicit local Gateway device
+selection, local Gateway caching of discovered devices, and a hardware
+diagnostic request.
 
 `connect` and `disconnect` establish and end a runtime communication session
 between Gateway and Firmware. A connection session does not authorize signing,
@@ -250,9 +253,11 @@ signing readiness, it does not prove that account or signing APIs exist, and it
 does not authorize Gateway to make policy decisions. Gateway must preserve and
 display the value without treating it as authority.
 
-The current StackChan CoreS3 target always returns `unprovisioned`. Runtime
-mnemonic generation, mnemonic import, persistent user signing material, account
-derivation, and signing APIs are not implemented.
+The current StackChan CoreS3 target persists and reports only
+`unprovisioned` and `provisioning`. It must not report `provisioned` until root
+signing material exists, and it does not use `locked` because no unlock model is
+implemented. Runtime mnemonic generation, mnemonic import, persistent user
+signing material, account derivation, and signing APIs are not implemented.
 
 Device metadata strings are untrusted input and Gateway bounds them when
 parsing a response:
@@ -263,6 +268,121 @@ parsing a response:
   printable ASCII only and caps length (64, 64, and 32 characters), dropping
   control characters and newlines. These are display values, not a trust
   signal, so they are sanitized rather than rejected.
+
+## Provisioning State Transitions
+
+Provisioning state transition requests let Firmware enter or cancel local setup
+state. They do not create, import, store, export, or reveal mnemonics, seeds,
+private keys, accounts, or policies.
+
+These requests are sensitive write actions. Firmware must change state only
+after physical approval on the device. Gateway must not treat the resulting
+state as signing readiness, and agent-facing MCP tools must not expose these
+write actions.
+
+Provisioning state transition requests do not require `sessionId`. The physical
+approval on Firmware is the authority for the state change; the host request is
+only an untrusted prompt to show that approval UI.
+
+The current implemented states for these requests are:
+
+- `unprovisioned`
+- `provisioning`
+
+The current implementation must not set:
+
+- `provisioned`, because no root signing material exists.
+- `locked`, because no unlock model exists.
+
+### Start Provisioning
+
+Request:
+
+```json
+{
+  "id": "req_start_setup_001",
+  "version": 1,
+  "type": "start_provisioning",
+  "params": {
+    "approvalTimeoutMs": 30000
+  }
+}
+```
+
+Request rules:
+
+- `approvalTimeoutMs` is a positive integer with maximum `60000`.
+- Default `approvalTimeoutMs` when omitted is `30000`.
+- The request contains no mnemonic, seed, private key, import text, account
+  data, or policy data.
+
+Approved response:
+
+```json
+{
+  "id": "req_start_setup_001",
+  "version": 1,
+  "type": "provisioning_result",
+  "status": "started",
+  "provisioning": {
+    "state": "provisioning"
+  }
+}
+```
+
+If the user rejects or approval times out, Firmware returns the common `error`
+shape with `rejected` or `timeout`, and the previous provisioning state is
+preserved.
+
+If Firmware cannot persist the new state, it returns `storage_error` and the
+previous provisioning state is preserved.
+
+If Firmware is not `unprovisioned`, it returns `invalid_state` without showing
+approval UI and preserves the current provisioning state.
+
+### Cancel Provisioning
+
+Request:
+
+```json
+{
+  "id": "req_cancel_setup_001",
+  "version": 1,
+  "type": "cancel_provisioning",
+  "params": {
+    "approvalTimeoutMs": 30000
+  }
+}
+```
+
+Approved response:
+
+```json
+{
+  "id": "req_cancel_setup_001",
+  "version": 1,
+  "type": "provisioning_result",
+  "status": "canceled",
+  "provisioning": {
+    "state": "unprovisioned"
+  }
+}
+```
+
+If the user rejects or approval times out, Firmware returns the common `error`
+shape with `rejected` or `timeout`, and the previous provisioning state is
+preserved.
+
+If Firmware is not `provisioning`, it returns `invalid_state` without showing
+approval UI and preserves the current provisioning state.
+
+Canceling provisioning wipes setup scratch state before returning to
+`unprovisioned`. Runtime v0 stores no mnemonic, seed, private key, account, or
+policy scratch state, so there is no signing material to wipe in this slice.
+
+While a provisioning approval UI is active, Firmware should return `busy` for
+new UI-affecting or session-changing requests. `get_status` remains read-only
+and must keep working without changing approval UI.
 
 ## Identify Device
 

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   assertConnectResponse,
   assertDisconnectResponse,
+  assertProvisioningResponse,
   assertStatusResponse,
   createRequestId,
   isGatewayName,
@@ -10,9 +11,11 @@ import {
   isSafeRequestId,
   isSessionId,
   makeConnectRequest,
+  makeCancelProvisioningRequest,
   makeDisconnectRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
+  makeStartProvisioningRequest,
   MAX_SESSION_TTL_MS,
   parseProtocolResponse,
   sanitizeDisplayText,
@@ -76,7 +79,7 @@ test("creates and parses identify_device messages", () => {
 });
 
 test("preserves Firmware protocol error codes", () => {
-  for (const code of ["unsupported_type", "busy"]) {
+  for (const code of ["unsupported_type", "busy", "storage_error", "invalid_state"]) {
     const response = parseProtocolResponse(
       JSON.stringify({
         id: "req_1",
@@ -194,6 +197,119 @@ test("makeDisconnectRequest validates sessionId", () => {
   assert.throws(() => makeDisconnectRequest("not_a_session"), /Invalid sessionId/);
   assert.throws(() => makeDisconnectRequest("session_AABB"), /Invalid sessionId/);
   assert.throws(() => makeDisconnectRequest("session_"), /Invalid sessionId/);
+});
+
+test("creates provisioning transition requests without secret fields", () => {
+  const start = makeStartProvisioningRequest(30000, "req_start_setup");
+  assert.deepEqual(start, {
+    id: "req_start_setup",
+    version: 1,
+    type: "start_provisioning",
+    params: {
+      approvalTimeoutMs: 30000,
+    },
+  });
+
+  const cancel = makeCancelProvisioningRequest(30000, "req_cancel_setup");
+  assert.deepEqual(cancel, {
+    id: "req_cancel_setup",
+    version: 1,
+    type: "cancel_provisioning",
+    params: {
+      approvalTimeoutMs: 30000,
+    },
+  });
+
+  const serialized = serializeRequest(start) + serializeRequest(cancel);
+  assert.doesNotMatch(serialized, /mnemonic|seed|private|secret|import/i);
+
+  assert.throws(() => makeStartProvisioningRequest(0), /approvalTimeoutMs/);
+  assert.throws(() => makeCancelProvisioningRequest(60001), /approvalTimeoutMs/);
+  assert.throws(() => makeStartProvisioningRequest(30000, "req/unsafe"), /Invalid request id/);
+});
+
+test("parses provisioning transition responses and rejects malformed state", () => {
+  const started = assertProvisioningResponse(
+    parseProtocolResponse(
+      JSON.stringify({
+        id: "req_start_setup",
+        version: 1,
+        type: "provisioning_result",
+        status: "started",
+        provisioning: {
+          state: "provisioning",
+        },
+      }),
+      "req_start_setup",
+    ),
+  );
+  assert.equal(started.status, "started");
+  assert.equal(started.provisioning.state, "provisioning");
+
+  const canceled = assertProvisioningResponse(
+    parseProtocolResponse(
+      JSON.stringify({
+        id: "req_cancel_setup",
+        version: 1,
+        type: "provisioning_result",
+        status: "canceled",
+        provisioning: {
+          state: "unprovisioned",
+        },
+      }),
+      "req_cancel_setup",
+    ),
+  );
+  assert.equal(canceled.status, "canceled");
+  assert.equal(canceled.provisioning.state, "unprovisioned");
+
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        JSON.stringify({
+          id: "req_start_setup",
+          version: 1,
+          type: "provisioning_result",
+          status: "started",
+          provisioning: {
+            state: "signing_ready",
+          },
+        }),
+        "req_start_setup",
+      ),
+    { code: "protocol_error" },
+  );
+
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        JSON.stringify({
+          id: "req_start_setup",
+          version: 1,
+          type: "provisioning_result",
+          status: "started",
+          provisioning: {
+            state: "unprovisioned",
+          },
+        }),
+        "req_start_setup",
+      ),
+    { code: "protocol_error" },
+  );
+
+  const rejected = parseProtocolResponse(
+    JSON.stringify({
+      id: "req_start_setup",
+      version: 1,
+      type: "error",
+      error: {
+        code: "rejected",
+        message: "Provisioning start rejected.",
+      },
+    }),
+    "req_start_setup",
+  );
+  assert.throws(() => assertProvisioningResponse(rejected), { code: "rejected" });
 });
 
 test("parses connect_result approved and rejected responses", () => {

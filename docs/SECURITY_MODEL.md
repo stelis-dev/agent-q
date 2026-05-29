@@ -40,6 +40,10 @@ Implemented today:
 - A connect/disconnect runtime session held only in Gateway memory.
 - A physical approval modal on the StackChan CoreS3 target for `connect`: the
   user accepts or rejects on the device's screen.
+- A device-local provisioning state flag on the StackChan CoreS3 target. It can
+  move between `unprovisioned` and `provisioning` only after physical approval.
+  This is not signing readiness and stores no mnemonic, seed, private key,
+  account, or policy.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 

@@ -24,6 +24,8 @@ export type { DeviceState, ProvisioningState };
 export const PROTOCOL_VERSION = 1;
 export const MAX_APPROVAL_TIMEOUT_MS = 60000;
 export const DEFAULT_APPROVAL_TIMEOUT_MS = 30000;
+export const MAX_PROVISIONING_APPROVAL_TIMEOUT_MS = MAX_APPROVAL_TIMEOUT_MS;
+export const DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS = DEFAULT_APPROVAL_TIMEOUT_MS;
 // sessionTtlMs is a uint32 millisecond counter on the wire (see the firmware's
 // kSessionTtlMs). A value outside that range cannot come from a conformant
 // device, so the wire boundary rejects it as malformed. Bounding it here also
@@ -82,11 +84,31 @@ export interface DisconnectRequest {
   sessionId: string;
 }
 
+export interface StartProvisioningRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "start_provisioning";
+  params: {
+    approvalTimeoutMs: number;
+  };
+}
+
+export interface CancelProvisioningRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "cancel_provisioning";
+  params: {
+    approvalTimeoutMs: number;
+  };
+}
+
 export type ProtocolRequest =
   | GetStatusRequest
   | IdentifyDeviceRequest
   | ConnectRequest
-  | DisconnectRequest;
+  | DisconnectRequest
+  | StartProvisioningRequest
+  | CancelProvisioningRequest;
 
 export interface StatusResponse {
   id: string;
@@ -135,6 +157,14 @@ export interface DisconnectResponse {
   status: "disconnected";
 }
 
+export interface ProvisioningResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "provisioning_result";
+  status: "started" | "canceled";
+  provisioning: ProvisioningStatus;
+}
+
 export interface ProtocolErrorResponse {
   id?: string;
   version: typeof PROTOCOL_VERSION;
@@ -150,6 +180,7 @@ export type ProtocolResponse =
   | IdentifyDeviceResponse
   | ConnectResponse
   | DisconnectResponse
+  | ProvisioningResponse
   | ProtocolErrorResponse;
 
 export class ProtocolError extends Error {
@@ -167,9 +198,7 @@ export function createRequestId(): string {
 }
 
 export function makeGetStatusRequest(id = createRequestId()): GetStatusRequest {
-  if (!isSafeRequestId(id)) {
-    throw new ProtocolError("invalid_id", "Invalid request id.");
-  }
+  validateRequestId(id);
   return {
     id,
     version: PROTOCOL_VERSION,
@@ -182,9 +211,7 @@ export function makeIdentifyDeviceRequest(
   durationMs: number,
   id = createRequestId(),
 ): IdentifyDeviceRequest {
-  if (!isSafeRequestId(id)) {
-    throw new ProtocolError("invalid_id", "Invalid request id.");
-  }
+  validateRequestId(id);
   if (!isIdentificationCode(code)) {
     throw new ProtocolError("invalid_code", "Invalid identification code.");
   }
@@ -211,25 +238,14 @@ export function makeConnectRequest(
   approvalTimeoutMs: number = DEFAULT_APPROVAL_TIMEOUT_MS,
   id = createRequestId(),
 ): ConnectRequest {
-  if (!isSafeRequestId(id)) {
-    throw new ProtocolError("invalid_id", "Invalid request id.");
-  }
+  validateRequestId(id);
   if (!isGatewayName(gatewayName)) {
     throw new ProtocolError(
       "invalid_gateway_name",
       "gatewayName must be 1-64 printable ASCII characters.",
     );
   }
-  if (
-    !Number.isInteger(approvalTimeoutMs) ||
-    approvalTimeoutMs <= 0 ||
-    approvalTimeoutMs > MAX_APPROVAL_TIMEOUT_MS
-  ) {
-    throw new ProtocolError(
-      "invalid_approval_timeout",
-      `approvalTimeoutMs must be a positive integer <= ${MAX_APPROVAL_TIMEOUT_MS}.`,
-    );
-  }
+  validateApprovalTimeoutMs(approvalTimeoutMs);
   return {
     id,
     version: PROTOCOL_VERSION,
@@ -242,9 +258,7 @@ export function makeConnectRequest(
 }
 
 export function makeDisconnectRequest(sessionId: string, id = createRequestId()): DisconnectRequest {
-  if (!isSafeRequestId(id)) {
-    throw new ProtocolError("invalid_id", "Invalid request id.");
-  }
+  validateRequestId(id);
   if (!isSessionId(sessionId)) {
     throw new ProtocolError("invalid_session", "Invalid sessionId.");
   }
@@ -253,6 +267,38 @@ export function makeDisconnectRequest(sessionId: string, id = createRequestId())
     version: PROTOCOL_VERSION,
     type: "disconnect",
     sessionId,
+  };
+}
+
+export function makeStartProvisioningRequest(
+  approvalTimeoutMs: number = DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS,
+  id = createRequestId(),
+): StartProvisioningRequest {
+  validateRequestId(id);
+  validateApprovalTimeoutMs(approvalTimeoutMs);
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "start_provisioning",
+    params: {
+      approvalTimeoutMs,
+    },
+  };
+}
+
+export function makeCancelProvisioningRequest(
+  approvalTimeoutMs: number = DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS,
+  id = createRequestId(),
+): CancelProvisioningRequest {
+  validateRequestId(id);
+  validateApprovalTimeoutMs(approvalTimeoutMs);
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "cancel_provisioning",
+    params: {
+      approvalTimeoutMs,
+    },
   };
 }
 
@@ -403,6 +449,27 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
+  if (value.type === "provisioning_result") {
+    if (typeof value.id !== "string" || (value.status !== "started" && value.status !== "canceled")) {
+      throw new ProtocolError("protocol_error", "Provisioning response is malformed.");
+    }
+    const provisioning = sanitizeProvisioningStatus(value.provisioning);
+    if (provisioning === null) {
+      throw new ProtocolError("protocol_error", "Provisioning response state is malformed.");
+    }
+    const expectedState = value.status === "started" ? "provisioning" : "unprovisioned";
+    if (provisioning.state !== expectedState) {
+      throw new ProtocolError("protocol_error", "Provisioning response status and state disagree.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "provisioning_result",
+      status: value.status,
+      provisioning,
+    };
+  }
+
   throw new ProtocolError("protocol_error", "Protocol response type is unsupported.");
 }
 
@@ -446,6 +513,16 @@ export function assertDisconnectResponse(response: ProtocolResponse): Disconnect
   return response;
 }
 
+export function assertProvisioningResponse(response: ProtocolResponse): ProvisioningResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "provisioning_result") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not provisioning_result.");
+  }
+  return response;
+}
+
 // Reduce an untrusted wire or stored device object to a safe DeviceStatus, or
 // null when its identity fields are unusable. deviceId and state are REJECTED
 // when malformed (returns null); the display strings are sanitized to bounded
@@ -485,6 +562,25 @@ export function sanitizeDeviceStatusSnapshot(value: unknown): DeviceStatusSnapsh
 
 function isIdentificationCode(value: unknown): value is string {
   return typeof value === "string" && IDENTIFICATION_CODE_PATTERN.test(value);
+}
+
+function validateRequestId(id: string): void {
+  if (!isSafeRequestId(id)) {
+    throw new ProtocolError("invalid_id", "Invalid request id.");
+  }
+}
+
+function validateApprovalTimeoutMs(approvalTimeoutMs: number): void {
+  if (
+    !Number.isInteger(approvalTimeoutMs) ||
+    approvalTimeoutMs <= 0 ||
+    approvalTimeoutMs > MAX_APPROVAL_TIMEOUT_MS
+  ) {
+    throw new ProtocolError(
+      "invalid_approval_timeout",
+      `approvalTimeoutMs must be a positive integer <= ${MAX_APPROVAL_TIMEOUT_MS}.`,
+    );
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

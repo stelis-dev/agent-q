@@ -28,11 +28,16 @@ constexpr const char* kHardwareId = "stackchan-cores3";
 constexpr const char* kFirmwareVersion = "0.0.0";
 constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kDeviceIdKey = "device_id";
+constexpr const char* kProvisioningStateKey = "prov_state";
+constexpr const char* kProvisioningStateUnprovisioned = "unprovisioned";
+constexpr const char* kProvisioningStateProvisioning = "provisioning";
 constexpr uint32_t kDisplaySignalTimeoutMs = 30000;
 constexpr uint32_t kIdentifyDisplayDefaultMs = 10000;
 constexpr uint32_t kIdentifyDisplayMaxMs = 30000;
 constexpr uint32_t kConnectApprovalDefaultMs = 30000;
 constexpr uint32_t kConnectApprovalMaxMs = 60000;
+constexpr uint32_t kProvisioningApprovalDefaultMs = 30000;
+constexpr uint32_t kProvisioningApprovalMaxMs = 60000;
 // Session lifetime advertised to Gateway. 30 minutes is a convenience value for
 // the connection session, which grants no signing authority. When signing
 // methods are added, reconsider and likely shorten this.
@@ -44,6 +49,7 @@ constexpr size_t kLineBufferSize = 512;
 constexpr size_t kResponseBufferSize = 512;
 constexpr size_t kMaxRequestIdSize = 80;
 constexpr size_t kDeviceIdSize = 37;
+constexpr size_t kProvisioningStateSize = 16;
 constexpr size_t kIdentifyCodeSize = 5;
 constexpr size_t kSessionIdSize = 26;
 constexpr size_t kGatewayNameSize = 65;
@@ -90,6 +96,13 @@ enum class PendingKind {
     none,
     display_signal,
     connect,
+    start_provisioning,
+    cancel_provisioning,
+};
+
+enum class ProvisioningRuntimeState {
+    unprovisioned,
+    provisioning,
 };
 
 // Firmware-owned state is kept separate from StackChan-owned avatar/app state.
@@ -140,6 +153,15 @@ struct PendingApprovalState {
         active = true;
         kind = PendingKind::display_signal;
         deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kDisplaySignalTimeoutMs);
+    }
+
+    void begin_provisioning_transition(const char* request_id, PendingKind request_kind, uint32_t timeout_ms)
+    {
+        clear();
+        strlcpy(id, request_id, sizeof(id));
+        active = true;
+        kind = request_kind;
+        deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
     }
 };
 
@@ -194,6 +216,7 @@ struct AgentQUiState {
 char g_line_buffer[kLineBufferSize];
 size_t g_line_size = 0;
 char g_device_id[kDeviceIdSize];
+ProvisioningRuntimeState g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
 PendingApprovalState g_pending;
 IdentificationState g_identification;
 SessionState g_session;
@@ -372,6 +395,33 @@ const char* current_device_state()
     return "idle";
 }
 
+const char* provisioning_state_to_string(ProvisioningRuntimeState state)
+{
+    switch (state) {
+        case ProvisioningRuntimeState::provisioning:
+            return kProvisioningStateProvisioning;
+        case ProvisioningRuntimeState::unprovisioned:
+        default:
+            return kProvisioningStateUnprovisioned;
+    }
+}
+
+bool parse_provisioning_state(const char* value, ProvisioningRuntimeState* output)
+{
+    if (value == nullptr || output == nullptr) {
+        return false;
+    }
+    if (strcmp(value, kProvisioningStateUnprovisioned) == 0) {
+        *output = ProvisioningRuntimeState::unprovisioned;
+        return true;
+    }
+    if (strcmp(value, kProvisioningStateProvisioning) == 0) {
+        *output = ProvisioningRuntimeState::provisioning;
+        return true;
+    }
+    return false;
+}
+
 void write_status_response(const char* id)
 {
     JsonDocument response;
@@ -383,7 +433,7 @@ void write_status_response(const char* id)
     response["device"]["firmwareName"] = kFirmwareName;
     response["device"]["hardware"] = kHardwareId;
     response["device"]["firmwareVersion"] = kFirmwareVersion;
-    response["provisioning"]["state"] = "unprovisioned";
+    response["provisioning"]["state"] = provisioning_state_to_string(g_provisioning_state);
     write_json_document(response);
 }
 
@@ -453,6 +503,17 @@ void write_disconnect_result(const char* id)
     response["version"] = kProtocolVersion;
     response["type"] = "disconnect_result";
     response["status"] = "disconnected";
+    write_json_document(response);
+}
+
+void write_provisioning_result(const char* id, const char* status)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "provisioning_result";
+    response["status"] = status;
+    response["provisioning"]["state"] = provisioning_state_to_string(g_provisioning_state);
     write_json_document(response);
 }
 
@@ -557,6 +618,102 @@ void load_or_create_device_id()
         ESP_LOGI(kTag, "Created device id in NVS");
     }
     nvs_close(nvs);
+}
+
+void load_provisioning_state()
+{
+    g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
+
+    nvs_handle_t nvs = 0;
+    esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
+    if (result != ESP_OK) {
+        ESP_LOGW(kTag, "NVS open failed for provisioning state: %s", esp_err_to_name(result));
+        return;
+    }
+
+    char stored_state[kProvisioningStateSize] = {};
+    size_t length = sizeof(stored_state);
+    result = nvs_get_str(nvs, kProvisioningStateKey, stored_state, &length);
+    nvs_close(nvs);
+
+    if (result == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(kTag, "Provisioning state not found in NVS; using unprovisioned");
+        return;
+    }
+    if (result != ESP_OK) {
+        ESP_LOGW(kTag, "NVS read failed for provisioning state: %s", esp_err_to_name(result));
+        return;
+    }
+
+    ProvisioningRuntimeState parsed = ProvisioningRuntimeState::unprovisioned;
+    if (!parse_provisioning_state(stored_state, &parsed)) {
+        ESP_LOGW(kTag, "Unknown provisioning state in NVS; using unprovisioned");
+        return;
+    }
+
+    g_provisioning_state = parsed;
+    ESP_LOGI(kTag, "Loaded provisioning state from NVS: %s", provisioning_state_to_string(g_provisioning_state));
+}
+
+bool persist_provisioning_state(ProvisioningRuntimeState next_state)
+{
+    nvs_handle_t nvs = 0;
+    esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
+    if (result != ESP_OK) {
+        ESP_LOGW(kTag, "NVS open failed while saving provisioning state: %s", esp_err_to_name(result));
+        return false;
+    }
+
+    result = nvs_set_str(nvs, kProvisioningStateKey, provisioning_state_to_string(next_state));
+    if (result == ESP_OK) {
+        result = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+
+    if (result != ESP_OK) {
+        ESP_LOGW(kTag, "NVS write failed for provisioning state: %s", esp_err_to_name(result));
+        return false;
+    }
+
+    g_provisioning_state = next_state;
+    ESP_LOGI(kTag, "Stored provisioning state: %s", provisioning_state_to_string(g_provisioning_state));
+    return true;
+}
+
+bool wipe_provisioning_scratch_state()
+{
+    // Runtime v0 has no generated/imported signing material or setup scratch
+    // state. Future provisioning slices must wipe their temporary state here
+    // before returning to unprovisioned.
+    return true;
+}
+
+bool provisioning_transition_allowed(PendingKind request_kind)
+{
+    switch (request_kind) {
+        case PendingKind::start_provisioning:
+            return g_provisioning_state == ProvisioningRuntimeState::unprovisioned;
+        case PendingKind::cancel_provisioning:
+            return g_provisioning_state == ProvisioningRuntimeState::provisioning;
+        case PendingKind::none:
+        case PendingKind::display_signal:
+        case PendingKind::connect:
+        default:
+            return false;
+    }
+}
+
+void write_invalid_provisioning_state_response(const char* id, PendingKind request_kind)
+{
+    if (request_kind == PendingKind::start_provisioning) {
+        write_error_response(id, "invalid_state", "Provisioning can start only from unprovisioned state.");
+        return;
+    }
+    if (request_kind == PendingKind::cancel_provisioning) {
+        write_error_response(id, "invalid_state", "Provisioning can be canceled only while provisioning.");
+        return;
+    }
+    write_error_response(id, "invalid_state", "Invalid provisioning state transition.");
 }
 
 void on_yes_clicked(lv_event_t*)
@@ -858,6 +1015,22 @@ void show_display_signal_decision(const char* message)
     ESP_LOGW(kTag, "display_signal could not show Agent-Q avatar decision UI");
 }
 
+void show_start_provisioning_decision()
+{
+    if (show_avatar_decision("Start setup?")) {
+        return;
+    }
+    ESP_LOGW(kTag, "start_provisioning could not show Agent-Q avatar decision UI");
+}
+
+void show_cancel_provisioning_decision()
+{
+    if (show_avatar_decision("Cancel setup?")) {
+        return;
+    }
+    ESP_LOGW(kTag, "cancel_provisioning could not show Agent-Q avatar decision UI");
+}
+
 void poll_touch_fallback()
 {
     if (!g_pending.awaiting_choice()) {
@@ -920,6 +1093,14 @@ void ensure_pending_request_ui()
             show_connect_decision(g_pending.gateway_name);
             ESP_LOGW(kTag, "connect decision UI recovered: id=%s", g_pending.id);
             break;
+        case PendingKind::start_provisioning:
+            show_start_provisioning_decision();
+            ESP_LOGW(kTag, "start_provisioning decision UI recovered: id=%s", g_pending.id);
+            break;
+        case PendingKind::cancel_provisioning:
+            show_cancel_provisioning_decision();
+            ESP_LOGW(kTag, "cancel_provisioning decision UI recovered: id=%s", g_pending.id);
+            break;
         case PendingKind::none:
             break;
     }
@@ -944,6 +1125,16 @@ void send_choice_response_if_needed()
                     write_connect_rejected_response(g_pending.id, "timeout", "Connection approval timed out.");
                     ESP_LOGI(kTag, "connect timed out: id=%s", g_pending.id);
                     show_result_and_clear_pending("Connection timed out", AgentQMessageKind::timeout);
+                    break;
+                case PendingKind::start_provisioning:
+                    write_error_response(g_pending.id, "timeout", "Provisioning start approval timed out.");
+                    ESP_LOGI(kTag, "start_provisioning timed out: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Setup timed out", AgentQMessageKind::timeout);
+                    break;
+                case PendingKind::cancel_provisioning:
+                    write_error_response(g_pending.id, "timeout", "Provisioning cancellation timed out.");
+                    ESP_LOGI(kTag, "cancel_provisioning timed out: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Cancel timed out", AgentQMessageKind::timeout);
                     break;
                 case PendingKind::none:
                     clear_pending_state();
@@ -972,6 +1163,41 @@ void send_choice_response_if_needed()
                 write_connect_rejected_response(g_pending.id, "rejected", "Connection rejected.");
                 ESP_LOGI(kTag, "connect rejected: id=%s", g_pending.id);
                 show_result_and_clear_pending("Connection rejected", AgentQMessageKind::rejected);
+            }
+            break;
+        case PendingKind::start_provisioning:
+            if (approved) {
+                if (persist_provisioning_state(ProvisioningRuntimeState::provisioning)) {
+                    write_provisioning_result(g_pending.id, "started");
+                    ESP_LOGI(kTag, "start_provisioning approved: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Setup started", AgentQMessageKind::success);
+                } else {
+                    write_error_response(g_pending.id, "storage_error", "Could not store provisioning state.");
+                    ESP_LOGW(kTag, "start_provisioning storage error: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Storage error", AgentQMessageKind::error);
+                }
+            } else {
+                write_error_response(g_pending.id, "rejected", "Provisioning start rejected.");
+                ESP_LOGI(kTag, "start_provisioning rejected: id=%s", g_pending.id);
+                show_result_and_clear_pending("Setup rejected", AgentQMessageKind::rejected);
+            }
+            break;
+        case PendingKind::cancel_provisioning:
+            if (approved) {
+                if (wipe_provisioning_scratch_state() &&
+                    persist_provisioning_state(ProvisioningRuntimeState::unprovisioned)) {
+                    write_provisioning_result(g_pending.id, "canceled");
+                    ESP_LOGI(kTag, "cancel_provisioning approved: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Setup canceled", AgentQMessageKind::success);
+                } else {
+                    write_error_response(g_pending.id, "storage_error", "Could not store provisioning state.");
+                    ESP_LOGW(kTag, "cancel_provisioning storage error: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Storage error", AgentQMessageKind::error);
+                }
+            } else {
+                write_error_response(g_pending.id, "rejected", "Provisioning cancellation rejected.");
+                ESP_LOGI(kTag, "cancel_provisioning rejected: id=%s", g_pending.id);
+                show_result_and_clear_pending("Cancel rejected", AgentQMessageKind::rejected);
             }
             break;
         case PendingKind::none:
@@ -1078,6 +1304,39 @@ void handle_line(const char* line)
         return;
     }
 
+    if (strcmp(type, "start_provisioning") == 0 || strcmp(type, "cancel_provisioning") == 0) {
+        if (g_pending.active) {
+            write_error_response(id, "busy", "Device is awaiting physical input.");
+            return;
+        }
+
+        uint32_t approval_timeout_ms = request["params"]["approvalTimeoutMs"] | kProvisioningApprovalDefaultMs;
+        if (approval_timeout_ms == 0 || approval_timeout_ms > kProvisioningApprovalMaxMs) {
+            write_error_response(id, "invalid_approval_timeout", "Invalid approval timeout.");
+            return;
+        }
+
+        const PendingKind request_kind = strcmp(type, "start_provisioning") == 0
+            ? PendingKind::start_provisioning
+            : PendingKind::cancel_provisioning;
+        if (!provisioning_transition_allowed(request_kind)) {
+            write_invalid_provisioning_state_response(id, request_kind);
+            return;
+        }
+
+        if (request_kind == PendingKind::start_provisioning) {
+            g_pending.begin_provisioning_transition(id, request_kind, approval_timeout_ms);
+            show_start_provisioning_decision();
+            ESP_LOGI(kTag, "start_provisioning waiting for YES/NO: id=%s", id);
+            return;
+        }
+
+        g_pending.begin_provisioning_transition(id, request_kind, approval_timeout_ms);
+        show_cancel_provisioning_decision();
+        ESP_LOGI(kTag, "cancel_provisioning waiting for YES/NO: id=%s", id);
+        return;
+    }
+
     if (strcmp(type, "display_signal") != 0) {
         write_error_response(id, "unsupported_type", "Unsupported request type.");
         return;
@@ -1152,6 +1411,7 @@ namespace agent_q {
 void init_usb_request_server()
 {
     load_or_create_device_id();
+    load_provisioning_state();
     g_session.clear();
     g_session.next_expiry_check = 0;
     g_pending.clear();
