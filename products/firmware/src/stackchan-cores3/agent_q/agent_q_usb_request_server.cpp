@@ -60,10 +60,17 @@ constexpr size_t kRecoveryPhrasePrefixCellCount = 12;
 constexpr size_t kRecoveryPhrasePrefixCellSize = 8;
 constexpr int kScreenHeight = 240;
 constexpr int kScreenWidth = 320;
-constexpr int kTopDecisionStripHeight = 34;
-constexpr int kTopDecisionPanelHeight = kTopDecisionStripHeight;
-constexpr int kTopDecisionButtonWidth = kScreenWidth / 2;
-constexpr int kTopDecisionCornerRadius = 10;
+constexpr int kDecisionStripHeight = 34;
+constexpr int kDecisionPanelHeight = kDecisionStripHeight;
+constexpr int kDecisionButtonWidth = kScreenWidth / 2;
+constexpr int kDecisionCornerRadius = 10;
+constexpr int kRecoveryPhraseButtonHeight = 28;
+constexpr int kRecoveryPhraseButtonRadius = 7;
+constexpr int kRecoveryPhraseButtonWidth = 142;
+constexpr int kRecoveryPhraseButtonLeftX = 8;
+constexpr int kRecoveryPhraseButtonRightX = 154;
+constexpr int kRecoveryPhraseButtonBottomMargin = 8;
+constexpr int kRecoveryPhraseTopMargin = kRecoveryPhraseButtonBottomMargin;
 constexpr uint32_t kAgentQResultDisplayMs = 1800;
 constexpr uint32_t kAgentQHeadLiftMs = 900;
 constexpr int kAgentQHeadLiftPitchDelta = 160;
@@ -71,7 +78,7 @@ constexpr int kAgentQHeadLiftSpeed = 280;
 
 enum class AgentQUiPanelKind {
     none,
-    top_decision,
+    decision_strip,
     recovery_phrase_display,
 };
 
@@ -101,6 +108,8 @@ enum class AgentQUiEventKind {
     panel_deleted,
     setup_requested,
     provisioning_welcome_requested,
+    recovery_phrase_cancel_requested,
+    recovery_phrase_confirm_requested,
 };
 
 struct AgentQUiEvent {
@@ -312,7 +321,7 @@ void wipe_recovery_phrase_scratch(const char* reason)
 
 bool is_decision_panel_kind(AgentQUiPanelKind kind)
 {
-    return kind == AgentQUiPanelKind::top_decision;
+    return kind == AgentQUiPanelKind::decision_strip;
 }
 
 bool tick_reached(TickType_t deadline)
@@ -1075,6 +1084,16 @@ void on_setup_clicked(lv_event_t*)
     enqueue_setup_requested();
 }
 
+void on_recovery_phrase_cancel_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::recovery_phrase_cancel_requested);
+}
+
+void on_recovery_phrase_confirm_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::recovery_phrase_confirm_requested);
+}
+
 void clear_agent_q_avatar_ui();
 
 void make_button_label_with_font(lv_obj_t* button, const char* text, const lv_font_t* font, lv_event_cb_t callback)
@@ -1093,18 +1112,64 @@ void make_button_label_with_font(lv_obj_t* button, const char* text, const lv_fo
     lv_obj_add_event_cb(label, callback, LV_EVENT_CLICKED, nullptr);
 }
 
-void make_top_decision_button(lv_obj_t* parent, const char* text, int x, lv_color_t color, lv_event_cb_t callback)
+void make_decision_button_corner_fill(lv_obj_t* button, lv_align_t align, lv_color_t color, lv_event_cb_t callback)
+{
+    lv_obj_t* fill = lv_obj_create(button);
+    lv_obj_remove_style_all(fill);
+    lv_obj_set_size(fill, kDecisionCornerRadius, kDecisionCornerRadius);
+    lv_obj_align(fill, align, 0, 0);
+    lv_obj_set_style_bg_color(fill, color, 0);
+    lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
+    lv_obj_add_flag(fill, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(fill, callback, LV_EVENT_CLICKED, nullptr);
+}
+
+void make_decision_button(lv_obj_t* parent, const char* text, int x, lv_color_t color, lv_event_cb_t callback)
 {
     // A plain clickable object avoids themed button shadows/scrollbars that can
     // show up as stray vertical lines over the avatar.
     lv_obj_t* button = lv_obj_create(parent);
     lv_obj_remove_style_all(button);
-    lv_obj_set_size(button, kTopDecisionButtonWidth, kTopDecisionStripHeight);
+    lv_obj_set_size(button, kDecisionButtonWidth, kDecisionStripHeight);
     lv_obj_align(button, LV_ALIGN_TOP_LEFT, x, 0);
     lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(button, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_radius(button, 0, 0);
+    lv_obj_set_style_radius(button, kDecisionCornerRadius, 0);
+    lv_obj_set_style_border_width(button, 0, 0);
+    lv_obj_set_style_outline_width(button, 0, 0);
+    lv_obj_set_style_shadow_width(button, 0, 0);
+    lv_obj_set_style_pad_all(button, 0, 0);
+    lv_obj_set_style_bg_color(button, color, 0);
+    lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
+    lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, nullptr);
+    if (x == 0) {
+        make_decision_button_corner_fill(button, LV_ALIGN_TOP_RIGHT, color, callback);
+        make_decision_button_corner_fill(button, LV_ALIGN_BOTTOM_LEFT, color, callback);
+        make_decision_button_corner_fill(button, LV_ALIGN_BOTTOM_RIGHT, color, callback);
+    } else {
+        make_decision_button_corner_fill(button, LV_ALIGN_TOP_LEFT, color, callback);
+        make_decision_button_corner_fill(button, LV_ALIGN_BOTTOM_LEFT, color, callback);
+        make_decision_button_corner_fill(button, LV_ALIGN_BOTTOM_RIGHT, color, callback);
+    }
+    make_button_label_with_font(button, text, &lv_font_montserrat_14, callback);
+}
+
+void make_recovery_phrase_action_button(
+    lv_obj_t* parent,
+    const char* text,
+    int x,
+    lv_color_t color,
+    lv_event_cb_t callback)
+{
+    lv_obj_t* button = lv_obj_create(parent);
+    lv_obj_remove_style_all(button);
+    lv_obj_set_size(button, kRecoveryPhraseButtonWidth, kRecoveryPhraseButtonHeight);
+    lv_obj_align(button, LV_ALIGN_BOTTOM_LEFT, x, -kRecoveryPhraseButtonBottomMargin);
+    lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(button, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_radius(button, kRecoveryPhraseButtonRadius, 0);
     lv_obj_set_style_border_width(button, 0, 0);
     lv_obj_set_style_outline_width(button, 0, 0);
     lv_obj_set_style_shadow_width(button, 0, 0);
@@ -1292,7 +1357,7 @@ void clear_agent_q_request_ui()
     clear_agent_q_panel();
 }
 
-void show_top_decision_panel()
+void show_decision_panel()
 {
     g_identification.clear();
 
@@ -1301,14 +1366,14 @@ void show_top_decision_panel()
         clear_panel_locked();
 
         g_ui.panel = lv_obj_create(lv_screen_active());
-        register_agent_q_panel_locked(AgentQUiPanelKind::top_decision);
+        register_agent_q_panel_locked(AgentQUiPanelKind::decision_strip);
         lv_obj_remove_style_all(g_ui.panel);
-        lv_obj_set_size(g_ui.panel, kScreenWidth, kTopDecisionPanelHeight);
-        lv_obj_align(g_ui.panel, LV_ALIGN_TOP_MID, 0, 0);
+        lv_obj_set_size(g_ui.panel, kScreenWidth, kDecisionPanelHeight);
+        lv_obj_align(g_ui.panel, LV_ALIGN_BOTTOM_MID, 0, 0);
         lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
         lv_obj_set_scrollbar_mode(g_ui.panel, LV_SCROLLBAR_MODE_OFF);
-        lv_obj_set_style_radius(g_ui.panel, kTopDecisionCornerRadius, 0);
+        lv_obj_set_style_radius(g_ui.panel, 0, 0);
         lv_obj_set_style_clip_corner(g_ui.panel, true, 0);
         lv_obj_set_style_border_width(g_ui.panel, 0, 0);
         lv_obj_set_style_outline_width(g_ui.panel, 0, 0);
@@ -1316,8 +1381,8 @@ void show_top_decision_panel()
         lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_TRANSP, 0);
         lv_obj_set_style_pad_all(g_ui.panel, 0, 0);
 
-        make_top_decision_button(g_ui.panel, "Cancel", 0, lv_color_hex(0xA53B3B), on_no_clicked);
-        make_top_decision_button(g_ui.panel, "Confirm", kTopDecisionButtonWidth, lv_color_hex(0x24875A), on_yes_clicked);
+        make_decision_button(g_ui.panel, "Cancel", 0, lv_color_hex(0xA53B3B), on_no_clicked);
+        make_decision_button(g_ui.panel, "Confirm", kDecisionButtonWidth, lv_color_hex(0x24875A), on_yes_clicked);
 
         lv_obj_move_foreground(g_ui.panel);
     }
@@ -1361,7 +1426,7 @@ bool show_avatar_decision(const char* message)
     if (!show_agent_q_message(message, AgentQMessageKind::approval, AgentQUiMode::decision, 0)) {
         return false;
     }
-    show_top_decision_panel();
+    show_decision_panel();
     return true;
 }
 
@@ -1436,6 +1501,40 @@ void show_factory_reset_decision()
     ESP_LOGW(kTag, "factory_reset could not show Agent-Q avatar decision UI");
 }
 
+enum class RecoveryPhraseCommitResult {
+    ok,
+    missing_scratch,
+    root_storage_error,
+    state_storage_error,
+};
+
+RecoveryPhraseCommitResult store_recovery_phrase_and_mark_provisioned(const char* reason)
+{
+    if (g_provisioning_scratch.recovery_phrase_stage != RecoveryPhraseScratchStage::displayed &&
+        g_provisioning_scratch.recovery_phrase_stage != RecoveryPhraseScratchStage::backup_confirmation_pending) {
+        return RecoveryPhraseCommitResult::missing_scratch;
+    }
+
+    if (!agent_q::store_root_material(
+            g_provisioning_scratch.root_material,
+            sizeof(g_provisioning_scratch.root_material))) {
+        g_root_material_consistency_error = agent_q::has_root_material();
+        wipe_recovery_phrase_scratch(reason);
+        return RecoveryPhraseCommitResult::root_storage_error;
+    }
+
+    if (!persist_provisioning_state(ProvisioningRuntimeState::provisioned)) {
+        agent_q::wipe_root_material();
+        g_root_material_consistency_error = agent_q::has_root_material();
+        wipe_recovery_phrase_scratch(reason);
+        return RecoveryPhraseCommitResult::state_storage_error;
+    }
+
+    g_root_material_consistency_error = false;
+    wipe_recovery_phrase_scratch(reason);
+    return RecoveryPhraseCommitResult::ok;
+}
+
 bool show_recovery_phrase_display(const char* recovery_phrase)
 {
     if (!format_recovery_phrase_prefix_cells(
@@ -1455,15 +1554,15 @@ bool show_recovery_phrase_display(const char* recovery_phrase)
     }
     register_agent_q_panel_locked(AgentQUiPanelKind::recovery_phrase_display);
     lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_scrollbar_mode(g_ui.panel, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(g_ui.panel, kScreenWidth - 16, kScreenHeight - 28);
-    lv_obj_align(g_ui.panel, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_set_size(g_ui.panel, kScreenWidth - 16, kScreenHeight - 16);
+    lv_obj_align(g_ui.panel, LV_ALIGN_TOP_MID, 0, 8);
     lv_obj_set_style_radius(g_ui.panel, 8, 0);
-    lv_obj_set_style_border_width(g_ui.panel, 2, 0);
-    lv_obj_set_style_border_color(g_ui.panel, lv_color_hex(0x24875A), 0);
+    lv_obj_set_style_border_width(g_ui.panel, 0, 0);
     lv_obj_set_style_bg_color(g_ui.panel, lv_color_hex(0xF7FFF9), 0);
     lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(g_ui.panel, 10, 0);
+    lv_obj_set_style_pad_all(g_ui.panel, 0, 0);
 
     lv_obj_t* title = lv_label_create(g_ui.panel);
     if (title == nullptr) {
@@ -1473,7 +1572,7 @@ bool show_recovery_phrase_display(const char* recovery_phrase)
     lv_label_set_text(title, "BIP-39 prefixes (DEV)");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kRecoveryPhraseTopMargin);
 
     lv_obj_t* warning = lv_label_create(g_ui.panel);
     if (warning == nullptr) {
@@ -1486,10 +1585,10 @@ bool show_recovery_phrase_display(const char* recovery_phrase)
     lv_obj_set_style_text_align(warning, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(warning, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(warning, lv_color_hex(0x3A2B00), 0);
-    lv_obj_align(warning, LV_ALIGN_TOP_MID, 0, 22);
+    lv_obj_align(warning, LV_ALIGN_TOP_MID, 0, 22 + kRecoveryPhraseTopMargin);
 
-    constexpr int kGridLeft = 12;
-    constexpr int kGridTop = 64;
+    constexpr int kGridLeft = 17;
+    constexpr int kGridTop = 58 + kRecoveryPhraseTopMargin;
     constexpr int kGridCellWidth = 90;
     constexpr int kGridCellHeight = 22;
     constexpr int kGridRowHeight = 25;
@@ -1546,15 +1645,11 @@ bool show_recovery_phrase_display(const char* recovery_phrase)
         lv_obj_set_style_text_color(prefix_label, lv_color_hex(0x111827), 0);
         lv_obj_align(prefix_label, LV_ALIGN_LEFT_MID, kPrefixLeft, 0);
     }
-    lv_obj_t* footer = lv_label_create(g_ui.panel);
-    if (footer == nullptr) {
-        clear_panel_locked();
-        return false;
-    }
-    lv_label_set_text(footer, "Confirm backup from setup.");
-    lv_obj_set_style_text_font(footer, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(footer, lv_color_hex(0x475467), 0);
-    lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, 0);
+    make_recovery_phrase_action_button(
+        g_ui.panel, "Cancel", kRecoveryPhraseButtonLeftX, lv_color_hex(0xA53B3B), on_recovery_phrase_cancel_clicked);
+    make_recovery_phrase_action_button(
+        g_ui.panel, "Confirm", kRecoveryPhraseButtonRightX, lv_color_hex(0x24875A), on_recovery_phrase_confirm_clicked);
+
     lv_obj_move_foreground(g_ui.panel);
     return true;
 }
@@ -1693,6 +1788,48 @@ void start_local_provisioning_from_setup_touch()
     show_agent_q_message("Generation error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
 }
 
+void cancel_recovery_phrase_from_local_ui()
+{
+    if (g_provisioning_scratch.recovery_phrase_stage == RecoveryPhraseScratchStage::none) {
+        ESP_LOGW(kTag, "Local setup cancel ignored because no setup phrase is active");
+        show_agent_q_message("Setup unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        return;
+    }
+
+    clear_agent_q_panel();
+    wipe_provisioning_scratch_state();
+    ESP_LOGI(kTag, "Local setup canceled from recovery phrase UI");
+    show_agent_q_message("Setup canceled", AgentQMessageKind::rejected, AgentQUiMode::result, kAgentQResultDisplayMs);
+}
+
+void confirm_recovery_phrase_from_local_ui()
+{
+    if (!recovery_phrase_backup_confirmation_ready()) {
+        ESP_LOGW(kTag, "Local backup confirmation ignored because recovery phrase is unavailable");
+        show_agent_q_message("Phrase unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        return;
+    }
+
+    const RecoveryPhraseCommitResult result =
+        store_recovery_phrase_and_mark_provisioned("local recovery phrase backup confirmed");
+    clear_agent_q_panel();
+    switch (result) {
+        case RecoveryPhraseCommitResult::ok:
+            ESP_LOGI(kTag, "Local recovery phrase backup confirmed and provisioned");
+            show_agent_q_message("Provisioned", AgentQMessageKind::success, AgentQUiMode::result, kAgentQResultDisplayMs);
+            break;
+        case RecoveryPhraseCommitResult::missing_scratch:
+            ESP_LOGW(kTag, "Local backup confirmation missing scratch");
+            show_agent_q_message("Phrase unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            break;
+        case RecoveryPhraseCommitResult::root_storage_error:
+        case RecoveryPhraseCommitResult::state_storage_error:
+            ESP_LOGW(kTag, "Local backup confirmation storage error");
+            show_agent_q_message("Storage error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            break;
+    }
+}
+
 void drain_ui_events()
 {
     if (g_ui_event_queue == nullptr) {
@@ -1708,6 +1845,16 @@ void drain_ui_events()
 
         if (event.kind == AgentQUiEventKind::provisioning_welcome_requested) {
             show_provisioning_welcome_if_available();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::recovery_phrase_cancel_requested) {
+            cancel_recovery_phrase_from_local_ui();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::recovery_phrase_confirm_requested) {
+            confirm_recovery_phrase_from_local_ui();
             continue;
         }
 
@@ -1914,35 +2061,27 @@ void send_choice_response_if_needed()
             break;
         case PendingKind::confirm_recovery_phrase_backup:
             if (approved) {
-                if (g_provisioning_scratch.recovery_phrase_stage !=
-                    RecoveryPhraseScratchStage::backup_confirmation_pending) {
+                const RecoveryPhraseCommitResult result =
+                    store_recovery_phrase_and_mark_provisioned("confirm_recovery_phrase_backup approved");
+                if (result == RecoveryPhraseCommitResult::missing_scratch) {
                     write_error_response(
                         g_pending.id, "invalid_setup_step", "Recovery phrase is no longer available for backup confirmation.");
                     ESP_LOGW(kTag, "confirm_recovery_phrase_backup missing scratch: id=%s", g_pending.id);
                     show_result_and_clear_pending("Phrase unavailable", AgentQMessageKind::error);
                     break;
                 }
-                if (!agent_q::store_root_material(
-                        g_provisioning_scratch.root_material,
-                        sizeof(g_provisioning_scratch.root_material))) {
-                    g_root_material_consistency_error = agent_q::has_root_material();
-                    wipe_recovery_phrase_scratch("confirm_recovery_phrase_backup storage failed");
+                if (result == RecoveryPhraseCommitResult::root_storage_error) {
                     write_error_response(g_pending.id, "storage_error", "Could not store root material.");
                     ESP_LOGW(kTag, "confirm_recovery_phrase_backup root material storage failed: id=%s", g_pending.id);
                     show_result_and_clear_pending("Storage error", AgentQMessageKind::error);
                     break;
                 }
-                if (!persist_provisioning_state(ProvisioningRuntimeState::provisioned)) {
-                    agent_q::wipe_root_material();
-                    g_root_material_consistency_error = agent_q::has_root_material();
-                    wipe_recovery_phrase_scratch("confirm_recovery_phrase_backup state storage failed");
+                if (result == RecoveryPhraseCommitResult::state_storage_error) {
                     write_error_response(g_pending.id, "storage_error", "Could not store provisioned state.");
                     ESP_LOGW(kTag, "confirm_recovery_phrase_backup provisioned state storage failed: id=%s", g_pending.id);
                     show_result_and_clear_pending("Storage error", AgentQMessageKind::error);
                     break;
                 }
-                g_root_material_consistency_error = false;
-                wipe_recovery_phrase_scratch("confirm_recovery_phrase_backup approved");
                 write_recovery_phrase_result(g_pending.id, "confirmed");
                 ESP_LOGI(kTag, "confirm_recovery_phrase_backup approved and provisioned: id=%s", g_pending.id);
                 show_result_and_clear_pending("Provisioned", AgentQMessageKind::success);

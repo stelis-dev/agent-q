@@ -56,7 +56,8 @@ Implemented today:
 - A physical-approval `factory_reset` source path for StackChan CoreS3 that
   erases the DEV_PROFILE root entropy blob, clears RAM session/setup scratch,
   persists `unprovisioned`, and recovers from material/state consistency error.
-  Hardware smoke is still required.
+  It is a development/recovery path and is not exposed as a normal
+  agent-facing MCP tool. Hardware smoke is still required.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
@@ -370,6 +371,7 @@ Must not be reachable through a normal MCP signing path:
 
 - Firmware update.
 - Policy write.
+- Factory reset or root-material wipe.
 - `export_key`, `raw_sign`, `read_memory`, `debug_command`.
 
 Allowed direction:

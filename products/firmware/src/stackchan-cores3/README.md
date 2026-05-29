@@ -28,11 +28,13 @@ The current implementation includes:
   `start_provisioning` generates DEV_PROFILE BIP-39 root entropy in RAM,
   displays only the up-to-4-letter word prefixes on device in a 3-column by
   4-row grid, and stores the root entropy only after physical backup
-  confirmation.
+  confirmation. The local setup speech bubble starts the same flow on device,
+  and the recovery phrase panel also has device-local Cancel/Confirm buttons.
 - a USB JSONL `factory_reset` request that requires physical approval, clears
   RAM sessions and volatile setup scratch, erases the DEV_PROFILE root entropy
   blob, persists `unprovisioned`, and recovers from material/state consistency
-  errors.
+  errors. This path is for DEV_PROFILE development and recovery; Gateway must
+  not expose it as a normal agent-facing MCP tool.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP

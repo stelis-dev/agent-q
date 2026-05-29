@@ -44,7 +44,7 @@ Legend:
 | `connect` | △ | Accepted only after material-backed `provisioned` state and physical approval. The session is RAM-only and does not authorize signing. Hardware smoke is still required. |
 | `disconnect` | △ | Clears a matching RAM-only Firmware session after material-backed `provisioned` state. Hardware smoke is still required. |
 | `factory_reset` | △ | Requires physical approval, erases DEV_PROFILE root entropy, clears RAM session/setup scratch, persists `unprovisioned`, and recovers from material/state consistency errors. Hardware smoke is still required. |
-| Agent-Q avatar UI | O | Uses an Agent-Q-owned speech-bubble decorator and top decision strip. |
+| Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
 | Display power control | O | Turns the screen backlight off after one minute of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. |
@@ -113,7 +113,7 @@ StackChan owns the default avatar face and normal device runtime.
 Agent-Q owns only the temporary UI objects it creates:
 
 - Agent-Q speech-bubble decorator;
-- top decision strip for Cancel/Confirm;
+- bottom decision strip for Cancel/Confirm;
 - temporary emotion override;
 - temporary head movement feedback.
 
@@ -127,12 +127,12 @@ Current UI behavior:
 | `unprovisioned` idle | Touchable setup speech bubble | `idle` |
 | `get_status` | No UI | `idle` unless approval UI is active |
 | `identify_device` | Temporary speech bubble with short code | `idle` |
-| `display_signal` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
-| `start_provisioning` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
-| `cancel_provisioning` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
-| Recovery phrase displayed | Temporary setup panel with 12 numbered up-to-4-letter prefixes in 3 columns by 4 rows | `busy` |
-| `confirm_recovery_phrase_backup` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
-| `factory_reset` pending | Speech bubble plus top Cancel/Confirm strip | `awaiting_approval` |
+| `display_signal` pending | Top speech bubble plus bottom Cancel/Confirm strip | `awaiting_approval` |
+| `start_provisioning` pending | Top speech bubble plus bottom Cancel/Confirm strip | `awaiting_approval` |
+| `cancel_provisioning` pending | Top speech bubble plus bottom Cancel/Confirm strip | `awaiting_approval` |
+| Recovery phrase displayed | Temporary setup panel with 12 numbered up-to-4-letter prefixes in 3 columns by 4 rows and bottom Cancel/Confirm buttons | `busy` |
+| `confirm_recovery_phrase_backup` pending | Top speech bubble plus bottom Cancel/Confirm strip | `awaiting_approval` |
+| `factory_reset` pending | Top speech bubble plus bottom Cancel/Confirm strip | `awaiting_approval` |
 | Approved result | Temporary success speech and emotion | `idle` |
 | Rejected result | Temporary rejected speech and emotion | `idle` |
 | Timeout result | Temporary timeout speech and emotion | `idle` |
@@ -234,13 +234,14 @@ The target tracks the volatile phrase with a RAM-only scratch substate:
 separate from persistent `provisioning.state`, pending approval, and the LVGL
 panel pointer.
 
-`confirm_recovery_phrase_backup` is accepted only after the scratch substate is
-`displayed`. Accepting the request moves it to `backup_confirmation_pending`;
-approval, rejection, or timeout wipes the volatile phrase and returns the
-scratch substate to `none`. Approval stores the DEV_PROFILE root entropy blob,
-persists `provisioned`, and then wipes volatile scratch. Storage failure wipes
-scratch, returns `storage_error`, and must not report `provisioned`. Hardware
-smoke is still required.
+Backup confirmation is accepted only after the scratch substate is `displayed`.
+The device-local Confirm button on the recovery phrase panel stores the
+DEV_PROFILE root entropy blob, persists `provisioned`, and then wipes volatile
+scratch. The protocol `confirm_recovery_phrase_backup` request first moves the
+scratch substate to `backup_confirmation_pending`; approval, rejection, or
+timeout wipes the volatile phrase and returns the scratch substate to `none`.
+Storage failure wipes scratch, returns `storage_error`, and must not report
+`provisioned`. Hardware smoke is still required.
 
 The LVGL panel is not the source of truth for recovery phrase validity. If the
 recovery phrase display panel is removed or replaced while the scratch substate
@@ -265,7 +266,9 @@ the internal material/state consistency-error condition. Approval clears any
 RAM session, wipes volatile setup scratch, erases the DEV_PROFILE root entropy
 blob, persists `unprovisioned`, and clears the consistency error only after
 storage cleanup succeeds. Rejection and timeout leave stored material and state
-unchanged.
+unchanged. This is a DEV_PROFILE development and recovery operation; Gateway
+must not expose it as a normal agent-facing MCP tool, and USER_PROFILE reset
+must be kept behind a local recovery/setup path with physical approval.
 
 Mnemonic import, account derivation, policy, signing APIs, and USER_PROFILE
 secure root-material handling are not implemented on this target.

@@ -19,6 +19,9 @@ private:
     lv_obj_t* container_ = nullptr;
     lv_obj_t* arrow_ = nullptr;
     lv_obj_t* bubble_ = nullptr;
+    lv_obj_t* top_square_ = nullptr;
+    lv_obj_t* left_square_ = nullptr;
+    lv_obj_t* text_clip_ = nullptr;
     lv_obj_t* label_ = nullptr;
 };
 

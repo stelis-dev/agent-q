@@ -107,6 +107,7 @@ Allowed:
   confirmation prompt is active
 - `confirm_recovery_phrase_backup` only while volatile mnemonic setup scratch is
   displayed
+- device-local setup speech bubble and recovery phrase Cancel/Confirm controls
 
 Rejected:
 
@@ -215,7 +216,8 @@ prompt is active. Other `O` operations may still return `busy` while a physical
 approval prompt or device-only setup material display is active.
 `factory_reset` is also allowed from Firmware's internal consistency-error
 state even though that error state is reported as `device.state = error`, not as
-a separate `provisioning.state` value.
+a separate `provisioning.state` value. It is a DEV_PROFILE development/recovery
+operation and must not be exposed as a normal agent-facing MCP tool.
 
 Gateway may hide unavailable operations, but Firmware must still reject them.
 
@@ -232,7 +234,7 @@ Boot
 -> setup speech bubble touch or start_provisioning request
 -> generate mnemonic on device
 -> show up-to-4-letter prefixes once on device
--> user confirms backup or cancels
+-> user confirms backup or cancels on device, or through an approved protocol request
 -> if confirmed, store root material locally
 -> only after storage succeeds, provisioned
 -> wipe volatile scratch

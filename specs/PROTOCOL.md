@@ -313,6 +313,11 @@ authority for the setup UI transition; the host request is only an untrusted
 prompt to show that approval UI. Agent-facing MCP tools must not expose these
 write actions as normal signing tools.
 
+The StackChan CoreS3 target also supports device-local setup entry by tapping
+the setup speech bubble while unprovisioned, plus device-local Cancel/Confirm
+buttons on the recovery phrase display. These local controls do not add protocol
+messages; they must follow the same Firmware-owned setup scratch and wipe rules.
+
 Firmware owns recovery phrase scratch as a volatile setup substate, separate
 from persistent `provisioning.state`, pending physical approval, and LVGL panel
 state. The v0 substates are:
@@ -542,6 +547,10 @@ Request rules:
   pending or device-only setup material is active.
 - Firmware must not expose root material, mnemonic text, or displayed prefixes
   before, during, or after reset.
+- Gateway and MCP must not expose `factory_reset` as a normal agent-facing
+  signing or management tool. It is a destructive DEV_PROFILE development and
+  recovery operation in the current implementation. USER_PROFILE reset must be
+  gated by local recovery/setup mode and physical approval.
 
 Approved response:
 

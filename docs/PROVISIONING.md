@@ -163,11 +163,11 @@ return `invalid_state` without opening approval UI.
 ## Recovery Phrase Setup v0
 
 Current StackChan CoreS3 source enters recovery phrase setup through approved
-`start_provisioning` or through the local setup speech bubble shown while the device is
-`unprovisioned`, then finishes through `confirm_recovery_phrase_backup` or
-`cancel_provisioning`. Protocol requests require physical approval on the device
-and do not require `sessionId`; the local setup speech bubble touch is already a physical
-device action.
+`start_provisioning` or through the local setup speech bubble shown while the
+device is `unprovisioned`. The recovery phrase panel has device-local
+Cancel/Confirm buttons. Protocol requests require physical approval on the
+device and do not require `sessionId`; the local setup speech bubble touch and
+local recovery phrase buttons are already physical device actions.
 
 Approved `start_provisioning` generates 128-bit BIP-39 root entropy from an
 Agent-Q CSPRNG seeded from early boot entropy before HAL initialization, then
@@ -189,16 +189,16 @@ LVGL panel state. The UI is not the source of truth; panel deletion or
 replacement is treated as an event that must move `displayed` to `none` by
 wiping or invalidating the phrase.
 
-`confirm_recovery_phrase_backup` is accepted only after a phrase has been
-displayed. Accepting the request moves the scratch substate from `displayed` to
-`backup_confirmation_pending`; approval, rejection, or timeout always wipes the
-volatile phrase and returns the scratch substate to `none`. On approval,
-Firmware first stores the binary root entropy, then persists
-`provisioning.state = provisioned`, then wipes volatile scratch. If root
-material storage or state persistence fails, Firmware wipes volatile scratch,
-returns `storage_error`, and must not report `provisioned`. Rejection or timeout
-also wipes the volatile phrase, so the user must generate a new phrase to
-continue.
+Backup confirmation is accepted only after a phrase has been displayed. The
+device-local Confirm button stores the binary root entropy, then persists
+`provisioning.state = provisioned`, then wipes volatile scratch. The protocol
+`confirm_recovery_phrase_backup` request moves the scratch substate from
+`displayed` to `backup_confirmation_pending`; approval, rejection, or timeout
+always wipes the volatile phrase and returns the scratch substate to `none`. If
+root material storage or state persistence fails, Firmware wipes volatile
+scratch, returns `storage_error`, and must not report `provisioned`. Rejection
+or timeout also wipes the volatile phrase, so the user must generate a new
+phrase to continue.
 
 The recovery phrase is backup-ready only while its device display is still the
 active setup UI. If that display is removed or replaced, Firmware wipes or
@@ -229,7 +229,9 @@ setup scratch, erases the stored root entropy blob, persists
 `provisioning.state = unprovisioned`, and is also valid when Firmware has failed
 closed because stored state and root material disagree. If erase or state
 persistence fails, Firmware returns `storage_error` and must not claim reset
-success.
+success. It is a development/recovery operation for this DEV_PROFILE slice, not
+a normal agent-facing MCP tool. USER_PROFILE reset must stay behind a local
+recovery or setup path with physical approval.
 
 ## Implementation Order
 
