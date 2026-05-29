@@ -82,6 +82,8 @@ selected device only after the user chooses one.
 
 ## Current Status
 
+Detailed implementation status lives in `docs/IMPLEMENTATION_STATUS.md`.
+
 Implemented:
 
 - Device discovery, identification, and selection over USB.

@@ -3,6 +3,8 @@
 This directory contains the first hardware-specific Agent-Q firmware source
 overlay.
 
+Target-specific behavior and capability status live in `SPEC.md`.
+
 The current implementation includes:
 
 - a boot-time signing self-test that proves the firmware can link the signing
