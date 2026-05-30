@@ -8,6 +8,7 @@ import {
   DISCONNECT_REASONS,
   GET_ACCOUNTS_SESSION_ENDED_REASONS,
   GET_CAPABILITIES_SESSION_ENDED_REASONS,
+  GET_POLICY_SESSION_ENDED_REASONS,
   GatewayCore,
   MAX_IDENTIFY_DURATION_MS,
   type ConnectDeviceResult,
@@ -17,6 +18,7 @@ import {
   type DisconnectDeviceResult,
   type GetAccountsResult,
   type GetCapabilitiesResult,
+  type GetPolicyResult,
   type SetDeviceMetadataResult,
 } from "./core.js";
 import { GatewayError, toGatewayError } from "./errors.js";
@@ -25,11 +27,14 @@ import {
   CALL_METHOD_CHAIN_PATTERN,
   CALL_METHOD_NAME_PATTERN,
   ED25519_PUBLIC_KEY_BASE64_PATTERN,
+  AGENT_Q_POLICY_SCHEMA,
   MAX_ACCOUNTS_PER_RESPONSE,
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
   MAX_APPROVAL_TIMEOUT_MS,
+  MAX_POLICY_RULE_COUNT,
   METHOD_RESULT_ERROR_MESSAGES,
+  POLICY_ID_PATTERN,
   SUI_ADDRESS_PATTERN,
   SUI_DERIVATION_PATH,
   isSuiAddressForPublicKey,
@@ -344,6 +349,39 @@ const getAccountsToolOutputShape = z.discriminatedUnion("source", [
   errorToolResultShape,
 ]);
 
+const policySummaryShape = z.object({
+  schema: z.literal(AGENT_Q_POLICY_SCHEMA),
+  policyId: z.string().regex(POLICY_ID_PATTERN),
+  defaultAction: z.literal("reject"),
+  ruleCount: z.literal(MAX_POLICY_RULE_COUNT),
+});
+const livePolicyOutputShape = z.object({
+  source: z.literal("live"),
+  deviceId: safeDeviceIdShape,
+  policy: policySummaryShape,
+});
+const notConnectedPolicyOutputShape = z.object({
+  source: z.literal("not_connected"),
+  deviceId: safeDeviceIdShape,
+  reason: z.literal("not_connected"),
+});
+const sessionEndedPolicyOutputShape = z.object({
+  source: z.literal("session_ended"),
+  deviceId: safeDeviceIdShape,
+  reason: z.enum(GET_POLICY_SESSION_ENDED_REASONS),
+});
+const getPolicySuccessOutputShape = z.discriminatedUnion("source", [
+  livePolicyOutputShape,
+  notConnectedPolicyOutputShape,
+  sessionEndedPolicyOutputShape,
+]);
+const getPolicyToolOutputShape = z.discriminatedUnion("source", [
+  livePolicyOutputShape,
+  notConnectedPolicyOutputShape,
+  sessionEndedPolicyOutputShape,
+  errorToolResultShape,
+]);
+
 const methodResultErrorShape = z.object({
   code: z.enum(Object.keys(METHOD_RESULT_ERROR_MESSAGES) as [keyof typeof METHOD_RESULT_ERROR_MESSAGES, ...Array<keyof typeof METHOD_RESULT_ERROR_MESSAGES>]),
   message: z.enum(Object.values(METHOD_RESULT_ERROR_MESSAGES) as [string, ...string[]]),
@@ -562,6 +600,19 @@ export const gatewayToolDefinitions = {
     outputSchema: getAccountsToolOutputShape,
     successOutputSchema: getAccountsSuccessOutputShape,
   },
+  getPolicy: {
+    name: "get_policy",
+    title: "Get policy",
+    description:
+      "Read the Firmware-owned active policy summary over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Read-only: no policy update, no signing, no private material, and no session id is ever returned.",
+    inputSchema: {
+      deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
+      purpose: purposeSchema.optional(),
+      timeoutMs: scanTimeoutSchema,
+    },
+    outputSchema: getPolicyToolOutputShape,
+    successOutputSchema: getPolicySuccessOutputShape,
+  },
   callMethod: {
     name: "call_method",
     title: "Call method",
@@ -759,6 +810,22 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
     async ({ deviceId, purpose, timeoutMs }) =>
       run(gatewayToolDefinitions.getAccounts.successOutputSchema, () =>
         core.getAccounts({ deviceId, purpose, timeoutMs }),
+      ),
+  );
+
+  server.registerTool(
+    gatewayToolDefinitions.getPolicy.name,
+    {
+      title: gatewayToolDefinitions.getPolicy.title,
+      description: gatewayToolDefinitions.getPolicy.description,
+      inputSchema: gatewayToolDefinitions.getPolicy.inputSchema,
+      // Success is a discriminated union (live | not_connected | session_ended),
+      // which the SDK outputSchema model cannot represent; it is sanitized at the
+      // run() boundary below instead.
+    },
+    async ({ deviceId, purpose, timeoutMs }) =>
+      run(gatewayToolDefinitions.getPolicy.successOutputSchema, () =>
+        core.getPolicy({ deviceId, purpose, timeoutMs }),
       ),
   );
 

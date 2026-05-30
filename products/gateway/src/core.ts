@@ -18,6 +18,7 @@ import {
   type DeviceStatusSnapshot,
   type IdentifyDeviceResponse,
   type MethodResultResponse,
+  type PolicySummary,
   ProtocolError,
   type StatusResponse,
   validateCallMethodInput,
@@ -167,6 +168,8 @@ export type GetAccountsSessionEndedReason = (typeof GET_ACCOUNTS_SESSION_ENDED_R
 
 export const GET_CAPABILITIES_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
 export type GetCapabilitiesSessionEndedReason = GetAccountsSessionEndedReason;
+export const GET_POLICY_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
+export type GetPolicySessionEndedReason = GetAccountsSessionEndedReason;
 export const CALL_METHOD_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
 export type CallMethodSessionEndedReason = GetAccountsSessionEndedReason;
 
@@ -189,6 +192,13 @@ export type GetAccountsResult =
   | { source: "live"; deviceId: string; accounts: Account[] }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: GetAccountsSessionEndedReason };
+
+// get_policy is read-only and session-scoped. The policy summary is
+// Firmware-authored metadata for the active policy provider used by call_method.
+export type GetPolicyResult =
+  | { source: "live"; deviceId: string; policy: PolicySummary }
+  | { source: "not_connected"; deviceId: string; reason: "not_connected" }
+  | { source: "session_ended"; deviceId: string; reason: GetPolicySessionEndedReason };
 
 // call_method is the common method path. The current runtime keeps
 // sessions/state gates intact, rejects unknown methods, and recognizes Sui
@@ -591,6 +601,48 @@ export class GatewayCore {
       );
       // Read-only: the session is retained on success.
       return { source: "live", deviceId: target.deviceId, accounts: response.accounts };
+    } catch (error) {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+  }
+
+  async getPolicy(input: {
+    deviceId?: string;
+    purpose?: string;
+    timeoutMs?: number;
+  } = {}): Promise<GetPolicyResult> {
+    const target = await this.resolveTargetDevice(input);
+    const scanTimeoutMs = validateTimeoutMs(input.timeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS);
+
+    const session = this.peekRuntimeSession(target.deviceId);
+    if (session === null) {
+      return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
+    }
+
+    let matchingPort: UsbStatusResult | undefined;
+    try {
+      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+    } catch (error) {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+
+    try {
+      const response = await this.usbDriver.getPolicy(
+        matchingPort.portPath,
+        session.sessionId,
+        scanTimeoutMs,
+      );
+      return { source: "live", deviceId: target.deviceId, policy: response.policy };
     } catch (error) {
       const reason = localSessionClearReason(error);
       if (reason !== null) {

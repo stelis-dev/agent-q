@@ -20,11 +20,11 @@ Its current role is:
   StackChan avatar face;
 - provide hardware smoke coverage for future signing flows.
 
-It is not the signing product yet. It does not persist signing keys, store
-policy, expose MCP directly, or sign user requests. It links a restricted
-host-tested Sui transaction facts parser plus a common policy evaluator and
-default-reject runtime boundary, and consumes that default-reject decision only
-for Sui `sign_transaction` policy-decision smoke.
+It is not the signing product yet. It does not persist signing keys, expose MCP
+directly, update policy, or sign user requests. It links a restricted
+host-tested Sui transaction facts parser plus a common policy evaluator, stores
+a DEV_PROFILE active default-reject policy record, and consumes that policy
+decision only for Sui `sign_transaction` policy-decision smoke.
 
 ## Target Status
 
@@ -40,8 +40,8 @@ Legend:
 | USB JSONL transport | O | Uses ESP32-S3 USB Serial/JTAG. |
 | Persistent protocol `deviceId` | O | Stored in NVS namespace `agent_q`, key `device_id`. |
 | `get_status` | O | Returns device id, current state, and provisioning status without approval UI. |
-| Provisioning status reporting | △ | Reports `unprovisioned` or material-backed `provisioned`; hardware smoke is still required. This is not signing readiness: read-only `get_accounts` exposes public identity only, while policy and signing remain unavailable. |
-| Mnemonic UI flow v0 | △ | Approved `start_provisioning` or the local setup speech bubble generates DEV_PROFILE BIP-39 root entropy into RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and stores the root entropy only after physical backup confirmation. Three-letter BIP-39 words are displayed as the full word. `confirm_recovery_phrase_backup` and `cancel_provisioning` wipe scratch. Hardware smoke is still required. |
+| Provisioning status reporting | △ | Reports `unprovisioned` or material-backed `provisioned`; hardware smoke is still required. This is not signing readiness: read-only `get_accounts` and `get_policy` expose public/metadata state only, while signing remains unavailable. |
+| Mnemonic UI flow v0 | △ | Approved `start_provisioning` or the local setup speech bubble generates DEV_PROFILE BIP-39 root entropy into RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and stores root entropy plus an active default-reject policy only after physical backup confirmation. Three-letter BIP-39 words are displayed as the full word. `confirm_recovery_phrase_backup` and `cancel_provisioning` wipe scratch. Hardware smoke is still required. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `display_signal` diagnostic | O | Shows a decision UI and returns after touch approval, rejection, or timeout, only after material-backed `provisioned`. |
 | `connect` | O | Hardware smoke verifies acceptance only after material-backed `provisioned` state and physical approval. The session is RAM-only and does not authorize signing. |
@@ -55,12 +55,14 @@ Legend:
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
 | `get_capabilities` | O | Hardware smoke verifies Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until concrete signing methods are implemented. |
 | `get_accounts` | O | Hardware smoke verifies deriving the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returning address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is also verified against Sui SDK address vectors on host. |
-| `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke. Hardware smoke verifies the rejected policy-decision path; a host test covers the request field/type validation helper. No approval UI, capability advertisement, or signing is connected. |
+| `get_policy` | △ | Source implements a session-scoped read-only summary of the active DEV_PROFILE default-reject policy (`agentq.policy.v0`, hash id, `reject`, zero rules). Corrupt/unreadable policy fails closed; missing policy is migrated only for legacy root-only DEV_PROFILE devices. Gateway/MCP parser tests and target policy-store host tests cover this path; hardware smoke is still required. |
+| `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke. It consumes the stored active default-reject policy; corrupt/unreadable policy is a material-consistency error rather than a normal `provisioned` state, while missing policy is migrated only for legacy root-only DEV_PROFILE devices. Host tests cover the request field/type validation helper and policy store provider. Hardware smoke must be rerun for the policy-store-backed path. No approval UI, capability advertisement, or signing is connected. |
 | Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display and backup-confirmed root entropy storage source exists. Mnemonic import and USER_PROFILE secure provisioning are not implemented. |
-| Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Public account derivation is implemented via `get_accounts`; signing and USER_PROFILE secure provisioning are not implemented. |
-| Policy evaluator foundation | △ | Links the common host-tested policy evaluator, default-reject policy provider boundary, and Sui restricted-transfer facts adapter. Sui `sign_transaction` consumes the default-reject decision only as a rejected policy-decision smoke result; it does not sign. |
-| Policy storage/update | X | Not implemented. |
+| Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation stores root entropy and initializes the active default-reject policy. Public account derivation is implemented via `get_accounts`; signing and USER_PROFILE secure provisioning are not implemented. |
+| Policy evaluator foundation | △ | Links the common host-tested policy evaluator, stored-policy provider boundary, and Sui restricted-transfer facts adapter. Sui `sign_transaction` consumes the stored active default-reject decision only as a rejected policy-decision smoke result; it does not sign. |
+| Policy storage/read | △ | Stores only the DEV_PROFILE active default-reject policy record in NVS, exposes a read-only `get_policy` summary, migrates legacy root-only missing policy to the default-reject record, and treats corrupt/unreadable records as a material-consistency error. Policy update authorization and custom policy content are not implemented. |
+| Policy update | X | Not implemented. |
 | Secure user profile | X | Not implemented. |
 
 ## Chain And Method Support
@@ -74,7 +76,7 @@ parser; none of these are signing APIs.
 |---|---:|---|
 | Sui Ed25519 self-test | △ | Diagnostic only. It proves the signing dependency links and works on-device. |
 | Sui `sign_personal_message` | X | Not implemented. |
-| Sui `sign_transaction` | △ | Hardware smoke verifies this method inside `call_method` only for policy-decision smoke. It validates `network` and base64 `txBytes`, decodes the restricted SUI transfer shape, consumes the default-reject policy runtime decision, and returns a rejected `method_result`. It is not advertised in `get_capabilities`, does not sign, and does not trigger approval UI. |
+| Sui `sign_transaction` | △ | This method is recognized inside `call_method` only for policy-decision smoke. It validates `network` and base64 `txBytes`, decodes the restricted SUI transfer shape, consumes the stored active default-reject policy runtime decision, and returns a rejected `method_result`; corrupt/unreadable policy fails closed as material inconsistency before normal session-scoped methods are available, and missing policy is migrated only for legacy root-only DEV_PROFILE devices. It is not advertised in `get_capabilities`, does not sign, and does not trigger approval UI. Hardware smoke must be rerun for the policy-store-backed path. |
 | Sui txBytes decoding | △ | The StackChan build links the common restricted SUI transfer facts parser. Host fixtures cover valid SUI transfer facts and malformed/unsupported rejects. The runtime connects it only to Sui `sign_transaction` policy-decision smoke, not capability advertisement or signing. |
 | Sui zkLogin | X | Not implemented; requires a separate trust model. |
 | EVM signing | X | Not implemented. |
@@ -196,19 +198,26 @@ for future session-scoped protocol requests.
 
 ## Persistent Storage
 
-This target persists the protocol `deviceId`, the provisioning state flag, and
-a DEV_PROFILE binary root entropy blob in ordinary NVS after physical backup
-confirmation. The provisioning state flag is not signing material by itself and
-does not make the device ready to sign. The target reports `provisioned` only
-when the persisted state and valid root entropy blob both exist. It does not
-store the mnemonic display string, prefixes, seed, account, or policy data to
+This target persists the protocol `deviceId`, the provisioning state flag, a
+DEV_PROFILE binary root entropy blob, and the DEV_PROFILE active default-reject
+policy record in ordinary NVS after physical backup confirmation. The
+provisioning state flag is not signing material by itself and does not make the
+device ready to sign. The target reports `provisioned` only when the persisted
+state, valid root entropy blob, and valid active policy record all exist. It
+does not store the mnemonic display string, prefixes, seed, or account data to
 NVS.
+For DEV_PROFILE upgrade compatibility, if the target boots with the previous
+development shape (`prov_state = provisioned` and valid root entropy, but no
+policy record), it initializes the default-reject active policy before reporting
+`provisioned`; failure to initialize that policy enters material/state
+consistency error.
 
 | Namespace | Key | Purpose |
 |---|---|---|
 | `agent_q` | `device_id` | Gateway reconnect and device-selection identity |
-| `agent_q` | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy present |
+| `agent_q` | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy and active policy present |
 | `agent_q` | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
+| `agent_q` | `policy_v0` | DEV_PROFILE active default-reject policy record |
 
 Agent-Q-owned modules are sources under `agent_q/` in this target tree. These
 modules may share the `agent_q` namespace. New keys should be named by feature,
@@ -227,8 +236,8 @@ smoke is still required. `get_status` returns `provisioning.state`.
 is accepted only while mnemonic setup scratch or its confirmation prompt is
 active; other state combinations return `invalid_state` without opening
 approval UI. `provisioned` is set only after physical backup confirmation and
-successful root entropy plus provisioning-state persistence. `locked` is not
-used because no unlock model exists.
+successful root entropy, active policy, and provisioning-state persistence.
+`locked` is not used because no unlock model exists.
 
 Recovery phrase setup v0 source paths are approved `start_provisioning`,
 `confirm_recovery_phrase_backup`, and `cancel_provisioning`. `start_provisioning`
@@ -240,7 +249,7 @@ word. BIP-39 English prefixes identify the words and are secret material. The
 response contains only `recovery_phrase_result`, status
 metadata, and `provisioning.state`. The display response reports
 `unprovisioned`; the confirmed response reports `provisioned` only after root
-entropy storage succeeds. It never contains the
+entropy and active policy storage succeeds. It never contains the
 phrase, prefixes, entropy, seed, private key, account data, or policy data.
 The target tracks the volatile phrase with a RAM-only scratch substate:
 `none`, `displayed`, or `backup_confirmation_pending`. This substate is
@@ -249,12 +258,13 @@ panel pointer.
 
 Backup confirmation is accepted only after the scratch substate is `displayed`.
 The device-local Confirm button on the recovery phrase panel stores the
-DEV_PROFILE root entropy blob, persists `provisioned`, and then wipes volatile
-scratch. The protocol `confirm_recovery_phrase_backup` request first moves the
-scratch substate to `backup_confirmation_pending`; approval, rejection, or
-timeout wipes the volatile phrase and returns the scratch substate to `none`.
-Storage failure wipes scratch, returns `storage_error`, and must not report
-`provisioned`. Hardware smoke is still required.
+DEV_PROFILE root entropy blob, stores the active default-reject policy, persists
+`provisioned`, and then wipes volatile scratch. The protocol
+`confirm_recovery_phrase_backup` request first moves the scratch substate to
+`backup_confirmation_pending`; approval, rejection, or timeout wipes the
+volatile phrase and returns the scratch substate to `none`. Storage failure
+wipes scratch, returns `storage_error`, and must not report `provisioned`.
+Hardware smoke is still required.
 
 The LVGL panel is not the source of truth for recovery phrase validity. If the
 recovery phrase display panel is removed or replaced while the scratch substate
@@ -274,13 +284,14 @@ that phrase.
 `cancel_provisioning` wipes volatile setup scratch once its approval UI has
 interrupted a recovery phrase display. If cancellation is rejected or times out,
 the displayed phrase is gone and must be generated again. Cancellation does not
-erase already-confirmed root material; `factory_reset` owns that operation.
+erase already-confirmed root material or active policy; `factory_reset` owns
+that operation.
 
 `factory_reset` is accepted with physical approval from normal states and from
 the internal material/state consistency-error condition. Approval clears any
 RAM session, wipes volatile setup scratch, erases the DEV_PROFILE root entropy
-blob, persists `unprovisioned`, and clears the consistency error only after
-storage cleanup succeeds. Rejection and timeout leave stored material and state
+blob and active policy, persists `unprovisioned`, and clears the consistency
+error only after storage cleanup succeeds. Rejection and timeout leave stored material and state
 unchanged. This is a DEV_PROFILE development and recovery operation; Gateway
 must not expose it as a normal agent-facing MCP tool, and USER_PROFILE reset
 must be kept behind a local recovery/setup path with physical approval.
@@ -336,8 +347,8 @@ Current verification expectations for this target:
 - smoke-test `display_signal` approval, rejection, and timeout behavior after
   `provisioned`;
 - smoke-test `connect` returns `invalid_state` before `provisioned`;
-- smoke-test `connect` after backup-confirmed root material storage requires
-  physical approval and returns a RAM-only session id;
+- smoke-test `connect` after backup-confirmed root material and active policy
+  storage requires physical approval and returns a RAM-only session id;
 - smoke-test `disconnect` clears a matching active session and rejects an
   unknown or expired session id;
 - smoke-test `factory_reset` requires physical approval, clears a matching

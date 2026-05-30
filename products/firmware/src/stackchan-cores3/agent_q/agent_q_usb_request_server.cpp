@@ -9,6 +9,7 @@
 #include "agent_q_call_method_validation.h"
 #include "agent_q_display_power.h"
 #include "agent_q_entropy.h"
+#include "agent_q_policy_store.h"
 #include "agent_q_root_material.h"
 #include "agent_q_speech_bubble.h"
 #include "agent_q_sui_account.h"
@@ -305,7 +306,7 @@ char g_line_buffer[kLineBufferSize];
 size_t g_line_size = 0;
 char g_device_id[kDeviceIdSize];
 ProvisioningRuntimeState g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
-bool g_root_material_consistency_error = false;
+bool g_persistent_material_consistency_error = false;
 PendingApprovalState g_pending;
 IdentificationState g_identification;
 SessionState g_session;
@@ -317,7 +318,7 @@ QueueHandle_t g_pending_choice_queue = nullptr;
 QueueHandle_t g_ui_event_queue = nullptr;
 
 bool recovery_phrase_flow_active();
-bool refresh_root_material_consistency();
+bool refresh_persistent_material_consistency();
 bool persist_provisioning_state(ProvisioningRuntimeState next_state);
 
 void wipe_recovery_phrase_scratch(const char* reason)
@@ -551,7 +552,7 @@ void write_error_response(const char* id, const char* code, const char* message)
 
 const char* current_device_state()
 {
-    if (g_root_material_consistency_error) {
+    if (g_persistent_material_consistency_error) {
         return "error";
     }
     if (g_pending.active) {
@@ -598,7 +599,7 @@ bool parse_provisioning_state(const char* value, ProvisioningRuntimeState* outpu
 
 void write_status_response(const char* id)
 {
-    refresh_root_material_consistency();
+    refresh_persistent_material_consistency();
 
     JsonDocument response;
     response["id"] = id;
@@ -716,6 +717,26 @@ void write_capabilities_response(const char* id)
     write_json_document(response);
 }
 
+bool write_policy_response(const char* id)
+{
+    agent_q::AgentQStoredPolicySummary policy = {};
+    if (!agent_q::read_active_policy_summary(&policy)) {
+        return false;
+    }
+
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "policy";
+    JsonObject policy_json = response["policy"].to<JsonObject>();
+    policy_json["schema"] = policy.schema;
+    policy_json["policyId"] = policy.policy_id;
+    policy_json["defaultAction"] = policy.default_action;
+    policy_json["ruleCount"] = policy.rule_count;
+    write_json_document(response);
+    return true;
+}
+
 void write_sui_sign_transaction_policy_decision(const char* id, JsonDocument& request)
 {
     JsonVariant params = request["params"];
@@ -757,9 +778,14 @@ void write_sui_sign_transaction_policy_decision(const char* id, JsonDocument& re
         return;
     }
 
-    const agent_q::AgentQPolicyProvider policy_provider = agent_q::agent_q_default_reject_policy_provider();
+    const agent_q::AgentQPolicyProvider policy_provider = agent_q::active_policy_provider();
     const agent_q::AgentQPolicyDecision decision =
         agent_q::evaluate_agent_q_policy_runtime(policy_provider, policy_facts);
+    if (decision.reason == agent_q::AgentQPolicyDecisionReason::invalid_policy) {
+        write_rejected_method_result(id, "policy_error", "Active policy is unavailable.");
+        ESP_LOGW(kTag, "sui/sign_transaction active policy unavailable: id=%s", id);
+        return;
+    }
     if (decision.action == agent_q::AgentQPolicyAction::reject) {
         write_rejected_method_result(id, "policy_rejected", "The request was rejected by device policy.");
         ESP_LOGI(kTag, "sui/sign_transaction policy rejected: id=%s reason=%s",
@@ -812,18 +838,54 @@ void clear_active_session()
     g_session.clear();
 }
 
-void enter_root_material_consistency_error(const char* message)
+bool persistent_setup_material_exists()
 {
-    g_root_material_consistency_error = true;
-    clear_active_session();
-    ESP_LOGE(kTag, "%s", message != nullptr ? message : "Root material consistency error; failing closed");
+    return agent_q::has_root_material() ||
+           agent_q::active_policy_status() != agent_q::AgentQPolicyStoreStatus::missing;
 }
 
-void enter_root_material_consistency_error_if_root_remains(const char* message)
+void enter_persistent_material_consistency_error(const char* message)
 {
-    if (agent_q::has_root_material()) {
-        enter_root_material_consistency_error(message);
+    g_persistent_material_consistency_error = true;
+    clear_active_session();
+    ESP_LOGE(kTag, "%s", message != nullptr ? message : "Persistent material consistency error; failing closed");
+}
+
+void enter_persistent_material_consistency_error_if_material_remains(const char* message)
+{
+    if (persistent_setup_material_exists()) {
+        enter_persistent_material_consistency_error(message);
     }
+}
+
+bool ensure_active_policy_for_legacy_provisioned_state(agent_q::AgentQPolicyStoreStatus* policy_status)
+{
+    if (policy_status == nullptr) {
+        return false;
+    }
+    if (*policy_status == agent_q::AgentQPolicyStoreStatus::active) {
+        return true;
+    }
+    if (*policy_status != agent_q::AgentQPolicyStoreStatus::missing) {
+        enter_persistent_material_consistency_error(
+            "Existing provisioned material has invalid or unreadable active policy; failing closed");
+        return false;
+    }
+
+    ESP_LOGW(kTag, "Provisioned state has root material but no active policy; installing default-reject policy");
+    if (!agent_q::store_default_policy()) {
+        enter_persistent_material_consistency_error(
+            "Could not initialize active policy for existing provisioned material; failing closed");
+        return false;
+    }
+
+    *policy_status = agent_q::active_policy_status();
+    if (*policy_status != agent_q::AgentQPolicyStoreStatus::active) {
+        enter_persistent_material_consistency_error(
+            "Initialized active policy is unreadable for existing provisioned material; failing closed");
+        return false;
+    }
+    return true;
 }
 
 // Writes the Sui Ed25519 account (index 0, m/44'/784'/0'/0'/0') response after
@@ -841,7 +903,7 @@ bool write_accounts_response(const char* id)
         // is inconsistent. Fail closed so get_status reports "error" and
         // connect/get_accounts stop treating it as provisioned until
         // factory_reset, instead of silently staying provisioned until reboot.
-        enter_root_material_consistency_error("Root material unreadable while provisioned; failing closed");
+        enter_persistent_material_consistency_error("Root material unreadable while provisioned; failing closed");
         return false;
     }
     if (account_result != agent_q::SuiAccountDerivationResult::ok) {
@@ -1000,13 +1062,13 @@ void load_or_create_device_id()
 void load_provisioning_state()
 {
     g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
-    g_root_material_consistency_error = false;
+    g_persistent_material_consistency_error = false;
 
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
     if (result != ESP_OK) {
         ESP_LOGW(kTag, "NVS open failed for provisioning state: %s", esp_err_to_name(result));
-        enter_root_material_consistency_error("Provisioning state could not be opened; failing closed");
+        enter_persistent_material_consistency_error("Provisioning state could not be opened; failing closed");
         return;
     }
 
@@ -1016,21 +1078,22 @@ void load_provisioning_state()
     nvs_close(nvs);
 
     if (result == ESP_ERR_NVS_NOT_FOUND) {
-        enter_root_material_consistency_error_if_root_remains(
-            "Root material exists without provisioning state; failing closed");
+        enter_persistent_material_consistency_error_if_material_remains(
+            "Persistent setup material exists without provisioning state; failing closed");
         ESP_LOGI(kTag, "Provisioning state not found in NVS; using unprovisioned");
         return;
     }
     if (result != ESP_OK) {
-        enter_root_material_consistency_error("Provisioning state could not be read; failing closed");
+        enter_persistent_material_consistency_error("Provisioning state could not be read; failing closed");
         ESP_LOGW(kTag, "NVS read failed for provisioning state: %s", esp_err_to_name(result));
         return;
     }
 
     ProvisioningRuntimeState parsed = ProvisioningRuntimeState::unprovisioned;
     if (!parse_provisioning_state(stored_state, &parsed)) {
-        if (agent_q::has_root_material()) {
-            enter_root_material_consistency_error("Unknown provisioning state with root material present; failing closed");
+        if (persistent_setup_material_exists()) {
+            enter_persistent_material_consistency_error(
+                "Unknown provisioning state with persistent setup material present; failing closed");
         } else {
             ESP_LOGW(kTag, "Unknown provisioning state in NVS; resetting to unprovisioned");
             persist_provisioning_state(ProvisioningRuntimeState::unprovisioned);
@@ -1039,16 +1102,19 @@ void load_provisioning_state()
     }
 
     const bool has_root = agent_q::has_root_material();
+    agent_q::AgentQPolicyStoreStatus policy_status = agent_q::active_policy_status();
     if (parsed == ProvisioningRuntimeState::provisioned) {
-        if (has_root) {
+        if (has_root && ensure_active_policy_for_legacy_provisioned_state(&policy_status)) {
             g_provisioning_state = ProvisioningRuntimeState::provisioned;
         } else {
             g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
-            enter_root_material_consistency_error("Stored provisioned state has no valid root material; failing closed");
+            enter_persistent_material_consistency_error(
+                "Stored provisioned state is missing root material or active policy; failing closed");
         }
-    } else if (has_root) {
+    } else if (has_root || policy_status != agent_q::AgentQPolicyStoreStatus::missing) {
         g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
-        enter_root_material_consistency_error("Root material exists without provisioned state; failing closed");
+        enter_persistent_material_consistency_error(
+            "Persistent setup material exists without provisioned state; failing closed");
     } else if (parsed == ProvisioningRuntimeState::provisioning) {
         g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
         ESP_LOGW(kTag, "Resetting legacy provisioning state for persistent root material flow");
@@ -1096,29 +1162,33 @@ bool reset_device_to_unprovisioned()
     wipe_provisioning_scratch_state();
 
     if (!agent_q::wipe_root_material()) {
-        enter_root_material_consistency_error("Root material wipe failed during factory reset; failing closed");
+        enter_persistent_material_consistency_error("Root material wipe failed during factory reset; failing closed");
+        return false;
+    }
+    if (!agent_q::wipe_policy()) {
+        enter_persistent_material_consistency_error("Policy wipe failed during factory reset; failing closed");
         return false;
     }
 
     if (!persist_provisioning_state(ProvisioningRuntimeState::unprovisioned)) {
-        enter_root_material_consistency_error("Provisioning state reset failed during factory reset; failing closed");
+        enter_persistent_material_consistency_error("Provisioning state reset failed during factory reset; failing closed");
         return false;
     }
 
-    g_root_material_consistency_error = false;
+    g_persistent_material_consistency_error = false;
     return true;
 }
 
 bool provisioning_transition_allowed(PendingKind request_kind)
 {
-    if (!refresh_root_material_consistency()) {
+    if (!refresh_persistent_material_consistency()) {
         return false;
     }
 
     switch (request_kind) {
         case PendingKind::start_provisioning:
             return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
-                   !g_root_material_consistency_error &&
+                   !g_persistent_material_consistency_error &&
                    !recovery_phrase_flow_active();
         case PendingKind::cancel_provisioning:
             return g_provisioning_state == ProvisioningRuntimeState::provisioning ||
@@ -1140,27 +1210,30 @@ bool recovery_phrase_flow_active()
 bool start_provisioning_busy()
 {
     return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
-           !g_root_material_consistency_error &&
+           !g_persistent_material_consistency_error &&
            recovery_phrase_flow_active();
 }
 
-bool refresh_root_material_consistency()
+bool refresh_persistent_material_consistency()
 {
-    if (g_root_material_consistency_error) {
+    if (g_persistent_material_consistency_error) {
         return false;
     }
 
     const bool has_root = agent_q::has_root_material();
+    const agent_q::AgentQPolicyStoreStatus policy_status = agent_q::active_policy_status();
     if (g_provisioning_state == ProvisioningRuntimeState::provisioned) {
-        if (has_root) {
+        if (has_root && policy_status == agent_q::AgentQPolicyStoreStatus::active) {
             return true;
         }
-        enter_root_material_consistency_error("Provisioned state lost root material; failing closed");
+        enter_persistent_material_consistency_error(
+            "Provisioned state lost root material or active policy; failing closed");
         return false;
     }
 
-    if (has_root) {
-        enter_root_material_consistency_error("Root material exists outside provisioned state; failing closed");
+    if (has_root || policy_status != agent_q::AgentQPolicyStoreStatus::missing) {
+        enter_persistent_material_consistency_error(
+            "Persistent setup material exists outside provisioned state; failing closed");
         return false;
     }
     return true;
@@ -1169,7 +1242,7 @@ bool refresh_root_material_consistency()
 bool provisioned_material_ready()
 {
     return g_provisioning_state == ProvisioningRuntimeState::provisioned &&
-           refresh_root_material_consistency();
+           refresh_persistent_material_consistency();
 }
 
 bool write_busy_if_pending_or_setup_flow_active(const char* id)
@@ -1547,7 +1620,7 @@ bool provisioning_welcome_available()
     }
 
     return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
-           !g_root_material_consistency_error &&
+           !g_persistent_material_consistency_error &&
            !g_pending.active &&
            !g_identification.active &&
            !recovery_phrase_flow_active() &&
@@ -1724,6 +1797,7 @@ enum class RecoveryPhraseCommitResult {
     ok,
     missing_scratch,
     root_storage_error,
+    policy_storage_error,
     state_storage_error,
 };
 
@@ -1737,21 +1811,31 @@ RecoveryPhraseCommitResult store_recovery_phrase_and_mark_provisioned(const char
     if (!agent_q::store_root_material(
             g_provisioning_scratch.root_material,
             sizeof(g_provisioning_scratch.root_material))) {
-        enter_root_material_consistency_error_if_root_remains(
-            "Root material storage left partial material; failing closed");
+        enter_persistent_material_consistency_error_if_material_remains(
+            "Root material storage left partial persistent setup material; failing closed");
         wipe_recovery_phrase_scratch(reason);
         return RecoveryPhraseCommitResult::root_storage_error;
     }
 
-    if (!persist_provisioning_state(ProvisioningRuntimeState::provisioned)) {
+    if (!agent_q::store_default_policy()) {
+        agent_q::wipe_policy();
         agent_q::wipe_root_material();
-        enter_root_material_consistency_error_if_root_remains(
-            "Provisioning state storage failed with root material present; failing closed");
+        enter_persistent_material_consistency_error_if_material_remains(
+            "Policy storage failed with persistent setup material present; failing closed");
+        wipe_recovery_phrase_scratch(reason);
+        return RecoveryPhraseCommitResult::policy_storage_error;
+    }
+
+    if (!persist_provisioning_state(ProvisioningRuntimeState::provisioned)) {
+        agent_q::wipe_policy();
+        agent_q::wipe_root_material();
+        enter_persistent_material_consistency_error_if_material_remains(
+            "Provisioning state storage failed with persistent setup material present; failing closed");
         wipe_recovery_phrase_scratch(reason);
         return RecoveryPhraseCommitResult::state_storage_error;
     }
 
-    g_root_material_consistency_error = false;
+    g_persistent_material_consistency_error = false;
     wipe_recovery_phrase_scratch(reason);
     return RecoveryPhraseCommitResult::ok;
 }
@@ -2044,6 +2128,7 @@ void confirm_recovery_phrase_from_local_ui()
             show_agent_q_message("Phrase unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
             break;
         case RecoveryPhraseCommitResult::root_storage_error:
+        case RecoveryPhraseCommitResult::policy_storage_error:
         case RecoveryPhraseCommitResult::state_storage_error:
             ESP_LOGW(kTag, "Local backup confirmation storage error");
             show_agent_q_message("Storage error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -2297,6 +2382,12 @@ void send_choice_response_if_needed()
                     show_result_and_clear_pending("Storage error", AgentQMessageKind::error);
                     break;
                 }
+                if (result == RecoveryPhraseCommitResult::policy_storage_error) {
+                    write_error_response(g_pending.id, "storage_error", "Could not store active policy.");
+                    ESP_LOGW(kTag, "confirm_recovery_phrase_backup policy storage failed: id=%s", g_pending.id);
+                    show_result_and_clear_pending("Storage error", AgentQMessageKind::error);
+                    break;
+                }
                 if (result == RecoveryPhraseCommitResult::state_storage_error) {
                     write_error_response(g_pending.id, "storage_error", "Could not store provisioned state.");
                     ESP_LOGW(kTag, "confirm_recovery_phrase_backup provisioned state storage failed: id=%s", g_pending.id);
@@ -2459,6 +2550,32 @@ void handle_line(const char* line)
             return;
         }
         ESP_LOGI(kTag, "get_accounts: id=%s", id);
+        return;
+    }
+
+    if (strcmp(type, "get_policy") == 0) {
+        // get_policy is a session-scoped read-only request. Firmware returns
+        // metadata for the active policy document it will use for method
+        // decisions; Gateway must not infer policy state from local defaults.
+        if (!provisioned_material_ready()) {
+            write_error_response(id, "invalid_state", "Policy is available only after provisioning is complete.");
+            return;
+        }
+        if (write_busy_if_pending_or_setup_flow_active(id)) {
+            return;
+        }
+
+        const char* session_id = request["sessionId"] | "";
+        if (!require_active_matching_session(id, session_id)) {
+            return;
+        }
+
+        if (!write_policy_response(id)) {
+            write_error_response(id, "policy_error", "Active policy is unavailable.");
+            ESP_LOGW(kTag, "get_policy active policy unavailable: id=%s", id);
+            return;
+        }
+        ESP_LOGI(kTag, "get_policy: id=%s", id);
         return;
     }
 

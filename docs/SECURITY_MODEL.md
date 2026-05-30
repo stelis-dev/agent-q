@@ -42,10 +42,11 @@ Implemented today:
 - A physical approval modal on the StackChan CoreS3 target for `connect`: the
   user accepts or rejects on the device's screen.
 - A material-backed provisioning state on the StackChan CoreS3 target. It
-  reports `provisioned` only when the persisted state and valid DEV_PROFILE root
-  entropy blob both exist. This is not signing readiness and stores no account
-  or policy. The current build stores that DEV_PROFILE root entropy in ordinary
-  NVS; Secure Boot, Flash Encryption, and NVS Encryption are not configured.
+  reports `provisioned` only when the persisted state, valid DEV_PROFILE root
+  entropy blob, and active default-reject policy record all exist. This is not
+  signing readiness and stores no account data. The current build stores that
+  DEV_PROFILE root entropy and active policy record in ordinary NVS; Secure
+  Boot, Flash Encryption, and NVS Encryption are not configured.
 - A DEV_PROFILE recovery phrase setup path in StackChan CoreS3 source. It can
   generate BIP-39 root entropy into RAM from an Agent-Q CSPRNG seeded from
   early boot entropy, display only up-to-4-letter word prefixes on the device,
@@ -54,19 +55,20 @@ Implemented today:
   Firmware build verification is required for each change, hardware smoke is
   still required, and this is not USER_PROFILE key provisioning.
 - A physical-approval `factory_reset` source path for StackChan CoreS3 that
-  erases the DEV_PROFILE root entropy blob, clears RAM session/setup scratch,
-  persists `unprovisioned`, and recovers from material/state consistency error.
-  It is a development/recovery path and is not exposed as a normal
+  erases the DEV_PROFILE root entropy blob and active policy record, clears RAM
+  session/setup scratch, persists `unprovisioned`, and recovers from
+  material/state consistency error. It is a development/recovery path and is not
+  exposed as a normal
   agent-facing MCP tool. Hardware smoke is still required.
 - Read-only Sui account and public-key discovery over an approved runtime
   session. Firmware derives public identity from the DEV_PROFILE root entropy
   on demand and does not return mnemonic, seed, entropy, or private key
   material. StackChan CoreS3 hardware smoke verifies this path over Gateway/MCP.
-- A common firmware policy evaluator and default-reject runtime boundary. It can
-  calculate internal `sign`, `reject`, or `ask` decisions from already extracted
-  transaction facts in host tests. StackChan CoreS3 consumes the default-reject
-  decision only for Sui `sign_transaction` policy-decision smoke; it does not
-  sign, store policy, or trigger physical approval.
+- A common firmware policy evaluator and a StackChan CoreS3 DEV_PROFILE active
+  policy provider. The target stores only a default-reject policy record in
+  ordinary NVS, reads a public summary through `get_policy`, and consumes that
+  active policy only for Sui `sign_transaction` policy-decision smoke. It does
+  not sign, update policy, or trigger physical approval.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
@@ -76,7 +78,7 @@ Designed but not implemented (do not treat as present):
 - Key import.
 - USER_PROFILE first-install mnemonic generation or import.
 - zkLogin signing material.
-- Policy storage and policy update authorization.
+- USER_PROFILE policy storage and policy update authorization.
 - Signing methods inside `call_method`. The `call_method` runtime recognizes Sui
   `sign_transaction` only for rejected policy-decision smoke; it does not sign,
   advertise the method, or trigger approval UI.

@@ -125,6 +125,19 @@ function defaultDriver(overrides = {}) {
         ],
       };
     },
+    async getPolicy() {
+      return {
+        id: "req_policy",
+        version: 1,
+        type: "policy",
+        policy: {
+          schema: "agentq.policy.v0",
+          policyId: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+          defaultAction: "reject",
+          ruleCount: 0,
+        },
+      };
+    },
     async callMethod() {
       return {
         id: "req_call_method",
@@ -1030,6 +1043,61 @@ test("getAccounts clears the local session when Firmware reports invalid_session
     await core.connectDevice({});
 
     const result = await core.getAccounts({});
+    assert.equal(result.source, "session_ended");
+    assert.equal(result.reason, "invalid_session");
+    const listed = await core.listDevices();
+    assert.equal(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("getPolicy without a runtime session returns not_connected", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(store, defaultDriver());
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+
+    const result = await core.getPolicy({});
+    assert.equal(result.source, "not_connected");
+    assert.equal(result.reason, "not_connected");
+    assert.equal(result.policy, undefined);
+  });
+});
+
+test("getPolicy returns the active Firmware policy summary and keeps the session", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(store, defaultDriver());
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.getPolicy({});
+    assert.equal(result.source, "live");
+    assert.equal(result.policy.schema, "agentq.policy.v0");
+    assert.equal(result.policy.policyId, "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab");
+    assert.equal(result.policy.defaultAction, "reject");
+    assert.equal(result.policy.ruleCount, 0);
+
+    // Read-only: the session is retained after get_policy.
+    const listed = await core.listDevices();
+    assert.notEqual(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("getPolicy clears the local session when Firmware reports invalid_session", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async getPolicy() {
+          throw new GatewayError("invalid_session", "Session is unknown or already ended.", false);
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.getPolicy({});
     assert.equal(result.source, "session_ended");
     assert.equal(result.reason, "invalid_session");
     const listed = await core.listDevices();

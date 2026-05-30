@@ -4,6 +4,7 @@ import {
   assertAccountsResponse,
   assertCapabilitiesResponse,
   assertMethodResultResponse,
+  assertPolicyResponse,
   assertConnectResponse,
   assertDisconnectResponse,
   assertFactoryResetResponse,
@@ -25,6 +26,7 @@ import {
   makeFactoryResetRequest,
   makeGetCapabilitiesRequest,
   makeGetAccountsRequest,
+  makeGetPolicyRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
   makeStartProvisioningRequest,
@@ -100,6 +102,7 @@ test("preserves Firmware protocol error codes", () => {
     "invalid_state",
     "invalid_setup_step",
     "unsupported_method",
+    "policy_error",
     "rng_error",
     "ui_error",
     "generation_error",
@@ -260,6 +263,19 @@ test("makeGetAccountsRequest validates sessionId", () => {
 
   assert.throws(() => makeGetAccountsRequest("not_a_session"), /Invalid sessionId/);
   assert.throws(() => makeGetAccountsRequest("session_"), /Invalid sessionId/);
+});
+
+test("makeGetPolicyRequest validates sessionId", () => {
+  const request = makeGetPolicyRequest("session_abcdef0123456789", "req_get_policy_1");
+  assert.deepEqual(request, {
+    id: "req_get_policy_1",
+    version: 1,
+    type: "get_policy",
+    sessionId: "session_abcdef0123456789",
+  });
+
+  assert.throws(() => makeGetPolicyRequest("not_a_session"), /Invalid sessionId/);
+  assert.throws(() => makeGetPolicyRequest("session_"), /Invalid sessionId/);
 });
 
 test("makeCallMethodRequest validates session, method identifiers, and params", () => {
@@ -546,6 +562,61 @@ test("parseProtocolResponse rejects an accounts response exceeding the supported
   assert.throws(() => parseProtocolResponse(empty, "req_accounts"), { code: "protocol_error" });
 });
 
+const policyLine = (policyOverrides = {}, topLevelOverrides = {}) =>
+  JSON.stringify({
+    id: "req_policy",
+    version: 1,
+    type: "policy",
+    policy: {
+      schema: "agentq.policy.v0",
+      policyId: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+      defaultAction: "reject",
+      ruleCount: 0,
+      ...policyOverrides,
+    },
+    ...topLevelOverrides,
+  });
+
+test("parseProtocolResponse accepts a valid active policy summary", () => {
+  const response = assertPolicyResponse(parseProtocolResponse(policyLine(), "req_policy"));
+  assert.equal(response.type, "policy");
+  assert.equal(response.policy.schema, "agentq.policy.v0");
+  assert.equal(response.policy.defaultAction, "reject");
+  assert.equal(response.policy.ruleCount, 0);
+  assert.match(response.policy.policyId, /^sha256:[0-9a-f]{64}$/);
+});
+
+test("parseProtocolResponse rejects malformed policy summaries", () => {
+  assert.throws(() => parseProtocolResponse(policyLine({ schema: "agentq.policy.v1" }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({ policyId: "not-a-hash" }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({ defaultAction: "sign" }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 1 }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({ rules: [] }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({}, { sessionId: "session_abcdef0123456789" }), "req_policy"), {
+    code: "protocol_error",
+  });
+});
+
+test("parseProtocolResponse rejects policy summaries carrying secret material", () => {
+  for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
+    assert.throws(
+      () => parseProtocolResponse(policyLine({ [fieldName]: "secret-like value" }), "req_policy"),
+      { code: "protocol_error" },
+      `secret-like policy field ${fieldName} must be rejected`,
+    );
+  }
+});
+
 const methodResultLine = (overrides = {}, errorOverrides = {}) =>
   JSON.stringify({
     id: "req_call_method",
@@ -574,6 +645,7 @@ test("parseProtocolResponse accepts rejected Sui sign_transaction policy decisio
     ["policy_rejected", "The request was rejected by device policy."],
     ["malformed_transaction", "Transaction bytes are malformed."],
     ["unsupported_transaction", "Transaction shape is not supported."],
+    ["policy_error", "Active policy is unavailable."],
     ["policy_action_not_implemented", "Policy action is not implemented."],
   ];
   for (const [code, message] of cases) {

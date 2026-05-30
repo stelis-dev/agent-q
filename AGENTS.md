@@ -226,25 +226,19 @@ Current Gateway package commands:
 - Build: `cd products/gateway && npm run build`
 - Test: `cd products/gateway && npm test`
 
-Current firmware helper commands:
+Current common firmware helper commands:
 
-- Fetch StackChan CoreS3 host firmware:
-  `tools/firmware/stackchan-cores3/fetch.sh`
 - Regenerate common Sui transaction facts fixtures:
   `tools/firmware/common/generate_sui_transaction_fixtures.mjs`
 - Test common Sui transaction facts parser fixtures (host C++ compiler only;
   does not require ESP-IDF): `tools/firmware/common/test_sui_transaction_facts.sh`
 - Test common policy v0 evaluator fixtures (host C++ compiler only; does not
   require ESP-IDF): `tools/firmware/common/test_policy_v0.sh`
-- Test StackChan CoreS3 call_method validation boundaries (host C++ compiler and
-  pinned ArduinoJson checkout only; does not require ESP-IDF):
-  `tools/firmware/stackchan-cores3/test_call_method_validation.sh`
-- Build StackChan CoreS3 firmware after ESP-IDF v5.5.4 is active:
-  `tools/firmware/stackchan-cores3/build.sh`
-- Test BIP-39 mnemonic vectors after ESP-IDF v5.5.4 is active:
-  `tools/firmware/stackchan-cores3/test_bip39_vectors.sh`
-- Test Sui Ed25519 account derivation vectors (host C/C++ compiler only; does not
-  require ESP-IDF): `tools/firmware/stackchan-cores3/test_sui_account_vectors.sh`
+
+Hardware-specific firmware commands live in the corresponding target
+documentation under `products/firmware/src/<hardware-id>/`. Read that target's
+README and SPEC before running target builds, target tests, flashing, or
+hardware smoke checks.
 
 If a root `package.json` is added, inspect it before running project commands
 and update this section.
@@ -360,6 +354,7 @@ get_status
   -> connect
     -> get_capabilities
     -> get_accounts
+    -> get_policy
     -> call_method*
   -> disconnect
 ```

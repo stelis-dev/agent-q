@@ -5,6 +5,7 @@ import {
   assertAccountsResponse,
   assertCapabilitiesResponse,
   assertMethodResultResponse,
+  assertPolicyResponse,
   assertConnectResponse,
   assertDisconnectResponse,
   assertIdentifyDeviceResponse,
@@ -15,6 +16,7 @@ import {
   makeGetCapabilitiesRequest,
   makeGetAccountsRequest,
   makeIdentifyDeviceRequest,
+  makeGetPolicyRequest,
   makeGetStatusRequest,
   parseJsonLine,
   parseProtocolResponse,
@@ -26,6 +28,7 @@ import {
   type DisconnectResponse,
   type IdentifyDeviceResponse,
   type MethodResultResponse,
+  type PolicyResponse,
   type ProtocolRequest,
   type ProtocolResponse,
   type StatusResponse,
@@ -107,6 +110,11 @@ export interface UsbSerialDriver {
     sessionId: string,
     timeoutMs: number,
   ): Promise<AccountsResponse>;
+  getPolicy(
+    portPath: string,
+    sessionId: string,
+    timeoutMs: number,
+  ): Promise<PolicyResponse>;
   callMethod(
     portPath: string,
     sessionId: string,
@@ -169,6 +177,14 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     timeoutMs: number,
   ): Promise<AccountsResponse> {
     return getAccountsOverSerial(portPath, sessionId, timeoutMs);
+  }
+
+  async getPolicy(
+    portPath: string,
+    sessionId: string,
+    timeoutMs: number,
+  ): Promise<PolicyResponse> {
+    return getPolicyOverSerial(portPath, sessionId, timeoutMs);
   }
 
   async callMethod(
@@ -301,6 +317,12 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         driver.getAccounts(portPath, sessionId, timeoutMs),
         timeoutMs,
         "USB get accounts exceeded its timeout.",
+      ),
+    getPolicy: (portPath, sessionId, timeoutMs) =>
+      raceDeadline(
+        driver.getPolicy(portPath, sessionId, timeoutMs),
+        timeoutMs,
+        "USB get policy exceeded its timeout.",
       ),
     callMethod: (portPath, sessionId, chain, method, params, timeoutMs) =>
       raceDeadline(
@@ -447,6 +469,15 @@ async function getAccountsOverSerial(
 ): Promise<AccountsResponse> {
   const request = makeGetAccountsRequest(sessionId);
   return requestOverSerial(portPath, request, timeoutMs, (response) => assertAccountsResponse(response));
+}
+
+async function getPolicyOverSerial(
+  portPath: string,
+  sessionId: string,
+  timeoutMs: number,
+): Promise<PolicyResponse> {
+  const request = makeGetPolicyRequest(sessionId);
+  return requestOverSerial(portPath, request, timeoutMs, (response) => assertPolicyResponse(response));
 }
 
 async function callMethodOverSerial(

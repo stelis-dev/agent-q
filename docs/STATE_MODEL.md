@@ -34,11 +34,11 @@ are not authority.
 stateDiagram-v2
     [*] --> Unprovisioned: boot, no root signing material
     Unprovisioned --> Unprovisioned: start_provisioning + phrase display
-    Unprovisioned --> Provisioned: confirm backup + root material stored
+    Unprovisioned --> Provisioned: confirm backup + root material and active policy stored
     Unprovisioned --> Unprovisioned: cancel/timeout/failure + scratch wipe
     Unprovisioned --> Provisioning: future persistent setup step
     Provisioning --> Unprovisioned: cancel_provisioning + physical approval
-    Provisioning --> Provisioned: future setup complete, root material stored
+    Provisioning --> Provisioned: future setup complete, root material and active policy stored
     Provisioned --> Locked: future local lock condition
     Locked --> Provisioned: future local unlock
     Provisioned --> Unprovisioned: factory_reset + physical approval
@@ -59,19 +59,24 @@ stateDiagram-v2
 Current StackChan CoreS3 persistent root material flow starts from
 `unprovisioned`. It generates recovery phrase scratch in RAM, displays only
 up-to-4-letter BIP-39 word prefixes on the device in a 3-column by 4-row grid,
-stores the binary BIP-39 root entropy only after physical backup confirmation,
-and wipes scratch on confirmation, cancellation, timeout, failure, or display
-expiry. Three-letter BIP-39 words are displayed as the full word.
-`provisioned` may be reported only when the persisted state and stored root
-material both exist. `locked` remains a design target until an unlock model
-exists.
+stores the binary BIP-39 root entropy and active default-reject policy only
+after physical backup confirmation, and wipes scratch on confirmation,
+cancellation, timeout, failure, or display expiry. Three-letter BIP-39 words are
+displayed as the full word. `provisioned` may be reported only when the
+persisted state, stored root material, and stored active policy all exist.
+`locked` remains a design target until an unlock model exists.
 
-If persisted state and stored root material disagree, Firmware reports device
-`error` and fails closed for normal setup and session requests. `factory_reset`
-is the recovery path for that consistency-error condition: after physical
-approval, Firmware erases root material, clears volatile scratch and RAM
-sessions, persists `unprovisioned`, and clears the error only after storage
-cleanup succeeds.
+For DEV_PROFILE upgrade compatibility, if Firmware boots with the previous
+development shape (`prov_state = provisioned` and valid root material, but no
+policy record), it initializes the default-reject active policy before reporting
+`provisioned`. Any failure to initialize that policy is a consistency error.
+
+If persisted state, stored root material, and stored active policy disagree,
+Firmware reports device `error` and fails closed for normal setup and session
+requests. `factory_reset` is the recovery path for that consistency-error
+condition: after physical approval, Firmware erases root material and active
+policy, clears volatile scratch and RAM sessions, persists `unprovisioned`, and
+clears the error only after storage cleanup succeeds.
 Detecting the consistency error also clears any active RAM session immediately,
 so a session created before the error is not retained as a stale local
 capability.
@@ -116,8 +121,8 @@ Allowed:
 
 Rejected:
 
-- `connect` until persistent root material exists and the device is
-  `provisioned`
+- `connect` until persistent root material and active policy exist and the
+  device is `provisioned`
 - `get_capabilities`
 - `get_accounts`
 - `call_method`
@@ -155,17 +160,19 @@ Current StackChan CoreS3 source limits recovery phrase scratch material to RAM
 and tracks it with a volatile substate: `none`, `displayed`, or
 `backup_confirmation_pending`. That scratch substate is separate from the
 persistent `provisioning.state`, pending approval state, and UI panel state.
-The current StackChan CoreS3 persistent root material slice resets stale
-`provisioning` state to `unprovisioned` when no valid root material exists and
-does not enter this state for the normal generate-and-confirm flow.
+The current StackChan CoreS3 persistent material slice resets stale
+`provisioning` state to `unprovisioned` when no valid root material or active
+policy exists and does not enter this state for the normal
+generate-and-confirm flow.
 
 ### `provisioned`
 
-Root signing material exists in device-local storage. In the current StackChan
-CoreS3 DEV_PROFILE implementation this means a binary BIP-39 entropy blob is
-stored in NVS and `prov_state` is `provisioned`; read-only Sui account
-derivation is implemented, while signing, policy, and USER_PROFILE secure
-storage gates are still separate work.
+Root signing material and an active policy exist in device-local storage. In
+the current StackChan CoreS3 DEV_PROFILE implementation this means a binary
+BIP-39 entropy blob and the active default-reject policy record are stored in
+NVS and `prov_state` is `provisioned`; read-only Sui account derivation and
+read-only active policy summary are implemented, while signing, policy update,
+and USER_PROFILE secure storage gates are still separate work.
 
 Allowed:
 
@@ -176,27 +183,33 @@ Allowed:
 - `display_signal` diagnostic
 - `get_capabilities` (read-only, session-scoped)
 - `get_accounts` (read-only, session-scoped)
+- `get_policy` (read-only, session-scoped)
 - `call_method` runtime skeleton (session-scoped; unknown methods reject, and Sui
   `sign_transaction` is recognized only for rejected policy-decision smoke)
-- policy read/update only after those protocol surfaces are implemented
+- policy update only after an authorization/update surface is implemented
 
 This state is not blanket signing approval. Policy still decides whether each
 request signs, rejects, or asks. In the current StackChan CoreS3
 implementation, `provisioned` enables `connect`, `disconnect`, read-only
 `get_capabilities` (`methods: []`), read-only `get_accounts` (Sui Ed25519
-account 0), the `call_method` runtime skeleton (unknown methods rejected with
-`unsupported_method`, while Sui `sign_transaction` policy-decision smoke returns
-only rejected method results), and the `display_signal` diagnostic; signing
-remains unavailable.
+account 0), read-only `get_policy` for the active default-reject policy summary,
+the `call_method` runtime skeleton (unknown methods rejected with
+`unsupported_method`, while Sui `sign_transaction` policy-decision smoke consumes
+the active policy and returns only rejected method results), and the
+`display_signal` diagnostic; signing remains unavailable.
 Future signing txBytes decoding is allowed only inside a session-scoped
 `call_method` signing path after `provisioned`; it must remain unavailable in
 `unprovisioned`, `provisioning`, `locked`, and the internal consistency-error
 condition. Current common firmware source includes a restricted host-tested SUI
-transfer facts parser, a Sui facts-to-policy adapter, a default-reject policy
-provider boundary, and a host-tested policy evaluator. These are common firmware
-foundations only: StackChan CoreS3 consumes the default-reject policy decision
+transfer facts parser, a Sui facts-to-policy adapter, a stored-policy provider
+boundary, and a host-tested policy evaluator. These are firmware foundations
+only: StackChan CoreS3 consumes the stored active default-reject policy decision
 for Sui `sign_transaction` policy-decision smoke, capabilities still advertise no
-signing methods, and Gateway must not evaluate policy.
+signing methods, and Gateway must not evaluate policy. A corrupt or unreadable
+active policy is a persistent-material consistency error, not a normal
+`provisioned` state. A missing active policy is migrated only for the documented
+DEV_PROFILE legacy shape where `prov_state = provisioned` and root material is
+valid; outside that compatibility path it is also a consistency error.
 
 ### `locked`
 
@@ -211,7 +224,9 @@ Allowed:
 Rejected until unlocked:
 
 - `get_accounts`
+- `get_policy`
 - `call_method`
+- policy read
 - policy update
 - signing
 
@@ -232,9 +247,10 @@ This state is reserved until an unlock model is implemented.
 | `display_signal` | X | X | O | X | Firmware |
 | `get_capabilities` | X | X | O | X | Firmware |
 | `get_accounts` | X | X | O | X | Firmware |
+| `get_policy` | X | X | O | X | Firmware |
 | `call_method` | X | X | O | X | Firmware |
 | policy read | X | X | O | X | Firmware |
-| policy update | X | X | O, with authorization | X | Firmware |
+| policy update | X | X | X (future: authorization required) | X | Firmware |
 
 `O*`: allowed only while volatile mnemonic setup scratch or its confirmation
 prompt is active. Other `O` operations may still return `busy` while a physical
@@ -260,7 +276,7 @@ Boot
 -> generate mnemonic on device
 -> show up-to-4-letter prefixes once on device
 -> user confirms backup or cancels on device, or through an approved protocol request
--> if confirmed, store root material locally
+-> if confirmed, store root material and active policy locally
 -> only after storage succeeds, provisioned
 -> wipe volatile scratch
 -> ready

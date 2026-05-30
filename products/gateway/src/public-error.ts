@@ -39,6 +39,7 @@ export const PUBLIC_ERROR_MESSAGES: Record<string, string> = {
   invalid_session: "The session is no longer valid.",
   invalid_state: "The device is not in a valid state for this request.",
   invalid_setup_step: "The device setup step is not ready for this request.",
+  policy_error: "The device active policy is unavailable.",
   unsupported_version: "The device firmware protocol version is not supported.",
   unsupported_type: "The device does not support this request.",
   unsupported_method: "The requested method is not supported.",

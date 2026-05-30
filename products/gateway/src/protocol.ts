@@ -99,6 +99,13 @@ export interface GetAccountsRequest {
   sessionId: string;
 }
 
+export interface GetPolicyRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "get_policy";
+  sessionId: string;
+}
+
 export interface CallMethodRequest {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -152,6 +159,7 @@ export type ProtocolRequest =
   | DisconnectRequest
   | GetCapabilitiesRequest
   | GetAccountsRequest
+  | GetPolicyRequest
   | CallMethodRequest
   | StartProvisioningRequest
   | CancelProvisioningRequest
@@ -242,6 +250,20 @@ export interface AccountsResponse {
   accounts: Account[];
 }
 
+export interface PolicySummary {
+  schema: string;
+  policyId: string;
+  defaultAction: "reject";
+  ruleCount: number;
+}
+
+export interface PolicyResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "policy";
+  policy: PolicySummary;
+}
+
 export interface MethodResultResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -294,6 +316,7 @@ export type ProtocolResponse =
   | DisconnectResponse
   | CapabilitiesResponse
   | AccountsResponse
+  | PolicyResponse
   | MethodResultResponse
   | ProvisioningResponse
   | RecoveryPhraseResponse
@@ -412,6 +435,19 @@ export function makeGetAccountsRequest(sessionId: string, id = createRequestId()
     id,
     version: PROTOCOL_VERSION,
     type: "get_accounts",
+    sessionId,
+  };
+}
+
+export function makeGetPolicyRequest(sessionId: string, id = createRequestId()): GetPolicyRequest {
+  validateRequestId(id);
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "get_policy",
     sessionId,
   };
 }
@@ -794,6 +830,28 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
+  if (value.type === "policy") {
+    if (typeof value.id !== "string") {
+      throw new ProtocolError("protocol_error", "Policy response id is malformed.");
+    }
+    if (hasSecretPayloadKey(value)) {
+      throw new ProtocolError("protocol_error", "Policy response must not include secret material.");
+    }
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "policy"])) {
+      throw new ProtocolError("protocol_error", "Policy response contains unsupported fields.");
+    }
+    const policy = sanitizePolicySummary(value.policy);
+    if (policy === null) {
+      throw new ProtocolError("protocol_error", "Policy response policy object is malformed.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "policy",
+      policy,
+    };
+  }
+
   if (value.type === "method_result") {
     if (typeof value.id !== "string" || value.status !== "rejected") {
       throw new ProtocolError("protocol_error", "Method result response is malformed.");
@@ -887,6 +945,16 @@ export function assertAccountsResponse(response: ProtocolResponse): AccountsResp
   return response;
 }
 
+export function assertPolicyResponse(response: ProtocolResponse): PolicyResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "policy") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not policy.");
+  }
+  return response;
+}
+
 export function assertMethodResultResponse(response: ProtocolResponse): MethodResultResponse {
   if (response.type === "error") {
     throw new ProtocolError(response.error.code, response.error.message);
@@ -971,6 +1039,9 @@ export const MAX_CAPABILITY_ACCOUNTS_PER_CHAIN = 1;
 // imply multi-account support that does not exist. Raise this as more accounts or
 // chains are actually implemented.
 export const MAX_ACCOUNTS_PER_RESPONSE = 1;
+export const AGENT_Q_POLICY_SCHEMA = "agentq.policy.v0";
+export const POLICY_ID_PATTERN = /^sha256:[0-9a-f]{64}$/;
+export const MAX_POLICY_RULE_COUNT = 0;
 export const CALL_METHOD_CHAIN_PATTERN = /^[a-z][a-z0-9_.-]{0,31}$/;
 export const CALL_METHOD_NAME_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
 // The method runtime keeps request bodies bounded by the current Firmware JSONL
@@ -988,6 +1059,7 @@ export const METHOD_RESULT_ERROR_MESSAGES = {
   policy_rejected: "The request was rejected by device policy.",
   malformed_transaction: "Transaction bytes are malformed.",
   unsupported_transaction: "Transaction shape is not supported.",
+  policy_error: "Active policy is unavailable.",
   policy_action_not_implemented: "Policy action is not implemented.",
 } as const;
 export type MethodResultErrorCode = keyof typeof METHOD_RESULT_ERROR_MESSAGES;
@@ -1242,6 +1314,33 @@ function sanitizeAccount(value: unknown): Account {
     publicKey: value.publicKey,
     keyScheme: value.keyScheme,
     derivationPath: value.derivationPath,
+  };
+}
+
+function sanitizePolicySummary(value: unknown): PolicySummary | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (hasSecretPayloadKey(value)) {
+    throw new ProtocolError("protocol_error", "Policy summary must not include secret material.");
+  }
+  if (!hasOnlyObjectKeys(value, ["schema", "policyId", "defaultAction", "ruleCount"])) {
+    throw new ProtocolError("protocol_error", "Policy summary contains unsupported fields.");
+  }
+  if (
+    value.schema !== AGENT_Q_POLICY_SCHEMA ||
+    typeof value.policyId !== "string" ||
+    !POLICY_ID_PATTERN.test(value.policyId) ||
+    value.defaultAction !== "reject" ||
+    value.ruleCount !== MAX_POLICY_RULE_COUNT
+  ) {
+    return null;
+  }
+  return {
+    schema: value.schema,
+    policyId: value.policyId,
+    defaultAction: value.defaultAction,
+    ruleCount: value.ruleCount,
   };
 }
 

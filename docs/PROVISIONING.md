@@ -52,6 +52,7 @@ device RNG
   -> user backs it up
   -> user confirms backup
   -> Firmware stores root material locally
+  -> Firmware stores an active default-reject policy locally
   -> Firmware exposes only public keys / addresses
 ```
 
@@ -61,6 +62,8 @@ Rules:
 - The mnemonic is shown only during provisioning.
 - After confirmation, the mnemonic is not shown again.
 - If setup is canceled, Firmware wipes the generated material.
+- A device is not `provisioned` unless root material and an active policy are
+  both present.
 
 ### Import Existing Mnemonic
 
@@ -70,6 +73,7 @@ Recovery or migration path:
 user provides mnemonic
   -> Firmware validates it
   -> Firmware stores root material locally
+  -> Firmware stores an active policy locally
   -> Firmware exposes only public keys / addresses
 ```
 
@@ -119,15 +123,19 @@ Target provisioning states:
 
 - `unprovisioned`: no root signing material is stored.
 - `provisioning`: setup flow is active.
-- `provisioned`: root signing material exists.
+- `provisioned`: root signing material and an active policy exist.
 - `locked`: sensitive actions require local unlock.
 
 Runtime v0 implements the current StackChan CoreS3 mnemonic UI flow and
 persistent root material slice. It loads and reports `provisioning.state`, but
 does not persist `provisioning` during the normal create-new-mnemonic flow.
 After physical backup confirmation, Firmware stores the binary BIP-39 root
-entropy in ordinary DEV_PROFILE device-local NVS and only then moves to
-`provisioned`.
+entropy and the active default-reject policy in ordinary DEV_PROFILE
+device-local NVS and only then moves to `provisioned`.
+For existing DEV_PROFILE devices created before policy storage existed, Firmware
+may initialize the default-reject active policy at boot when `prov_state =
+provisioned` and root material is already valid. If that migration fails, the
+device fails closed.
 
 Runtime v0 does not import, export, or sign with root signing material; read-only
 public Sui account derivation is available via `get_accounts`. Current StackChan
@@ -137,8 +145,8 @@ phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
 or display expiry. Three-letter BIP-39 words are displayed as the full word.
 This is DEV_PROFILE storage scaffolding and is not USER_PROFILE key
 provisioning. Firmware must not set `provisioned` unless root signing material
-exists in device-local storage. Firmware must not set `locked` until an unlock
-model exists.
+and an active policy exist in device-local storage. Firmware must not set
+`locked` until an unlock model exists.
 
 Runtime v0 state transitions:
 
@@ -146,15 +154,15 @@ Runtime v0 state transitions:
 stateDiagram-v2
     [*] --> Unprovisioned: boot default or stored state
     Unprovisioned --> Unprovisioned: start_provisioning approved, phrase displayed
-    Unprovisioned --> Provisioned: backup confirmed, root material stored
+    Unprovisioned --> Provisioned: backup confirmed, root material and policy stored
     Unprovisioned --> Unprovisioned: cancel/timeout/failure, scratch wiped
-    Provisioned --> Unprovisioned: factory_reset approved, root material erased
+    Provisioned --> Unprovisioned: factory_reset approved, root material and policy erased
 
     Unprovisioned --> Unprovisioned: start rejected or timeout
 
-    Unprovisioned: no root signing material
+    Unprovisioned: no root signing material or active policy
     Unprovisioned: optional volatile mnemonic setup scratch only
-    Provisioned: root material stored; read-only get_accounts available, signing still unavailable
+    Provisioned: root material and active policy stored; read-only get_accounts/get_policy available, signing still unavailable
 ```
 
 `start_provisioning` is valid only when persistent state is `unprovisioned` and
@@ -192,12 +200,13 @@ replacement is treated as an event that must move `displayed` to `none` by
 wiping or invalidating the phrase.
 
 Backup confirmation is accepted only after a phrase has been displayed. The
-device-local Confirm button stores the binary root entropy, then persists
-`provisioning.state = provisioned`, then wipes volatile scratch. The protocol
+device-local Confirm button stores the binary root entropy, stores the active
+default-reject policy, then persists `provisioning.state = provisioned`, then
+wipes volatile scratch. The protocol
 `confirm_recovery_phrase_backup` request moves the scratch substate from
 `displayed` to `backup_confirmation_pending`; approval, rejection, or timeout
 always wipes the volatile phrase and returns the scratch substate to `none`. If
-root material storage or state persistence fails, Firmware wipes volatile
+root material, policy, or state persistence fails, Firmware wipes volatile
 scratch, returns `storage_error`, and must not report `provisioned`. Rejection
 or timeout also wipes the volatile phrase, so the user must generate a new
 phrase to continue.
@@ -230,12 +239,12 @@ rehearsal, and hardware smoke.
 
 `factory_reset` is the destructive recovery path for this DEV_PROFILE storage
 slice. It requires physical approval, clears any RAM session, wipes volatile
-setup scratch, erases the stored root entropy blob, persists
+setup scratch, erases the stored root entropy blob and active policy, persists
 `provisioning.state = unprovisioned`, and is also valid when Firmware has failed
-closed because stored state and root material disagree. If erase or state
-persistence fails, Firmware returns `storage_error` and must not claim reset
-success. It is a development/recovery operation for this DEV_PROFILE slice, not
-a normal agent-facing MCP tool. USER_PROFILE reset must stay behind a local
+closed because stored state, root material, and active policy disagree. If erase
+or state persistence fails, Firmware returns `storage_error` and must not claim
+reset success. It is a development/recovery operation for this DEV_PROFILE
+slice, not a normal agent-facing MCP tool. USER_PROFILE reset must stay behind a local
 recovery or setup path with physical approval.
 
 ## Implementation Order
@@ -246,7 +255,8 @@ Recommended first slice:
 2. Add setup-step messages that still store no persistent assets.
 3. Add DEV_PROFILE BIP-39 recovery phrase display with volatile wipe and no
    host exposure.
-4. Add DEV_PROFILE persistent root material storage after backup confirmation.
+4. Add DEV_PROFILE persistent root material and active policy storage after
+   backup confirmation.
 5. Add Sui Ed25519 account derivation.
 6. Add `get_accounts`.
 7. Add Sui `sign_personal_message`.

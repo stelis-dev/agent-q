@@ -11,9 +11,10 @@
 //
 // It exercises the actual agent-facing path:
 //   scan_devices -> identify_devices -> select_device -> connect_device (YES)
-//   -> get_capabilities -> get_accounts -> call_method (policy reject) -> disconnect_device
+//   -> get_capabilities -> get_accounts -> get_policy
+//   -> call_method (policy reject) -> disconnect_device
 //
-// The device must already be provisioned for connect_device/get_capabilities/get_accounts/call_method.
+// The device must already be provisioned for connect_device/get_capabilities/get_accounts/get_policy/call_method.
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -31,7 +32,7 @@ import { SerialPortUsbDriver } from "../dist/usb.js";
 const hardwareEnabled = process.env.AGENTQ_HW === "1";
 
 test(
-  "hardware: scan -> identify -> select -> connect -> get_capabilities -> get_accounts -> call_method -> disconnect over MCP",
+  "hardware: scan -> identify -> select -> connect -> get_capabilities -> get_accounts -> get_policy -> call_method -> disconnect over MCP",
   { skip: hardwareEnabled ? false : "set AGENTQ_HW=1 with a device connected" },
   async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-q-hw-smoke-"));
@@ -92,6 +93,19 @@ test(
       const accountsJson = JSON.stringify(accounts.structuredContent).toLowerCase();
       for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
         assert.equal(accountsJson.includes(fieldName.toLowerCase()), false, `${fieldName} must not reach the client`);
+      }
+
+      console.log("[hw-smoke] requesting active policy summary...");
+      const policy = await client.callTool({ name: "get_policy", arguments: { deviceId } });
+      assert.equal(policy.structuredContent.source, "live", "get_policy requires a provisioned device");
+      assert.equal(policy.structuredContent.policy.schema, "agentq.policy.v0");
+      assert.match(policy.structuredContent.policy.policyId, /^sha256:[0-9a-f]{64}$/);
+      assert.equal(policy.structuredContent.policy.defaultAction, "reject");
+      assert.equal(policy.structuredContent.policy.ruleCount, 0);
+      assert.equal("sessionId" in policy.structuredContent, false, "sessionId must not reach the client");
+      const policyJson = JSON.stringify(policy.structuredContent).toLowerCase();
+      for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
+        assert.equal(policyJson.includes(fieldName.toLowerCase()), false, `${fieldName} must not reach the client`);
       }
 
       const validSuiTransferHex = (

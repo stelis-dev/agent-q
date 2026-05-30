@@ -124,6 +124,7 @@ get_status
   -> connect
     -> get_capabilities
     -> get_accounts
+    -> get_policy
     -> call_method*
   -> disconnect
 ```
@@ -139,7 +140,8 @@ Flow rules:
 - A stored transport hint is not identity. Gateway must confirm identity with
   Firmware before treating a device as live.
 - `connect` establishes a session and requires physical approval.
-- `get_capabilities`, `get_accounts`, and `call_method` require `sessionId`.
+- `get_capabilities`, `get_accounts`, `get_policy`, and `call_method` require
+  `sessionId`.
 - `disconnect` ends the session.
 - Firmware should reject session-scoped requests with an unknown or expired
   `sessionId`.
@@ -150,20 +152,20 @@ Flow rules:
   it can no longer confirm.
 
 Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
-`get_capabilities`, `get_accounts`, the `call_method` runtime skeleton,
+`get_capabilities`, `get_accounts`, `get_policy`, the `call_method` runtime skeleton,
 `start_provisioning`, `cancel_provisioning`, explicit local Gateway device
 selection, local Gateway caching of discovered devices, and a hardware
 diagnostic request. The current `call_method` skeleton enforces state and
 session gates, keeps unknown methods rejected, and recognizes Sui
-`sign_transaction` only for rejected policy-decision smoke; it is not signing
-support.
+`sign_transaction` only for rejected policy-decision smoke against the active
+stored default-reject policy; it is not signing support.
 
 Source-level implementation added, with hardware smoke still pending:
-`confirm_recovery_phrase_backup` with persistent root material storage and
-`factory_reset` for physical-approval root wipe/recovery. The current StackChan
-CoreS3 mnemonic UI flow uses `start_provisioning` to generate and display setup
-material; it does not expose `generate_recovery_phrase` or the previous
-`provisioning_setup_check` boundary-check request.
+`confirm_recovery_phrase_backup` with persistent root material and active policy
+storage, plus `factory_reset` for physical-approval material wipe/recovery. The
+current StackChan CoreS3 mnemonic UI flow uses `start_provisioning` to generate
+and display setup material; it does not expose `generate_recovery_phrase` or the
+previous `provisioning_setup_check` boundary-check request.
 
 `connect` and `disconnect` are defined by the protocol and parsed by Gateway.
 The current StackChan CoreS3 target accepts `connect` only after persistent root
@@ -176,13 +178,14 @@ does not prove agent identity, and does not change Firmware policy.
 `get_capabilities` is implemented as a read-only, session-scoped capability
 request that currently reports Sui account identity with `methods: []`.
 `get_accounts` is implemented as a read-only, session-scoped identity request
-for the Sui Ed25519 account at index 0 in the `provisioned` state. StackChan
-CoreS3 hardware smoke verifies the Gateway/MCP path through `connect`,
-`get_capabilities`, `get_accounts`, Sui `sign_transaction` policy rejection, and
-`disconnect`. `call_method` exists only as a session-scoped runtime skeleton:
-unknown methods are rejected, while Sui `sign_transaction` is recognized only
-for restricted-transfer policy-decision smoke and still returns a rejected
-method result. No signing method is implemented or advertised.
+for the Sui Ed25519 account at index 0 in the `provisioned` state.
+`get_policy` is implemented as a read-only, session-scoped summary of the active
+DEV_PROFILE default-reject policy; it is metadata only and not a policy update
+surface. `call_method` exists only as a session-scoped runtime skeleton: unknown
+methods are rejected, while Sui `sign_transaction` is recognized only for
+restricted-transfer policy-decision smoke and still returns a rejected method
+result. No signing method is implemented or advertised. Hardware smoke must be
+rerun for the `get_policy` and policy-store-backed `call_method` paths.
 
 ## Device Discovery And Selection
 
@@ -274,9 +277,9 @@ security boundary and must not be treated as proof that the device is trusted.
 
 Provisioning states:
 
-- `unprovisioned`: root signing material is not present.
+- `unprovisioned`: root signing material and active policy are not present.
 - `provisioning`: local provisioning is in progress.
-- `provisioned`: root signing material is present.
+- `provisioned`: root signing material and active policy are present.
 - `locked`: the provisioning state cannot be used until the device is unlocked.
 
 `provisioning.state` reports only the Firmware's provisioning state. It is not
@@ -285,12 +288,19 @@ authorize Gateway to make policy decisions. Gateway must preserve and
 display the value without treating it as authority.
 
 The current StackChan CoreS3 target persists and reports `unprovisioned` and
-`provisioned`. It may report `provisioned` only when `prov_state` and the
-device-local root material blob both exist. It does not use `locked` because no
-unlock model is implemented. Source-level DEV_PROFILE recovery phrase display
-and persistent root material storage exist, and read-only `get_accounts` Sui
-account derivation is implemented. Runtime mnemonic import, policy, and signing
+`provisioned`. It may report `provisioned` only when `prov_state`, the
+device-local root material blob, and the active default-reject policy record all
+exist. It does not use `locked` because no unlock model is implemented.
+Source-level DEV_PROFILE recovery phrase display, persistent root material, and
+active policy storage exist, and read-only `get_accounts` Sui account
+derivation is implemented. Runtime mnemonic import, policy update, and signing
 APIs are not implemented.
+
+For DEV_PROFILE upgrade compatibility, a target that boots with the previous
+development shape (`prov_state = provisioned` and valid root material, but no
+policy record) may initialize the default-reject active policy before reporting
+`provisioned`. If that initialization fails, Firmware must fail closed instead
+of reporting normal `provisioned`.
 
 Device metadata strings are untrusted input and Gateway bounds them when
 parsing a response:
@@ -307,13 +317,14 @@ parsing a response:
 Mnemonic UI flow v0 is a hardware-confirmation setup slice. It lets Firmware
 generate a 12-word BIP-39 recovery phrase in RAM, display up-to-4-letter word
 prefixes on the device in a 3-column by 4-row grid, store binary root material
-only after backup confirmation, and then wipe the volatile scratch material
-after confirmation, cancellation, timeout, or failure. Three-letter BIP-39 words
-are displayed as the full word.
+and the active default-reject policy only after backup confirmation, and then
+wipe the volatile scratch material after confirmation, cancellation, timeout, or
+failure. Three-letter BIP-39 words are displayed as the full word.
 
-This flow completes only DEV_PROFILE root material persistence. Read-only public
-account identity is then available via `get_accounts`; this flow does not install
-policy, make signing available, or satisfy USER_PROFILE generation. USER_PROFILE generation remains blocked until the
+This flow completes only DEV_PROFILE root material and active policy
+persistence. Read-only public account identity is then available via
+`get_accounts`; this flow does not make signing available or satisfy
+USER_PROFILE generation. USER_PROFILE generation remains blocked until the
 firmware integrity and encrypted storage gates in `docs/SECURITY_MODEL.md` are
 satisfied.
 
@@ -450,9 +461,9 @@ source state and setup-step guards before request parameters such as
 `invalid_state` without showing approval UI.
 
 Canceling provisioning wipes setup scratch state before reporting success and
-must not return it to the host. It does not erase already-confirmed root
+must not return it to the host. It does not erase already-confirmed persistent
 material; once the device is `provisioned`, use `factory_reset` to erase local
-root material and return to `unprovisioned`.
+root material and active policy and return to `unprovisioned`.
 
 While a provisioning approval UI is active, Firmware should return `busy` for
 new UI-affecting or session-changing requests. `get_status` remains read-only
@@ -504,13 +515,13 @@ Approved backup confirmation response:
 }
 ```
 
-In v0, backup confirmation stores root material first, then persists
-`provisioned`, then wipes the volatile phrase. If root material storage or
-state persistence fails, Firmware returns `storage_error`, wipes volatile
-scratch, and must not report `provisioned`. If the user rejects or approval
-times out, Firmware returns the common `error` shape with `rejected` or
-`timeout` and wipes the volatile phrase. The user must start again to generate a
-new phrase.
+In v0, backup confirmation stores root material first, stores the active
+default-reject policy, then persists `provisioned`, then wipes the volatile
+phrase. If root material, policy, or state persistence fails, Firmware returns
+`storage_error`, wipes volatile scratch, and must not report `provisioned`. If
+the user rejects or approval times out, Firmware returns the common `error`
+shape with `rejected` or `timeout` and wipes the volatile phrase. The user must
+start again to generate a new phrase.
 Accepting a backup confirmation request transitions `displayed` to
 `backup_confirmation_pending`; approval, rejection, or timeout transitions
 `backup_confirmation_pending` to `none` and always wipes the phrase.
@@ -586,11 +597,12 @@ Approved response:
 ```
 
 On physical approval, Firmware clears any RAM session, wipes volatile setup
-scratch, erases stored root material, persists `provisioning.state =
-unprovisioned`, and clears the consistency-error condition only after those
-operations succeed. If erasing root material or writing state fails, Firmware
-returns `storage_error` and must not report reset success. Reject and timeout
-leave persistent root material and provisioning state unchanged.
+scratch, erases stored root material and active policy, persists
+`provisioning.state = unprovisioned`, and clears the consistency-error condition
+only after those operations succeed. If erasing root material, erasing policy,
+or writing state fails, Firmware returns `storage_error` and must not report
+reset success. Reject and timeout leave persistent material and provisioning
+state unchanged.
 
 ## Identify Device
 
@@ -890,7 +902,8 @@ Rules:
 
 - `get_capabilities` is session-scoped and requires `sessionId`.
 - Firmware returns capabilities only when `provisioning.state` is `provisioned`
-  and stored root material is consistent. Before that it returns
+  and persistent material, including root material and active policy, is
+  consistent. Before that it returns
   `invalid_state`.
 - A missing, expired, or mismatched session returns `invalid_session`; an
   expired session is also cleared.
@@ -947,7 +960,8 @@ Rules:
   is reported separately as `keyScheme`; the address is
   `0x` + lowercase hex of `blake2b256(0x00 || publicKey)`.
 - Firmware returns accounts only when `provisioning.state` is `provisioned` and
-  the stored root material is consistent. Before that it returns `invalid_state`.
+  persistent material, including root material and active policy, is consistent.
+  Before that it returns `invalid_state`.
 - The request requires `sessionId`. A missing, expired, or mismatched session
   returns `invalid_session`; an expired session is also cleared.
 - Account derivation runs in Firmware on demand and wipes all intermediate secret
@@ -965,6 +979,59 @@ Rules:
   verifies the current single-account response over an approved session.
   `get_accounts` reads identity only; capability `methods` remains empty until
   signing methods are implemented.
+
+## Policy Summary
+
+`get_policy` is a session-scoped read-only request that returns public metadata
+for the active Firmware-owned policy provider used by `call_method`. It does not
+return policy secrets, signing material, or an editable policy document.
+
+Request:
+
+```json
+{
+  "id": "req_policy",
+  "version": 1,
+  "type": "get_policy",
+  "sessionId": "session_001"
+}
+```
+
+Response:
+
+```json
+{
+  "id": "req_policy",
+  "version": 1,
+  "type": "policy",
+  "policy": {
+    "schema": "agentq.policy.v0",
+    "policyId": "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+    "defaultAction": "reject",
+    "ruleCount": 0
+  }
+}
+```
+
+Rules:
+
+- Firmware returns a policy summary only when `provisioning.state` is
+  `provisioned`, persistent material is consistent, the active default-reject
+  policy record exists, and the request has a matching active session.
+- Corrupt or unreadable active policy is a persistent-material consistency
+  error. Missing active policy is migrated only for the documented DEV_PROFILE
+  legacy shape where `prov_state = provisioned` and root material is valid;
+  outside that compatibility path, missing policy is also a consistency error.
+  Firmware must fail closed instead of continuing to report a normal
+  `provisioned` state when the policy cannot be made active.
+- `policyId` is the lowercase SHA-256 identifier for the canonical stored
+  policy record. It is metadata for drift detection, not an authorization token.
+- The current StackChan CoreS3 target supports only `agentq.policy.v0`,
+  `defaultAction: "reject"`, and `ruleCount: 0`. Custom policy content and
+  policy update authorization are not implemented.
+- Gateway validates the response strictly, rejects secret-like fields and any
+  unexpected `sessionId`, and does not evaluate policy.
+- The Gateway MCP `get_policy` tool never exposes the session id.
 
 ## Method Request
 
@@ -988,8 +1055,11 @@ with `txBytes` up to 384 decoded bytes and 512 canonical base64 characters.
 Firmware decodes only the restricted SUI transfer shape documented in
 [Implementation Status](../docs/IMPLEMENTATION_STATUS.md), adapts those facts
 into the Firmware-owned policy runtime, and returns a rejected method result.
-The current compiled policy is default reject, so valid supported transactions
-return `policy_rejected`. Malformed BCS returns
+The current active stored policy is default reject, so valid supported
+transactions return `policy_rejected`. A corrupt or unreadable active policy
+fails closed as a persistent-material consistency error before normal
+session-scoped methods are available; missing active policy is migrated only for
+legacy root-only DEV_PROFILE devices. Malformed BCS returns
 `malformed_transaction`; unsupported transaction shapes return
 `unsupported_transaction`. If a future test policy yields `sign` or `ask`, this
 runtime still returns `policy_action_not_implemented`. No signature, physical
@@ -1004,12 +1074,14 @@ policy provider boundary, and policy evaluator are Firmware-internal source
 foundations; they do not make `call_method` a signing API.
 
 Policy evaluation is currently a Firmware common-source foundation. It accepts
-already extracted transaction facts, loads a compiled default-reject policy
-through a Firmware-owned provider boundary, applies a declarative deny-by-default
+already extracted transaction facts, loads the stored active policy through a
+Firmware-owned provider boundary, applies a declarative deny-by-default
 policy model, and returns an internal `sign`, `reject`, or `ask` decision. That
 decision is not a signature, does not update device state, does not trigger
-physical approval yet, and is not exposed through Gateway or MCP. Missing or
-invalid policy providers fail closed as `reject`. Sui txBytes do not carry
+physical approval yet, and is not exposed through Gateway or MCP as authority.
+Missing or invalid active policy providers fail closed; in normal boot-time
+state handling that condition is a persistent-material consistency error, and
+any late provider failure is mapped to `policy_error`. Sui txBytes do not carry
 network identity; future runtime integration must supply network context outside
 the txBytes before evaluating network criteria. In the current schema, `sign`
 and `ask` rules with no criteria are invalid; broad allow behavior must be
@@ -1032,7 +1104,7 @@ Request:
 }
 ```
 
-Current policy-decision response for the compiled default-reject policy:
+Current policy-decision response for the active stored default-reject policy:
 
 ```json
 {
@@ -1043,6 +1115,22 @@ Current policy-decision response for the compiled default-reject policy:
   "error": {
     "code": "policy_rejected",
     "message": "The request was rejected by device policy."
+  }
+}
+```
+
+Current response when the active policy provider fails after normal state and
+session gates:
+
+```json
+{
+  "id": "req_006",
+  "version": 1,
+  "type": "method_result",
+  "status": "rejected",
+  "error": {
+    "code": "policy_error",
+    "message": "Active policy is unavailable."
   }
 }
 ```

@@ -36,14 +36,15 @@ The current implementation includes:
   `cancel_provisioning`, and `confirm_recovery_phrase_backup`.
   `start_provisioning` generates DEV_PROFILE BIP-39 root entropy in RAM,
   displays only the up-to-4-letter word prefixes on device in a 3-column by
-  4-row grid, and stores the root entropy only after physical backup
-  confirmation. The local setup speech bubble starts the same flow on device,
-  and the recovery phrase panel also has device-local Cancel/Confirm buttons.
+  4-row grid, and stores the root entropy plus active default-reject policy only
+  after physical backup confirmation. The local setup speech bubble starts the
+  same flow on device, and the recovery phrase panel also has device-local
+  Cancel/Confirm buttons.
 - a USB JSONL `factory_reset` request that requires physical approval, clears
   RAM sessions and volatile setup scratch, erases the DEV_PROFILE root entropy
-  blob, persists `unprovisioned`, and recovers from material/state consistency
-  errors. This path is for DEV_PROFILE development and recovery; Gateway must
-  not expose it as a normal agent-facing MCP tool.
+  blob and active policy, persists `unprovisioned`, and recovers from
+  material/state consistency errors. This path is for DEV_PROFILE development
+  and recovery; Gateway must not expose it as a normal agent-facing MCP tool.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP
@@ -70,11 +71,12 @@ This is not the signing product yet. It reports read-only identity capability
 (`get_capabilities` with `methods: []`), derives only read-only public account
 identity (`get_accounts`), and links a restricted host-tested Sui transaction
 facts parser plus a common default-reject policy runtime boundary. The current
-`call_method` skeleton consumes that default-reject decision only for Sui
-`sign_transaction` policy-decision smoke; it does not sign, store policies,
-expose MCP directly, or apply signing policy to produce signatures. The persisted values in this target implementation are the
-protocol `deviceId`, provisioning state flag, and DEV_PROFILE root entropy blob
-after backup confirmation.
+`call_method` skeleton consumes the stored active default-reject policy decision
+only for Sui `sign_transaction` policy-decision smoke; it does not sign, update
+policy, expose MCP directly, or apply signing policy to produce signatures. The
+persisted values in this target implementation are the protocol `deviceId`,
+provisioning state flag, DEV_PROFILE root entropy blob after backup
+confirmation, and a DEV_PROFILE active default-reject policy record.
 
 Agent-Q firmware is intentionally not a general StackChan AI firmware. It does
 not include StackChan World login, Xiaozhi cloud sessions, camera upload, screen
@@ -100,6 +102,7 @@ tools/firmware/common/generate_sui_transaction_fixtures.mjs
 tools/firmware/common/test_sui_transaction_facts.sh
 tools/firmware/common/test_policy_v0.sh
 tools/firmware/stackchan-cores3/test_call_method_validation.sh
+tools/firmware/stackchan-cores3/test_policy_store.sh
 tools/firmware/stackchan-cores3/test_bip39_vectors.sh
 tools/firmware/stackchan-cores3/test_sui_account_vectors.sh
 ```
@@ -129,9 +132,15 @@ The policy test is also a common host-side check. It compiles
 verifies deny-by-default, `sign`/`reject`/`ask` decision calculation, default
 provider behavior, missing/invalid policy provider rejection, malformed policy
 rejection, and unsupported-facts rejection. StackChan CoreS3 consumes the
-default-reject decision only for Sui `sign_transaction` policy-decision smoke;
-policy is not connected to physical approval, capability advertisement, or
-signing.
+stored active default-reject decision only for Sui `sign_transaction`
+policy-decision smoke; policy is not connected to physical approval, capability
+advertisement, policy update, or signing.
+
+The StackChan policy-store test is target-specific. It compiles the tracked
+`agent_q_policy_store.cpp` provider with ESP-IDF mbedTLS SHA-256 sources and
+host NVS stubs, then verifies default-policy storage, policy id calculation,
+summary reads, wipe behavior, active-policy availability checks, and
+missing/corrupt/failed-write fail-closed provider behavior.
 
 During preparation, the tracked build tools also patch the pinned upstream host
 tree so the Agent-Q build does not start the StackChan/Xiaozhi remote AI
@@ -170,14 +179,19 @@ In the hardware firmware tree:
 
 ## Persistent Storage
 
-This target stores the protocol `deviceId`, provisioning state, and DEV_PROFILE
-root entropy in NVS namespace `agent_q`.
+This target stores the protocol `deviceId`, provisioning state, DEV_PROFILE root
+entropy, and active default-reject policy in NVS namespace `agent_q`.
+When a previous DEV_PROFILE build already has `prov_state = provisioned` and
+valid root entropy but no policy record, boot initializes the default-reject
+policy before reporting `provisioned`; if that write fails, the target fails
+closed with a material/state consistency error.
 
 | Key | Purpose |
 |---|---|
 | `device_id` | Gateway reconnect and device-selection identity |
-| `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy present |
+| `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy and active policy present |
 | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
+| `policy_v0` | DEV_PROFILE active default-reject policy record |
 
 Recovery phrase setup v0 stores generated phrase text only in RAM, displays
 only up-to-4-letter prefixes on device, and wipes the phrase on cancel, backup
