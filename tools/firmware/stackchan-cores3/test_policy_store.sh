@@ -217,7 +217,6 @@ int main()
     agent_q::AgentQStoredPolicySummary summary = {};
 
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "missing policy status");
-    expect(!agent_q::has_active_policy(), "missing policy is not active");
     expect(!agent_q::read_active_policy_summary(&summary), "missing policy summary fails closed");
     agent_q::AgentQPolicyDecision decision = evaluate_active_policy();
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "missing policy rejects");
@@ -225,7 +224,6 @@ int main()
 
     expect(agent_q::store_default_policy(), "store default policy");
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "stored policy status");
-    expect(agent_q::has_active_policy(), "stored policy is active");
     expect(agent_q::read_active_policy_summary(&summary), "read default policy summary");
     expect(strcmp(summary.schema, "agentq.policy.v0") == 0, "policy schema");
     expect(strcmp(summary.default_action, "reject") == 0, "policy default action");
@@ -238,7 +236,6 @@ int main()
 
     g_blob[0] = 0;
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "corrupt policy status");
-    expect(!agent_q::has_active_policy(), "corrupt policy is not active");
     expect(!agent_q::read_active_policy_summary(&summary), "corrupt policy summary fails closed");
     decision = evaluate_active_policy();
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "corrupt policy rejects");
@@ -252,19 +249,16 @@ int main()
     expect(agent_q::wipe_policy(), "wipe policy");
     expect(g_blob.empty(), "policy blob wiped");
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "wiped policy status");
-    expect(!agent_q::has_active_policy(), "wiped policy is not active");
     expect(!agent_q::read_active_policy_summary(&summary), "wiped policy summary fails closed");
 
     g_commit_fails = true;
     expect(!agent_q::store_default_policy(), "commit failure fails closed");
     expect(g_blob.empty(), "commit failure wipes partial policy");
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "commit failure policy status");
-    expect(!agent_q::has_active_policy(), "commit failure leaves no active policy");
     g_commit_fails = false;
 
     g_open_fails = true;
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::storage_error, "storage error policy status");
-    expect(!agent_q::has_active_policy(), "storage error is not active");
     g_open_fails = false;
 
     if (failures != 0) {

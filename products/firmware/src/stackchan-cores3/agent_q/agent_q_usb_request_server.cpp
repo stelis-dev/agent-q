@@ -584,11 +584,6 @@ void write_rejected_method_result(const char* id, const char* code, const char* 
     write_json_document(response);
 }
 
-void write_unsupported_method_result(const char* id)
-{
-    write_rejected_method_result(id, "unsupported_method", "Method is not supported.");
-}
-
 void write_capabilities_response(const char* id)
 {
     JsonDocument response;
@@ -1133,21 +1128,6 @@ void enqueue_ui_event(AgentQUiEventKind kind, AgentQUiPanelKind panel_kind = Age
     }
 }
 
-void enqueue_ui_panel_deleted(AgentQUiPanelKind panel_kind)
-{
-    enqueue_ui_event(AgentQUiEventKind::panel_deleted, panel_kind);
-}
-
-void enqueue_setup_requested()
-{
-    enqueue_ui_event(AgentQUiEventKind::setup_requested);
-}
-
-void enqueue_provisioning_welcome_requested()
-{
-    enqueue_ui_event(AgentQUiEventKind::provisioning_welcome_requested);
-}
-
 void on_yes_clicked(lv_event_t*)
 {
     enqueue_pending_choice(PendingChoice::yes);
@@ -1160,7 +1140,7 @@ void on_no_clicked(lv_event_t*)
 
 void on_setup_clicked(lv_event_t*)
 {
-    enqueue_setup_requested();
+    enqueue_ui_event(AgentQUiEventKind::setup_requested);
 }
 
 void on_recovery_phrase_cancel_clicked(lv_event_t*)
@@ -1259,11 +1239,6 @@ void make_recovery_phrase_action_button(
     make_button_label_with_font(button, text, &lv_font_montserrat_14, callback);
 }
 
-void trigger_agent_q_head_lift()
-{
-    agent_q::play_motion_feedback(agent_q::AgentQMotionFeedbackState::head_lift);
-}
-
 void on_agent_q_panel_deleted(lv_event_t* event)
 {
     lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(event));
@@ -1272,7 +1247,7 @@ void on_agent_q_panel_deleted(lv_event_t* event)
         ESP_LOGW(kTag, "Agent-Q panel was deleted by external UI state");
         g_ui.panel = nullptr;
         g_ui.panel_kind = AgentQUiPanelKind::none;
-        enqueue_ui_panel_deleted(deleted_kind);
+        enqueue_ui_event(AgentQUiEventKind::panel_deleted, deleted_kind);
     }
 }
 
@@ -1389,7 +1364,7 @@ bool show_agent_q_message(
         presentation.foreground,
         click_callback));
     if (presentation.lift_head) {
-        trigger_agent_q_head_lift();
+        agent_q::play_motion_feedback(agent_q::AgentQMotionFeedbackState::head_lift);
     }
     g_ui.speech_avatar = &avatar;
     g_ui.speech_mode = mode;
@@ -2194,7 +2169,7 @@ void handle_line(const char* line)
             return;
         }
 
-        write_unsupported_method_result(id);
+        write_rejected_method_result(id, "unsupported_method", "Method is not supported.");
         ESP_LOGI(kTag, "call_method unsupported: id=%s", id);
         return;
     }
@@ -2313,7 +2288,7 @@ void init_usb_request_server()
 
 void show_provisioning_welcome_if_needed()
 {
-    enqueue_provisioning_welcome_requested();
+    enqueue_ui_event(AgentQUiEventKind::provisioning_welcome_requested);
 }
 
 }  // namespace agent_q

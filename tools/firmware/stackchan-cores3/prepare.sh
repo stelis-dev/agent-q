@@ -325,7 +325,8 @@ launcher = insert_after_once(
     launcher,
     "#include <stackchan/stackchan.h>\n",
     "#include <agent_q/agent_q_usb_request_server.h>\n"
-    "#include <agent_q/agent_q_display_power.h>\n",
+    "#include <agent_q/agent_q_display_power.h>\n"
+    "#include <agent_q/agent_q_motion_state.h>\n",
     "app_launcher.cpp Agent-Q provisioning UI include",
 )
 launcher = replace_any_once(
@@ -372,7 +373,7 @@ launcher = replace_any_once(
         GetStackChan().attachAvatar(std::move(default_avatar));
         GetStackChan().addModifier(std::make_unique<stackchan::BlinkModifier>());
         GetStackChan().addModifier(std::make_unique<stackchan::IdleExpressionModifier>(8000, 20000));
-        agent_q::prepare_display_power_awake_posture();
+        agent_q::set_motion_posture(agent_q::AgentQMotionPostureState::awake);
         agent_q::show_provisioning_welcome_if_needed();
         _view.reset();
     } else {
@@ -456,7 +457,7 @@ board = board_path.read_text()
 board = insert_after_once(
     board,
     "#include \"hal_bridge.h\"\n",
-    "#include \"agent_q/agent_q_display_power.h\"\n#include <freertos/FreeRTOS.h>\n#include <freertos/task.h>\n",
+    "#include \"agent_q/agent_q_display_power.h\"\n#include \"agent_q/agent_q_motion_state.h\"\n#include <freertos/FreeRTOS.h>\n#include <freertos/task.h>\n",
     "stackchan.cc Agent-Q display power include",
 )
 board = replace_once(
@@ -555,8 +556,8 @@ board = insert_after_once(
         const uint8_t power_key_irqs = pmic_->ConsumePowerKeyIrqs();
         if ((power_key_irqs & 0x04) != 0) {
             ESP_LOGI(TAG, "Power key long press: moving to rest posture and powering off");
-            agent_q::prepare_display_power_rest_posture();
-            vTaskDelay(pdMS_TO_TICKS(agent_q::display_power_rest_posture_delay_ms()));
+            agent_q::set_motion_posture(agent_q::AgentQMotionPostureState::rest);
+            vTaskDelay(pdMS_TO_TICKS(agent_q::motion_rest_posture_settle_ms()));
             pmic_->PowerOff();
             return;
         }

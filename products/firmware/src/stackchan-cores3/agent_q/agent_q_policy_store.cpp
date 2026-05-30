@@ -220,11 +220,6 @@ bool wipe_policy()
     return true;
 }
 
-bool has_active_policy()
-{
-    return active_policy_status() == AgentQPolicyStoreStatus::active;
-}
-
 AgentQPolicyStoreStatus active_policy_status()
 {
     StoredPolicyRecord record = {};

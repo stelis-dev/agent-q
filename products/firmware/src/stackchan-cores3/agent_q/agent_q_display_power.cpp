@@ -64,21 +64,6 @@ void request_display_power_wake()
     g_wake_requested.store(true, std::memory_order_relaxed);
 }
 
-void prepare_display_power_awake_posture()
-{
-    set_motion_posture(AgentQMotionPostureState::awake);
-}
-
-void prepare_display_power_rest_posture()
-{
-    set_motion_posture(AgentQMotionPostureState::rest);
-}
-
-uint32_t display_power_rest_posture_delay_ms()
-{
-    return motion_rest_posture_settle_ms();
-}
-
 void update_display_power(uint32_t inactive_time_ms)
 {
     if (g_toggle_requested.exchange(false, std::memory_order_relaxed)) {

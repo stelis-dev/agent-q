@@ -27,7 +27,6 @@ enum class AgentQPolicyStoreStatus {
 bool store_default_policy();
 bool wipe_policy();
 AgentQPolicyStoreStatus active_policy_status();
-bool has_active_policy();
 
 AgentQPolicyProvider active_policy_provider();
 bool read_active_policy_summary(AgentQStoredPolicySummary* out);

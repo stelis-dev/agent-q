@@ -166,8 +166,8 @@ display-power control:
 The display-power state is owned by `agent_q_display_power`. StackChan-specific
 motor posture and transient head-motion feedback are owned by
 `agent_q_motion_state`. The board layer only translates AXP2101 power-key IRQs
-into display-power events or hardware power-off; it does not change Agent-Q
-product state.
+into display-power events, target-local motion posture for power-off, or
+hardware power-off; it does not change Agent-Q product state.
 
 Boot posture is StackChan-specific motion feedback. After the default avatar is
 attached, the Agent-Q build centers yaw and raises pitch (`yaw=0`, `pitch=540`).

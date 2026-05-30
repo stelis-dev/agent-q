@@ -112,11 +112,6 @@ int compare_decimal_u64_strings(const char* left, const char* right)
     return 0;
 }
 
-bool validate_decimal_limit(const char* value)
-{
-    return is_decimal_u64_string(value);
-}
-
 bool validate_criterion(const AgentQPolicyCriterion& criterion)
 {
     if (!is_known_criterion_type(criterion.type) || !is_known_operator(criterion.op)) {
@@ -141,7 +136,7 @@ bool validate_criterion(const AgentQPolicyCriterion& criterion)
         case AgentQPolicyCriterionType::amount:
         case AgentQPolicyCriterionType::gas_budget:
             return criterion.op == AgentQPolicyOperator::lte &&
-                   validate_decimal_limit(criterion.value);
+                   is_decimal_u64_string(criterion.value);
     }
     return false;
 }
