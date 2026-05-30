@@ -35,6 +35,8 @@ const secondStatus = {
   device: secondDevice,
 };
 
+const signTransactionParams = { network: "devnet", txBytes: "AQID" };
+
 function identifyResponse(code, identifiedDevice = device) {
   return {
     id: "req_identify",
@@ -1059,7 +1061,7 @@ test("callMethod returns Firmware's rejected method_result and keeps the session
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
-    const result = await core.callMethod({ chain: "sui", method: "sign_transaction", params: {} });
+    const result = await core.callMethod({ chain: "sui", method: "unknown_method", params: {} });
     assert.equal(result.source, "live");
     assert.equal(result.status, "rejected");
     assert.equal(result.error.code, "unsupported_method");
@@ -1139,7 +1141,7 @@ test("callMethod clears the local session when Firmware reports invalid_session"
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
-    const result = await core.callMethod({ chain: "sui", method: "sign_transaction", params: {} });
+    const result = await core.callMethod({ chain: "sui", method: "sign_transaction", params: signTransactionParams });
     assert.equal(result.source, "session_ended");
     assert.equal(result.reason, "invalid_session");
     const listed = await core.listDevices();

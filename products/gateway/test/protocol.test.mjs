@@ -34,6 +34,8 @@ import {
   serializeRequest,
 } from "../dist/protocol.js";
 
+const CANONICAL_TX_BYTES_BASE64 = "AQID";
+
 test("creates safe request ids and get_status requests", () => {
   const id = createRequestId();
   assert.equal(isSafeRequestId(id), true);
@@ -264,7 +266,7 @@ test("makeCallMethodRequest validates session, method identifiers, and params", 
   const request = makeCallMethodRequest(
     "session_abcdef0123456789",
     "sui",
-    "sign_transaction",
+    "unknown_method",
     {},
     "req_call_method_1",
   );
@@ -274,7 +276,7 @@ test("makeCallMethodRequest validates session, method identifiers, and params", 
     type: "call_method",
     sessionId: "session_abcdef0123456789",
     chain: "sui",
-    method: "sign_transaction",
+    method: "unknown_method",
     params: {},
   });
 
@@ -287,17 +289,59 @@ test("makeCallMethodRequest validates session, method identifiers, and params", 
   );
   assert.throws(
     () =>
-      makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", {
-        seed: "must-not-forward",
+      makeCallMethodRequest("session_abcdef0123456789", "sui", "unknown_method", {
+        memo: "가".repeat(250),
       }),
-    /secret material/,
+    /too large/,
+  );
+});
+
+test("makeCallMethodRequest validates Sui sign_transaction params", () => {
+  const params = { network: "devnet", txBytes: CANONICAL_TX_BYTES_BASE64 };
+  const request = makeCallMethodRequest(
+    "session_abcdef0123456789",
+    "sui",
+    "sign_transaction",
+    params,
+    "req_call_method_1",
+  );
+  assert.deepEqual(request.params, params);
+
+  assert.throws(
+    () => makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", {}),
+    /network/,
   );
   assert.throws(
     () =>
       makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", {
-        memo: "가".repeat(90),
+        network: "invalidnet",
+        txBytes: CANONICAL_TX_BYTES_BASE64,
       }),
-    /too large/,
+    /network/,
+  );
+  assert.throws(
+    () =>
+      makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", {
+        network: "devnet",
+        txBytes: "not-base64",
+      }),
+    /base64/,
+  );
+  assert.throws(
+    () =>
+      makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", {
+        network: "devnet",
+        txBytes: CANONICAL_TX_BYTES_BASE64,
+        memo: "extra",
+      }),
+    /unsupported fields/,
+  );
+  assert.throws(
+    () =>
+      makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", {
+        seed: "must-not-forward",
+      }),
+    /secret material/,
   );
 });
 
@@ -525,6 +569,23 @@ test("parseProtocolResponse accepts the current rejected method_result skeleton"
   assert.equal(response.error.code, "unsupported_method");
 });
 
+test("parseProtocolResponse accepts rejected Sui sign_transaction policy decisions", () => {
+  const cases = [
+    ["policy_rejected", "The request was rejected by device policy."],
+    ["malformed_transaction", "Transaction bytes are malformed."],
+    ["unsupported_transaction", "Transaction shape is not supported."],
+    ["policy_action_not_implemented", "Policy action is not implemented."],
+  ];
+  for (const [code, message] of cases) {
+    const response = assertMethodResultResponse(
+      parseProtocolResponse(methodResultLine({}, { code, message }), "req_call_method"),
+    );
+    assert.equal(response.status, "rejected");
+    assert.equal(response.error.code, code);
+    assert.equal(response.error.message, message);
+  }
+});
+
 test("parseProtocolResponse rejects unsupported method_result shapes", () => {
   assert.throws(
     () => parseProtocolResponse(methodResultLine({ status: "approved", result: { signature: "x" } }), "req_call_method"),
@@ -535,7 +596,7 @@ test("parseProtocolResponse rejects unsupported method_result shapes", () => {
     { code: "protocol_error" },
   );
   assert.throws(
-    () => parseProtocolResponse(methodResultLine({}, { code: "policy_rejected" }), "req_call_method"),
+    () => parseProtocolResponse(methodResultLine({}, { code: "policy_rejected", message: "wrong" }), "req_call_method"),
     { code: "protocol_error" },
   );
   for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {

@@ -38,9 +38,9 @@ physical approval when the target supports sessions. The current StackChan
 CoreS3 target accepts `connect` only after persistent root material and
 material-backed `provisioned` state exist. `disconnect_device` ends the runtime
 session when one exists. `get_capabilities` and `get_accounts` are read-only
-session-scoped tools. `call_method` is the shared method path, but the current
-skeleton returns `unsupported_method` for every method and is not signing
-support.
+session-scoped tools. `call_method` is the shared method path; the current
+runtime keeps unknown methods rejected and recognizes Sui `sign_transaction`
+only for rejected policy-decision smoke. It is not signing support.
 
 ## Boundaries
 

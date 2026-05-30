@@ -11,11 +11,12 @@
 //
 // It exercises the actual agent-facing path:
 //   scan_devices -> identify_devices -> select_device -> connect_device (YES)
-//   -> get_capabilities -> get_accounts -> call_method (unsupported) -> disconnect_device
+//   -> get_capabilities -> get_accounts -> call_method (policy reject) -> disconnect_device
 //
 // The device must already be provisioned for connect_device/get_capabilities/get_accounts/call_method.
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { Buffer } from "node:buffer";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -93,14 +94,27 @@ test(
         assert.equal(accountsJson.includes(fieldName.toLowerCase()), false, `${fieldName} must not reach the client`);
       }
 
-      console.log("[hw-smoke] calling skeleton method path...");
+      const validSuiTransferHex = (
+        await readFile(
+          new URL("../../firmware/src/common/agent_q/sui/testdata/sui_transaction_facts/valid_sui_transfer_tx.bcs.hex", import.meta.url),
+          "utf8",
+        )
+      ).replace(/\s+/g, "");
+      const validSuiTransferTxBytes = Buffer.from(validSuiTransferHex, "hex").toString("base64");
+
+      console.log("[hw-smoke] calling Sui sign_transaction policy-decision path...");
       const method = await client.callTool({
         name: "call_method",
-        arguments: { deviceId, chain: "sui", method: "sign_transaction", params: {} },
+        arguments: {
+          deviceId,
+          chain: "sui",
+          method: "sign_transaction",
+          params: { network: "devnet", txBytes: validSuiTransferTxBytes },
+        },
       });
       assert.equal(method.structuredContent.source, "live", "call_method requires a provisioned session");
       assert.equal(method.structuredContent.status, "rejected");
-      assert.equal(method.structuredContent.error.code, "unsupported_method");
+      assert.equal(method.structuredContent.error.code, "policy_rejected");
       assert.equal("sessionId" in method.structuredContent, false, "sessionId must not reach the client");
       const methodJson = JSON.stringify(method.structuredContent).toLowerCase();
       for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {

@@ -190,9 +190,10 @@ export type GetAccountsResult =
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: GetAccountsSessionEndedReason };
 
-// call_method is the common method path. The current runtime skeleton keeps
-// sessions/state gates intact but all methods are rejected by Firmware until a
-// specific method is implemented and advertised.
+// call_method is the common method path. The current runtime keeps
+// sessions/state gates intact, rejects unknown methods, and recognizes Sui
+// sign_transaction only for rejected policy-decision smoke until signing is
+// implemented and advertised.
 export type CallMethodResult =
   | {
       source: "live";

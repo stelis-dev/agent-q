@@ -64,9 +64,9 @@ Implemented today:
   material. Hardware smoke is still required.
 - A common firmware policy evaluator and default-reject runtime boundary. It can
   calculate internal `sign`, `reject`, or `ask` decisions from already extracted
-  transaction facts in host tests, but the current `call_method` runtime
-  skeleton does not consume policy decisions and it does not sign, store policy,
-  or trigger physical approval.
+  transaction facts in host tests. StackChan CoreS3 consumes the default-reject
+  decision only for Sui `sign_transaction` policy-decision smoke; it does not
+  sign, store policy, or trigger physical approval.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
@@ -76,9 +76,10 @@ Designed but not implemented (do not treat as present):
 - Key import.
 - USER_PROFILE first-install mnemonic generation or import.
 - zkLogin signing material.
-- Policy storage, policy update authorization, and runtime policy enforcement.
-- Signing methods inside `call_method`. The `call_method` runtime skeleton exists
-  but currently rejects every method as unsupported.
+- Policy storage and policy update authorization.
+- Signing methods inside `call_method`. The `call_method` runtime recognizes Sui
+  `sign_transaction` only for rejected policy-decision smoke; it does not sign,
+  advertise the method, or trigger approval UI.
 - The Admin Page / local web UI.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.
 - Secure Boot, Flash Encryption, and NVS Encryption setup flow.
@@ -395,9 +396,12 @@ Enforcement today:
   registered tools must equal a fixed set, both at definition and over the live
   transport. A new tool such as `export_key` cannot be added without failing
   those tests.
-- Concrete signing methods inside `call_method` are not implemented. Before they
-  ship they need their own allowlist and negative tests, because the top-level
-  allowlist does not cover method names carried inside `call_method`.
+- Concrete signing methods inside `call_method` are not implemented. Sui
+  `sign_transaction` currently has a rejected policy-decision smoke path only.
+  Before a method ships as signing support it needs its own allowlist, capability
+  advertisement, physical-approval behavior where required, and negative tests,
+  because the top-level allowlist does not cover method names carried inside
+  `call_method`.
 
 ## 12. Device Capability Tiers
 

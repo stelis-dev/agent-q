@@ -429,6 +429,33 @@ test("call_method dispatch returns a rejected skeleton result without a session 
   });
 });
 
+test("call_method dispatch accepts rejected policy-decision results without a session token", async () => {
+  const core = {
+    ...noOpCore,
+    async callMethod() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        status: "rejected",
+        error: {
+          code: "policy_rejected",
+          message: "The request was rejected by device policy.",
+        },
+      };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({
+      name: "call_method",
+      arguments: { chain: "sui", method: "sign_transaction", params: {} },
+    });
+    assert.equal(result.structuredContent.source, "live");
+    assert.equal(result.structuredContent.status, "rejected");
+    assert.equal(result.structuredContent.error.code, "policy_rejected");
+    assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
+  }, core);
+});
+
 test("call_method dispatch lets core own state-first validation", async () => {
   let callMethodCalls = 0;
   const core = {

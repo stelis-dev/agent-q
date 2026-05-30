@@ -28,9 +28,10 @@ The current implementation includes:
   `provisioned`. The current `methods` list is empty because signing methods are
   not implemented.
 - a USB JSONL `call_method` runtime skeleton. It requires material-backed
-  `provisioned` state plus a matching active session, then rejects every method
-  with `unsupported_method`. It does not parse txBytes, evaluate policy, ask for
-  signing approval, or sign.
+  `provisioned` state plus a matching active session, keeps unknown methods
+  rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only
+  for restricted-transfer policy-decision smoke. It does not ask for signing
+  approval or sign.
 - USB JSONL mnemonic UI requests for `start_provisioning`,
   `cancel_provisioning`, and `confirm_recovery_phrase_backup`.
   `start_provisioning` generates DEV_PROFILE BIP-39 root entropy in RAM,
@@ -68,9 +69,10 @@ after material-backed provisioning. Sessions do not authorize signing.
 This is not the signing product yet. It reports read-only identity capability
 (`get_capabilities` with `methods: []`), derives only read-only public account
 identity (`get_accounts`), and links a restricted host-tested Sui transaction
-facts parser plus a common default-reject policy runtime boundary that the
-current `call_method` skeleton does not consume; it does not sign, store
-policies, expose MCP directly, or apply signing policy at runtime. The persisted values in this target implementation are the
+facts parser plus a common default-reject policy runtime boundary. The current
+`call_method` skeleton consumes that default-reject decision only for Sui
+`sign_transaction` policy-decision smoke; it does not sign, store policies,
+expose MCP directly, or apply signing policy to produce signatures. The persisted values in this target implementation are the
 protocol `deviceId`, provisioning state flag, and DEV_PROFILE root entropy blob
 after backup confirmation.
 
@@ -118,15 +120,17 @@ source and checks known Sui SDK address/public-key vectors.
 
 The Sui transaction facts parser test is a common host-side check. It compiles
 `products/firmware/src/common/agent_q/sui` and verifies tracked BCS fixtures for
-the restricted SUI transfer parser. By itself it does not connect the parser to
-the `call_method` skeleton, policy evaluation, or signing.
+the restricted SUI transfer parser. StackChan CoreS3 connects the parser only to
+Sui `sign_transaction` policy-decision smoke; it is not signing.
 
 The policy test is also a common host-side check. It compiles
 `products/firmware/src/common/agent_q/policy` plus the Sui facts adapter and
 verifies deny-by-default, `sign`/`reject`/`ask` decision calculation, default
 provider behavior, missing/invalid policy provider rejection, malformed policy
-rejection, and unsupported-facts rejection. It does not connect policy to the
-`call_method` skeleton, physical approval, capability advertisement, or signing.
+rejection, and unsupported-facts rejection. StackChan CoreS3 consumes the
+default-reject decision only for Sui `sign_transaction` policy-decision smoke;
+policy is not connected to physical approval, capability advertisement, or
+signing.
 
 During preparation, the tracked build tools also patch the pinned upstream host
 tree so the Agent-Q build does not start the StackChan/Xiaozhi remote AI

@@ -29,9 +29,9 @@ import {
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
   MAX_APPROVAL_TIMEOUT_MS,
+  METHOD_RESULT_ERROR_MESSAGES,
   SUI_ADDRESS_PATTERN,
   SUI_DERIVATION_PATH,
-  UNSUPPORTED_METHOD_MESSAGE,
   isSuiAddressForPublicKey,
 } from "./protocol.js";
 import { SerialPortUsbDriver, MAX_SCAN_TIMEOUT_MS } from "./usb.js";
@@ -345,8 +345,10 @@ const getAccountsToolOutputShape = z.discriminatedUnion("source", [
 ]);
 
 const methodResultErrorShape = z.object({
-  code: z.literal("unsupported_method"),
-  message: z.literal(UNSUPPORTED_METHOD_MESSAGE),
+  code: z.enum(Object.keys(METHOD_RESULT_ERROR_MESSAGES) as [keyof typeof METHOD_RESULT_ERROR_MESSAGES, ...Array<keyof typeof METHOD_RESULT_ERROR_MESSAGES>]),
+  message: z.enum(Object.values(METHOD_RESULT_ERROR_MESSAGES) as [string, ...string[]]),
+}).refine((error) => error.message === METHOD_RESULT_ERROR_MESSAGES[error.code], {
+  message: "Method result error message must match its code.",
 });
 const liveCallMethodOutputShape = z.object({
   source: z.literal("live"),
@@ -564,7 +566,7 @@ export const gatewayToolDefinitions = {
     name: "call_method",
     title: "Call method",
     description:
-      "Send a session-scoped method request through the shared Agent-Q protocol path. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. This is not signing support: current StackChan CoreS3 capabilities advertise no callable methods and current method calls are rejected until Firmware implements and advertises a method.",
+      "Send a session-scoped method request through the shared Agent-Q protocol path. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. This is not signing support: current StackChan CoreS3 capabilities advertise no callable methods, unknown methods are rejected, and Sui sign_transaction is recognized only for rejected policy-decision smoke.",
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),

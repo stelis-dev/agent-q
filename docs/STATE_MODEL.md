@@ -176,25 +176,27 @@ Allowed:
 - `display_signal` diagnostic
 - `get_capabilities` (read-only, session-scoped)
 - `get_accounts` (read-only, session-scoped)
-- `call_method` runtime skeleton (session-scoped; currently rejects every method)
+- `call_method` runtime skeleton (session-scoped; unknown methods reject, and Sui
+  `sign_transaction` is recognized only for rejected policy-decision smoke)
 - policy read/update only after those protocol surfaces are implemented
 
 This state is not blanket signing approval. Policy still decides whether each
 request signs, rejects, or asks. In the current StackChan CoreS3
 implementation, `provisioned` enables `connect`, `disconnect`, read-only
 `get_capabilities` (`methods: []`), read-only `get_accounts` (Sui Ed25519
-account 0), the `call_method` runtime skeleton (all methods rejected with
-`unsupported_method`), and the `display_signal` diagnostic; policy and signing
-remain unavailable.
-Future txBytes decoding is allowed only inside a session-scoped `call_method`
-signing path after `provisioned`; it must remain unavailable in
+account 0), the `call_method` runtime skeleton (unknown methods rejected with
+`unsupported_method`, while Sui `sign_transaction` policy-decision smoke returns
+only rejected method results), and the `display_signal` diagnostic; signing
+remains unavailable.
+Future signing txBytes decoding is allowed only inside a session-scoped
+`call_method` signing path after `provisioned`; it must remain unavailable in
 `unprovisioned`, `provisioning`, `locked`, and the internal consistency-error
 condition. Current common firmware source includes a restricted host-tested SUI
 transfer facts parser, a Sui facts-to-policy adapter, a default-reject policy
 provider boundary, and a host-tested policy evaluator. These are common firmware
-foundations only: the current `call_method` skeleton does not consume policy
-decisions, capabilities still advertise no signing methods, and Gateway must
-not evaluate policy.
+foundations only: StackChan CoreS3 consumes the default-reject policy decision
+for Sui `sign_transaction` policy-decision smoke, capabilities still advertise no
+signing methods, and Gateway must not evaluate policy.
 
 ### `locked`
 

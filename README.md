@@ -98,14 +98,15 @@ Implemented:
 - Disconnect.
 - Read-only Sui account and public-key discovery over an approved runtime
   session.
-- A session-scoped `call_method` runtime skeleton that currently rejects every
-  method as unsupported. It is not signing support.
+- A session-scoped `call_method` runtime skeleton that keeps unknown methods
+  rejected and recognizes Sui `sign_transaction` only for rejected
+  policy-decision smoke. It is not signing support.
 - A common host-tested policy evaluator and default-reject runtime boundary that
   are not connected to runtime signing.
 
-Not yet implemented: concrete signing methods, runtime policy enforcement or
-storage, Admin Page, and chain-specific transaction logic. Connection is not
-signing approval and does not authorize signing. A connection session does not
+Not yet implemented: concrete signing outputs, policy storage/update, Admin
+Page, and broad chain-specific transaction logic. Connection is not signing
+approval and does not authorize signing. A connection session does not
 prove agent identity. Labels and purpose names are local Gateway metadata and
 are not security boundaries.
 

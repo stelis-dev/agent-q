@@ -248,7 +248,7 @@ export interface MethodResultResponse {
   type: "method_result";
   status: "rejected";
   error: {
-    code: "unsupported_method";
+    code: MethodResultErrorCode;
     message: string;
   };
 }
@@ -451,6 +451,9 @@ export function validateCallMethodInput(
     throw new ProtocolError("invalid_method", "Invalid call_method method.");
   }
   validateCallMethodParams(params);
+  if (chain === SUI_CHAIN_ID && method === SUI_SIGN_TRANSACTION_METHOD) {
+    validateSuiSignTransactionParams(params);
+  }
 }
 
 export function makeStartProvisioningRequest(
@@ -802,12 +805,11 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
       throw new ProtocolError("protocol_error", "Method result response contains unsupported fields.");
     }
     const error = value.error;
-    if (
-      !isRecord(error) ||
-      !hasOnlyObjectKeys(error, ["code", "message"]) ||
-      error.code !== "unsupported_method" ||
-      error.message !== UNSUPPORTED_METHOD_MESSAGE
-    ) {
+    if (!isRecord(error) || !hasOnlyObjectKeys(error, ["code", "message"])) {
+      throw new ProtocolError("protocol_error", "Method result error is malformed.");
+    }
+    const errorMessage = methodResultErrorMessage(error.code);
+    if (errorMessage === undefined || error.message !== errorMessage) {
       throw new ProtocolError("protocol_error", "Method result error is malformed.");
     }
     return {
@@ -816,8 +818,8 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
       type: "method_result",
       status: "rejected",
       error: {
-        code: "unsupported_method",
-        message: UNSUPPORTED_METHOD_MESSAGE,
+        code: error.code as MethodResultErrorCode,
+        message: errorMessage,
       },
     };
   }
@@ -971,10 +973,24 @@ export const MAX_CAPABILITY_ACCOUNTS_PER_CHAIN = 1;
 export const MAX_ACCOUNTS_PER_RESPONSE = 1;
 export const CALL_METHOD_CHAIN_PATTERN = /^[a-z][a-z0-9_.-]{0,31}$/;
 export const CALL_METHOD_NAME_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
-// The skeleton only establishes the runtime envelope and currently rejects every
-// method. Keep payloads small until a specific method owns larger signable data.
-export const MAX_CALL_METHOD_PARAMS_JSON_BYTES = 256;
+// The method runtime keeps request bodies bounded by the current Firmware JSONL
+// input buffer. Specific methods can add stricter semantic limits inside this cap.
+export const MAX_CALL_METHOD_PARAMS_JSON_BYTES = 600;
+export const SUI_CHAIN_ID = "sui";
+export const SUI_SIGN_TRANSACTION_METHOD = "sign_transaction";
+export const SUI_SIGN_TRANSACTION_NETWORKS = ["mainnet", "testnet", "devnet", "localnet"] as const;
+export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES = 384;
+export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS = 512;
+const BASE64_CANONICAL_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 export const UNSUPPORTED_METHOD_MESSAGE = "Method is not supported.";
+export const METHOD_RESULT_ERROR_MESSAGES = {
+  unsupported_method: UNSUPPORTED_METHOD_MESSAGE,
+  policy_rejected: "The request was rejected by device policy.",
+  malformed_transaction: "Transaction bytes are malformed.",
+  unsupported_transaction: "Transaction shape is not supported.",
+  policy_action_not_implemented: "Policy action is not implemented.",
+} as const;
+export type MethodResultErrorCode = keyof typeof METHOD_RESULT_ERROR_MESSAGES;
 export const FORBIDDEN_SECRET_FIELD_NAMES = [
   "entropy",
   "mnemonic",
@@ -1243,8 +1259,42 @@ function validateCallMethodParams(params: unknown): asserts params is Record<str
     throw new ProtocolError("invalid_params", "call_method params must be JSON serializable.");
   }
   if (serialized === undefined || Buffer.byteLength(serialized, "utf8") > MAX_CALL_METHOD_PARAMS_JSON_BYTES) {
-    throw new ProtocolError("invalid_params", "call_method params are too large for the skeleton runtime.");
+    throw new ProtocolError("invalid_params", "call_method params are too large for the runtime.");
   }
+}
+
+function validateSuiSignTransactionParams(params: Record<string, unknown>): void {
+  if (!hasOnlyObjectKeys(params, ["network", "txBytes"])) {
+    throw new ProtocolError("invalid_params", "sui/sign_transaction params contain unsupported fields.");
+  }
+  if (!SUI_SIGN_TRANSACTION_NETWORKS.includes(params.network as (typeof SUI_SIGN_TRANSACTION_NETWORKS)[number])) {
+    throw new ProtocolError("invalid_params", "sui/sign_transaction network is unsupported.");
+  }
+  if (typeof params.txBytes !== "string") {
+    throw new ProtocolError("invalid_params", "sui/sign_transaction txBytes must be base64.");
+  }
+  if (
+    params.txBytes.length === 0 ||
+    params.txBytes.length > MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS ||
+    !BASE64_CANONICAL_PATTERN.test(params.txBytes)
+  ) {
+    throw new ProtocolError("invalid_params", "sui/sign_transaction txBytes must be canonical base64.");
+  }
+  const decoded = Buffer.from(params.txBytes, "base64");
+  if (
+    decoded.length === 0 ||
+    decoded.length > MAX_SUI_SIGN_TRANSACTION_TX_BYTES ||
+    decoded.toString("base64") !== params.txBytes
+  ) {
+    throw new ProtocolError("invalid_params", "sui/sign_transaction txBytes are outside the supported size.");
+  }
+}
+
+function methodResultErrorMessage(code: unknown): string | undefined {
+  if (typeof code !== "string" || !(code in METHOD_RESULT_ERROR_MESSAGES)) {
+    return undefined;
+  }
+  return METHOD_RESULT_ERROR_MESSAGES[code as MethodResultErrorCode];
 }
 
 export function sanitizeDeviceStatusSnapshot(value: unknown): DeviceStatusSnapshot | null {

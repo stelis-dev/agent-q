@@ -154,7 +154,9 @@ Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
 `start_provisioning`, `cancel_provisioning`, explicit local Gateway device
 selection, local Gateway caching of discovered devices, and a hardware
 diagnostic request. The current `call_method` skeleton enforces state and
-session gates but rejects every method as unsupported; it is not signing support.
+session gates, keeps unknown methods rejected, and recognizes Sui
+`sign_transaction` only for rejected policy-decision smoke; it is not signing
+support.
 
 Source-level implementation added, with hardware smoke still pending:
 `confirm_recovery_phrase_backup` with persistent root material storage and
@@ -176,7 +178,9 @@ request that currently reports Sui account identity with `methods: []`.
 `get_accounts` is implemented as a read-only, session-scoped identity request
 for the Sui Ed25519 account at index 0 in the `provisioned` state; hardware smoke
 is still pending. `call_method` exists only as a session-scoped runtime skeleton:
-all methods are rejected until a concrete method is implemented and advertised.
+unknown methods are rejected, while Sui `sign_transaction` is recognized only
+for restricted-transfer policy-decision smoke and still returns a rejected
+method result. No signing method is implemented or advertised.
 
 ## Device Discovery And Selection
 
@@ -963,18 +967,33 @@ Rules:
 
 Gateway calls supported methods by name through `call_method`.
 
-The current `call_method` implementation is a runtime skeleton. Firmware
+The current `call_method` implementation is a runtime skeleton with one internal
+Sui `sign_transaction` policy-decision path. Firmware
 validates the protocol envelope enough to identify the request, then enforces
 `provisioned` state, setup/pending busy gates, and a matching active session.
 After those gates pass, Firmware validates the `chain`, `method`, and `params`
-field shape and size. Valid method requests still return `method_result` with
-`status: "rejected"` and `error.code: "unsupported_method"`. No txBytes parsing,
-policy decision consumption, physical approval, signing, or capability
-advertisement is connected to this runtime path yet.
+field shape and size. Unknown methods still return `method_result` with
+`status: "rejected"` and `error.code: "unsupported_method"`.
+
+Sui `sign_transaction` is recognized only for policy-decision smoke. It accepts
+`params.network` as `mainnet`, `testnet`, `devnet`, or `localnet`, and
+`params.txBytes` as canonical base64 bounded by the current Firmware JSONL
+request envelope. The current bound is `params` JSON up to 600 UTF-8 bytes,
+with `txBytes` up to 384 decoded bytes and 512 canonical base64 characters.
+Firmware decodes only the restricted SUI transfer shape documented in
+[Implementation Status](../docs/IMPLEMENTATION_STATUS.md), adapts those facts
+into the Firmware-owned policy runtime, and returns a rejected method result.
+The current compiled policy is default reject, so valid supported transactions
+return `policy_rejected`. Malformed BCS returns
+`malformed_transaction`; unsupported transaction shapes return
+`unsupported_transaction`. If a future test policy yields `sign` or `ask`, this
+runtime still returns `policy_action_not_implemented`. No signature, physical
+approval, or capability advertisement is connected to this runtime path yet.
 
 Firmware must not advertise `sign_transaction` in `get_capabilities` until Sui
-txBytes decoding, policy evaluation, negative parser fixtures, and signing are
-all implemented and connected to the runtime request path. The current
+txBytes decoding, policy evaluation, negative parser fixtures, physical approval
+where required, and signing are all implemented and connected to the runtime
+request path. The current
 restricted Sui transaction facts parser, Sui policy facts adapter, default-reject
 policy provider boundary, and policy evaluator are Firmware-internal source
 foundations; they do not make `call_method` a signing API.
@@ -1001,11 +1020,14 @@ Request:
   "sessionId": "session_001",
   "chain": "sui",
   "method": "sign_transaction",
-  "params": {}
+  "params": {
+    "network": "devnet",
+    "txBytes": "AA..."
+  }
 }
 ```
 
-Current skeleton response:
+Current policy-decision response for the compiled default-reject policy:
 
 ```json
 {
@@ -1014,8 +1036,8 @@ Current skeleton response:
   "type": "method_result",
   "status": "rejected",
   "error": {
-    "code": "unsupported_method",
-    "message": "Method is not supported."
+    "code": "policy_rejected",
+    "message": "The request was rejected by device policy."
   }
 }
 ```

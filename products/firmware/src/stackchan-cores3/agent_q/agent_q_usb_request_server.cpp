@@ -12,6 +12,9 @@
 #include "agent_q_speech_bubble.h"
 #include "agent_q_sui_account.h"
 #include "agent_q_sui_account_store.h"
+#include "agent_q_common/policy/agent_q_policy_runtime.h"
+#include "agent_q_common/sui/agent_q_sui_policy_adapter.h"
+#include "agent_q_common/sui/agent_q_sui_transaction_facts.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -52,19 +55,21 @@ constexpr uint32_t kProvisioningApprovalMaxMs = 60000;
 constexpr uint32_t kRecoveryPhraseDisplayMs = kProvisioningApprovalMaxMs;
 constexpr uint32_t kSessionTtlMs = 1800000;
 constexpr uint32_t kSessionExpiryCheckMs = 5000;
-constexpr size_t kLineBufferSize = 512;
+constexpr size_t kLineBufferSize = 1024;
 constexpr size_t kResponseBufferSize = 512;
 constexpr size_t kMaxRequestIdSize = 80;
 constexpr size_t kCallMethodChainMaxLength = 32;
 constexpr size_t kCallMethodNameMaxLength = 64;
-constexpr size_t kCallMethodParamsJsonMaxBytes = 256;
+constexpr size_t kCallMethodParamsJsonMaxBytes = 600;
+constexpr size_t kSuiSignTransactionTxBytesMaxBytes = 384;
+constexpr size_t kSuiSignTransactionTxBytesMaxBase64Size = 512;
 constexpr size_t kDeviceIdSize = 37;
 constexpr size_t kProvisioningStateSize = 16;
 constexpr size_t kIdentifyCodeSize = 5;
 constexpr size_t kSessionIdSize = 26;
 constexpr size_t kGatewayNameSize = 65;
 constexpr size_t kConnectDisplayMessageSize = 96;
-constexpr size_t kPendingDisplayMessageSize = kLineBufferSize;
+constexpr size_t kPendingDisplayMessageSize = 512;
 constexpr size_t kRecoveryPhrasePrefixCellCount = 12;
 constexpr size_t kRecoveryPhrasePrefixCellSize = 8;
 constexpr int kScreenHeight = 240;
@@ -559,6 +564,99 @@ bool is_call_method_identifier(const char* value, size_t max_length)
     return length > 0;
 }
 
+int base64_value(char c)
+{
+    if (c >= 'A' && c <= 'Z') {
+        return c - 'A';
+    }
+    if (c >= 'a' && c <= 'z') {
+        return 26 + c - 'a';
+    }
+    if (c >= '0' && c <= '9') {
+        return 52 + c - '0';
+    }
+    if (c == '+') {
+        return 62;
+    }
+    if (c == '/') {
+        return 63;
+    }
+    return -1;
+}
+
+bool validate_canonical_base64(
+    const char* value,
+    size_t max_base64_size,
+    size_t max_decoded_size,
+    size_t* decoded_size)
+{
+    if (decoded_size != nullptr) {
+        *decoded_size = 0;
+    }
+    if (value == nullptr) {
+        return false;
+    }
+
+    const size_t length = strlen(value);
+    if (length == 0 || length > max_base64_size || (length % 4) != 0) {
+        return false;
+    }
+
+    size_t padding = 0;
+    if (value[length - 1] == '=') {
+        padding++;
+    }
+    if (length >= 2 && value[length - 2] == '=') {
+        padding++;
+    }
+
+    for (size_t index = 0; index < length; ++index) {
+        const char c = value[index];
+        const bool in_padding = index >= length - padding;
+        if (in_padding) {
+            if (c != '=') {
+                return false;
+            }
+            continue;
+        }
+        if (c == '=' || base64_value(c) < 0) {
+            return false;
+        }
+    }
+
+    if (padding == 1) {
+        const int third = base64_value(value[length - 2]);
+        if (third < 0 || (third & 0x03) != 0) {
+            return false;
+        }
+    } else if (padding == 2) {
+        const int second = base64_value(value[length - 3]);
+        if (second < 0 || (second & 0x0F) != 0) {
+            return false;
+        }
+    } else if (padding > 2) {
+        return false;
+    }
+
+    const size_t output_size = ((length / 4) * 3) - padding;
+    if (output_size == 0 || output_size > max_decoded_size) {
+        return false;
+    }
+    if (decoded_size != nullptr) {
+        *decoded_size = output_size;
+    }
+    return true;
+}
+
+bool is_supported_sui_network(const char* network)
+{
+    return network != nullptr &&
+           (strcmp(network, "mainnet") == 0 ||
+            strcmp(network, "testnet") == 0 ||
+            strcmp(network, "devnet") == 0 ||
+            strcmp(network, "localnet") == 0);
+}
+
 CallMethodFieldValidation validate_call_method_request_fields(JsonDocument& request)
 {
     const char* chain = request["chain"] | nullptr;
@@ -576,6 +674,33 @@ CallMethodFieldValidation validate_call_method_request_fields(JsonDocument& requ
         return CallMethodFieldValidation::invalid_params_size;
     }
     return CallMethodFieldValidation::valid;
+}
+
+bool validate_sui_sign_transaction_params(JsonVariant params, size_t* decoded_tx_size)
+{
+    if (decoded_tx_size != nullptr) {
+        *decoded_tx_size = 0;
+    }
+    if (!params.is<JsonObject>()) {
+        return false;
+    }
+
+    JsonObject params_object = params.as<JsonObject>();
+    for (JsonPair item : params_object) {
+        const char* key = item.key().c_str();
+        if (strcmp(key, "network") != 0 && strcmp(key, "txBytes") != 0) {
+            return false;
+        }
+    }
+
+    const char* network = params["network"] | nullptr;
+    const char* tx_bytes_base64 = params["txBytes"] | nullptr;
+    return is_supported_sui_network(network) &&
+           validate_canonical_base64(
+               tx_bytes_base64,
+               kSuiSignTransactionTxBytesMaxBase64Size,
+               kSuiSignTransactionTxBytesMaxBytes,
+               decoded_tx_size);
 }
 
 void write_json_document(JsonDocument& response)
@@ -734,16 +859,21 @@ void write_disconnect_result(const char* id)
     write_json_document(response);
 }
 
-void write_unsupported_method_result(const char* id)
+void write_rejected_method_result(const char* id, const char* code, const char* message)
 {
     JsonDocument response;
     response["id"] = id;
     response["version"] = kProtocolVersion;
     response["type"] = "method_result";
     response["status"] = "rejected";
-    response["error"]["code"] = "unsupported_method";
-    response["error"]["message"] = "Method is not supported.";
+    response["error"]["code"] = code;
+    response["error"]["message"] = message;
     write_json_document(response);
+}
+
+void write_unsupported_method_result(const char* id)
+{
+    write_rejected_method_result(id, "unsupported_method", "Method is not supported.");
 }
 
 void write_capabilities_response(const char* id)
@@ -761,6 +891,64 @@ void write_capabilities_response(const char* id)
     account["derivationPath"] = "m/44'/784'/0'/0'/0'";
     sui["methods"].to<JsonArray>();
     write_json_document(response);
+}
+
+void write_sui_sign_transaction_policy_decision(const char* id, JsonDocument& request)
+{
+    JsonVariant params = request["params"];
+    size_t decoded_tx_size = 0;
+    if (!validate_sui_sign_transaction_params(params, &decoded_tx_size)) {
+        write_error_response(id, "invalid_params", "Invalid sui/sign_transaction params.");
+        return;
+    }
+
+    const char* network = params["network"] | nullptr;
+    const char* tx_bytes_base64 = params["txBytes"] | nullptr;
+    uint8_t tx_bytes[kSuiSignTransactionTxBytesMaxBytes] = {};
+    if (base64_to_bytes(tx_bytes_base64, strlen(tx_bytes_base64), tx_bytes, sizeof(tx_bytes)) != 0) {
+        write_error_response(id, "invalid_params", "Invalid sui/sign_transaction txBytes.");
+        return;
+    }
+
+    agent_q::SuiTransferFacts sui_facts = {};
+    const agent_q::SuiTransactionFactsResult parse_result =
+        agent_q::parse_sui_transfer_facts(tx_bytes, decoded_tx_size, &sui_facts);
+    memset(tx_bytes, 0, sizeof(tx_bytes));
+
+    if (parse_result == agent_q::SuiTransactionFactsResult::malformed) {
+        write_rejected_method_result(id, "malformed_transaction", "Transaction bytes are malformed.");
+        ESP_LOGI(kTag, "sui/sign_transaction malformed txBytes: id=%s", id);
+        return;
+    }
+    if (parse_result != agent_q::SuiTransactionFactsResult::ok) {
+        write_rejected_method_result(id, "unsupported_transaction", "Transaction shape is not supported.");
+        ESP_LOGI(kTag, "sui/sign_transaction unsupported tx shape: id=%s result=%s",
+                 id, agent_q::sui_transaction_facts_result_name(parse_result));
+        return;
+    }
+
+    agent_q::AgentQTransactionFacts policy_facts = {};
+    if (!agent_q::make_sui_transfer_policy_facts(sui_facts, network, &policy_facts)) {
+        write_rejected_method_result(id, "unsupported_transaction", "Transaction shape is not supported.");
+        ESP_LOGI(kTag, "sui/sign_transaction facts adapter rejected tx: id=%s", id);
+        return;
+    }
+
+    const agent_q::AgentQPolicyProvider policy_provider = agent_q::agent_q_default_reject_policy_provider();
+    const agent_q::AgentQPolicyDecision decision =
+        agent_q::evaluate_agent_q_policy_runtime(policy_provider, policy_facts);
+    if (decision.action == agent_q::AgentQPolicyAction::reject) {
+        write_rejected_method_result(id, "policy_rejected", "The request was rejected by device policy.");
+        ESP_LOGI(kTag, "sui/sign_transaction policy rejected: id=%s reason=%s",
+                 id, agent_q::agent_q_policy_decision_reason_name(decision.reason));
+        return;
+    }
+
+    write_rejected_method_result(id, "policy_action_not_implemented", "Policy action is not implemented.");
+    ESP_LOGW(kTag, "sui/sign_transaction policy action not implemented: id=%s action=%s reason=%s",
+             id,
+             agent_q::agent_q_policy_action_name(decision.action),
+             agent_q::agent_q_policy_decision_reason_name(decision.reason));
 }
 
 void write_factory_reset_result(const char* id)
@@ -2452,9 +2640,9 @@ void handle_line(const char* line)
     }
 
     if (strcmp(type, "call_method") == 0) {
-        // Runtime skeleton only: Firmware enforces state/session gates and then
-        // rejects every method until a concrete method owns parsing, policy, UI,
-        // signing, and capability advertisement.
+        // Runtime skeleton only: Firmware enforces state/session gates, recognizes
+        // Sui sign_transaction for rejected policy-decision smoke, and does not
+        // sign or advertise callable methods yet.
         if (!provisioned_material_ready()) {
             write_error_response(id, "invalid_state", "call_method is available only after provisioning is complete.");
             return;
@@ -2478,8 +2666,15 @@ void handle_line(const char* line)
                 write_error_response(id, "invalid_params", "call_method params must be an object.");
                 return;
             case CallMethodFieldValidation::invalid_params_size:
-                write_error_response(id, "invalid_params", "call_method params are too large for the skeleton runtime.");
+                write_error_response(id, "invalid_params", "call_method params are too large for the runtime.");
                 return;
+        }
+
+        const char* chain = request["chain"] | "";
+        const char* method = request["method"] | "";
+        if (strcmp(chain, "sui") == 0 && strcmp(method, "sign_transaction") == 0) {
+            write_sui_sign_transaction_policy_decision(id, request);
+            return;
         }
 
         write_unsupported_method_result(id);
