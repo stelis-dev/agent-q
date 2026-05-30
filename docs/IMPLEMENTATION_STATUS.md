@@ -28,9 +28,9 @@ This document tracks implementation status only. The wire protocol is defined in
 | `identify_device` | O | Implemented as temporary device UI for explicit user selection. |
 | `connect` | △ | Protocol and Gateway parser support exist. StackChan CoreS3 source restores provisioned-only Firmware sessions after persistent root material exists. Hardware smoke is still required. |
 | `disconnect` | △ | Protocol and Gateway parser support exist. StackChan CoreS3 source clears a matching active Firmware session after `provisioned`. Hardware smoke is still required. |
-| `get_capabilities` | △ | StackChan CoreS3 source returns Firmware-authored Sui Ed25519 account identity capability over an approved session while `provisioned`. The current `methods` list is empty because runtime `call_method`, physical approval integration, and signing are not implemented. Hardware smoke is still required. |
+| `get_capabilities` | △ | StackChan CoreS3 source returns Firmware-authored Sui Ed25519 account identity capability over an approved session while `provisioned`. The current `methods` list is empty because no concrete signing method, physical approval integration, or signing implementation exists. Hardware smoke is still required. |
 | `get_accounts` | △ | StackChan CoreS3 source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from stored root material and returns it over an approved session while `provisioned`. Read-only: no mnemonic, seed, entropy, or private key in responses, logs, or UI. Derivation verified against Sui SDK address vectors on host (`test_sui_account_vectors.sh`); hardware smoke is still required. |
-| `call_method` | X | Designed session-scoped dispatch for all chains and methods; not implemented. |
+| `call_method` | △ | Runtime skeleton exists in Gateway and StackChan CoreS3 source. It is provisioned/session-scoped and currently rejects every method with `unsupported_method`; no txBytes parsing, policy evaluation, physical approval, capability advertisement, or signing is connected. Hardware smoke is still required. |
 | Hardware diagnostic `display_signal` | O | Implemented for firmware/UI smoke testing after material-backed `provisioned`. Not a public signing API. |
 
 ## Gateway
@@ -67,6 +67,7 @@ Current MCP tools:
 | `disconnect_device` | △ | Ends a runtime session or clears stale local session state when a session exists. |
 | `get_capabilities` | △ | Gateway tool and protocol parser exist. Returns Firmware-authored Sui Ed25519 account identity capability over an active runtime session with `methods: []`, rejects unsupported chains/methods/secret-like fields, and never exposes the session id to MCP. Hardware smoke is still required. |
 | `get_accounts` | △ | Gateway tool and protocol parser exist. Returns public accounts over an active runtime session, strictly re-validates the account shape, recomputes the Sui address/public-key relationship, rejects secret-like fields, and never exposes the session id to MCP. Hardware smoke is still required. |
+| `call_method` | △ | Gateway tool and protocol parser exist for the common session-scoped method path. The current skeleton returns Firmware-authored `rejected/unsupported_method` only and never exposes the session id to MCP. It is not signing support. |
 
 ## Firmware Targets
 
@@ -82,6 +83,7 @@ Current MCP tools:
 | `disconnect` | △ | X | X | StackChan CoreS3 source clears a matching active Firmware session after `provisioned`. Hardware smoke is still required. |
 | `get_capabilities` | △ | X | X | StackChan CoreS3 source reports Sui Ed25519 account identity capability for account 0 over an approved session while `provisioned`; `methods` is empty until signing methods are implemented. Hardware smoke is still required. |
 | `get_accounts` | △ | X | X | StackChan CoreS3 source derives and returns the Sui Ed25519 account 0 over an approved session while `provisioned`; read-only, no private material emitted. Hardware smoke is still required. |
+| `call_method` | △ | X | X | StackChan CoreS3 source enforces provisioned/session gates and returns `unsupported_method` for every method. It does not parse txBytes, evaluate policy, ask for signing approval, or sign. Hardware smoke is still required. |
 | `factory_reset` | △ | X | X | StackChan CoreS3 source supports physical-approval wipe back to `unprovisioned`, including material/state consistency-error recovery. Hardware smoke is still required. |
 | Request/result UI | O | X | X | StackChan CoreS3 uses Agent-Q-owned top avatar speech bubble and bottom decision strip. |
 | Display power control | O | X | X | StackChan CoreS3 turns the screen backlight off after one minute of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. Before screen-off or power-off, it moves to a rest posture; when the screen wakes, it returns to awake posture. |
@@ -121,7 +123,7 @@ session-scoped `call_method` protocol.
 | Sui Ed25519 signing self-test | △ | Firmware can link signing code, generate a runtime test seed, sign, verify, and wipe the test seed. This is not a signing API. |
 | Sui `sign_personal_message` | X | Not implemented. |
 | Sui `sign_transaction` | X | Not implemented. |
-| Sui txBytes decoder | △ | Common firmware source includes a restricted host-tested SUI transfer facts parser for `TransactionData::V1 -> ProgrammableTransaction -> SplitCoins(GasCoin, [Input(amountPure)]) -> TransferObjects([Result(0)], Input(recipientPure))`. The parsed facts can feed the common policy v0 evaluator in host tests, but no runtime request connects the parser to `call_method`, capability advertisement, or signing. |
+| Sui txBytes decoder | △ | Common firmware source includes a restricted host-tested SUI transfer facts parser for `TransactionData::V1 -> ProgrammableTransaction -> SplitCoins(GasCoin, [Input(amountPure)]) -> TransferObjects([Result(0)], Input(recipientPure))`. The parsed facts can feed the common policy v0 evaluator in host tests, but the `call_method` skeleton does not connect the parser to runtime requests, capability advertisement, or signing. |
 | Sui zkLogin | X | Not implemented; separate trust model required. |
 | EVM | X | Not implemented. |
 | Solana | X | Not implemented. |
@@ -136,7 +138,7 @@ session-scoped `call_method` protocol.
 | Provisioning status reporting | O | Firmware reports `provisioning.state`; Gateway exposes it without treating it as signing readiness. |
 | Mnemonic UI flow v0 | △ | StackChan CoreS3 source adds DEV_PROFILE BIP-39 recovery phrase generation from an early-boot-seeded Agent-Q CSPRNG, device-only up-to-4-letter prefix display, and confirmed root material storage. It stores no mnemonic text, private key, account, or policy. Hardware smoke is still required. |
 | Deny-by-default policy model | △ | Common firmware source includes a host-tested policy v0 evaluator that rejects by default, rejects malformed/unsupported policy or facts, and returns `sign`, `reject`, or `ask` decisions only as internal calculation results. It is not connected to runtime signing. |
-| Policy evaluator | △ | Common firmware source implements a declarative policy v0 evaluator and a Sui restricted-transfer facts adapter. Host tests cover positive and negative decisions. Runtime `call_method`, physical approval, capability advertisement, and signing integration are not implemented. |
+| Policy evaluator | △ | Common firmware source implements a declarative policy v0 evaluator and a Sui restricted-transfer facts adapter. Host tests cover positive and negative decisions. The `call_method` skeleton exists, but policy decisions are not connected to physical approval, capability advertisement, or signing. |
 | Policy storage | X | Not implemented. |
 | Policy update authorization | X | Not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display and persistent root material storage source exists for StackChan CoreS3. Mnemonic import, USER_PROFILE secure root storage, and signing use remain unimplemented. |

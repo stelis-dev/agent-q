@@ -52,7 +52,7 @@ stateDiagram-v2
     Provisioned: get_capabilities, get_accounts (read-only, session-scoped)
     Provisioned: display_signal diagnostic
     Provisioned: factory_reset
-    Provisioned: call_method (designed, not implemented)
+    Provisioned: call_method runtime skeleton
     Locked: get_status, identify_device, unlock flow
 ```
 
@@ -176,23 +176,24 @@ Allowed:
 - `display_signal` diagnostic
 - `get_capabilities` (read-only, session-scoped)
 - `get_accounts` (read-only, session-scoped)
-- `call_method` and policy read/update only after those protocol surfaces are
-  implemented
+- `call_method` runtime skeleton (session-scoped; currently rejects every method)
+- policy read/update only after those protocol surfaces are implemented
 
 This state is not blanket signing approval. Policy still decides whether each
 request signs, rejects, or asks. In the current StackChan CoreS3
 implementation, `provisioned` enables `connect`, `disconnect`, read-only
 `get_capabilities` (`methods: []`), read-only `get_accounts` (Sui Ed25519
-account 0), and the `display_signal` diagnostic; policy and signing remain
-unavailable.
+account 0), the `call_method` runtime skeleton (all methods rejected with
+`unsupported_method`), and the `display_signal` diagnostic; policy and signing
+remain unavailable.
 Future txBytes decoding is allowed only inside a session-scoped `call_method`
 signing path after `provisioned`; it must remain unavailable in
 `unprovisioned`, `provisioning`, `locked`, and the internal consistency-error
 condition. Current common firmware source includes a restricted host-tested SUI
 transfer facts parser, a Sui facts-to-policy adapter, and a host-tested policy
-v0 evaluator. These are common firmware foundations only: no runtime API calls
-them yet, capabilities still advertise no signing methods, and Gateway must not
-evaluate policy.
+v0 evaluator. These are common firmware foundations only: the current
+`call_method` skeleton does not call them, capabilities still advertise no
+signing methods, and Gateway must not evaluate policy.
 
 ### `locked`
 

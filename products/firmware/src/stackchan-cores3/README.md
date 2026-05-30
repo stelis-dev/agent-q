@@ -27,6 +27,10 @@ The current implementation includes:
   Ed25519 account identity capability over an approved session while
   `provisioned`. The current `methods` list is empty because signing methods are
   not implemented.
+- a USB JSONL `call_method` runtime skeleton. It requires material-backed
+  `provisioned` state plus a matching active session, then rejects every method
+  with `unsupported_method`. It does not parse txBytes, evaluate policy, ask for
+  signing approval, or sign.
 - USB JSONL mnemonic UI requests for `start_provisioning`,
   `cancel_provisioning`, and `confirm_recovery_phrase_backup`.
   `start_provisioning` generates DEV_PROFILE BIP-39 root entropy in RAM,
@@ -64,9 +68,9 @@ after material-backed provisioning. Sessions do not authorize signing.
 This is not the signing product yet. It reports read-only identity capability
 (`get_capabilities` with `methods: []`), derives only read-only public account
 identity (`get_accounts`), and links a restricted host-tested Sui transaction
-facts parser plus a common policy v0 evaluator that no runtime request calls
-yet; it does not sign, store policies, expose MCP directly, or apply signing
-policy at runtime. The persisted values in this target implementation are the
+facts parser plus a common policy v0 evaluator that the current `call_method`
+skeleton does not call; it does not sign, store policies, expose MCP directly,
+or apply signing policy at runtime. The persisted values in this target implementation are the
 protocol `deviceId`, provisioning state flag, and DEV_PROFILE root entropy blob
 after backup confirmation.
 
@@ -115,13 +119,13 @@ source and checks known Sui SDK address/public-key vectors.
 The Sui transaction facts parser test is a common host-side check. It compiles
 `products/firmware/src/common/agent_q/sui` and verifies tracked BCS fixtures for
 the restricted SUI transfer parser. By itself it does not connect the parser to
-runtime `call_method`, policy evaluation, or signing.
+the `call_method` skeleton, policy evaluation, or signing.
 
 The policy v0 test is also a common host-side check. It compiles
 `products/firmware/src/common/agent_q/policy` plus the Sui facts adapter and
 verifies deny-by-default, `sign`/`reject`/`ask` decision calculation, malformed
 policy rejection, and unsupported-facts rejection. It does not connect policy to
-runtime `call_method`, physical approval, capability advertisement, or signing.
+the `call_method` skeleton, physical approval, capability advertisement, or signing.
 
 During preparation, the tracked build tools also patch the pinned upstream host
 tree so the Agent-Q build does not start the StackChan/Xiaozhi remote AI

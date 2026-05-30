@@ -4,10 +4,12 @@ import { GatewayError } from "./errors.js";
 import {
   assertAccountsResponse,
   assertCapabilitiesResponse,
+  assertMethodResultResponse,
   assertConnectResponse,
   assertDisconnectResponse,
   assertIdentifyDeviceResponse,
   assertStatusResponse,
+  makeCallMethodRequest,
   makeConnectRequest,
   makeDisconnectRequest,
   makeGetCapabilitiesRequest,
@@ -23,6 +25,7 @@ import {
   type ConnectResponse,
   type DisconnectResponse,
   type IdentifyDeviceResponse,
+  type MethodResultResponse,
   type ProtocolRequest,
   type ProtocolResponse,
   type StatusResponse,
@@ -104,6 +107,14 @@ export interface UsbSerialDriver {
     sessionId: string,
     timeoutMs: number,
   ): Promise<AccountsResponse>;
+  callMethod(
+    portPath: string,
+    sessionId: string,
+    chain: string,
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs: number,
+  ): Promise<MethodResultResponse>;
 }
 
 export class SerialPortUsbDriver implements UsbSerialDriver {
@@ -158,6 +169,17 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     timeoutMs: number,
   ): Promise<AccountsResponse> {
     return getAccountsOverSerial(portPath, sessionId, timeoutMs);
+  }
+
+  async callMethod(
+    portPath: string,
+    sessionId: string,
+    chain: string,
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs: number,
+  ): Promise<MethodResultResponse> {
+    return callMethodOverSerial(portPath, sessionId, chain, method, params, timeoutMs);
   }
 }
 
@@ -279,6 +301,12 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         driver.getAccounts(portPath, sessionId, timeoutMs),
         timeoutMs,
         "USB get accounts exceeded its timeout.",
+      ),
+    callMethod: (portPath, sessionId, chain, method, params, timeoutMs) =>
+      raceDeadline(
+        driver.callMethod(portPath, sessionId, chain, method, params, timeoutMs),
+        timeoutMs,
+        "USB call_method exceeded its timeout.",
       ),
   };
 }
@@ -419,6 +447,18 @@ async function getAccountsOverSerial(
 ): Promise<AccountsResponse> {
   const request = makeGetAccountsRequest(sessionId);
   return requestOverSerial(portPath, request, timeoutMs, (response) => assertAccountsResponse(response));
+}
+
+async function callMethodOverSerial(
+  portPath: string,
+  sessionId: string,
+  chain: string,
+  method: string,
+  params: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<MethodResultResponse> {
+  const request = makeCallMethodRequest(sessionId, chain, method, params);
+  return requestOverSerial(portPath, request, timeoutMs, (response) => assertMethodResultResponse(response));
 }
 
 async function requestOverSerial<TResponse extends ProtocolResponse>(

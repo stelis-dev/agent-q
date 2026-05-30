@@ -21,6 +21,9 @@ Device registry and connection-session tools:
 - `set_device_metadata`
 - `connect_device`
 - `disconnect_device`
+- `get_capabilities`
+- `get_accounts`
+- `call_method`
 
 `scan_devices` records discovered candidates but does not save an active
 device. `identify_devices` asks candidate devices to display short codes.
@@ -34,7 +37,10 @@ communication session by sending a Firmware connect request that requires
 physical approval when the target supports sessions. The current StackChan
 CoreS3 target accepts `connect` only after persistent root material and
 material-backed `provisioned` state exist. `disconnect_device` ends the runtime
-session when one exists.
+session when one exists. `get_capabilities` and `get_accounts` are read-only
+session-scoped tools. `call_method` is the shared method path, but the current
+skeleton returns `unsupported_method` for every method and is not signing
+support.
 
 ## Boundaries
 
@@ -61,8 +67,8 @@ session when one exists.
   disconnect or session-scoped call.
 - Gateway evicts an expired runtime session lazily, on the next access after
   its local TTL passes, not on a timer. Firmware remains the session authority.
-- Not yet implemented: signing, runtime policy evaluation, Admin Page, and
-  chain-specific transaction logic.
+- Not yet implemented: concrete signing methods, runtime policy evaluation,
+  Admin Page, and chain-specific transaction logic.
 
 ## MCP Output Boundary
 

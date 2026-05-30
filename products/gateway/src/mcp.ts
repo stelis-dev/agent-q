@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import * as z from "zod/v4";
 import { ConfigStore } from "./config.js";
 import {
+  CALL_METHOD_SESSION_ENDED_REASONS,
   DISCONNECT_ENDED_REASONS,
   DISCONNECT_REASONS,
   GET_ACCOUNTS_SESSION_ENDED_REASONS,
@@ -10,15 +11,19 @@ import {
   GatewayCore,
   MAX_IDENTIFY_DURATION_MS,
   type ConnectDeviceResult,
+  type CallMethodResult,
   type DeviceListResult,
   type DeviceStatusToolResult,
   type DisconnectDeviceResult,
+  type GetAccountsResult,
   type GetCapabilitiesResult,
   type SetDeviceMetadataResult,
 } from "./core.js";
 import { GatewayError, toGatewayError } from "./errors.js";
 import { PUBLIC_ERROR_MESSAGES, normalizeErrorCode, toPublicError } from "./public-error.js";
 import {
+  CALL_METHOD_CHAIN_PATTERN,
+  CALL_METHOD_NAME_PATTERN,
   ED25519_PUBLIC_KEY_BASE64_PATTERN,
   MAX_ACCOUNTS_PER_RESPONSE,
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
@@ -26,6 +31,7 @@ import {
   MAX_APPROVAL_TIMEOUT_MS,
   SUI_ADDRESS_PATTERN,
   SUI_DERIVATION_PATH,
+  UNSUPPORTED_METHOD_MESSAGE,
   isSuiAddressForPublicKey,
 } from "./protocol.js";
 import { SerialPortUsbDriver, MAX_SCAN_TIMEOUT_MS } from "./usb.js";
@@ -338,6 +344,38 @@ const getAccountsToolOutputShape = z.discriminatedUnion("source", [
   errorToolResultShape,
 ]);
 
+const methodResultErrorShape = z.object({
+  code: z.literal("unsupported_method"),
+  message: z.literal(UNSUPPORTED_METHOD_MESSAGE),
+});
+const liveCallMethodOutputShape = z.object({
+  source: z.literal("live"),
+  deviceId: safeDeviceIdShape,
+  status: z.literal("rejected"),
+  error: methodResultErrorShape,
+});
+const notConnectedCallMethodOutputShape = z.object({
+  source: z.literal("not_connected"),
+  deviceId: safeDeviceIdShape,
+  reason: z.literal("not_connected"),
+});
+const sessionEndedCallMethodOutputShape = z.object({
+  source: z.literal("session_ended"),
+  deviceId: safeDeviceIdShape,
+  reason: z.enum(CALL_METHOD_SESSION_ENDED_REASONS),
+});
+const callMethodSuccessOutputShape = z.discriminatedUnion("source", [
+  liveCallMethodOutputShape,
+  notConnectedCallMethodOutputShape,
+  sessionEndedCallMethodOutputShape,
+]);
+const callMethodToolOutputShape = z.discriminatedUnion("source", [
+  liveCallMethodOutputShape,
+  notConnectedCallMethodOutputShape,
+  sessionEndedCallMethodOutputShape,
+  errorToolResultShape,
+]);
+
 // get_device_status success is itself a live | cached union, which the SDK
 // output-schema model cannot represent, so this tool is the one registered
 // without an SDK outputSchema. The success union is still used at the run()
@@ -521,6 +559,22 @@ export const gatewayToolDefinitions = {
     },
     outputSchema: getAccountsToolOutputShape,
     successOutputSchema: getAccountsSuccessOutputShape,
+  },
+  callMethod: {
+    name: "call_method",
+    title: "Call method",
+    description:
+      "Send a session-scoped method request through the shared Agent-Q protocol path. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. This is not signing support: current StackChan CoreS3 capabilities advertise no callable methods and current method calls are rejected until Firmware implements and advertises a method.",
+    inputSchema: {
+      deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
+      purpose: purposeSchema.optional(),
+      chain: z.string().regex(CALL_METHOD_CHAIN_PATTERN),
+      method: z.string().regex(CALL_METHOD_NAME_PATTERN),
+      params: z.object({}).passthrough().optional(),
+      timeoutMs: scanTimeoutSchema,
+    },
+    outputSchema: callMethodToolOutputShape,
+    successOutputSchema: callMethodSuccessOutputShape,
   },
 } as const;
 
@@ -706,6 +760,22 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
       ),
   );
 
+  server.registerTool(
+    gatewayToolDefinitions.callMethod.name,
+    {
+      title: gatewayToolDefinitions.callMethod.title,
+      description: gatewayToolDefinitions.callMethod.description,
+      inputSchema: gatewayToolDefinitions.callMethod.inputSchema,
+      // Success is a discriminated union (live | not_connected | session_ended),
+      // which the SDK outputSchema model cannot represent; it is sanitized at the
+      // run() boundary below instead.
+    },
+    async ({ deviceId, purpose, chain, method, params, timeoutMs }) =>
+      run(gatewayToolDefinitions.callMethod.successOutputSchema, () =>
+        core.callMethod({ deviceId, purpose, chain, method, params, timeoutMs }),
+      ),
+  );
+
   return server;
 }
 
@@ -792,7 +862,9 @@ type StructuredToolResult =
   | DeviceListResult
   | SetDeviceMetadataResult
   | ConnectDeviceResult
+  | CallMethodResult
   | DisconnectDeviceResult
+  | GetAccountsResult
   | GetCapabilitiesResult;
 
 // Must only ever receive an already-sanitized success result or a public error

@@ -7,6 +7,7 @@ import { createGatewayMcpServer, gatewayToolDefinitions } from "../dist/mcp.js";
 import { FORBIDDEN_SECRET_FIELD_NAMES } from "../dist/protocol.js";
 
 const expectedToolNames = [
+  "call_method",
   "connect_device",
   "disconnect_device",
   "get_accounts",
@@ -119,6 +120,17 @@ const noOpCore = {
           derivationPath: "m/44'/784'/0'/0'/0'",
         },
       ],
+    };
+  },
+  async callMethod() {
+    return {
+      source: "live",
+      deviceId: "device-1",
+      status: "rejected",
+      error: {
+        code: "unsupported_method",
+        message: "Method is not supported.",
+      },
     };
   },
 };
@@ -333,6 +345,7 @@ const dispatchCases = [
   { name: "disconnect_device", arguments: {} },
   { name: "get_capabilities", arguments: {} },
   { name: "get_accounts", arguments: {} },
+  { name: "call_method", arguments: { chain: "sui", method: "sign_transaction", params: {} } },
 ];
 
 test("MCP client lists exactly the Agent-Q tool set over a real transport", async () => {
@@ -401,6 +414,43 @@ test("get_capabilities dispatch returns current capabilities without a session t
     assert.deepEqual(result.structuredContent.capabilities[0].methods, []);
     assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
   });
+});
+
+test("call_method dispatch returns a rejected skeleton result without a session token", async () => {
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({
+      name: "call_method",
+      arguments: { chain: "sui", method: "sign_transaction", params: {} },
+    });
+    assert.equal(result.structuredContent.source, "live");
+    assert.equal(result.structuredContent.status, "rejected");
+    assert.equal(result.structuredContent.error.code, "unsupported_method");
+    assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
+  });
+});
+
+test("call_method dispatch lets core own state-first validation", async () => {
+  let callMethodCalls = 0;
+  const core = {
+    ...noOpCore,
+    async callMethod() {
+      callMethodCalls += 1;
+      return { source: "not_connected", deviceId: "device-1", reason: "not_connected" };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({
+      name: "call_method",
+      arguments: {
+        chain: "sui",
+        method: "sign_transaction",
+        params: { seed: "must-not-forward" },
+      },
+    });
+    assert.equal(result.isError, false);
+    assert.equal(result.structuredContent.source, "not_connected");
+    assert.equal(callMethodCalls, 1);
+  }, core);
 });
 
 // Distinctive markers a leaking core would smuggle in. Searched for as
@@ -505,6 +555,18 @@ const leakyCore = {
       ...SECRET_EXTRAS,
     };
   },
+  async callMethod() {
+    return {
+      source: "live",
+      deviceId: "device-1",
+      status: "rejected",
+      error: {
+        code: "unsupported_method",
+        message: "Method is not supported.",
+      },
+      ...SECRET_EXTRAS,
+    };
+  },
 };
 
 test("MCP boundary strips secret-like extra fields from every success result", async () => {
@@ -544,6 +606,30 @@ test("get_accounts unreachable shape (live without accounts) cannot leak out as 
   };
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "get_accounts", arguments: {} });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, "internal_output_error");
+  }, malformedCore);
+});
+
+test("call_method approved shape cannot leak before a method is implemented", async () => {
+  const malformedCore = {
+    ...noOpCore,
+    async callMethod() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        status: "approved",
+        result: {
+          signature: "not-supported-yet",
+        },
+      };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({
+      name: "call_method",
+      arguments: { chain: "sui", method: "sign_transaction", params: {} },
+    });
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.error.code, "internal_output_error");
   }, malformedCore);
@@ -635,11 +721,19 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
     },
     {
+      name: "call_method",
+      result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
+    },
+    {
       name: "get_accounts",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
     {
       name: "get_capabilities",
+      result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
+    },
+    {
+      name: "call_method",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
   ];
@@ -656,9 +750,15 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       async getCapabilities() {
         return testCase.result;
       },
+      async callMethod() {
+        return testCase.result;
+      },
     };
     await withConnectedClient(async (client) => {
-      const result = await client.callTool({ name: testCase.name, arguments: {} });
+      const args = testCase.name === "call_method"
+        ? { chain: "sui", method: "sign_transaction", params: {} }
+        : {};
+      const result = await client.callTool({ name: testCase.name, arguments: args });
       assert.equal(result.isError, true, `${testCase.name}: source/reason mismatch must fail closed`);
       assert.equal(result.structuredContent.error.code, "internal_output_error");
     }, malformedCore);

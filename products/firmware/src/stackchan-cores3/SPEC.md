@@ -52,9 +52,9 @@ Legend:
 | Display power control | O | Turns the screen backlight off after one minute of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. Before screen-off or power-off, the target moves to a rest posture; when the screen wakes, it returns to awake posture. |
 | Boot/sleep posture | O | Centers yaw and raises pitch when the default avatar is attached at boot or the screen wakes. Moves to centered yaw and lowered pitch before screen-off or power-off. |
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
-| `get_capabilities` | △ | Reports Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until signing methods are implemented. Hardware smoke is still required. |
+| `get_capabilities` | △ | Reports Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until concrete signing methods are implemented. Hardware smoke is still required. |
 | `get_accounts` | △ | Derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation verified against Sui SDK address vectors on host; hardware smoke is still required. |
-| `call_method` | X | Not implemented. |
+| `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, then rejects every method with `unsupported_method`. No txBytes parsing, policy evaluation, approval UI, capability advertisement, or signing is connected. Hardware smoke is still required. |
 | Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display and backup-confirmed root entropy storage source exists. Mnemonic import and USER_PROFILE secure provisioning are not implemented. |
 | Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Public account derivation is implemented via `get_accounts`; runtime policy, signing, and USER_PROFILE secure provisioning are not implemented. |
@@ -74,7 +74,7 @@ parser; none of these are signing APIs.
 | Sui Ed25519 self-test | △ | Diagnostic only. It proves the signing dependency links and works on-device. |
 | Sui `sign_personal_message` | X | Not implemented. |
 | Sui `sign_transaction` | X | Not implemented. |
-| Sui txBytes decoding | △ | The StackChan build links the common restricted SUI transfer facts parser. Host fixtures cover valid SUI transfer facts and malformed/unsupported rejects. Parsed facts can feed the common policy v0 evaluator in host tests, but no runtime request connects txBytes decoding to `call_method`, capability advertisement, or signing. |
+| Sui txBytes decoding | △ | The StackChan build links the common restricted SUI transfer facts parser. Host fixtures cover valid SUI transfer facts and malformed/unsupported rejects. Parsed facts can feed the common policy v0 evaluator in host tests, but the current `call_method` skeleton does not connect txBytes decoding to runtime requests, capability advertisement, or signing. |
 | Sui zkLogin | X | Not implemented; requires a separate trust model. |
 | EVM signing | X | Not implemented. |
 | Solana signing | X | Not implemented. |

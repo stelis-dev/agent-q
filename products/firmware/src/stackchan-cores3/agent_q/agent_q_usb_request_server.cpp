@@ -55,6 +55,9 @@ constexpr uint32_t kSessionExpiryCheckMs = 5000;
 constexpr size_t kLineBufferSize = 512;
 constexpr size_t kResponseBufferSize = 512;
 constexpr size_t kMaxRequestIdSize = 80;
+constexpr size_t kCallMethodChainMaxLength = 32;
+constexpr size_t kCallMethodNameMaxLength = 64;
+constexpr size_t kCallMethodParamsJsonMaxBytes = 256;
 constexpr size_t kDeviceIdSize = 37;
 constexpr size_t kProvisioningStateSize = 16;
 constexpr size_t kIdentifyCodeSize = 5;
@@ -137,6 +140,13 @@ enum class ProvisioningRuntimeState {
     unprovisioned,
     provisioning,
     provisioned,
+};
+
+enum class CallMethodFieldValidation {
+    valid,
+    invalid_method,
+    invalid_params_shape,
+    invalid_params_size,
 };
 
 // Firmware-owned state is kept separate from StackChan-owned avatar/app state.
@@ -522,6 +532,52 @@ bool is_safe_session_id(const char* value)
     return length > prefix_length;
 }
 
+bool is_call_method_identifier(const char* value, size_t max_length)
+{
+    if (value == nullptr || max_length == 0) {
+        return false;
+    }
+
+    size_t length = 0;
+    for (const char* cursor = value; *cursor != '\0'; ++cursor) {
+        if (length >= max_length) {
+            return false;
+        }
+        const char c = *cursor;
+        const bool is_lower = c >= 'a' && c <= 'z';
+        const bool is_digit = c >= '0' && c <= '9';
+        const bool is_separator = c == '_' || c == '.' || c == '-';
+        if (length == 0) {
+            if (!is_lower) {
+                return false;
+            }
+        } else if (!is_lower && !is_digit && !is_separator) {
+            return false;
+        }
+        length++;
+    }
+    return length > 0;
+}
+
+CallMethodFieldValidation validate_call_method_request_fields(JsonDocument& request)
+{
+    const char* chain = request["chain"] | nullptr;
+    const char* method = request["method"] | nullptr;
+    if (!is_call_method_identifier(chain, kCallMethodChainMaxLength) ||
+        !is_call_method_identifier(method, kCallMethodNameMaxLength)) {
+        return CallMethodFieldValidation::invalid_method;
+    }
+
+    JsonVariant params = request["params"];
+    if (!params.is<JsonObject>()) {
+        return CallMethodFieldValidation::invalid_params_shape;
+    }
+    if (measureJson(params) > kCallMethodParamsJsonMaxBytes) {
+        return CallMethodFieldValidation::invalid_params_size;
+    }
+    return CallMethodFieldValidation::valid;
+}
+
 void write_json_document(JsonDocument& response)
 {
     char buffer[kResponseBufferSize];
@@ -675,6 +731,18 @@ void write_disconnect_result(const char* id)
     response["version"] = kProtocolVersion;
     response["type"] = "disconnect_result";
     response["status"] = "disconnected";
+    write_json_document(response);
+}
+
+void write_unsupported_method_result(const char* id)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "method_result";
+    response["status"] = "rejected";
+    response["error"]["code"] = "unsupported_method";
+    response["error"]["message"] = "Method is not supported.";
     write_json_document(response);
 }
 
@@ -2380,6 +2448,42 @@ void handle_line(const char* line)
             return;
         }
         ESP_LOGI(kTag, "get_accounts: id=%s", id);
+        return;
+    }
+
+    if (strcmp(type, "call_method") == 0) {
+        // Runtime skeleton only: Firmware enforces state/session gates and then
+        // rejects every method until a concrete method owns parsing, policy, UI,
+        // signing, and capability advertisement.
+        if (!provisioned_material_ready()) {
+            write_error_response(id, "invalid_state", "call_method is available only after provisioning is complete.");
+            return;
+        }
+        if (write_busy_if_pending_or_setup_flow_active(id)) {
+            return;
+        }
+
+        const char* session_id = request["sessionId"] | "";
+        if (!require_active_matching_session(id, session_id)) {
+            return;
+        }
+
+        switch (validate_call_method_request_fields(request)) {
+            case CallMethodFieldValidation::valid:
+                break;
+            case CallMethodFieldValidation::invalid_method:
+                write_error_response(id, "invalid_method", "Invalid call_method chain or method.");
+                return;
+            case CallMethodFieldValidation::invalid_params_shape:
+                write_error_response(id, "invalid_params", "call_method params must be an object.");
+                return;
+            case CallMethodFieldValidation::invalid_params_size:
+                write_error_response(id, "invalid_params", "call_method params are too large for the skeleton runtime.");
+                return;
+        }
+
+        write_unsupported_method_result(id);
+        ESP_LOGI(kTag, "call_method unsupported: id=%s", id);
         return;
     }
 

@@ -123,6 +123,18 @@ function defaultDriver(overrides = {}) {
         ],
       };
     },
+    async callMethod() {
+      return {
+        id: "req_call_method",
+        version: 1,
+        type: "method_result",
+        status: "rejected",
+        error: {
+          code: "unsupported_method",
+          message: "Method is not supported.",
+        },
+      };
+    },
     ...overrides,
   };
 }
@@ -1016,6 +1028,118 @@ test("getAccounts clears the local session when Firmware reports invalid_session
     await core.connectDevice({});
 
     const result = await core.getAccounts({});
+    assert.equal(result.source, "session_ended");
+    assert.equal(result.reason, "invalid_session");
+    const listed = await core.listDevices();
+    assert.equal(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("callMethod without a runtime session returns not_connected before validating method params", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(store, defaultDriver());
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+
+    const result = await core.callMethod({
+      chain: "sui",
+      method: "sign_transaction",
+      params: { seed: "state gate wins" },
+    });
+    assert.equal(result.source, "not_connected");
+    assert.equal(result.reason, "not_connected");
+    assert.equal(result.status, undefined);
+  });
+});
+
+test("callMethod returns Firmware's rejected method_result and keeps the session", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(store, defaultDriver());
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.callMethod({ chain: "sui", method: "sign_transaction", params: {} });
+    assert.equal(result.source, "live");
+    assert.equal(result.status, "rejected");
+    assert.equal(result.error.code, "unsupported_method");
+
+    const listed = await core.listDevices();
+    assert.notEqual(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("callMethod validates input before USB live-port probing", async () => {
+  await withStore(async (store) => {
+    let listPortsCalls = 0;
+    let requestStatusCalls = 0;
+    let callMethodCalls = 0;
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async listPorts() {
+          listPortsCalls += 1;
+          return [
+            {
+              path: "/dev/cu.usbmodem1",
+              vendorId: "303a",
+              productId: "1001",
+              manufacturer: "Espressif",
+            },
+          ];
+        },
+        async requestStatus() {
+          requestStatusCalls += 1;
+          return status;
+        },
+        async callMethod() {
+          callMethodCalls += 1;
+          return {
+            id: "req_call_method",
+            version: 1,
+            type: "method_result",
+            status: "rejected",
+            error: {
+              code: "unsupported_method",
+              message: "Method is not supported.",
+            },
+          };
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    listPortsCalls = 0;
+    requestStatusCalls = 0;
+    callMethodCalls = 0;
+
+    await assert.rejects(
+      () => core.callMethod({ chain: "sui", method: "sign_transaction", params: { seed: "must-not-forward" } }),
+      { code: "invalid_params" },
+    );
+    assert.equal(listPortsCalls, 0);
+    assert.equal(requestStatusCalls, 0);
+    assert.equal(callMethodCalls, 0);
+  });
+});
+
+test("callMethod clears the local session when Firmware reports invalid_session", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async callMethod() {
+          throw new GatewayError("invalid_session", "Session is unknown or already ended.", false);
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.callMethod({ chain: "sui", method: "sign_transaction", params: {} });
     assert.equal(result.source, "session_ended");
     assert.equal(result.reason, "invalid_session");
     const listed = await core.listDevices();

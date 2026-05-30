@@ -150,9 +150,11 @@ Flow rules:
   it can no longer confirm.
 
 Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
+`get_capabilities`, `get_accounts`, the `call_method` runtime skeleton,
 `start_provisioning`, `cancel_provisioning`, explicit local Gateway device
 selection, local Gateway caching of discovered devices, and a hardware
-diagnostic request.
+diagnostic request. The current `call_method` skeleton enforces state and
+session gates but rejects every method as unsupported; it is not signing support.
 
 Source-level implementation added, with hardware smoke still pending:
 `confirm_recovery_phrase_backup` with persistent root material storage and
@@ -169,10 +171,12 @@ material and a `provisioned` state exist.
 between Gateway and Firmware. A connection session does not authorize signing,
 does not prove agent identity, and does not change Firmware policy.
 
+`get_capabilities` is implemented as a read-only, session-scoped capability
+request that currently reports Sui account identity with `methods: []`.
 `get_accounts` is implemented as a read-only, session-scoped identity request
 for the Sui Ed25519 account at index 0 in the `provisioned` state; hardware smoke
-is still pending. Designed but not yet implemented: the session-scoped requests
-`get_capabilities` and `call_method`.
+is still pending. `call_method` exists only as a session-scoped runtime skeleton:
+all methods are rejected until a concrete method is implemented and advertised.
 
 ## Device Discovery And Selection
 
@@ -886,8 +890,8 @@ Rules:
   expired session is also cleared.
 - The current StackChan CoreS3 target advertises Sui Ed25519 account identity
   only: account 0 at `m/44'/784'/0'/0'/0'`. `methods` is empty because
-  runtime `call_method`, physical approval integration, and signing methods are
-  not implemented.
+  no concrete `call_method` signing method, physical approval integration, or
+  signing implementation exists.
 - Gateway validates the response strictly, rejects unknown chains, unsupported
   account schemes or derivation paths, non-empty/unknown method lists,
   secret-like fields, and any unexpected `sessionId` in the response. Gateway
@@ -957,15 +961,23 @@ Rules:
 
 ## Method Request
 
-Gateway calls supported methods by name.
+Gateway calls supported methods by name through `call_method`.
 
-`call_method` and signing methods are designed but not implemented. Firmware
-must not advertise `sign_transaction` in `get_capabilities` until Sui txBytes
-decoding, policy evaluation, negative parser fixtures, and signing are all
-implemented and connected to the runtime request path. The current restricted
-Sui transaction facts parser, Sui policy facts adapter, and policy v0 evaluator
-are Firmware-internal source, not a wire contract, and are not connected to
-`call_method`, capability advertisement, or signing.
+The current `call_method` implementation is a runtime skeleton. Firmware
+validates the protocol envelope enough to identify the request, then enforces
+`provisioned` state, setup/pending busy gates, and a matching active session.
+After those gates pass, Firmware validates the `chain`, `method`, and `params`
+field shape and size. Valid method requests still return `method_result` with
+`status: "rejected"` and `error.code: "unsupported_method"`. No txBytes parsing,
+policy evaluation, physical approval, signing, or capability advertisement is
+connected to this runtime path yet.
+
+Firmware must not advertise `sign_transaction` in `get_capabilities` until Sui
+txBytes decoding, policy evaluation, negative parser fixtures, and signing are
+all implemented and connected to the runtime request path. The current
+restricted Sui transaction facts parser, Sui policy facts adapter, and policy v0
+evaluator are Firmware-internal source foundations; they do not make
+`call_method` a signing API.
 
 Policy v0 is currently a Firmware common-source foundation. It accepts already
 extracted transaction facts, applies a declarative deny-by-default policy model,
@@ -987,30 +999,33 @@ Request:
   "sessionId": "session_001",
   "chain": "sui",
   "method": "sign_transaction",
-  "params": {
-    "txBytes": "..."
-  }
+  "params": {}
 }
 ```
 
-Response:
+Current skeleton response:
 
 ```json
 {
   "id": "req_006",
   "version": 1,
   "type": "method_result",
-  "status": "approved",
-  "result": {
-    "signature": "..."
+  "status": "rejected",
+  "error": {
+    "code": "unsupported_method",
+    "message": "Method is not supported."
   }
 }
 ```
 
-Possible method result statuses:
+Current method result status:
+
+- `rejected`
+
+Designed future method result statuses, not accepted by the current skeleton
+parser:
 
 - `approved`
-- `rejected`
 - `requires_physical_approval`
 - `timed_out`
 - `error`

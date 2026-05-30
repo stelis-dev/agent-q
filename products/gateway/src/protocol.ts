@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
 import {
   IDENTIFICATION_CODE_PATTERN,
@@ -98,6 +99,16 @@ export interface GetAccountsRequest {
   sessionId: string;
 }
 
+export interface CallMethodRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "call_method";
+  sessionId: string;
+  chain: string;
+  method: string;
+  params: Record<string, unknown>;
+}
+
 export interface StartProvisioningRequest {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -141,6 +152,7 @@ export type ProtocolRequest =
   | DisconnectRequest
   | GetCapabilitiesRequest
   | GetAccountsRequest
+  | CallMethodRequest
   | StartProvisioningRequest
   | CancelProvisioningRequest
   | ConfirmRecoveryPhraseBackupRequest
@@ -230,6 +242,17 @@ export interface AccountsResponse {
   accounts: Account[];
 }
 
+export interface MethodResultResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "method_result";
+  status: "rejected";
+  error: {
+    code: "unsupported_method";
+    message: string;
+  };
+}
+
 export interface ProvisioningResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -271,6 +294,7 @@ export type ProtocolResponse =
   | DisconnectResponse
   | CapabilitiesResponse
   | AccountsResponse
+  | MethodResultResponse
   | ProvisioningResponse
   | RecoveryPhraseResponse
   | FactoryResetResponse
@@ -390,6 +414,43 @@ export function makeGetAccountsRequest(sessionId: string, id = createRequestId()
     type: "get_accounts",
     sessionId,
   };
+}
+
+export function makeCallMethodRequest(
+  sessionId: string,
+  chain: string,
+  method: string,
+  params: Record<string, unknown> = {},
+  id = createRequestId(),
+): CallMethodRequest {
+  validateRequestId(id);
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  validateCallMethodInput(chain, method, params);
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "call_method",
+    sessionId,
+    chain,
+    method,
+    params,
+  };
+}
+
+export function validateCallMethodInput(
+  chain: unknown,
+  method: unknown,
+  params: unknown,
+): asserts params is Record<string, unknown> {
+  if (!isCallMethodChain(chain)) {
+    throw new ProtocolError("invalid_method", "Invalid call_method chain.");
+  }
+  if (!isCallMethodName(method)) {
+    throw new ProtocolError("invalid_method", "Invalid call_method method.");
+  }
+  validateCallMethodParams(params);
 }
 
 export function makeStartProvisioningRequest(
@@ -730,6 +791,37 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
+  if (value.type === "method_result") {
+    if (typeof value.id !== "string" || value.status !== "rejected") {
+      throw new ProtocolError("protocol_error", "Method result response is malformed.");
+    }
+    if (hasSecretPayloadKey(value)) {
+      throw new ProtocolError("protocol_error", "Method result response must not include secret material.");
+    }
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "error"])) {
+      throw new ProtocolError("protocol_error", "Method result response contains unsupported fields.");
+    }
+    const error = value.error;
+    if (
+      !isRecord(error) ||
+      !hasOnlyObjectKeys(error, ["code", "message"]) ||
+      error.code !== "unsupported_method" ||
+      error.message !== UNSUPPORTED_METHOD_MESSAGE
+    ) {
+      throw new ProtocolError("protocol_error", "Method result error is malformed.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "method_result",
+      status: "rejected",
+      error: {
+        code: "unsupported_method",
+        message: UNSUPPORTED_METHOD_MESSAGE,
+      },
+    };
+  }
+
   throw new ProtocolError("protocol_error", "Protocol response type is unsupported.");
 }
 
@@ -793,6 +885,16 @@ export function assertAccountsResponse(response: ProtocolResponse): AccountsResp
   return response;
 }
 
+export function assertMethodResultResponse(response: ProtocolResponse): MethodResultResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "method_result") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not method_result.");
+  }
+  return response;
+}
+
 export function assertProvisioningResponse(response: ProtocolResponse): ProvisioningResponse {
   if (response.type === "error") {
     throw new ProtocolError(response.error.code, response.error.message);
@@ -848,6 +950,14 @@ export function sanitizeProvisioningStatus(value: unknown): ProvisioningStatus |
   return { state: value.state };
 }
 
+export function isCallMethodChain(value: unknown): value is string {
+  return typeof value === "string" && CALL_METHOD_CHAIN_PATTERN.test(value);
+}
+
+export function isCallMethodName(value: unknown): value is string {
+  return typeof value === "string" && CALL_METHOD_NAME_PATTERN.test(value);
+}
+
 export const SUI_ADDRESS_PATTERN = /^0x[0-9a-f]{64}$/;
 // Raw 32-byte Ed25519 public key as base64 is exactly 43 payload chars + one "=".
 export const ED25519_PUBLIC_KEY_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
@@ -859,6 +969,12 @@ export const MAX_CAPABILITY_ACCOUNTS_PER_CHAIN = 1;
 // imply multi-account support that does not exist. Raise this as more accounts or
 // chains are actually implemented.
 export const MAX_ACCOUNTS_PER_RESPONSE = 1;
+export const CALL_METHOD_CHAIN_PATTERN = /^[a-z][a-z0-9_.-]{0,31}$/;
+export const CALL_METHOD_NAME_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
+// The skeleton only establishes the runtime envelope and currently rejects every
+// method. Keep payloads small until a specific method owns larger signable data.
+export const MAX_CALL_METHOD_PARAMS_JSON_BYTES = 256;
+export const UNSUPPORTED_METHOD_MESSAGE = "Method is not supported.";
 export const FORBIDDEN_SECRET_FIELD_NAMES = [
   "entropy",
   "mnemonic",
@@ -1111,6 +1227,24 @@ function sanitizeAccount(value: unknown): Account {
     keyScheme: value.keyScheme,
     derivationPath: value.derivationPath,
   };
+}
+
+function validateCallMethodParams(params: unknown): asserts params is Record<string, unknown> {
+  if (!isRecord(params) || Array.isArray(params)) {
+    throw new ProtocolError("invalid_params", "call_method params must be an object.");
+  }
+  if (hasSecretPayloadKey(params)) {
+    throw new ProtocolError("invalid_params", "call_method params must not include secret material.");
+  }
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(params);
+  } catch {
+    throw new ProtocolError("invalid_params", "call_method params must be JSON serializable.");
+  }
+  if (serialized === undefined || Buffer.byteLength(serialized, "utf8") > MAX_CALL_METHOD_PARAMS_JSON_BYTES) {
+    throw new ProtocolError("invalid_params", "call_method params are too large for the skeleton runtime.");
+  }
 }
 
 export function sanitizeDeviceStatusSnapshot(value: unknown): DeviceStatusSnapshot | null {

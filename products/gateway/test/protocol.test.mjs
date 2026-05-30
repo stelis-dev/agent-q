@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   assertAccountsResponse,
   assertCapabilitiesResponse,
+  assertMethodResultResponse,
   assertConnectResponse,
   assertDisconnectResponse,
   assertFactoryResetResponse,
@@ -16,6 +17,7 @@ import {
   isSafeRequestId,
   isSessionId,
   isSuiAddressForPublicKey,
+  makeCallMethodRequest,
   makeConnectRequest,
   makeCancelProvisioningRequest,
   makeConfirmRecoveryPhraseBackupRequest,
@@ -95,6 +97,7 @@ test("preserves Firmware protocol error codes", () => {
     "storage_error",
     "invalid_state",
     "invalid_setup_step",
+    "unsupported_method",
     "rng_error",
     "ui_error",
     "generation_error",
@@ -255,6 +258,47 @@ test("makeGetAccountsRequest validates sessionId", () => {
 
   assert.throws(() => makeGetAccountsRequest("not_a_session"), /Invalid sessionId/);
   assert.throws(() => makeGetAccountsRequest("session_"), /Invalid sessionId/);
+});
+
+test("makeCallMethodRequest validates session, method identifiers, and params", () => {
+  const request = makeCallMethodRequest(
+    "session_abcdef0123456789",
+    "sui",
+    "sign_transaction",
+    {},
+    "req_call_method_1",
+  );
+  assert.deepEqual(request, {
+    id: "req_call_method_1",
+    version: 1,
+    type: "call_method",
+    sessionId: "session_abcdef0123456789",
+    chain: "sui",
+    method: "sign_transaction",
+    params: {},
+  });
+
+  assert.throws(() => makeCallMethodRequest("not_a_session", "sui", "sign_transaction"), /sessionId/);
+  assert.throws(() => makeCallMethodRequest("session_abcdef0123456789", "Sui", "sign_transaction"), /chain/);
+  assert.throws(() => makeCallMethodRequest("session_abcdef0123456789", "sui", "sign transaction"), /method/);
+  assert.throws(
+    () => makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", []),
+    /params/,
+  );
+  assert.throws(
+    () =>
+      makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", {
+        seed: "must-not-forward",
+      }),
+    /secret material/,
+  );
+  assert.throws(
+    () =>
+      makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", {
+        memo: "가".repeat(90),
+      }),
+    /too large/,
+  );
 });
 
 test("makeGetCapabilitiesRequest validates sessionId", () => {
@@ -456,6 +500,51 @@ test("parseProtocolResponse rejects an accounts response exceeding the supported
     accounts: [],
   });
   assert.throws(() => parseProtocolResponse(empty, "req_accounts"), { code: "protocol_error" });
+});
+
+const methodResultLine = (overrides = {}, errorOverrides = {}) =>
+  JSON.stringify({
+    id: "req_call_method",
+    version: 1,
+    type: "method_result",
+    status: "rejected",
+    error: {
+      code: "unsupported_method",
+      message: "Method is not supported.",
+      ...errorOverrides,
+    },
+    ...overrides,
+  });
+
+test("parseProtocolResponse accepts the current rejected method_result skeleton", () => {
+  const response = assertMethodResultResponse(
+    parseProtocolResponse(methodResultLine(), "req_call_method"),
+  );
+  assert.equal(response.type, "method_result");
+  assert.equal(response.status, "rejected");
+  assert.equal(response.error.code, "unsupported_method");
+});
+
+test("parseProtocolResponse rejects unsupported method_result shapes", () => {
+  assert.throws(
+    () => parseProtocolResponse(methodResultLine({ status: "approved", result: { signature: "x" } }), "req_call_method"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () => parseProtocolResponse(methodResultLine({ sessionId: "session_abcdef0123456789" }), "req_call_method"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () => parseProtocolResponse(methodResultLine({}, { code: "policy_rejected" }), "req_call_method"),
+    { code: "protocol_error" },
+  );
+  for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
+    assert.throws(
+      () => parseProtocolResponse(methodResultLine({ [fieldName]: "secret-like value" }), "req_call_method"),
+      { code: "protocol_error" },
+      `secret-like method_result field ${fieldName} must be rejected`,
+    );
+  }
 });
 
 test("creates provisioning requests without secret fields", () => {

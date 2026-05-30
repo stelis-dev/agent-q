@@ -17,7 +17,10 @@ import {
   type CapabilityChain,
   type DeviceStatusSnapshot,
   type IdentifyDeviceResponse,
+  type MethodResultResponse,
+  ProtocolError,
   type StatusResponse,
+  validateCallMethodInput,
 } from "./protocol.js";
 import {
   DEFAULT_SCAN_TIMEOUT_MS,
@@ -164,6 +167,8 @@ export type GetAccountsSessionEndedReason = (typeof GET_ACCOUNTS_SESSION_ENDED_R
 
 export const GET_CAPABILITIES_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
 export type GetCapabilitiesSessionEndedReason = GetAccountsSessionEndedReason;
+export const CALL_METHOD_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
+export type CallMethodSessionEndedReason = GetAccountsSessionEndedReason;
 
 export type DisconnectDeviceResult =
   | { source: "disconnected"; deviceId: string; reason: DisconnectEndedReason }
@@ -184,6 +189,19 @@ export type GetAccountsResult =
   | { source: "live"; deviceId: string; accounts: Account[] }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: GetAccountsSessionEndedReason };
+
+// call_method is the common method path. The current runtime skeleton keeps
+// sessions/state gates intact but all methods are rejected by Firmware until a
+// specific method is implemented and advertised.
+export type CallMethodResult =
+  | {
+      source: "live";
+      deviceId: string;
+      status: MethodResultResponse["status"];
+      error: MethodResultResponse["error"];
+    }
+  | { source: "not_connected"; deviceId: string; reason: "not_connected" }
+  | { source: "session_ended"; deviceId: string; reason: CallMethodSessionEndedReason };
 
 export const DEFAULT_IDENTIFY_DURATION_MS = 10000;
 export const MAX_IDENTIFY_DURATION_MS = 30000;
@@ -582,6 +600,58 @@ export class GatewayCore {
     }
   }
 
+  async callMethod(input: {
+    deviceId?: string;
+    purpose?: string;
+    chain: string;
+    method: string;
+    params?: Record<string, unknown>;
+    timeoutMs?: number;
+  }): Promise<CallMethodResult> {
+    const params = input.params ?? {};
+    const target = await this.resolveTargetDevice(input);
+    const scanTimeoutMs = validateTimeoutMs(input.timeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS);
+
+    const session = this.peekRuntimeSession(target.deviceId);
+    if (session === null) {
+      return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
+    }
+
+    validateCallMethodGatewayInput(input.chain, input.method, params);
+
+    let matchingPort: UsbStatusResult | undefined;
+    try {
+      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+    } catch (error) {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+
+    try {
+      const response = await this.usbDriver.callMethod(
+        matchingPort.portPath,
+        session.sessionId,
+        input.chain,
+        input.method,
+        params,
+        scanTimeoutMs,
+      );
+      // Method-level rejection is not a session failure. Keep the session live.
+      return { source: "live", deviceId: target.deviceId, status: response.status, error: response.error };
+    } catch (error) {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+  }
+
   private peekRuntimeSession(deviceId: string): RuntimeSession | null {
     const session = this.runtimeSessions.get(deviceId);
     if (session === undefined) {
@@ -797,6 +867,17 @@ function validateGatewayName(value: unknown): string {
     );
   }
   return value;
+}
+
+function validateCallMethodGatewayInput(chain: unknown, method: unknown, params: unknown): void {
+  try {
+    validateCallMethodInput(chain, method, params);
+  } catch (error) {
+    if (error instanceof ProtocolError) {
+      throw new GatewayError(error.code, error.message, false);
+    }
+    throw error;
+  }
 }
 
 function mapConfigError(error: unknown): GatewayError {

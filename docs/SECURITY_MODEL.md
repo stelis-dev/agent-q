@@ -64,8 +64,8 @@ Implemented today:
   material. Hardware smoke is still required.
 - A common firmware policy v0 evaluator foundation. It can calculate internal
   `sign`, `reject`, or `ask` decisions from already extracted transaction
-  facts in host tests, but no runtime request calls it and it does not sign,
-  store policy, or trigger physical approval.
+  facts in host tests, but the current `call_method` runtime skeleton does not
+  call it and it does not sign, store policy, or trigger physical approval.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
@@ -76,7 +76,8 @@ Designed but not implemented (do not treat as present):
 - USER_PROFILE first-install mnemonic generation or import.
 - zkLogin signing material.
 - Policy storage, policy update authorization, and runtime policy enforcement.
-- Signing via `call_method`.
+- Signing methods inside `call_method`. The `call_method` runtime skeleton exists
+  but currently rejects every method as unsupported.
 - The Admin Page / local web UI.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.
 - Secure Boot, Flash Encryption, and NVS Encryption setup flow.
@@ -393,9 +394,9 @@ Enforcement today:
   registered tools must equal a fixed set, both at definition and over the live
   transport. A new tool such as `export_key` cannot be added without failing
   those tests.
-- Signing methods (`call_method`) are not implemented. Before they ship they need
-  their own allowlist and negative tests, because the top-level allowlist does
-  not cover method names carried inside `call_method`.
+- Concrete signing methods inside `call_method` are not implemented. Before they
+  ship they need their own allowlist and negative tests, because the top-level
+  allowlist does not cover method names carried inside `call_method`.
 
 ## 12. Device Capability Tiers
 
