@@ -167,7 +167,7 @@ display signaling.
 
 `connect` and `disconnect` are defined by the protocol and parsed by Gateway.
 The current StackChan CoreS3 target accepts `connect` only after persistent root
-material and a `provisioned` state exist.
+material, active policy, local PIN verifier, and a `provisioned` state exist.
 
 `connect` and `disconnect` establish and end a runtime communication session
 between Gateway and Firmware. A connection session does not authorize signing,
@@ -275,9 +275,9 @@ security boundary and must not be treated as proof that the device is trusted.
 
 Provisioning states:
 
-- `unprovisioned`: root signing material and active policy are not present.
+- `unprovisioned`: root signing material, active policy, and local PIN verifier are not present.
 - `provisioning`: local provisioning is in progress.
-- `provisioned`: root signing material and active policy are present.
+- `provisioned`: root signing material, active policy, and local PIN verifier are present.
 - `locked`: the provisioning state cannot be used until the device is unlocked.
 
 `provisioning.state` reports only the Firmware's provisioning state. It is not
@@ -287,18 +287,20 @@ display the value without treating it as authority.
 
 The current StackChan CoreS3 target persists and reports `unprovisioned` and
 `provisioned`. It may report `provisioned` only when `prov_state`, the
-device-local root material blob, and the active default-reject policy record all
-exist. It does not use `locked` because no unlock model is implemented.
-Source-level DEV_PROFILE recovery phrase display, persistent root material, and
-active policy storage exist, and read-only `get_accounts` Sui account
-derivation is implemented. Runtime mnemonic import, policy update, and signing
-APIs are not implemented.
+device-local root material blob, the active default-reject policy record, and
+the local PIN verifier all exist. It does not use `locked` because no unlock
+model is implemented. Source-level DEV_PROFILE recovery phrase display,
+persistent root material, active policy storage, and local PIN verifier storage
+exist, and read-only `get_accounts` Sui account derivation is implemented.
+Runtime mnemonic import, local reset, policy update, and signing APIs are not
+implemented.
 
 For DEV_PROFILE upgrade compatibility, a target that boots with the previous
 development shape (`prov_state = provisioned` and valid root material, but no
 policy record) may initialize the default-reject active policy before reporting
 `provisioned`. If that initialization fails, Firmware must fail closed instead
-of reporting normal `provisioned`.
+of reporting normal `provisioned`. Existing DEV_PROFILE devices without the
+local PIN verifier are not migrated and fail closed until reprovisioned.
 
 Device metadata strings are untrusted input and Gateway bounds them when
 parsing a response:
@@ -324,27 +326,39 @@ displays up-to-4-letter word prefixes on the device in a 3-column by 4-row
 grid, and exposes only local Cancel and Confirm controls on the recovery phrase
 panel. Three-letter BIP-39 words are displayed as the full word.
 
-Firmware owns the volatile recovery phrase scratch substate, separate from
+Firmware owns the volatile setup scratch substate, separate from
 persistent `provisioning.state`, session state, display power state, and LVGL
 object lifetime. The current substates are:
 
 - `none`: no generated recovery phrase is valid in RAM.
-- `displayed`: root entropy and recovery phrase scratch exist in RAM and the
-  device recovery phrase panel is active.
+- `recovery_phrase_displayed`: root entropy and recovery phrase scratch exist
+  in RAM and the device recovery phrase panel is active.
+- `pin_first_entry`: root entropy and the first typed PIN scratch exist in RAM
+  and the device-local numeric PIN setup panel is active.
+- `pin_repeat_entry`: root entropy, the first PIN scratch, and the repeat typed
+  PIN scratch exist in RAM and the device-local numeric PIN setup panel is
+  active.
+- `pin_committing`: root entropy and matching PIN scratch exist in RAM while
+  Firmware persists root material, policy, PIN verifier, and provisioned state;
+  the PIN panel is redrawn as a non-interactive saving state and further local
+  input is ignored.
 
 The UI panel is an output of this substate machine, not the source of truth. If
-the recovery phrase panel is removed, replaced, expires, is canceled, or fails
-to store material, Firmware wipes the volatile phrase and returns the scratch
-substate to `none`. Screen/backlight sleep does not by itself change the
-security state; Agent-Q UI wakes the display before showing setup material or
-approval UI.
+the recovery phrase or PIN panel is removed, replaced, expires, is canceled, or
+fails to store material, Firmware wipes the volatile setup scratch and returns
+the scratch substate to `none`. Screen/backlight sleep does not by itself change
+the security state; Agent-Q UI wakes the display before showing setup material
+or approval UI.
 
 Local Confirm is the only implemented backup confirmation transition. It stores
-binary root material and the active default-reject policy first, then persists
-`provisioned`, then wipes volatile scratch. If root material, policy, or state
-persistence fails, Firmware wipes volatile scratch and must not report
-`provisioned`. Local Cancel wipes volatile scratch and leaves persistent state
-`unprovisioned`.
+no persistent material by itself; it advances the scratch state to local
+6-digit PIN entry and wipes phrase text/prefix scratch. Matching PIN repeat
+stores binary root material, the active default-reject policy, and the salt +
+PIN verifier first, then persists `provisioned`, then wipes volatile scratch.
+If root material, policy, PIN verifier, or state persistence fails, Firmware
+rolls back persistent setup material where possible, wipes volatile scratch, and
+must not report `provisioned`. Local Cancel wipes volatile scratch and leaves
+persistent state `unprovisioned`.
 
 Gateway must not receive the phrase, displayed prefixes, entropy, seed, private
 key, account data, policy data, or import text. BIP-39 English word prefixes of
@@ -604,8 +618,8 @@ Rules:
 
 - `get_capabilities` is session-scoped and requires `sessionId`.
 - Firmware returns capabilities only when `provisioning.state` is `provisioned`
-  and persistent material, including root material and active policy, is
-  consistent. Before that it returns
+  and persistent material, including root material, active policy, and local PIN
+  verifier, is consistent. Before that it returns
   `invalid_state`.
 - A missing, expired, or mismatched session returns `invalid_session`; an
   expired session is also cleared.
@@ -662,8 +676,8 @@ Rules:
   is reported separately as `keyScheme`; the address is
   `0x` + lowercase hex of `blake2b256(0x00 || publicKey)`.
 - Firmware returns accounts only when `provisioning.state` is `provisioned` and
-  persistent material, including root material and active policy, is consistent.
-  Before that it returns `invalid_state`.
+  persistent material, including root material, active policy, and local PIN
+  verifier, is consistent. Before that it returns `invalid_state`.
 - The request requires `sessionId`. A missing, expired, or mismatched session
   returns `invalid_session`; an expired session is also cleared.
 - Account derivation runs in Firmware on demand and wipes all intermediate secret

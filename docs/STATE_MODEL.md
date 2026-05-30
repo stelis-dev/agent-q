@@ -34,11 +34,11 @@ are not authority.
 stateDiagram-v2
     [*] --> Unprovisioned: boot, no root signing material
     Unprovisioned --> Unprovisioned: local setup starts + phrase display
-    Unprovisioned --> Provisioned: local backup confirm + root material and active policy stored
+    Unprovisioned --> Provisioned: local backup confirm + 6-digit PIN setup + root/policy/PIN verifier stored
     Unprovisioned --> Unprovisioned: local cancel/timeout/failure + scratch wipe
     Unprovisioned --> Provisioning: future persistent setup step
     Provisioning --> Unprovisioned: future local cancel + physical approval
-    Provisioning --> Provisioned: future setup complete, root material and active policy stored
+    Provisioning --> Provisioned: future setup complete, root material, active policy, and local PIN verifier stored
     Provisioned --> Locked: future local lock condition
     Locked --> Provisioned: future local unlock
     Provisioned --> Unprovisioned: future local reset + physical approval
@@ -57,10 +57,12 @@ Current StackChan CoreS3 persistent root material flow starts from
 `unprovisioned`. It generates recovery phrase scratch in RAM, displays only
 up-to-4-letter BIP-39 word prefixes on the device in a 3-column by 4-row grid,
 stores the binary BIP-39 root entropy and active default-reject policy only
-after physical backup confirmation, and wipes scratch on confirmation,
-cancellation, timeout, failure, or display expiry. Three-letter BIP-39 words are
-displayed as the full word. `provisioned` may be reported only when the
-persisted state, stored root material, and stored active policy all exist.
+after physical backup confirmation and local 6-digit PIN setup, and wipes
+scratch on confirmation, cancellation, timeout, failure, or display expiry.
+Three-letter BIP-39 words are displayed as the full word. `provisioned` may be
+reported only when the persisted state, stored root material, stored active
+policy, and stored local PIN verifier all exist. The PIN verifier is a
+DEV_PROFILE local UX gate only; it does not encrypt root material.
 `locked` remains a design target until an unlock model exists.
 
 For DEV_PROFILE upgrade compatibility, if Firmware boots with the previous
@@ -69,6 +71,7 @@ policy record), it initializes the default-reject active policy before reporting
 `provisioned`. Any failure to initialize that policy is a consistency error.
 
 If persisted state, stored root material, and stored active policy disagree,
+or if the stored local PIN verifier is missing or invalid while `provisioned`,
 Firmware reports device `error` and fails closed for normal setup and session
 requests. Detecting the consistency error also clears any active RAM session
 immediately, so a session created before the error is not retained as a stale
@@ -84,8 +87,8 @@ hardware and must be documented in each target's `SPEC.md`.
 
 | Layer | Examples | Owner | May gate protocol APIs? |
 |---|---|---|---:|
-| Persistent device state | provisioning state, stored root material, policy, account availability | Firmware | Yes |
-| Volatile sensitive scratch | generated recovery phrase, setup entropy, pending backup confirmation | Firmware | Yes |
+| Persistent device state | provisioning state, stored root material, policy, local PIN verifier, account availability | Firmware | Yes |
+| Volatile sensitive scratch | generated recovery phrase, setup entropy, pending backup confirmation, typed PIN digits | Firmware | Yes |
 | Pending approval state | active physical approval request, timeout, requested action | Firmware | Yes |
 | Runtime session state | active protocol session id and expiry | Firmware; Gateway mirrors its own client session state | Yes |
 | Target-local display state | screen on/off, brightness, screensaver replacement | Firmware target display module | No |
@@ -111,7 +114,7 @@ Allowed:
 
 Rejected:
 
-- `connect` until persistent root material and active policy exist and the
+- `connect` until persistent root material, active policy, and local PIN verifier exist and the
   device is `provisioned`
 - `get_capabilities`
 - `get_accounts`
@@ -122,8 +125,9 @@ Rejected:
 - external evidence or price fetch
 
 Current mnemonic setup is a volatile substate under `unprovisioned` until the
-user physically confirms backup and Firmware stores root material. The host
-never receives the phrase or its up-to-4-letter prefixes.
+user physically confirms backup, enters and repeats a 6-digit local PIN, and
+Firmware stores root material, active policy, and the PIN verifier. The host
+never receives the phrase, its up-to-4-letter prefixes, or the PIN.
 
 ### `provisioning`
 
@@ -146,10 +150,11 @@ Rejected:
 
 Scratch signing material may exist only inside Firmware during setup steps.
 Canceling setup must wipe scratch material before returning to `unprovisioned`.
-Current StackChan CoreS3 source limits recovery phrase scratch material to RAM
-and tracks it with a volatile substate: `none` or `displayed`. That scratch
-substate is separate from the persistent `provisioning.state`, pending approval
-state, and UI panel state.
+Current StackChan CoreS3 source limits recovery phrase and typed PIN scratch to
+RAM and tracks setup with volatile substates: `none`,
+`recovery_phrase_displayed`, `pin_first_entry`, `pin_repeat_entry`, and
+`pin_committing`. Those scratch substates are separate from persistent
+`provisioning.state`, pending approval state, and UI panel state.
 The current StackChan CoreS3 persistent material slice resets stale
 `provisioning` state to `unprovisioned` when no valid root material or active
 policy exists and does not enter this state for the normal
@@ -159,10 +164,11 @@ generate-and-confirm flow.
 
 Root signing material and an active policy exist in device-local storage. In
 the current StackChan CoreS3 DEV_PROFILE implementation this means a binary
-BIP-39 entropy blob and the active default-reject policy record are stored in
-NVS and `prov_state` is `provisioned`; read-only Sui account derivation and
-read-only active policy summary are implemented, while signing, policy update,
-and USER_PROFILE secure storage gates are still separate work.
+BIP-39 entropy blob, the active default-reject policy record, and a local
+6-digit PIN verifier record are stored in ordinary NVS and `prov_state` is
+`provisioned`; read-only Sui account derivation and read-only active policy
+summary are implemented, while signing, policy update, local reset, and
+USER_PROFILE secure storage gates are still separate work.
 
 Allowed:
 
@@ -199,6 +205,9 @@ active policy is a persistent-material consistency error, not a normal
 `provisioned` state. A missing active policy is migrated only for the documented
 DEV_PROFILE legacy shape where `prov_state = provisioned` and root material is
 valid; outside that compatibility path it is also a consistency error.
+There is no automatic migration for provisioned DEV_PROFILE devices that lack
+the local PIN verifier; those devices fail closed until erased and reprovisioned
+through a local UX or development reflash workflow.
 
 ### `locked`
 
@@ -257,7 +266,8 @@ Boot
 -> generate mnemonic on device
 -> show up-to-4-letter prefixes once on device
 -> user confirms backup or cancels on device
--> if confirmed, store root material and active policy locally
+-> if confirmed, enter and repeat a 6-digit local PIN on device
+-> if PINs match, store root material, active policy, and PIN verifier locally
 -> only after storage succeeds, provisioned
 -> wipe volatile scratch
 -> ready
@@ -268,7 +278,7 @@ Reboot after provisioning:
 ```text
 Boot
 -> load provisioning state
--> verify root signing material exists
+-> verify root signing material, active policy, and local PIN verifier exist
 -> provisioned
 -> welcome
 -> ready

@@ -43,17 +43,20 @@ Implemented today:
   user accepts or rejects on the device's screen.
 - A material-backed provisioning state on the StackChan CoreS3 target. It
   reports `provisioned` only when the persisted state, valid DEV_PROFILE root
-  entropy blob, and active default-reject policy record all exist. This is not
-  signing readiness and stores no account data. The current build stores that
-  DEV_PROFILE root entropy and active policy record in ordinary NVS; Secure
-  Boot, Flash Encryption, and NVS Encryption are not configured.
+  entropy blob, active default-reject policy record, and local PIN verifier all
+  exist. This is not signing readiness and stores no account data. The current
+  build stores that DEV_PROFILE root entropy, active policy record, and PIN
+  verifier in ordinary NVS; Secure Boot, Flash Encryption, and NVS Encryption
+  are not configured.
 - A DEV_PROFILE recovery phrase setup path in StackChan CoreS3 source. It can
   generate BIP-39 root entropy into RAM from an Agent-Q CSPRNG seeded from
   early boot entropy, display only up-to-4-letter word prefixes on the device,
-  store the root entropy after local backup confirmation, and wipe volatile
-  scratch on local cancel, confirmation, display expiry, or failure.
-  Firmware build verification is required for each change, hardware smoke is
-  still required, and this is not USER_PROFILE key provisioning.
+  require a local 6-digit PIN entry/repeat after backup confirmation, store
+  root entropy plus a salt + PIN verifier after the PIN matches, and wipe
+  volatile scratch on local cancel, confirmation, display expiry, PIN setup
+  timeout, or failure. Firmware build verification is required for each change,
+  hardware smoke is still required, and this is not USER_PROFILE key
+  provisioning.
 - No implemented local reset/recovery UX. Host-triggered reset/debug protocol
   paths are intentionally not implemented; material/state consistency errors
   fail closed until a normal device-local reset or recovery flow is specified
@@ -180,6 +183,9 @@ DEV_PROFILE - the default development path:
 - No Secure Boot or Flash Encryption requirement.
 - Current StackChan CoreS3 DEV_PROFILE root entropy persistence uses ordinary
   NVS unless the platform build is separately configured for encrypted storage.
+- The current StackChan CoreS3 local PIN verifier is also stored in ordinary
+  NVS. It is a local UX gate for reset and future sensitive writes, not root
+  material encryption or physical extraction defense.
 - Makes no security claim. Tools and docs must show a "do not use with real
   assets" warning.
 

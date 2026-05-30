@@ -51,8 +51,10 @@ device RNG
   -> show mnemonic to user once
   -> user backs it up
   -> user confirms backup
+  -> user enters and repeats a 6-digit local PIN on device
   -> Firmware stores root material locally
   -> Firmware stores an active default-reject policy locally
+  -> Firmware stores a salt + PIN verifier locally
   -> Firmware exposes only public keys / addresses
 ```
 
@@ -62,8 +64,11 @@ Rules:
 - The mnemonic is shown only during provisioning.
 - After confirmation, the mnemonic is not shown again.
 - If setup is canceled, Firmware wipes the generated material.
-- A device is not `provisioned` unless root material and an active policy are
-  both present.
+- A device is not `provisioned` unless root material, an active policy, and a
+  local PIN verifier are all present.
+- The local PIN verifier is a DEV_PROFILE UX gate for local reset and future
+  sensitive writes. It is not root-material encryption or physical extraction
+  defense.
 
 ### Import Existing Mnemonic
 
@@ -92,10 +97,13 @@ Provisioning UX depends on hardware:
 
 StackChan CoreS3 has display and touch hardware. Source-level DEV_PROFILE
 recovery phrase generation, backup confirmation, persistent root storage, and
-read-only `get_accounts` Sui account derivation are implemented. Hardware smoke
-has verified the provisioned Gateway/MCP session path through `get_accounts` and
-rejected Sui `sign_transaction` policy-decision handling; mnemonic provisioning
-UI smoke remains pending. Mnemonic import and signing are not implemented.
+read-only `get_accounts` Sui account derivation are implemented. The current
+setup source also records a DEV_PROFILE local PIN verifier before reporting
+`provisioned`. Source/build tests cover the provisioned Gateway/MCP session path
+through `get_accounts` and rejected Sui `sign_transaction` policy-decision
+handling; hardware smoke for the current local-PIN-gated setup and provisioned
+session path remains pending. Mnemonic import, local reset, and signing are not
+implemented.
 
 ## Chain Accounts
 
@@ -123,15 +131,16 @@ Target provisioning states:
 
 - `unprovisioned`: no root signing material is stored.
 - `provisioning`: setup flow is active.
-- `provisioned`: root signing material and an active policy exist.
+- `provisioned`: root signing material, an active policy, and a local PIN
+  verifier exist.
 - `locked`: sensitive actions require local unlock.
 
 Runtime v0 implements the current StackChan CoreS3 mnemonic UI flow and
 persistent root material slice. It loads and reports `provisioning.state`, but
 does not persist `provisioning` during the normal create-new-mnemonic flow.
 After physical backup confirmation, Firmware stores the binary BIP-39 root
-entropy and the active default-reject policy in ordinary DEV_PROFILE
-device-local NVS and only then moves to `provisioned`.
+entropy, the active default-reject policy, and a salt + PIN verifier in
+ordinary DEV_PROFILE device-local NVS and only then moves to `provisioned`.
 For existing DEV_PROFILE devices created before policy storage existed, Firmware
 may initialize the default-reject active policy at boot when `prov_state =
 provisioned` and root material is already valid. If that migration fails, the
@@ -145,8 +154,8 @@ phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
 or display expiry. Three-letter BIP-39 words are displayed as the full word.
 This is DEV_PROFILE storage scaffolding and is not USER_PROFILE key
 provisioning. Firmware must not set `provisioned` unless root signing material
-and an active policy exist in device-local storage. Firmware must not set
-`locked` until an unlock model exists.
+an active policy, and a local PIN verifier exist in device-local storage.
+Firmware must not set `locked` until an unlock model exists.
 
 Runtime v0 state transitions:
 
@@ -154,12 +163,13 @@ Runtime v0 state transitions:
 stateDiagram-v2
     [*] --> Unprovisioned: boot default or stored state
     Unprovisioned --> Unprovisioned: local setup opens phrase display
-    Unprovisioned --> Provisioned: local Confirm, root material and policy stored
+    Unprovisioned --> Unprovisioned: local Confirm, PIN entry active
+    Unprovisioned --> Provisioned: matching PIN repeat, root material + policy + PIN verifier stored
     Unprovisioned --> Unprovisioned: local Cancel/timeout/failure, scratch wiped
 
-    Unprovisioned: no root signing material or active policy
-    Unprovisioned: optional volatile mnemonic setup scratch only
-    Provisioned: root material and active policy stored; read-only get_accounts/get_policy available, signing still unavailable
+    Unprovisioned: no root signing material, active policy, or local PIN verifier
+    Unprovisioned: optional volatile mnemonic/root/PIN setup scratch only
+    Provisioned: root material, active policy, and local PIN verifier stored; read-only get_accounts/get_policy available, signing still unavailable
 ```
 
 The current runtime does not expose USB requests for provisioning start,
@@ -184,18 +194,31 @@ word prefixes identify the words and are secret material; Gateway never
 receives them. No protocol response carries the phrase, prefixes, entropy,
 seed, private key, account data, or policy data.
 
-Firmware tracks the volatile recovery phrase with an explicit scratch substate:
-`none` or `displayed`. This RAM-only substate is separate from the persistent
+Firmware tracks the volatile setup flow with explicit RAM scratch substates:
+`none`, `recovery_phrase_displayed`, `pin_first_entry`, `pin_repeat_entry`, and
+`pin_committing`. This substate is separate from the persistent
 `provisioning.state`, session state, display power state, and LVGL panel state.
 The UI is not the source of truth; panel deletion or replacement is treated as
-an event that must move `displayed` to `none` by wiping or invalidating the
-phrase.
+an event that must wipe or invalidate the current setup scratch.
 
 Backup confirmation is accepted only after a phrase has been displayed. The
-device-local Confirm button stores the binary root entropy, stores the active
-default-reject policy, then persists `provisioning.state = provisioned`, then
-wipes volatile scratch. If root material, policy, or state persistence fails,
-Firmware wipes volatile scratch and must not report `provisioned`.
+device-local Confirm button does not store material by itself. It advances the
+RAM scratch state to local PIN setup, wipes phrase text/prefix scratch, and
+requires the user to enter and repeat a 6-digit numeric PIN on the device. If
+the two entries mismatch, Firmware wipes only typed PIN scratch and returns to
+the first PIN entry while retaining the root entropy scratch. If PIN setup is
+canceled, times out, or loses its panel, Firmware wipes PIN and root scratch and
+leaves persistent state `unprovisioned`.
+
+Only after the repeated PIN matches does Firmware enter `pin_committing`, redraw
+the PIN panel as a non-interactive saving state with disabled controls, then
+store the binary root entropy, store the active default-reject policy, store the
+salt + PIN verifier, persist `provisioning.state = provisioned`, and wipe
+volatile scratch. Firmware defers the storage step until after the saving state
+has had a render turn, so the user sees that input is locked while setup is
+being persisted. If root material, policy, PIN verifier, or state persistence
+fails, Firmware rolls back persistent setup material where possible, wipes
+volatile scratch, and must not report `provisioned`.
 
 The recovery phrase is backup-ready only while its recovery phrase setup panel
 is still active and not expired. If that panel is removed or replaced, Firmware
@@ -204,9 +227,9 @@ confirm material whose setup UI is gone. Display power state is not part of
 this security state: screen/backlight sleep does not invalidate scratch by
 itself, and Agent-Q UI wakes the display before showing setup material.
 
-While the phrase display is active, `get_status` remains available and reports
-`device.state = busy`. The display has a finite lifetime; expiry clears the
-setup panel and wipes the volatile phrase.
+While the phrase display or PIN setup panel is active, `get_status` remains
+available and reports `device.state = busy`. Both device-local setup panels have
+finite lifetimes; expiry clears the setup panel and wipes volatile scratch.
 
 The device-local Cancel button wipes volatile setup scratch and leaves the
 persistent state `unprovisioned`. If display expiry, UI replacement, or another
@@ -233,8 +256,8 @@ Recommended first slice:
 2. Add setup-step messages that still store no persistent assets.
 3. Add DEV_PROFILE BIP-39 recovery phrase display with volatile wipe and no
    host exposure.
-4. Add DEV_PROFILE persistent root material and active policy storage after
-   backup confirmation.
+4. Add DEV_PROFILE persistent root material, active policy, and local PIN
+   verifier storage after backup confirmation plus matching PIN repeat.
 5. Add Sui Ed25519 account derivation.
 6. Add `get_accounts`.
 7. Add Sui `sign_personal_message`.

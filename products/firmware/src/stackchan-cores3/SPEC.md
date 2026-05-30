@@ -24,8 +24,9 @@ It is not the signing product yet. It does not persist chain private keys,
 expose MCP directly, update policy, or sign user requests. It links a
 restricted host-tested Sui transaction facts parser plus a common policy
 evaluator, stores DEV_PROFILE root entropy and a DEV_PROFILE active
-default-reject policy record, and consumes that policy decision only for Sui
-`sign_transaction` policy-decision smoke.
+default-reject policy record plus a DEV_PROFILE local PIN verifier, and
+consumes that policy decision only for Sui `sign_transaction`
+policy-decision smoke.
 
 ## Target Status
 
@@ -42,7 +43,7 @@ Legend:
 | Persistent protocol `deviceId` | O | Stored in NVS namespace `agent_q`, key `device_id`. |
 | `get_status` | O | Returns device id, current state, and provisioning status without approval UI. |
 | Provisioning status reporting | △ | Reports `unprovisioned` or material-backed `provisioned`; hardware smoke is still required. This is not signing readiness: read-only `get_accounts` and `get_policy` expose public/metadata state only, while signing remains unavailable. |
-| Mnemonic UI flow v0 | △ | The local setup speech bubble generates DEV_PROFILE BIP-39 root entropy into RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and stores root entropy plus an active default-reject policy only after local backup confirmation. Three-letter BIP-39 words are displayed as the full word. Local Confirm and Cancel own the setup transitions; there are no USB setup transition requests. Hardware smoke is still required for the local setup UX. |
+| Mnemonic UI flow v0 | △ | The local setup speech bubble generates DEV_PROFILE BIP-39 root entropy into RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, advances to local 6-digit PIN entry after local backup confirmation, and stores root entropy plus an active default-reject policy plus a salt/PIN verifier only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. Local Confirm/Cancel and PIN keypad controls own the setup transitions; there are no USB setup transition requests. Hardware smoke is still required for the local setup UX. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `connect` | O | Source accepts connection only after material-backed `provisioned` state and physical approval. The session is RAM-only and does not authorize signing. Hardware smoke must be rerun after the local-only setup boundary change. |
 | `disconnect` | O | Source clears only a matching RAM-only Firmware session after material-backed `provisioned` state. Hardware smoke must be rerun after the local-only setup boundary change. |
@@ -57,9 +58,9 @@ Legend:
 | `get_accounts` | O | Source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is verified against Sui SDK address vectors on host; hardware smoke must be rerun after the local-only setup boundary change. |
 | `get_policy` | △ | Source implements a session-scoped read-only summary of the active DEV_PROFILE default-reject policy (`agentq.policy.v0`, hash id, `reject`, zero rules). Corrupt/unreadable policy fails closed; missing policy is migrated only for legacy root-only DEV_PROFILE devices. Gateway/MCP parser tests and target policy-store host tests cover this path; hardware smoke is still required. |
 | `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke. It consumes the stored active default-reject policy; corrupt/unreadable policy is a material-consistency error rather than a normal `provisioned` state, while missing policy is migrated only for legacy root-only DEV_PROFILE devices. Host tests cover the request field/type validation helper and policy store provider. Hardware smoke must be rerun for the policy-store-backed path. No approval UI, capability advertisement, or signing is connected. |
-| Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
-| Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display and backup-confirmed root entropy storage source exists. Mnemonic import and USER_PROFILE secure provisioning are not implemented. |
-| Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation stores root entropy and initializes the active default-reject policy. Public account derivation is implemented via `get_accounts`; signing and USER_PROFILE secure provisioning are not implemented. |
+| Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation plus matching PIN repeat. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
+| Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display, local 6-digit PIN setup, and backup-confirmed root entropy storage source exists. Mnemonic import and USER_PROFILE secure provisioning are not implemented. |
+| Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat stores root entropy, initializes the active default-reject policy, and stores the local PIN verifier. Public account derivation is implemented via `get_accounts`; signing and USER_PROFILE secure provisioning are not implemented. |
 | Policy evaluator foundation | △ | Links the common host-tested policy evaluator, stored-policy provider boundary, and Sui restricted-transfer facts adapter. Sui `sign_transaction` consumes the stored active default-reject decision only as a rejected policy-decision smoke result; it does not sign. |
 | Policy storage/read | △ | Stores only the DEV_PROFILE active default-reject policy record in NVS, exposes a read-only `get_policy` summary, migrates legacy root-only missing policy to the default-reject record, and treats corrupt/unreadable records as a material-consistency error. Policy update authorization and custom policy content are not implemented. |
 | Policy update | X | Not implemented. |
@@ -135,15 +136,16 @@ Current UI behavior:
 | `get_status` | No UI | `idle` unless approval UI is active |
 | `identify_device` | Temporary speech bubble with short code | `idle` |
 | Recovery phrase displayed | Temporary setup panel with 12 numbered up-to-4-letter prefixes in 3 columns by 4 rows and bottom Cancel/Confirm buttons | `busy` |
-| Local recovery phrase Confirm | Uses the recovery phrase panel's bottom Confirm button | `busy` until storage completes |
+| Local recovery phrase Confirm | Uses the recovery phrase panel's bottom Confirm button and advances to local PIN entry | `busy` |
+| Local PIN setup | Temporary setup panel with numeric keypad, masked 6-digit entry, Clear, backspace icon, Cancel, and Confirm | `busy` |
 | Local recovery phrase Cancel | Uses the recovery phrase panel's bottom Cancel button | `idle` after scratch wipe |
 | Approved result | Temporary success speech and emotion | `idle` |
 | Rejected result | Temporary rejected speech and emotion | `idle` |
 | Timeout result | Temporary timeout speech and emotion | `idle` |
 
 `idle` means no physical approval prompt or device-only setup material is
-active. Recovery phrase display reports `busy` so Gateway status does not imply
-that UI-replacing setup requests are available.
+active. Recovery phrase display and PIN setup report `busy` so Gateway status
+does not imply that UI-replacing setup requests are available.
 
 The StackChan default avatar face remains visible. Agent-Q does not use the
 upstream default speech bubble at runtime; it uses the Agent-Q-owned speech
@@ -198,25 +200,29 @@ for future session-scoped protocol requests.
 ## Persistent Storage
 
 This target persists the protocol `deviceId`, the provisioning state flag, a
-DEV_PROFILE binary root entropy blob, and the DEV_PROFILE active default-reject
-policy record in ordinary NVS after physical backup confirmation. The
-provisioning state flag is not signing material by itself and does not make the
-device ready to sign. The target reports `provisioned` only when the persisted
-state, valid root entropy blob, and valid active policy record all exist. It
-does not store the mnemonic display string, prefixes, seed, or account data to
-NVS.
+DEV_PROFILE binary root entropy blob, the DEV_PROFILE active default-reject
+policy record, and a DEV_PROFILE local PIN verifier in ordinary NVS after
+physical backup confirmation plus matching PIN repeat. The provisioning state
+flag is not signing material by itself and does not make the device ready to
+sign. The target reports `provisioned` only when the persisted state, valid root
+entropy blob, valid active policy record, and valid local PIN verifier all
+exist. It does not store the mnemonic display string, prefixes, seed, or account
+data to NVS. The local PIN verifier is a UX gate for local reset and future
+sensitive writes; it is not root-material encryption.
 For DEV_PROFILE upgrade compatibility, if the target boots with the previous
 development shape (`prov_state = provisioned` and valid root entropy, but no
 policy record), it initializes the default-reject active policy before reporting
 `provisioned`; failure to initialize that policy enters material/state
-consistency error.
+consistency error. Existing DEV_PROFILE devices without the local PIN verifier
+are not migrated and fail closed until reprovisioned.
 
 | Namespace | Key | Purpose |
 |---|---|---|
 | `agent_q` | `device_id` | Gateway reconnect and device-selection identity |
-| `agent_q` | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy and active policy present |
+| `agent_q` | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy, active policy, and local PIN verifier present |
 | `agent_q` | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
 | `agent_q` | `policy_v0` | DEV_PROFILE active default-reject policy record |
+| `agent_q` | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
 
 Agent-Q-owned modules are sources under `agent_q/` in this target tree. These
 modules may share the `agent_q` namespace. New keys should be named by feature,
@@ -233,9 +239,10 @@ smoke is still required. `get_status` returns `provisioning.state`.
 Setup transition paths are local device UX only. The target does not implement
 USB requests for setup start, setup cancel, recovery phrase backup
 confirmation, factory reset, or diagnostic display signaling. `provisioned` is
-set only after local backup confirmation and successful root entropy, active
-policy, and provisioning-state persistence. `locked` is not used because no
-unlock model exists.
+set only after local backup confirmation, matching local PIN repeat, and
+successful root entropy, active policy, local PIN verifier, and
+provisioning-state persistence. `locked` is not used because no unlock model
+exists.
 
 Recovery phrase setup v0 starts from the local setup speech bubble shown while
 the device is `unprovisioned`. The flow uses an Agent-Q CSPRNG seeded from early
@@ -246,33 +253,42 @@ Three-letter BIP-39 words are displayed as the full word. BIP-39 English
 prefixes identify the words and are secret material. No protocol response
 contains the phrase, prefixes, entropy, seed, private key, account data, or
 policy data.
-The target tracks the volatile phrase with a RAM-only scratch substate:
-`none` or `displayed`. This substate is separate from persistent
+The target tracks volatile setup with RAM-only scratch substates: `none`,
+`recovery_phrase_displayed`, `pin_first_entry`, `pin_repeat_entry`, and
+`pin_committing`. This substate is separate from persistent
 `provisioning.state`, session state, display power state, and the LVGL panel
 pointer.
 
 Backup confirmation is accepted only from the recovery phrase panel's local
-Confirm button after the scratch substate is `displayed`. The device-local
-Confirm button stores the DEV_PROFILE root entropy blob, stores the active
-default-reject policy, persists `provisioned`, and then wipes volatile scratch.
-Storage failure wipes scratch and must not report `provisioned`. Hardware smoke
-is still required for the local setup UX.
+Confirm button after the scratch substate is `recovery_phrase_displayed`. The
+device-local Confirm button advances to local PIN entry; it does not store
+persistent material by itself. The PIN entry screen accepts exactly six digits,
+asks for a repeat, wipes typed PIN scratch on mismatch, and returns to first PIN
+entry while retaining root entropy scratch. Matching PIN repeat enters
+`pin_committing`, redraws the PIN panel as a non-interactive saving state with
+disabled controls, stores the DEV_PROFILE root entropy blob, stores the active
+default-reject policy, stores a salt + PIN verifier, persists `provisioned`, and
+then wipes volatile scratch. Storage failure rolls back persistent setup
+material where possible, wipes scratch, and must not report `provisioned`.
+Hardware smoke is still required for
+the local setup UX.
 
-The LVGL panel is not the source of truth for recovery phrase validity. If the
-recovery phrase display panel is removed or replaced while the scratch substate
-is `displayed`, the target treats that UI event as a transition to `none` and
-wipes the volatile phrase. A later backup confirmation request must not succeed
-for a phrase whose setup panel is gone. Display power state is not part of this
-security state: screen/backlight sleep alone does not invalidate scratch, and
-Agent-Q UI wakes the display before showing setup material.
+The LVGL panel is not the source of truth for setup scratch validity. If the
+recovery phrase display or PIN panel is removed or replaced while the matching
+scratch substate is active, the target treats that UI event as a transition to
+`none` and wipes the volatile setup scratch. A later backup confirmation or PIN
+submit event must not succeed for setup material whose panel is gone. Display
+power state is not part of this security state: screen/backlight sleep alone
+does not invalidate scratch, and Agent-Q UI wakes the display before showing
+setup material.
 
-The phrase display has a finite lifetime. When it expires, the target clears the
-setup panel, wipes the volatile phrase, and no later backup confirmation can use
-that phrase.
+The phrase display and PIN setup panel have finite lifetimes. When either
+expires, the target clears the setup panel, wipes volatile setup scratch, and no
+later backup confirmation or PIN submit can use that scratch.
 
 The device-local Cancel button wipes volatile setup scratch and leaves
 persistent state `unprovisioned`. Cancellation does not erase already-confirmed
-root material or active policy. No local reset/recovery UX is implemented yet;
+root material, active policy, or PIN verifier. No local reset/recovery UX is implemented yet;
 when the target detects a material/state consistency error, it clears any active
 RAM session immediately and fails closed for session-scoped requests until a
 normal local reset/recovery path exists.
@@ -287,6 +303,7 @@ future local provisioning flow:
 - generate a new mnemonic on the device;
 - show the mnemonic on the device once for backup;
 - require local confirmation before storing it;
+- require local 6-digit PIN entry/repeat before storing it;
 - accept imported mnemonic input only through an explicitly weaker setup path;
 - expose only public keys and addresses after provisioning.
 
@@ -316,6 +333,9 @@ Current verification expectations for this target:
 - run `tools/firmware/stackchan-cores3/test_bip39_vectors.sh` after ESP-IDF
   v5.5.4 is active to check known BIP-39 entropy-to-mnemonic vectors against
   the tracked encoder, ESP-IDF mbedTLS SHA-256, and generated wordlist source;
+- run `tools/firmware/stackchan-cores3/test_local_auth.sh` to check local
+  6-digit PIN verifier storage, verification, fresh salt, wipe, and fail-closed
+  behavior against host NVS/RNG stubs and pinned Monocypher;
 - build with `tools/firmware/stackchan-cores3/build.sh` after ESP-IDF v5.5.4 is
   active;
 - flash to a StackChan CoreS3 device when hardware is available;
@@ -328,11 +348,18 @@ Current verification expectations for this target:
   BIP-39 words are displayed as the full word;
 - smoke-test local Cancel wipes scratch and leaves `provisioning.state =
   unprovisioned`;
-- smoke-test local Confirm stores root material plus active default-reject
-  policy, wipes scratch, and reports `provisioning.state = provisioned`;
-- smoke-test reboot persistence after local Confirm;
-- smoke-test `connect` after backup-confirmed root material and active policy
-  storage requires physical approval and returns a RAM-only session id;
+- smoke-test local Confirm advances to local PIN setup without storing material;
+- smoke-test matching local PIN repeat stores root material plus active
+  default-reject policy plus local PIN verifier, wipes scratch, and reports
+  `provisioning.state = provisioned`;
+- smoke-test PIN mismatch wipes typed PIN scratch only and retries first PIN
+  entry;
+- smoke-test PIN cancel/timeout wipes PIN plus root scratch and remains
+  `unprovisioned`;
+- smoke-test reboot persistence after matching PIN repeat;
+- smoke-test `connect` after backup-confirmed root material, active policy, and
+  local PIN verifier storage requires physical approval and returns a RAM-only
+  session id;
 - smoke-test `disconnect` clears a matching active session and rejects an
   unknown or expired session id;
 - smoke-test three minutes of inactivity turns the screen backlight off, Agent-Q

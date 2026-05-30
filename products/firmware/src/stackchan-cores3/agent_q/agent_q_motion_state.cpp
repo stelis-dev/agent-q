@@ -12,8 +12,9 @@ constexpr int kAwakeYawAngle = 0;
 constexpr int kAwakePitchAngle = 540;
 constexpr int kRestYawAngle = 0;
 constexpr int kRestPitchAngle = 0;
-constexpr int kPostureMoveSpeed = 280;
-constexpr uint32_t kRestPostureSettleMs = 350;
+constexpr int kAwakePostureMoveSpeed = 280;
+constexpr int kRestPostureMoveSpeed = 160;
+constexpr uint32_t kRestPostureSettleMs = 700;
 constexpr uint32_t kHeadLiftMs = 900;
 constexpr int kHeadLiftPitchDelta = 160;
 constexpr int kHeadLiftSpeed = 280;
@@ -39,9 +40,9 @@ AgentQMotionPostureState current_posture_state()
 void move_to_posture(AgentQMotionPostureState state)
 {
     if (state == AgentQMotionPostureState::rest) {
-        GetStackChan().motion().moveWithSpeed(kRestYawAngle, kRestPitchAngle, kPostureMoveSpeed);
+        GetStackChan().motion().moveWithSpeed(kRestYawAngle, kRestPitchAngle, kRestPostureMoveSpeed);
     } else {
-        GetStackChan().motion().moveWithSpeed(kAwakeYawAngle, kAwakePitchAngle, kPostureMoveSpeed);
+        GetStackChan().motion().moveWithSpeed(kAwakeYawAngle, kAwakePitchAngle, kAwakePostureMoveSpeed);
     }
     g_posture_state.store(static_cast<int>(state), std::memory_order_relaxed);
 }

@@ -30,10 +30,11 @@ The current implementation includes:
   approval or sign.
 - a device-local mnemonic setup flow. The local setup speech bubble generates
   DEV_PROFILE BIP-39 root entropy in RAM, displays only the up-to-4-letter word
-  prefixes on device in a 3-column by 4-row grid, and stores the root entropy
-  plus active default-reject policy only when the user presses the recovery
-  phrase panel's local `Confirm` button. The recovery phrase panel also has a
-  local `Cancel` button that wipes volatile setup scratch. These setup
+  prefixes on device in a 3-column by 4-row grid, advances to local 6-digit PIN
+  entry after the recovery phrase panel's local `Confirm` button, and stores
+  the root entropy plus active default-reject policy plus salt/PIN verifier only
+  after the repeated PIN matches. The recovery phrase and PIN panels also have
+  local `Cancel` controls that wipe volatile setup scratch. These setup
   transitions are not exposed as USB JSONL requests.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
@@ -66,7 +67,8 @@ only for Sui `sign_transaction` policy-decision smoke; it does not sign, update
 policy, expose MCP directly, or apply signing policy to produce signatures. The
 persisted values in this target implementation are the protocol `deviceId`,
 provisioning state flag, DEV_PROFILE root entropy blob after backup
-confirmation, and a DEV_PROFILE active default-reject policy record.
+confirmation, a DEV_PROFILE active default-reject policy record, and a
+DEV_PROFILE local PIN verifier.
 
 Agent-Q firmware is intentionally not a general StackChan AI firmware. It does
 not include StackChan World login, Xiaozhi cloud sessions, camera upload, screen
@@ -93,6 +95,7 @@ tools/firmware/common/test_sui_transaction_facts.sh
 tools/firmware/common/test_policy_v0.sh
 tools/firmware/stackchan-cores3/test_call_method_validation.sh
 tools/firmware/stackchan-cores3/test_policy_store.sh
+tools/firmware/stackchan-cores3/test_local_auth.sh
 tools/firmware/stackchan-cores3/test_bip39_vectors.sh
 tools/firmware/stackchan-cores3/test_sui_account_vectors.sh
 ```
@@ -132,6 +135,13 @@ host NVS stubs, then verifies default-policy storage, policy id calculation,
 summary reads, wipe behavior, active-policy availability checks, and
 missing/corrupt/failed-write fail-closed provider behavior.
 
+The StackChan local-auth test is target-specific. It compiles the tracked
+`agent_q_local_auth.cpp` verifier store with the pinned MicroSui Monocypher
+source plus host NVS/RNG stubs, then verifies exact 6-digit PIN validation,
+PBKDF2-HMAC-SHA512 verifier storage, correct/wrong PIN checks, fresh salt,
+wipe behavior, and corrupt/failed-write fail-closed behavior. This verifier is
+a DEV_PROFILE local UX gate, not root-material encryption.
+
 During preparation, the tracked build tools also patch the pinned upstream host
 tree so the Agent-Q build does not start the StackChan/Xiaozhi remote AI
 runtime, does not register Xiaozhi remote MCP tools, does not initialize the
@@ -170,23 +180,27 @@ In the hardware firmware tree:
 ## Persistent Storage
 
 This target stores the protocol `deviceId`, provisioning state, DEV_PROFILE root
-entropy, and active default-reject policy in NVS namespace `agent_q`.
+entropy, active default-reject policy, and local PIN verifier in NVS namespace
+`agent_q`.
 When a previous DEV_PROFILE build already has `prov_state = provisioned` and
 valid root entropy but no policy record, boot initializes the default-reject
 policy before reporting `provisioned`; if that write fails, the target fails
-closed with a material/state consistency error.
+closed with a material/state consistency error. Devices missing the local PIN
+verifier are not migrated and fail closed until reprovisioned.
 
 | Key | Purpose |
 |---|---|
 | `device_id` | Gateway reconnect and device-selection identity |
-| `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy and active policy present |
+| `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy, active policy, and local PIN verifier present |
 | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
 | `policy_v0` | DEV_PROFILE active default-reject policy record |
+| `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
 
 Recovery phrase setup v0 stores generated phrase text only in RAM, displays
-only up-to-4-letter prefixes on device, and wipes the phrase on cancel, backup
-confirmation, rejection, display expiry, timeout, or firmware restart.
-Backup-confirmed root entropy is stored as DEV_PROFILE scaffolding only; this
+only up-to-4-letter prefixes on device, advances to local 6-digit PIN setup on
+backup confirmation, and wipes volatile setup scratch on cancel, display expiry,
+PIN timeout, storage failure, or firmware restart. Backup-confirmed root entropy
+is stored as DEV_PROFILE scaffolding only after the repeated PIN matches; this
 build does not enable USER_PROFILE encrypted storage. Three-letter BIP-39 words
 are displayed as the full word.
 
