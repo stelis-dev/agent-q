@@ -6,12 +6,14 @@ import {
   DISCONNECT_ENDED_REASONS,
   DISCONNECT_REASONS,
   GET_ACCOUNTS_SESSION_ENDED_REASONS,
+  GET_CAPABILITIES_SESSION_ENDED_REASONS,
   GatewayCore,
   MAX_IDENTIFY_DURATION_MS,
   type ConnectDeviceResult,
   type DeviceListResult,
   type DeviceStatusToolResult,
   type DisconnectDeviceResult,
+  type GetCapabilitiesResult,
   type SetDeviceMetadataResult,
 } from "./core.js";
 import { GatewayError, toGatewayError } from "./errors.js";
@@ -19,6 +21,8 @@ import { PUBLIC_ERROR_MESSAGES, normalizeErrorCode, toPublicError } from "./publ
 import {
   ED25519_PUBLIC_KEY_BASE64_PATTERN,
   MAX_ACCOUNTS_PER_RESPONSE,
+  MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
+  MAX_CAPABILITY_CHAINS,
   MAX_APPROVAL_TIMEOUT_MS,
   SUI_ADDRESS_PATTERN,
   SUI_DERIVATION_PATH,
@@ -255,6 +259,42 @@ const disconnectDeviceToolOutputShape = z.discriminatedUnion("source", [
   errorToolResultShape,
 ]);
 
+const capabilityAccountShape = z.object({
+  keyScheme: z.literal("ed25519"),
+  derivationPath: z.literal(SUI_DERIVATION_PATH),
+});
+const capabilityChainShape = z.object({
+  id: z.literal("sui"),
+  accounts: z.array(capabilityAccountShape).length(MAX_CAPABILITY_ACCOUNTS_PER_CHAIN),
+  methods: z.array(z.never()).length(0),
+});
+const liveCapabilitiesOutputShape = z.object({
+  source: z.literal("live"),
+  deviceId: safeDeviceIdShape,
+  capabilities: z.array(capabilityChainShape).length(MAX_CAPABILITY_CHAINS),
+});
+const notConnectedCapabilitiesOutputShape = z.object({
+  source: z.literal("not_connected"),
+  deviceId: safeDeviceIdShape,
+  reason: z.literal("not_connected"),
+});
+const sessionEndedCapabilitiesOutputShape = z.object({
+  source: z.literal("session_ended"),
+  deviceId: safeDeviceIdShape,
+  reason: z.enum(GET_CAPABILITIES_SESSION_ENDED_REASONS),
+});
+const getCapabilitiesSuccessOutputShape = z.discriminatedUnion("source", [
+  liveCapabilitiesOutputShape,
+  notConnectedCapabilitiesOutputShape,
+  sessionEndedCapabilitiesOutputShape,
+]);
+const getCapabilitiesToolOutputShape = z.discriminatedUnion("source", [
+  liveCapabilitiesOutputShape,
+  notConnectedCapabilitiesOutputShape,
+  sessionEndedCapabilitiesOutputShape,
+  errorToolResultShape,
+]);
+
 // Public account identity only. sessionId and any private/signing material are
 // never part of this shape, so they cannot reach an MCP client.
 const accountShape = z.object({
@@ -456,6 +496,19 @@ export const gatewayToolDefinitions = {
     outputSchema: disconnectDeviceToolOutputShape,
     successOutputSchema: disconnectDeviceSuccessOutputShape,
   },
+  getCapabilities: {
+    name: "get_capabilities",
+    title: "Get capabilities",
+    description:
+      "Read Firmware-authored supported chains, public account schemes, and currently implemented methods over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Current StackChan CoreS3 capabilities report Sui Ed25519 account identity with no signing methods.",
+    inputSchema: {
+      deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
+      purpose: purposeSchema.optional(),
+      timeoutMs: scanTimeoutSchema,
+    },
+    outputSchema: getCapabilitiesToolOutputShape,
+    successOutputSchema: getCapabilitiesSuccessOutputShape,
+  },
   getAccounts: {
     name: "get_accounts",
     title: "Get accounts",
@@ -513,7 +566,7 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
     return withStructuredContent(sanitized);
   };
 
-  // For the 7 tools below the registered SDK outputSchema is the success-only
+  // For the tools below the registered SDK outputSchema is the success-only
   // object shape. Error results carry `isError: true`, for which the SDK skips
   // output validation, so the error variant is intentionally absent there.
   server.registerTool(
@@ -622,6 +675,22 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
   );
 
   server.registerTool(
+    gatewayToolDefinitions.getCapabilities.name,
+    {
+      title: gatewayToolDefinitions.getCapabilities.title,
+      description: gatewayToolDefinitions.getCapabilities.description,
+      inputSchema: gatewayToolDefinitions.getCapabilities.inputSchema,
+      // Success is a discriminated union (live | not_connected | session_ended),
+      // which the SDK outputSchema model cannot represent; it is sanitized at the
+      // run() boundary below instead.
+    },
+    async ({ deviceId, purpose, timeoutMs }) =>
+      run(gatewayToolDefinitions.getCapabilities.successOutputSchema, () =>
+        core.getCapabilities({ deviceId, purpose, timeoutMs }),
+      ),
+  );
+
+  server.registerTool(
     gatewayToolDefinitions.getAccounts.name,
     {
       title: gatewayToolDefinitions.getAccounts.title,
@@ -723,7 +792,8 @@ type StructuredToolResult =
   | DeviceListResult
   | SetDeviceMetadataResult
   | ConnectDeviceResult
-  | DisconnectDeviceResult;
+  | DisconnectDeviceResult
+  | GetCapabilitiesResult;
 
 // Must only ever receive an already-sanitized success result or a public error
 // result. Both structuredContent and the text mirror are derived from the same

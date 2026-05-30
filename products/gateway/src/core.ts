@@ -14,6 +14,7 @@ import {
   DEFAULT_APPROVAL_TIMEOUT_MS,
   MAX_APPROVAL_TIMEOUT_MS,
   type Account,
+  type CapabilityChain,
   type DeviceStatusSnapshot,
   type IdentifyDeviceResponse,
   type StatusResponse,
@@ -161,9 +162,19 @@ export const GET_ACCOUNTS_SESSION_ENDED_REASONS = [
 ] as const;
 export type GetAccountsSessionEndedReason = (typeof GET_ACCOUNTS_SESSION_ENDED_REASONS)[number];
 
+export const GET_CAPABILITIES_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
+export type GetCapabilitiesSessionEndedReason = GetAccountsSessionEndedReason;
+
 export type DisconnectDeviceResult =
   | { source: "disconnected"; deviceId: string; reason: DisconnectEndedReason }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" };
+
+// get_capabilities is read-only and session-scoped. The returned capability set
+// is Firmware-authored; Gateway only transports and validates it.
+export type GetCapabilitiesResult =
+  | { source: "live"; deviceId: string; capabilities: CapabilityChain[] }
+  | { source: "not_connected"; deviceId: string; reason: "not_connected" }
+  | { source: "session_ended"; deviceId: string; reason: GetCapabilitiesSessionEndedReason };
 
 // get_accounts is read-only and session-scoped. "live" carries the public
 // accounts; "not_connected"/"session_ended" carry only a reason (no accounts),
@@ -480,6 +491,48 @@ export class GatewayCore {
 
     this.runtimeSessions.delete(target.deviceId);
     return { source: "disconnected", deviceId: target.deviceId, reason: "firmware_confirmed" };
+  }
+
+  async getCapabilities(input: {
+    deviceId?: string;
+    purpose?: string;
+    timeoutMs?: number;
+  } = {}): Promise<GetCapabilitiesResult> {
+    const target = await this.resolveTargetDevice(input);
+    const scanTimeoutMs = validateTimeoutMs(input.timeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS);
+
+    const session = this.peekRuntimeSession(target.deviceId);
+    if (session === null) {
+      return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
+    }
+
+    let matchingPort: UsbStatusResult | undefined;
+    try {
+      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+    } catch (error) {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+
+    try {
+      const response = await this.usbDriver.getCapabilities(
+        matchingPort.portPath,
+        session.sessionId,
+        scanTimeoutMs,
+      );
+      return { source: "live", deviceId: target.deviceId, capabilities: response.chains };
+    } catch (error) {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
   }
 
   async getAccounts(input: {

@@ -864,14 +864,33 @@ Response:
   "chains": [
     {
       "id": "sui",
-      "methods": [
-        "sign_transaction",
-        "sign_personal_message"
-      ]
+      "accounts": [
+        {
+          "keyScheme": "ed25519",
+          "derivationPath": "m/44'/784'/0'/0'/0'"
+        }
+      ],
+      "methods": []
     }
   ]
 }
 ```
+
+Rules:
+
+- `get_capabilities` is session-scoped and requires `sessionId`.
+- Firmware returns capabilities only when `provisioning.state` is `provisioned`
+  and stored root material is consistent. Before that it returns
+  `invalid_state`.
+- A missing, expired, or mismatched session returns `invalid_session`; an
+  expired session is also cleared.
+- The current StackChan CoreS3 target advertises Sui Ed25519 account identity
+  only: account 0 at `m/44'/784'/0'/0'/0'`. `methods` is empty because
+  `call_method`, policy evaluation, and signing methods are not implemented.
+- Gateway validates the response strictly, rejects unknown chains, unsupported
+  account schemes or derivation paths, non-empty/unknown method lists,
+  secret-like fields, and any unexpected `sessionId` in the response. Gateway
+  does not infer or add capabilities.
 
 ## Accounts
 
@@ -930,9 +949,10 @@ Rules:
 - The current StackChan CoreS3 target implements the Sui Ed25519 account at index
   0 (`m/44'/784'/0'/0'/0'`) and returns exactly one `accounts[]` entry. Gateway
   rejects any other account count for this target. Additional chains and accounts
-  are added as more `accounts[]` entries only after the protocol and Gateway
-  bounds are updated. Hardware smoke is still required. Signing methods listed
-  under capabilities remain unimplemented; `get_accounts` reads identity only.
+  are added as more `accounts[]` entries only after the protocol, capability
+  response, and Gateway bounds are updated. Hardware smoke is still required.
+  `get_accounts` reads identity only; capability `methods` remains empty until
+  signing methods are implemented.
 
 ## Method Request
 

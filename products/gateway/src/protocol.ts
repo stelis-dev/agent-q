@@ -84,6 +84,13 @@ export interface DisconnectRequest {
   sessionId: string;
 }
 
+export interface GetCapabilitiesRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "get_capabilities";
+  sessionId: string;
+}
+
 export interface GetAccountsRequest {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -132,6 +139,7 @@ export type ProtocolRequest =
   | IdentifyDeviceRequest
   | ConnectRequest
   | DisconnectRequest
+  | GetCapabilitiesRequest
   | GetAccountsRequest
   | StartProvisioningRequest
   | CancelProvisioningRequest
@@ -183,6 +191,24 @@ export interface DisconnectResponse {
   version: typeof PROTOCOL_VERSION;
   type: "disconnect_result";
   status: "disconnected";
+}
+
+export interface CapabilityAccount {
+  keyScheme: string;
+  derivationPath: string;
+}
+
+export interface CapabilityChain {
+  id: string;
+  accounts: CapabilityAccount[];
+  methods: string[];
+}
+
+export interface CapabilitiesResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "capabilities";
+  chains: CapabilityChain[];
 }
 
 // Public account identity only. Never carries mnemonic, seed, entropy, or any
@@ -243,6 +269,7 @@ export type ProtocolResponse =
   | IdentifyDeviceResponse
   | ConnectResponse
   | DisconnectResponse
+  | CapabilitiesResponse
   | AccountsResponse
   | ProvisioningResponse
   | RecoveryPhraseResponse
@@ -332,6 +359,22 @@ export function makeDisconnectRequest(sessionId: string, id = createRequestId())
     id,
     version: PROTOCOL_VERSION,
     type: "disconnect",
+    sessionId,
+  };
+}
+
+export function makeGetCapabilitiesRequest(
+  sessionId: string,
+  id = createRequestId(),
+): GetCapabilitiesRequest {
+  validateRequestId(id);
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "get_capabilities",
     sessionId,
   };
 }
@@ -560,6 +603,30 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
+  if (value.type === "capabilities") {
+    if (typeof value.id !== "string") {
+      throw new ProtocolError("protocol_error", "Capabilities response id is malformed.");
+    }
+    if (hasSecretPayloadKey(value)) {
+      throw new ProtocolError("protocol_error", "Capabilities response must not include secret material.");
+    }
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "chains"])) {
+      throw new ProtocolError("protocol_error", "Capabilities response contains unsupported fields.");
+    }
+    if (!Array.isArray(value.chains)) {
+      throw new ProtocolError("protocol_error", "Capabilities response chains must be an array.");
+    }
+    if (value.chains.length !== MAX_CAPABILITY_CHAINS) {
+      throw new ProtocolError("protocol_error", "Capabilities response has an unsupported chain count.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "capabilities",
+      chains: value.chains.map((entry) => sanitizeCapabilityChain(entry)),
+    };
+  }
+
   if (value.type === "provisioning_result") {
     if (typeof value.id !== "string" || value.status !== "canceled") {
       throw new ProtocolError("protocol_error", "Provisioning response is malformed.");
@@ -706,6 +773,16 @@ export function assertDisconnectResponse(response: ProtocolResponse): Disconnect
   return response;
 }
 
+export function assertCapabilitiesResponse(response: ProtocolResponse): CapabilitiesResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "capabilities") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not capabilities.");
+  }
+  return response;
+}
+
 export function assertAccountsResponse(response: ProtocolResponse): AccountsResponse {
   if (response.type === "error") {
     throw new ProtocolError(response.error.code, response.error.message);
@@ -775,6 +852,8 @@ export const SUI_ADDRESS_PATTERN = /^0x[0-9a-f]{64}$/;
 // Raw 32-byte Ed25519 public key as base64 is exactly 43 payload chars + one "=".
 export const ED25519_PUBLIC_KEY_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
 export const SUI_DERIVATION_PATH = "m/44'/784'/0'/0'/0'";
+export const MAX_CAPABILITY_CHAINS = 1;
+export const MAX_CAPABILITY_ACCOUNTS_PER_CHAIN = 1;
 // The current target implements exactly one account (Sui Ed25519 account 0). Bound
 // the accounts array so a buggy or spoofed device cannot inflate the MCP result or
 // imply multi-account support that does not exist. Raise this as more accounts or
@@ -937,6 +1016,60 @@ export function isSuiAddressForPublicKey(address: string, publicKeyBase64: strin
   }
   const expectedAddress = deriveSuiAddressFromPublicKey(publicKeyBase64);
   return expectedAddress !== null && address === expectedAddress;
+}
+
+function sanitizeCapabilityAccount(value: unknown): CapabilityAccount {
+  if (!isRecord(value)) {
+    throw new ProtocolError("protocol_error", "Capability account entry is malformed.");
+  }
+  if (hasSecretPayloadKey(value)) {
+    throw new ProtocolError("protocol_error", "Capability account entry must not include secret material.");
+  }
+  if (!hasOnlyObjectKeys(value, ["keyScheme", "derivationPath"])) {
+    throw new ProtocolError("protocol_error", "Capability account entry contains unsupported fields.");
+  }
+  if (value.keyScheme !== "ed25519") {
+    throw new ProtocolError("protocol_error", "Capability account keyScheme is unsupported.");
+  }
+  if (value.derivationPath !== SUI_DERIVATION_PATH) {
+    throw new ProtocolError("protocol_error", "Capability account derivationPath is unsupported.");
+  }
+  return {
+    keyScheme: value.keyScheme,
+    derivationPath: value.derivationPath,
+  };
+}
+
+function sanitizeCapabilityChain(value: unknown): CapabilityChain {
+  if (!isRecord(value)) {
+    throw new ProtocolError("protocol_error", "Capability chain entry is malformed.");
+  }
+  if (hasSecretPayloadKey(value)) {
+    throw new ProtocolError("protocol_error", "Capability chain entry must not include secret material.");
+  }
+  if (!hasOnlyObjectKeys(value, ["id", "accounts", "methods"])) {
+    throw new ProtocolError("protocol_error", "Capability chain entry contains unsupported fields.");
+  }
+  if (value.id !== "sui") {
+    throw new ProtocolError("protocol_error", "Capability chain is unsupported.");
+  }
+  if (!Array.isArray(value.accounts)) {
+    throw new ProtocolError("protocol_error", "Capability accounts must be an array.");
+  }
+  if (value.accounts.length !== MAX_CAPABILITY_ACCOUNTS_PER_CHAIN) {
+    throw new ProtocolError("protocol_error", "Capability account count is unsupported.");
+  }
+  if (!Array.isArray(value.methods)) {
+    throw new ProtocolError("protocol_error", "Capability methods must be an array.");
+  }
+  if (value.methods.length !== 0) {
+    throw new ProtocolError("protocol_error", "Capability method is unsupported.");
+  }
+  return {
+    id: "sui",
+    accounts: value.accounts.map((entry) => sanitizeCapabilityAccount(entry)),
+    methods: [],
+  };
 }
 
 // Reduce an untrusted account entry to a safe Account or throw. Enforces the Sui

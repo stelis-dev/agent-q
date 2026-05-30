@@ -10,6 +10,7 @@ const expectedToolNames = [
   "connect_device",
   "disconnect_device",
   "get_accounts",
+  "get_capabilities",
   "get_device_status",
   "identify_devices",
   "list_devices",
@@ -86,6 +87,24 @@ const noOpCore = {
   },
   async disconnectDevice() {
     return { source: "disconnected", deviceId: "device-1", reason: "firmware_confirmed" };
+  },
+  async getCapabilities() {
+    return {
+      source: "live",
+      deviceId: "device-1",
+      capabilities: [
+        {
+          id: "sui",
+          accounts: [
+            {
+              keyScheme: "ed25519",
+              derivationPath: "m/44'/784'/0'/0'/0'",
+            },
+          ],
+          methods: [],
+        },
+      ],
+    };
   },
   async getAccounts() {
     return {
@@ -312,6 +331,7 @@ const dispatchCases = [
   { name: "set_device_metadata", arguments: { deviceId: "device-1", label: null } },
   { name: "connect_device", arguments: {} },
   { name: "disconnect_device", arguments: {} },
+  { name: "get_capabilities", arguments: {} },
   { name: "get_accounts", arguments: {} },
 ];
 
@@ -367,6 +387,18 @@ test("get_accounts dispatch returns the public Sui account without a session tok
       result.structuredContent.accounts[0].address,
       "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
     );
+    assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
+  });
+});
+
+test("get_capabilities dispatch returns current capabilities without a session token", async () => {
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "get_capabilities", arguments: {} });
+    assert.equal(result.structuredContent.source, "live");
+    assert.equal(result.structuredContent.capabilities.length, 1);
+    assert.equal(result.structuredContent.capabilities[0].id, "sui");
+    assert.equal(result.structuredContent.capabilities[0].accounts[0].keyScheme, "ed25519");
+    assert.deepEqual(result.structuredContent.capabilities[0].methods, []);
     assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
   });
 });
@@ -438,6 +470,25 @@ const leakyCore = {
   async disconnectDevice() {
     return { source: "disconnected", deviceId: "device-1", reason: "firmware_confirmed", ...SECRET_EXTRAS };
   },
+  async getCapabilities() {
+    return {
+      source: "live",
+      deviceId: "device-1",
+      capabilities: [
+        {
+          id: "sui",
+          accounts: [
+            {
+              keyScheme: "ed25519",
+              derivationPath: "m/44'/784'/0'/0'/0'",
+            },
+          ],
+          methods: [],
+        },
+      ],
+      ...SECRET_EXTRAS,
+    };
+  },
   async getAccounts() {
     return {
       source: "live",
@@ -498,6 +549,35 @@ test("get_accounts unreachable shape (live without accounts) cannot leak out as 
   }, malformedCore);
 });
 
+test("get_capabilities unreachable shape (live with signing method) cannot leak out as a success", async () => {
+  const malformedCore = {
+    ...noOpCore,
+    async getCapabilities() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        capabilities: [
+          {
+            id: "sui",
+            accounts: [
+              {
+                keyScheme: "ed25519",
+                derivationPath: "m/44'/784'/0'/0'/0'",
+              },
+            ],
+            methods: ["sign_transaction"],
+          },
+        ],
+      };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "get_capabilities", arguments: {} });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, "internal_output_error");
+  }, malformedCore);
+});
+
 test("get_accounts unreachable shape (live with no accounts) cannot leak out as a success", async () => {
   const malformedCore = {
     ...noOpCore,
@@ -551,7 +631,15 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
     },
     {
+      name: "get_capabilities",
+      result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
+    },
+    {
       name: "get_accounts",
+      result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
+    },
+    {
+      name: "get_capabilities",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
   ];
@@ -563,6 +651,9 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
         return testCase.result;
       },
       async getAccounts() {
+        return testCase.result;
+      },
+      async getCapabilities() {
         return testCase.result;
       },
     };

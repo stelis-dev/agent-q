@@ -3,12 +3,14 @@ import { existsSync } from "node:fs";
 import { GatewayError } from "./errors.js";
 import {
   assertAccountsResponse,
+  assertCapabilitiesResponse,
   assertConnectResponse,
   assertDisconnectResponse,
   assertIdentifyDeviceResponse,
   assertStatusResponse,
   makeConnectRequest,
   makeDisconnectRequest,
+  makeGetCapabilitiesRequest,
   makeGetAccountsRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
@@ -17,6 +19,7 @@ import {
   ProtocolError,
   serializeRequest,
   type AccountsResponse,
+  type CapabilitiesResponse,
   type ConnectResponse,
   type DisconnectResponse,
   type IdentifyDeviceResponse,
@@ -91,6 +94,11 @@ export interface UsbSerialDriver {
     sessionId: string,
     timeoutMs: number,
   ): Promise<DisconnectResponse>;
+  getCapabilities(
+    portPath: string,
+    sessionId: string,
+    timeoutMs: number,
+  ): Promise<CapabilitiesResponse>;
   getAccounts(
     portPath: string,
     sessionId: string,
@@ -134,6 +142,14 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     timeoutMs: number,
   ): Promise<DisconnectResponse> {
     return disconnectDeviceOverSerial(portPath, sessionId, timeoutMs);
+  }
+
+  async getCapabilities(
+    portPath: string,
+    sessionId: string,
+    timeoutMs: number,
+  ): Promise<CapabilitiesResponse> {
+    return getCapabilitiesOverSerial(portPath, sessionId, timeoutMs);
   }
 
   async getAccounts(
@@ -251,6 +267,12 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         driver.disconnectDevice(portPath, sessionId, timeoutMs),
         timeoutMs,
         "USB disconnect exceeded its timeout.",
+      ),
+    getCapabilities: (portPath, sessionId, timeoutMs) =>
+      raceDeadline(
+        driver.getCapabilities(portPath, sessionId, timeoutMs),
+        timeoutMs,
+        "USB get capabilities exceeded its timeout.",
       ),
     getAccounts: (portPath, sessionId, timeoutMs) =>
       raceDeadline(
@@ -379,6 +401,15 @@ async function disconnectDeviceOverSerial(
 ): Promise<DisconnectResponse> {
   const request = makeDisconnectRequest(sessionId);
   return requestOverSerial(portPath, request, timeoutMs, (response) => assertDisconnectResponse(response));
+}
+
+async function getCapabilitiesOverSerial(
+  portPath: string,
+  sessionId: string,
+  timeoutMs: number,
+): Promise<CapabilitiesResponse> {
+  const request = makeGetCapabilitiesRequest(sessionId);
+  return requestOverSerial(portPath, request, timeoutMs, (response) => assertCapabilitiesResponse(response));
 }
 
 async function getAccountsOverSerial(

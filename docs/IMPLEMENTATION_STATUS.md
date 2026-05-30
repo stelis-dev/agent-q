@@ -28,7 +28,7 @@ This document tracks implementation status only. The wire protocol is defined in
 | `identify_device` | O | Implemented as temporary device UI for explicit user selection. |
 | `connect` | △ | Protocol and Gateway parser support exist. StackChan CoreS3 source restores provisioned-only Firmware sessions after persistent root material exists. Hardware smoke is still required. |
 | `disconnect` | △ | Protocol and Gateway parser support exist. StackChan CoreS3 source clears a matching active Firmware session after `provisioned`. Hardware smoke is still required. |
-| `get_capabilities` | X | Designed session-scoped request; not implemented. |
+| `get_capabilities` | △ | StackChan CoreS3 source returns Firmware-authored Sui Ed25519 account identity capability over an approved session while `provisioned`. The current `methods` list is empty because `call_method`, policy evaluation, and signing are not implemented. Hardware smoke is still required. |
 | `get_accounts` | △ | StackChan CoreS3 source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from stored root material and returns it over an approved session while `provisioned`. Read-only: no mnemonic, seed, entropy, or private key in responses, logs, or UI. Derivation verified against Sui SDK address vectors on host (`test_sui_account_vectors.sh`); hardware smoke is still required. |
 | `call_method` | X | Designed session-scoped dispatch for all chains and methods; not implemented. |
 | Hardware diagnostic `display_signal` | O | Implemented for firmware/UI smoke testing after material-backed `provisioned`. Not a public signing API. |
@@ -65,6 +65,7 @@ Current MCP tools:
 | `set_device_metadata` | O | Sets or clears local label. |
 | `connect_device` | △ | Gateway tool exists. StackChan CoreS3 source accepts Firmware `connect` only after persistent root material and `provisioned` exist; hardware smoke is still required. |
 | `disconnect_device` | △ | Ends a runtime session or clears stale local session state when a session exists. |
+| `get_capabilities` | △ | Gateway tool and protocol parser exist. Returns Firmware-authored Sui Ed25519 account identity capability over an active runtime session with `methods: []`, rejects unsupported chains/methods/secret-like fields, and never exposes the session id to MCP. Hardware smoke is still required. |
 | `get_accounts` | △ | Gateway tool and protocol parser exist. Returns public accounts over an active runtime session, strictly re-validates the account shape, recomputes the Sui address/public-key relationship, rejects secret-like fields, and never exposes the session id to MCP. Hardware smoke is still required. |
 
 ## Firmware Targets
@@ -79,6 +80,7 @@ Current MCP tools:
 | `identify_device` | O | X | X | Uses temporary avatar speech bubble on StackChan CoreS3. |
 | `connect` physical approval | △ | X | X | StackChan CoreS3 source supports physical approval only after material-backed `provisioned`; before that it returns `invalid_state`. Hardware smoke is still required. |
 | `disconnect` | △ | X | X | StackChan CoreS3 source clears a matching active Firmware session after `provisioned`. Hardware smoke is still required. |
+| `get_capabilities` | △ | X | X | StackChan CoreS3 source reports Sui Ed25519 account identity capability for account 0 over an approved session while `provisioned`; `methods` is empty until signing methods are implemented. Hardware smoke is still required. |
 | `get_accounts` | △ | X | X | StackChan CoreS3 source derives and returns the Sui Ed25519 account 0 over an approved session while `provisioned`; read-only, no private material emitted. Hardware smoke is still required. |
 | `factory_reset` | △ | X | X | StackChan CoreS3 source supports physical-approval wipe back to `unprovisioned`, including material/state consistency-error recovery. Hardware smoke is still required. |
 | Request/result UI | O | X | X | StackChan CoreS3 uses Agent-Q-owned top avatar speech bubble and bottom decision strip. |

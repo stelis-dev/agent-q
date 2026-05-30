@@ -88,6 +88,25 @@ function defaultDriver(overrides = {}) {
         status: "disconnected",
       };
     },
+    async getCapabilities() {
+      return {
+        id: "req_capabilities",
+        version: 1,
+        type: "capabilities",
+        chains: [
+          {
+            id: "sui",
+            accounts: [
+              {
+                keyScheme: "ed25519",
+                derivationPath: "m/44'/784'/0'/0'/0'",
+              },
+            ],
+            methods: [],
+          },
+        ],
+      };
+    },
     async getAccounts() {
       return {
         id: "req_accounts",
@@ -902,6 +921,61 @@ test("getAccounts without a runtime session returns not_connected", async () => 
     assert.equal(result.source, "not_connected");
     assert.equal(result.reason, "not_connected");
     assert.equal(result.accounts, undefined);
+  });
+});
+
+test("getCapabilities without a runtime session returns not_connected", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(store, defaultDriver());
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+
+    const result = await core.getCapabilities({});
+    assert.equal(result.source, "not_connected");
+    assert.equal(result.reason, "not_connected");
+    assert.equal(result.capabilities, undefined);
+  });
+});
+
+test("getCapabilities returns Firmware-authored methods and keeps the session", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(store, defaultDriver());
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.getCapabilities({});
+    assert.equal(result.source, "live");
+    assert.equal(result.capabilities.length, 1);
+    assert.equal(result.capabilities[0].id, "sui");
+    assert.equal(result.capabilities[0].accounts[0].keyScheme, "ed25519");
+    assert.deepEqual(result.capabilities[0].methods, []);
+
+    // Read-only: the session is retained after get_capabilities.
+    const listed = await core.listDevices();
+    assert.notEqual(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("getCapabilities clears the local session when Firmware reports invalid_session", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async getCapabilities() {
+          throw new GatewayError("invalid_session", "Session is unknown or already ended.", false);
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.getCapabilities({});
+    assert.equal(result.source, "session_ended");
+    assert.equal(result.reason, "invalid_session");
+    const listed = await core.listDevices();
+    assert.equal(listed.devices[0].runtimeSession, null);
   });
 });
 

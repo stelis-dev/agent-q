@@ -11,9 +11,9 @@
 //
 // It exercises the actual agent-facing path:
 //   scan_devices -> identify_devices -> select_device -> connect_device (YES)
-//   -> get_accounts -> disconnect_device
+//   -> get_capabilities -> get_accounts -> disconnect_device
 //
-// The device must already be provisioned for connect_device/get_accounts.
+// The device must already be provisioned for connect_device/get_capabilities/get_accounts.
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -30,7 +30,7 @@ import { SerialPortUsbDriver } from "../dist/usb.js";
 const hardwareEnabled = process.env.AGENTQ_HW === "1";
 
 test(
-  "hardware: scan -> identify -> select -> connect -> get_accounts -> disconnect over MCP",
+  "hardware: scan -> identify -> select -> connect -> get_capabilities -> get_accounts -> disconnect over MCP",
   { skip: hardwareEnabled ? false : "set AGENTQ_HW=1 with a device connected" },
   async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-q-hw-smoke-"));
@@ -63,6 +63,23 @@ test(
       });
       assert.equal(connect.structuredContent.source, "connected", "connect must be physically approved");
       assert.equal("sessionId" in connect.structuredContent, false, "sessionId must not reach the client");
+
+      console.log("[hw-smoke] requesting capabilities...");
+      const capabilities = await client.callTool({ name: "get_capabilities", arguments: { deviceId } });
+      assert.equal(capabilities.structuredContent.source, "live", "get_capabilities requires a provisioned device");
+      assert.equal(capabilities.structuredContent.capabilities.length, 1);
+      assert.equal(capabilities.structuredContent.capabilities[0].id, "sui");
+      assert.equal(capabilities.structuredContent.capabilities[0].accounts[0].keyScheme, "ed25519");
+      assert.deepEqual(capabilities.structuredContent.capabilities[0].methods, []);
+      assert.equal("sessionId" in capabilities.structuredContent, false, "sessionId must not reach the client");
+      const capabilitiesJson = JSON.stringify(capabilities.structuredContent).toLowerCase();
+      for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
+        assert.equal(
+          capabilitiesJson.includes(fieldName.toLowerCase()),
+          false,
+          `${fieldName} must not reach the client`,
+        );
+      }
 
       console.log("[hw-smoke] requesting public accounts...");
       const accounts = await client.callTool({ name: "get_accounts", arguments: { deviceId } });

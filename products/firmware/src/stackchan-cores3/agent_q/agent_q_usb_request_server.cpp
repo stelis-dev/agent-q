@@ -678,6 +678,23 @@ void write_disconnect_result(const char* id)
     write_json_document(response);
 }
 
+void write_capabilities_response(const char* id)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "capabilities";
+    JsonArray chains = response["chains"].to<JsonArray>();
+    JsonObject sui = chains.add<JsonObject>();
+    sui["id"] = "sui";
+    JsonArray accounts = sui["accounts"].to<JsonArray>();
+    JsonObject account = accounts.add<JsonObject>();
+    account["keyScheme"] = "ed25519";
+    account["derivationPath"] = "m/44'/784'/0'/0'/0'";
+    sui["methods"].to<JsonArray>();
+    write_json_document(response);
+}
+
 void write_factory_reset_result(const char* id)
 {
     JsonDocument response;
@@ -2316,6 +2333,27 @@ void handle_line(const char* line)
         clear_active_session();
         write_disconnect_result(id);
         ESP_LOGI(kTag, "disconnect: id=%s", id);
+        return;
+    }
+
+    if (strcmp(type, "get_capabilities") == 0) {
+        // get_capabilities is read-only and session-scoped. Firmware is the
+        // capability authority; Gateway must not infer or extend this response.
+        if (!provisioned_material_ready()) {
+            write_error_response(id, "invalid_state", "Capabilities are available only after provisioning is complete.");
+            return;
+        }
+        if (write_busy_if_pending_or_setup_flow_active(id)) {
+            return;
+        }
+
+        const char* session_id = request["sessionId"] | "";
+        if (!require_active_matching_session(id, session_id)) {
+            return;
+        }
+
+        write_capabilities_response(id);
+        ESP_LOGI(kTag, "get_capabilities: id=%s", id);
         return;
     }
 

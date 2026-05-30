@@ -23,6 +23,10 @@ The current implementation includes:
 - protocol handling for `connect` and `disconnect`. The current target accepts
   `connect` only after material-backed `provisioned` state and physical
   approval. Firmware sessions are RAM-only and do not authorize signing.
+- a USB JSONL `get_capabilities` request that returns Firmware-authored Sui
+  Ed25519 account identity capability over an approved session while
+  `provisioned`. The current `methods` list is empty because signing methods are
+  not implemented.
 - USB JSONL mnemonic UI requests for `start_provisioning`,
   `cancel_provisioning`, and `confirm_recovery_phrase_backup`.
   `start_provisioning` generates DEV_PROFILE BIP-39 root entropy in RAM,
@@ -57,8 +61,9 @@ The current implementation includes:
 Runtime Firmware sessions are implemented only as RAM-held protocol sessions
 after material-backed provisioning. Sessions do not authorize signing.
 
-This is not the signing product yet. It derives only read-only public account
-identity (`get_accounts`) and links a restricted host-tested Sui transaction
+This is not the signing product yet. It reports read-only identity capability
+(`get_capabilities` with `methods: []`), derives only read-only public account
+identity (`get_accounts`), and links a restricted host-tested Sui transaction
 facts parser that no runtime request calls yet; it does not sign, store
 policies, expose MCP directly, or apply signing policy. The persisted values in
 this target implementation are the protocol `deviceId`, provisioning state

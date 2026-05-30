@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   assertAccountsResponse,
+  assertCapabilitiesResponse,
   assertConnectResponse,
   assertDisconnectResponse,
   assertFactoryResetResponse,
@@ -20,6 +21,7 @@ import {
   makeConfirmRecoveryPhraseBackupRequest,
   makeDisconnectRequest,
   makeFactoryResetRequest,
+  makeGetCapabilitiesRequest,
   makeGetAccountsRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
@@ -253,6 +255,95 @@ test("makeGetAccountsRequest validates sessionId", () => {
 
   assert.throws(() => makeGetAccountsRequest("not_a_session"), /Invalid sessionId/);
   assert.throws(() => makeGetAccountsRequest("session_"), /Invalid sessionId/);
+});
+
+test("makeGetCapabilitiesRequest validates sessionId", () => {
+  const request = makeGetCapabilitiesRequest("session_abcdef0123456789", "req_get_capabilities_1");
+  assert.deepEqual(request, {
+    id: "req_get_capabilities_1",
+    version: 1,
+    type: "get_capabilities",
+    sessionId: "session_abcdef0123456789",
+  });
+
+  assert.throws(() => makeGetCapabilitiesRequest("not_a_session"), /Invalid sessionId/);
+  assert.throws(() => makeGetCapabilitiesRequest("session_"), /Invalid sessionId/);
+});
+
+const capabilitiesLine = (chainOverrides = {}, accountOverrides = {}, responseOverrides = {}) =>
+  JSON.stringify({
+    id: "req_capabilities",
+    version: 1,
+    type: "capabilities",
+    chains: [
+      {
+        id: "sui",
+        accounts: [
+          {
+            keyScheme: "ed25519",
+            derivationPath: "m/44'/784'/0'/0'/0'",
+            ...accountOverrides,
+          },
+        ],
+        methods: [],
+        ...chainOverrides,
+      },
+    ],
+    ...responseOverrides,
+  });
+
+test("parseProtocolResponse accepts a valid capabilities response with no signing methods", () => {
+  const response = assertCapabilitiesResponse(
+    parseProtocolResponse(capabilitiesLine(), "req_capabilities"),
+  );
+  assert.equal(response.type, "capabilities");
+  assert.equal(response.chains.length, 1);
+  assert.equal(response.chains[0].id, "sui");
+  assert.equal(response.chains[0].accounts.length, 1);
+  assert.equal(response.chains[0].accounts[0].keyScheme, "ed25519");
+  assert.equal(response.chains[0].accounts[0].derivationPath, "m/44'/784'/0'/0'/0'");
+  assert.deepEqual(response.chains[0].methods, []);
+});
+
+test("parseProtocolResponse rejects unsupported capabilities", () => {
+  assert.throws(
+    () => parseProtocolResponse(capabilitiesLine({ id: "ethereum" }), "req_capabilities"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () => parseProtocolResponse(capabilitiesLine({ methods: ["sign_transaction"] }), "req_capabilities"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () => parseProtocolResponse(capabilitiesLine({}, { keyScheme: "secp256k1" }), "req_capabilities"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () => parseProtocolResponse(capabilitiesLine({}, { derivationPath: "m/44'/0'/0'/0'/0'" }), "req_capabilities"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        capabilitiesLine({}, {}, { sessionId: "session_abcdef0123456789" }),
+        "req_capabilities",
+      ),
+    { code: "protocol_error" },
+  );
+});
+
+test("parseProtocolResponse rejects capabilities carrying secret material", () => {
+  for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
+    assert.throws(
+      () =>
+        parseProtocolResponse(
+          capabilitiesLine({}, { [fieldName]: "secret-like value" }),
+          "req_capabilities",
+        ),
+      { code: "protocol_error" },
+      `secret-like capability field ${fieldName} must be rejected`,
+    );
+  }
 });
 
 const accountsLine = (accountOverrides = {}) =>

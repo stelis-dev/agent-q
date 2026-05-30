@@ -52,7 +52,7 @@ Legend:
 | Display power control | O | Turns the screen backlight off after one minute of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. Before screen-off or power-off, the target moves to a rest posture; when the screen wakes, it returns to awake posture. |
 | Boot/sleep posture | O | Centers yaw and raises pitch when the default avatar is attached at boot or the screen wakes. Moves to centered yaw and lowered pitch before screen-off or power-off. |
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
-| `get_capabilities` | X | Not implemented. |
+| `get_capabilities` | △ | Reports Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until signing methods are implemented. Hardware smoke is still required. |
 | `get_accounts` | △ | Derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation verified against Sui SDK address vectors on host; hardware smoke is still required. |
 | `call_method` | X | Not implemented. |
 | Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
@@ -64,8 +64,9 @@ Legend:
 ## Chain And Method Support
 
 This target currently has no user-facing chain signing API. Chain code is
-limited to a Sui Ed25519 boot-time self-test and the common restricted Sui
-transaction facts parser; neither is a signing API.
+limited to a Sui Ed25519 boot-time self-test, read-only public account identity
+capability/account reporting, and the common restricted Sui transaction facts
+parser; none of these are signing APIs.
 
 | Chain / method | Status | Notes |
 |---|---:|---|
