@@ -54,9 +54,10 @@ Implemented today:
   require a local 6-digit PIN entry/repeat after backup confirmation, store
   root entropy plus a salt + PIN verifier after the PIN matches, and wipe
   volatile scratch on local cancel, confirmation, display expiry, PIN setup
-  timeout, or failure. Firmware build verification is required for each change,
-  hardware smoke is still required, and this is not USER_PROFILE key
-  provisioning.
+  timeout, or failure. Firmware build verification is required for each change.
+  StackChan CoreS3 local setup and PIN entry were manually smoke-tested after
+  commit `2cb243b`; rerun hardware smoke after setup UI or state changes. This
+  is not USER_PROFILE key provisioning.
 - No implemented local reset/recovery UX. Host-triggered reset/debug protocol
   paths are intentionally not implemented; material/state consistency errors
   fail closed until a normal device-local reset or recovery flow is specified
@@ -64,8 +65,7 @@ Implemented today:
 - Read-only Sui account and public-key discovery over an approved runtime
   session. Firmware derives public identity from the DEV_PROFILE root entropy
   on demand and does not return mnemonic, seed, entropy, or private key
-  material. Hardware smoke must be rerun after the local-only setup boundary
-  change.
+  material. Rerun hardware smoke after setup, session, or material-storage changes.
 - A common firmware policy evaluator and a StackChan CoreS3 DEV_PROFILE active
   policy provider. The target stores only a default-reject policy record in
   ordinary NVS, reads a public summary through `get_policy`, and consumes that

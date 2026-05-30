@@ -101,9 +101,9 @@ read-only `get_accounts` Sui account derivation are implemented. The current
 setup source also records a DEV_PROFILE local PIN verifier before reporting
 `provisioned`. Source/build tests cover the provisioned Gateway/MCP session path
 through `get_accounts` and rejected Sui `sign_transaction` policy-decision
-handling; hardware smoke for the current local-PIN-gated setup and provisioned
-session path remains pending. Mnemonic import, local reset, and signing are not
-implemented.
+handling. StackChan CoreS3 local setup and PIN entry were manually smoke-tested
+after commit `2cb243b`; rerun hardware smoke after setup UI or state changes.
+Mnemonic import, local reset, and signing are not implemented.
 
 ## Chain Accounts
 
@@ -265,10 +265,11 @@ Recommended first slice:
 Do not jump directly from mnemonic generation to user transaction signing.
 
 Current implementation status: steps 1 through 6 are implemented for the
-StackChan CoreS3 DEV_PROFILE source path, with hardware smoke still required
-for the local mnemonic UI path. Sui `sign_personal_message` (step 7), mnemonic
-import, signing APIs, policy update, local reset/recovery UX, and USER_PROFILE
-secure provisioning are not implemented.
+StackChan CoreS3 DEV_PROFILE source path. StackChan CoreS3 local setup and PIN
+entry were manually smoke-tested after commit `2cb243b`; rerun hardware smoke
+after setup UI or state changes. Sui `sign_personal_message` (step 7),
+mnemonic import, signing APIs, policy update, local reset/recovery UX, and
+USER_PROFILE secure provisioning are not implemented.
 
 ## Completion Criteria
 

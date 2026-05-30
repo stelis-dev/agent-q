@@ -261,6 +261,12 @@ and update this section.
 Never claim a test, build, lint, pack, flash, or verification step passed unless
 it was actually run and observed successfully.
 
+When a hardware smoke check is run, record enough evidence for the next reader:
+target hardware, commit, build or flash command, manual steps, observed result,
+and any paths that were not checked. Put target-specific evidence in the target
+documentation or in `.WORK/notes/`, and update implementation-status documents
+when the verification level changes.
+
 If a check cannot be run, state:
 
 - the exact check that was skipped
