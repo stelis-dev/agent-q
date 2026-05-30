@@ -8,17 +8,28 @@ signatures or rejections to Agent-Q Gateway.
 
 ## Folder Policy
 
-### `src/`
+### `src/common/`
+
+Hardware-independent firmware source shared by targets.
+
+Common source may include protocol parsers, chain transaction decoders, pure
+data-format helpers, and test fixtures when they do not depend on a hardware
+runtime. Common modules must not include target UI, USB transport, NVS layout,
+display power, posture, or other hardware-specific integration code.
+
+### `src/<hardware-id>/`
 
 Hardware-specific firmware source roots.
 
-Each supported hardware device gets one direct child directory under `src/`.
-Do not pre-create deep subfolders before implementation needs them.
+Each supported hardware device gets one direct child directory under `src/`,
+next to `common/`. Do not pre-create deep subfolders before implementation needs
+them.
 
 Example:
 
 ```text
 src/
+  common/
   stackchan-cores3/
 ```
 
@@ -59,6 +70,8 @@ For the current StackChan CoreS3 target:
 
 ```bash
 source /path/to/esp-idf-v5.5.4/export.sh
+tools/firmware/common/generate_sui_transaction_fixtures.mjs
+tools/firmware/common/test_sui_transaction_facts.sh
 tools/firmware/stackchan-cores3/build.sh
 ```
 

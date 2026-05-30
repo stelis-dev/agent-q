@@ -230,6 +230,10 @@ Current firmware helper commands:
 
 - Fetch StackChan CoreS3 host firmware:
   `tools/firmware/stackchan-cores3/fetch.sh`
+- Regenerate common Sui transaction facts fixtures:
+  `tools/firmware/common/generate_sui_transaction_fixtures.mjs`
+- Test common Sui transaction facts parser fixtures (host C++ compiler only;
+  does not require ESP-IDF): `tools/firmware/common/test_sui_transaction_facts.sh`
 - Build StackChan CoreS3 firmware after ESP-IDF v5.5.4 is active:
   `tools/firmware/stackchan-cores3/build.sh`
 - Test BIP-39 mnemonic vectors after ESP-IDF v5.5.4 is active:

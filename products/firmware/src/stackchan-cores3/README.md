@@ -58,10 +58,11 @@ Runtime Firmware sessions are implemented only as RAM-held protocol sessions
 after material-backed provisioning. Sessions do not authorize signing.
 
 This is not the signing product yet. It derives only read-only public account
-identity (`get_accounts`); it does not sign, store policies, parse signable
-transactions, expose MCP directly, or apply signing policy. The persisted values in this target implementation are the protocol
-`deviceId`, provisioning state flag, and DEV_PROFILE root entropy blob after
-backup confirmation.
+identity (`get_accounts`) and links a restricted host-tested Sui transaction
+facts parser that no runtime request calls yet; it does not sign, store
+policies, expose MCP directly, or apply signing policy. The persisted values in
+this target implementation are the protocol `deviceId`, provisioning state
+flag, and DEV_PROFILE root entropy blob after backup confirmation.
 
 Agent-Q firmware is intentionally not a general StackChan AI firmware. It does
 not include StackChan World login, Xiaozhi cloud sessions, camera upload, screen
@@ -83,6 +84,8 @@ and GitHub Actions use the same inputs:
 ```bash
 source /path/to/esp-idf-v5.5.4/export.sh
 tools/firmware/stackchan-cores3/build.sh
+tools/firmware/common/generate_sui_transaction_fixtures.mjs
+tools/firmware/common/test_sui_transaction_facts.sh
 tools/firmware/stackchan-cores3/test_bip39_vectors.sh
 tools/firmware/stackchan-cores3/test_sui_account_vectors.sh
 ```
@@ -102,6 +105,11 @@ The Sui account vector test is also host-side. It compiles the tracked
 `agent_q_sui_account.cpp` derivation module with the pinned MicroSui signing
 source and checks known Sui SDK address/public-key vectors.
 
+The Sui transaction facts parser test is a common host-side check. It compiles
+`products/firmware/src/common/agent_q/sui` and verifies tracked BCS fixtures for
+the restricted SUI transfer parser. It does not connect the parser to
+`call_method`, policy evaluation, or signing.
+
 During preparation, the tracked build tools also patch the pinned upstream host
 tree so the Agent-Q build does not start the StackChan/Xiaozhi remote AI
 runtime, does not register Xiaozhi remote MCP tools, does not initialize the
@@ -112,6 +120,8 @@ camera, and does not start remote avatar WebSocket service.
 In the hardware firmware tree:
 
 - Add `agent_q/*.cpp` to the main firmware component sources.
+- Add `agent_q_common/sui/*.cpp` to the main firmware component sources for the
+  shared hardware-independent Sui parser.
 - Add the `signing_crypto` component to the main firmware component
   dependencies.
 - Add `mbedtls` to the main firmware component dependencies for BIP-39

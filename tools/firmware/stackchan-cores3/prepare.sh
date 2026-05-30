@@ -14,19 +14,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 FIRMWARE_DIR="$(cd "$1" && pwd)"
 TARGET_ROOT="${REPO_ROOT}/products/firmware/src/stackchan-cores3"
+COMMON_ROOT="${REPO_ROOT}/products/firmware/src/common/agent_q"
 
 if [[ ! -f "${FIRMWARE_DIR}/main/CMakeLists.txt" || ! -f "${FIRMWARE_DIR}/main/main.cpp" ]]; then
   echo "Expected a StackChan firmware directory with main/CMakeLists.txt and main/main.cpp: ${FIRMWARE_DIR}" >&2
   exit 1
 fi
 
-if [[ ! -d "${TARGET_ROOT}/agent_q" || ! -d "${TARGET_ROOT}/components/signing_crypto" ]]; then
-  echo "Missing tracked StackChan CoreS3 firmware overlay under ${TARGET_ROOT}" >&2
+if [[ ! -d "${TARGET_ROOT}/agent_q" || ! -d "${TARGET_ROOT}/components/signing_crypto" || ! -d "${COMMON_ROOT}" ]]; then
+  echo "Missing tracked StackChan CoreS3 overlay under ${TARGET_ROOT} or common Agent-Q source under ${COMMON_ROOT}" >&2
   exit 1
 fi
 
 rm -rf "${FIRMWARE_DIR}/main/agent_q"
 cp -R "${TARGET_ROOT}/agent_q" "${FIRMWARE_DIR}/main/agent_q"
+rm -rf "${FIRMWARE_DIR}/main/agent_q_common"
+cp -R "${COMMON_ROOT}" "${FIRMWARE_DIR}/main/agent_q_common"
 
 mkdir -p "${FIRMWARE_DIR}/components"
 rm -rf "${FIRMWARE_DIR}/components/signing_crypto"
@@ -129,7 +132,7 @@ cmake = cmake_path.read_text()
 cmake = insert_after_once(
     cmake,
     '    "hal/*.cpp"\n',
-    '    "agent_q/*.c"\n    "agent_q/*.cc"\n    "agent_q/*.cpp"\n',
+    '    "agent_q/*.c"\n    "agent_q/*.cc"\n    "agent_q/*.cpp"\n    "agent_q_common/sui/*.c"\n    "agent_q_common/sui/*.cc"\n    "agent_q_common/sui/*.cpp"\n',
     "main/CMakeLists.txt sources",
 )
 cmake = insert_after_once(

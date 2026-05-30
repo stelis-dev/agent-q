@@ -119,7 +119,7 @@ session-scoped `call_method` protocol.
 | Sui Ed25519 signing self-test | △ | Firmware can link signing code, generate a runtime test seed, sign, verify, and wipe the test seed. This is not a signing API. |
 | Sui `sign_personal_message` | X | Not implemented. |
 | Sui `sign_transaction` | X | Not implemented. |
-| Sui txBytes decoder | X | Not implemented. |
+| Sui txBytes decoder | △ | Common firmware source includes a restricted host-tested SUI transfer facts parser for `TransactionData::V1 -> ProgrammableTransaction -> SplitCoins(GasCoin, [Input(amountPure)]) -> TransferObjects([Result(0)], Input(recipientPure))`. It is not connected to `call_method`, policy evaluation, capability advertisement, or signing. |
 | Sui zkLogin | X | Not implemented; separate trust model required. |
 | EVM | X | Not implemented. |
 | Solana | X | Not implemented. |

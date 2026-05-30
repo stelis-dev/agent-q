@@ -21,7 +21,9 @@ Its current role is:
 - provide hardware smoke coverage for future signing flows.
 
 It is not the signing product yet. It does not persist signing keys, store
-policy, parse signable transactions, expose MCP directly, or sign user requests.
+policy, expose MCP directly, or sign user requests. It links a restricted
+host-tested Sui transaction facts parser, but no runtime protocol request calls
+that parser yet.
 
 ## Target Status
 
@@ -61,16 +63,16 @@ Legend:
 
 ## Chain And Method Support
 
-This target currently has no user-facing chain signing API. The only chain code
-present is a Sui Ed25519 boot-time self-test that uses a runtime-generated test
-seed, verifies the result locally, and wipes the test seed.
+This target currently has no user-facing chain signing API. Chain code is
+limited to a Sui Ed25519 boot-time self-test and the common restricted Sui
+transaction facts parser; neither is a signing API.
 
 | Chain / method | Status | Notes |
 |---|---:|---|
 | Sui Ed25519 self-test | △ | Diagnostic only. It proves the signing dependency links and works on-device. |
 | Sui `sign_personal_message` | X | Not implemented. |
 | Sui `sign_transaction` | X | Not implemented. |
-| Sui txBytes decoding | X | Not implemented. |
+| Sui txBytes decoding | △ | The StackChan build links the common restricted SUI transfer facts parser. Host fixtures cover valid SUI transfer facts and malformed/unsupported rejects. It is not connected to `call_method`, policy evaluation, or signing. |
 | Sui zkLogin | X | Not implemented; requires a separate trust model. |
 | EVM signing | X | Not implemented. |
 | Solana signing | X | Not implemented. |

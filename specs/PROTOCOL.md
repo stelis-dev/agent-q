@@ -938,6 +938,13 @@ Rules:
 
 Gateway calls supported methods by name.
 
+`call_method` and signing methods are designed but not implemented. Firmware
+must not advertise `sign_transaction` in `get_capabilities` until Sui txBytes
+decoding, policy evaluation, negative parser fixtures, and signing are all
+implemented. The current restricted Sui transaction facts parser is
+Firmware-internal source, not a wire contract, and is not connected to
+`call_method`, policy evaluation, or signing.
+
 Request:
 
 ```json

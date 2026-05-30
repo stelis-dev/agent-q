@@ -1,0 +1,9 @@
+{
+  "sender": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "recipient": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "asset": "0x2::sui::SUI",
+  "amount": "1000000",
+  "gasBudget": "50000000",
+  "gasPrice": "1000",
+  "commandCount": 2
+}

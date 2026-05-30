@@ -183,6 +183,11 @@ request signs, rejects, or asks. In the current StackChan CoreS3
 implementation, `provisioned` enables `connect`, `disconnect`, read-only
 `get_accounts` (Sui Ed25519 account 0), and the `display_signal` diagnostic;
 policy and signing remain unavailable.
+Future txBytes decoding is allowed only inside a session-scoped `call_method`
+signing path after `provisioned`; it must remain unavailable in
+`unprovisioned`, `provisioning`, `locked`, and the internal consistency-error
+condition. Current common firmware source includes a restricted host-tested SUI
+transfer facts parser, but no runtime API calls it yet.
 
 ### `locked`
 
