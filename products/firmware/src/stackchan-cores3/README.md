@@ -99,6 +99,7 @@ tools/firmware/stackchan-cores3/build.sh
 tools/firmware/common/generate_sui_transaction_fixtures.mjs
 tools/firmware/common/test_sui_transaction_facts.sh
 tools/firmware/common/test_policy_v0.sh
+tools/firmware/stackchan-cores3/test_call_method_validation.sh
 tools/firmware/stackchan-cores3/test_bip39_vectors.sh
 tools/firmware/stackchan-cores3/test_sui_account_vectors.sh
 ```

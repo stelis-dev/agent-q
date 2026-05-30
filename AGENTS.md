@@ -236,6 +236,9 @@ Current firmware helper commands:
   does not require ESP-IDF): `tools/firmware/common/test_sui_transaction_facts.sh`
 - Test common policy v0 evaluator fixtures (host C++ compiler only; does not
   require ESP-IDF): `tools/firmware/common/test_policy_v0.sh`
+- Test StackChan CoreS3 call_method validation boundaries (host C++ compiler and
+  pinned ArduinoJson checkout only; does not require ESP-IDF):
+  `tools/firmware/stackchan-cores3/test_call_method_validation.sh`
 - Build StackChan CoreS3 firmware after ESP-IDF v5.5.4 is active:
   `tools/firmware/stackchan-cores3/build.sh`
 - Test BIP-39 mnemonic vectors after ESP-IDF v5.5.4 is active:

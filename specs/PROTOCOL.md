@@ -975,8 +975,10 @@ Sui `sign_transaction` policy-decision path. Firmware
 validates the protocol envelope enough to identify the request, then enforces
 `provisioned` state, setup/pending busy gates, and a matching active session.
 After those gates pass, Firmware validates the `chain`, `method`, and `params`
-field shape and size. Unknown methods still return `method_result` with
-`status: "rejected"` and `error.code: "unsupported_method"`.
+field shape and size. StackChan CoreS3 keeps that validation in a host-tested
+helper so JSON non-string values cannot be accepted through ArduinoJson fallback
+semantics. Unknown methods still return `method_result` with `status: "rejected"`
+and `error.code: "unsupported_method"`.
 
 Sui `sign_transaction` is recognized only for policy-decision smoke. It accepts
 `params.network` as `mainnet`, `testnet`, `devnet`, or `localnet`, and

@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include <memory>
 #include "agent_q_bip39.h"
+#include "agent_q_call_method_validation.h"
 #include "agent_q_display_power.h"
 #include "agent_q_entropy.h"
 #include "agent_q_root_material.h"
@@ -58,11 +59,6 @@ constexpr uint32_t kSessionExpiryCheckMs = 5000;
 constexpr size_t kLineBufferSize = 1024;
 constexpr size_t kResponseBufferSize = 512;
 constexpr size_t kMaxRequestIdSize = 80;
-constexpr size_t kCallMethodChainMaxLength = 32;
-constexpr size_t kCallMethodNameMaxLength = 64;
-constexpr size_t kCallMethodParamsJsonMaxBytes = 600;
-constexpr size_t kSuiSignTransactionTxBytesMaxBytes = 384;
-constexpr size_t kSuiSignTransactionTxBytesMaxBase64Size = 512;
 constexpr size_t kDeviceIdSize = 37;
 constexpr size_t kProvisioningStateSize = 16;
 constexpr size_t kIdentifyCodeSize = 5;
@@ -145,13 +141,6 @@ enum class ProvisioningRuntimeState {
     unprovisioned,
     provisioning,
     provisioned,
-};
-
-enum class CallMethodFieldValidation {
-    valid,
-    invalid_method,
-    invalid_params_shape,
-    invalid_params_size,
 };
 
 // Firmware-owned state is kept separate from StackChan-owned avatar/app state.
@@ -537,180 +526,6 @@ bool is_safe_session_id(const char* value)
     return length > prefix_length;
 }
 
-bool is_call_method_identifier(const char* value, size_t max_length)
-{
-    if (value == nullptr || max_length == 0) {
-        return false;
-    }
-
-    size_t length = 0;
-    for (const char* cursor = value; *cursor != '\0'; ++cursor) {
-        if (length >= max_length) {
-            return false;
-        }
-        const char c = *cursor;
-        const bool is_lower = c >= 'a' && c <= 'z';
-        const bool is_digit = c >= '0' && c <= '9';
-        const bool is_separator = c == '_' || c == '.' || c == '-';
-        if (length == 0) {
-            if (!is_lower) {
-                return false;
-            }
-        } else if (!is_lower && !is_digit && !is_separator) {
-            return false;
-        }
-        length++;
-    }
-    return length > 0;
-}
-
-const char* json_string_or_null(JsonVariantConst value)
-{
-    if (!value.is<const char*>()) {
-        return nullptr;
-    }
-    return value.as<const char*>();
-}
-
-int base64_value(char c)
-{
-    if (c >= 'A' && c <= 'Z') {
-        return c - 'A';
-    }
-    if (c >= 'a' && c <= 'z') {
-        return 26 + c - 'a';
-    }
-    if (c >= '0' && c <= '9') {
-        return 52 + c - '0';
-    }
-    if (c == '+') {
-        return 62;
-    }
-    if (c == '/') {
-        return 63;
-    }
-    return -1;
-}
-
-bool validate_canonical_base64(
-    const char* value,
-    size_t max_base64_size,
-    size_t max_decoded_size,
-    size_t* decoded_size)
-{
-    if (decoded_size != nullptr) {
-        *decoded_size = 0;
-    }
-    if (value == nullptr) {
-        return false;
-    }
-
-    const size_t length = strlen(value);
-    if (length == 0 || length > max_base64_size || (length % 4) != 0) {
-        return false;
-    }
-
-    size_t padding = 0;
-    if (value[length - 1] == '=') {
-        padding++;
-    }
-    if (length >= 2 && value[length - 2] == '=') {
-        padding++;
-    }
-
-    for (size_t index = 0; index < length; ++index) {
-        const char c = value[index];
-        const bool in_padding = index >= length - padding;
-        if (in_padding) {
-            if (c != '=') {
-                return false;
-            }
-            continue;
-        }
-        if (c == '=' || base64_value(c) < 0) {
-            return false;
-        }
-    }
-
-    if (padding == 1) {
-        const int third = base64_value(value[length - 2]);
-        if (third < 0 || (third & 0x03) != 0) {
-            return false;
-        }
-    } else if (padding == 2) {
-        const int second = base64_value(value[length - 3]);
-        if (second < 0 || (second & 0x0F) != 0) {
-            return false;
-        }
-    } else if (padding > 2) {
-        return false;
-    }
-
-    const size_t output_size = ((length / 4) * 3) - padding;
-    if (output_size == 0 || output_size > max_decoded_size) {
-        return false;
-    }
-    if (decoded_size != nullptr) {
-        *decoded_size = output_size;
-    }
-    return true;
-}
-
-bool is_supported_sui_network(const char* network)
-{
-    return network != nullptr &&
-           (strcmp(network, "mainnet") == 0 ||
-            strcmp(network, "testnet") == 0 ||
-            strcmp(network, "devnet") == 0 ||
-            strcmp(network, "localnet") == 0);
-}
-
-CallMethodFieldValidation validate_call_method_request_fields(JsonDocument& request)
-{
-    const char* chain = json_string_or_null(request["chain"]);
-    const char* method = json_string_or_null(request["method"]);
-    if (!is_call_method_identifier(chain, kCallMethodChainMaxLength) ||
-        !is_call_method_identifier(method, kCallMethodNameMaxLength)) {
-        return CallMethodFieldValidation::invalid_method;
-    }
-
-    JsonVariant params = request["params"];
-    if (!params.is<JsonObject>()) {
-        return CallMethodFieldValidation::invalid_params_shape;
-    }
-    if (measureJson(params) > kCallMethodParamsJsonMaxBytes) {
-        return CallMethodFieldValidation::invalid_params_size;
-    }
-    return CallMethodFieldValidation::valid;
-}
-
-bool validate_sui_sign_transaction_params(JsonVariant params, size_t* decoded_tx_size)
-{
-    if (decoded_tx_size != nullptr) {
-        *decoded_tx_size = 0;
-    }
-    if (!params.is<JsonObject>()) {
-        return false;
-    }
-
-    JsonObject params_object = params.as<JsonObject>();
-    for (JsonPair item : params_object) {
-        const char* key = item.key().c_str();
-        if (strcmp(key, "network") != 0 && strcmp(key, "txBytes") != 0) {
-            return false;
-        }
-    }
-
-    const char* network = json_string_or_null(params["network"]);
-    const char* tx_bytes_base64 = json_string_or_null(params["txBytes"]);
-    return is_supported_sui_network(network) &&
-           validate_canonical_base64(
-               tx_bytes_base64,
-               kSuiSignTransactionTxBytesMaxBase64Size,
-               kSuiSignTransactionTxBytesMaxBytes,
-               decoded_tx_size);
-}
-
 void write_json_document(JsonDocument& response)
 {
     char buffer[kResponseBufferSize];
@@ -905,14 +720,14 @@ void write_sui_sign_transaction_policy_decision(const char* id, JsonDocument& re
 {
     JsonVariant params = request["params"];
     size_t decoded_tx_size = 0;
-    if (!validate_sui_sign_transaction_params(params, &decoded_tx_size)) {
+    if (!agent_q::validate_sui_sign_transaction_params(params, &decoded_tx_size)) {
         write_error_response(id, "invalid_params", "Invalid sui/sign_transaction params.");
         return;
     }
 
-    const char* network = json_string_or_null(params["network"]);
-    const char* tx_bytes_base64 = json_string_or_null(params["txBytes"]);
-    uint8_t tx_bytes[kSuiSignTransactionTxBytesMaxBytes] = {};
+    const char* network = params["network"].as<const char*>();
+    const char* tx_bytes_base64 = params["txBytes"].as<const char*>();
+    uint8_t tx_bytes[agent_q::kSuiSignTransactionTxBytesMaxBytes] = {};
     if (base64_to_bytes(tx_bytes_base64, strlen(tx_bytes_base64), tx_bytes, sizeof(tx_bytes)) != 0) {
         write_error_response(id, "invalid_params", "Invalid sui/sign_transaction txBytes.");
         return;
@@ -2664,16 +2479,16 @@ void handle_line(const char* line)
             return;
         }
 
-        switch (validate_call_method_request_fields(request)) {
-            case CallMethodFieldValidation::valid:
+        switch (agent_q::validate_call_method_request_fields(request)) {
+            case agent_q::CallMethodFieldValidation::valid:
                 break;
-            case CallMethodFieldValidation::invalid_method:
+            case agent_q::CallMethodFieldValidation::invalid_method:
                 write_error_response(id, "invalid_method", "Invalid call_method chain or method.");
                 return;
-            case CallMethodFieldValidation::invalid_params_shape:
+            case agent_q::CallMethodFieldValidation::invalid_params_shape:
                 write_error_response(id, "invalid_params", "call_method params must be an object.");
                 return;
-            case CallMethodFieldValidation::invalid_params_size:
+            case agent_q::CallMethodFieldValidation::invalid_params_size:
                 write_error_response(id, "invalid_params", "call_method params are too large for the runtime.");
                 return;
         }
