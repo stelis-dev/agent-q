@@ -61,7 +61,7 @@ Implemented today:
 - Read-only Sui account and public-key discovery over an approved runtime
   session. Firmware derives public identity from the DEV_PROFILE root entropy
   on demand and does not return mnemonic, seed, entropy, or private key
-  material. Hardware smoke is still required.
+  material. StackChan CoreS3 hardware smoke verifies this path over Gateway/MCP.
 - A common firmware policy evaluator and default-reject runtime boundary. It can
   calculate internal `sign`, `reject`, or `ask` decisions from already extracted
   transaction facts in host tests. StackChan CoreS3 consumes the default-reject

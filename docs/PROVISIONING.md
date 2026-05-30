@@ -89,7 +89,9 @@ Provisioning UX depends on hardware:
 StackChan CoreS3 has display and touch hardware. Source-level DEV_PROFILE
 recovery phrase generation, backup confirmation, persistent root storage, and
 read-only `get_accounts` Sui account derivation are implemented. Hardware smoke
-is still pending. Mnemonic import and signing are not implemented.
+has verified the provisioned Gateway/MCP session path through `get_accounts` and
+rejected Sui `sign_transaction` policy-decision handling; mnemonic provisioning
+UI smoke remains pending. Mnemonic import and signing are not implemented.
 
 ## Chain Accounts
 

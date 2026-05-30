@@ -55,7 +55,7 @@ The current implementation includes:
   requests use an Agent-Q-owned speech-bubble decorator with state-specific
   colors plus a small confirmation strip when physical input is required.
 - target-local display-power handling that turns the screen backlight off after
-  one minute of inactivity, wakes for Agent-Q request UI, toggles display power
+  three minutes of inactivity, wakes for Agent-Q request UI, toggles display power
   on side-button short press, and powers off on side-button long press. Before
   screen-off or power-off, the target moves to a rest posture; when the screen
   wakes, it returns to awake posture.

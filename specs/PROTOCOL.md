@@ -176,8 +176,10 @@ does not prove agent identity, and does not change Firmware policy.
 `get_capabilities` is implemented as a read-only, session-scoped capability
 request that currently reports Sui account identity with `methods: []`.
 `get_accounts` is implemented as a read-only, session-scoped identity request
-for the Sui Ed25519 account at index 0 in the `provisioned` state; hardware smoke
-is still pending. `call_method` exists only as a session-scoped runtime skeleton:
+for the Sui Ed25519 account at index 0 in the `provisioned` state. StackChan
+CoreS3 hardware smoke verifies the Gateway/MCP path through `connect`,
+`get_capabilities`, `get_accounts`, Sui `sign_transaction` policy rejection, and
+`disconnect`. `call_method` exists only as a session-scoped runtime skeleton:
 unknown methods are rejected, while Sui `sign_transaction` is recognized only
 for restricted-transfer policy-decision smoke and still returns a rejected
 method result. No signing method is implemented or advertised.
@@ -959,7 +961,8 @@ Rules:
   0 (`m/44'/784'/0'/0'/0'`) and returns exactly one `accounts[]` entry. Gateway
   rejects any other account count for this target. Additional chains and accounts
   are added as more `accounts[]` entries only after the protocol, capability
-  response, and Gateway bounds are updated. Hardware smoke is still required.
+  response, and Gateway bounds are updated. StackChan CoreS3 hardware smoke
+  verifies the current single-account response over an approved session.
   `get_accounts` reads identity only; capability `methods` remains empty until
   signing methods are implemented.
 

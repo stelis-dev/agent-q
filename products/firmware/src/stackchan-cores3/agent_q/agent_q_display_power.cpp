@@ -11,7 +11,8 @@ namespace agent_q {
 namespace {
 
 constexpr const char* kTag = "AgentQDisplayPower";
-constexpr uint32_t kScreenSleepTimeoutMs = 60000;
+constexpr uint32_t kMillisPerMinute = 60 * 1000;
+constexpr uint32_t kScreenSleepTimeoutMs = 3 * kMillisPerMinute;
 constexpr uint8_t kFallbackWakeBrightness = 75;
 constexpr int kAwakeYawAngle = 0;
 constexpr int kAwakePitchAngle = 540;

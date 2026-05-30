@@ -44,18 +44,18 @@ Legend:
 | Mnemonic UI flow v0 | △ | Approved `start_provisioning` or the local setup speech bubble generates DEV_PROFILE BIP-39 root entropy into RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and stores the root entropy only after physical backup confirmation. Three-letter BIP-39 words are displayed as the full word. `confirm_recovery_phrase_backup` and `cancel_provisioning` wipe scratch. Hardware smoke is still required. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `display_signal` diagnostic | O | Shows a decision UI and returns after touch approval, rejection, or timeout, only after material-backed `provisioned`. |
-| `connect` | △ | Accepted only after material-backed `provisioned` state and physical approval. The session is RAM-only and does not authorize signing. Hardware smoke is still required. |
-| `disconnect` | △ | Clears a matching RAM-only Firmware session after material-backed `provisioned` state. Hardware smoke is still required. |
+| `connect` | O | Hardware smoke verifies acceptance only after material-backed `provisioned` state and physical approval. The session is RAM-only and does not authorize signing. |
+| `disconnect` | O | Hardware smoke verifies clearing a matching RAM-only Firmware session after material-backed `provisioned` state. |
 | `factory_reset` | △ | Requires physical approval, erases DEV_PROFILE root entropy, clears RAM session/setup scratch, persists `unprovisioned`, and recovers from material/state consistency errors. Hardware smoke is still required. |
 | Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
-| Display power control | O | Turns the screen backlight off after one minute of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. Before screen-off or power-off, the target moves to a rest posture; when the screen wakes, it returns to awake posture. |
+| Display power control | O | Turns the screen backlight off after three minutes of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. Before screen-off or power-off, the target moves to a rest posture; when the screen wakes, it returns to awake posture. |
 | Boot/sleep posture | O | Centers yaw and raises pitch when the default avatar is attached at boot or the screen wakes. Moves to centered yaw and lowered pitch before screen-off or power-off. |
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
-| `get_capabilities` | △ | Reports Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until concrete signing methods are implemented. Hardware smoke is still required. |
-| `get_accounts` | △ | Derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation verified against Sui SDK address vectors on host; hardware smoke is still required. |
-| `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke. No approval UI, capability advertisement, or signing is connected. Hardware smoke is still required. |
+| `get_capabilities` | O | Hardware smoke verifies Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until concrete signing methods are implemented. |
+| `get_accounts` | O | Hardware smoke verifies deriving the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returning address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is also verified against Sui SDK address vectors on host. |
+| `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke. Hardware smoke verifies the rejected policy-decision path. No approval UI, capability advertisement, or signing is connected. |
 | Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display and backup-confirmed root entropy storage source exists. Mnemonic import and USER_PROFILE secure provisioning are not implemented. |
 | Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Public account derivation is implemented via `get_accounts`; signing and USER_PROFILE secure provisioning are not implemented. |
@@ -74,7 +74,7 @@ parser; none of these are signing APIs.
 |---|---:|---|
 | Sui Ed25519 self-test | △ | Diagnostic only. It proves the signing dependency links and works on-device. |
 | Sui `sign_personal_message` | X | Not implemented. |
-| Sui `sign_transaction` | △ | Recognized inside `call_method` only for policy-decision smoke. It validates `network` and base64 `txBytes`, decodes the restricted SUI transfer shape, consumes the default-reject policy runtime decision, and returns a rejected `method_result`. It is not advertised in `get_capabilities`, does not sign, and does not trigger approval UI. |
+| Sui `sign_transaction` | △ | Hardware smoke verifies this method inside `call_method` only for policy-decision smoke. It validates `network` and base64 `txBytes`, decodes the restricted SUI transfer shape, consumes the default-reject policy runtime decision, and returns a rejected `method_result`. It is not advertised in `get_capabilities`, does not sign, and does not trigger approval UI. |
 | Sui txBytes decoding | △ | The StackChan build links the common restricted SUI transfer facts parser. Host fixtures cover valid SUI transfer facts and malformed/unsupported rejects. The runtime connects it only to Sui `sign_transaction` policy-decision smoke, not capability advertisement or signing. |
 | Sui zkLogin | X | Not implemented; requires a separate trust model. |
 | EVM signing | X | Not implemented. |
@@ -158,7 +158,7 @@ gate protocol APIs, provisioning, sessions, accounts, policy, or signing.
 The Agent-Q StackChan CoreS3 build replaces the upstream screensaver with
 display-power control:
 
-- one minute of LVGL inactivity turns the screen backlight off;
+- three minutes of LVGL inactivity turns the screen backlight off;
 - Agent-Q request UI wakes the screen before showing setup material,
   notifications, or physical approval prompts;
 - side-button short press toggles display power;
@@ -345,7 +345,7 @@ Current verification expectations for this target:
   again;
 - smoke-test `factory_reset` recovers a material/state consistency-error device
   when such a condition can be safely induced in a development build;
-- smoke-test one minute of inactivity turns the screen backlight off, Agent-Q
+- smoke-test three minutes of inactivity turns the screen backlight off, Agent-Q
   request UI wakes it, side-button short press toggles display power, and
   side-button long press powers off;
 - visually verify boot posture centers yaw and raises pitch after the default

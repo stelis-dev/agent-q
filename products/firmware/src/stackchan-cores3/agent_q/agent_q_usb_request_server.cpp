@@ -564,6 +564,14 @@ bool is_call_method_identifier(const char* value, size_t max_length)
     return length > 0;
 }
 
+const char* json_string_or_null(JsonVariantConst value)
+{
+    if (!value.is<const char*>()) {
+        return nullptr;
+    }
+    return value.as<const char*>();
+}
+
 int base64_value(char c)
 {
     if (c >= 'A' && c <= 'Z') {
@@ -659,8 +667,8 @@ bool is_supported_sui_network(const char* network)
 
 CallMethodFieldValidation validate_call_method_request_fields(JsonDocument& request)
 {
-    const char* chain = request["chain"] | nullptr;
-    const char* method = request["method"] | nullptr;
+    const char* chain = json_string_or_null(request["chain"]);
+    const char* method = json_string_or_null(request["method"]);
     if (!is_call_method_identifier(chain, kCallMethodChainMaxLength) ||
         !is_call_method_identifier(method, kCallMethodNameMaxLength)) {
         return CallMethodFieldValidation::invalid_method;
@@ -693,8 +701,8 @@ bool validate_sui_sign_transaction_params(JsonVariant params, size_t* decoded_tx
         }
     }
 
-    const char* network = params["network"] | nullptr;
-    const char* tx_bytes_base64 = params["txBytes"] | nullptr;
+    const char* network = json_string_or_null(params["network"]);
+    const char* tx_bytes_base64 = json_string_or_null(params["txBytes"]);
     return is_supported_sui_network(network) &&
            validate_canonical_base64(
                tx_bytes_base64,
@@ -902,8 +910,8 @@ void write_sui_sign_transaction_policy_decision(const char* id, JsonDocument& re
         return;
     }
 
-    const char* network = params["network"] | nullptr;
-    const char* tx_bytes_base64 = params["txBytes"] | nullptr;
+    const char* network = json_string_or_null(params["network"]);
+    const char* tx_bytes_base64 = json_string_or_null(params["txBytes"]);
     uint8_t tx_bytes[kSuiSignTransactionTxBytesMaxBytes] = {};
     if (base64_to_bytes(tx_bytes_base64, strlen(tx_bytes_base64), tx_bytes, sizeof(tx_bytes)) != 0) {
         write_error_response(id, "invalid_params", "Invalid sui/sign_transaction txBytes.");
