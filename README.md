@@ -100,8 +100,8 @@ Implemented:
   session.
 - A session-scoped `call_method` runtime skeleton that currently rejects every
   method as unsupported. It is not signing support.
-- A common host-tested policy v0 evaluator foundation that is not connected to
-  runtime signing.
+- A common host-tested policy evaluator and default-reject runtime boundary that
+  are not connected to runtime signing.
 
 Not yet implemented: concrete signing methods, runtime policy enforcement or
 storage, Admin Page, and chain-specific transaction logic. Connection is not

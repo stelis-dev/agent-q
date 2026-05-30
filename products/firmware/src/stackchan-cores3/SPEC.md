@@ -22,8 +22,9 @@ Its current role is:
 
 It is not the signing product yet. It does not persist signing keys, store
 policy, expose MCP directly, or sign user requests. It links a restricted
-host-tested Sui transaction facts parser and common policy v0 evaluator, but no
-runtime protocol request calls them yet.
+host-tested Sui transaction facts parser plus a common policy evaluator and
+default-reject runtime boundary, but no runtime protocol request consumes policy
+decisions yet.
 
 ## Target Status
 
@@ -54,11 +55,11 @@ Legend:
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
 | `get_capabilities` | △ | Reports Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until concrete signing methods are implemented. Hardware smoke is still required. |
 | `get_accounts` | △ | Derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation verified against Sui SDK address vectors on host; hardware smoke is still required. |
-| `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, then rejects every method with `unsupported_method`. No txBytes parsing, policy evaluation, approval UI, capability advertisement, or signing is connected. Hardware smoke is still required. |
+| `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, then rejects every method with `unsupported_method`. No txBytes parsing, policy decision consumption, approval UI, capability advertisement, or signing is connected. Hardware smoke is still required. |
 | Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display and backup-confirmed root entropy storage source exists. Mnemonic import and USER_PROFILE secure provisioning are not implemented. |
 | Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Public account derivation is implemented via `get_accounts`; runtime policy, signing, and USER_PROFILE secure provisioning are not implemented. |
-| Policy evaluator foundation | △ | Links the common host-tested policy v0 evaluator and Sui restricted-transfer facts adapter. No runtime protocol request calls it, and it does not sign. |
+| Policy evaluator foundation | △ | Links the common host-tested policy evaluator, default-reject policy provider boundary, and Sui restricted-transfer facts adapter. No runtime protocol request consumes policy decisions, and it does not sign. |
 | Policy storage/update | X | Not implemented. |
 | Secure user profile | X | Not implemented. |
 
@@ -74,7 +75,7 @@ parser; none of these are signing APIs.
 | Sui Ed25519 self-test | △ | Diagnostic only. It proves the signing dependency links and works on-device. |
 | Sui `sign_personal_message` | X | Not implemented. |
 | Sui `sign_transaction` | X | Not implemented. |
-| Sui txBytes decoding | △ | The StackChan build links the common restricted SUI transfer facts parser. Host fixtures cover valid SUI transfer facts and malformed/unsupported rejects. Parsed facts can feed the common policy v0 evaluator in host tests, but the current `call_method` skeleton does not connect txBytes decoding to runtime requests, capability advertisement, or signing. |
+| Sui txBytes decoding | △ | The StackChan build links the common restricted SUI transfer facts parser. Host fixtures cover valid SUI transfer facts and malformed/unsupported rejects. Parsed facts can feed the common policy evaluator/runtime boundary in host tests, but the current `call_method` skeleton does not connect txBytes decoding to runtime requests, capability advertisement, or signing. |
 | Sui zkLogin | X | Not implemented; requires a separate trust model. |
 | EVM signing | X | Not implemented. |
 | Solana signing | X | Not implemented. |

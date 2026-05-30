@@ -62,10 +62,11 @@ Implemented today:
   session. Firmware derives public identity from the DEV_PROFILE root entropy
   on demand and does not return mnemonic, seed, entropy, or private key
   material. Hardware smoke is still required.
-- A common firmware policy v0 evaluator foundation. It can calculate internal
-  `sign`, `reject`, or `ask` decisions from already extracted transaction
-  facts in host tests, but the current `call_method` runtime skeleton does not
-  call it and it does not sign, store policy, or trigger physical approval.
+- A common firmware policy evaluator and default-reject runtime boundary. It can
+  calculate internal `sign`, `reject`, or `ask` decisions from already extracted
+  transaction facts in host tests, but the current `call_method` runtime
+  skeleton does not consume policy decisions and it does not sign, store policy,
+  or trigger physical approval.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 

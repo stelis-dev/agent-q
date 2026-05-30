@@ -68,9 +68,9 @@ after material-backed provisioning. Sessions do not authorize signing.
 This is not the signing product yet. It reports read-only identity capability
 (`get_capabilities` with `methods: []`), derives only read-only public account
 identity (`get_accounts`), and links a restricted host-tested Sui transaction
-facts parser plus a common policy v0 evaluator that the current `call_method`
-skeleton does not call; it does not sign, store policies, expose MCP directly,
-or apply signing policy at runtime. The persisted values in this target implementation are the
+facts parser plus a common default-reject policy runtime boundary that the
+current `call_method` skeleton does not consume; it does not sign, store
+policies, expose MCP directly, or apply signing policy at runtime. The persisted values in this target implementation are the
 protocol `deviceId`, provisioning state flag, and DEV_PROFILE root entropy blob
 after backup confirmation.
 
@@ -121,11 +121,12 @@ The Sui transaction facts parser test is a common host-side check. It compiles
 the restricted SUI transfer parser. By itself it does not connect the parser to
 the `call_method` skeleton, policy evaluation, or signing.
 
-The policy v0 test is also a common host-side check. It compiles
+The policy test is also a common host-side check. It compiles
 `products/firmware/src/common/agent_q/policy` plus the Sui facts adapter and
-verifies deny-by-default, `sign`/`reject`/`ask` decision calculation, malformed
-policy rejection, and unsupported-facts rejection. It does not connect policy to
-the `call_method` skeleton, physical approval, capability advertisement, or signing.
+verifies deny-by-default, `sign`/`reject`/`ask` decision calculation, default
+provider behavior, missing/invalid policy provider rejection, malformed policy
+rejection, and unsupported-facts rejection. It does not connect policy to the
+`call_method` skeleton, physical approval, capability advertisement, or signing.
 
 During preparation, the tracked build tools also patch the pinned upstream host
 tree so the Agent-Q build does not start the StackChan/Xiaozhi remote AI

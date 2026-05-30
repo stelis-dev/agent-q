@@ -5,8 +5,9 @@ usage() {
   cat >&2 <<'EOF'
 Usage: tools/firmware/common/test_policy_v0.sh
 
-Compiles the common Agent-Q policy v0 evaluator with a host C++ compiler and
-checks Sui restricted-transfer facts against positive and negative policy cases.
+Compiles the common Agent-Q policy evaluator/runtime boundary with a host C++
+compiler and checks Sui restricted-transfer facts against positive and negative
+policy cases.
 This test does not require ESP-IDF and does not depend on .WORK paths.
 EOF
 }
@@ -26,6 +27,8 @@ FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
 for required in \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.h" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_runtime.cpp" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_runtime.h" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_policy_adapter.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_policy_adapter.h" \
@@ -53,6 +56,7 @@ cat >"${TMP_DIR}/policy_v0_test.cpp" <<'CPP'
 #include <vector>
 
 #include "agent_q_policy_v0.h"
+#include "agent_q_policy_runtime.h"
 #include "agent_q_sui_policy_adapter.h"
 #include "agent_q_sui_transaction_facts.h"
 
@@ -151,6 +155,32 @@ void expect_decision(
     }
 }
 
+void expect_runtime_decision(
+    const char* label,
+    const agent_q::AgentQPolicyProvider& provider,
+    const agent_q::AgentQTransactionFacts& facts,
+    agent_q::AgentQPolicyAction expected_action,
+    agent_q::AgentQPolicyDecisionReason expected_reason,
+    const char* expected_rule_id,
+    int* failures)
+{
+    const agent_q::AgentQPolicyDecision decision =
+        agent_q::evaluate_agent_q_policy_runtime(provider, facts);
+    if (decision.action != expected_action || decision.reason != expected_reason ||
+        ((expected_rule_id == nullptr) != (decision.rule_id == nullptr)) ||
+        (expected_rule_id != nullptr && strcmp(expected_rule_id, decision.rule_id) != 0)) {
+        fprintf(stderr, "%s mismatch\n  expected: %s/%s/%s\n  actual:   %s/%s/%s\n",
+                label,
+                agent_q::agent_q_policy_action_name(expected_action),
+                agent_q::agent_q_policy_decision_reason_name(expected_reason),
+                expected_rule_id == nullptr ? "(none)" : expected_rule_id,
+                agent_q::agent_q_policy_action_name(decision.action),
+                agent_q::agent_q_policy_decision_reason_name(decision.reason),
+                decision.rule_id == nullptr ? "(none)" : decision.rule_id);
+        *failures += 1;
+    }
+}
+
 agent_q::AgentQPolicyDocument one_rule_policy(const agent_q::AgentQPolicyRule* rule)
 {
     return agent_q::AgentQPolicyDocument{
@@ -159,6 +189,26 @@ agent_q::AgentQPolicyDocument one_rule_policy(const agent_q::AgentQPolicyRule* r
         rule,
         1,
     };
+}
+
+struct FixedPolicyProviderContext {
+    agent_q::AgentQPolicyDocument policy;
+};
+
+bool load_fixed_policy(agent_q::AgentQPolicyDocument* out, void* context)
+{
+    if (out == nullptr || context == nullptr) {
+        return false;
+    }
+    *out = static_cast<FixedPolicyProviderContext*>(context)->policy;
+    return true;
+}
+
+bool load_missing_policy(agent_q::AgentQPolicyDocument* out, void* context)
+{
+    (void)out;
+    (void)context;
+    return false;
 }
 
 }  // namespace
@@ -188,6 +238,37 @@ int main(int argc, char** argv)
         fprintf(stderr, "Sui policy adapter rejected valid transfer facts\n");
         return 1;
     }
+
+    const agent_q::AgentQPolicyProvider default_policy_provider =
+        agent_q::agent_q_default_reject_policy_provider();
+    expect_runtime_decision(
+        "runtime default reject policy",
+        default_policy_provider,
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::default_reject,
+        nullptr,
+        &failures);
+
+    const agent_q::AgentQPolicyProvider missing_policy_provider = {load_missing_policy, nullptr};
+    expect_runtime_decision(
+        "runtime missing policy provider",
+        missing_policy_provider,
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::invalid_policy,
+        nullptr,
+        &failures);
+
+    const agent_q::AgentQPolicyProvider null_policy_provider = {nullptr, nullptr};
+    expect_runtime_decision(
+        "runtime null policy provider",
+        null_policy_provider,
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::invalid_policy,
+        nullptr,
+        &failures);
 
     agent_q::AgentQTransactionFacts missing_network_facts = {};
     if (agent_q::make_sui_transfer_policy_facts(sui_facts, "", &missing_network_facts)) {
@@ -342,6 +423,20 @@ int main(int argc, char** argv)
         nullptr,
         &failures);
 
+    FixedPolicyProviderContext invalid_policy_context = {invalid_default_policy};
+    const agent_q::AgentQPolicyProvider invalid_policy_provider = {
+        load_fixed_policy,
+        &invalid_policy_context,
+    };
+    expect_runtime_decision(
+        "runtime invalid policy provider",
+        invalid_policy_provider,
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::invalid_policy,
+        nullptr,
+        &failures);
+
     const agent_q::AgentQPolicyRule broad_sign_rule = {
         "broad-sign",
         "sui",
@@ -450,6 +545,28 @@ int main(int argc, char** argv)
         nullptr,
         &failures);
 
+    FixedPolicyProviderContext sign_policy_context = {sign_policy};
+    const agent_q::AgentQPolicyProvider sign_policy_provider = {
+        load_fixed_policy,
+        &sign_policy_context,
+    };
+    expect_runtime_decision(
+        "runtime matching sign rule",
+        sign_policy_provider,
+        facts,
+        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyDecisionReason::matched_rule,
+        "sign-small-sui-transfer",
+        &failures);
+    expect_runtime_decision(
+        "runtime unsupported facts",
+        sign_policy_provider,
+        unsupported_facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::unsupported_facts,
+        nullptr,
+        &failures);
+
     const std::vector<uint8_t> unsupported_tx =
         read_hex_fixture((fixture_dir + "/unsupported_merge_coins_tx.bcs.hex").c_str());
     sui_facts = {};
@@ -478,6 +595,7 @@ CPP
   -I"${COMMON_SUI_DIR}" \
   "${TMP_DIR}/policy_v0_test.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_runtime.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_policy_adapter.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \

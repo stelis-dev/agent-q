@@ -969,25 +969,27 @@ validates the protocol envelope enough to identify the request, then enforces
 After those gates pass, Firmware validates the `chain`, `method`, and `params`
 field shape and size. Valid method requests still return `method_result` with
 `status: "rejected"` and `error.code: "unsupported_method"`. No txBytes parsing,
-policy evaluation, physical approval, signing, or capability advertisement is
-connected to this runtime path yet.
+policy decision consumption, physical approval, signing, or capability
+advertisement is connected to this runtime path yet.
 
 Firmware must not advertise `sign_transaction` in `get_capabilities` until Sui
 txBytes decoding, policy evaluation, negative parser fixtures, and signing are
 all implemented and connected to the runtime request path. The current
-restricted Sui transaction facts parser, Sui policy facts adapter, and policy v0
-evaluator are Firmware-internal source foundations; they do not make
-`call_method` a signing API.
+restricted Sui transaction facts parser, Sui policy facts adapter, default-reject
+policy provider boundary, and policy evaluator are Firmware-internal source
+foundations; they do not make `call_method` a signing API.
 
-Policy v0 is currently a Firmware common-source foundation. It accepts already
-extracted transaction facts, applies a declarative deny-by-default policy model,
-and returns an internal `sign`, `reject`, or `ask` decision. That decision is
-not a signature, does not update device state, does not trigger physical
-approval yet, and is not exposed through Gateway or MCP. Sui txBytes do not
-carry network identity; future runtime integration must supply network context
-outside the txBytes before evaluating network criteria. In v0, `sign` and
-`ask` rules with no criteria are invalid; broad allow behavior must be modeled
-explicitly in a later policy version if it is ever supported.
+Policy evaluation is currently a Firmware common-source foundation. It accepts
+already extracted transaction facts, loads a compiled default-reject policy
+through a Firmware-owned provider boundary, applies a declarative deny-by-default
+policy model, and returns an internal `sign`, `reject`, or `ask` decision. That
+decision is not a signature, does not update device state, does not trigger
+physical approval yet, and is not exposed through Gateway or MCP. Missing or
+invalid policy providers fail closed as `reject`. Sui txBytes do not carry
+network identity; future runtime integration must supply network context outside
+the txBytes before evaluating network criteria. In the current schema, `sign`
+and `ask` rules with no criteria are invalid; broad allow behavior must be
+modeled explicitly in a later policy version if it is ever supported.
 
 Request:
 
