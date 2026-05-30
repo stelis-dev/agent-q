@@ -96,12 +96,16 @@ Implemented:
 - Connection sessions. A `connect_device` call requests physical approval on
   Firmware, and an approved session is held in Gateway memory only.
 - Disconnect.
+- Read-only Sui account and public-key discovery over an approved runtime
+  session.
+- A common host-tested policy v0 evaluator foundation that is not connected to
+  runtime signing.
 
-Not yet implemented: signing, policy evaluation, account discovery, public key
-discovery, Admin Page, and chain-specific transaction logic. Connection is not
-signing approval and does not authorize signing. A connection session does not
-prove agent identity. Labels and purpose names are local Gateway metadata and
-are not security boundaries.
+Not yet implemented: signing, runtime policy enforcement or storage, Admin
+Page, and chain-specific transaction logic. Connection is not signing approval
+and does not authorize signing. A connection session does not prove agent
+identity. Labels and purpose names are local Gateway metadata and are not
+security boundaries.
 
 ## Repository Layout
 

@@ -28,7 +28,7 @@ This document tracks implementation status only. The wire protocol is defined in
 | `identify_device` | O | Implemented as temporary device UI for explicit user selection. |
 | `connect` | △ | Protocol and Gateway parser support exist. StackChan CoreS3 source restores provisioned-only Firmware sessions after persistent root material exists. Hardware smoke is still required. |
 | `disconnect` | △ | Protocol and Gateway parser support exist. StackChan CoreS3 source clears a matching active Firmware session after `provisioned`. Hardware smoke is still required. |
-| `get_capabilities` | △ | StackChan CoreS3 source returns Firmware-authored Sui Ed25519 account identity capability over an approved session while `provisioned`. The current `methods` list is empty because `call_method`, policy evaluation, and signing are not implemented. Hardware smoke is still required. |
+| `get_capabilities` | △ | StackChan CoreS3 source returns Firmware-authored Sui Ed25519 account identity capability over an approved session while `provisioned`. The current `methods` list is empty because runtime `call_method`, physical approval integration, and signing are not implemented. Hardware smoke is still required. |
 | `get_accounts` | △ | StackChan CoreS3 source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from stored root material and returns it over an approved session while `provisioned`. Read-only: no mnemonic, seed, entropy, or private key in responses, logs, or UI. Derivation verified against Sui SDK address vectors on host (`test_sui_account_vectors.sh`); hardware smoke is still required. |
 | `call_method` | X | Designed session-scoped dispatch for all chains and methods; not implemented. |
 | Hardware diagnostic `display_signal` | O | Implemented for firmware/UI smoke testing after material-backed `provisioned`. Not a public signing API. |
@@ -87,7 +87,7 @@ Current MCP tools:
 | Display power control | O | X | X | StackChan CoreS3 turns the screen backlight off after one minute of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. Before screen-off or power-off, it moves to a rest posture; when the screen wakes, it returns to awake posture. |
 | Boot/sleep posture | O | X | X | StackChan CoreS3 centers yaw and raises pitch when the default avatar is attached at boot or the screen wakes, and moves to centered yaw and lowered pitch before screen-off or power-off. |
 | Per-request `ask` approval | X | N/A | X | Not implemented for signing requests because signing requests are not implemented. |
-| Automatic `sign` / `reject` policy action | X | X | X | Requires policy evaluator and signing method support. |
+| Automatic `sign` / `reject` policy action | X | X | X | Common policy v0 can calculate internal `sign`/`reject`/`ask` decisions in host tests, but no target connects policy decisions to runtime `call_method`, physical approval, or signing. |
 | Persistent signing material | △ | X | X | StackChan CoreS3 source stores DEV_PROFILE BIP-39 root entropy after backup confirmation. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0); it does not sign. |
 | Policy storage | X | X | X | Not implemented. |
 | Provisioning flow | △ | X | X | DEV_PROFILE mnemonic UI and persistent root material storage source exists for StackChan CoreS3. Public Sui account derivation is implemented via `get_accounts`; mnemonic import, signing use, policy, and USER_PROFILE secure provisioning are not implemented. |
@@ -121,7 +121,7 @@ session-scoped `call_method` protocol.
 | Sui Ed25519 signing self-test | △ | Firmware can link signing code, generate a runtime test seed, sign, verify, and wipe the test seed. This is not a signing API. |
 | Sui `sign_personal_message` | X | Not implemented. |
 | Sui `sign_transaction` | X | Not implemented. |
-| Sui txBytes decoder | △ | Common firmware source includes a restricted host-tested SUI transfer facts parser for `TransactionData::V1 -> ProgrammableTransaction -> SplitCoins(GasCoin, [Input(amountPure)]) -> TransferObjects([Result(0)], Input(recipientPure))`. It is not connected to `call_method`, policy evaluation, capability advertisement, or signing. |
+| Sui txBytes decoder | △ | Common firmware source includes a restricted host-tested SUI transfer facts parser for `TransactionData::V1 -> ProgrammableTransaction -> SplitCoins(GasCoin, [Input(amountPure)]) -> TransferObjects([Result(0)], Input(recipientPure))`. The parsed facts can feed the common policy v0 evaluator in host tests, but no runtime request connects the parser to `call_method`, capability advertisement, or signing. |
 | Sui zkLogin | X | Not implemented; separate trust model required. |
 | EVM | X | Not implemented. |
 | Solana | X | Not implemented. |
@@ -135,8 +135,8 @@ session-scoped `call_method` protocol.
 | Provisioning flow document | O | See `docs/PROVISIONING.md`. USER_PROFILE mnemonic/key provisioning is not implemented. |
 | Provisioning status reporting | O | Firmware reports `provisioning.state`; Gateway exposes it without treating it as signing readiness. |
 | Mnemonic UI flow v0 | △ | StackChan CoreS3 source adds DEV_PROFILE BIP-39 recovery phrase generation from an early-boot-seeded Agent-Q CSPRNG, device-only up-to-4-letter prefix display, and confirmed root material storage. It stores no mnemonic text, private key, account, or policy. Hardware smoke is still required. |
-| Deny-by-default policy model | △ | Documented target behavior; evaluator not implemented. |
-| Policy evaluator | X | Not implemented. |
+| Deny-by-default policy model | △ | Common firmware source includes a host-tested policy v0 evaluator that rejects by default, rejects malformed/unsupported policy or facts, and returns `sign`, `reject`, or `ask` decisions only as internal calculation results. It is not connected to runtime signing. |
+| Policy evaluator | △ | Common firmware source implements a declarative policy v0 evaluator and a Sui restricted-transfer facts adapter. Host tests cover positive and negative decisions. Runtime `call_method`, physical approval, capability advertisement, and signing integration are not implemented. |
 | Policy storage | X | Not implemented. |
 | Policy update authorization | X | Not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display and persistent root material storage source exists for StackChan CoreS3. Mnemonic import, USER_PROFILE secure root storage, and signing use remain unimplemented. |

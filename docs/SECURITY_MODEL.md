@@ -58,6 +58,14 @@ Implemented today:
   persists `unprovisioned`, and recovers from material/state consistency error.
   It is a development/recovery path and is not exposed as a normal
   agent-facing MCP tool. Hardware smoke is still required.
+- Read-only Sui account and public-key discovery over an approved runtime
+  session. Firmware derives public identity from the DEV_PROFILE root entropy
+  on demand and does not return mnemonic, seed, entropy, or private key
+  material. Hardware smoke is still required.
+- A common firmware policy v0 evaluator foundation. It can calculate internal
+  `sign`, `reject`, or `ask` decisions from already extracted transaction
+  facts in host tests, but no runtime request calls it and it does not sign,
+  store policy, or trigger physical approval.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
@@ -67,8 +75,7 @@ Designed but not implemented (do not treat as present):
 - Key import.
 - USER_PROFILE first-install mnemonic generation or import.
 - zkLogin signing material.
-- Policy storage and evaluation.
-- Account and public-key discovery.
+- Policy storage, policy update authorization, and runtime policy enforcement.
 - Signing via `call_method`.
 - The Admin Page / local web UI.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.

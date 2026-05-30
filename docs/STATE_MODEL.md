@@ -189,7 +189,10 @@ Future txBytes decoding is allowed only inside a session-scoped `call_method`
 signing path after `provisioned`; it must remain unavailable in
 `unprovisioned`, `provisioning`, `locked`, and the internal consistency-error
 condition. Current common firmware source includes a restricted host-tested SUI
-transfer facts parser, but no runtime API calls it yet.
+transfer facts parser, a Sui facts-to-policy adapter, and a host-tested policy
+v0 evaluator. These are common firmware foundations only: no runtime API calls
+them yet, capabilities still advertise no signing methods, and Gateway must not
+evaluate policy.
 
 ### `locked`
 

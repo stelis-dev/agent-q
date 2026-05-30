@@ -61,8 +61,8 @@ session when one exists.
   disconnect or session-scoped call.
 - Gateway evicts an expired runtime session lazily, on the next access after
   its local TTL passes, not on a timer. Firmware remains the session authority.
-- Not yet implemented: signing, policy evaluation, account discovery, public
-  key discovery, Admin Page, and chain-specific transaction logic.
+- Not yet implemented: signing, runtime policy evaluation, Admin Page, and
+  chain-specific transaction logic.
 
 ## MCP Output Boundary
 

@@ -64,10 +64,11 @@ after material-backed provisioning. Sessions do not authorize signing.
 This is not the signing product yet. It reports read-only identity capability
 (`get_capabilities` with `methods: []`), derives only read-only public account
 identity (`get_accounts`), and links a restricted host-tested Sui transaction
-facts parser that no runtime request calls yet; it does not sign, store
-policies, expose MCP directly, or apply signing policy. The persisted values in
-this target implementation are the protocol `deviceId`, provisioning state
-flag, and DEV_PROFILE root entropy blob after backup confirmation.
+facts parser plus a common policy v0 evaluator that no runtime request calls
+yet; it does not sign, store policies, expose MCP directly, or apply signing
+policy at runtime. The persisted values in this target implementation are the
+protocol `deviceId`, provisioning state flag, and DEV_PROFILE root entropy blob
+after backup confirmation.
 
 Agent-Q firmware is intentionally not a general StackChan AI firmware. It does
 not include StackChan World login, Xiaozhi cloud sessions, camera upload, screen
@@ -91,6 +92,7 @@ source /path/to/esp-idf-v5.5.4/export.sh
 tools/firmware/stackchan-cores3/build.sh
 tools/firmware/common/generate_sui_transaction_fixtures.mjs
 tools/firmware/common/test_sui_transaction_facts.sh
+tools/firmware/common/test_policy_v0.sh
 tools/firmware/stackchan-cores3/test_bip39_vectors.sh
 tools/firmware/stackchan-cores3/test_sui_account_vectors.sh
 ```
@@ -112,8 +114,14 @@ source and checks known Sui SDK address/public-key vectors.
 
 The Sui transaction facts parser test is a common host-side check. It compiles
 `products/firmware/src/common/agent_q/sui` and verifies tracked BCS fixtures for
-the restricted SUI transfer parser. It does not connect the parser to
-`call_method`, policy evaluation, or signing.
+the restricted SUI transfer parser. By itself it does not connect the parser to
+runtime `call_method`, policy evaluation, or signing.
+
+The policy v0 test is also a common host-side check. It compiles
+`products/firmware/src/common/agent_q/policy` plus the Sui facts adapter and
+verifies deny-by-default, `sign`/`reject`/`ask` decision calculation, malformed
+policy rejection, and unsupported-facts rejection. It does not connect policy to
+runtime `call_method`, physical approval, capability advertisement, or signing.
 
 During preparation, the tracked build tools also patch the pinned upstream host
 tree so the Agent-Q build does not start the StackChan/Xiaozhi remote AI
@@ -127,6 +135,8 @@ In the hardware firmware tree:
 - Add `agent_q/*.cpp` to the main firmware component sources.
 - Add `agent_q_common/sui/*.cpp` to the main firmware component sources for the
   shared hardware-independent Sui parser.
+- Add `agent_q_common/policy/*.cpp` to the main firmware component sources for
+  the shared hardware-independent policy evaluator.
 - Add the `signing_crypto` component to the main firmware component
   dependencies.
 - Add `mbedtls` to the main firmware component dependencies for BIP-39

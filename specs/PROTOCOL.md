@@ -886,7 +886,8 @@ Rules:
   expired session is also cleared.
 - The current StackChan CoreS3 target advertises Sui Ed25519 account identity
   only: account 0 at `m/44'/784'/0'/0'/0'`. `methods` is empty because
-  `call_method`, policy evaluation, and signing methods are not implemented.
+  runtime `call_method`, physical approval integration, and signing methods are
+  not implemented.
 - Gateway validates the response strictly, rejects unknown chains, unsupported
   account schemes or derivation paths, non-empty/unknown method lists,
   secret-like fields, and any unexpected `sessionId` in the response. Gateway
@@ -961,9 +962,20 @@ Gateway calls supported methods by name.
 `call_method` and signing methods are designed but not implemented. Firmware
 must not advertise `sign_transaction` in `get_capabilities` until Sui txBytes
 decoding, policy evaluation, negative parser fixtures, and signing are all
-implemented. The current restricted Sui transaction facts parser is
-Firmware-internal source, not a wire contract, and is not connected to
-`call_method`, policy evaluation, or signing.
+implemented and connected to the runtime request path. The current restricted
+Sui transaction facts parser, Sui policy facts adapter, and policy v0 evaluator
+are Firmware-internal source, not a wire contract, and are not connected to
+`call_method`, capability advertisement, or signing.
+
+Policy v0 is currently a Firmware common-source foundation. It accepts already
+extracted transaction facts, applies a declarative deny-by-default policy model,
+and returns an internal `sign`, `reject`, or `ask` decision. That decision is
+not a signature, does not update device state, does not trigger physical
+approval yet, and is not exposed through Gateway or MCP. Sui txBytes do not
+carry network identity; future runtime integration must supply network context
+outside the txBytes before evaluating network criteria. In v0, `sign` and
+`ask` rules with no criteria are invalid; broad allow behavior must be modeled
+explicitly in a later policy version if it is ever supported.
 
 Request:
 

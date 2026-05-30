@@ -72,6 +72,7 @@ For the current StackChan CoreS3 target:
 source /path/to/esp-idf-v5.5.4/export.sh
 tools/firmware/common/generate_sui_transaction_fixtures.mjs
 tools/firmware/common/test_sui_transaction_facts.sh
+tools/firmware/common/test_policy_v0.sh
 tools/firmware/stackchan-cores3/build.sh
 ```
 

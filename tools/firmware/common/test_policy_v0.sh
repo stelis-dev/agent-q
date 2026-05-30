@@ -1,0 +1,486 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: tools/firmware/common/test_policy_v0.sh
+
+Compiles the common Agent-Q policy v0 evaluator with a host C++ compiler and
+checks Sui restricted-transfer facts against positive and negative policy cases.
+This test does not require ESP-IDF and does not depend on .WORK paths.
+EOF
+}
+
+if [[ $# -ne 0 ]]; then
+  usage
+  exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+COMMON_ROOT="${REPO_ROOT}/products/firmware/src/common/agent_q"
+COMMON_POLICY_DIR="${COMMON_ROOT}/policy"
+COMMON_SUI_DIR="${COMMON_ROOT}/sui"
+FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
+
+for required in \
+  "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_v0.h" \
+  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_policy_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_policy_adapter.h" \
+  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
+  "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
+  "${FIXTURE_DIR}/unsupported_merge_coins_tx.bcs.hex"; do
+  if [[ ! -f "${required}" ]]; then
+    echo "Missing required file: ${required}" >&2
+    exit 1
+  fi
+done
+
+CXX_BIN="${CXX:-c++}"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-policy-v0.XXXXXX")"
+trap 'rm -rf "${TMP_DIR}"' EXIT
+
+cat >"${TMP_DIR}/policy_v0_test.cpp" <<'CPP'
+#include <ctype.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <string>
+#include <vector>
+
+#include "agent_q_policy_v0.h"
+#include "agent_q_sui_policy_adapter.h"
+#include "agent_q_sui_transaction_facts.h"
+
+namespace {
+
+std::string read_file(const char* path)
+{
+    FILE* file = fopen(path, "rb");
+    if (file == nullptr) {
+        fprintf(stderr, "Could not open %s\n", path);
+        exit(1);
+    }
+    std::string data;
+    char buffer[4096];
+    while (true) {
+        const size_t read = fread(buffer, 1, sizeof(buffer), file);
+        if (read != 0) {
+            data.append(buffer, read);
+        }
+        if (read < sizeof(buffer)) {
+            if (ferror(file)) {
+                fprintf(stderr, "Could not read %s\n", path);
+                fclose(file);
+                exit(1);
+            }
+            break;
+        }
+    }
+    fclose(file);
+    return data;
+}
+
+int hex_value(char value)
+{
+    if (value >= '0' && value <= '9') {
+        return value - '0';
+    }
+    if (value >= 'a' && value <= 'f') {
+        return 10 + value - 'a';
+    }
+    if (value >= 'A' && value <= 'F') {
+        return 10 + value - 'A';
+    }
+    return -1;
+}
+
+std::vector<uint8_t> read_hex_fixture(const char* path)
+{
+    const std::string raw = read_file(path);
+    std::string hex;
+    for (char ch : raw) {
+        if (!isspace(static_cast<unsigned char>(ch))) {
+            hex.push_back(ch);
+        }
+    }
+    if (hex.size() % 2 != 0) {
+        fprintf(stderr, "Odd-length hex fixture: %s\n", path);
+        exit(1);
+    }
+    std::vector<uint8_t> bytes;
+    bytes.reserve(hex.size() / 2);
+    for (size_t index = 0; index < hex.size(); index += 2) {
+        const int high = hex_value(hex[index]);
+        const int low = hex_value(hex[index + 1]);
+        if (high < 0 || low < 0) {
+            fprintf(stderr, "Invalid hex fixture: %s\n", path);
+            exit(1);
+        }
+        bytes.push_back(static_cast<uint8_t>((high << 4) | low));
+    }
+    return bytes;
+}
+
+void expect_decision(
+    const char* label,
+    const agent_q::AgentQPolicyDocument& policy,
+    const agent_q::AgentQTransactionFacts& facts,
+    agent_q::AgentQPolicyAction expected_action,
+    agent_q::AgentQPolicyDecisionReason expected_reason,
+    const char* expected_rule_id,
+    int* failures)
+{
+    const agent_q::AgentQPolicyDecision decision = agent_q::evaluate_agent_q_policy_v0(policy, facts);
+    if (decision.action != expected_action || decision.reason != expected_reason ||
+        ((expected_rule_id == nullptr) != (decision.rule_id == nullptr)) ||
+        (expected_rule_id != nullptr && strcmp(expected_rule_id, decision.rule_id) != 0)) {
+        fprintf(stderr, "%s mismatch\n  expected: %s/%s/%s\n  actual:   %s/%s/%s\n",
+                label,
+                agent_q::agent_q_policy_action_name(expected_action),
+                agent_q::agent_q_policy_decision_reason_name(expected_reason),
+                expected_rule_id == nullptr ? "(none)" : expected_rule_id,
+                agent_q::agent_q_policy_action_name(decision.action),
+                agent_q::agent_q_policy_decision_reason_name(decision.reason),
+                decision.rule_id == nullptr ? "(none)" : decision.rule_id);
+        *failures += 1;
+    }
+}
+
+agent_q::AgentQPolicyDocument one_rule_policy(const agent_q::AgentQPolicyRule* rule)
+{
+    return agent_q::AgentQPolicyDocument{
+        agent_q::kAgentQPolicyV0Schema,
+        agent_q::AgentQPolicyAction::reject,
+        rule,
+        1,
+    };
+}
+
+}  // namespace
+
+int main(int argc, char** argv)
+{
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s /path/to/fixture_dir\n", argv[0]);
+        return 2;
+    }
+
+    const std::string fixture_dir = argv[1];
+    int failures = 0;
+
+    const std::vector<uint8_t> valid =
+        read_hex_fixture((fixture_dir + "/valid_sui_transfer_tx.bcs.hex").c_str());
+    agent_q::SuiTransferFacts sui_facts = {};
+    const agent_q::SuiTransactionFactsResult parse_result =
+        agent_q::parse_sui_transfer_facts(valid.data(), valid.size(), &sui_facts);
+    if (parse_result != agent_q::SuiTransactionFactsResult::ok) {
+        fprintf(stderr, "valid Sui transfer fixture did not parse\n");
+        return 1;
+    }
+
+    agent_q::AgentQTransactionFacts facts = {};
+    if (!agent_q::make_sui_transfer_policy_facts(sui_facts, "devnet", &facts)) {
+        fprintf(stderr, "Sui policy adapter rejected valid transfer facts\n");
+        return 1;
+    }
+
+    agent_q::AgentQTransactionFacts missing_network_facts = {};
+    if (agent_q::make_sui_transfer_policy_facts(sui_facts, "", &missing_network_facts)) {
+        fprintf(stderr, "Sui policy adapter accepted missing network context\n");
+        failures += 1;
+    }
+
+    const char* allowed_recipients[] = {sui_facts.recipient};
+    const char* other_recipients[] = {
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+    };
+
+    const agent_q::AgentQPolicyCriterion allow_criteria[] = {
+        {agent_q::AgentQPolicyCriterionType::network, agent_q::AgentQPolicyOperator::eq, "devnet", nullptr, 0},
+        {agent_q::AgentQPolicyCriterionType::kind, agent_q::AgentQPolicyOperator::eq, "transfer", nullptr, 0},
+        {agent_q::AgentQPolicyCriterionType::recipient, agent_q::AgentQPolicyOperator::in, nullptr, allowed_recipients, 1},
+        {agent_q::AgentQPolicyCriterionType::amount, agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},
+        {agent_q::AgentQPolicyCriterionType::gas_budget, agent_q::AgentQPolicyOperator::lte, "50000000", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule sign_rule = {
+        "sign-small-sui-transfer",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        allow_criteria,
+        sizeof(allow_criteria) / sizeof(allow_criteria[0]),
+    };
+    const agent_q::AgentQPolicyDocument sign_policy = one_rule_policy(&sign_rule);
+    expect_decision(
+        "matching sign rule",
+        sign_policy,
+        facts,
+        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyDecisionReason::matched_rule,
+        "sign-small-sui-transfer",
+        &failures);
+
+    const agent_q::AgentQPolicyRule ask_rule = {
+        "ask-small-sui-transfer",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::ask,
+        allow_criteria,
+        sizeof(allow_criteria) / sizeof(allow_criteria[0]),
+    };
+    const agent_q::AgentQPolicyRule first_match_rules[] = {ask_rule, sign_rule};
+    const agent_q::AgentQPolicyDocument first_match_policy = {
+        agent_q::kAgentQPolicyV0Schema,
+        agent_q::AgentQPolicyAction::reject,
+        first_match_rules,
+        2,
+    };
+    expect_decision(
+        "first matching ask rule",
+        first_match_policy,
+        facts,
+        agent_q::AgentQPolicyAction::ask,
+        agent_q::AgentQPolicyDecisionReason::matched_rule,
+        "ask-small-sui-transfer",
+        &failures);
+
+    const agent_q::AgentQPolicyRule reject_rule = {
+        "reject-small-sui-transfer",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::reject,
+        allow_criteria,
+        sizeof(allow_criteria) / sizeof(allow_criteria[0]),
+    };
+    const agent_q::AgentQPolicyDocument reject_policy = one_rule_policy(&reject_rule);
+    expect_decision(
+        "matching reject rule",
+        reject_policy,
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::matched_rule,
+        "reject-small-sui-transfer",
+        &failures);
+
+    const agent_q::AgentQPolicyCriterion wrong_recipient_criteria[] = {
+        {agent_q::AgentQPolicyCriterionType::recipient, agent_q::AgentQPolicyOperator::in, nullptr, other_recipients, 1},
+    };
+    const agent_q::AgentQPolicyRule wrong_recipient_rule = {
+        "wrong-recipient",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        wrong_recipient_criteria,
+        1,
+    };
+    expect_decision(
+        "recipient not allowed",
+        one_rule_policy(&wrong_recipient_rule),
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::default_reject,
+        nullptr,
+        &failures);
+
+    const agent_q::AgentQPolicyCriterion amount_limit_criteria[] = {
+        {agent_q::AgentQPolicyCriterionType::amount, agent_q::AgentQPolicyOperator::lte, "999999", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule amount_limit_rule = {
+        "amount-limit",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        amount_limit_criteria,
+        1,
+    };
+    expect_decision(
+        "amount over limit",
+        one_rule_policy(&amount_limit_rule),
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::default_reject,
+        nullptr,
+        &failures);
+
+    const agent_q::AgentQPolicyCriterion gas_limit_criteria[] = {
+        {agent_q::AgentQPolicyCriterionType::gas_budget, agent_q::AgentQPolicyOperator::lte, "49999999", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule gas_limit_rule = {
+        "gas-limit",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        gas_limit_criteria,
+        1,
+    };
+    expect_decision(
+        "gas over limit",
+        one_rule_policy(&gas_limit_rule),
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::default_reject,
+        nullptr,
+        &failures);
+
+    const agent_q::AgentQPolicyDocument invalid_default_policy = {
+        agent_q::kAgentQPolicyV0Schema,
+        agent_q::AgentQPolicyAction::ask,
+        &sign_rule,
+        1,
+    };
+    expect_decision(
+        "non-reject default action",
+        invalid_default_policy,
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::invalid_policy,
+        nullptr,
+        &failures);
+
+    const agent_q::AgentQPolicyRule broad_sign_rule = {
+        "broad-sign",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        nullptr,
+        0,
+    };
+    expect_decision(
+        "broad sign without criteria",
+        one_rule_policy(&broad_sign_rule),
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::invalid_policy,
+        nullptr,
+        &failures);
+
+    const agent_q::AgentQPolicyCriterion unknown_criterion[] = {
+        {static_cast<agent_q::AgentQPolicyCriterionType>(99), agent_q::AgentQPolicyOperator::eq, "devnet", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule unknown_criterion_rule = {
+        "unknown-criterion",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        unknown_criterion,
+        1,
+    };
+    expect_decision(
+        "unknown criterion",
+        one_rule_policy(&unknown_criterion_rule),
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::invalid_policy,
+        nullptr,
+        &failures);
+
+    const agent_q::AgentQPolicyCriterion unsupported_op[] = {
+        {agent_q::AgentQPolicyCriterionType::network, static_cast<agent_q::AgentQPolicyOperator>(99), "devnet", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule unsupported_op_rule = {
+        "unsupported-op",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        unsupported_op,
+        1,
+    };
+    expect_decision(
+        "unsupported operator",
+        one_rule_policy(&unsupported_op_rule),
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::invalid_policy,
+        nullptr,
+        &failures);
+
+    const agent_q::AgentQPolicyCriterion malformed_amount[] = {
+        {agent_q::AgentQPolicyCriterionType::amount, agent_q::AgentQPolicyOperator::lte, "10.5", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule malformed_amount_rule = {
+        "malformed-amount",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        malformed_amount,
+        1,
+    };
+    expect_decision(
+        "malformed numeric criterion",
+        one_rule_policy(&malformed_amount_rule),
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::invalid_policy,
+        nullptr,
+        &failures);
+
+    const agent_q::AgentQPolicyCriterion overflow_amount[] = {
+        {agent_q::AgentQPolicyCriterionType::amount, agent_q::AgentQPolicyOperator::lte, "18446744073709551616", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule overflow_amount_rule = {
+        "overflow-amount",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        overflow_amount,
+        1,
+    };
+    expect_decision(
+        "overflow numeric criterion",
+        one_rule_policy(&overflow_amount_rule),
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::invalid_policy,
+        nullptr,
+        &failures);
+
+    agent_q::AgentQTransactionFacts unsupported_facts = facts;
+    unsupported_facts.amount = "not-a-u64";
+    expect_decision(
+        "malformed unsupported facts",
+        sign_policy,
+        unsupported_facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::unsupported_facts,
+        nullptr,
+        &failures);
+
+    const std::vector<uint8_t> unsupported_tx =
+        read_hex_fixture((fixture_dir + "/unsupported_merge_coins_tx.bcs.hex").c_str());
+    sui_facts = {};
+    const agent_q::SuiTransactionFactsResult unsupported_parse_result =
+        agent_q::parse_sui_transfer_facts(unsupported_tx.data(), unsupported_tx.size(), &sui_facts);
+    if (unsupported_parse_result != agent_q::SuiTransactionFactsResult::unsupported) {
+        fprintf(stderr, "unsupported Sui fixture should be rejected by facts parser\n");
+        failures += 1;
+    }
+
+    if (failures != 0) {
+        fprintf(stderr, "Policy v0 tests FAILED: %d\n", failures);
+        return 1;
+    }
+    printf("Policy v0 tests passed\n");
+    return 0;
+}
+CPP
+
+"${CXX_BIN}" \
+  -std=c++17 \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -I"${COMMON_POLICY_DIR}" \
+  -I"${COMMON_SUI_DIR}" \
+  "${TMP_DIR}/policy_v0_test.cpp" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_policy_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
+  -o "${TMP_DIR}/policy_v0_test"
+
+"${TMP_DIR}/policy_v0_test" "${FIXTURE_DIR}"

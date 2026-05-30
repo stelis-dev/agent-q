@@ -137,6 +137,12 @@ cmake = insert_after_once(
 )
 cmake = insert_after_once(
     cmake,
+    '    "agent_q_common/sui/*.cpp"\n',
+    '    "agent_q_common/policy/*.c"\n    "agent_q_common/policy/*.cc"\n    "agent_q_common/policy/*.cpp"\n',
+    "main/CMakeLists.txt common policy sources",
+)
+cmake = insert_after_once(
+    cmake,
     '    "stackchan/*.cpp"\n)\n',
     r'''
 
