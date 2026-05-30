@@ -25,8 +25,6 @@ export type { DeviceState, ProvisioningState };
 export const PROTOCOL_VERSION = 1;
 export const MAX_APPROVAL_TIMEOUT_MS = 60000;
 export const DEFAULT_APPROVAL_TIMEOUT_MS = 30000;
-export const MAX_PROVISIONING_APPROVAL_TIMEOUT_MS = MAX_APPROVAL_TIMEOUT_MS;
-export const DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS = DEFAULT_APPROVAL_TIMEOUT_MS;
 // sessionTtlMs is a uint32 millisecond counter on the wire. A value outside
 // that range cannot come from a conformant device, so the wire boundary rejects
 // it as malformed. Bounding it here also keeps Gateway's session-expiry
@@ -116,42 +114,6 @@ export interface CallMethodRequest {
   params: Record<string, unknown>;
 }
 
-export interface StartProvisioningRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "start_provisioning";
-  params: {
-    approvalTimeoutMs: number;
-  };
-}
-
-export interface CancelProvisioningRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "cancel_provisioning";
-  params: {
-    approvalTimeoutMs: number;
-  };
-}
-
-export interface ConfirmRecoveryPhraseBackupRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "confirm_recovery_phrase_backup";
-  params: {
-    approvalTimeoutMs: number;
-  };
-}
-
-export interface FactoryResetRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "factory_reset";
-  params: {
-    approvalTimeoutMs: number;
-  };
-}
-
 export type ProtocolRequest =
   | GetStatusRequest
   | IdentifyDeviceRequest
@@ -160,11 +122,7 @@ export type ProtocolRequest =
   | GetCapabilitiesRequest
   | GetAccountsRequest
   | GetPolicyRequest
-  | CallMethodRequest
-  | StartProvisioningRequest
-  | CancelProvisioningRequest
-  | ConfirmRecoveryPhraseBackupRequest
-  | FactoryResetRequest;
+  | CallMethodRequest;
 
 export interface StatusResponse {
   id: string;
@@ -275,30 +233,6 @@ export interface MethodResultResponse {
   };
 }
 
-export interface ProvisioningResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "provisioning_result";
-  status: "canceled";
-  provisioning: ProvisioningStatus;
-}
-
-export interface RecoveryPhraseResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "recovery_phrase_result";
-  status: "displayed" | "confirmed";
-  provisioning: ProvisioningStatus;
-}
-
-export interface FactoryResetResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "factory_reset_result";
-  status: "reset";
-  provisioning: ProvisioningStatus;
-}
-
 export interface ProtocolErrorResponse {
   id?: string;
   version: typeof PROTOCOL_VERSION;
@@ -318,9 +252,6 @@ export type ProtocolResponse =
   | AccountsResponse
   | PolicyResponse
   | MethodResultResponse
-  | ProvisioningResponse
-  | RecoveryPhraseResponse
-  | FactoryResetResponse
   | ProtocolErrorResponse;
 
 export class ProtocolError extends Error {
@@ -490,70 +421,6 @@ export function validateCallMethodInput(
   if (chain === SUI_CHAIN_ID && method === SUI_SIGN_TRANSACTION_METHOD) {
     validateSuiSignTransactionParams(params);
   }
-}
-
-export function makeStartProvisioningRequest(
-  approvalTimeoutMs: number = DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS,
-  id = createRequestId(),
-): StartProvisioningRequest {
-  validateRequestId(id);
-  validateApprovalTimeoutMs(approvalTimeoutMs);
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "start_provisioning",
-    params: {
-      approvalTimeoutMs,
-    },
-  };
-}
-
-export function makeCancelProvisioningRequest(
-  approvalTimeoutMs: number = DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS,
-  id = createRequestId(),
-): CancelProvisioningRequest {
-  validateRequestId(id);
-  validateApprovalTimeoutMs(approvalTimeoutMs);
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "cancel_provisioning",
-    params: {
-      approvalTimeoutMs,
-    },
-  };
-}
-
-export function makeConfirmRecoveryPhraseBackupRequest(
-  approvalTimeoutMs: number = DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS,
-  id = createRequestId(),
-): ConfirmRecoveryPhraseBackupRequest {
-  validateRequestId(id);
-  validateApprovalTimeoutMs(approvalTimeoutMs);
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "confirm_recovery_phrase_backup",
-    params: {
-      approvalTimeoutMs,
-    },
-  };
-}
-
-export function makeFactoryResetRequest(
-  approvalTimeoutMs: number = DEFAULT_PROVISIONING_APPROVAL_TIMEOUT_MS,
-  id = createRequestId(),
-): FactoryResetRequest {
-  validateRequestId(id);
-  validateApprovalTimeoutMs(approvalTimeoutMs);
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "factory_reset",
-    params: {
-      approvalTimeoutMs,
-    },
-  };
 }
 
 export function serializeRequest(request: ProtocolRequest): string {
@@ -727,85 +594,6 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
-  if (value.type === "provisioning_result") {
-    if (typeof value.id !== "string" || value.status !== "canceled") {
-      throw new ProtocolError("protocol_error", "Provisioning response is malformed.");
-    }
-    const provisioning = sanitizeProvisioningStatus(value.provisioning);
-    if (provisioning === null) {
-      throw new ProtocolError("protocol_error", "Provisioning response state is malformed.");
-    }
-    if (provisioning.state !== "unprovisioned") {
-      throw new ProtocolError("protocol_error", "Provisioning cancellation response requires unprovisioned state.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "provisioning_result",
-      status: value.status,
-      provisioning,
-    };
-  }
-
-  if (value.type === "recovery_phrase_result") {
-    if (
-      typeof value.id !== "string" ||
-      (value.status !== "displayed" && value.status !== "confirmed")
-    ) {
-      throw new ProtocolError("protocol_error", "Recovery phrase response is malformed.");
-    }
-    if (hasSecretPayloadKey(value)) {
-      throw new ProtocolError("protocol_error", "Recovery phrase response must not include secret material.");
-    }
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "provisioning"])) {
-      throw new ProtocolError("protocol_error", "Recovery phrase response contains unsupported fields.");
-    }
-    if (!isRecord(value.provisioning) || !hasOnlyObjectKeys(value.provisioning, ["state"])) {
-      throw new ProtocolError("protocol_error", "Recovery phrase response state is malformed.");
-    }
-    const provisioning = sanitizeProvisioningStatus(value.provisioning);
-    if (provisioning === null) {
-      throw new ProtocolError("protocol_error", "Recovery phrase response state is malformed.");
-    }
-    const expectedState = value.status === "displayed" ? "unprovisioned" : "provisioned";
-    if (provisioning.state !== expectedState) {
-      throw new ProtocolError("protocol_error", "Recovery phrase response status and state disagree.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "recovery_phrase_result",
-      status: value.status,
-      provisioning,
-    };
-  }
-
-  if (value.type === "factory_reset_result") {
-    if (typeof value.id !== "string" || value.status !== "reset") {
-      throw new ProtocolError("protocol_error", "Factory reset response is malformed.");
-    }
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "provisioning"])) {
-      throw new ProtocolError("protocol_error", "Factory reset response contains unsupported fields.");
-    }
-    if (!isRecord(value.provisioning) || !hasOnlyObjectKeys(value.provisioning, ["state"])) {
-      throw new ProtocolError("protocol_error", "Factory reset response state is malformed.");
-    }
-    const provisioning = sanitizeProvisioningStatus(value.provisioning);
-    if (provisioning === null) {
-      throw new ProtocolError("protocol_error", "Factory reset response state is malformed.");
-    }
-    if (provisioning.state !== "unprovisioned") {
-      throw new ProtocolError("protocol_error", "Factory reset response requires unprovisioned state.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "factory_reset_result",
-      status: "reset",
-      provisioning,
-    };
-  }
-
   if (value.type === "accounts") {
     if (typeof value.id !== "string") {
       throw new ProtocolError("protocol_error", "Accounts response id is malformed.");
@@ -961,36 +749,6 @@ export function assertMethodResultResponse(response: ProtocolResponse): MethodRe
   }
   if (response.type !== "method_result") {
     throw new ProtocolError("protocol_error", "Protocol response type is not method_result.");
-  }
-  return response;
-}
-
-export function assertProvisioningResponse(response: ProtocolResponse): ProvisioningResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "provisioning_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not provisioning_result.");
-  }
-  return response;
-}
-
-export function assertRecoveryPhraseResponse(response: ProtocolResponse): RecoveryPhraseResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "recovery_phrase_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not recovery_phrase_result.");
-  }
-  return response;
-}
-
-export function assertFactoryResetResponse(response: ProtocolResponse): FactoryResetResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "factory_reset_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not factory_reset_result.");
   }
   return response;
 }

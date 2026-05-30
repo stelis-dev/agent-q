@@ -26,11 +26,9 @@ for (const file of SRC_FILES) {
 
 const allowlist = new Set(Object.keys(PUBLIC_ERROR_MESSAGES));
 const firmwareProtocolCodes = [
-  "invalid_setup_step",
   "rng_error",
-  "ui_error",
-  "generation_error",
   "account_error",
+  "policy_error",
 ];
 
 test("every literal Gateway error code is registered in the public-error allowlist", () => {
@@ -44,7 +42,7 @@ test("every literal Gateway error code is registered in the public-error allowli
   );
 });
 
-test("Firmware-emitted setup error codes are public Gateway errors", () => {
+test("Firmware-emitted runtime error codes are public Gateway errors", () => {
   for (const code of firmwareProtocolCodes) {
     assert.ok(allowlist.has(code), `${code} should be registered`);
     assert.equal(normalizeErrorCode(code), code);

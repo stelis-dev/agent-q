@@ -20,11 +20,12 @@ Its current role is:
   StackChan avatar face;
 - provide hardware smoke coverage for future signing flows.
 
-It is not the signing product yet. It does not persist signing keys, expose MCP
-directly, update policy, or sign user requests. It links a restricted
-host-tested Sui transaction facts parser plus a common policy evaluator, stores
-a DEV_PROFILE active default-reject policy record, and consumes that policy
-decision only for Sui `sign_transaction` policy-decision smoke.
+It is not the signing product yet. It does not persist chain private keys,
+expose MCP directly, update policy, or sign user requests. It links a
+restricted host-tested Sui transaction facts parser plus a common policy
+evaluator, stores DEV_PROFILE root entropy and a DEV_PROFILE active
+default-reject policy record, and consumes that policy decision only for Sui
+`sign_transaction` policy-decision smoke.
 
 ## Target Status
 
@@ -41,20 +42,19 @@ Legend:
 | Persistent protocol `deviceId` | O | Stored in NVS namespace `agent_q`, key `device_id`. |
 | `get_status` | O | Returns device id, current state, and provisioning status without approval UI. |
 | Provisioning status reporting | △ | Reports `unprovisioned` or material-backed `provisioned`; hardware smoke is still required. This is not signing readiness: read-only `get_accounts` and `get_policy` expose public/metadata state only, while signing remains unavailable. |
-| Mnemonic UI flow v0 | △ | Approved `start_provisioning` or the local setup speech bubble generates DEV_PROFILE BIP-39 root entropy into RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and stores root entropy plus an active default-reject policy only after physical backup confirmation. Three-letter BIP-39 words are displayed as the full word. `confirm_recovery_phrase_backup` and `cancel_provisioning` wipe scratch. Hardware smoke is still required. |
+| Mnemonic UI flow v0 | △ | The local setup speech bubble generates DEV_PROFILE BIP-39 root entropy into RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and stores root entropy plus an active default-reject policy only after local backup confirmation. Three-letter BIP-39 words are displayed as the full word. Local Confirm and Cancel own the setup transitions; there are no USB setup transition requests. Hardware smoke is still required for the local setup UX. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
-| `display_signal` diagnostic | O | Shows a decision UI and returns after touch approval, rejection, or timeout, only after material-backed `provisioned`. |
-| `connect` | O | Hardware smoke verifies acceptance only after material-backed `provisioned` state and physical approval. The session is RAM-only and does not authorize signing. |
-| `disconnect` | O | Hardware smoke verifies clearing a matching RAM-only Firmware session after material-backed `provisioned` state. |
-| `factory_reset` | △ | Requires physical approval, erases DEV_PROFILE root entropy, clears RAM session/setup scratch, persists `unprovisioned`, and recovers from material/state consistency errors. Hardware smoke is still required. |
+| `connect` | O | Source accepts connection only after material-backed `provisioned` state and physical approval. The session is RAM-only and does not authorize signing. Hardware smoke must be rerun after the local-only setup boundary change. |
+| `disconnect` | O | Source clears only a matching RAM-only Firmware session after material-backed `provisioned` state. Hardware smoke must be rerun after the local-only setup boundary change. |
+| Local reset / material wipe | X | No normal product reset/recovery UX is implemented. Host-triggered reset/debug protocol paths are intentionally not implemented. |
 | Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
 | Display power control | O | Turns the screen backlight off after three minutes of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. Before screen-off or power-off, the target moves to a rest posture; when the screen wakes, it returns to awake posture. |
 | Boot/sleep posture | O | Centers yaw and raises pitch when the default avatar is attached at boot or the screen wakes. Moves to centered yaw and lowered pitch before screen-off or power-off. |
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
-| `get_capabilities` | O | Hardware smoke verifies Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until concrete signing methods are implemented. |
-| `get_accounts` | O | Hardware smoke verifies deriving the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returning address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is also verified against Sui SDK address vectors on host. |
+| `get_capabilities` | O | Source reports Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until concrete signing methods are implemented. Hardware smoke must be rerun after the local-only setup boundary change. |
+| `get_accounts` | O | Source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is verified against Sui SDK address vectors on host; hardware smoke must be rerun after the local-only setup boundary change. |
 | `get_policy` | △ | Source implements a session-scoped read-only summary of the active DEV_PROFILE default-reject policy (`agentq.policy.v0`, hash id, `reject`, zero rules). Corrupt/unreadable policy fails closed; missing policy is migrated only for legacy root-only DEV_PROFILE devices. Gateway/MCP parser tests and target policy-store host tests cover this path; hardware smoke is still required. |
 | `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke. It consumes the stored active default-reject policy; corrupt/unreadable policy is a material-consistency error rather than a normal `provisioned` state, while missing policy is migrated only for legacy root-only DEV_PROFILE devices. Host tests cover the request field/type validation helper and policy store provider. Hardware smoke must be rerun for the policy-store-backed path. No approval UI, capability advertisement, or signing is connected. |
 | Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
@@ -134,12 +134,9 @@ Current UI behavior:
 | `unprovisioned` idle | Touchable setup speech bubble | `idle` |
 | `get_status` | No UI | `idle` unless approval UI is active |
 | `identify_device` | Temporary speech bubble with short code | `idle` |
-| `display_signal` pending | Top speech bubble plus bottom Cancel/Confirm strip | `awaiting_approval` |
-| `start_provisioning` pending | Top speech bubble plus bottom Cancel/Confirm strip | `awaiting_approval` |
-| `cancel_provisioning` pending | Top speech bubble plus bottom Cancel/Confirm strip | `awaiting_approval` |
 | Recovery phrase displayed | Temporary setup panel with 12 numbered up-to-4-letter prefixes in 3 columns by 4 rows and bottom Cancel/Confirm buttons | `busy` |
-| `confirm_recovery_phrase_backup` pending | Top speech bubble plus bottom Cancel/Confirm strip | `awaiting_approval` |
-| `factory_reset` pending | Top speech bubble plus bottom Cancel/Confirm strip | `awaiting_approval` |
+| Local recovery phrase Confirm | Uses the recovery phrase panel's bottom Confirm button | `busy` until storage completes |
+| Local recovery phrase Cancel | Uses the recovery phrase panel's bottom Cancel button | `idle` after scratch wipe |
 | Approved result | Temporary success speech and emotion | `idle` |
 | Rejected result | Temporary rejected speech and emotion | `idle` |
 | Timeout result | Temporary timeout speech and emotion | `idle` |
@@ -166,9 +163,11 @@ display-power control:
 - side-button short press toggles display power;
 - side-button long press powers the device off.
 
-The display-power state is owned by `agent_q_display_power`. The board layer
-only translates AXP2101 power-key IRQs into display-power events or hardware
-power-off; it does not change Agent-Q product state.
+The display-power state is owned by `agent_q_display_power`. StackChan-specific
+motor posture and transient head-motion feedback are owned by
+`agent_q_motion_state`. The board layer only translates AXP2101 power-key IRQs
+into display-power events or hardware power-off; it does not change Agent-Q
+product state.
 
 Boot posture is StackChan-specific motion feedback. After the default avatar is
 attached, the Agent-Q build centers yaw and raises pitch (`yaw=0`, `pitch=540`).
@@ -231,40 +230,33 @@ Provisioning status reporting, the mnemonic UI flow, and DEV_PROFILE root
 entropy persistence are implemented in the target firmware source. Hardware
 smoke is still required. `get_status` returns `provisioning.state`.
 
-`start_provisioning` is accepted only while persistent state is
-`unprovisioned` and no mnemonic setup scratch is active. `cancel_provisioning`
-is accepted only while mnemonic setup scratch or its confirmation prompt is
-active; other state combinations return `invalid_state` without opening
-approval UI. `provisioned` is set only after physical backup confirmation and
-successful root entropy, active policy, and provisioning-state persistence.
-`locked` is not used because no unlock model exists.
+Setup transition paths are local device UX only. The target does not implement
+USB requests for setup start, setup cancel, recovery phrase backup
+confirmation, factory reset, or diagnostic display signaling. `provisioned` is
+set only after local backup confirmation and successful root entropy, active
+policy, and provisioning-state persistence. `locked` is not used because no
+unlock model exists.
 
-Recovery phrase setup v0 source paths are approved `start_provisioning`,
-`confirm_recovery_phrase_backup`, and `cancel_provisioning`. `start_provisioning`
-uses an Agent-Q CSPRNG seeded from early boot entropy before HAL initialization
-plus BIP-39 checksum logic to create a 12-word DEV_PROFILE recovery phrase in
-RAM, then displays only the up-to-4-letter word prefixes on the device in a
-3-column by 4-row grid. Three-letter BIP-39 words are displayed as the full
-word. BIP-39 English prefixes identify the words and are secret material. The
-response contains only `recovery_phrase_result`, status
-metadata, and `provisioning.state`. The display response reports
-`unprovisioned`; the confirmed response reports `provisioned` only after root
-entropy and active policy storage succeeds. It never contains the
-phrase, prefixes, entropy, seed, private key, account data, or policy data.
+Recovery phrase setup v0 starts from the local setup speech bubble shown while
+the device is `unprovisioned`. The flow uses an Agent-Q CSPRNG seeded from early
+boot entropy before HAL initialization plus BIP-39 checksum logic to create a
+12-word DEV_PROFILE recovery phrase in RAM, then displays only the
+up-to-4-letter word prefixes on the device in a 3-column by 4-row grid.
+Three-letter BIP-39 words are displayed as the full word. BIP-39 English
+prefixes identify the words and are secret material. No protocol response
+contains the phrase, prefixes, entropy, seed, private key, account data, or
+policy data.
 The target tracks the volatile phrase with a RAM-only scratch substate:
-`none`, `displayed`, or `backup_confirmation_pending`. This substate is
-separate from persistent `provisioning.state`, pending approval, and the LVGL
-panel pointer.
+`none` or `displayed`. This substate is separate from persistent
+`provisioning.state`, session state, display power state, and the LVGL panel
+pointer.
 
-Backup confirmation is accepted only after the scratch substate is `displayed`.
-The device-local Confirm button on the recovery phrase panel stores the
-DEV_PROFILE root entropy blob, stores the active default-reject policy, persists
-`provisioned`, and then wipes volatile scratch. The protocol
-`confirm_recovery_phrase_backup` request first moves the scratch substate to
-`backup_confirmation_pending`; approval, rejection, or timeout wipes the
-volatile phrase and returns the scratch substate to `none`. Storage failure
-wipes scratch, returns `storage_error`, and must not report `provisioned`.
-Hardware smoke is still required.
+Backup confirmation is accepted only from the recovery phrase panel's local
+Confirm button after the scratch substate is `displayed`. The device-local
+Confirm button stores the DEV_PROFILE root entropy blob, stores the active
+default-reject policy, persists `provisioned`, and then wipes volatile scratch.
+Storage failure wipes scratch and must not report `provisioned`. Hardware smoke
+is still required for the local setup UX.
 
 The LVGL panel is not the source of truth for recovery phrase validity. If the
 recovery phrase display panel is removed or replaced while the scratch substate
@@ -272,32 +264,18 @@ is `displayed`, the target treats that UI event as a transition to `none` and
 wipes the volatile phrase. A later backup confirmation request must not succeed
 for a phrase whose setup panel is gone. Display power state is not part of this
 security state: screen/backlight sleep alone does not invalidate scratch, and
-request UI should wake the display before showing prompts. The active
-`confirm_recovery_phrase_backup` approval prompt may replace the phrase display
-only after validating that the panel was active, and it must wipe the phrase on
-approval, rejection, or timeout.
+Agent-Q UI wakes the display before showing setup material.
 
 The phrase display has a finite lifetime. When it expires, the target clears the
 setup panel, wipes the volatile phrase, and no later backup confirmation can use
 that phrase.
 
-`cancel_provisioning` wipes volatile setup scratch once its approval UI has
-interrupted a recovery phrase display. If cancellation is rejected or times out,
-the displayed phrase is gone and must be generated again. Cancellation does not
-erase already-confirmed root material or active policy; `factory_reset` owns
-that operation.
-
-`factory_reset` is accepted with physical approval from normal states and from
-the internal material/state consistency-error condition. Approval clears any
-RAM session, wipes volatile setup scratch, erases the DEV_PROFILE root entropy
-blob and active policy, persists `unprovisioned`, and clears the consistency
-error only after storage cleanup succeeds. Rejection and timeout leave stored material and state
-unchanged. This is a DEV_PROFILE development and recovery operation; Gateway
-must not expose it as a normal agent-facing MCP tool, and USER_PROFILE reset
-must be kept behind a local recovery/setup path with physical approval.
-When the target detects a material/state consistency error before factory reset,
-it clears any active RAM session immediately and fails closed for session-scoped
-requests.
+The device-local Cancel button wipes volatile setup scratch and leaves
+persistent state `unprovisioned`. Cancellation does not erase already-confirmed
+root material or active policy. No local reset/recovery UX is implemented yet;
+when the target detects a material/state consistency error, it clears any active
+RAM session immediately and fails closed for session-scoped requests until a
+normal local reset/recovery path exists.
 
 Read-only public account derivation (`get_accounts`) is implemented. Mnemonic
 import, runtime policy APIs, signing APIs, and USER_PROFILE secure
@@ -343,19 +321,20 @@ Current verification expectations for this target:
 - flash to a StackChan CoreS3 device when hardware is available;
 - smoke-test `get_status`;
 - smoke-test `identify_device`;
-- smoke-test `display_signal` returns `invalid_state` before `provisioned`;
-- smoke-test `display_signal` approval, rejection, and timeout behavior after
-  `provisioned`;
 - smoke-test `connect` returns `invalid_state` before `provisioned`;
+- manually enter setup from the local unprovisioned setup speech bubble;
+- visually verify the recovery phrase panel displays 12 numbered
+  up-to-4-letter prefixes in a 3-column by 4-row grid and that three-letter
+  BIP-39 words are displayed as the full word;
+- smoke-test local Cancel wipes scratch and leaves `provisioning.state =
+  unprovisioned`;
+- smoke-test local Confirm stores root material plus active default-reject
+  policy, wipes scratch, and reports `provisioning.state = provisioned`;
+- smoke-test reboot persistence after local Confirm;
 - smoke-test `connect` after backup-confirmed root material and active policy
   storage requires physical approval and returns a RAM-only session id;
 - smoke-test `disconnect` clears a matching active session and rejects an
   unknown or expired session id;
-- smoke-test `factory_reset` requires physical approval, clears a matching
-  active session, returns `unprovisioned`, and allows `start_provisioning`
-  again;
-- smoke-test `factory_reset` recovers a material/state consistency-error device
-  when such a condition can be safely induced in a development build;
 - smoke-test three minutes of inactivity turns the screen backlight off, Agent-Q
   request UI wakes it, side-button short press toggles display power, and
   side-button long press powers off;
@@ -365,20 +344,9 @@ Current verification expectations for this target:
   power-off move the target to centered yaw and lowered pitch first;
 - visually verify touch, side-button wake, and Agent-Q request UI wake return
   the target to centered yaw and raised pitch;
-- smoke-test `start_provisioning` approval, rejection, timeout, displayed
-  3-column by 4-row prefix UI, unchanged `unprovisioned` state, and `busy`
-  while setup scratch is active;
-- smoke-test `cancel_provisioning` approval, rejection, timeout,
-  `invalid_state` when no setup flow is active, unchanged `unprovisioned`
-  state, and scratch wipe;
 - smoke-test `get_status` reports `device.state = busy` while a recovery phrase
   is displayed;
 - smoke-test recovery phrase display expiry clears the setup panel, wipes
-  scratch, and makes backup confirmation return `invalid_setup_step`;
-- smoke-test `confirm_recovery_phrase_backup` approval, rejection, timeout,
-  `invalid_setup_step` before phrase display, `provisioned` state after
-  approved storage, unchanged `unprovisioned` state after rejection or timeout,
-  and scratch wipe;
-- smoke-test `cancel_provisioning` wipes any displayed recovery phrase scratch;
+  scratch, and prevents later local confirmation;
 - visually verify that Agent-Q temporary UI does not leave the avatar in an
   Agent-Q-specific mode after completion.

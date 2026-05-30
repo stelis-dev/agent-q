@@ -33,25 +33,22 @@ are not authority.
 ```mermaid
 stateDiagram-v2
     [*] --> Unprovisioned: boot, no root signing material
-    Unprovisioned --> Unprovisioned: start_provisioning + phrase display
-    Unprovisioned --> Provisioned: confirm backup + root material and active policy stored
-    Unprovisioned --> Unprovisioned: cancel/timeout/failure + scratch wipe
+    Unprovisioned --> Unprovisioned: local setup starts + phrase display
+    Unprovisioned --> Provisioned: local backup confirm + root material and active policy stored
+    Unprovisioned --> Unprovisioned: local cancel/timeout/failure + scratch wipe
     Unprovisioned --> Provisioning: future persistent setup step
-    Provisioning --> Unprovisioned: cancel_provisioning + physical approval
+    Provisioning --> Unprovisioned: future local cancel + physical approval
     Provisioning --> Provisioned: future setup complete, root material and active policy stored
     Provisioned --> Locked: future local lock condition
     Locked --> Provisioned: future local unlock
-    Provisioned --> Unprovisioned: factory_reset + physical approval
+    Provisioned --> Unprovisioned: future local reset + physical approval
 
     Unprovisioned: get_status, identify_device
-    Unprovisioned: start_provisioning
-    Unprovisioned: cancel_provisioning and confirm_recovery_phrase_backup while mnemonic UI scratch is active
+    Unprovisioned: device-local setup bubble and recovery phrase controls
     Provisioning: get_status
-    Provisioning: cancel_provisioning
+    Provisioning: future local cancel
     Provisioned: get_status, identify_device, connect, disconnect
     Provisioned: get_capabilities, get_accounts (read-only, session-scoped)
-    Provisioned: display_signal diagnostic
-    Provisioned: factory_reset
     Provisioned: call_method runtime skeleton
     Locked: get_status, identify_device, unlock flow
 ```
@@ -73,13 +70,11 @@ policy record), it initializes the default-reject active policy before reporting
 
 If persisted state, stored root material, and stored active policy disagree,
 Firmware reports device `error` and fails closed for normal setup and session
-requests. `factory_reset` is the recovery path for that consistency-error
-condition: after physical approval, Firmware erases root material and active
-policy, clears volatile scratch and RAM sessions, persists `unprovisioned`, and
-clears the error only after storage cleanup succeeds.
-Detecting the consistency error also clears any active RAM session immediately,
-so a session created before the error is not retained as a stale local
-capability.
+requests. Detecting the consistency error also clears any active RAM session
+immediately, so a session created before the error is not retained as a stale
+local capability. The current StackChan CoreS3 source does not expose a USB
+reset or debug recovery request; a future reset/recovery path must be a
+device-local UX flow with physical approval.
 
 ## State Layers And Owners
 
@@ -112,11 +107,6 @@ Allowed:
 
 - `get_status`
 - `identify_device`
-- `start_provisioning`
-- `cancel_provisioning` only while volatile mnemonic setup scratch or its
-  confirmation prompt is active
-- `confirm_recovery_phrase_backup` only while volatile mnemonic setup scratch is
-  displayed
 - device-local setup speech bubble and recovery phrase Cancel/Confirm controls
 
 Rejected:
@@ -126,7 +116,7 @@ Rejected:
 - `get_capabilities`
 - `get_accounts`
 - `call_method`
-- `display_signal`
+- USB provisioning/reset/diagnostic requests
 - policy read/write
 - signing
 - external evidence or price fetch
@@ -143,7 +133,7 @@ Allowed:
 
 - `get_status`
 - `identify_device` only when it does not disrupt setup UI
-- `cancel_provisioning`
+- future device-local cancel
 
 Rejected:
 
@@ -157,9 +147,9 @@ Rejected:
 Scratch signing material may exist only inside Firmware during setup steps.
 Canceling setup must wipe scratch material before returning to `unprovisioned`.
 Current StackChan CoreS3 source limits recovery phrase scratch material to RAM
-and tracks it with a volatile substate: `none`, `displayed`, or
-`backup_confirmation_pending`. That scratch substate is separate from the
-persistent `provisioning.state`, pending approval state, and UI panel state.
+and tracks it with a volatile substate: `none` or `displayed`. That scratch
+substate is separate from the persistent `provisioning.state`, pending approval
+state, and UI panel state.
 The current StackChan CoreS3 persistent material slice resets stale
 `provisioning` state to `unprovisioned` when no valid root material or active
 policy exists and does not enter this state for the normal
@@ -180,7 +170,6 @@ Allowed:
 - `identify_device`
 - `connect`
 - `disconnect`
-- `display_signal` diagnostic
 - `get_capabilities` (read-only, session-scoped)
 - `get_accounts` (read-only, session-scoped)
 - `get_policy` (read-only, session-scoped)
@@ -195,8 +184,8 @@ implementation, `provisioned` enables `connect`, `disconnect`, read-only
 account 0), read-only `get_policy` for the active default-reject policy summary,
 the `call_method` runtime skeleton (unknown methods rejected with
 `unsupported_method`, while Sui `sign_transaction` policy-decision smoke consumes
-the active policy and returns only rejected method results), and the
-`display_signal` diagnostic; signing remains unavailable.
+the active policy and returns only rejected method results); signing remains
+unavailable.
 Future signing txBytes decoding is allowed only inside a session-scoped
 `call_method` signing path after `provisioned`; it must remain unavailable in
 `unprovisioned`, `provisioning`, `locked`, and the internal consistency-error
@@ -240,11 +229,7 @@ This state is reserved until an unlock model is implemented.
 | `identify_device` | O | O* | O | O | Firmware |
 | `connect` | X | X | O | TBD | Firmware |
 | `disconnect` | X | X | O | O | Firmware |
-| `start_provisioning` | O | X | X | X | Firmware |
-| `cancel_provisioning` | O* | O | X | X | Firmware |
-| `confirm_recovery_phrase_backup` | O* | X | X | X | Firmware |
-| `factory_reset` | O | O | O | TBD | Firmware |
-| `display_signal` | X | X | O | X | Firmware |
+| USB provisioning/reset/diagnostic requests | X | X | X | X | Firmware |
 | `get_capabilities` | X | X | O | X | Firmware |
 | `get_accounts` | X | X | O | X | Firmware |
 | `get_policy` | X | X | O | X | Firmware |
@@ -252,13 +237,9 @@ This state is reserved until an unlock model is implemented.
 | policy read | X | X | O | X | Firmware |
 | policy update | X | X | X (future: authorization required) | X | Firmware |
 
-`O*`: allowed only while volatile mnemonic setup scratch or its confirmation
-prompt is active. Other `O` operations may still return `busy` while a physical
+`O*`: allowed only when the request does not disrupt local setup UI. Other `O`
+operations may still return `busy` while a physical
 approval prompt or device-only setup material display is active.
-`factory_reset` is also allowed from Firmware's internal consistency-error
-state even though that error state is reported as `device.state = error`, not as
-a separate `provisioning.state` value. It is a DEV_PROFILE development/recovery
-operation and must not be exposed as a normal agent-facing MCP tool.
 
 Gateway may hide unavailable operations, but Firmware must still reject them.
 
@@ -272,10 +253,10 @@ Boot
 -> no root signing material
 -> unprovisioned
 -> welcome with touchable setup speech bubble
--> setup speech bubble touch or start_provisioning request
+-> setup speech bubble touch
 -> generate mnemonic on device
 -> show up-to-4-letter prefixes once on device
--> user confirms backup or cancels on device, or through an approved protocol request
+-> user confirms backup or cancels on device
 -> if confirmed, store root material and active policy locally
 -> only after storage succeeds, provisioned
 -> wipe volatile scratch

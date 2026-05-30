@@ -152,6 +152,21 @@ explicitly classified.
 Gateway may hide unavailable operations, but Firmware must enforce device-state
 gates.
 
+External APIs must not directly command Firmware state transitions. A protocol
+request may read state or submit bounded input for Firmware to evaluate, but it
+must not be shaped as a direct state setter.
+Firmware state transitions must be internal consequences of Firmware-owned
+conditions such as current state, validated input, stored material consistency,
+policy evaluation, physical input, successful persistence, timeout, or failure
+cleanup. APIs then behave according to the resulting state; they do not create
+authority to force that state from outside.
+
+Do not add convenience APIs, debug protocol messages, host-triggered setup,
+host-triggered reset, diagnostic display commands, or state-changing shortcuts
+for tests or demos. If a hardware test needs special setup, use a development
+firmware build or re-flash workflow for that test. The tested behavior itself
+must still enter through the normal product UX and normal protocol surface.
+
 Do not use UI object lifetime as the source of truth for security, provisioning,
 signing, account, policy, session, or sensitive scratch state. UI may display,
 request, or mirror state, but explicit state variables owned by the responsible

@@ -372,7 +372,7 @@ launcher = replace_any_once(
         GetStackChan().attachAvatar(std::move(default_avatar));
         GetStackChan().addModifier(std::make_unique<stackchan::BlinkModifier>());
         GetStackChan().addModifier(std::make_unique<stackchan::IdleExpressionModifier>(8000, 20000));
-        GetStackChan().motion().moveWithSpeed(0, 540, 500);
+        agent_q::prepare_display_power_awake_posture();
         agent_q::show_provisioning_welcome_if_needed();
         _view.reset();
     } else {

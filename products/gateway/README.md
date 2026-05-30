@@ -138,7 +138,8 @@ npm test
 The automated tests use mocked Gateway drivers and do not exercise the live
 `SerialPortUsbDriver` path. When hardware is available, run a manual USB smoke
 check for `scan_devices`, `get_device_status`, `identify_devices`,
-`display_signal`, `connect_device`, and `disconnect_device` after serial
+`connect_device`, `get_capabilities`, `get_accounts`, `get_policy`,
+`call_method`, and `disconnect_device` after serial
 transport changes.
 
 Run the stdio MCP server:

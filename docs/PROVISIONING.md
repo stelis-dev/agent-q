@@ -153,83 +153,65 @@ Runtime v0 state transitions:
 ```mermaid
 stateDiagram-v2
     [*] --> Unprovisioned: boot default or stored state
-    Unprovisioned --> Unprovisioned: start_provisioning approved, phrase displayed
-    Unprovisioned --> Provisioned: backup confirmed, root material and policy stored
-    Unprovisioned --> Unprovisioned: cancel/timeout/failure, scratch wiped
-    Provisioned --> Unprovisioned: factory_reset approved, root material and policy erased
-
-    Unprovisioned --> Unprovisioned: start rejected or timeout
+    Unprovisioned --> Unprovisioned: local setup opens phrase display
+    Unprovisioned --> Provisioned: local Confirm, root material and policy stored
+    Unprovisioned --> Unprovisioned: local Cancel/timeout/failure, scratch wiped
 
     Unprovisioned: no root signing material or active policy
     Unprovisioned: optional volatile mnemonic setup scratch only
     Provisioned: root material and active policy stored; read-only get_accounts/get_policy available, signing still unavailable
 ```
 
-`start_provisioning` is valid only when persistent state is `unprovisioned` and
-no mnemonic setup scratch is active. `cancel_provisioning` is valid only while
-mnemonic setup scratch or its confirmation prompt is active. Invalid transitions
-return `invalid_state` without opening approval UI.
+The current runtime does not expose USB requests for provisioning start,
+provisioning cancel, recovery phrase backup confirmation, factory reset, or
+diagnostic display signaling. These transitions are device-local UX only.
 
 ## Recovery Phrase Setup v0
 
-Current StackChan CoreS3 source enters recovery phrase setup through approved
-`start_provisioning` or through the local setup speech bubble shown while the
-device is `unprovisioned`. The recovery phrase panel has device-local
-Cancel/Confirm buttons. Protocol requests require physical approval on the
-device and do not require `sessionId`; the local setup speech bubble touch and
-local recovery phrase buttons are already physical device actions.
+Current StackChan CoreS3 source enters recovery phrase setup only through the
+local setup speech bubble shown while the device is `unprovisioned`. The
+recovery phrase panel has device-local Cancel/Confirm buttons. Gateway/MCP
+cannot start, cancel, or confirm this setup flow through USB protocol messages.
 
-Approved `start_provisioning` generates 128-bit BIP-39 root entropy from an
-Agent-Q CSPRNG seeded from early boot entropy before HAL initialization, then
-uses BIP-39 checksum logic to render a 12-word recovery phrase. Firmware keeps
-the root entropy and phrase only in RAM until backup confirmation and displays
-only the up-to-4-letter word prefixes on the device. Three-letter BIP-39 words
-are displayed as the full word. The prefixes are shown as 12 numbered cells in
-3 columns by 4 rows so they fit on one StackChan CoreS3 screen. BIP-39 English
+Local setup generates 128-bit BIP-39 root entropy from an Agent-Q CSPRNG seeded
+from early boot entropy before HAL initialization, then uses BIP-39 checksum
+logic to render a 12-word recovery phrase. Firmware keeps the root entropy and
+phrase only in RAM until backup confirmation and displays only the
+up-to-4-letter word prefixes on the device. Three-letter BIP-39 words are
+displayed as the full word. The prefixes are shown as 12 numbered cells in 3
+columns by 4 rows so they fit on one StackChan CoreS3 screen. BIP-39 English
 word prefixes identify the words and are secret material; Gateway never
-receives them. The response reports only `recovery_phrase_result` with status
-`displayed` and `provisioning.state = unprovisioned`. The response never
-carries the phrase, prefixes, entropy, seed, private key, account data, or
-policy data.
+receives them. No protocol response carries the phrase, prefixes, entropy,
+seed, private key, account data, or policy data.
 
 Firmware tracks the volatile recovery phrase with an explicit scratch substate:
-`none`, `displayed`, or `backup_confirmation_pending`. This RAM-only substate is
-separate from the persistent `provisioning.state`, pending approval state, and
-LVGL panel state. The UI is not the source of truth; panel deletion or
-replacement is treated as an event that must move `displayed` to `none` by
-wiping or invalidating the phrase.
+`none` or `displayed`. This RAM-only substate is separate from the persistent
+`provisioning.state`, session state, display power state, and LVGL panel state.
+The UI is not the source of truth; panel deletion or replacement is treated as
+an event that must move `displayed` to `none` by wiping or invalidating the
+phrase.
 
 Backup confirmation is accepted only after a phrase has been displayed. The
 device-local Confirm button stores the binary root entropy, stores the active
 default-reject policy, then persists `provisioning.state = provisioned`, then
-wipes volatile scratch. The protocol
-`confirm_recovery_phrase_backup` request moves the scratch substate from
-`displayed` to `backup_confirmation_pending`; approval, rejection, or timeout
-always wipes the volatile phrase and returns the scratch substate to `none`. If
-root material, policy, or state persistence fails, Firmware wipes volatile
-scratch, returns `storage_error`, and must not report `provisioned`. Rejection
-or timeout also wipes the volatile phrase, so the user must generate a new
-phrase to continue.
+wipes volatile scratch. If root material, policy, or state persistence fails,
+Firmware wipes volatile scratch and must not report `provisioned`.
 
 The recovery phrase is backup-ready only while its recovery phrase setup panel
 is still active and not expired. If that panel is removed or replaced, Firmware
 wipes or invalidates the volatile phrase so a later backup confirmation cannot
-confirm material whose setup UI is gone. Display power state is not part of this
-security state: screen/backlight sleep does not invalidate scratch by itself,
-and request UI should wake the display before showing a prompt. The active
-physical backup-confirmation prompt is the only exception: it may replace the
-phrase display after validating that the setup panel was still active, but it
-must end by wiping the phrase whether the user confirms, rejects, or lets the
-prompt time out.
+confirm material whose setup UI is gone. Display power state is not part of
+this security state: screen/backlight sleep does not invalidate scratch by
+itself, and Agent-Q UI wakes the display before showing setup material.
 
 While the phrase display is active, `get_status` remains available and reports
 `device.state = busy`. The display has a finite lifetime; expiry clears the
 setup panel and wipes the volatile phrase.
 
-`cancel_provisioning` also wipes volatile setup scratch once its approval UI has
-interrupted a recovery phrase display. If the user rejects cancellation or the
-cancel approval times out, the persistent state remains `unprovisioned`, but
-the displayed phrase is gone and must not be treated as recoverable.
+The device-local Cancel button wipes volatile setup scratch and leaves the
+persistent state `unprovisioned`. If display expiry, UI replacement, or another
+failure removes the panel, Firmware must wipe scratch and the user must start
+the local setup flow again.
 
 This v0 flow provides read-only `get_accounts` but deliberately stops before
 signing, policy, and USER_PROFILE secure provisioning. USER_PROFILE signing material remains blocked
@@ -237,15 +219,11 @@ by the security-profile gates in `docs/SECURITY_MODEL.md`: secure firmware
 profile, encrypted storage, verified RNG readiness, destructive hardware
 rehearsal, and hardware smoke.
 
-`factory_reset` is the destructive recovery path for this DEV_PROFILE storage
-slice. It requires physical approval, clears any RAM session, wipes volatile
-setup scratch, erases the stored root entropy blob and active policy, persists
-`provisioning.state = unprovisioned`, and is also valid when Firmware has failed
-closed because stored state, root material, and active policy disagree. If erase
-or state persistence fails, Firmware returns `storage_error` and must not claim
-reset success. It is a development/recovery operation for this DEV_PROFILE
-slice, not a normal agent-facing MCP tool. USER_PROFILE reset must stay behind a local
-recovery or setup path with physical approval.
+No destructive reset or reprovisioning protocol request is implemented. A future
+reset/recovery flow must be normal device UX, not a host-triggered debug path:
+Firmware must own physical approval, stored-material wipe, active policy wipe,
+session cleanup, and post-failure state. Until that local UX exists,
+material/state consistency errors fail closed.
 
 ## Implementation Order
 
@@ -264,9 +242,10 @@ Recommended first slice:
 Do not jump directly from mnemonic generation to user transaction signing.
 
 Current implementation status: steps 1 through 6 are implemented for the
-StackChan CoreS3 DEV_PROFILE source path, with hardware smoke still required.
-Sui `sign_personal_message` (step 7), mnemonic import, signing APIs, policy, and
-USER_PROFILE secure provisioning are not implemented.
+StackChan CoreS3 DEV_PROFILE source path, with hardware smoke still required
+for the local mnemonic UI path. Sui `sign_personal_message` (step 7), mnemonic
+import, signing APIs, policy update, local reset/recovery UX, and USER_PROFILE
+secure provisioning are not implemented.
 
 ## Completion Criteria
 

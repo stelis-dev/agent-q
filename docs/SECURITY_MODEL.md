@@ -50,20 +50,19 @@ Implemented today:
 - A DEV_PROFILE recovery phrase setup path in StackChan CoreS3 source. It can
   generate BIP-39 root entropy into RAM from an Agent-Q CSPRNG seeded from
   early boot entropy, display only up-to-4-letter word prefixes on the device,
-  store the root entropy after physical backup confirmation, and wipe volatile
-  scratch on cancel, confirmation, rejection, display expiry, or timeout.
+  store the root entropy after local backup confirmation, and wipe volatile
+  scratch on local cancel, confirmation, display expiry, or failure.
   Firmware build verification is required for each change, hardware smoke is
   still required, and this is not USER_PROFILE key provisioning.
-- A physical-approval `factory_reset` source path for StackChan CoreS3 that
-  erases the DEV_PROFILE root entropy blob and active policy record, clears RAM
-  session/setup scratch, persists `unprovisioned`, and recovers from
-  material/state consistency error. It is a development/recovery path and is not
-  exposed as a normal
-  agent-facing MCP tool. Hardware smoke is still required.
+- No implemented local reset/recovery UX. Host-triggered reset/debug protocol
+  paths are intentionally not implemented; material/state consistency errors
+  fail closed until a normal device-local reset or recovery flow is specified
+  and built.
 - Read-only Sui account and public-key discovery over an approved runtime
   session. Firmware derives public identity from the DEV_PROFILE root entropy
   on demand and does not return mnemonic, seed, entropy, or private key
-  material. StackChan CoreS3 hardware smoke verifies this path over Gateway/MCP.
+  material. Hardware smoke must be rerun after the local-only setup boundary
+  change.
 - A common firmware policy evaluator and a StackChan CoreS3 DEV_PROFILE active
   policy provider. The target stores only a default-reject policy record in
   ordinary NVS, reads a public summary through `get_policy`, and consumes that

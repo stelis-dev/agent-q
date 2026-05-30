@@ -98,16 +98,15 @@ Protocol error codes:
 - `invalid_approval_timeout`
 - `invalid_session`
 - `invalid_state`
-- `invalid_setup_step`
+- `invalid_method`
+- `invalid_params`
 - `unsupported_version`
 - `unsupported_type`
 - `busy`
 - `rejected`
 - `timeout`
-- `storage_error`
+- `policy_error`
 - `rng_error`
-- `ui_error`
-- `generation_error`
 - `account_error`
 
 Transport-layer errors are owned by Gateway and are not Firmware protocol
@@ -152,20 +151,19 @@ Flow rules:
   it can no longer confirm.
 
 Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
-`get_capabilities`, `get_accounts`, `get_policy`, the `call_method` runtime skeleton,
-`start_provisioning`, `cancel_provisioning`, explicit local Gateway device
-selection, local Gateway caching of discovered devices, and a hardware
-diagnostic request. The current `call_method` skeleton enforces state and
+`get_capabilities`, `get_accounts`, `get_policy`, the `call_method` runtime
+skeleton, explicit local Gateway device selection, and local Gateway caching of
+discovered devices. The current `call_method` skeleton enforces state and
 session gates, keeps unknown methods rejected, and recognizes Sui
 `sign_transaction` only for rejected policy-decision smoke against the active
 stored default-reject policy; it is not signing support.
 
-Source-level implementation added, with hardware smoke still pending:
-`confirm_recovery_phrase_backup` with persistent root material and active policy
-storage, plus `factory_reset` for physical-approval material wipe/recovery. The
-current StackChan CoreS3 mnemonic UI flow uses `start_provisioning` to generate
-and display setup material; it does not expose `generate_recovery_phrase` or the
-previous `provisioning_setup_check` boundary-check request.
+Provisioning and material reset transitions are not USB protocol requests in the
+current implementation. The StackChan CoreS3 target enters setup from its local
+unprovisioned setup UI and confirms or cancels the recovery phrase on the
+device. There is no implemented USB request for starting provisioning, canceling
+provisioning, confirming a recovery phrase backup, factory reset, or diagnostic
+display signaling.
 
 `connect` and `disconnect` are defined by the protocol and parsed by Gateway.
 The current StackChan CoreS3 target accepts `connect` only after persistent root
@@ -312,297 +310,52 @@ parsing a response:
   control characters and newlines. These are display values, not a trust
   signal, so they are sanitized rather than rejected.
 
-## Mnemonic UI Flow v0
+## Local Provisioning And Reset Boundary
 
-Mnemonic UI flow v0 is a hardware-confirmation setup slice. It lets Firmware
-generate a 12-word BIP-39 recovery phrase in RAM, display up-to-4-letter word
-prefixes on the device in a 3-column by 4-row grid, store binary root material
-and the active default-reject policy only after backup confirmation, and then
-wipe the volatile scratch material after confirmation, cancellation, timeout, or
-failure. Three-letter BIP-39 words are displayed as the full word.
+Provisioning setup and destructive material reset are device-local UX flows in
+the current protocol. Gateway can observe the resulting state through
+`get_status`, but it cannot trigger setup, cancellation, recovery phrase backup
+confirmation, factory reset, or diagnostic display approval by sending a USB
+request.
 
-This flow completes only DEV_PROFILE root material and active policy
-persistence. Read-only public account identity is then available via
-`get_accounts`; this flow does not make signing available or satisfy
-USER_PROFILE generation. USER_PROFILE generation remains blocked until the
-firmware integrity and encrypted storage gates in `docs/SECURITY_MODEL.md` are
-satisfied.
+The StackChan CoreS3 target enters setup from the local unprovisioned setup
+speech bubble. Firmware generates a 12-word BIP-39 recovery phrase in RAM,
+displays up-to-4-letter word prefixes on the device in a 3-column by 4-row
+grid, and exposes only local Cancel and Confirm controls on the recovery phrase
+panel. Three-letter BIP-39 words are displayed as the full word.
 
-Gateway must not receive the phrase, the displayed prefixes, entropy, seed,
-private key, account data, policy data, or import text. BIP-39 English word
-prefixes of up to four letters are enough to identify the words and must be
-treated as secret material.
-
-These requests do not require `sessionId`. Physical approval on Firmware is the
-authority for the setup UI transition; the host request is only an untrusted
-prompt to show that approval UI. Agent-facing MCP tools must not expose these
-write actions as normal signing tools.
-
-The StackChan CoreS3 target also supports device-local setup entry by tapping
-the setup speech bubble while unprovisioned, plus device-local Cancel/Confirm
-buttons on the recovery phrase display. These local controls do not add protocol
-messages; they must follow the same Firmware-owned setup scratch and wipe rules.
-
-Firmware owns recovery phrase scratch as a volatile setup substate, separate
-from persistent `provisioning.state`, pending physical approval, and LVGL panel
-state. The v0 substates are:
+Firmware owns the volatile recovery phrase scratch substate, separate from
+persistent `provisioning.state`, session state, display power state, and LVGL
+object lifetime. The current substates are:
 
 - `none`: no generated recovery phrase is valid in RAM.
-- `displayed`: a phrase exists in RAM and its up-to-4-letter prefixes are
-  considered shown for backup.
-- `backup_confirmation_pending`: the display was accepted for backup
-  confirmation and a physical confirmation prompt is active.
+- `displayed`: root entropy and recovery phrase scratch exist in RAM and the
+  device recovery phrase panel is active.
 
-The UI panel is an output of this substate machine, not the authority for it.
-Panel deletion or replacement is only an input that must transition `displayed`
-to `none` by wiping or invalidating the volatile phrase.
+The UI panel is an output of this substate machine, not the source of truth. If
+the recovery phrase panel is removed, replaced, expires, is canceled, or fails
+to store material, Firmware wipes the volatile phrase and returns the scratch
+substate to `none`. Screen/backlight sleep does not by itself change the
+security state; Agent-Q UI wakes the display before showing setup material or
+approval UI.
 
-### Start Provisioning
-
-`start_provisioning` starts the current mnemonic UI flow from `unprovisioned`.
-After physical approval, Firmware generates BIP-39 root entropy from its secure
-RNG, renders the BIP-39 phrase in RAM, and displays only the up-to-4-letter
-prefixes on the device. It does not persist `provisioning`, and it does not
-return a `provisioning_result` on success in this v0 slice.
-
-Request:
-
-```json
-{
-  "id": "req_start_setup_001",
-  "version": 1,
-  "type": "start_provisioning",
-  "params": {
-    "approvalTimeoutMs": 30000
-  }
-}
-```
-
-Request rules:
-
-- `approvalTimeoutMs` is a positive integer with maximum `60000`.
-- Default `approvalTimeoutMs` when omitted is `30000`.
-- The request contains no mnemonic, seed, private key, import text, account
-  data, or policy data.
-- If recovery phrase setup is already active, Firmware returns `busy` rather
-  than replacing the displayed setup material.
-
-Approved response:
-
-```json
-{
-  "id": "req_start_setup_001",
-  "version": 1,
-  "type": "recovery_phrase_result",
-  "status": "displayed",
-  "provisioning": {
-    "state": "unprovisioned"
-  }
-}
-```
-
-If the user rejects or approval times out, Firmware returns the common `error`
-shape with `rejected` or `timeout`, no phrase remains valid, and the persistent
-state remains `unprovisioned`.
-
-If the secure RNG is unavailable, Firmware returns `rng_error`. If BIP-39 phrase
-generation fails, Firmware returns `generation_error`. If the device cannot show
-the setup UI, Firmware returns `ui_error`. All failure paths must wipe any
-partial volatile scratch.
-
-After `type`, `id`, and `version` are syntactically valid, Firmware checks the
-source state and setup-step guards before request parameters such as
-`approvalTimeoutMs`. If Firmware is not available for the unprovisioned mnemonic
-UI flow, it returns `invalid_state` or `busy` without showing approval UI.
-
-### Cancel Provisioning
-
-`cancel_provisioning` is the cancellation path for this v0 setup UI. It is
-available while volatile mnemonic setup scratch or its confirmation prompt is
-active. It wipes setup scratch and leaves the persistent state
+Local Confirm is the only implemented backup confirmation transition. It stores
+binary root material and the active default-reject policy first, then persists
+`provisioned`, then wipes volatile scratch. If root material, policy, or state
+persistence fails, Firmware wipes volatile scratch and must not report
+`provisioned`. Local Cancel wipes volatile scratch and leaves persistent state
 `unprovisioned`.
 
-Request:
+Gateway must not receive the phrase, displayed prefixes, entropy, seed, private
+key, account data, policy data, or import text. BIP-39 English word prefixes of
+up to four letters identify the words and must be treated as secret material.
 
-```json
-{
-  "id": "req_cancel_setup_001",
-  "version": 1,
-  "type": "cancel_provisioning",
-  "params": {
-    "approvalTimeoutMs": 30000
-  }
-}
-```
-
-Approved response:
-
-```json
-{
-  "id": "req_cancel_setup_001",
-  "version": 1,
-  "type": "provisioning_result",
-  "status": "canceled",
-  "provisioning": {
-    "state": "unprovisioned"
-  }
-}
-```
-
-If the user rejects or approval times out, Firmware returns the common `error`
-shape with `rejected` or `timeout`. This does not preserve volatile setup
-scratch: once the cancel approval prompt interrupts displayed setup material,
-Firmware must wipe that phrase on rejection or timeout and the user must start
-again.
-
-After `type`, `id`, and `version` are syntactically valid, Firmware checks the
-source state and setup-step guards before request parameters such as
-`approvalTimeoutMs`. If no cancelable setup flow is active, Firmware returns
-`invalid_state` without showing approval UI.
-
-Canceling provisioning wipes setup scratch state before reporting success and
-must not return it to the host. It does not erase already-confirmed persistent
-material; once the device is `provisioned`, use `factory_reset` to erase local
-root material and active policy and return to `unprovisioned`.
-
-While a provisioning approval UI is active, Firmware should return `busy` for
-new UI-affecting or session-changing requests. `get_status` remains read-only
-and must keep working without changing approval UI.
-
-## Recovery Phrase Setup v0
-
-Recovery phrase setup v0 is currently entered by approved `start_provisioning`.
-There is no separate `generate_recovery_phrase` request in the current
-StackChan CoreS3 mnemonic UI flow.
-
-Backup confirmation request:
-
-```json
-{
-  "id": "req_confirm_phrase_001",
-  "version": 1,
-  "type": "confirm_recovery_phrase_backup",
-  "params": {
-    "approvalTimeoutMs": 30000
-  }
-}
-```
-
-Request rules:
-
-- The request is valid only while the persistent state is `unprovisioned` and
-  the mnemonic UI scratch substate is `displayed`.
-- Firmware must have recovery phrase scratch in the `displayed` substate and the
-  phrase must not have been invalidated by display removal.
-- Display power state is not part of this gate. If the screen/backlight slept
-  while the recovery phrase panel is still active and not expired, Firmware
-  wakes the request UI before showing the confirmation prompt.
-- If no phrase is pending confirmation, Firmware returns `invalid_setup_step`
-  without opening approval UI.
-- The request does not require `sessionId`.
-
-Approved backup confirmation response:
-
-```json
-{
-  "id": "req_confirm_phrase_001",
-  "version": 1,
-  "type": "recovery_phrase_result",
-  "status": "confirmed",
-  "provisioning": {
-    "state": "provisioned"
-  }
-}
-```
-
-In v0, backup confirmation stores root material first, stores the active
-default-reject policy, then persists `provisioned`, then wipes the volatile
-phrase. If root material, policy, or state persistence fails, Firmware returns
-`storage_error`, wipes volatile scratch, and must not report `provisioned`. If
-the user rejects or approval times out, Firmware returns the common `error`
-shape with `rejected` or `timeout` and wipes the volatile phrase. The user must
-start again to generate a new phrase.
-Accepting a backup confirmation request transitions `displayed` to
-`backup_confirmation_pending`; approval, rejection, or timeout transitions
-`backup_confirmation_pending` to `none` and always wipes the phrase.
-
-While a recovery phrase is displayed, Firmware should keep `get_status`
-available and report `device.state = busy`. It should also return `busy` for
-UI-affecting requests that would hide or replace the setup display.
-`cancel_provisioning` remains available and wipes scratch state before returning
-to `unprovisioned`. A displayed phrase must have a finite display lifetime; when
-the display expires, Firmware clears the setup panel and wipes the volatile
-phrase.
-
-Firmware must not keep recovery phrase scratch marked `displayed` after the
-display is no longer visible. If the recovery phrase display panel is removed or
-replaced while the scratch substate is `displayed`, Firmware must wipe or
-invalidate the volatile phrase for new requests so a later
-`confirm_recovery_phrase_backup` request cannot confirm material whose setup
-panel no longer exists. Screen/backlight sleep alone does not invalidate the
-scratch substate; request UI should wake the display before prompting. The only
-allowed exception is the already-started physical confirmation prompt that
-replaced a valid recovery phrase display after validating
-`confirm_recovery_phrase_backup`; that prompt owns the
-`backup_confirmation_pending` substate and must end by confirming and wiping the
-phrase, or by rejecting/timing out and wiping it.
-
-## Factory Reset
-
-`factory_reset` is a destructive Firmware-owned recovery path. It requires
-physical approval and is valid even when Firmware is in an internal
-root-material/provisioning-state consistency error, because that error state is
-one of the reasons a reset is needed.
-
-Request:
-
-```json
-{
-  "id": "req_factory_reset_001",
-  "version": 1,
-  "type": "factory_reset",
-  "params": {
-    "approvalTimeoutMs": 30000
-  }
-}
-```
-
-Request rules:
-
-- `approvalTimeoutMs` is a positive integer with maximum `60000`.
-- Default `approvalTimeoutMs` when omitted is `30000`.
-- The request carries no mnemonic, seed, private key, import text, account
-  data, or policy data.
-- Firmware must reject it with `busy` while another physical approval is
-  pending or device-only setup material is active.
-- Firmware must not expose root material, mnemonic text, or displayed prefixes
-  before, during, or after reset.
-- Gateway and MCP must not expose `factory_reset` as a normal agent-facing
-  signing or management tool. It is a destructive DEV_PROFILE development and
-  recovery operation in the current implementation. USER_PROFILE reset must be
-  gated by local recovery/setup mode and physical approval.
-
-Approved response:
-
-```json
-{
-  "id": "req_factory_reset_001",
-  "version": 1,
-  "type": "factory_reset_result",
-  "status": "reset",
-  "provisioning": {
-    "state": "unprovisioned"
-  }
-}
-```
-
-On physical approval, Firmware clears any RAM session, wipes volatile setup
-scratch, erases stored root material and active policy, persists
-`provisioning.state = unprovisioned`, and clears the consistency-error condition
-only after those operations succeed. If erasing root material, erasing policy,
-or writing state fails, Firmware returns `storage_error` and must not report
-reset success. Reject and timeout leave persistent material and provisioning
-state unchanged.
+The current protocol intentionally has no factory-reset or reprovisioning USB
+request. A future reset/recovery flow must be specified as normal product UX,
+must classify source and target states in `docs/STATE_MODEL.md`, and must keep
+Firmware as the authority for storage wipe, session cleanup, and physical
+approval. Until such a normal UX exists, material/state consistency errors fail
+closed rather than exposing a host-triggered destructive recovery path.
 
 ## Identify Device
 
@@ -656,57 +409,6 @@ earlier than the requested display duration; there is no cancel message.
 Identification display is temporary UI. Firmware must return to the previous
 device state after the display duration or when another request replaces the
 temporary layer.
-
-## Hardware Diagnostic Request
-
-`display_signal` is a hardware diagnostic request for local smoke tests. It is
-accepted only while `provisioning.state` is `provisioned`, and it is not a
-public Gateway/MCP signing API.
-
-Request:
-
-```json
-{
-  "id": "req_display_001",
-  "version": 1,
-  "type": "display_signal",
-  "params": {
-    "message": "Request received"
-  }
-}
-```
-
-Approved response:
-
-```json
-{
-  "id": "req_display_001",
-  "version": 1,
-  "type": "display_signal_result",
-  "status": "approved"
-}
-```
-
-Rejected or timed-out response:
-
-```json
-{
-  "id": "req_display_001",
-  "version": 1,
-  "type": "display_signal_result",
-  "status": "rejected",
-  "error": {
-    "code": "timeout",
-    "message": "Request timed out."
-  }
-}
-```
-
-The `display_signal` approval lifetime is Firmware-owned temporary UI. Gateway
-is permitted to stop waiting earlier than the Firmware timeout; there is no
-cancel message. A late physical response may be ignored by Gateway if the
-transport request already timed out. Before material-backed provisioning,
-Firmware returns `invalid_state`.
 
 ## Connect
 

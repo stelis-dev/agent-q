@@ -9,6 +9,7 @@
 #include "agent_q_call_method_validation.h"
 #include "agent_q_display_power.h"
 #include "agent_q_entropy.h"
+#include "agent_q_motion_state.h"
 #include "agent_q_policy_store.h"
 #include "agent_q_root_material.h"
 #include "agent_q_speech_bubble.h"
@@ -47,12 +48,10 @@ constexpr const char* kProvisioningStateKey = "prov_state";
 constexpr const char* kProvisioningStateUnprovisioned = "unprovisioned";
 constexpr const char* kProvisioningStateProvisioning = "provisioning";
 constexpr const char* kProvisioningStateProvisioned = "provisioned";
-constexpr uint32_t kDisplaySignalTimeoutMs = 30000;
 constexpr uint32_t kIdentifyDisplayDefaultMs = 10000;
 constexpr uint32_t kIdentifyDisplayMaxMs = 30000;
 constexpr uint32_t kConnectApprovalDefaultMs = 30000;
 constexpr uint32_t kConnectApprovalMaxMs = 60000;
-constexpr uint32_t kProvisioningApprovalDefaultMs = 30000;
 constexpr uint32_t kProvisioningApprovalMaxMs = 60000;
 constexpr uint32_t kRecoveryPhraseDisplayMs = kProvisioningApprovalMaxMs;
 constexpr uint32_t kSessionTtlMs = 1800000;
@@ -66,7 +65,6 @@ constexpr size_t kIdentifyCodeSize = 5;
 constexpr size_t kSessionIdSize = 26;
 constexpr size_t kGatewayNameSize = 65;
 constexpr size_t kConnectDisplayMessageSize = 96;
-constexpr size_t kPendingDisplayMessageSize = 512;
 constexpr size_t kRecoveryPhrasePrefixCellCount = 12;
 constexpr size_t kRecoveryPhrasePrefixCellSize = 8;
 constexpr int kScreenHeight = 240;
@@ -83,9 +81,6 @@ constexpr int kRecoveryPhraseButtonRightX = 154;
 constexpr int kRecoveryPhraseButtonBottomMargin = 8;
 constexpr int kRecoveryPhraseTopMargin = kRecoveryPhraseButtonBottomMargin;
 constexpr uint32_t kAgentQResultDisplayMs = 1800;
-constexpr uint32_t kAgentQHeadLiftMs = 900;
-constexpr int kAgentQHeadLiftPitchDelta = 160;
-constexpr int kAgentQHeadLiftSpeed = 280;
 
 enum class AgentQUiPanelKind {
     none,
@@ -130,12 +125,7 @@ struct AgentQUiEvent {
 
 enum class PendingKind {
     none,
-    display_signal,
     connect,
-    factory_reset,
-    start_provisioning,
-    cancel_provisioning,
-    confirm_recovery_phrase_backup,
 };
 
 enum class ProvisioningRuntimeState {
@@ -150,7 +140,6 @@ enum class ProvisioningRuntimeState {
 struct PendingApprovalState {
     char id[kMaxRequestIdSize] = {};
     char gateway_name[kGatewayNameSize] = {};
-    char display_message[kPendingDisplayMessageSize] = {};
     bool active = false;
     bool touch_armed = false;
     TickType_t deadline = 0;
@@ -166,7 +155,6 @@ struct PendingApprovalState {
     {
         id[0] = '\0';
         gateway_name[0] = '\0';
-        display_message[0] = '\0';
         active = false;
         touch_armed = false;
         deadline = 0;
@@ -181,39 +169,6 @@ struct PendingApprovalState {
         strlcpy(gateway_name, request_gateway_name, sizeof(gateway_name));
         active = true;
         kind = PendingKind::connect;
-        deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
-    }
-
-    void begin_display_signal(const char* request_id, const char* message)
-    {
-        clear();
-        strlcpy(id, request_id, sizeof(id));
-        strlcpy(display_message, message != nullptr ? message : "USB request", sizeof(display_message));
-        active = true;
-        kind = PendingKind::display_signal;
-        deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kDisplaySignalTimeoutMs);
-    }
-
-    void begin_provisioning_transition(const char* request_id, PendingKind request_kind, uint32_t timeout_ms)
-    {
-        clear();
-        strlcpy(id, request_id, sizeof(id));
-        active = true;
-        kind = request_kind;
-        deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
-    }
-
-    void begin_factory_reset(const char* request_id, uint32_t timeout_ms)
-    {
-        begin_provisioning_transition(request_id, PendingKind::factory_reset, timeout_ms);
-    }
-
-    void begin_recovery_phrase_step(const char* request_id, PendingKind request_kind, uint32_t timeout_ms)
-    {
-        clear();
-        strlcpy(id, request_id, sizeof(id));
-        active = true;
-        kind = request_kind;
         deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
     }
 };
@@ -269,7 +224,6 @@ struct AgentQUiState {
 enum class RecoveryPhraseScratchStage {
     none,
     displayed,
-    backup_confirmation_pending,
 };
 
 enum class RecoveryPhraseGenerationResult {
@@ -318,6 +272,7 @@ QueueHandle_t g_pending_choice_queue = nullptr;
 QueueHandle_t g_ui_event_queue = nullptr;
 
 bool recovery_phrase_flow_active();
+bool recovery_phrase_display_panel_active();
 bool refresh_persistent_material_consistency();
 bool persist_provisioning_state(ProvisioningRuntimeState next_state);
 
@@ -339,58 +294,6 @@ bool tick_reached(TickType_t deadline)
 {
     return static_cast<int32_t>(xTaskGetTickCount() - deadline) >= 0;
 }
-
-int clamp_int(int value, int min_value, int max_value)
-{
-    if (value < min_value) {
-        return min_value;
-    }
-    if (value > max_value) {
-        return max_value;
-    }
-    return value;
-}
-
-class AgentQHeadLiftModifier : public stackchan::TimedEventModifier {
-public:
-    AgentQHeadLiftModifier() : stackchan::TimedEventModifier(kAgentQHeadLiftMs)
-    {
-    }
-
-    void _on_start(stackchan::Modifiable& stackchan) override
-    {
-        auto& motion = stackchan.motion();
-        if (motion.isModifyLocked() || motion.isMoving()) {
-            return;
-        }
-
-        const auto current = motion.getCurrentAngles();
-        previous_yaw_ = current.x;
-        previous_pitch_ = current.y;
-        active_ = true;
-
-        motion.setModifyLock(true);
-        const int target_pitch = clamp_int(previous_pitch_ + kAgentQHeadLiftPitchDelta, 0, 540);
-        motion.moveWithSpeed(previous_yaw_, target_pitch, kAgentQHeadLiftSpeed);
-    }
-
-    void _on_end(stackchan::Modifiable& stackchan) override
-    {
-        if (!active_) {
-            return;
-        }
-
-        auto& motion = stackchan.motion();
-        motion.moveWithSpeed(previous_yaw_, previous_pitch_, kAgentQHeadLiftSpeed);
-        motion.setModifyLock(false);
-        active_ = false;
-    }
-
-private:
-    bool active_ = false;
-    int previous_yaw_ = 0;
-    int previous_pitch_ = 0;
-};
 
 bool is_safe_id(const char* value)
 {
@@ -630,20 +533,6 @@ void write_identify_device_result(const char* id, const char* code)
     write_json_document(response);
 }
 
-void write_display_signal_result(const char* id, const char* status, const char* error_code, const char* error_message)
-{
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "display_signal_result";
-    response["status"] = status;
-    if (error_code != nullptr) {
-        response["error"]["code"] = error_code;
-        response["error"]["message"] = error_message;
-    }
-    write_json_document(response);
-}
-
 void write_connect_approved_response(const char* id)
 {
     JsonDocument response;
@@ -800,39 +689,6 @@ void write_sui_sign_transaction_policy_decision(const char* id, JsonDocument& re
              agent_q::agent_q_policy_decision_reason_name(decision.reason));
 }
 
-void write_factory_reset_result(const char* id)
-{
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "factory_reset_result";
-    response["status"] = "reset";
-    response["provisioning"]["state"] = provisioning_state_to_string(g_provisioning_state);
-    write_json_document(response);
-}
-
-void write_provisioning_result(const char* id, const char* status)
-{
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "provisioning_result";
-    response["status"] = status;
-    response["provisioning"]["state"] = provisioning_state_to_string(g_provisioning_state);
-    write_json_document(response);
-}
-
-void write_recovery_phrase_result(const char* id, const char* status)
-{
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "recovery_phrase_result";
-    response["status"] = status;
-    response["provisioning"]["state"] = provisioning_state_to_string(g_provisioning_state);
-    write_json_document(response);
-}
-
 void clear_active_session()
 {
     g_session.clear();
@@ -901,8 +757,9 @@ bool write_accounts_response(const char* id)
     if (account_result == agent_q::SuiAccountDerivationResult::root_material_unavailable) {
         // A provisioned device whose stored root material is no longer readable
         // is inconsistent. Fail closed so get_status reports "error" and
-        // connect/get_accounts stop treating it as provisioned until
-        // factory_reset, instead of silently staying provisioned until reboot.
+        // connect/get_accounts stop treating it as provisioned until a local
+        // recovery/reset flow exists, instead of silently staying provisioned
+        // until reboot.
         enter_persistent_material_consistency_error("Root material unreadable while provisioned; failing closed");
         return false;
     }
@@ -1156,50 +1013,16 @@ bool wipe_provisioning_scratch_state()
     return true;
 }
 
-bool reset_device_to_unprovisioned()
-{
-    clear_active_session();
-    wipe_provisioning_scratch_state();
-
-    if (!agent_q::wipe_root_material()) {
-        enter_persistent_material_consistency_error("Root material wipe failed during factory reset; failing closed");
-        return false;
-    }
-    if (!agent_q::wipe_policy()) {
-        enter_persistent_material_consistency_error("Policy wipe failed during factory reset; failing closed");
-        return false;
-    }
-
-    if (!persist_provisioning_state(ProvisioningRuntimeState::unprovisioned)) {
-        enter_persistent_material_consistency_error("Provisioning state reset failed during factory reset; failing closed");
-        return false;
-    }
-
-    g_persistent_material_consistency_error = false;
-    return true;
-}
-
-bool provisioning_transition_allowed(PendingKind request_kind)
+bool local_setup_start_allowed()
 {
     if (!refresh_persistent_material_consistency()) {
         return false;
     }
 
-    switch (request_kind) {
-        case PendingKind::start_provisioning:
-            return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
-                   !g_persistent_material_consistency_error &&
-                   !recovery_phrase_flow_active();
-        case PendingKind::cancel_provisioning:
-            return g_provisioning_state == ProvisioningRuntimeState::provisioning ||
-                   recovery_phrase_flow_active();
-        case PendingKind::none:
-        case PendingKind::display_signal:
-        case PendingKind::factory_reset:
-        case PendingKind::confirm_recovery_phrase_backup:
-        default:
-            return false;
-    }
+    return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
+           !g_persistent_material_consistency_error &&
+           !recovery_phrase_flow_active() &&
+           !g_pending.active;
 }
 
 bool recovery_phrase_flow_active()
@@ -1207,11 +1030,11 @@ bool recovery_phrase_flow_active()
     return g_provisioning_scratch.has_recovery_phrase();
 }
 
-bool start_provisioning_busy()
+bool recovery_phrase_display_panel_active()
 {
-    return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
-           !g_persistent_material_consistency_error &&
-           recovery_phrase_flow_active();
+    LvglLockGuard lock;
+    return g_ui.panel != nullptr &&
+           g_ui.panel_kind == AgentQUiPanelKind::recovery_phrase_display;
 }
 
 bool refresh_persistent_material_consistency()
@@ -1281,45 +1104,9 @@ bool require_active_matching_session(const char* id, const char* session_id)
     return true;
 }
 
-bool recovery_phrase_confirmation_pending()
-{
-    return g_provisioning_scratch.recovery_phrase_stage == RecoveryPhraseScratchStage::backup_confirmation_pending &&
-           g_pending.active && g_pending.kind == PendingKind::confirm_recovery_phrase_backup;
-}
-
-bool recovery_phrase_display_panel_active()
-{
-    LvglLockGuard lock;
-    return g_ui.panel != nullptr && g_ui.panel_kind == AgentQUiPanelKind::recovery_phrase_display;
-}
-
 bool recovery_phrase_backup_confirmation_ready()
 {
-    return g_provisioning_scratch.recovery_phrase_stage == RecoveryPhraseScratchStage::displayed &&
-           recovery_phrase_display_panel_active();
-}
-
-void write_invalid_provisioning_state_response(const char* id, PendingKind request_kind)
-{
-    if (request_kind == PendingKind::start_provisioning) {
-        write_error_response(id, "invalid_state", "Provisioning can start only from unprovisioned state.");
-        return;
-    }
-    if (request_kind == PendingKind::cancel_provisioning) {
-        write_error_response(id, "invalid_state", "Provisioning can be canceled only while setup is active.");
-        return;
-    }
-    write_error_response(id, "invalid_state", "Invalid provisioning state transition.");
-}
-
-void write_invalid_recovery_phrase_state_response(const char* id)
-{
-    write_error_response(id, "invalid_state", "Recovery phrase backup confirmation is valid only during mnemonic setup.");
-}
-
-void write_recovery_phrase_not_ready_response(const char* id)
-{
-    write_error_response(id, "invalid_setup_step", "No displayed recovery phrase is ready for backup confirmation.");
+    return g_provisioning_scratch.recovery_phrase_stage == RecoveryPhraseScratchStage::displayed;
 }
 
 void enqueue_pending_choice(PendingChoice choice)
@@ -1474,7 +1261,7 @@ void make_recovery_phrase_action_button(
 
 void trigger_agent_q_head_lift()
 {
-    GetStackChan().addModifier(std::make_unique<AgentQHeadLiftModifier>());
+    agent_q::play_motion_feedback(agent_q::AgentQMotionFeedbackState::head_lift);
 }
 
 void on_agent_q_panel_deleted(lv_event_t* event)
@@ -1503,8 +1290,7 @@ void clear_panel_locked()
         g_ui.panel = nullptr;
         g_ui.panel_kind = AgentQUiPanelKind::none;
         const bool wipe_recovery_phrase_after_delete =
-            panel_kind == AgentQUiPanelKind::recovery_phrase_display &&
-            !recovery_phrase_confirmation_pending();
+            panel_kind == AgentQUiPanelKind::recovery_phrase_display;
         lv_obj_delete(panel);
         if (wipe_recovery_phrase_after_delete) {
             wipe_recovery_phrase_scratch("recovery phrase panel cleared");
@@ -1735,14 +1521,6 @@ void show_result_and_clear_pending(const char* message, AgentQMessageKind kind)
     clear_pending_state();
 }
 
-void show_display_signal_decision(const char* message)
-{
-    if (show_avatar_decision(message)) {
-        return;
-    }
-    ESP_LOGW(kTag, "display_signal could not show Agent-Q avatar decision UI");
-}
-
 void format_connect_message(const char* gateway_name, char* output, size_t output_size)
 {
     if (gateway_name == nullptr || gateway_name[0] == '\0') {
@@ -1761,38 +1539,6 @@ void show_connect_decision(const char* gateway_name)
     ESP_LOGW(kTag, "connect could not show Agent-Q avatar decision UI");
 }
 
-void show_start_provisioning_decision()
-{
-    if (show_avatar_decision("Generate phrase?")) {
-        return;
-    }
-    ESP_LOGW(kTag, "start_provisioning could not show Agent-Q avatar decision UI");
-}
-
-void show_cancel_provisioning_decision()
-{
-    if (show_avatar_decision("Cancel setup?")) {
-        return;
-    }
-    ESP_LOGW(kTag, "cancel_provisioning could not show Agent-Q avatar decision UI");
-}
-
-void show_confirm_recovery_phrase_backup_decision()
-{
-    if (show_avatar_decision("Backup complete?")) {
-        return;
-    }
-    ESP_LOGW(kTag, "confirm_recovery_phrase_backup could not show Agent-Q avatar decision UI");
-}
-
-void show_factory_reset_decision()
-{
-    if (show_avatar_decision("Wipe device?")) {
-        return;
-    }
-    ESP_LOGW(kTag, "factory_reset could not show Agent-Q avatar decision UI");
-}
-
 enum class RecoveryPhraseCommitResult {
     ok,
     missing_scratch,
@@ -1801,10 +1547,9 @@ enum class RecoveryPhraseCommitResult {
     state_storage_error,
 };
 
-RecoveryPhraseCommitResult store_recovery_phrase_and_mark_provisioned(const char* reason)
+RecoveryPhraseCommitResult commit_recovery_phrase_material(const char* reason)
 {
-    if (g_provisioning_scratch.recovery_phrase_stage != RecoveryPhraseScratchStage::displayed &&
-        g_provisioning_scratch.recovery_phrase_stage != RecoveryPhraseScratchStage::backup_confirmation_pending) {
+    if (g_provisioning_scratch.recovery_phrase_stage != RecoveryPhraseScratchStage::displayed) {
         return RecoveryPhraseCommitResult::missing_scratch;
     }
 
@@ -2063,7 +1808,7 @@ void drain_pending_choice_events()
 
 void start_local_provisioning_from_setup_touch()
 {
-    if (!provisioning_transition_allowed(PendingKind::start_provisioning)) {
+    if (!local_setup_start_allowed()) {
         ESP_LOGW(kTag, "Local setup touch ignored because setup is unavailable");
         clear_agent_q_request_ui();
         show_agent_q_message("Setup unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -2116,7 +1861,7 @@ void confirm_recovery_phrase_from_local_ui()
     }
 
     const RecoveryPhraseCommitResult result =
-        store_recovery_phrase_and_mark_provisioned("local recovery phrase backup confirmed");
+        commit_recovery_phrase_material("local recovery phrase backup committed");
     clear_agent_q_panel();
     switch (result) {
         case RecoveryPhraseCommitResult::ok:
@@ -2179,6 +1924,10 @@ void ensure_pending_request_ui()
     if (!g_pending.awaiting_choice()) {
         return;
     }
+    if (g_pending.kind != PendingKind::connect) {
+        clear_pending_state();
+        return;
+    }
 
     bool needs_decision_panel = false;
     {
@@ -2189,34 +1938,8 @@ void ensure_pending_request_ui()
         return;
     }
 
-    switch (g_pending.kind) {
-        case PendingKind::display_signal:
-            show_display_signal_decision(g_pending.display_message);
-            ESP_LOGW(kTag, "display_signal decision UI recovered: id=%s", g_pending.id);
-            break;
-        case PendingKind::connect:
-            show_connect_decision(g_pending.gateway_name);
-            ESP_LOGW(kTag, "connect decision UI recovered: id=%s", g_pending.id);
-            break;
-        case PendingKind::factory_reset:
-            show_factory_reset_decision();
-            ESP_LOGW(kTag, "factory_reset decision UI recovered: id=%s", g_pending.id);
-            break;
-        case PendingKind::start_provisioning:
-            show_start_provisioning_decision();
-            ESP_LOGW(kTag, "start_provisioning decision UI recovered: id=%s", g_pending.id);
-            break;
-        case PendingKind::cancel_provisioning:
-            show_cancel_provisioning_decision();
-            ESP_LOGW(kTag, "cancel_provisioning decision UI recovered: id=%s", g_pending.id);
-            break;
-        case PendingKind::confirm_recovery_phrase_backup:
-            show_confirm_recovery_phrase_backup_decision();
-            ESP_LOGW(kTag, "confirm_recovery_phrase_backup decision UI recovered: id=%s", g_pending.id);
-            break;
-        case PendingKind::none:
-            break;
-    }
+    show_connect_decision(g_pending.gateway_name);
+    ESP_LOGW(kTag, "connect decision UI recovered: id=%s", g_pending.id);
 }
 
 void send_choice_response_if_needed()
@@ -2229,42 +1952,12 @@ void send_choice_response_if_needed()
             tick_reached(g_pending.deadline)) {
             // Device leaves awaiting_approval before reporting the result.
             g_pending.active = false;
-            switch (g_pending.kind) {
-                case PendingKind::display_signal:
-                    write_display_signal_result(g_pending.id, "rejected", "timeout", "Request timed out.");
-                    ESP_LOGI(kTag, "display_signal timed out: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Timed out", AgentQMessageKind::timeout);
-                    break;
-                case PendingKind::connect:
-                    write_connect_rejected_response(g_pending.id, "timeout", "Connection approval timed out.");
-                    ESP_LOGI(kTag, "connect timed out: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Connection timed out", AgentQMessageKind::timeout);
-                    break;
-                case PendingKind::factory_reset:
-                    write_error_response(g_pending.id, "timeout", "Factory reset approval timed out.");
-                    ESP_LOGI(kTag, "factory_reset timed out: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Reset timed out", AgentQMessageKind::timeout);
-                    break;
-                case PendingKind::start_provisioning:
-                    write_error_response(g_pending.id, "timeout", "Provisioning start approval timed out.");
-                    ESP_LOGI(kTag, "start_provisioning timed out: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Setup timed out", AgentQMessageKind::timeout);
-                    break;
-                case PendingKind::cancel_provisioning:
-                    wipe_recovery_phrase_scratch("cancel_provisioning timeout");
-                    write_error_response(g_pending.id, "timeout", "Provisioning cancellation timed out.");
-                    ESP_LOGI(kTag, "cancel_provisioning timed out: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Cancel timed out", AgentQMessageKind::timeout);
-                    break;
-                case PendingKind::confirm_recovery_phrase_backup:
-                    wipe_recovery_phrase_scratch("confirm_recovery_phrase_backup timeout");
-                    write_error_response(g_pending.id, "timeout", "Recovery phrase backup confirmation timed out.");
-                    ESP_LOGI(kTag, "confirm_recovery_phrase_backup timed out: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Backup timed out", AgentQMessageKind::timeout);
-                    break;
-                case PendingKind::none:
-                    clear_pending_state();
-                    break;
+            if (g_pending.kind == PendingKind::connect) {
+                write_connect_rejected_response(g_pending.id, "timeout", "Connection approval timed out.");
+                ESP_LOGI(kTag, "connect timed out: id=%s", g_pending.id);
+                show_result_and_clear_pending("Connection timed out", AgentQMessageKind::timeout);
+            } else {
+                clear_pending_state();
             }
         }
         return;
@@ -2272,141 +1965,25 @@ void send_choice_response_if_needed()
 
     const bool approved = g_pending.choice == PendingChoice::yes;
     g_pending.active = false;
-    switch (g_pending.kind) {
-        case PendingKind::display_signal:
-            write_display_signal_result(g_pending.id, approved ? "approved" : "rejected", nullptr, nullptr);
-            ESP_LOGI(kTag, "display_signal %s: id=%s", approved ? "approved" : "rejected", g_pending.id);
-            show_result_and_clear_pending(approved ? "Approved" : "Rejected",
-                                          approved ? AgentQMessageKind::success : AgentQMessageKind::rejected);
-            break;
-        case PendingKind::connect:
-            if (approved) {
-                if (!replace_active_session()) {
-                    write_error_response(g_pending.id, "rng_error", "Could not create session id.");
-                    ESP_LOGE(kTag, "connect could not create session id: id=%s", g_pending.id);
-                    show_result_and_clear_pending("RNG error", AgentQMessageKind::error);
-                    break;
-                }
-                write_connect_approved_response(g_pending.id);
-                ESP_LOGI(kTag, "connect approved: id=%s", g_pending.id);
-                show_result_and_clear_pending("Connected", AgentQMessageKind::success);
-            } else {
-                write_connect_rejected_response(g_pending.id, "rejected", "Connection rejected.");
-                ESP_LOGI(kTag, "connect rejected: id=%s", g_pending.id);
-                show_result_and_clear_pending("Connection rejected", AgentQMessageKind::rejected);
-            }
-            break;
-        case PendingKind::factory_reset:
-            if (approved) {
-                if (reset_device_to_unprovisioned()) {
-                    write_factory_reset_result(g_pending.id);
-                    ESP_LOGI(kTag, "factory_reset approved: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Device wiped", AgentQMessageKind::success);
-                } else {
-                    write_error_response(g_pending.id, "storage_error", "Could not reset device.");
-                    ESP_LOGW(kTag, "factory_reset storage error: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Reset error", AgentQMessageKind::error);
-                }
-            } else {
-                write_error_response(g_pending.id, "rejected", "Factory reset rejected.");
-                ESP_LOGI(kTag, "factory_reset rejected: id=%s", g_pending.id);
-                show_result_and_clear_pending("Reset rejected", AgentQMessageKind::rejected);
-            }
-            break;
-        case PendingKind::start_provisioning:
-            if (approved) {
-                clear_agent_q_request_ui();
-                const RecoveryPhraseGenerationResult generation_result = generate_recovery_phrase_scratch();
-                if (generation_result == RecoveryPhraseGenerationResult::ok) {
-                    if (show_recovery_phrase_display(g_provisioning_scratch.recovery_phrase)) {
-                        write_recovery_phrase_result(g_pending.id, "displayed");
-                        ESP_LOGI(kTag, "start_provisioning approved and recovery phrase displayed: id=%s", g_pending.id);
-                        clear_pending_state();
-                    } else {
-                        wipe_recovery_phrase_scratch("recovery phrase display allocation failed");
-                        write_error_response(g_pending.id, "ui_error", "Could not display recovery phrase.");
-                        ESP_LOGW(kTag, "start_provisioning display failed: id=%s", g_pending.id);
-                        show_result_and_clear_pending("Display error", AgentQMessageKind::error);
-                    }
-                } else if (generation_result == RecoveryPhraseGenerationResult::rng_error) {
-                    write_error_response(g_pending.id, "rng_error", "Could not generate recovery phrase entropy.");
-                    ESP_LOGW(kTag, "start_provisioning RNG failed: id=%s", g_pending.id);
-                    show_result_and_clear_pending("RNG error", AgentQMessageKind::error);
-                } else {
-                    write_error_response(g_pending.id, "generation_error", "Could not generate recovery phrase.");
-                    ESP_LOGW(kTag, "start_provisioning phrase generation failed: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Generation error", AgentQMessageKind::error);
-                }
-            } else {
-                write_error_response(g_pending.id, "rejected", "Provisioning start rejected.");
-                ESP_LOGI(kTag, "start_provisioning rejected: id=%s", g_pending.id);
-                show_result_and_clear_pending("Setup rejected", AgentQMessageKind::rejected);
-            }
-            break;
-        case PendingKind::cancel_provisioning:
-            if (approved) {
-                const bool must_persist_unprovisioned =
-                    g_provisioning_state != ProvisioningRuntimeState::unprovisioned;
-                if (wipe_provisioning_scratch_state() &&
-                    (!must_persist_unprovisioned ||
-                     persist_provisioning_state(ProvisioningRuntimeState::unprovisioned))) {
-                    write_provisioning_result(g_pending.id, "canceled");
-                    ESP_LOGI(kTag, "cancel_provisioning approved: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Setup canceled", AgentQMessageKind::success);
-                } else {
-                    write_error_response(g_pending.id, "storage_error", "Could not store provisioning state.");
-                    ESP_LOGW(kTag, "cancel_provisioning storage error: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Storage error", AgentQMessageKind::error);
-                }
-            } else {
-                wipe_recovery_phrase_scratch("cancel_provisioning rejected");
-                write_error_response(g_pending.id, "rejected", "Provisioning cancellation rejected.");
-                ESP_LOGI(kTag, "cancel_provisioning rejected: id=%s", g_pending.id);
-                show_result_and_clear_pending("Cancel rejected", AgentQMessageKind::rejected);
-            }
-            break;
-        case PendingKind::confirm_recovery_phrase_backup:
-            if (approved) {
-                const RecoveryPhraseCommitResult result =
-                    store_recovery_phrase_and_mark_provisioned("confirm_recovery_phrase_backup approved");
-                if (result == RecoveryPhraseCommitResult::missing_scratch) {
-                    write_error_response(
-                        g_pending.id, "invalid_setup_step", "Recovery phrase is no longer available for backup confirmation.");
-                    ESP_LOGW(kTag, "confirm_recovery_phrase_backup missing scratch: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Phrase unavailable", AgentQMessageKind::error);
-                    break;
-                }
-                if (result == RecoveryPhraseCommitResult::root_storage_error) {
-                    write_error_response(g_pending.id, "storage_error", "Could not store root material.");
-                    ESP_LOGW(kTag, "confirm_recovery_phrase_backup root material storage failed: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Storage error", AgentQMessageKind::error);
-                    break;
-                }
-                if (result == RecoveryPhraseCommitResult::policy_storage_error) {
-                    write_error_response(g_pending.id, "storage_error", "Could not store active policy.");
-                    ESP_LOGW(kTag, "confirm_recovery_phrase_backup policy storage failed: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Storage error", AgentQMessageKind::error);
-                    break;
-                }
-                if (result == RecoveryPhraseCommitResult::state_storage_error) {
-                    write_error_response(g_pending.id, "storage_error", "Could not store provisioned state.");
-                    ESP_LOGW(kTag, "confirm_recovery_phrase_backup provisioned state storage failed: id=%s", g_pending.id);
-                    show_result_and_clear_pending("Storage error", AgentQMessageKind::error);
-                    break;
-                }
-                write_recovery_phrase_result(g_pending.id, "confirmed");
-                ESP_LOGI(kTag, "confirm_recovery_phrase_backup approved and provisioned: id=%s", g_pending.id);
-                show_result_and_clear_pending("Provisioned", AgentQMessageKind::success);
-            } else {
-                wipe_recovery_phrase_scratch("confirm_recovery_phrase_backup rejected");
-                write_error_response(g_pending.id, "rejected", "Recovery phrase backup confirmation rejected.");
-                ESP_LOGI(kTag, "confirm_recovery_phrase_backup rejected: id=%s", g_pending.id);
-                show_result_and_clear_pending("Backup rejected", AgentQMessageKind::rejected);
-            }
-            break;
-        case PendingKind::none:
-            clear_pending_state();
-            break;
+    if (g_pending.kind != PendingKind::connect) {
+        clear_pending_state();
+        return;
+    }
+
+    if (approved) {
+        if (!replace_active_session()) {
+            write_error_response(g_pending.id, "rng_error", "Could not create session id.");
+            ESP_LOGE(kTag, "connect could not create session id: id=%s", g_pending.id);
+            show_result_and_clear_pending("RNG error", AgentQMessageKind::error);
+            return;
+        }
+        write_connect_approved_response(g_pending.id);
+        ESP_LOGI(kTag, "connect approved: id=%s", g_pending.id);
+        show_result_and_clear_pending("Connected", AgentQMessageKind::success);
+    } else {
+        write_connect_rejected_response(g_pending.id, "rejected", "Connection rejected.");
+        ESP_LOGI(kTag, "connect rejected: id=%s", g_pending.id);
+        show_result_and_clear_pending("Connection rejected", AgentQMessageKind::rejected);
     }
 }
 
@@ -2622,117 +2199,7 @@ void handle_line(const char* line)
         return;
     }
 
-    if (strcmp(type, "factory_reset") == 0) {
-        if (write_busy_if_pending_or_setup_flow_active(id)) {
-            return;
-        }
-
-        uint32_t approval_timeout_ms = request["params"]["approvalTimeoutMs"] | kProvisioningApprovalDefaultMs;
-        if (approval_timeout_ms == 0 || approval_timeout_ms > kProvisioningApprovalMaxMs) {
-            write_error_response(id, "invalid_approval_timeout", "Invalid approval timeout.");
-            return;
-        }
-
-        g_pending.begin_factory_reset(id, approval_timeout_ms);
-        show_factory_reset_decision();
-        ESP_LOGI(kTag, "factory_reset waiting for YES/NO: id=%s", id);
-        return;
-    }
-
-    if (strcmp(type, "start_provisioning") == 0 || strcmp(type, "cancel_provisioning") == 0) {
-        const PendingKind request_kind = strcmp(type, "start_provisioning") == 0
-            ? PendingKind::start_provisioning
-            : PendingKind::cancel_provisioning;
-        if (request_kind == PendingKind::start_provisioning && start_provisioning_busy()) {
-            write_error_response(id, "busy", "Recovery phrase setup is already active.");
-            return;
-        }
-        if (!provisioning_transition_allowed(request_kind)) {
-            write_invalid_provisioning_state_response(id, request_kind);
-            return;
-        }
-
-        if (g_pending.active) {
-            write_error_response(id, "busy", "Device is awaiting physical input.");
-            return;
-        }
-
-        uint32_t approval_timeout_ms = request["params"]["approvalTimeoutMs"] | kProvisioningApprovalDefaultMs;
-        if (approval_timeout_ms == 0 || approval_timeout_ms > kProvisioningApprovalMaxMs) {
-            write_error_response(id, "invalid_approval_timeout", "Invalid approval timeout.");
-            return;
-        }
-
-        if (request_kind == PendingKind::start_provisioning) {
-            g_pending.begin_provisioning_transition(id, request_kind, approval_timeout_ms);
-            show_start_provisioning_decision();
-            ESP_LOGI(kTag, "start_provisioning waiting for YES/NO: id=%s", id);
-            return;
-        }
-
-        g_pending.begin_provisioning_transition(id, request_kind, approval_timeout_ms);
-        show_cancel_provisioning_decision();
-        ESP_LOGI(kTag, "cancel_provisioning waiting for YES/NO: id=%s", id);
-        return;
-    }
-
-    if (strcmp(type, "confirm_recovery_phrase_backup") == 0) {
-        if (g_provisioning_state != ProvisioningRuntimeState::unprovisioned) {
-            write_invalid_recovery_phrase_state_response(id);
-            return;
-        }
-
-        if (g_pending.active) {
-            write_error_response(id, "busy", "Device is awaiting physical input.");
-            return;
-        }
-
-        if (!recovery_phrase_backup_confirmation_ready()) {
-            write_recovery_phrase_not_ready_response(id);
-            return;
-        }
-
-        uint32_t approval_timeout_ms = request["params"]["approvalTimeoutMs"] | kProvisioningApprovalDefaultMs;
-        if (approval_timeout_ms == 0 || approval_timeout_ms > kProvisioningApprovalMaxMs) {
-            write_error_response(id, "invalid_approval_timeout", "Invalid approval timeout.");
-            return;
-        }
-
-        // The LVGL task can delete the phrase display while this USB task is
-        // validating parameters, so readiness is checked again before the
-        // scratch state moves to backup_confirmation_pending.
-        if (!recovery_phrase_backup_confirmation_ready()) {
-            write_recovery_phrase_not_ready_response(id);
-            return;
-        }
-
-        g_pending.begin_recovery_phrase_step(
-            id, PendingKind::confirm_recovery_phrase_backup, approval_timeout_ms);
-        g_provisioning_scratch.recovery_phrase_stage =
-            RecoveryPhraseScratchStage::backup_confirmation_pending;
-        show_confirm_recovery_phrase_backup_decision();
-        ESP_LOGI(kTag, "confirm_recovery_phrase_backup waiting for YES/NO: id=%s", id);
-        return;
-    }
-
-    if (strcmp(type, "display_signal") != 0) {
-        write_error_response(id, "unsupported_type", "Unsupported request type.");
-        return;
-    }
-
-    if (!provisioned_material_ready()) {
-        write_error_response(id, "invalid_state", "display_signal is available only after provisioning is complete.");
-        return;
-    }
-
-    if (write_busy_if_pending_or_setup_flow_active(id)) {
-        return;
-    }
-
-    const char* message = request["params"]["message"] | "USB request";
-    g_pending.begin_display_signal(id, message);
-    show_display_signal_decision(g_pending.display_message);
-    ESP_LOGI(kTag, "display_signal waiting for YES/NO: id=%s", id);
+    write_error_response(id, "unsupported_type", "Unsupported request type.");
 }
 
 void poll_usb_input()

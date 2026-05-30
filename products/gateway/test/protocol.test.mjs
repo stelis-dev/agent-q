@@ -7,9 +7,6 @@ import {
   assertPolicyResponse,
   assertConnectResponse,
   assertDisconnectResponse,
-  assertFactoryResetResponse,
-  assertProvisioningResponse,
-  assertRecoveryPhraseResponse,
   assertStatusResponse,
   createRequestId,
   FORBIDDEN_SECRET_FIELD_NAMES,
@@ -20,16 +17,12 @@ import {
   isSuiAddressForPublicKey,
   makeCallMethodRequest,
   makeConnectRequest,
-  makeCancelProvisioningRequest,
-  makeConfirmRecoveryPhraseBackupRequest,
   makeDisconnectRequest,
-  makeFactoryResetRequest,
   makeGetCapabilitiesRequest,
   makeGetAccountsRequest,
   makeGetPolicyRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
-  makeStartProvisioningRequest,
   MAX_SESSION_TTL_MS,
   parseProtocolResponse,
   sanitizeDisplayText,
@@ -98,14 +91,13 @@ test("preserves Firmware protocol error codes", () => {
   for (const code of [
     "unsupported_type",
     "busy",
-    "storage_error",
     "invalid_state",
-    "invalid_setup_step",
+    "invalid_method",
+    "invalid_params",
     "unsupported_method",
     "policy_error",
     "rng_error",
-    "ui_error",
-    "generation_error",
+    "account_error",
   ]) {
     const response = parseProtocolResponse(
       JSON.stringify({
@@ -678,287 +670,6 @@ test("parseProtocolResponse rejects unsupported method_result shapes", () => {
       `secret-like method_result field ${fieldName} must be rejected`,
     );
   }
-});
-
-test("creates provisioning requests without secret fields", () => {
-  const start = makeStartProvisioningRequest(30000, "req_start_setup");
-  assert.deepEqual(start, {
-    id: "req_start_setup",
-    version: 1,
-    type: "start_provisioning",
-    params: {
-      approvalTimeoutMs: 30000,
-    },
-  });
-
-  const cancel = makeCancelProvisioningRequest(30000, "req_cancel_setup");
-  assert.deepEqual(cancel, {
-    id: "req_cancel_setup",
-    version: 1,
-    type: "cancel_provisioning",
-    params: {
-      approvalTimeoutMs: 30000,
-    },
-  });
-
-  const confirmRecoveryPhraseBackup = makeConfirmRecoveryPhraseBackupRequest(30000, "req_confirm_phrase");
-  assert.deepEqual(confirmRecoveryPhraseBackup, {
-    id: "req_confirm_phrase",
-    version: 1,
-    type: "confirm_recovery_phrase_backup",
-    params: {
-      approvalTimeoutMs: 30000,
-    },
-  });
-
-  const factoryReset = makeFactoryResetRequest(30000, "req_factory_reset");
-  assert.deepEqual(factoryReset, {
-    id: "req_factory_reset",
-    version: 1,
-    type: "factory_reset",
-    params: {
-      approvalTimeoutMs: 30000,
-    },
-  });
-
-  const serialized =
-    serializeRequest(start) +
-    serializeRequest(cancel) +
-    serializeRequest(confirmRecoveryPhraseBackup) +
-    serializeRequest(factoryReset);
-  assert.doesNotMatch(serialized, /mnemonic|seed|private|secret|import/i);
-
-  assert.throws(() => makeStartProvisioningRequest(0), /approvalTimeoutMs/);
-  assert.throws(() => makeCancelProvisioningRequest(60001), /approvalTimeoutMs/);
-  assert.throws(() => makeConfirmRecoveryPhraseBackupRequest(60001), /approvalTimeoutMs/);
-  assert.throws(() => makeFactoryResetRequest(60001), /approvalTimeoutMs/);
-  assert.throws(() => makeStartProvisioningRequest(30000, "req/unsafe"), /Invalid request id/);
-});
-
-test("parses provisioning transition responses and rejects malformed state", () => {
-  const canceled = assertProvisioningResponse(
-    parseProtocolResponse(
-      JSON.stringify({
-        id: "req_cancel_setup",
-        version: 1,
-        type: "provisioning_result",
-        status: "canceled",
-        provisioning: {
-          state: "unprovisioned",
-        },
-      }),
-      "req_cancel_setup",
-    ),
-  );
-  assert.equal(canceled.status, "canceled");
-  assert.equal(canceled.provisioning.state, "unprovisioned");
-
-  assert.throws(
-    () =>
-      parseProtocolResponse(
-        JSON.stringify({
-          id: "req_start_setup",
-          version: 1,
-          type: "provisioning_result",
-          status: "started",
-          provisioning: {
-            state: "signing_ready",
-          },
-        }),
-        "req_start_setup",
-      ),
-    { code: "protocol_error" },
-  );
-
-  assert.throws(
-    () =>
-      parseProtocolResponse(
-        JSON.stringify({
-          id: "req_start_setup",
-          version: 1,
-          type: "provisioning_result",
-          status: "canceled",
-          provisioning: {
-            state: "provisioning",
-          },
-        }),
-        "req_start_setup",
-      ),
-    { code: "protocol_error" },
-  );
-
-  const rejected = parseProtocolResponse(
-    JSON.stringify({
-      id: "req_start_setup",
-      version: 1,
-      type: "error",
-      error: {
-        code: "rejected",
-        message: "Provisioning start rejected.",
-      },
-    }),
-    "req_start_setup",
-  );
-  assert.throws(() => assertProvisioningResponse(rejected), { code: "rejected" });
-});
-
-test("parses factory reset responses and requires unprovisioned state", () => {
-  const reset = assertFactoryResetResponse(
-    parseProtocolResponse(
-      JSON.stringify({
-        id: "req_factory_reset",
-        version: 1,
-        type: "factory_reset_result",
-        status: "reset",
-        provisioning: {
-          state: "unprovisioned",
-        },
-      }),
-      "req_factory_reset",
-    ),
-  );
-
-  assert.equal(reset.status, "reset");
-  assert.equal(reset.provisioning.state, "unprovisioned");
-
-  assert.throws(
-    () =>
-      parseProtocolResponse(
-        JSON.stringify({
-          id: "req_factory_reset",
-          version: 1,
-          type: "factory_reset_result",
-          status: "reset",
-          provisioning: {
-            state: "provisioned",
-          },
-        }),
-        "req_factory_reset",
-      ),
-    { code: "protocol_error" },
-  );
-
-  assert.throws(
-    () =>
-      parseProtocolResponse(
-        JSON.stringify({
-          id: "req_factory_reset",
-          version: 1,
-          type: "factory_reset_result",
-          status: "reset",
-          provisioning: {
-            state: "unprovisioned",
-          },
-          words: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        }),
-        "req_factory_reset",
-      ),
-    { code: "protocol_error" },
-  );
-});
-
-test("parses recovery phrase responses and rejects host-carried secrets", () => {
-  for (const [status, provisioningState] of [
-    ["displayed", "unprovisioned"],
-    ["confirmed", "provisioned"],
-  ]) {
-    const response = assertRecoveryPhraseResponse(
-      parseProtocolResponse(
-        JSON.stringify({
-          id: `req_phrase_${status}`,
-          version: 1,
-          type: "recovery_phrase_result",
-          status,
-          provisioning: {
-            state: provisioningState,
-          },
-        }),
-        `req_phrase_${status}`,
-      ),
-    );
-
-    assert.equal(response.status, status);
-    assert.equal(response.provisioning.state, provisioningState);
-  }
-
-  assert.throws(
-    () =>
-      parseProtocolResponse(
-        JSON.stringify({
-          id: "req_phrase",
-          version: 1,
-          type: "recovery_phrase_result",
-          status: "displayed",
-          provisioning: {
-            state: "provisioned",
-          },
-        }),
-        "req_phrase",
-      ),
-    { code: "protocol_error" },
-  );
-
-  assert.throws(
-    () =>
-      parseProtocolResponse(
-        JSON.stringify({
-          id: "req_phrase",
-          version: 1,
-          type: "recovery_phrase_result",
-          status: "confirmed",
-          provisioning: {
-            state: "unprovisioned",
-          },
-        }),
-        "req_phrase",
-      ),
-    { code: "protocol_error" },
-  );
-
-  for (const extra of [
-    { mnemonic: "never accept this" },
-    { recoveryPhrase: "never accept this" },
-    { words: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" },
-    { payload: { seed: "never accept this" } },
-    {
-      provisioning: {
-        state: "provisioned",
-        words: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-      },
-    },
-  ]) {
-    assert.throws(
-      () =>
-        parseProtocolResponse(
-          JSON.stringify({
-            id: "req_phrase",
-            version: 1,
-            type: "recovery_phrase_result",
-            status: "confirmed",
-            provisioning: {
-              state: "provisioned",
-            },
-            ...extra,
-          }),
-          "req_phrase",
-        ),
-      { code: "protocol_error" },
-    );
-  }
-
-  const invalidState = parseProtocolResponse(
-    JSON.stringify({
-      id: "req_phrase",
-      version: 1,
-      type: "error",
-      error: {
-        code: "invalid_state",
-        message: "Recovery phrase backup confirmation is valid only during mnemonic setup.",
-      },
-    }),
-    "req_phrase",
-  );
-  assert.throws(() => assertRecoveryPhraseResponse(invalidState), { code: "invalid_state" });
 });
 
 test("parses connect_result approved and rejected responses", () => {

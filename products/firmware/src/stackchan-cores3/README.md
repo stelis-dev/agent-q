@@ -11,10 +11,6 @@ The current implementation includes:
   dependency, create an Ed25519 Sui-formatted signature from a runtime-generated
   test seed, verify that signature on the device, and log the result without
   showing boot UI.
-- a USB JSONL request/response smoke path for `display_signal`. It proves that a
-  local process can send a request over USB, the device can show an on-screen
-  YES/NO prompt, and the device can return the selected JSON response only after
-  physical touch input.
 - a USB JSONL `get_status` request that follows the shared protocol envelope and
   returns a persistent device id plus the current device state without showing a
   physical approval UI.
@@ -32,19 +28,13 @@ The current implementation includes:
   rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only
   for restricted-transfer policy-decision smoke. It does not ask for signing
   approval or sign.
-- USB JSONL mnemonic UI requests for `start_provisioning`,
-  `cancel_provisioning`, and `confirm_recovery_phrase_backup`.
-  `start_provisioning` generates DEV_PROFILE BIP-39 root entropy in RAM,
-  displays only the up-to-4-letter word prefixes on device in a 3-column by
-  4-row grid, and stores the root entropy plus active default-reject policy only
-  after physical backup confirmation. The local setup speech bubble starts the
-  same flow on device, and the recovery phrase panel also has device-local
-  Cancel/Confirm buttons.
-- a USB JSONL `factory_reset` request that requires physical approval, clears
-  RAM sessions and volatile setup scratch, erases the DEV_PROFILE root entropy
-  blob and active policy, persists `unprovisioned`, and recovers from
-  material/state consistency errors. This path is for DEV_PROFILE development
-  and recovery; Gateway must not expose it as a normal agent-facing MCP tool.
+- a device-local mnemonic setup flow. The local setup speech bubble generates
+  DEV_PROFILE BIP-39 root entropy in RAM, displays only the up-to-4-letter word
+  prefixes on device in a 3-column by 4-row grid, and stores the root entropy
+  plus active default-reject policy only when the user presses the recovery
+  phrase panel's local `Confirm` button. The recovery phrase panel also has a
+  local `Cancel` button that wipes volatile setup scratch. These setup
+  transitions are not exposed as USB JSONL requests.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP
