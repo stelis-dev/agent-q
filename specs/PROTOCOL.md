@@ -267,10 +267,12 @@ Device states:
 - `error`: device is running but cannot currently serve requests.
 
 The current Firmware emits `idle`, `busy`, `awaiting_approval`, and `error`. It
-reports `busy` while device-only setup material is displayed, reports `error`
-for material/state consistency failure, and also uses `busy` as an error code
-for requests that cannot run while another operation owns the device UI. Other
-states are reserved for later behavior.
+reports `busy` while device-only setup material or a sensitive local subflow is
+active, reports `error` for material/state consistency failure, and also uses
+`busy` as an error code for requests that cannot run while another operation
+owns the device UI. An idle target Settings menu remains `idle` because existing
+session-scoped read and cleanup requests can still proceed. Other states are
+reserved for later behavior.
 
 `deviceId` is a Firmware-generated UUID stored in device-local persistent
 storage. It must not be derived from MAC address, USB serial number, account
@@ -576,9 +578,12 @@ Connect rules:
   Gateway evicts an expired runtime session lazily, on the next access after
   `connectedAt + sessionTtlMs`, not on a timer.
 - Firmware should return `busy` for UI-affecting or session-changing requests
-  (including `connect` and `disconnect`) while an approval UI or device-only
-  setup material display is already open. `get_status` remains read-only and
-  must not trigger or change approval UI.
+  (including `connect` and `disconnect`) while an approval UI, device-only setup
+  material display, or sensitive local PIN/reset/settings subflow is already
+  open. Idle target Settings menus are local UI and do not by themselves end the
+  active session; existing session-scoped requests may still proceed when they
+  do not mutate the Settings flow. `get_status` remains read-only and must not
+  trigger or change approval UI.
 
 ## Disconnect
 
@@ -602,7 +607,9 @@ Disconnect rules:
 
 - `disconnect` does not require physical approval.
 - Firmware may return `busy` instead of clearing the session while an approval
-  UI or device-only setup material display is active.
+  UI, device-only setup material display, or sensitive local PIN/reset/settings
+  subflow is active. Idle target Settings menus do not by themselves block
+  `disconnect`.
 - Firmware validates only the session lifecycle for `disconnect`; persistent
   material readiness is not a prerequisite. If material inconsistency already
   cleared the session, Firmware returns `invalid_session` rather than

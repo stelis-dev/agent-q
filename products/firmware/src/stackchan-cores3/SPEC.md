@@ -45,9 +45,9 @@ Legend:
 | Provisioning status reporting | △ | Reports `unprovisioned`, material-backed `provisioned`, or `error` for persistent material inconsistency. Manual smoke observed `provisioned` after local setup and recovery setup on StackChan CoreS3; failure and consistency-error states still need targeted hardware checks. This is not signing readiness: read-only `get_accounts` and `get_policy` expose public/metadata state only, while signing remains unavailable. |
 | Mnemonic UI flow v0 | △ | The local setup speech bubble opens a Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and advances to local 6-digit PIN entry after local backup confirmation. Recover accepts 12 BIP-39 words through a device-local 3-word-per-page prefix/candidate UI, verifies checksum, then enters the same PIN setup path. The target stores root entropy plus an active default-reject policy plus a salt/PIN verifier only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. Local controls own the setup transitions; there are no USB setup transition requests. Generate setup and PIN entry were manually smoke-tested after commit `2cb243b`; Recover was manually smoke-tested on StackChan CoreS3 during the recovery-entry slice. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
-| `connect` | O | Source accepts connection only after material-backed `provisioned` state. Default connect approval requires local PIN entry on device; local settings can switch connect approval to physical Confirm after PIN verification. The session is RAM-only and does not authorize signing. Rerun hardware smoke after setup, session, or material-storage changes. |
-| `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. It returns `busy` while local setup/settings/PIN/reset flow state is active, including Change PIN, so external session teardown cannot interleave with device-local sensitive UI. Rerun hardware smoke after setup, session, or material-storage changes. |
-| Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: connect PIN toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, connect-approval setting, session, and returns to `unprovisioned`. Host-triggered reset/debug/PIN-change protocol paths are intentionally not implemented. StackChan CoreS3 local reset was manually smoke-tested after commit `7c6e65c`; rerun hardware smoke after settings or reset UI/state changes. |
+| `connect` | O | Source accepts connection only after material-backed `provisioned` state. Default connect approval requires local PIN entry on device; local settings can switch connect approval to physical Confirm after PIN verification. The session is RAM-only and does not authorize signing. Manual hardware smoke verified local PIN approval and fresh reconnect after USB detach/replug. Rerun hardware smoke after setup, session, or material-storage changes. |
+| `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. It returns `busy` while local setup/PIN/reset or sensitive settings subflow state is active, including Change PIN, so external session teardown cannot interleave with device-local sensitive UI. Idle Settings menu does not block disconnect. Rerun hardware smoke after setup, session, or material-storage changes. |
+| Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: connect PIN toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, connect-approval setting, session, and returns to `unprovisioned`. Host-triggered reset/debug/PIN-change protocol paths are intentionally not implemented. StackChan CoreS3 local reset was manually smoke-tested after commit `7c6e65c`; a manual session/settings smoke verified idle Settings read access, Change PIN session retention, and USB detach/replug session invalidation. Rerun hardware smoke after settings or reset UI/state changes. |
 | Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
@@ -55,8 +55,8 @@ Legend:
 | Boot/sleep posture | O | Centers yaw and raises pitch when the default avatar is attached at boot or the screen wakes. Moves to centered yaw and lowered pitch before screen-off or power-off. |
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
 | `get_capabilities` | O | Source reports Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until concrete signing methods are implemented. Rerun hardware smoke after setup, session, or material-storage changes. |
-| `get_accounts` | O | Source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is verified against Sui SDK address vectors on host; rerun hardware smoke after setup, session, or material-storage changes. |
-| `get_policy` | △ | Source implements a session-scoped read-only summary of the active DEV_PROFILE default-reject policy (`agentq.policy.v0`, hash id, `reject`, zero rules). Corrupt/unreadable policy fails closed; missing policy is migrated only for legacy root-only DEV_PROFILE devices. Gateway/MCP parser tests and target policy-store host tests cover this path; hardware smoke is still required. |
+| `get_accounts` | O | Source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is verified against Sui SDK address vectors on host; manual hardware smoke verified this path while idle Settings is open, after Change PIN on the same session, and after reconnect. Rerun hardware smoke after setup, session, or material-storage changes. |
+| `get_policy` | △ | Source implements a session-scoped read-only summary of the active DEV_PROFILE default-reject policy (`agentq.policy.v0`, hash id, `reject`, zero rules). Corrupt/unreadable policy fails closed; missing policy is migrated only for legacy root-only DEV_PROFILE devices. Gateway/MCP parser tests, target policy-store host tests, and manual hardware smoke for idle-Settings read access cover this path. |
 | `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke. It consumes the stored active default-reject policy; corrupt/unreadable policy is a material-consistency error rather than a normal `provisioned` state, while missing policy is migrated only for legacy root-only DEV_PROFILE devices. Host tests cover the request field/type validation helper and policy store provider. Hardware smoke remains required for the stored-policy path. No approval UI, capability advertisement, or signing is connected. |
 | Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation plus matching PIN repeat. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display, device-local mnemonic recovery entry, local 6-digit PIN setup, and backup-confirmed/checksum-verified root entropy storage source exists. USB/Gateway/MCP mnemonic import and USER_PROFILE secure provisioning are not implemented. |
@@ -133,21 +133,23 @@ Current UI behavior:
 | Request or state | UI behavior | Firmware state |
 |---|---|---|
 | `unprovisioned` idle | Touchable setup speech bubble | `idle` |
-| `get_status` | No UI | `idle` unless approval UI is active |
+| `get_status` | No UI | `idle` unless approval UI, setup material, sensitive local subflow, or material/state error is active |
 | `identify_device` | Temporary speech bubble with short code | `idle` |
 | Local setup choice | Temporary Generate/Recover setup panel | `busy` |
 | Recovery phrase displayed | Temporary setup panel with 12 numbered up-to-4-letter prefixes in 3 columns by 4 rows and bottom Cancel/Confirm buttons | `busy` |
 | Mnemonic recovery entry | Temporary setup panel with three numbered word cells, A-Z prefix buttons, scrollable BIP-39 candidate bubbles, and local Cancel/Clear/Previous/Next controls | `busy` |
 | Local recovery phrase Confirm | Uses the recovery phrase panel's bottom Confirm button and advances to local PIN entry | `busy` |
 | Local PIN setup | Temporary setup panel with numeric keypad, masked 6-digit entry, Clear, backspace icon, Cancel, and Confirm | `busy` |
-| Local settings menu | Temporary settings menu with fixed label/control rows. Current implemented actions are connect PIN toggle, Change PIN, and Reset. Each sensitive action opens local PIN verification directly. | `busy` |
+| Local settings menu | Temporary settings menu with fixed label/control rows. Current implemented actions are connect PIN toggle, Change PIN, and Reset. Each sensitive action opens local PIN verification directly. | `idle` while the menu is idle; `busy` after entering a sensitive subflow |
 | Local recovery phrase Cancel | Uses the recovery phrase panel's bottom Cancel button | `idle` after scratch wipe |
 | Approved result | Temporary success speech and emotion | `idle` |
 | Rejected result | Temporary rejected speech and emotion | `idle` |
 | Timeout result | Temporary timeout speech and emotion | `idle` |
 
-`idle` means no physical approval prompt or device-only setup material is
-active. Recovery phrase display and PIN setup report `busy` so Gateway status
+`idle` means no physical approval prompt, device-only setup material, or
+sensitive local subflow is active. An idle Settings menu is local UI, but it does
+not block existing session-scoped read or cleanup requests, so status remains
+`idle`. Recovery phrase display and PIN setup report `busy` so Gateway status
 does not imply that UI-replacing setup requests are available.
 
 The StackChan default avatar face remains visible. Agent-Q does not use the
@@ -338,11 +340,18 @@ label/control rows and Close as the only bottom action. Current implemented
 settings actions are the connect PIN toggle, Change PIN, and Reset. Selecting a
 sensitive action opens stored 6-digit PIN verification directly. Change PIN then
 accepts and repeats a new 6-digit PIN, stores only the replacement salt/verifier,
-and returns to Settings; storage failure either leaves the old verifier in place
-or fails closed if the post-write verifier state cannot be proven.
+and returns to Settings without ending the active RAM session; storage failure
+either leaves the old verifier in place or fails closed if the post-write
+verifier state cannot be proven.
+Opening or closing the Settings menu alone does not end the active RAM session.
+While the Settings menu is idle, existing session-scoped requests remain
+available; PIN verification, PIN change, and Reset subflows return `busy` until
+the local flow completes or is canceled.
 Canceling connect-toggle, Change PIN, or Reset PIN verification, and
 successfully changing the connect-toggle setting or PIN verifier, return to the
-settings menu instead of closing local settings.
+settings menu instead of closing local settings. Successfully changing the
+connect-approval setting affects the next `connect`; it does not end the current
+active RAM session.
 Wrong PIN, timeout, or cancel leaves root material, active policy, PIN verifier,
 the local connect setting, and `provisioned` state intact.
 After Reset PIN confirm, the target keeps the reset PIN panel active and adds a

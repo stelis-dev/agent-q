@@ -824,8 +824,11 @@ const char* current_device_state()
     if (g_pending.active) {
         return "awaiting_approval";
     }
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(xTaskGetTickCount());
     if (g_provisioning_scratch.setup_flow_active() ||
-        agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active ||
+        (reset.flow_active &&
+         reset.stage != agent_q::AgentQLocalResetStage::settings_menu) ||
         g_local_pin_auth.flow_active()) {
         return "busy";
     }
@@ -1535,7 +1538,7 @@ bool local_settings_touch_entry_candidate_allowed()
            agent_q_ui_idle_for_local_settings();
 }
 
-bool write_busy_if_pending_or_local_flow_active(const char* id)
+bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_settings_menu = false)
 {
     if (g_pending.active) {
         write_error_response(id, "busy", "Device is awaiting local input.");
@@ -1548,6 +1551,10 @@ bool write_busy_if_pending_or_local_flow_active(const char* id)
     const agent_q::AgentQLocalResetSnapshot reset =
         agent_q::local_reset_snapshot(xTaskGetTickCount());
     if (reset.flow_active) {
+        if (allow_settings_menu &&
+            reset.stage == agent_q::AgentQLocalResetStage::settings_menu) {
+            return false;
+        }
         write_error_response(
             id,
             "busy",
@@ -4538,6 +4545,20 @@ void clear_local_pin_auth_if_needed()
         strlcpy(request_id, g_pending.id, sizeof(request_id));
     }
 
+    if (!panel_active && !expired && purpose == LocalPinAuthPurpose::connect &&
+        request_id[0] != '\0') {
+        if (!show_local_pin_auth_panel()) {
+            write_connect_rejected_response(request_id, "ui_error", "Could not restore local PIN UI.");
+            wipe_local_pin_auth_scratch("connect PIN UI recovery failed");
+            clear_pending_state();
+            show_agent_q_message("Display error",
+                                 AgentQMessageKind::error,
+                                 AgentQUiMode::result,
+                                 kAgentQResultDisplayMs);
+        }
+        return;
+    }
+
     if (panel_active) {
         clear_agent_q_panel();
     } else {
@@ -5157,6 +5178,14 @@ void send_choice_response_if_needed()
     poll_touch_fallback();
 
     if (g_pending.active && g_pending.kind == PendingKind::connect_pin) {
+        if (g_pending.deadline != 0 && tick_reached(g_pending.deadline)) {
+            char request_id[kMaxRequestIdSize] = {};
+            strlcpy(request_id, g_pending.id, sizeof(request_id));
+            write_connect_rejected_response(request_id, "timeout", "Connection PIN timed out.");
+            wipe_local_pin_auth_scratch("connect PIN pending timed out");
+            show_result_and_clear_pending("Connection timed out",
+                                          AgentQMessageKind::timeout);
+        }
         return;
     }
 
@@ -5284,7 +5313,7 @@ void handle_line(const char* line)
     }
 
     if (strcmp(type, "disconnect") == 0) {
-        if (write_busy_if_pending_or_local_flow_active(id)) {
+        if (write_busy_if_pending_or_local_flow_active(id, true)) {
             return;
         }
 
@@ -5305,7 +5334,7 @@ void handle_line(const char* line)
             write_error_response(id, "invalid_state", "Capabilities are available only after provisioning is complete.");
             return;
         }
-        if (write_busy_if_pending_or_local_flow_active(id)) {
+        if (write_busy_if_pending_or_local_flow_active(id, true)) {
             return;
         }
 
@@ -5327,7 +5356,7 @@ void handle_line(const char* line)
             write_error_response(id, "invalid_state", "Accounts are available only after provisioning is complete.");
             return;
         }
-        if (write_busy_if_pending_or_local_flow_active(id)) {
+        if (write_busy_if_pending_or_local_flow_active(id, true)) {
             return;
         }
 
@@ -5353,7 +5382,7 @@ void handle_line(const char* line)
             write_error_response(id, "invalid_state", "Policy is available only after provisioning is complete.");
             return;
         }
-        if (write_busy_if_pending_or_local_flow_active(id)) {
+        if (write_busy_if_pending_or_local_flow_active(id, true)) {
             return;
         }
 
@@ -5379,7 +5408,7 @@ void handle_line(const char* line)
             write_error_response(id, "invalid_state", "call_method is available only after provisioning is complete.");
             return;
         }
-        if (write_busy_if_pending_or_local_flow_active(id)) {
+        if (write_busy_if_pending_or_local_flow_active(id, true)) {
             return;
         }
 

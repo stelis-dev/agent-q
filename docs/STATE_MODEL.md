@@ -294,10 +294,12 @@ This state is reserved until an unlock model is implemented.
 `O*`: allowed only when the request does not disrupt local setup UI. `S` means
 session cleanup only: Firmware does not require material readiness, but a
 missing or mismatched session returns `invalid_session`. `S` operations may
-still return `busy` while local setup/settings/PIN/reset flow state is active,
-because external session teardown must not interleave with device-local
-sensitive UI. Other `O` operations may still return `busy` while a physical
-approval prompt or device-only setup material display is active.
+still return `busy` while local setup/PIN/reset or sensitive settings subflow
+state is active, because external session teardown must not interleave with
+device-local sensitive UI. Idle Settings menu is not itself a sensitive flow and
+does not end the active RAM session. Other `O` operations may still return
+`busy` while a physical approval prompt or device-only setup material display is
+active.
 
 Gateway may hide unavailable operations, but Firmware must still reject them.
 
