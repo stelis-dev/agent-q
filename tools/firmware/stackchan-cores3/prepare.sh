@@ -374,7 +374,7 @@ launcher = replace_any_once(
         GetStackChan().addModifier(std::make_unique<stackchan::BlinkModifier>());
         GetStackChan().addModifier(std::make_unique<stackchan::IdleExpressionModifier>(8000, 20000));
         agent_q::set_motion_posture(agent_q::AgentQMotionPostureState::awake);
-        agent_q::show_provisioning_welcome_if_needed();
+        agent_q::notify_agent_q_ui_surface_ready();
         _view.reset();
     } else {
         create_launcher_view();

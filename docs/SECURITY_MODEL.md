@@ -69,8 +69,12 @@ Implemented today:
   `unprovisioned`.
   Firmware records an internal reset-pending marker so boot can resume an
   interrupted reset wipe. Host-triggered reset/debug protocol paths are
-  intentionally not implemented. Hardware smoke is still required, and
-  material/state consistency errors are not recovered by this reset path.
+  intentionally not implemented. StackChan CoreS3 source also uses this
+  destructive wipe machinery for a device-local, PIN-less, erase-only recovery
+  from material/state consistency `error`, because the stored PIN verifier may
+  be unreadable. That path cannot read, repair, unlock, or export material and
+  is not exposed as a host-triggered recovery API. Hardware smoke is still
+  required after reset or error-recovery UI/state changes.
 - Read-only Sui account and public-key discovery over an approved runtime
   session. Firmware derives public identity from the DEV_PROFILE root entropy
   on demand and does not return mnemonic, seed, entropy, or private key

@@ -395,9 +395,11 @@ runtime session, and return to `unprovisioned`. Implementations that record an
 internal reset-pending marker before destructive wipe starts can resume an
 interrupted reset at boot. Wrong authentication, timeout, or cancel preserves
 existing material. Reset authentication lockout is target-local state, not a
-protocol state, and must not create a host-triggered recovery path. Material and
-state consistency errors still fail closed rather than exposing a host-triggered
-destructive recovery path.
+protocol state, and must not create a host-triggered recovery path. A target may
+offer a device-local, PIN-less, destructive erase-only recovery from
+material/state consistency `error` when the PIN verifier may be unreadable, but
+that path still must not be exposed as a USB/Gateway/MCP request and must not
+read, export, repair, or unlock stored material.
 
 ## Identify Device
 

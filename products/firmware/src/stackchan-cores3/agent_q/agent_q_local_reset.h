@@ -17,6 +17,7 @@ enum class AgentQLocalResetStage {
     settings_menu,
     pin_entry,
     pin_verifying,
+    error_recovery_confirm,
     wiping,
 };
 
@@ -68,7 +69,9 @@ bool local_reset_wipe_ready(TickType_t now);
 
 void local_reset_wipe();
 void local_reset_begin_settings(TickType_t deadline);
+void local_reset_begin_error_recovery_confirm(TickType_t deadline);
 bool local_reset_begin_pin_entry(TickType_t deadline);
+bool local_reset_begin_error_recovery_wipe(TickType_t wipe_ready_at);
 bool local_reset_add_pin_digit(char digit, TickType_t deadline);
 bool local_reset_clear_pin(TickType_t deadline);
 bool local_reset_backspace_pin(TickType_t deadline);

@@ -1,0 +1,367 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: tools/firmware/stackchan-cores3/test_local_reset.sh
+
+Compiles the StackChan CoreS3 local reset state machine against host stubs and
+verifies normal reset and error-state erase transitions, reset-pending marker
+behavior, and destructive wipe orchestration. This test uses only a host C++
+compiler and does NOT require ESP-IDF.
+EOF
+}
+
+if [[ $# -ne 0 ]]; then
+  usage
+  exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+AGENT_Q_DIR="${REPO_ROOT}/products/firmware/src/stackchan-cores3/agent_q"
+COMMON_ROOT="${REPO_ROOT}/products/firmware/src/common/agent_q"
+CXX_BIN="${CXX:-c++}"
+
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-local-reset.XXXXXX")"
+trap 'rm -rf "${TMP_DIR}"' EXIT
+
+mkdir -p "${TMP_DIR}/agent_q_common" "${TMP_DIR}/stubs/freertos"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+
+cat >"${TMP_DIR}/stubs/freertos/FreeRTOS.h" <<'H'
+#pragma once
+
+#include <stdint.h>
+
+typedef uint32_t TickType_t;
+
+#define pdMS_TO_TICKS(ms) (static_cast<TickType_t>(ms))
+H
+
+cat >"${TMP_DIR}/stubs/freertos/task.h" <<'H'
+#pragma once
+
+#include "freertos/FreeRTOS.h"
+
+extern "C" TickType_t xTaskGetTickCount();
+H
+
+cat >"${TMP_DIR}/stubs/esp_err.h" <<'H'
+#pragma once
+
+typedef int esp_err_t;
+
+#define ESP_OK 0
+#define ESP_ERR_NVS_NOT_FOUND 4354
+
+static inline const char* esp_err_to_name(esp_err_t error)
+{
+    return error == ESP_OK ? "ESP_OK" :
+           error == ESP_ERR_NVS_NOT_FOUND ? "ESP_ERR_NVS_NOT_FOUND" :
+           "ESP_ERR_TEST";
+}
+H
+
+cat >"${TMP_DIR}/stubs/esp_log.h" <<'H'
+#pragma once
+
+#define ESP_LOGI(tag, format, ...) do { (void)(tag); } while (0)
+#define ESP_LOGW(tag, format, ...) do { (void)(tag); } while (0)
+#define ESP_LOGE(tag, format, ...) do { (void)(tag); } while (0)
+H
+
+cat >"${TMP_DIR}/stubs/nvs.h" <<'H'
+#pragma once
+
+#include "esp_err.h"
+
+#define NVS_READONLY 1
+#define NVS_READWRITE 2
+
+typedef int nvs_handle_t;
+
+extern "C" {
+esp_err_t nvs_open(const char* name, int open_mode, nvs_handle_t* out_handle);
+void nvs_close(nvs_handle_t handle);
+esp_err_t nvs_get_u8(nvs_handle_t handle, const char* key, unsigned char* out_value);
+esp_err_t nvs_set_u8(nvs_handle_t handle, const char* key, unsigned char value);
+esp_err_t nvs_erase_key(nvs_handle_t handle, const char* key);
+esp_err_t nvs_commit(nvs_handle_t handle);
+}
+H
+
+cat >"${TMP_DIR}/local_reset_test.cpp" <<'CPP'
+#include <stdio.h>
+#include <string.h>
+
+#include "agent_q_local_auth.h"
+#include "agent_q_local_reset.h"
+#include "agent_q_policy_store.h"
+#include "esp_err.h"
+#include "nvs.h"
+
+namespace {
+
+TickType_t g_now = 0;
+bool g_marker_present = false;
+bool g_open_fails = false;
+bool g_marker_write_fails = false;
+bool g_root_present = true;
+bool g_policy_present = true;
+bool g_auth_present = true;
+bool g_connect_setting_present = true;
+bool g_root_wipe_fails = false;
+int g_clear_session_count = 0;
+int g_persist_unprovisioned_count = 0;
+int g_consistency_error_count = 0;
+int failures = 0;
+
+void expect(bool condition, const char* label)
+{
+    if (!condition) {
+        fprintf(stderr, "FAILED: %s\n", label);
+        ++failures;
+    }
+}
+
+void reset_stubs()
+{
+    g_now = 0;
+    g_marker_present = false;
+    g_open_fails = false;
+    g_marker_write_fails = false;
+    g_root_present = true;
+    g_policy_present = true;
+    g_auth_present = true;
+    g_connect_setting_present = true;
+    g_root_wipe_fails = false;
+    g_clear_session_count = 0;
+    g_persist_unprovisioned_count = 0;
+    g_consistency_error_count = 0;
+    agent_q::local_reset_wipe();
+}
+
+void clear_session()
+{
+    ++g_clear_session_count;
+}
+
+bool persist_unprovisioned()
+{
+    ++g_persist_unprovisioned_count;
+    return true;
+}
+
+void enter_consistency_error(const char*)
+{
+    ++g_consistency_error_count;
+}
+
+agent_q::AgentQLocalResetPersistenceOps ops()
+{
+    return agent_q::AgentQLocalResetPersistenceOps{
+        clear_session,
+        persist_unprovisioned,
+        enter_consistency_error,
+    };
+}
+
+}  // namespace
+
+extern "C" TickType_t xTaskGetTickCount()
+{
+    return g_now;
+}
+
+extern "C" {
+
+esp_err_t nvs_open(const char*, int, nvs_handle_t* out_handle)
+{
+    if (g_open_fails) {
+        return 1;
+    }
+    *out_handle = 1;
+    return ESP_OK;
+}
+
+void nvs_close(nvs_handle_t) {}
+
+esp_err_t nvs_get_u8(nvs_handle_t, const char*, unsigned char* out_value)
+{
+    if (!g_marker_present) {
+        return ESP_ERR_NVS_NOT_FOUND;
+    }
+    *out_value = 1;
+    return ESP_OK;
+}
+
+esp_err_t nvs_set_u8(nvs_handle_t, const char*, unsigned char)
+{
+    if (g_marker_write_fails) {
+        return 1;
+    }
+    g_marker_present = true;
+    return ESP_OK;
+}
+
+esp_err_t nvs_erase_key(nvs_handle_t, const char*)
+{
+    if (!g_marker_present) {
+        return ESP_ERR_NVS_NOT_FOUND;
+    }
+    g_marker_present = false;
+    return ESP_OK;
+}
+
+esp_err_t nvs_commit(nvs_handle_t)
+{
+    return ESP_OK;
+}
+
+}
+
+namespace agent_q {
+
+void wipe_sensitive_buffer(void* data, size_t size)
+{
+    volatile unsigned char* cursor = static_cast<volatile unsigned char*>(data);
+    while (cursor != nullptr && size > 0) {
+        *cursor++ = 0;
+        --size;
+    }
+}
+
+bool has_root_material()
+{
+    return g_root_present;
+}
+
+bool wipe_root_material()
+{
+    if (g_root_wipe_fails) {
+        return false;
+    }
+    g_root_present = false;
+    return true;
+}
+
+AgentQPolicyStoreStatus active_policy_status()
+{
+    return g_policy_present ? AgentQPolicyStoreStatus::active : AgentQPolicyStoreStatus::missing;
+}
+
+bool wipe_policy()
+{
+    g_policy_present = false;
+    return true;
+}
+
+AgentQLocalAuthStatus local_auth_status()
+{
+    return g_auth_present ? AgentQLocalAuthStatus::active : AgentQLocalAuthStatus::missing;
+}
+
+bool is_valid_local_pin(const char* pin)
+{
+    if (pin == nullptr || strlen(pin) != kLocalPinDigits) {
+        return false;
+    }
+    for (size_t index = 0; index < kLocalPinDigits; ++index) {
+        if (pin[index] < '0' || pin[index] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool wipe_local_auth()
+{
+    g_auth_present = false;
+    return true;
+}
+
+bool verify_local_pin(const char*, bool* verified)
+{
+    *verified = true;
+    return true;
+}
+
+bool wipe_require_pin_on_connect()
+{
+    g_connect_setting_present = false;
+    return true;
+}
+
+}  // namespace agent_q
+
+int main()
+{
+    using Stage = agent_q::AgentQLocalResetStage;
+    using Commit = agent_q::AgentQLocalResetCommitResult;
+
+    reset_stubs();
+    agent_q::local_reset_begin_error_recovery_confirm(100);
+    expect(agent_q::local_reset_snapshot(0).stage == Stage::error_recovery_confirm,
+           "error recovery enters confirmation stage");
+    expect(!agent_q::local_reset_wipe_ready(99), "error recovery not ready before erase");
+    expect(agent_q::local_reset_begin_error_recovery_wipe(200), "error recovery begins wipe");
+    expect(agent_q::local_reset_snapshot(0).stage == Stage::wiping, "error recovery uses wiping stage");
+    expect(!agent_q::local_reset_wipe_ready(199), "wipe waits for display delay");
+    expect(agent_q::local_reset_wipe_ready(200), "wipe ready after delay");
+    expect(agent_q::local_reset_commit_material(ops()) == Commit::ok, "error recovery commit succeeds");
+    expect(!g_root_present && !g_policy_present && !g_auth_present && !g_connect_setting_present,
+           "error recovery wipes all persistent material");
+    expect(!g_marker_present, "error recovery clears reset marker");
+    expect(g_clear_session_count == 1, "error recovery clears active session");
+    expect(g_persist_unprovisioned_count == 1, "error recovery persists unprovisioned");
+
+    reset_stubs();
+    g_marker_write_fails = true;
+    agent_q::local_reset_begin_error_recovery_confirm(100);
+    expect(agent_q::local_reset_begin_error_recovery_wipe(100), "marker failure path enters wiping");
+    expect(agent_q::local_reset_commit_material(ops()) == Commit::reset_marker_storage_error,
+           "marker failure aborts before wiping");
+    expect(g_root_present && g_policy_present && g_auth_present && g_connect_setting_present,
+           "marker failure leaves material untouched");
+
+    reset_stubs();
+    g_root_wipe_fails = true;
+    agent_q::local_reset_begin_error_recovery_confirm(100);
+    expect(agent_q::local_reset_begin_error_recovery_wipe(100), "root failure path enters wiping");
+    expect(agent_q::local_reset_commit_material(ops()) == Commit::root_wipe_error,
+           "root wipe failure reports error");
+    expect(g_consistency_error_count == 1, "root wipe failure enters consistency error");
+
+    reset_stubs();
+    g_marker_present = true;
+    bool marker_seen = false;
+    expect(agent_q::local_reset_resume_pending_if_needed(ops(), &marker_seen) == Commit::ok,
+           "pending marker resumes wipe");
+    expect(marker_seen, "pending marker reported");
+    expect(!g_root_present && !g_policy_present && !g_auth_present && !g_connect_setting_present,
+           "pending marker resume wipes all material");
+
+    reset_stubs();
+    expect(!agent_q::local_reset_begin_error_recovery_wipe(100),
+           "error recovery wipe cannot start without confirmation state");
+
+    if (failures != 0) {
+        fprintf(stderr, "%d local reset test(s) failed\n", failures);
+        return 1;
+    }
+    printf("Local reset tests passed\n");
+    return 0;
+}
+CPP
+
+"${CXX_BIN}" -std=c++17 \
+  -I"${TMP_DIR}/stubs" \
+  -I"${TMP_DIR}" \
+  -I"${AGENT_Q_DIR}" \
+  "${AGENT_Q_DIR}/agent_q_pin_attempt.cpp" \
+  "${AGENT_Q_DIR}/agent_q_local_reset.cpp" \
+  "${TMP_DIR}/local_reset_test.cpp" \
+  -o "${TMP_DIR}/local_reset_test"
+
+"${TMP_DIR}/local_reset_test"

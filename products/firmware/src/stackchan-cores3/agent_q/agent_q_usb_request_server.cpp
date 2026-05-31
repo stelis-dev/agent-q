@@ -162,6 +162,7 @@ enum class AgentQUiPanelKind {
     pin_entry,
     settings_menu,
     reset_pin_entry,
+    error_recovery,
     local_pin_auth,
 };
 
@@ -198,12 +199,14 @@ enum class AgentQUiEventKind {
     setup_generate_requested,
     setup_recover_requested,
     setup_cancel_requested,
-    provisioning_welcome_requested,
+    ui_surface_ready,
     settings_requested,
     settings_cancel_requested,
     settings_connect_pin_requested,
     settings_change_pin_requested,
     settings_reset_requested,
+    error_recovery_erase_requested,
+    error_recovery_cancel_requested,
     reset_cancel_requested,
     recovery_phrase_cancel_requested,
     recovery_phrase_confirm_requested,
@@ -332,6 +335,7 @@ struct AgentQUiState {
     AgentQUiMode speech_mode = AgentQUiMode::none;
     stackchan::avatar::Emotion previous_emotion = stackchan::avatar::Emotion::Neutral;
     bool owns_emotion = false;
+    bool surface_ready = false;
     TickType_t message_deadline = 0;
 };
 
@@ -370,6 +374,7 @@ bool persist_provisioning_state(ProvisioningRuntimeState next_state);
 agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops();
 void clear_agent_q_panel();
 void clear_pending_state();
+void show_persistent_error_recovery_if_needed();
 
 void wipe_setup_scratch(const char* reason)
 {
@@ -423,7 +428,9 @@ bool local_reset_panel_matches_stage(AgentQUiPanelKind kind)
     return (kind == AgentQUiPanelKind::settings_menu &&
             stage == agent_q::AgentQLocalResetStage::settings_menu) ||
            (kind == AgentQUiPanelKind::reset_pin_entry &&
-            stage == agent_q::AgentQLocalResetStage::pin_entry);
+            stage == agent_q::AgentQLocalResetStage::pin_entry) ||
+           (kind == AgentQUiPanelKind::error_recovery &&
+            stage == agent_q::AgentQLocalResetStage::error_recovery_confirm);
 }
 
 bool provisioning_flow_panel_deleted(AgentQUiPanelKind kind, const char* reason)
@@ -1416,6 +1423,16 @@ void on_settings_change_pin_clicked(lv_event_t*)
     enqueue_ui_event(AgentQUiEventKind::settings_change_pin_requested);
 }
 
+void on_error_recovery_erase_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::error_recovery_erase_requested);
+}
+
+void on_error_recovery_cancel_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::error_recovery_cancel_requested);
+}
+
 void on_reset_cancel_clicked(lv_event_t*)
 {
     enqueue_ui_event(AgentQUiEventKind::reset_cancel_requested);
@@ -2015,7 +2032,10 @@ bool provisioning_welcome_available()
     bool ui_display_idle = false;
     {
         LvglLockGuard lock;
-        ui_display_idle = g_ui.panel == nullptr && g_ui.speech_mode == AgentQUiMode::none;
+        ui_display_idle =
+            g_ui.surface_ready &&
+            g_ui.panel == nullptr &&
+            g_ui.speech_mode == AgentQUiMode::none;
     }
 
     return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
@@ -2036,6 +2056,12 @@ void show_provisioning_welcome_if_available()
 
     show_agent_q_message(
         "Set up Agent-Q", AgentQMessageKind::info, AgentQUiMode::identification, 0, on_setup_clicked);
+}
+
+void show_idle_agent_q_ui_for_current_state()
+{
+    show_persistent_error_recovery_if_needed();
+    show_provisioning_welcome_if_available();
 }
 
 void clear_agent_q_panel()
@@ -2974,6 +3000,109 @@ bool show_settings_menu_panel()
     return true;
 }
 
+bool show_error_recovery_panel(bool confirm)
+{
+    const bool wiping =
+        agent_q::local_reset_snapshot(xTaskGetTickCount()).stage ==
+        agent_q::AgentQLocalResetStage::wiping;
+    clear_agent_q_avatar_ui();
+
+    LvglLockGuard lock;
+    agent_q::request_display_power_wake();
+    clear_panel_locked(SensitiveUiClearPolicy::preserve);
+
+    g_ui.panel = lv_obj_create(lv_screen_active());
+    if (g_ui.panel == nullptr) {
+        g_ui.panel_kind = AgentQUiPanelKind::none;
+        return false;
+    }
+    register_agent_q_panel_locked(AgentQUiPanelKind::error_recovery);
+    lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(g_ui.panel, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(g_ui.panel, kScreenWidth - 16, kScreenHeight - 16);
+    lv_obj_align(g_ui.panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_radius(g_ui.panel, 8, 0);
+    lv_obj_set_style_border_width(g_ui.panel, 0, 0);
+    lv_obj_set_style_bg_color(g_ui.panel, lv_color_hex(0xFFF7F7), 0);
+    lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(g_ui.panel, 0, 0);
+
+    lv_obj_t* title = lv_label_create(g_ui.panel);
+    if (title == nullptr) {
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
+        return false;
+    }
+    lv_label_set_text(title, wiping ? "Erasing device" : (confirm ? "Erase device data" : "Device data error"));
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x7A1E1E), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 26);
+
+    lv_obj_t* message = lv_label_create(g_ui.panel);
+    if (message == nullptr) {
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
+        return false;
+    }
+    lv_label_set_text(
+        message,
+        wiping
+            ? "Processing. Please wait."
+            : (confirm
+            ? "This deletes local root material, policy, PIN, and settings."
+            : "Stored device material is inconsistent. Erase before setup."));
+    lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(message, kScreenWidth - 54);
+    lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(message, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(message, lv_color_hex(0x3C0505), 0);
+    lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 70);
+
+    if (wiping) {
+        if (!make_pin_processing_overlay(g_ui.panel)) {
+            clear_panel_locked(SensitiveUiClearPolicy::wipe);
+            return false;
+        }
+    } else if (confirm) {
+        if (!make_setup_button(
+                g_ui.panel,
+                "Cancel",
+                kRecoveryPhraseButtonLeftX,
+                kSetupActionButtonY,
+                kRecoveryPhraseButtonWidth,
+                kRecoveryPhraseButtonHeight,
+                SetupButtonKind::outlined_keypad,
+                lv_color_hex(0xA53B3B),
+                on_error_recovery_cancel_clicked) ||
+            !make_setup_button(
+                g_ui.panel,
+                "Erase",
+                kRecoveryPhraseButtonRightX,
+                kSetupActionButtonY,
+                kRecoveryPhraseButtonWidth,
+                kRecoveryPhraseButtonHeight,
+                SetupButtonKind::solid_action,
+                lv_color_hex(0xA53B3B),
+                on_error_recovery_erase_clicked)) {
+            clear_panel_locked(SensitiveUiClearPolicy::wipe);
+            return false;
+        }
+    } else if (!make_setup_button(
+                   g_ui.panel,
+                   "Erase",
+                   kSettingsMenuButtonCenterX,
+                   kSetupActionButtonY,
+                   kRecoveryPhraseButtonWidth,
+                   kRecoveryPhraseButtonHeight,
+                   SetupButtonKind::solid_action,
+                   lv_color_hex(0xA53B3B),
+                   on_error_recovery_erase_clicked)) {
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
+        return false;
+    }
+
+    lv_obj_move_foreground(g_ui.panel);
+    return true;
+}
+
 bool show_reset_pin_panel(const char* notice = nullptr)
 {
     const agent_q::AgentQLocalResetSnapshot reset =
@@ -3507,10 +3636,14 @@ void clear_local_reset_if_needed()
     }
 
     if (expired) {
+        const char* timeout_message = "Reset canceled";
+        if (reset.stage == agent_q::AgentQLocalResetStage::settings_menu) {
+            timeout_message = "Settings timed out";
+        } else if (reset.stage == agent_q::AgentQLocalResetStage::error_recovery_confirm) {
+            timeout_message = "Erase canceled";
+        }
         show_agent_q_message(
-            reset.stage == agent_q::AgentQLocalResetStage::settings_menu
-                ? "Settings timed out"
-                : "Reset canceled",
+            timeout_message,
             AgentQMessageKind::timeout,
             AgentQUiMode::result,
             kAgentQResultDisplayMs);
@@ -3605,6 +3738,98 @@ void close_local_settings_from_ui()
 
     clear_agent_q_panel();
     wipe_local_reset_scratch("local settings closed");
+}
+
+void show_persistent_error_recovery_if_needed()
+{
+    if (!g_persistent_material_consistency_error ||
+        g_pending.active ||
+        g_identification.active ||
+        agent_q::provisioning_flow_active() ||
+        agent_q::local_pin_auth_flow_active() ||
+        agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active) {
+        return;
+    }
+
+    bool error_recovery_visible = false;
+    {
+        LvglLockGuard lock;
+        if (!g_ui.surface_ready) {
+            return;
+        }
+        error_recovery_visible =
+            g_ui.panel != nullptr &&
+            g_ui.panel_kind == AgentQUiPanelKind::error_recovery;
+    }
+    if (error_recovery_visible) {
+        return;
+    }
+
+    if (!show_error_recovery_panel(false)) {
+        ESP_LOGW(kTag, "Persistent error recovery panel could not be shown");
+    }
+}
+
+void start_error_recovery_from_ui()
+{
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(xTaskGetTickCount());
+    if (!g_persistent_material_consistency_error ||
+        reset.flow_active ||
+        g_pending.active ||
+        g_identification.active ||
+        agent_q::provisioning_flow_active() ||
+        agent_q::local_pin_auth_flow_active()) {
+        ESP_LOGW(kTag, "Stale error recovery action ignored");
+        return;
+    }
+
+    agent_q::local_reset_begin_error_recovery_confirm(
+        xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs));
+    if (!show_error_recovery_panel(true)) {
+        wipe_local_reset_scratch("error recovery confirmation display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void cancel_error_recovery_from_ui()
+{
+    if (agent_q::local_reset_snapshot(xTaskGetTickCount()).stage !=
+        agent_q::AgentQLocalResetStage::error_recovery_confirm) {
+        ESP_LOGW(kTag, "Stale error recovery cancel ignored");
+        return;
+    }
+
+    clear_agent_q_panel();
+    wipe_local_reset_scratch("error recovery canceled");
+    show_agent_q_message("Erase canceled", AgentQMessageKind::info, AgentQUiMode::result, kAgentQResultDisplayMs);
+}
+
+void confirm_error_recovery_from_ui()
+{
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(xTaskGetTickCount());
+    if (reset.stage == agent_q::AgentQLocalResetStage::none) {
+        start_error_recovery_from_ui();
+        return;
+    }
+    if (reset.stage != agent_q::AgentQLocalResetStage::error_recovery_confirm ||
+        !g_persistent_material_consistency_error) {
+        ESP_LOGW(kTag, "Stale error recovery erase ignored");
+        return;
+    }
+
+    if (!agent_q::local_reset_begin_error_recovery_wipe(
+            xTaskGetTickCount() + pdMS_TO_TICKS(kLocalProcessingDisplayMs))) {
+        ESP_LOGW(kTag, "Error recovery erase could not enter wiping state");
+        return;
+    }
+
+    if (!make_pin_processing_overlay_on_current_panel(AgentQUiPanelKind::error_recovery) &&
+        !show_error_recovery_panel(true)) {
+        wipe_local_reset_scratch("error recovery wiping display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
 }
 
 void start_reset_pin_from_settings_menu()
@@ -4497,8 +4722,8 @@ void drain_ui_events()
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::provisioning_welcome_requested) {
-            show_provisioning_welcome_if_available();
+        if (event.kind == AgentQUiEventKind::ui_surface_ready) {
+            show_idle_agent_q_ui_for_current_state();
             continue;
         }
 
@@ -4524,6 +4749,16 @@ void drain_ui_events()
 
         if (event.kind == AgentQUiEventKind::settings_reset_requested) {
             start_reset_pin_from_settings_menu();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::error_recovery_erase_requested) {
+            confirm_error_recovery_from_ui();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::error_recovery_cancel_requested) {
+            cancel_error_recovery_from_ui();
             continue;
         }
 
@@ -5018,6 +5253,7 @@ void usb_request_task(void*)
         commit_local_pin_setting_if_ready();
         expire_session_if_needed();
         poll_local_settings_touch_entry();
+        show_persistent_error_recovery_if_needed();
         send_choice_response_if_needed();
         ensure_pending_request_ui();
         if (g_usb_ready) {
@@ -5085,9 +5321,13 @@ void init_usb_request_server()
     ESP_LOGI(kTag, "USB request server ready");
 }
 
-void show_provisioning_welcome_if_needed()
+void notify_agent_q_ui_surface_ready()
 {
-    enqueue_ui_event(AgentQUiEventKind::provisioning_welcome_requested);
+    {
+        LvglLockGuard lock;
+        g_ui.surface_ready = true;
+    }
+    enqueue_ui_event(AgentQUiEventKind::ui_surface_ready);
 }
 
 }  // namespace agent_q

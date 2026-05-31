@@ -156,6 +156,12 @@ PBKDF2-HMAC-SHA512 verifier storage, correct/wrong PIN checks, fresh salt,
 wipe behavior, and corrupt/failed-write fail-closed behavior. This verifier is
 a DEV_PROFILE local UX gate, not root-material encryption.
 
+The StackChan local-reset test is target-specific. It compiles the tracked
+`agent_q_local_reset.cpp` state machine with host NVS/material stubs, then
+verifies normal reset and error-state erase recovery transitions, reset-pending
+marker behavior, destructive wipe orchestration, and failure cleanup. This is a
+host-side state-machine check, not hardware UX proof.
+
 The StackChan provisioning-flow test is target-specific. It compiles the
 tracked `agent_q_provisioning_flow.cpp` state machine with host stubs, then
 verifies Generate/Recover/setup-PIN volatile state transitions, scratch
@@ -195,6 +201,9 @@ In the hardware firmware tree:
 - `agent_q::init_usb_request_server()` starts the USB request task. The task
   keeps protocol handling available even when another firmware mode takes over
   the main app loop.
+- Call `agent_q::notify_agent_q_ui_surface_ready()` after the target attaches
+  the default avatar to let Agent-Q draw the current idle UI for the active
+  device state.
 
 ## Persistent Storage
 

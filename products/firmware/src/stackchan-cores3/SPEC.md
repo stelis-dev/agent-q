@@ -47,7 +47,7 @@ Legend:
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `connect` | O | Source accepts connection only after material-backed `provisioned` state. Default connect approval requires local PIN entry on device; local settings can switch connect approval to physical Confirm after PIN verification. The session is RAM-only and does not authorize signing. Manual hardware smoke verified local PIN approval and fresh reconnect after USB detach/replug. Rerun hardware smoke after setup, session, or material-storage changes. |
 | `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. It returns `busy` while local setup/PIN/reset or sensitive settings subflow state is active, including Change PIN, so external session teardown cannot interleave with device-local sensitive UI. Idle Settings menu does not block disconnect. Rerun hardware smoke after setup, session, or material-storage changes. |
-| Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: connect PIN toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, connect-approval setting, session, and returns to `unprovisioned`. Host-triggered reset/debug/PIN-change protocol paths are intentionally not implemented. StackChan CoreS3 local reset was manually smoke-tested after commit `7c6e65c`; a manual session/settings smoke verified idle Settings read access, Change PIN session retention, and USB detach/replug session invalidation. Rerun hardware smoke after settings or reset UI/state changes. |
+| Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: connect PIN toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, connect-approval setting, session, and returns to `unprovisioned`. Source also implements device-local destructive erase-only recovery from persistent-material consistency `error`, without PIN because the verifier may be unreadable, using the same reset-pending marker and wipe transaction. Host-triggered reset/debug/recovery/PIN-change protocol paths are intentionally not implemented. StackChan CoreS3 local reset was manually smoke-tested after commit `7c6e65c`; a manual session/settings smoke verified idle Settings read access, Change PIN session retention, and USB detach/replug session invalidation. Error-state erase recovery still needs hardware smoke. Rerun hardware smoke after settings or reset UI/state changes. |
 | Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
@@ -364,10 +364,13 @@ reset-pending marker; if power is lost
 mid-reset, boot resumes the material wipe before loading normal state. If the
 marker cannot be written, reset aborts before material is wiped. After the
 marker is written, partial wipe, marker-clear, or state persistence failure
-enters material/state consistency error. This reset flow is not exposed over USB
-and is not an error-state recovery path; when the target detects a
-material/state consistency error, it clears any active RAM session immediately
-and fails closed for session-scoped requests. Wrong reset PIN attempts use a
+enters material/state consistency error. This reset flow is not exposed over USB.
+When the target detects a material/state consistency error, it clears any active
+RAM session immediately and fails closed for session-scoped requests. The error
+panel offers only a device-local destructive erase recovery: it cannot read,
+repair, unlock, or export stored material, it does not require PIN because the
+PIN verifier may be unreadable, and it uses the same reset-pending marker plus
+material wipe transaction before returning to `unprovisioned`. Wrong reset PIN attempts use a
 RAM-only short lockout that is not cleared by closing and reopening the reset
 flow; connect/settings PIN attempts use the same 5-failure, 30-second,
 RAM-only lockout policy. Power cycling clears these local lockouts.
@@ -418,6 +421,10 @@ Current verification expectations for this target:
 - run `tools/firmware/stackchan-cores3/test_local_pin_auth.sh` to check local
   PIN authorization state transitions, including lockout release and retry
   deadline refresh;
+- run `tools/firmware/stackchan-cores3/test_local_reset.sh` to check local reset
+  and error-state erase recovery state transitions, reset-pending marker
+  behavior, destructive wipe orchestration, and failure cleanup against host
+  NVS/material stubs;
 - run `tools/firmware/stackchan-cores3/test_provisioning_flow.sh` to check
   Generate/Recover/setup-PIN volatile state transitions, scratch lifetime,
   panel-loss cleanup, and commit readiness against host stubs;

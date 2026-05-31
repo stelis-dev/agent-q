@@ -82,8 +82,11 @@ to change the local PIN verifier, or choose Reset, verify the stored local PIN,
 and then wipe root material, active policy, PIN verifier, runtime session, and
 provisioning state before returning to `unprovisioned`.
 Firmware records an internal reset-pending marker before destructive wipe starts
-so an interrupted reset can resume at boot. This reset path is not an
-error-state recovery path.
+so an interrupted reset can resume at boot. The same destructive wipe machinery
+is also used by a device-local erase-only recovery from the `error` state.
+That recovery has no PIN requirement because the PIN verifier may be unreadable,
+but it still requires on-device confirmation and is not exposed as a USB,
+Gateway, MCP, or host-triggered API.
 
 ## State Layers And Owners
 
@@ -239,6 +242,9 @@ Allowed:
 - `identify_device`
 - `disconnect` only as session lifecycle cleanup; if the session was already
   cleared, Firmware returns `invalid_session`
+- device-local erase-only recovery after destructive on-device confirmation;
+  this wipes root material, active policy, PIN verifier, local connect setting,
+  runtime session, and provisioning state before returning to `unprovisioned`
 
 Rejected:
 
@@ -250,9 +256,10 @@ Rejected:
 - policy update
 - signing
 
-This state currently has no normal on-device erase-only recovery path. Recovery
-requires a separate product decision because it would allow destructive material
-wipe without a readable PIN verifier.
+This recovery is intentionally destructive and cannot read, export, repair, or
+unlock root material. It exists only to return a fail-closed device to the
+normal local setup path when the stored material set is inconsistent. USB,
+Gateway, and MCP clients still cannot trigger reset or recovery.
 
 ### `locked`
 

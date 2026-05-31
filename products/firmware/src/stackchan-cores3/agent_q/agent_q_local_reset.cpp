@@ -216,6 +216,13 @@ void local_reset_begin_settings(TickType_t deadline)
     g_local_reset.deadline = deadline;
 }
 
+void local_reset_begin_error_recovery_confirm(TickType_t deadline)
+{
+    g_local_reset.wipe();
+    g_local_reset.stage = AgentQLocalResetStage::error_recovery_confirm;
+    g_local_reset.deadline = deadline;
+}
+
 bool local_reset_begin_pin_entry(TickType_t deadline)
 {
     if (g_local_reset.stage != AgentQLocalResetStage::settings_menu) {
@@ -226,6 +233,18 @@ bool local_reset_begin_pin_entry(TickType_t deadline)
     g_local_reset.stage = AgentQLocalResetStage::pin_entry;
     g_local_reset.wipe_pin_only();
     g_local_reset.deadline = deadline;
+    return true;
+}
+
+bool local_reset_begin_error_recovery_wipe(TickType_t wipe_ready_at)
+{
+    if (g_local_reset.stage != AgentQLocalResetStage::error_recovery_confirm) {
+        return false;
+    }
+    g_local_reset.wipe_pin_only();
+    g_local_reset.clear_lockout();
+    g_local_reset.stage = AgentQLocalResetStage::wiping;
+    g_local_reset.wipe_ready_at = wipe_ready_at;
     return true;
 }
 
