@@ -16,6 +16,7 @@
 #include "agent_q_local_reset.h"
 #include "agent_q_motion_state.h"
 #include "agent_q_policy_store.h"
+#include "agent_q_provisioning_flow.h"
 #include "agent_q_root_material.h"
 #include "agent_q_speech_bubble.h"
 #include "agent_q_sui_account.h"
@@ -44,6 +45,10 @@ namespace {
 
 using LocalPinAuthPurpose = agent_q::AgentQLocalPinAuthPurpose;
 using LocalPinAuthStage = agent_q::AgentQLocalPinAuthStage;
+using ProvisioningFlowGenerateResult = agent_q::AgentQProvisioningFlowGenerateResult;
+using ProvisioningFlowPanel = agent_q::AgentQProvisioningFlowPanel;
+using ProvisioningFlowPinSubmitResult = agent_q::AgentQProvisioningFlowPinSubmitResult;
+using ProvisioningFlowStage = agent_q::AgentQProvisioningFlowStage;
 
 constexpr const char* kTag = "UsbRequestServer";
 constexpr int kProtocolVersion = 1;
@@ -79,12 +84,10 @@ constexpr size_t kIdentifyCodeSize = 5;
 constexpr size_t kSessionIdSize = 26;
 constexpr size_t kGatewayNameSize = 65;
 constexpr size_t kConnectDisplayMessageSize = 96;
-constexpr size_t kRecoveryPhrasePrefixCellCount = 12;
-constexpr size_t kRecoveryPhrasePrefixCellSize = 8;
-constexpr size_t kRecoverWordsPerPage = 3;
-constexpr size_t kRecoverPageCount = agent_q::kBip39MnemonicWordCount / kRecoverWordsPerPage;
-constexpr size_t kRecoverPrefixMaxChars = 4;
-constexpr size_t kRecoverPrefixBufferSize = kRecoverPrefixMaxChars + 1;
+constexpr size_t kRecoveryPhrasePrefixCellCount = agent_q::kProvisioningFlowPhrasePrefixCellCount;
+constexpr size_t kRecoveryPhrasePrefixCellSize = agent_q::kProvisioningFlowPhrasePrefixCellSize;
+constexpr size_t kRecoverWordsPerPage = agent_q::kProvisioningFlowRecoverWordsPerPage;
+constexpr size_t kRecoverPageCount = agent_q::kProvisioningFlowRecoverPageCount;
 constexpr int kScreenHeight = 240;
 constexpr int kScreenWidth = 320;
 constexpr int kDecisionStripHeight = 34;
@@ -332,84 +335,6 @@ struct AgentQUiState {
     TickType_t message_deadline = 0;
 };
 
-enum class SetupScratchStage {
-    none,
-    setup_choice,
-    recovery_phrase_displayed,
-    recover_word_entry,
-    pin_first_entry,
-    pin_repeat_entry,
-    pin_committing,
-};
-
-enum class RecoveryPhraseGenerationResult {
-    ok,
-    rng_error,
-    generation_error,
-};
-
-struct ProvisioningScratchState {
-    uint8_t root_material[agent_q::kRootMaterialBytes] = {};
-    char recovery_phrase[agent_q::kBip39MnemonicMaxChars] = {};
-    char recovery_phrase_prefix_cells[kRecoveryPhrasePrefixCellCount][kRecoveryPhrasePrefixCellSize] = {};
-    uint16_t recover_word_indices[agent_q::kBip39MnemonicWordCount] = {};
-    bool recover_word_selected[agent_q::kBip39MnemonicWordCount] = {};
-    char recover_prefixes[agent_q::kBip39MnemonicWordCount][kRecoverPrefixBufferSize] = {};
-    char pin_first[agent_q::kLocalPinBufferSize] = {};
-    char pin_entry[agent_q::kLocalPinBufferSize] = {};
-    size_t pin_entry_length = 0;
-    uint8_t recover_page = 0;
-    uint8_t recover_active_slot = 0;
-    SetupScratchStage setup_stage = SetupScratchStage::none;
-    TickType_t setup_choice_deadline = 0;
-    TickType_t recovery_phrase_deadline = 0;
-    TickType_t recover_word_deadline = 0;
-    TickType_t pin_deadline = 0;
-    TickType_t pin_commit_ready_at = 0;
-
-    void wipe()
-    {
-        agent_q::wipe_sensitive_buffer(root_material, sizeof(root_material));
-        agent_q::wipe_sensitive_buffer(recovery_phrase, sizeof(recovery_phrase));
-        agent_q::wipe_sensitive_buffer(
-            recovery_phrase_prefix_cells,
-            kRecoveryPhrasePrefixCellCount * kRecoveryPhrasePrefixCellSize);
-        agent_q::wipe_sensitive_buffer(recover_word_indices, sizeof(recover_word_indices));
-        agent_q::wipe_sensitive_buffer(recover_word_selected, sizeof(recover_word_selected));
-        agent_q::wipe_sensitive_buffer(recover_prefixes, sizeof(recover_prefixes));
-        wipe_pin_only();
-        recover_page = 0;
-        recover_active_slot = 0;
-        setup_stage = SetupScratchStage::none;
-        setup_choice_deadline = 0;
-        recovery_phrase_deadline = 0;
-        recover_word_deadline = 0;
-        pin_commit_ready_at = 0;
-    }
-
-    void wipe_pin_only()
-    {
-        agent_q::wipe_sensitive_buffer(pin_first, sizeof(pin_first));
-        agent_q::wipe_sensitive_buffer(pin_entry, sizeof(pin_entry));
-        pin_entry_length = 0;
-        pin_deadline = 0;
-        pin_commit_ready_at = 0;
-    }
-
-    void wipe_displayed_phrase_text()
-    {
-        agent_q::wipe_sensitive_buffer(recovery_phrase, sizeof(recovery_phrase));
-        agent_q::wipe_sensitive_buffer(
-            recovery_phrase_prefix_cells,
-            kRecoveryPhrasePrefixCellCount * kRecoveryPhrasePrefixCellSize);
-    }
-
-    bool setup_flow_active() const
-    {
-        return setup_stage != SetupScratchStage::none;
-    }
-};
-
 struct LocalSettingsTouchState {
     bool active = false;
     TickType_t started_at = 0;
@@ -430,7 +355,6 @@ PendingApprovalState g_pending;
 IdentificationState g_identification;
 SessionState g_session;
 AgentQUiState g_ui;
-ProvisioningScratchState g_provisioning_scratch;
 LocalSettingsTouchState g_settings_touch;
 bool g_usb_ready = false;
 bool g_usb_host_connected_known = false;
@@ -449,8 +373,8 @@ void clear_pending_state();
 
 void wipe_setup_scratch(const char* reason)
 {
-    const bool had_setup_scratch = g_provisioning_scratch.setup_flow_active();
-    g_provisioning_scratch.wipe();
+    const bool had_setup_scratch = agent_q::provisioning_flow_active();
+    agent_q::provisioning_flow_wipe();
     if (had_setup_scratch) {
         ESP_LOGW(kTag, "Setup scratch wiped: %s", reason != nullptr ? reason : "unspecified");
     }
@@ -500,6 +424,32 @@ bool local_reset_panel_matches_stage(AgentQUiPanelKind kind)
             stage == agent_q::AgentQLocalResetStage::settings_menu) ||
            (kind == AgentQUiPanelKind::reset_pin_entry &&
             stage == agent_q::AgentQLocalResetStage::pin_entry);
+}
+
+bool provisioning_flow_panel_deleted(AgentQUiPanelKind kind, const char* reason)
+{
+    ProvisioningFlowPanel panel;
+    switch (kind) {
+        case AgentQUiPanelKind::setup_choice:
+            panel = ProvisioningFlowPanel::setup_choice;
+            break;
+        case AgentQUiPanelKind::recovery_phrase_display:
+            panel = ProvisioningFlowPanel::recovery_phrase_display;
+            break;
+        case AgentQUiPanelKind::recovery_word_entry:
+            panel = ProvisioningFlowPanel::recovery_word_entry;
+            break;
+        case AgentQUiPanelKind::pin_entry:
+            panel = ProvisioningFlowPanel::pin_entry;
+            break;
+        default:
+            return false;
+    }
+    const bool wiped = agent_q::provisioning_flow_handle_panel_deleted(panel);
+    if (wiped) {
+        ESP_LOGW(kTag, "Setup scratch wiped: %s", reason != nullptr ? reason : "panel deleted");
+    }
+    return wiped;
 }
 
 bool tick_reached(TickType_t deadline)
@@ -557,147 +507,6 @@ bool is_printable_ascii_gateway_name(const char* value)
         }
     }
     return true;
-}
-
-void wipe_recovery_phrase_prefix_cells(char cells[kRecoveryPhrasePrefixCellCount][kRecoveryPhrasePrefixCellSize])
-{
-    agent_q::wipe_sensitive_buffer(
-        cells, kRecoveryPhrasePrefixCellCount * kRecoveryPhrasePrefixCellSize);
-}
-
-bool format_recovery_phrase_prefix_cells(
-    const char* phrase,
-    char cells[kRecoveryPhrasePrefixCellCount][kRecoveryPhrasePrefixCellSize])
-{
-    if (phrase == nullptr || cells == nullptr) {
-        return false;
-    }
-
-    wipe_recovery_phrase_prefix_cells(cells);
-    size_t word_count = 0;
-    const char* cursor = phrase;
-    while (*cursor != '\0') {
-        while (*cursor == ' ') {
-            cursor++;
-        }
-        if (*cursor == '\0') {
-            break;
-        }
-
-        char prefix[5] = {};
-        size_t prefix_length = 0;
-        while (*cursor != '\0' && *cursor != ' ') {
-            if (prefix_length < 4) {
-                prefix[prefix_length++] = *cursor;
-            }
-            cursor++;
-        }
-        word_count++;
-        if (word_count > 12) {
-            wipe_recovery_phrase_prefix_cells(cells);
-            return false;
-        }
-
-        const int written = snprintf(
-            cells[word_count - 1],
-            kRecoveryPhrasePrefixCellSize,
-            "%s",
-            prefix);
-        if (written <= 0 || static_cast<size_t>(written) >= kRecoveryPhrasePrefixCellSize) {
-            wipe_recovery_phrase_prefix_cells(cells);
-            return false;
-        }
-    }
-
-    if (word_count != 12) {
-        wipe_recovery_phrase_prefix_cells(cells);
-        return false;
-    }
-    return true;
-}
-
-size_t recover_global_word_slot()
-{
-    return static_cast<size_t>(g_provisioning_scratch.recover_page) * kRecoverWordsPerPage +
-           g_provisioning_scratch.recover_active_slot;
-}
-
-size_t recover_global_word_slot_for(uint8_t page, uint8_t slot)
-{
-    return static_cast<size_t>(page) * kRecoverWordsPerPage + slot;
-}
-
-bool recover_current_page_complete()
-{
-    if (g_provisioning_scratch.recover_page >= kRecoverPageCount) {
-        return false;
-    }
-    for (size_t slot = 0; slot < kRecoverWordsPerPage; ++slot) {
-        const size_t global_slot = recover_global_word_slot_for(g_provisioning_scratch.recover_page, slot);
-        if (global_slot >= agent_q::kBip39MnemonicWordCount ||
-            !g_provisioning_scratch.recover_word_selected[global_slot]) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool recover_all_words_complete()
-{
-    for (size_t index = 0; index < agent_q::kBip39MnemonicWordCount; ++index) {
-        if (!g_provisioning_scratch.recover_word_selected[index]) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool word_starts_with_prefix(const char* word, const char* prefix)
-{
-    if (word == nullptr || prefix == nullptr || prefix[0] == '\0') {
-        return false;
-    }
-    for (size_t index = 0; prefix[index] != '\0'; ++index) {
-        if (word[index] != prefix[index]) {
-            return false;
-        }
-    }
-    return true;
-}
-
-void write_selected_word_prefix(size_t global_slot, uint16_t word_index)
-{
-    if (global_slot >= agent_q::kBip39MnemonicWordCount) {
-        return;
-    }
-    char* prefix = g_provisioning_scratch.recover_prefixes[global_slot];
-    agent_q::wipe_sensitive_buffer(prefix, kRecoverPrefixBufferSize);
-    const char* word = agent_q::bip39_english_word(word_index);
-    if (word == nullptr) {
-        return;
-    }
-    size_t index = 0;
-    while (index < kRecoverPrefixMaxChars && word[index] != '\0') {
-        prefix[index] = word[index];
-        ++index;
-    }
-    prefix[index] = '\0';
-}
-
-void wipe_recover_word_entry_scratch()
-{
-    agent_q::wipe_sensitive_buffer(
-        g_provisioning_scratch.recover_word_indices,
-        sizeof(g_provisioning_scratch.recover_word_indices));
-    agent_q::wipe_sensitive_buffer(
-        g_provisioning_scratch.recover_word_selected,
-        sizeof(g_provisioning_scratch.recover_word_selected));
-    agent_q::wipe_sensitive_buffer(
-        g_provisioning_scratch.recover_prefixes,
-        sizeof(g_provisioning_scratch.recover_prefixes));
-    g_provisioning_scratch.recover_page = 0;
-    g_provisioning_scratch.recover_active_slot = 0;
-    g_provisioning_scratch.recover_word_deadline = 0;
 }
 
 bool is_safe_session_id(const char* value)
@@ -759,7 +568,7 @@ const char* current_device_state()
     }
     const agent_q::AgentQLocalResetSnapshot reset =
         agent_q::local_reset_snapshot(xTaskGetTickCount());
-    if (g_provisioning_scratch.setup_flow_active() ||
+    if (agent_q::provisioning_flow_active() ||
         (reset.flow_active &&
          reset.stage != agent_q::AgentQLocalResetStage::settings_menu) ||
         agent_q::local_pin_auth_flow_active()) {
@@ -1407,7 +1216,7 @@ bool local_setup_start_allowed()
 
     return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
            !g_persistent_material_consistency_error &&
-           !g_provisioning_scratch.setup_flow_active() &&
+           !agent_q::provisioning_flow_active() &&
            !agent_q::local_pin_auth_flow_active() &&
            !g_pending.active;
 }
@@ -1467,7 +1276,7 @@ bool local_settings_touch_entry_candidate_allowed()
            !g_persistent_material_consistency_error &&
            !g_pending.active &&
            !g_identification.active &&
-           !g_provisioning_scratch.setup_flow_active() &&
+           !agent_q::provisioning_flow_active() &&
            !agent_q::local_pin_auth_flow_active() &&
            !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
            agent_q_ui_idle_for_local_settings();
@@ -1479,7 +1288,7 @@ bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_setti
         write_error_response(id, "busy", "Device is awaiting local input.");
         return true;
     }
-    if (g_provisioning_scratch.setup_flow_active()) {
+    if (agent_q::provisioning_flow_active()) {
         write_error_response(id, "busy", "Device is showing setup material.");
         return true;
     }
@@ -1530,7 +1339,7 @@ bool require_active_matching_session(const char* id, const char* session_id)
 
 bool recovery_phrase_backup_confirmation_ready()
 {
-    return g_provisioning_scratch.setup_stage == SetupScratchStage::recovery_phrase_displayed;
+    return agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recovery_phrase_displayed);
 }
 
 void enqueue_pending_choice(PendingChoice choice)
@@ -2089,7 +1898,9 @@ void clear_panel_locked(SensitiveUiClearPolicy policy)
             local_pin_auth_panel_matches_stage(panel_kind);
         lv_obj_delete(panel);
         if (wipe_setup_after_delete) {
-            wipe_setup_scratch("sensitive setup panel cleared");
+            if (!provisioning_flow_panel_deleted(panel_kind, "sensitive setup panel cleared")) {
+                wipe_setup_scratch("sensitive setup panel cleared");
+            }
         }
         if (wipe_reset_after_delete) {
             wipe_local_reset_scratch("local reset panel cleared");
@@ -2211,7 +2022,7 @@ bool provisioning_welcome_available()
            !g_persistent_material_consistency_error &&
            !g_pending.active &&
            !g_identification.active &&
-           !g_provisioning_scratch.setup_flow_active() &&
+           !agent_q::provisioning_flow_active() &&
            !agent_q::local_pin_auth_flow_active() &&
            !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
            ui_display_idle;
@@ -2359,16 +2170,16 @@ void rollback_persistent_setup_material_after_failed_commit()
     agent_q::wipe_root_material();
 }
 
-SetupCommitResult commit_setup_material_after_pin_match(const char* pin, const char* reason)
+SetupCommitResult commit_setup_material_after_pin_match(const char* reason)
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::pin_committing ||
-        !agent_q::is_valid_local_pin(pin)) {
+    const uint8_t* root_material = nullptr;
+    size_t root_material_size = 0;
+    const char* setup_pin = nullptr;
+    if (!agent_q::provisioning_flow_commit_inputs(&root_material, &root_material_size, &setup_pin)) {
         return SetupCommitResult::missing_scratch;
     }
 
-    if (!agent_q::store_root_material(
-            g_provisioning_scratch.root_material,
-            sizeof(g_provisioning_scratch.root_material))) {
+    if (!agent_q::store_root_material(root_material, root_material_size)) {
         rollback_persistent_setup_material_after_failed_commit();
         enter_persistent_material_consistency_error_if_material_remains(
             "Root material storage left partial persistent setup material; failing closed");
@@ -2384,7 +2195,7 @@ SetupCommitResult commit_setup_material_after_pin_match(const char* pin, const c
         return SetupCommitResult::policy_storage_error;
     }
 
-    if (!agent_q::store_local_pin_verifier(pin)) {
+    if (!agent_q::store_local_pin_verifier(setup_pin)) {
         rollback_persistent_setup_material_after_failed_commit();
         enter_persistent_material_consistency_error_if_material_remains(
             "Local PIN verifier storage failed with persistent setup material present; failing closed");
@@ -2484,8 +2295,10 @@ bool make_recover_word_cell(lv_obj_t* parent, uint8_t slot)
         return false;
     }
 
+    const agent_q::AgentQProvisioningFlowSnapshot flow =
+        agent_q::provisioning_flow_snapshot();
     const size_t global_slot =
-        recover_global_word_slot_for(g_provisioning_scratch.recover_page, slot);
+        agent_q::provisioning_flow_recover_global_word_slot_for(flow.recover_page, slot);
     if (global_slot >= agent_q::kBip39MnemonicWordCount) {
         return false;
     }
@@ -2505,7 +2318,7 @@ bool make_recover_word_cell(lv_obj_t* parent, uint8_t slot)
     lv_obj_set_style_border_width(cell, 1, 0);
     lv_obj_set_style_border_color(cell, lv_color_hex(kSetupCellBorderColor), 0);
     lv_obj_set_style_bg_color(cell, lv_color_hex(
-        slot == g_provisioning_scratch.recover_active_slot ? 0xE9F8EF : 0xFFFFFF), 0);
+        slot == flow.recover_active_slot ? 0xE9F8EF : 0xFFFFFF), 0);
     lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(cell, lv_color_hex(kSetupInputPressedColor), LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(cell, LV_OPA_30, LV_STATE_PRESSED);
@@ -2545,7 +2358,7 @@ bool make_recover_word_cell(lv_obj_t* parent, uint8_t slot)
     if (prefix_label == nullptr) {
         return false;
     }
-    const char* prefix = g_provisioning_scratch.recover_prefixes[global_slot];
+    const char* prefix = agent_q::provisioning_flow_recover_prefix(global_slot);
     lv_label_set_text(prefix_label, prefix[0] != '\0' ? prefix : "____");
     lv_label_set_long_mode(prefix_label, LV_LABEL_LONG_CLIP);
     lv_obj_set_width(prefix_label, kMnemonicWordPrefixWidth);
@@ -2609,10 +2422,8 @@ bool make_recover_candidate_area(lv_obj_t* parent)
     lv_obj_set_style_pad_all(area, 0, 0);
     lv_obj_set_style_bg_opa(area, LV_OPA_TRANSP, 0);
 
-    const size_t global_slot = recover_global_word_slot();
-    const char* prefix = global_slot < agent_q::kBip39MnemonicWordCount
-        ? g_provisioning_scratch.recover_prefixes[global_slot]
-        : "";
+    const size_t global_slot = agent_q::provisioning_flow_recover_global_word_slot();
+    const char* prefix = agent_q::provisioning_flow_recover_prefix(global_slot);
     if (prefix[0] == '\0') {
         lv_obj_t* label = lv_label_create(area);
         if (label == nullptr) {
@@ -2630,7 +2441,7 @@ bool make_recover_candidate_area(lv_obj_t* parent)
     size_t candidate_count = 0;
     for (uint16_t word_index = 0; word_index < agent_q::kBip39WordCount; ++word_index) {
         const char* word = agent_q::bip39_english_word(word_index);
-        if (!word_starts_with_prefix(word, prefix)) {
+        if (!agent_q::provisioning_flow_word_starts_with_prefix(word, prefix)) {
             continue;
         }
         if (candidate_count >= agent_q::kBip39WordCount) {
@@ -2730,10 +2541,12 @@ bool show_recover_word_entry_panel(const char* notice = nullptr)
     lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(g_ui.panel, 0, 0);
 
+    const agent_q::AgentQProvisioningFlowSnapshot flow =
+        agent_q::provisioning_flow_snapshot();
     char title_text[32] = {};
     snprintf(title_text, sizeof(title_text), "Recover words %u-%u",
-             static_cast<unsigned>(g_provisioning_scratch.recover_page * kRecoverWordsPerPage + 1),
-             static_cast<unsigned>((g_provisioning_scratch.recover_page + 1) * kRecoverWordsPerPage));
+             static_cast<unsigned>(flow.recover_page * kRecoverWordsPerPage + 1),
+             static_cast<unsigned>((flow.recover_page + 1) * kRecoverWordsPerPage));
     lv_obj_t* title = lv_label_create(g_ui.panel);
     if (title == nullptr) {
         clear_panel_locked(SensitiveUiClearPolicy::wipe);
@@ -2802,10 +2615,10 @@ bool show_recover_word_entry_panel(const char* notice = nullptr)
             lv_color_hex(0x667085),
             on_recover_previous_clicked,
             nullptr,
-            g_provisioning_scratch.recover_page > 0) ||
+            flow.recover_page > 0) ||
         !make_setup_button(
             g_ui.panel,
-            g_provisioning_scratch.recover_page + 1 >= kRecoverPageCount ? "Verify" : "Next",
+            flow.recover_page + 1 >= kRecoverPageCount ? "Verify" : "Next",
             kRecoveryPhraseButtonLeftX + 3 * (kRecoverNavigationButtonWidth + 8),
             kSetupActionButtonY,
             kRecoverNavigationButtonWidth,
@@ -2814,7 +2627,7 @@ bool show_recover_word_entry_panel(const char* notice = nullptr)
             lv_color_hex(0x24875A),
             on_recover_next_clicked,
             nullptr,
-            recover_current_page_complete())) {
+            flow.recover_current_page_complete)) {
         clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
@@ -2825,8 +2638,7 @@ bool show_recover_word_entry_panel(const char* notice = nullptr)
 
 bool show_recovery_phrase_display(const char* recovery_phrase)
 {
-    if (!format_recovery_phrase_prefix_cells(
-            recovery_phrase, g_provisioning_scratch.recovery_phrase_prefix_cells)) {
+    if (recovery_phrase == nullptr || recovery_phrase[0] == '\0') {
         return false;
     }
 
@@ -2919,7 +2731,7 @@ bool show_recovery_phrase_display(const char* recovery_phrase)
             clear_panel_locked(SensitiveUiClearPolicy::wipe);
             return false;
         }
-        lv_label_set_text_static(prefix_label, g_provisioning_scratch.recovery_phrase_prefix_cells[index]);
+        lv_label_set_text_static(prefix_label, agent_q::provisioning_flow_recovery_phrase_prefix_cell(index));
         lv_label_set_long_mode(prefix_label, LV_LABEL_LONG_CLIP);
         lv_obj_set_width(prefix_label, kMnemonicWordPrefixWidth);
         lv_obj_set_style_text_align(prefix_label, LV_TEXT_ALIGN_LEFT, 0);
@@ -2979,8 +2791,10 @@ bool show_pin_setup_panel(const char* notice = nullptr)
     lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(g_ui.panel, 0, 0);
 
-    const bool repeat_stage = g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry;
-    const bool committing_stage = g_provisioning_scratch.setup_stage == SetupScratchStage::pin_committing;
+    const agent_q::AgentQProvisioningFlowSnapshot flow =
+        agent_q::provisioning_flow_snapshot();
+    const bool repeat_stage = flow.stage == ProvisioningFlowStage::pin_repeat_entry;
+    const bool committing_stage = flow.stage == ProvisioningFlowStage::pin_committing;
     const bool buttons_enabled = !committing_stage;
     lv_obj_t* title = lv_label_create(g_ui.panel);
     if (title == nullptr) {
@@ -3011,7 +2825,7 @@ bool show_pin_setup_panel(const char* notice = nullptr)
 
     char pin_mask[agent_q::kLocalPinDigits + 1] = {};
     for (size_t index = 0; index < agent_q::kLocalPinDigits; ++index) {
-        pin_mask[index] = index < g_provisioning_scratch.pin_entry_length ? '*' : '_';
+        pin_mask[index] = index < flow.pin_entry_length ? '*' : '_';
     }
     char pin_text[16] = {};
     snprintf(pin_text, sizeof(pin_text), "PIN: %s", pin_mask);
@@ -3441,46 +3255,10 @@ bool show_local_pin_auth_panel(const char* notice = nullptr)
     return true;
 }
 
-RecoveryPhraseGenerationResult generate_recovery_phrase_scratch()
-{
-    wipe_setup_scratch("recovery phrase generation reset");
-
-    if (!agent_q::fill_secure_random(
-            g_provisioning_scratch.root_material,
-            sizeof(g_provisioning_scratch.root_material))) {
-        wipe_setup_scratch("recovery phrase entropy failure");
-        return RecoveryPhraseGenerationResult::rng_error;
-    }
-    const bool generated = agent_q::make_bip39_mnemonic_12_words(
-        g_provisioning_scratch.root_material,
-        g_provisioning_scratch.recovery_phrase,
-        sizeof(g_provisioning_scratch.recovery_phrase));
-    if (!generated) {
-        wipe_setup_scratch("recovery phrase generation failure");
-        return RecoveryPhraseGenerationResult::generation_error;
-    }
-
-    g_provisioning_scratch.setup_stage = SetupScratchStage::recovery_phrase_displayed;
-    g_provisioning_scratch.recovery_phrase_deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(kRecoveryPhraseDisplayMs);
-    return RecoveryPhraseGenerationResult::ok;
-}
-
-void begin_recovery_word_entry_scratch()
-{
-    wipe_setup_scratch("recovery import reset");
-    g_provisioning_scratch.setup_stage = SetupScratchStage::recover_word_entry;
-    g_provisioning_scratch.recover_page = 0;
-    g_provisioning_scratch.recover_active_slot = 0;
-    g_provisioning_scratch.recover_word_deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
-}
-
 bool setup_choice_action_allowed()
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::setup_choice ||
-        g_provisioning_scratch.setup_choice_deadline == 0 ||
-        tick_reached(g_provisioning_scratch.setup_choice_deadline) ||
+    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::setup_choice) ||
+        !agent_q::provisioning_flow_setup_choice_action_allowed(xTaskGetTickCount()) ||
         g_pending.active ||
         agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active) {
         return false;
@@ -3494,13 +3272,12 @@ bool setup_choice_action_allowed()
 
 void clear_setup_choice_if_needed()
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::setup_choice) {
+    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::setup_choice)) {
         return;
     }
 
     const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::setup_choice);
-    const bool expired = g_provisioning_scratch.setup_choice_deadline != 0 &&
-                         tick_reached(g_provisioning_scratch.setup_choice_deadline);
+    const bool expired = agent_q::provisioning_flow_stage_expired(xTaskGetTickCount());
     if (panel_active && !expired) {
         return;
     }
@@ -3518,13 +3295,12 @@ void clear_setup_choice_if_needed()
 
 void clear_recovery_word_entry_if_needed()
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry) {
+    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recover_word_entry)) {
         return;
     }
 
     const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::recovery_word_entry);
-    const bool expired = g_provisioning_scratch.recover_word_deadline != 0 &&
-                         tick_reached(g_provisioning_scratch.recover_word_deadline);
+    const bool expired = agent_q::provisioning_flow_stage_expired(xTaskGetTickCount());
     if (panel_active && !expired) {
         return;
     }
@@ -3542,13 +3318,12 @@ void clear_recovery_word_entry_if_needed()
 
 void clear_recovery_phrase_if_needed()
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recovery_phrase_displayed) {
+    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recovery_phrase_displayed)) {
         return;
     }
 
     const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::recovery_phrase_display);
-    const bool expired = g_provisioning_scratch.recovery_phrase_deadline != 0 &&
-                         tick_reached(g_provisioning_scratch.recovery_phrase_deadline);
+    const bool expired = agent_q::provisioning_flow_stage_expired(xTaskGetTickCount());
     if (panel_active && !expired) {
         return;
     }
@@ -3566,14 +3341,12 @@ void clear_recovery_phrase_if_needed()
 
 void clear_pin_setup_if_needed()
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::pin_first_entry &&
-        g_provisioning_scratch.setup_stage != SetupScratchStage::pin_repeat_entry) {
+    if (!agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
         return;
     }
 
     const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::pin_entry);
-    const bool expired = g_provisioning_scratch.pin_deadline != 0 &&
-                         tick_reached(g_provisioning_scratch.pin_deadline);
+    const bool expired = agent_q::provisioning_flow_stage_expired(xTaskGetTickCount());
     if (panel_active && !expired) {
         return;
     }
@@ -3591,23 +3364,11 @@ void clear_pin_setup_if_needed()
 
 void handle_pin_digit_from_local_ui(char digit)
 {
-    if ((g_provisioning_scratch.setup_stage != SetupScratchStage::pin_first_entry &&
-         g_provisioning_scratch.setup_stage != SetupScratchStage::pin_repeat_entry) ||
-        digit < '0' || digit > '9') {
+    if (!agent_q::provisioning_flow_add_pin_digit(
+            digit,
+            xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs))) {
         return;
     }
-    if (g_provisioning_scratch.pin_entry_length >= agent_q::kLocalPinDigits) {
-        g_provisioning_scratch.pin_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs);
-        if (!show_pin_setup_panel()) {
-            wipe_setup_scratch("local PIN setup display allocation failed");
-            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-
-    g_provisioning_scratch.pin_entry[g_provisioning_scratch.pin_entry_length++] = digit;
-    g_provisioning_scratch.pin_entry[g_provisioning_scratch.pin_entry_length] = '\0';
-    g_provisioning_scratch.pin_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs);
     if (!show_pin_setup_panel()) {
         wipe_setup_scratch("local PIN setup display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -3616,13 +3377,10 @@ void handle_pin_digit_from_local_ui(char digit)
 
 void handle_pin_clear_from_local_ui()
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::pin_first_entry &&
-        g_provisioning_scratch.setup_stage != SetupScratchStage::pin_repeat_entry) {
+    if (!agent_q::provisioning_flow_clear_pin_entry(
+            xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs))) {
         return;
     }
-    agent_q::wipe_sensitive_buffer(g_provisioning_scratch.pin_entry, sizeof(g_provisioning_scratch.pin_entry));
-    g_provisioning_scratch.pin_entry_length = 0;
-    g_provisioning_scratch.pin_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs);
     if (!show_pin_setup_panel()) {
         wipe_setup_scratch("local PIN setup display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -3631,14 +3389,10 @@ void handle_pin_clear_from_local_ui()
 
 void handle_pin_backspace_from_local_ui()
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::pin_first_entry &&
-        g_provisioning_scratch.setup_stage != SetupScratchStage::pin_repeat_entry) {
+    if (!agent_q::provisioning_flow_backspace_pin(
+            xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs))) {
         return;
     }
-    if (g_provisioning_scratch.pin_entry_length > 0) {
-        g_provisioning_scratch.pin_entry[--g_provisioning_scratch.pin_entry_length] = '\0';
-    }
-    g_provisioning_scratch.pin_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs);
     if (!show_pin_setup_panel()) {
         wipe_setup_scratch("local PIN setup display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -3647,53 +3401,40 @@ void handle_pin_backspace_from_local_ui()
 
 void handle_pin_submit_from_local_ui()
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::pin_first_entry &&
-        g_provisioning_scratch.setup_stage != SetupScratchStage::pin_repeat_entry) {
+    if (!agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
         ESP_LOGW(kTag, "Stale local PIN submit ignored");
         return;
     }
-    if (g_provisioning_scratch.pin_entry_length != agent_q::kLocalPinDigits ||
-        !agent_q::is_valid_local_pin(g_provisioning_scratch.pin_entry)) {
-        g_provisioning_scratch.pin_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs);
+    const ProvisioningFlowPinSubmitResult result =
+        agent_q::provisioning_flow_submit_pin(
+            xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs),
+            xTaskGetTickCount() + pdMS_TO_TICKS(kLocalProcessingDisplayMs));
+    if (result == ProvisioningFlowPinSubmitResult::invalid_pin) {
         if (!show_pin_setup_panel("Enter exactly 6 digits.")) {
             wipe_setup_scratch("local PIN setup display allocation failed");
             show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
         }
         return;
     }
-
-    if (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry) {
-        strlcpy(g_provisioning_scratch.pin_first,
-                g_provisioning_scratch.pin_entry,
-                sizeof(g_provisioning_scratch.pin_first));
-        agent_q::wipe_sensitive_buffer(g_provisioning_scratch.pin_entry, sizeof(g_provisioning_scratch.pin_entry));
-        g_provisioning_scratch.pin_entry_length = 0;
-        g_provisioning_scratch.setup_stage = SetupScratchStage::pin_repeat_entry;
-        g_provisioning_scratch.pin_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs);
+    if (result == ProvisioningFlowPinSubmitResult::advanced_to_repeat) {
         if (!show_pin_setup_panel()) {
             wipe_setup_scratch("local PIN setup display allocation failed");
             show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
         }
         return;
     }
-
-    if (strcmp(g_provisioning_scratch.pin_first, g_provisioning_scratch.pin_entry) != 0) {
-        agent_q::wipe_sensitive_buffer(g_provisioning_scratch.pin_first, sizeof(g_provisioning_scratch.pin_first));
-        agent_q::wipe_sensitive_buffer(g_provisioning_scratch.pin_entry, sizeof(g_provisioning_scratch.pin_entry));
-        g_provisioning_scratch.pin_entry_length = 0;
-        g_provisioning_scratch.setup_stage = SetupScratchStage::pin_first_entry;
-        g_provisioning_scratch.pin_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs);
+    if (result == ProvisioningFlowPinSubmitResult::mismatch_restart) {
         if (!show_pin_setup_panel("PINs did not match.")) {
             wipe_setup_scratch("local PIN setup display allocation failed");
             show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
         }
         return;
     }
+    if (result != ProvisioningFlowPinSubmitResult::commit_started) {
+        ESP_LOGW(kTag, "Stale local PIN submit ignored");
+        return;
+    }
 
-    g_provisioning_scratch.setup_stage = SetupScratchStage::pin_committing;
-    g_provisioning_scratch.pin_commit_ready_at =
-        xTaskGetTickCount() + pdMS_TO_TICKS(kLocalProcessingDisplayMs);
-    agent_q::wipe_sensitive_buffer(g_provisioning_scratch.pin_first, sizeof(g_provisioning_scratch.pin_first));
     if (!make_pin_processing_overlay_on_current_panel(AgentQUiPanelKind::pin_entry) &&
         !show_pin_setup_panel()) {
         ESP_LOGW(kTag, "Local setup committing panel could not be shown");
@@ -3704,16 +3445,12 @@ void handle_pin_submit_from_local_ui()
 
 void commit_local_setup_if_ready()
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::pin_committing ||
-        g_provisioning_scratch.pin_commit_ready_at == 0 ||
-        !tick_reached(g_provisioning_scratch.pin_commit_ready_at)) {
+    if (!agent_q::provisioning_flow_commit_ready(xTaskGetTickCount())) {
         return;
     }
 
     const SetupCommitResult result =
-        commit_setup_material_after_pin_match(
-            g_provisioning_scratch.pin_entry,
-            "local recovery phrase backup and PIN committed");
+        commit_setup_material_after_pin_match("local recovery phrase backup and PIN committed");
     clear_agent_q_panel();
     switch (result) {
         case SetupCommitResult::ok:
@@ -3821,7 +3558,7 @@ void start_local_settings_from_touch()
     if (!provisioned_material_ready() ||
         g_pending.active ||
         g_identification.active ||
-        g_provisioning_scratch.setup_flow_active() ||
+        agent_q::provisioning_flow_active() ||
         agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active ||
         !agent_q_ui_idle_for_local_settings()) {
         ESP_LOGW(kTag, "Local settings touch ignored because settings are unavailable");
@@ -4536,9 +4273,11 @@ void start_local_provisioning_from_setup_touch()
         return;
     }
 
-    const RecoveryPhraseGenerationResult generation_result = generate_recovery_phrase_scratch();
-    if (generation_result == RecoveryPhraseGenerationResult::ok) {
-        if (show_recovery_phrase_display(g_provisioning_scratch.recovery_phrase)) {
+    const ProvisioningFlowGenerateResult generation_result =
+        agent_q::provisioning_flow_begin_generate(
+            xTaskGetTickCount() + pdMS_TO_TICKS(kRecoveryPhraseDisplayMs));
+    if (generation_result == ProvisioningFlowGenerateResult::ok) {
+        if (show_recovery_phrase_display(agent_q::provisioning_flow_recovery_phrase())) {
             ESP_LOGI(kTag, "Local setup recovery phrase displayed");
         } else {
             wipe_setup_scratch("local setup recovery phrase display allocation failed");
@@ -4548,7 +4287,7 @@ void start_local_provisioning_from_setup_touch()
         return;
     }
 
-    if (generation_result == RecoveryPhraseGenerationResult::rng_error) {
+    if (generation_result == ProvisioningFlowGenerateResult::rng_error) {
         ESP_LOGW(kTag, "Local setup RNG failed");
         show_agent_q_message("RNG error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
         return;
@@ -4567,10 +4306,8 @@ void show_setup_choice_from_setup_touch()
         return;
     }
 
-    wipe_setup_scratch("setup choice reset");
-    g_provisioning_scratch.setup_stage = SetupScratchStage::setup_choice;
-    g_provisioning_scratch.setup_choice_deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
+    agent_q::provisioning_flow_begin_setup_choice(
+        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs));
     if (!show_setup_choice_panel()) {
         wipe_setup_scratch("setup choice display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4584,7 +4321,8 @@ void start_local_recovery_from_setup_choice()
         return;
     }
 
-    begin_recovery_word_entry_scratch();
+    agent_q::provisioning_flow_begin_recover(
+        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs));
     if (!show_recover_word_entry_panel()) {
         wipe_setup_scratch("recovery word entry display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4593,8 +4331,8 @@ void start_local_recovery_from_setup_choice()
 
 void cancel_setup_from_local_ui()
 {
-    if (g_provisioning_scratch.setup_stage == SetupScratchStage::none ||
-        g_provisioning_scratch.setup_stage == SetupScratchStage::pin_committing) {
+    if (agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::none) ||
+        agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::pin_committing)) {
         ESP_LOGW(kTag, "Stale local setup cancel ignored");
         return;
     }
@@ -4612,11 +4350,11 @@ void confirm_recovery_phrase_from_local_ui()
         return;
     }
 
-    g_provisioning_scratch.setup_stage = SetupScratchStage::pin_first_entry;
-    agent_q::wipe_sensitive_buffer(g_provisioning_scratch.pin_first, sizeof(g_provisioning_scratch.pin_first));
-    agent_q::wipe_sensitive_buffer(g_provisioning_scratch.pin_entry, sizeof(g_provisioning_scratch.pin_entry));
-    g_provisioning_scratch.pin_entry_length = 0;
-    g_provisioning_scratch.pin_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs);
+    if (!agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(
+            xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs))) {
+        ESP_LOGW(kTag, "Local backup confirmation could not enter setup PIN state");
+        return;
+    }
 
     if (!show_pin_setup_panel()) {
         wipe_setup_scratch("local PIN setup display allocation failed");
@@ -4625,19 +4363,16 @@ void confirm_recovery_phrase_from_local_ui()
         return;
     }
 
-    g_provisioning_scratch.wipe_displayed_phrase_text();
     ESP_LOGI(kTag, "Local backup confirmed; setup PIN entry started");
 }
 
 void handle_recover_slot_from_local_ui(uint8_t slot)
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry ||
-        slot >= kRecoverWordsPerPage) {
+    if (!agent_q::provisioning_flow_recover_select_slot(
+            slot,
+            xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs))) {
         return;
     }
-    g_provisioning_scratch.recover_active_slot = slot;
-    g_provisioning_scratch.recover_word_deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
     if (!show_recover_word_entry_panel()) {
         wipe_setup_scratch("recovery word entry display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4646,31 +4381,11 @@ void handle_recover_slot_from_local_ui(uint8_t slot)
 
 void handle_recover_letter_from_local_ui(char letter)
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry ||
-        letter < 'a' || letter > 'z') {
+    if (!agent_q::provisioning_flow_recover_add_letter(
+            letter,
+            xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs))) {
         return;
     }
-    const size_t global_slot = recover_global_word_slot();
-    if (global_slot >= agent_q::kBip39MnemonicWordCount) {
-        return;
-    }
-    char* prefix = g_provisioning_scratch.recover_prefixes[global_slot];
-    size_t length = strlen(prefix);
-    if (length >= kRecoverPrefixMaxChars) {
-        g_provisioning_scratch.recover_word_deadline =
-            xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
-        if (!show_recover_word_entry_panel()) {
-            wipe_setup_scratch("recovery word entry display allocation failed");
-            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-    prefix[length++] = letter;
-    prefix[length] = '\0';
-    g_provisioning_scratch.recover_word_selected[global_slot] = false;
-    g_provisioning_scratch.recover_word_indices[global_slot] = 0;
-    g_provisioning_scratch.recover_word_deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
     if (!show_recover_word_entry_panel()) {
         wipe_setup_scratch("recovery word entry display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4679,21 +4394,9 @@ void handle_recover_letter_from_local_ui(char letter)
 
 void handle_recover_clear_from_local_ui()
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry) {
-        return;
-    }
-    const size_t global_slot = recover_global_word_slot();
-    if (global_slot >= agent_q::kBip39MnemonicWordCount) {
-        return;
-    }
-    agent_q::wipe_sensitive_buffer(
-        g_provisioning_scratch.recover_prefixes[global_slot],
-        kRecoverPrefixBufferSize);
-    g_provisioning_scratch.recover_word_selected[global_slot] = false;
-    g_provisioning_scratch.recover_word_indices[global_slot] = 0;
-    g_provisioning_scratch.recover_word_deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
-    if (!show_recover_word_entry_panel()) {
+    if (agent_q::provisioning_flow_recover_clear_active(
+            xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs)) &&
+        !show_recover_word_entry_panel()) {
         wipe_setup_scratch("recovery word entry display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
     }
@@ -4701,24 +4404,10 @@ void handle_recover_clear_from_local_ui()
 
 void handle_recover_candidate_from_local_ui(uint16_t word_index)
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry ||
-        word_index >= agent_q::kBip39WordCount ||
-        agent_q::bip39_english_word(word_index) == nullptr) {
-        return;
-    }
-    const size_t global_slot = recover_global_word_slot();
-    if (global_slot >= agent_q::kBip39MnemonicWordCount) {
-        return;
-    }
-    g_provisioning_scratch.recover_word_indices[global_slot] = word_index;
-    g_provisioning_scratch.recover_word_selected[global_slot] = true;
-    write_selected_word_prefix(global_slot, word_index);
-    if (g_provisioning_scratch.recover_active_slot + 1 < kRecoverWordsPerPage) {
-        ++g_provisioning_scratch.recover_active_slot;
-    }
-    g_provisioning_scratch.recover_word_deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
-    if (!show_recover_word_entry_panel()) {
+    if (agent_q::provisioning_flow_recover_select_candidate(
+            word_index,
+            xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs)) &&
+        !show_recover_word_entry_panel()) {
         wipe_setup_scratch("recovery word entry display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
     }
@@ -4726,15 +4415,9 @@ void handle_recover_candidate_from_local_ui(uint16_t word_index)
 
 void handle_recover_previous_from_local_ui()
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry ||
-        g_provisioning_scratch.recover_page == 0) {
-        return;
-    }
-    --g_provisioning_scratch.recover_page;
-    g_provisioning_scratch.recover_active_slot = 0;
-    g_provisioning_scratch.recover_word_deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
-    if (!show_recover_word_entry_panel()) {
+    if (agent_q::provisioning_flow_recover_previous_page(
+            xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs)) &&
+        !show_recover_word_entry_panel()) {
         wipe_setup_scratch("recovery word entry display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
     }
@@ -4742,12 +4425,8 @@ void handle_recover_previous_from_local_ui()
 
 void start_pin_setup_after_recovered_entropy()
 {
-    g_provisioning_scratch.setup_stage = SetupScratchStage::pin_first_entry;
-    wipe_recover_word_entry_scratch();
-    agent_q::wipe_sensitive_buffer(g_provisioning_scratch.pin_first, sizeof(g_provisioning_scratch.pin_first));
-    agent_q::wipe_sensitive_buffer(g_provisioning_scratch.pin_entry, sizeof(g_provisioning_scratch.pin_entry));
-    g_provisioning_scratch.pin_entry_length = 0;
-    g_provisioning_scratch.pin_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs);
+    agent_q::provisioning_flow_begin_pin_setup_after_recovery(
+        xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs));
 
     if (!show_pin_setup_panel()) {
         wipe_setup_scratch("local PIN setup display allocation failed after recovery");
@@ -4757,16 +4436,13 @@ void start_pin_setup_after_recovered_entropy()
 
 void handle_recover_next_from_local_ui()
 {
-    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry ||
-        !recover_current_page_complete()) {
+    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recover_word_entry) ||
+        !agent_q::provisioning_flow_recover_current_page_complete()) {
         return;
     }
 
-    if (g_provisioning_scratch.recover_page + 1 < kRecoverPageCount) {
-        ++g_provisioning_scratch.recover_page;
-        g_provisioning_scratch.recover_active_slot = 0;
-        g_provisioning_scratch.recover_word_deadline =
-            xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
+    if (agent_q::provisioning_flow_recover_next_page(
+            xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs))) {
         if (!show_recover_word_entry_panel()) {
             wipe_setup_scratch("recovery word entry display allocation failed");
             show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4774,22 +4450,15 @@ void handle_recover_next_from_local_ui()
         return;
     }
 
-    if (!recover_all_words_complete()) {
+    if (!agent_q::provisioning_flow_recover_all_words_complete()) {
         return;
     }
 
     const agent_q::Bip39EntropyRecoveryResult result =
-        agent_q::recover_bip39_entropy_12_words(
-            g_provisioning_scratch.recover_word_indices,
-            agent_q::kBip39MnemonicWordCount,
-            g_provisioning_scratch.root_material,
-            sizeof(g_provisioning_scratch.root_material));
+        agent_q::provisioning_flow_recover_entropy_from_words();
     if (result != agent_q::Bip39EntropyRecoveryResult::ok) {
-        agent_q::wipe_sensitive_buffer(
-            g_provisioning_scratch.root_material,
-            sizeof(g_provisioning_scratch.root_material));
-        g_provisioning_scratch.recover_word_deadline =
-            xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
+        agent_q::provisioning_flow_recover_refresh_deadline(
+            xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs));
         if (!show_recover_word_entry_panel("Checksum failed. Recheck words.")) {
             wipe_setup_scratch("recovery checksum failure display allocation failed");
             show_agent_q_message("Recovery error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4911,8 +4580,7 @@ void drain_ui_events()
         if (event.kind == AgentQUiEventKind::pin_digit_requested) {
             const agent_q::AgentQLocalResetStage reset_stage =
                 agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
-            if (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry ||
-                g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry) {
+            if (agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 handle_pin_digit_from_local_ui(event.digit);
             } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
                 handle_reset_pin_digit_from_local_ui(event.digit);
@@ -4925,8 +4593,7 @@ void drain_ui_events()
         if (event.kind == AgentQUiEventKind::pin_clear_requested) {
             const agent_q::AgentQLocalResetStage reset_stage =
                 agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
-            if (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry ||
-                g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry) {
+            if (agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 handle_pin_clear_from_local_ui();
             } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
                 handle_reset_pin_clear_from_local_ui();
@@ -4939,8 +4606,7 @@ void drain_ui_events()
         if (event.kind == AgentQUiEventKind::pin_backspace_requested) {
             const agent_q::AgentQLocalResetStage reset_stage =
                 agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
-            if (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry ||
-                g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry) {
+            if (agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 handle_pin_backspace_from_local_ui();
             } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
                 handle_reset_pin_backspace_from_local_ui();
@@ -4953,8 +4619,7 @@ void drain_ui_events()
         if (event.kind == AgentQUiEventKind::pin_submit_requested) {
             const agent_q::AgentQLocalResetStage reset_stage =
                 agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
-            if (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry ||
-                g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry) {
+            if (agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 handle_pin_submit_from_local_ui();
             } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
                 handle_reset_pin_submit_from_local_ui();
@@ -4967,8 +4632,7 @@ void drain_ui_events()
         if (event.kind == AgentQUiEventKind::pin_cancel_requested) {
             const agent_q::AgentQLocalResetStage reset_stage =
                 agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
-            if (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry ||
-                g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry) {
+            if (agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 cancel_setup_from_local_ui();
             } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
                 cancel_local_reset_from_ui("Reset canceled");
@@ -4981,19 +4645,8 @@ void drain_ui_events()
         if (event.kind != AgentQUiEventKind::panel_deleted) {
             continue;
         }
-        if (event.panel_kind == AgentQUiPanelKind::recovery_phrase_display &&
-            g_provisioning_scratch.setup_stage == SetupScratchStage::recovery_phrase_displayed) {
-            wipe_setup_scratch("recovery phrase panel deleted");
-        } else if (event.panel_kind == AgentQUiPanelKind::setup_choice &&
-                   g_provisioning_scratch.setup_stage == SetupScratchStage::setup_choice) {
-            wipe_setup_scratch("setup choice panel deleted");
-        } else if (event.panel_kind == AgentQUiPanelKind::recovery_word_entry &&
-                   g_provisioning_scratch.setup_stage == SetupScratchStage::recover_word_entry) {
-            wipe_setup_scratch("recovery word entry panel deleted");
-        } else if (event.panel_kind == AgentQUiPanelKind::pin_entry &&
-                   (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry ||
-                    g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry)) {
-            wipe_setup_scratch("local PIN setup panel deleted");
+        if (provisioning_flow_panel_deleted(event.panel_kind, "setup panel deleted")) {
+            continue;
         } else if (local_reset_panel_matches_stage(event.panel_kind)) {
             wipe_local_reset_scratch("local reset panel deleted");
         } else if (local_pin_auth_panel_matches_stage(event.panel_kind)) {

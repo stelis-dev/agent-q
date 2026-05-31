@@ -156,6 +156,11 @@ PBKDF2-HMAC-SHA512 verifier storage, correct/wrong PIN checks, fresh salt,
 wipe behavior, and corrupt/failed-write fail-closed behavior. This verifier is
 a DEV_PROFILE local UX gate, not root-material encryption.
 
+The StackChan provisioning-flow test is target-specific. It compiles the
+tracked `agent_q_provisioning_flow.cpp` state machine with host stubs, then
+verifies Generate/Recover/setup-PIN volatile state transitions, scratch
+lifetime, panel-loss cleanup, and commit-readiness without LVGL or USB.
+
 During preparation, the tracked build tools also patch the pinned upstream host
 tree so the Agent-Q build does not start the StackChan/Xiaozhi remote AI
 runtime, does not register Xiaozhi remote MCP tools, does not initialize the
