@@ -108,6 +108,7 @@ tools/firmware/common/test_policy_v0.sh
 tools/firmware/stackchan-cores3/test_call_method_validation.sh
 tools/firmware/stackchan-cores3/test_policy_store.sh
 tools/firmware/stackchan-cores3/test_local_auth.sh
+tools/firmware/stackchan-cores3/test_local_pin_auth.sh
 tools/firmware/stackchan-cores3/test_connect_settings.sh
 tools/firmware/stackchan-cores3/test_bip39_vectors.sh
 tools/firmware/stackchan-cores3/test_sui_account_vectors.sh

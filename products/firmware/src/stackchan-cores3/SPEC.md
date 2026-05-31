@@ -415,6 +415,9 @@ Current verification expectations for this target:
 - run `tools/firmware/stackchan-cores3/test_local_auth.sh` to check local
   6-digit PIN verifier storage, verification, fresh salt, wipe, and fail-closed
   behavior against host NVS/RNG stubs and pinned Monocypher;
+- run `tools/firmware/stackchan-cores3/test_local_pin_auth.sh` to check local
+  PIN authorization state transitions, including lockout release and retry
+  deadline refresh;
 - run `tools/firmware/stackchan-cores3/test_connect_settings.sh` to check the
   connect-approval setting's missing-key secure default, stored OFF override,
   invalid value fail-closed behavior, and reset wipe back to the missing-key

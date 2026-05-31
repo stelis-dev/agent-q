@@ -12,9 +12,9 @@
 #include "agent_q_display_power.h"
 #include "agent_q_entropy.h"
 #include "agent_q_local_auth.h"
+#include "agent_q_local_pin_auth.h"
 #include "agent_q_local_reset.h"
 #include "agent_q_motion_state.h"
-#include "agent_q_pin_attempt.h"
 #include "agent_q_policy_store.h"
 #include "agent_q_root_material.h"
 #include "agent_q_speech_bubble.h"
@@ -41,6 +41,9 @@ extern "C" {
 #include "stackchan/stackchan.h"
 
 namespace {
+
+using LocalPinAuthPurpose = agent_q::AgentQLocalPinAuthPurpose;
+using LocalPinAuthStage = agent_q::AgentQLocalPinAuthStage;
 
 constexpr const char* kTag = "UsbRequestServer";
 constexpr int kProtocolVersion = 1;
@@ -230,23 +233,6 @@ enum class PendingKind {
     connect_pin,
 };
 
-enum class LocalPinAuthPurpose {
-    none,
-    connect,
-    settings_connect_pin,
-    settings_change_pin,
-};
-
-enum class LocalPinAuthStage {
-    none,
-    pin_entry,
-    pin_verifying,
-    new_pin_entry,
-    repeat_pin_entry,
-    committing_setting,
-    committing_pin_change,
-};
-
 enum class ProvisioningRuntimeState {
     unprovisioned,
     provisioning,
@@ -344,55 +330,6 @@ struct AgentQUiState {
     stackchan::avatar::Emotion previous_emotion = stackchan::avatar::Emotion::Neutral;
     bool owns_emotion = false;
     TickType_t message_deadline = 0;
-};
-
-struct LocalPinAuthState {
-    char pin_entry[agent_q::kLocalPinBufferSize] = {};
-    char new_pin[agent_q::kLocalPinBufferSize] = {};
-    size_t pin_entry_length = 0;
-    LocalPinAuthPurpose purpose = LocalPinAuthPurpose::none;
-    LocalPinAuthStage stage = LocalPinAuthStage::none;
-    bool target_require_pin_on_connect = true;
-    TickType_t deadline = 0;
-    TickType_t verify_ready_at = 0;
-    TickType_t commit_ready_at = 0;
-    agent_q::AgentQPinAttemptState pin_attempt;
-
-    bool flow_active() const
-    {
-        return purpose != LocalPinAuthPurpose::none && stage != LocalPinAuthStage::none;
-    }
-
-    void clear_flow()
-    {
-        agent_q::wipe_sensitive_buffer(pin_entry, sizeof(pin_entry));
-        agent_q::wipe_sensitive_buffer(new_pin, sizeof(new_pin));
-        pin_entry_length = 0;
-        purpose = LocalPinAuthPurpose::none;
-        stage = LocalPinAuthStage::none;
-        target_require_pin_on_connect = true;
-        deadline = 0;
-        verify_ready_at = 0;
-        commit_ready_at = 0;
-    }
-
-    void clear_pin_only()
-    {
-        agent_q::wipe_sensitive_buffer(pin_entry, sizeof(pin_entry));
-        pin_entry_length = 0;
-        verify_ready_at = 0;
-        commit_ready_at = 0;
-    }
-
-    void clear_new_pin()
-    {
-        agent_q::wipe_sensitive_buffer(new_pin, sizeof(new_pin));
-    }
-
-    void clear_attempts()
-    {
-        agent_q::pin_attempt_clear(&pin_attempt);
-    }
 };
 
 enum class SetupScratchStage {
@@ -494,7 +431,6 @@ IdentificationState g_identification;
 SessionState g_session;
 AgentQUiState g_ui;
 ProvisioningScratchState g_provisioning_scratch;
-LocalPinAuthState g_local_pin_auth;
 LocalSettingsTouchState g_settings_touch;
 bool g_usb_ready = false;
 bool g_usb_host_connected_known = false;
@@ -533,8 +469,8 @@ void wipe_local_reset_scratch(const char* reason)
 
 void wipe_local_pin_auth_scratch(const char* reason)
 {
-    const bool had_pin_auth = g_local_pin_auth.flow_active();
-    g_local_pin_auth.clear_flow();
+    const bool had_pin_auth = agent_q::local_pin_auth_flow_active();
+    agent_q::local_pin_auth_clear_flow();
     if (had_pin_auth) {
         ESP_LOGW(kTag, "Local PIN authorization scratch wiped: %s", reason != nullptr ? reason : "unspecified");
     }
@@ -548,15 +484,12 @@ bool is_decision_panel_kind(AgentQUiPanelKind kind)
 bool local_pin_auth_panel_matches_stage(AgentQUiPanelKind kind)
 {
     return kind == AgentQUiPanelKind::local_pin_auth &&
-           g_local_pin_auth.flow_active();
+           agent_q::local_pin_auth_flow_active();
 }
 
 bool local_pin_auth_accepts_keypad_input()
 {
-    return g_local_pin_auth.flow_active() &&
-           (g_local_pin_auth.stage == LocalPinAuthStage::pin_entry ||
-            g_local_pin_auth.stage == LocalPinAuthStage::new_pin_entry ||
-            g_local_pin_auth.stage == LocalPinAuthStage::repeat_pin_entry);
+    return agent_q::local_pin_auth_accepts_keypad_input();
 }
 
 bool local_reset_panel_matches_stage(AgentQUiPanelKind kind)
@@ -829,7 +762,7 @@ const char* current_device_state()
     if (g_provisioning_scratch.setup_flow_active() ||
         (reset.flow_active &&
          reset.stage != agent_q::AgentQLocalResetStage::settings_menu) ||
-        g_local_pin_auth.flow_active()) {
+        agent_q::local_pin_auth_flow_active()) {
         return "busy";
     }
     return "idle";
@@ -1252,9 +1185,11 @@ void poll_usb_host_connection()
     const bool had_pending_connect = g_pending.active &&
                                      (g_pending.kind == PendingKind::connect ||
                                       g_pending.kind == PendingKind::connect_pin);
+    const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
+        agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
     const bool had_connect_pin =
-        g_local_pin_auth.flow_active() &&
-        g_local_pin_auth.purpose == LocalPinAuthPurpose::connect;
+        pin_auth.flow_active &&
+        pin_auth.purpose == LocalPinAuthPurpose::connect;
 
     clear_active_session();
     g_line_size = 0;
@@ -1473,7 +1408,7 @@ bool local_setup_start_allowed()
     return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
            !g_persistent_material_consistency_error &&
            !g_provisioning_scratch.setup_flow_active() &&
-           !g_local_pin_auth.flow_active() &&
+           !agent_q::local_pin_auth_flow_active() &&
            !g_pending.active;
 }
 
@@ -1533,7 +1468,7 @@ bool local_settings_touch_entry_candidate_allowed()
            !g_pending.active &&
            !g_identification.active &&
            !g_provisioning_scratch.setup_flow_active() &&
-           !g_local_pin_auth.flow_active() &&
+           !agent_q::local_pin_auth_flow_active() &&
            !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
            agent_q_ui_idle_for_local_settings();
 }
@@ -1563,7 +1498,7 @@ bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_setti
                 : "Device is showing local reset UI.");
         return true;
     }
-    if (g_local_pin_auth.flow_active()) {
+    if (agent_q::local_pin_auth_flow_active()) {
         write_error_response(id, "busy", "Device is showing local PIN UI.");
         return true;
     }
@@ -2277,7 +2212,7 @@ bool provisioning_welcome_available()
            !g_pending.active &&
            !g_identification.active &&
            !g_provisioning_scratch.setup_flow_active() &&
-           !g_local_pin_auth.flow_active() &&
+           !agent_q::local_pin_auth_flow_active() &&
            !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
            ui_display_idle;
 }
@@ -3343,22 +3278,23 @@ bool show_reset_pin_panel(const char* notice = nullptr)
     return true;
 }
 
-const char* local_pin_auth_default_message(bool processing_stage, bool locked_stage)
+const char* local_pin_auth_default_message(
+    const agent_q::AgentQLocalPinAuthSnapshot& snapshot)
 {
-    if (locked_stage) {
+    if (snapshot.lockout_active) {
         return "Too many wrong PINs. Wait 30s.";
     }
-    if (processing_stage) {
+    if (snapshot.processing) {
         return "Processing. Please wait.";
     }
-    if (g_local_pin_auth.purpose == LocalPinAuthPurpose::connect) {
+    if (snapshot.purpose == LocalPinAuthPurpose::connect) {
         return "Enter local PIN to connect.";
     }
-    if (g_local_pin_auth.purpose == LocalPinAuthPurpose::settings_change_pin) {
-        if (g_local_pin_auth.stage == LocalPinAuthStage::new_pin_entry) {
+    if (snapshot.purpose == LocalPinAuthPurpose::settings_change_pin) {
+        if (snapshot.stage == LocalPinAuthStage::new_pin_entry) {
             return "Enter new PIN.";
         }
-        if (g_local_pin_auth.stage == LocalPinAuthStage::repeat_pin_entry) {
+        if (snapshot.stage == LocalPinAuthStage::repeat_pin_entry) {
             return "Repeat new PIN.";
         }
         return "Enter current PIN.";
@@ -3366,19 +3302,19 @@ const char* local_pin_auth_default_message(bool processing_stage, bool locked_st
     return "Enter PIN to change setting.";
 }
 
-const char* local_pin_auth_title(bool processing_stage)
+const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapshot& snapshot)
 {
-    if (processing_stage) {
+    if (snapshot.processing) {
         return "Processing PIN";
     }
-    if (g_local_pin_auth.purpose == LocalPinAuthPurpose::connect) {
+    if (snapshot.purpose == LocalPinAuthPurpose::connect) {
         return "Connect PIN";
     }
-    if (g_local_pin_auth.purpose == LocalPinAuthPurpose::settings_change_pin) {
-        if (g_local_pin_auth.stage == LocalPinAuthStage::new_pin_entry) {
+    if (snapshot.purpose == LocalPinAuthPurpose::settings_change_pin) {
+        if (snapshot.stage == LocalPinAuthStage::new_pin_entry) {
             return "New PIN";
         }
-        if (g_local_pin_auth.stage == LocalPinAuthStage::repeat_pin_entry) {
+        if (snapshot.stage == LocalPinAuthStage::repeat_pin_entry) {
             return "Repeat PIN";
         }
         return "Change PIN";
@@ -3388,7 +3324,10 @@ const char* local_pin_auth_title(bool processing_stage)
 
 bool show_local_pin_auth_panel(const char* notice = nullptr)
 {
-    if (!g_local_pin_auth.flow_active()) {
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQLocalPinAuthSnapshot snapshot =
+        agent_q::local_pin_auth_snapshot(now);
+    if (!snapshot.flow_active) {
         return false;
     }
 
@@ -3415,22 +3354,14 @@ bool show_local_pin_auth_panel(const char* notice = nullptr)
     lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(g_ui.panel, 0, 0);
 
-    const bool processing_stage =
-        g_local_pin_auth.stage == LocalPinAuthStage::pin_verifying ||
-        g_local_pin_auth.stage == LocalPinAuthStage::committing_setting ||
-        g_local_pin_auth.stage == LocalPinAuthStage::committing_pin_change;
-    const TickType_t now = xTaskGetTickCount();
-    agent_q::pin_attempt_release_if_elapsed(&g_local_pin_auth.pin_attempt, now);
-    const bool locked_stage =
-        agent_q::pin_attempt_locked_at(g_local_pin_auth.pin_attempt, now);
-    const bool buttons_enabled = !processing_stage && !locked_stage;
+    const bool buttons_enabled = !snapshot.processing && !snapshot.lockout_active;
 
     lv_obj_t* title = lv_label_create(g_ui.panel);
     if (title == nullptr) {
         clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
-    lv_label_set_text(title, local_pin_auth_title(processing_stage));
+    lv_label_set_text(title, local_pin_auth_title(snapshot));
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
@@ -3444,7 +3375,7 @@ bool show_local_pin_auth_panel(const char* notice = nullptr)
         message,
         notice != nullptr && notice[0] != '\0'
             ? notice
-            : local_pin_auth_default_message(processing_stage, locked_stage));
+            : local_pin_auth_default_message(snapshot));
     lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(message, kScreenWidth - 44);
     lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
@@ -3454,7 +3385,7 @@ bool show_local_pin_auth_panel(const char* notice = nullptr)
 
     char pin_mask[agent_q::kLocalPinDigits + 1] = {};
     for (size_t index = 0; index < agent_q::kLocalPinDigits; ++index) {
-        pin_mask[index] = index < g_local_pin_auth.pin_entry_length ? '*' : '_';
+        pin_mask[index] = index < snapshot.pin_entry_length ? '*' : '_';
     }
     char pin_text[16] = {};
     snprintf(pin_text, sizeof(pin_text), "PIN: %s", pin_mask);
@@ -3484,7 +3415,7 @@ bool show_local_pin_auth_panel(const char* notice = nullptr)
             lv_color_hex(0x667085),
             on_pin_cancel_clicked,
             nullptr,
-            !processing_stage) ||
+            !snapshot.processing) ||
         !make_setup_button(
             g_ui.panel,
             "Confirm",
@@ -3501,7 +3432,7 @@ bool show_local_pin_auth_panel(const char* notice = nullptr)
         return false;
     }
 
-    if (processing_stage && !make_pin_processing_overlay(g_ui.panel)) {
+    if (snapshot.processing && !make_pin_processing_overlay(g_ui.panel)) {
         clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
@@ -3957,10 +3888,7 @@ void start_reset_pin_from_settings_menu()
 void begin_connect_pin_auth(const char* id, const char* gateway_name, uint32_t approval_timeout_ms)
 {
     g_pending.begin_connect_pin(id, gateway_name, approval_timeout_ms);
-    g_local_pin_auth.clear_flow();
-    g_local_pin_auth.purpose = LocalPinAuthPurpose::connect;
-    g_local_pin_auth.stage = LocalPinAuthStage::pin_entry;
-    g_local_pin_auth.deadline = g_pending.deadline;
+    agent_q::local_pin_auth_begin_connect(g_pending.deadline);
 
     if (!show_local_pin_auth_panel()) {
         write_connect_rejected_response(g_pending.id, "ui_error", "Could not show local PIN UI.");
@@ -3976,7 +3904,7 @@ void start_settings_connect_pin_from_settings_menu()
         agent_q::local_reset_snapshot(xTaskGetTickCount());
     if (!provisioned_material_ready() ||
         reset.stage != agent_q::AgentQLocalResetStage::settings_menu ||
-        g_local_pin_auth.flow_active()) {
+        agent_q::local_pin_auth_flow_active()) {
         ESP_LOGW(kTag, "Stale settings connect PIN action ignored");
         return;
     }
@@ -3993,12 +3921,9 @@ void start_settings_connect_pin_from_settings_menu()
         return;
     }
     agent_q::local_reset_wipe();
-    g_local_pin_auth.clear_flow();
-    g_local_pin_auth.purpose = LocalPinAuthPurpose::settings_connect_pin;
-    g_local_pin_auth.stage = LocalPinAuthStage::pin_entry;
-    g_local_pin_auth.target_require_pin_on_connect = !current_require_pin;
-    g_local_pin_auth.deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
+    agent_q::local_pin_auth_begin_connect_setting(
+        !current_require_pin,
+        xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs));
 
     if (!show_local_pin_auth_panel()) {
         wipe_local_pin_auth_scratch("settings connect PIN display allocation failed");
@@ -4012,17 +3937,14 @@ void start_settings_change_pin_from_settings_menu()
         agent_q::local_reset_snapshot(xTaskGetTickCount());
     if (!provisioned_material_ready() ||
         reset.stage != agent_q::AgentQLocalResetStage::settings_menu ||
-        g_local_pin_auth.flow_active()) {
+        agent_q::local_pin_auth_flow_active()) {
         ESP_LOGW(kTag, "Stale settings Change PIN action ignored");
         return;
     }
 
     agent_q::local_reset_wipe();
-    g_local_pin_auth.clear_flow();
-    g_local_pin_auth.purpose = LocalPinAuthPurpose::settings_change_pin;
-    g_local_pin_auth.stage = LocalPinAuthStage::pin_entry;
-    g_local_pin_auth.deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
+    agent_q::local_pin_auth_begin_change_pin(
+        xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs));
 
     if (!show_local_pin_auth_panel()) {
         wipe_local_pin_auth_scratch("settings Change PIN display allocation failed");
@@ -4032,19 +3954,21 @@ void start_settings_change_pin_from_settings_menu()
 
 void cancel_local_pin_auth_from_ui(const char* message)
 {
-    if (!g_local_pin_auth.flow_active() ||
-        !local_pin_auth_accepts_keypad_input()) {
+    const agent_q::AgentQLocalPinAuthSnapshot snapshot =
+        agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
+    if (!snapshot.flow_active || !snapshot.accepts_keypad_input) {
         ESP_LOGW(kTag, "Stale local PIN authorization cancel ignored");
         return;
     }
 
-    const LocalPinAuthPurpose purpose = g_local_pin_auth.purpose;
+    const LocalPinAuthPurpose purpose = snapshot.purpose;
     char request_id[kMaxRequestIdSize] = {};
     if (purpose == LocalPinAuthPurpose::connect && g_pending.kind == PendingKind::connect_pin) {
         strlcpy(request_id, g_pending.id, sizeof(request_id));
     }
 
     clear_agent_q_panel();
+    wipe_local_pin_auth_scratch("local PIN authorization canceled");
     if (purpose == LocalPinAuthPurpose::connect && request_id[0] != '\0') {
         write_connect_rejected_response(request_id, "rejected", "Connection rejected.");
         clear_pending_state();
@@ -4071,28 +3995,15 @@ void cancel_local_pin_auth_from_ui(const char* message)
 
 void handle_local_pin_auth_digit_from_ui(char digit)
 {
-    const TickType_t now = xTaskGetTickCount();
-    agent_q::pin_attempt_release_if_elapsed(&g_local_pin_auth.pin_attempt, now);
-    if (!g_local_pin_auth.flow_active() ||
-        !local_pin_auth_accepts_keypad_input() ||
-        agent_q::pin_attempt_locked_at(g_local_pin_auth.pin_attempt, now) ||
-        digit < '0' || digit > '9') {
+    const agent_q::AgentQLocalPinAuthInputResult result =
+        agent_q::local_pin_auth_add_digit(
+            digit,
+            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs));
+    if (result == agent_q::AgentQLocalPinAuthInputResult::inactive ||
+        result == agent_q::AgentQLocalPinAuthInputResult::locked ||
+        result == agent_q::AgentQLocalPinAuthInputResult::invalid_digit) {
         return;
     }
-    if (g_local_pin_auth.pin_entry_length >= agent_q::kLocalPinDigits) {
-        g_local_pin_auth.deadline =
-            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
-        if (!show_local_pin_auth_panel()) {
-            wipe_local_pin_auth_scratch("local PIN authorization display allocation failed");
-            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-
-    g_local_pin_auth.pin_entry[g_local_pin_auth.pin_entry_length++] = digit;
-    g_local_pin_auth.pin_entry[g_local_pin_auth.pin_entry_length] = '\0';
-    g_local_pin_auth.deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
     if (!show_local_pin_auth_panel()) {
         wipe_local_pin_auth_scratch("local PIN authorization display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4101,16 +4012,10 @@ void handle_local_pin_auth_digit_from_ui(char digit)
 
 void handle_local_pin_auth_clear_from_ui()
 {
-    const TickType_t now = xTaskGetTickCount();
-    agent_q::pin_attempt_release_if_elapsed(&g_local_pin_auth.pin_attempt, now);
-    if (!g_local_pin_auth.flow_active() ||
-        !local_pin_auth_accepts_keypad_input() ||
-        agent_q::pin_attempt_locked_at(g_local_pin_auth.pin_attempt, now)) {
+    if (!agent_q::local_pin_auth_clear_pin(
+            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs))) {
         return;
     }
-    g_local_pin_auth.clear_pin_only();
-    g_local_pin_auth.deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
     if (!show_local_pin_auth_panel()) {
         wipe_local_pin_auth_scratch("local PIN authorization display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4119,18 +4024,10 @@ void handle_local_pin_auth_clear_from_ui()
 
 void handle_local_pin_auth_backspace_from_ui()
 {
-    const TickType_t now = xTaskGetTickCount();
-    agent_q::pin_attempt_release_if_elapsed(&g_local_pin_auth.pin_attempt, now);
-    if (!g_local_pin_auth.flow_active() ||
-        !local_pin_auth_accepts_keypad_input() ||
-        agent_q::pin_attempt_locked_at(g_local_pin_auth.pin_attempt, now)) {
+    if (!agent_q::local_pin_auth_backspace_pin(
+            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs))) {
         return;
     }
-    if (g_local_pin_auth.pin_entry_length > 0) {
-        g_local_pin_auth.pin_entry[--g_local_pin_auth.pin_entry_length] = '\0';
-    }
-    g_local_pin_auth.deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
     if (!show_local_pin_auth_panel()) {
         wipe_local_pin_auth_scratch("local PIN authorization display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4140,80 +4037,51 @@ void handle_local_pin_auth_backspace_from_ui()
 void handle_local_pin_auth_submit_from_ui()
 {
     const TickType_t now = xTaskGetTickCount();
-    agent_q::pin_attempt_release_if_elapsed(&g_local_pin_auth.pin_attempt, now);
-    if (!g_local_pin_auth.flow_active() ||
-        !local_pin_auth_accepts_keypad_input()) {
-        ESP_LOGW(kTag, "Stale local PIN authorization submit ignored");
-        return;
-    }
-    if (agent_q::pin_attempt_locked_at(g_local_pin_auth.pin_attempt, now)) {
-        return;
-    }
-    if (g_local_pin_auth.pin_entry_length != agent_q::kLocalPinDigits ||
-        !agent_q::is_valid_local_pin(g_local_pin_auth.pin_entry)) {
-        g_local_pin_auth.deadline =
-            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
-        if (!show_local_pin_auth_panel("Enter exactly 6 digits.")) {
-            wipe_local_pin_auth_scratch("local PIN authorization display allocation failed");
-            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-
-    if (g_local_pin_auth.purpose == LocalPinAuthPurpose::settings_change_pin &&
-        g_local_pin_auth.stage == LocalPinAuthStage::new_pin_entry) {
-        strlcpy(g_local_pin_auth.new_pin,
-                g_local_pin_auth.pin_entry,
-                sizeof(g_local_pin_auth.new_pin));
-        g_local_pin_auth.clear_pin_only();
-        g_local_pin_auth.stage = LocalPinAuthStage::repeat_pin_entry;
-        g_local_pin_auth.deadline =
-            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
-        if (!show_local_pin_auth_panel()) {
-            wipe_local_pin_auth_scratch("Change PIN repeat display allocation failed");
-            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-
-    if (g_local_pin_auth.purpose == LocalPinAuthPurpose::settings_change_pin &&
-        g_local_pin_auth.stage == LocalPinAuthStage::repeat_pin_entry) {
-        if (strcmp(g_local_pin_auth.new_pin, g_local_pin_auth.pin_entry) != 0) {
-            g_local_pin_auth.clear_new_pin();
-            g_local_pin_auth.clear_pin_only();
-            g_local_pin_auth.stage = LocalPinAuthStage::new_pin_entry;
-            g_local_pin_auth.deadline =
-                xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
+    const agent_q::AgentQLocalPinAuthSubmitResult result =
+        agent_q::local_pin_auth_submit(
+            now + pdMS_TO_TICKS(kLocalProcessingRenderDelayMs),
+            now + pdMS_TO_TICKS(kLocalProcessingDisplayMs),
+            now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs));
+    switch (result) {
+        case agent_q::AgentQLocalPinAuthSubmitResult::unavailable_stage:
+            ESP_LOGW(kTag, "Stale local PIN authorization submit ignored");
+            return;
+        case agent_q::AgentQLocalPinAuthSubmitResult::locked:
+            return;
+        case agent_q::AgentQLocalPinAuthSubmitResult::invalid_pin:
+            if (!show_local_pin_auth_panel("Enter exactly 6 digits.")) {
+                wipe_local_pin_auth_scratch("local PIN authorization display allocation failed");
+                show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            }
+            return;
+        case agent_q::AgentQLocalPinAuthSubmitResult::advanced_to_repeat_pin:
+            if (!show_local_pin_auth_panel()) {
+                wipe_local_pin_auth_scratch("Change PIN repeat display allocation failed");
+                show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            }
+            return;
+        case agent_q::AgentQLocalPinAuthSubmitResult::mismatch_restart:
             if (!show_local_pin_auth_panel("PINs did not match.")) {
                 wipe_local_pin_auth_scratch("Change PIN mismatch display allocation failed");
                 show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
             }
             return;
-        }
-
-        g_local_pin_auth.clear_pin_only();
-        g_local_pin_auth.stage = LocalPinAuthStage::committing_pin_change;
-        g_local_pin_auth.commit_ready_at =
-            xTaskGetTickCount() + pdMS_TO_TICKS(kLocalProcessingDisplayMs);
-        g_local_pin_auth.deadline = 0;
-        if (!make_pin_processing_overlay_on_current_panel(AgentQUiPanelKind::local_pin_auth) &&
-            !show_local_pin_auth_panel()) {
-            wipe_local_pin_auth_scratch("Change PIN commit display allocation failed");
-            clear_agent_q_panel();
-            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-
-    g_local_pin_auth.stage = LocalPinAuthStage::pin_verifying;
-    g_local_pin_auth.verify_ready_at =
-        xTaskGetTickCount() + pdMS_TO_TICKS(kLocalProcessingRenderDelayMs);
-    g_local_pin_auth.deadline = 0;
-    if (!make_pin_processing_overlay_on_current_panel(AgentQUiPanelKind::local_pin_auth) &&
-        !show_local_pin_auth_panel()) {
-        wipe_local_pin_auth_scratch("local PIN authorization verification display allocation failed");
-        clear_agent_q_panel();
-        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        case agent_q::AgentQLocalPinAuthSubmitResult::started_pin_change_commit:
+            if (!make_pin_processing_overlay_on_current_panel(AgentQUiPanelKind::local_pin_auth) &&
+                !show_local_pin_auth_panel()) {
+                wipe_local_pin_auth_scratch("Change PIN commit display allocation failed");
+                clear_agent_q_panel();
+                show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            }
+            return;
+        case agent_q::AgentQLocalPinAuthSubmitResult::started_verification:
+            if (!make_pin_processing_overlay_on_current_panel(AgentQUiPanelKind::local_pin_auth) &&
+                !show_local_pin_auth_panel()) {
+                wipe_local_pin_auth_scratch("local PIN authorization verification display allocation failed");
+                clear_agent_q_panel();
+                show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            }
+            return;
     }
 }
 
@@ -4353,14 +4221,14 @@ void verify_local_reset_pin_if_ready()
 
 void verify_local_pin_auth_if_ready()
 {
-    if (!g_local_pin_auth.flow_active() ||
-        g_local_pin_auth.stage != LocalPinAuthStage::pin_verifying ||
-        g_local_pin_auth.verify_ready_at == 0 ||
-        !tick_reached(g_local_pin_auth.verify_ready_at)) {
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQLocalPinAuthSnapshot snapshot =
+        agent_q::local_pin_auth_snapshot(now);
+    if (!snapshot.flow_active || snapshot.stage != LocalPinAuthStage::pin_verifying) {
         return;
     }
 
-    const LocalPinAuthPurpose purpose = g_local_pin_auth.purpose;
+    const LocalPinAuthPurpose purpose = snapshot.purpose;
     if (!provisioned_material_ready()) {
         char request_id[kMaxRequestIdSize] = {};
         if (purpose == LocalPinAuthPurpose::connect && g_pending.kind == PendingKind::connect_pin) {
@@ -4376,120 +4244,115 @@ void verify_local_pin_auth_if_ready()
         return;
     }
 
-    bool verified = false;
-    if (!agent_q::verify_local_pin(g_local_pin_auth.pin_entry, &verified)) {
-        char request_id[kMaxRequestIdSize] = {};
-        if (purpose == LocalPinAuthPurpose::connect && g_pending.kind == PendingKind::connect_pin) {
-            strlcpy(request_id, g_pending.id, sizeof(request_id));
-        }
-        enter_persistent_material_consistency_error("Local PIN verifier unavailable during PIN authorization; failing closed");
-        wipe_local_pin_auth_scratch("local PIN authorization verifier unavailable");
-        clear_agent_q_panel();
-        if (request_id[0] != '\0') {
-            write_connect_rejected_response(request_id, "auth_unavailable", "Local PIN verifier unavailable.");
-            clear_pending_state();
-        }
-        show_agent_q_message("Auth error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        return;
-    }
-
-    const TickType_t now = xTaskGetTickCount();
-    if (!verified) {
-        g_local_pin_auth.clear_pin_only();
-        g_local_pin_auth.stage = LocalPinAuthStage::pin_entry;
-        g_local_pin_auth.deadline = now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
-        const bool locked = agent_q::pin_attempt_record_failure(
-            &g_local_pin_auth.pin_attempt,
-            now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetPinLockoutMs));
-        if (!show_local_pin_auth_panel(locked ? "Too many wrong PINs. Wait 30s." : "Wrong PIN.")) {
-            wipe_local_pin_auth_scratch("local PIN authorization display allocation failed after wrong PIN");
-            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-
-    agent_q::wipe_sensitive_buffer(g_local_pin_auth.pin_entry, sizeof(g_local_pin_auth.pin_entry));
-    g_local_pin_auth.pin_entry_length = 0;
-    g_local_pin_auth.verify_ready_at = 0;
-    g_local_pin_auth.clear_attempts();
-
-    if (purpose == LocalPinAuthPurpose::settings_change_pin) {
-        g_local_pin_auth.stage = LocalPinAuthStage::new_pin_entry;
-        g_local_pin_auth.deadline = now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
-        if (!show_local_pin_auth_panel()) {
-            wipe_local_pin_auth_scratch("Change PIN new PIN display allocation failed");
-            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-
-    if (purpose == LocalPinAuthPurpose::connect) {
-        char request_id[kMaxRequestIdSize] = {};
-        if (g_pending.kind == PendingKind::connect_pin) {
-            strlcpy(request_id, g_pending.id, sizeof(request_id));
-        }
-        g_pending.active = false;
-        if (!replace_active_session()) {
-            if (request_id[0] != '\0') {
-                write_error_response(request_id, "rng_error", "Could not create session id.");
+    const agent_q::AgentQLocalPinAuthVerifyResult result =
+        agent_q::local_pin_auth_verify_if_ready(
+            now,
+            now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs),
+            now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetPinLockoutMs),
+            now + pdMS_TO_TICKS(kLocalProcessingDisplayMs));
+    switch (result) {
+        case agent_q::AgentQLocalPinAuthVerifyResult::not_ready:
+            return;
+        case agent_q::AgentQLocalPinAuthVerifyResult::auth_unavailable: {
+            char request_id[kMaxRequestIdSize] = {};
+            if (purpose == LocalPinAuthPurpose::connect && g_pending.kind == PendingKind::connect_pin) {
+                strlcpy(request_id, g_pending.id, sizeof(request_id));
             }
-            ESP_LOGE(kTag, "connect PIN could not create session id: id=%s", request_id);
+            enter_persistent_material_consistency_error("Local PIN verifier unavailable during PIN authorization; failing closed");
+            wipe_local_pin_auth_scratch("local PIN authorization verifier unavailable");
             clear_agent_q_panel();
-            clear_pending_state();
-            show_agent_q_message("RNG error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            if (request_id[0] != '\0') {
+                write_connect_rejected_response(request_id, "auth_unavailable", "Local PIN verifier unavailable.");
+                clear_pending_state();
+            }
+            show_agent_q_message("Auth error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
             return;
         }
-        clear_agent_q_panel();
-        if (request_id[0] != '\0') {
-            write_connect_approved_response(request_id);
+        case agent_q::AgentQLocalPinAuthVerifyResult::locked:
+            if (!show_local_pin_auth_panel("Too many wrong PINs. Wait 30s.")) {
+                wipe_local_pin_auth_scratch("local PIN authorization display allocation failed after wrong PIN");
+                show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            }
+            return;
+        case agent_q::AgentQLocalPinAuthVerifyResult::wrong_pin:
+            if (!show_local_pin_auth_panel("Wrong PIN.")) {
+                wipe_local_pin_auth_scratch("local PIN authorization display allocation failed after wrong PIN");
+                show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            }
+            return;
+        case agent_q::AgentQLocalPinAuthVerifyResult::advanced_to_change_pin:
+            if (!show_local_pin_auth_panel()) {
+                wipe_local_pin_auth_scratch("Change PIN new PIN display allocation failed");
+                show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            }
+            return;
+        case agent_q::AgentQLocalPinAuthVerifyResult::verified_connect: {
+            char request_id[kMaxRequestIdSize] = {};
+            if (g_pending.kind == PendingKind::connect_pin) {
+                strlcpy(request_id, g_pending.id, sizeof(request_id));
+            }
+            g_pending.active = false;
+            if (!replace_active_session()) {
+                if (request_id[0] != '\0') {
+                    write_error_response(request_id, "rng_error", "Could not create session id.");
+                }
+                ESP_LOGE(kTag, "connect PIN could not create session id: id=%s", request_id);
+                wipe_local_pin_auth_scratch("connect PIN session creation failed");
+                clear_agent_q_panel();
+                clear_pending_state();
+                show_agent_q_message("RNG error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                return;
+            }
+            wipe_local_pin_auth_scratch("connect PIN approved");
+            clear_agent_q_panel();
+            if (request_id[0] != '\0') {
+                write_connect_approved_response(request_id);
+            }
+            clear_pending_state();
+            ESP_LOGI(kTag, "connect PIN approved: id=%s", request_id);
+            show_agent_q_message("Connected", AgentQMessageKind::success, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
         }
-        clear_pending_state();
-        ESP_LOGI(kTag, "connect PIN approved: id=%s", request_id);
-        show_agent_q_message("Connected", AgentQMessageKind::success, AgentQUiMode::result, kAgentQResultDisplayMs);
-        return;
-    }
-
-    g_local_pin_auth.stage = LocalPinAuthStage::committing_setting;
-    g_local_pin_auth.commit_ready_at = now + pdMS_TO_TICKS(kLocalProcessingDisplayMs);
-    if (!make_pin_processing_overlay_on_current_panel(AgentQUiPanelKind::local_pin_auth) &&
-        !show_local_pin_auth_panel()) {
-        wipe_local_pin_auth_scratch("settings PIN commit display allocation failed");
-        clear_agent_q_panel();
-        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        case agent_q::AgentQLocalPinAuthVerifyResult::started_setting_commit:
+            if (!make_pin_processing_overlay_on_current_panel(AgentQUiPanelKind::local_pin_auth) &&
+                !show_local_pin_auth_panel()) {
+                wipe_local_pin_auth_scratch("settings PIN commit display allocation failed");
+                clear_agent_q_panel();
+                show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            }
+            return;
     }
 }
 
 void commit_local_pin_setting_if_ready()
 {
-    if (!g_local_pin_auth.flow_active() ||
-        (g_local_pin_auth.stage != LocalPinAuthStage::committing_setting &&
-         g_local_pin_auth.stage != LocalPinAuthStage::committing_pin_change) ||
-        g_local_pin_auth.commit_ready_at == 0 ||
-        !tick_reached(g_local_pin_auth.commit_ready_at)) {
+    const agent_q::AgentQLocalPinAuthCommitResult result =
+        agent_q::local_pin_auth_commit_if_ready(xTaskGetTickCount());
+    if (result == agent_q::AgentQLocalPinAuthCommitResult::not_ready) {
         return;
     }
-
-    const LocalPinAuthStage stage = g_local_pin_auth.stage;
-    const bool next_value = g_local_pin_auth.target_require_pin_on_connect;
-    const bool stored =
-        stage == LocalPinAuthStage::committing_pin_change
-            ? agent_q::store_local_pin_verifier(g_local_pin_auth.new_pin)
-            : agent_q::store_require_pin_on_connect(next_value);
     clear_agent_q_panel();
-    if (!stored) {
-        if (stage == LocalPinAuthStage::committing_pin_change &&
-            agent_q::local_auth_status() != agent_q::AgentQLocalAuthStatus::active) {
-            enter_persistent_material_consistency_error(
-                "Change PIN failed and local PIN verifier is unavailable; failing closed");
-            show_agent_q_message(
-                "Auth error",
-                AgentQMessageKind::error,
-                AgentQUiMode::result,
-                kAgentQResultDisplayMs);
-            return;
-        }
+    if (result == agent_q::AgentQLocalPinAuthCommitResult::pin_change_auth_unavailable) {
+        enter_persistent_material_consistency_error(
+            "Change PIN failed and local PIN verifier is unavailable; failing closed");
         show_agent_q_message(
-            stage == LocalPinAuthStage::committing_pin_change ? "PIN change failed" : "Settings error",
+            "Auth error",
+            AgentQMessageKind::error,
+            AgentQUiMode::result,
+            kAgentQResultDisplayMs);
+        return;
+    }
+    if (result == agent_q::AgentQLocalPinAuthCommitResult::pin_change_storage_error) {
+        show_agent_q_message(
+            "PIN change failed",
+            AgentQMessageKind::error,
+            AgentQUiMode::result,
+            kAgentQResultDisplayMs);
+        return;
+    }
+    if (result == agent_q::AgentQLocalPinAuthCommitResult::storage_error) {
+        show_agent_q_message(
+            "Settings error",
             AgentQMessageKind::error,
             AgentQUiMode::result,
             kAgentQResultDisplayMs);
@@ -4501,7 +4364,7 @@ void commit_local_pin_setting_if_ready()
     if (!show_settings_menu_panel()) {
         wipe_local_reset_scratch("local settings display allocation failed after PIN commit");
         show_agent_q_message(
-            stage == LocalPinAuthStage::committing_pin_change ? "PIN changed" : "Settings saved",
+            result == agent_q::AgentQLocalPinAuthCommitResult::pin_changed ? "PIN changed" : "Settings saved",
             AgentQMessageKind::success,
             AgentQUiMode::result,
             kAgentQResultDisplayMs);
@@ -4510,16 +4373,16 @@ void commit_local_pin_setting_if_ready()
 
 void clear_local_pin_auth_if_needed()
 {
-    if (!g_local_pin_auth.flow_active() ||
-        g_local_pin_auth.stage == LocalPinAuthStage::pin_verifying ||
-        g_local_pin_auth.stage == LocalPinAuthStage::committing_setting ||
-        g_local_pin_auth.stage == LocalPinAuthStage::committing_pin_change) {
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQLocalPinAuthSnapshot snapshot =
+        agent_q::local_pin_auth_snapshot(now);
+    if (!snapshot.flow_active || snapshot.processing) {
         return;
     }
 
-    const TickType_t now = xTaskGetTickCount();
-    if (agent_q::pin_attempt_release_if_elapsed(&g_local_pin_auth.pin_attempt, now)) {
-        g_local_pin_auth.deadline = now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
+    if (agent_q::local_pin_auth_release_lockout_if_elapsed(
+            now,
+            now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs))) {
         if (!show_local_pin_auth_panel("Try again.")) {
             wipe_local_pin_auth_scratch("local PIN authorization lockout display allocation failed");
             show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4533,13 +4396,12 @@ void clear_local_pin_auth_if_needed()
         panel_active = g_ui.panel != nullptr &&
                        local_pin_auth_panel_matches_stage(g_ui.panel_kind);
     }
-    const bool expired = g_local_pin_auth.deadline != 0 &&
-                         tick_reached(g_local_pin_auth.deadline);
+    const bool expired = agent_q::local_pin_auth_deadline_expired(now);
     if (panel_active && !expired) {
         return;
     }
 
-    const LocalPinAuthPurpose purpose = g_local_pin_auth.purpose;
+    const LocalPinAuthPurpose purpose = snapshot.purpose;
     char request_id[kMaxRequestIdSize] = {};
     if (purpose == LocalPinAuthPurpose::connect && g_pending.kind == PendingKind::connect_pin) {
         strlcpy(request_id, g_pending.id, sizeof(request_id));
@@ -5136,7 +4998,9 @@ void drain_ui_events()
             wipe_local_reset_scratch("local reset panel deleted");
         } else if (local_pin_auth_panel_matches_stage(event.panel_kind)) {
             char request_id[kMaxRequestIdSize] = {};
-            if (g_local_pin_auth.purpose == LocalPinAuthPurpose::connect &&
+            const agent_q::AgentQLocalPinAuthSnapshot snapshot =
+                agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
+            if (snapshot.purpose == LocalPinAuthPurpose::connect &&
                 g_pending.kind == PendingKind::connect_pin) {
                 strlcpy(request_id, g_pending.id, sizeof(request_id));
             }
