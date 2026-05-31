@@ -22,6 +22,7 @@ struct ProvisioningFlowState {
     char pin_first[kLocalPinBufferSize] = {};
     char pin_entry[kLocalPinBufferSize] = {};
     size_t pin_entry_length = 0;
+    uint32_t pin_commit_job_id = 0;
     uint8_t recover_page = 0;
     uint8_t recover_active_slot = 0;
     AgentQProvisioningFlowStage stage = AgentQProvisioningFlowStage::none;
@@ -30,14 +31,20 @@ struct ProvisioningFlowState {
     TickType_t recover_word_deadline = 0;
     TickType_t pin_deadline = 0;
     TickType_t pin_commit_ready_at = 0;
+    TickType_t pin_commit_deadline = 0;
 
     void wipe_pin_only()
     {
+        if (pin_commit_job_id != 0) {
+            local_auth_worker_cancel_job(pin_commit_job_id);
+        }
         wipe_sensitive_buffer(pin_first, sizeof(pin_first));
         wipe_sensitive_buffer(pin_entry, sizeof(pin_entry));
         pin_entry_length = 0;
+        pin_commit_job_id = 0;
         pin_deadline = 0;
         pin_commit_ready_at = 0;
+        pin_commit_deadline = 0;
     }
 
     void wipe_displayed_phrase_text()
@@ -219,10 +226,21 @@ bool provisioning_flow_stage_expired(TickType_t now)
     return false;
 }
 
-bool provisioning_flow_commit_ready(TickType_t now)
+bool provisioning_flow_fail_pin_commit_if_expired(TickType_t now)
 {
-    return g_state.stage == AgentQProvisioningFlowStage::pin_committing &&
-           deadline_reached(now, g_state.pin_commit_ready_at);
+    if (g_state.stage != AgentQProvisioningFlowStage::pin_committing ||
+        !deadline_reached(now, g_state.pin_commit_deadline)) {
+        return false;
+    }
+    g_state.wipe();
+    return true;
+}
+
+bool provisioning_flow_commit_job_active(uint32_t job_id)
+{
+    return job_id != 0 &&
+           g_state.stage == AgentQProvisioningFlowStage::pin_committing &&
+           g_state.pin_commit_job_id == job_id;
 }
 
 void provisioning_flow_wipe()
@@ -558,7 +576,8 @@ bool provisioning_flow_backspace_pin(TickType_t deadline)
 
 AgentQProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     TickType_t retry_deadline,
-    TickType_t commit_ready_at)
+    TickType_t commit_ready_at,
+    TickType_t worker_deadline)
 {
     if (!pin_setup_stage()) {
         return AgentQProvisioningFlowPinSubmitResult::inactive;
@@ -586,25 +605,58 @@ AgentQProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
         return AgentQProvisioningFlowPinSubmitResult::mismatch_restart;
     }
 
+    uint32_t job_id = 0;
+    if (!local_auth_worker_submit_prepare_verifier(
+            AgentQLocalAuthWorkerOwner::provisioning_setup,
+            g_state.pin_entry,
+            &job_id)) {
+        g_state.pin_deadline = retry_deadline;
+        return AgentQProvisioningFlowPinSubmitResult::worker_unavailable;
+    }
+
     g_state.stage = AgentQProvisioningFlowStage::pin_committing;
+    g_state.pin_commit_job_id = job_id;
     g_state.pin_commit_ready_at = commit_ready_at;
+    g_state.pin_commit_deadline = worker_deadline;
     wipe_sensitive_buffer(g_state.pin_first, sizeof(g_state.pin_first));
+    wipe_sensitive_buffer(g_state.pin_entry, sizeof(g_state.pin_entry));
+    g_state.pin_entry_length = 0;
     return AgentQProvisioningFlowPinSubmitResult::commit_started;
 }
 
 bool provisioning_flow_commit_inputs(
     const uint8_t** root_material,
-    size_t* root_material_size,
-    const char** pin)
+    size_t* root_material_size)
 {
-    if (root_material == nullptr || root_material_size == nullptr || pin == nullptr ||
-        g_state.stage != AgentQProvisioningFlowStage::pin_committing ||
-        !is_valid_local_pin(g_state.pin_entry)) {
+    if (root_material == nullptr || root_material_size == nullptr ||
+        g_state.stage != AgentQProvisioningFlowStage::pin_committing) {
         return false;
     }
     *root_material = g_state.root_material;
     *root_material_size = sizeof(g_state.root_material);
-    *pin = g_state.pin_entry;
+    return true;
+}
+
+bool provisioning_flow_commit_worker_result(
+    const AgentQLocalAuthWorkerResult& result,
+    const uint8_t** root_material,
+    size_t* root_material_size,
+    const AgentQLocalAuthPreparedRecord** prepared_auth)
+{
+    if (root_material == nullptr || root_material_size == nullptr || prepared_auth == nullptr ||
+        result.owner != AgentQLocalAuthWorkerOwner::provisioning_setup ||
+        result.operation != AgentQLocalAuthWorkerOperation::prepare_verifier_record ||
+        !provisioning_flow_commit_job_active(result.job_id)) {
+        return false;
+    }
+    g_state.pin_commit_job_id = 0;
+    g_state.pin_commit_deadline = 0;
+    if (result.status != AgentQLocalAuthWorkerStatus::ok) {
+        return false;
+    }
+    *root_material = g_state.root_material;
+    *root_material_size = sizeof(g_state.root_material);
+    *prepared_auth = &result.prepared_record;
     return true;
 }
 

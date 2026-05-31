@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "agent_q_local_auth_worker.h"
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
@@ -40,6 +41,7 @@ enum class AgentQLocalPinAuthSubmitResult {
     invalid_pin,
     unavailable_stage,
     locked,
+    worker_unavailable,
 };
 
 enum class AgentQLocalPinAuthVerifyResult {
@@ -76,6 +78,7 @@ AgentQLocalPinAuthSnapshot local_pin_auth_snapshot(TickType_t now);
 bool local_pin_auth_flow_active();
 bool local_pin_auth_accepts_keypad_input();
 bool local_pin_auth_deadline_expired(TickType_t now);
+bool local_pin_auth_fail_processing_if_expired(TickType_t now);
 bool local_pin_auth_release_lockout_if_elapsed(TickType_t now, TickType_t retry_deadline);
 
 void local_pin_auth_clear_flow();
@@ -89,12 +92,15 @@ bool local_pin_auth_backspace_pin(TickType_t deadline);
 AgentQLocalPinAuthSubmitResult local_pin_auth_submit(
     TickType_t verify_ready_at,
     TickType_t commit_ready_at,
-    TickType_t retry_deadline);
-AgentQLocalPinAuthVerifyResult local_pin_auth_verify_if_ready(
-    TickType_t now,
+    TickType_t retry_deadline,
+    TickType_t worker_deadline);
+AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
+    const AgentQLocalAuthWorkerResult& result,
     TickType_t retry_deadline,
     TickType_t lockout_until,
     TickType_t setting_commit_ready_at);
+AgentQLocalPinAuthCommitResult local_pin_auth_complete_pin_change_job(
+    const AgentQLocalAuthWorkerResult& result);
 AgentQLocalPinAuthCommitResult local_pin_auth_commit_if_ready(TickType_t now);
 
 }  // namespace agent_q

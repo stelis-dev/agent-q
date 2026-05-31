@@ -89,6 +89,26 @@ enum class SetupButtonKind {
 };
 
 AgentQModalDrawingCallbacks g_callbacks;
+lv_obj_t* g_pin_processing_overlay = nullptr;
+
+void on_pin_processing_overlay_deleted(lv_event_t* event)
+{
+    lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(event));
+    if (target == g_pin_processing_overlay) {
+        g_pin_processing_overlay = nullptr;
+    }
+}
+
+void clear_pin_processing_overlay_locked()
+{
+    if (g_pin_processing_overlay == nullptr) {
+        return;
+    }
+    if (lv_obj_is_valid(g_pin_processing_overlay)) {
+        lv_obj_delete(g_pin_processing_overlay);
+    }
+    g_pin_processing_overlay = nullptr;
+}
 uint16_t g_recover_candidate_event_indices[kBip39WordCount] = {};
 
 }  // namespace
@@ -334,6 +354,15 @@ static void rotate_processing_arc(void* obj, int32_t rotation)
 
 static bool make_pin_processing_overlay(lv_obj_t* parent)
 {
+    if (g_pin_processing_overlay != nullptr &&
+        lv_obj_is_valid(g_pin_processing_overlay) &&
+        lv_obj_get_parent(g_pin_processing_overlay) == parent) {
+        lv_obj_move_foreground(g_pin_processing_overlay);
+        return true;
+    }
+
+    clear_pin_processing_overlay_locked();
+
     lv_obj_t* blocker = lv_obj_create(parent);
     if (blocker == nullptr) {
         return false;
@@ -401,6 +430,8 @@ static bool make_pin_processing_overlay(lv_obj_t* parent)
     }
 #endif
 
+    g_pin_processing_overlay = blocker;
+    lv_obj_add_event_cb(blocker, on_pin_processing_overlay_deleted, LV_EVENT_DELETE, nullptr);
     lv_obj_move_foreground(blocker);
     return true;
 }

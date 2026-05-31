@@ -109,7 +109,9 @@ tools/firmware/stackchan-cores3/test_call_method_validation.sh
 tools/firmware/stackchan-cores3/test_method_runtime.sh
 tools/firmware/stackchan-cores3/test_policy_store.sh
 tools/firmware/stackchan-cores3/test_persistent_material.sh
+tools/firmware/stackchan-cores3/test_provisioning_state_store.sh
 tools/firmware/stackchan-cores3/test_local_auth.sh
+tools/firmware/stackchan-cores3/test_local_auth_worker.sh
 tools/firmware/stackchan-cores3/test_local_pin_auth.sh
 tools/firmware/stackchan-cores3/test_connect_settings.sh
 tools/firmware/stackchan-cores3/test_session.sh
@@ -160,8 +162,16 @@ default-reject policy result for a valid restricted SUI transfer fixture.
 
 The StackChan persistent-material test is target-specific. It compiles the
 tracked `agent_q_persistent_material.cpp` coordinator with host material stubs,
-then verifies setup commit ordering and rollback, reset wipe coverage, loaded
-state consistency classification, and legacy missing-policy migration.
+then verifies setup commit ordering and rollback, reset wipe coverage,
+provisioning-state storage envelope classification, loaded-state consistency
+classification, typed runtime material failure handling, persistent-material
+consistency error latch ownership, and legacy missing-policy migration.
+
+The StackChan provisioning-state store test is target-specific. It compiles the
+tracked `agent_q_provisioning_state_store.cpp` NVS adapter with host NVS stubs,
+then verifies missing/present/unreadable storage classification and state
+writes. Persistent-material consistency meaning remains owned by
+`agent_q_persistent_material.cpp`.
 
 The StackChan local-auth test is target-specific. It compiles the tracked
 `agent_q_local_auth.cpp` verifier store with the pinned MicroSui Monocypher
@@ -169,6 +179,11 @@ source plus host NVS/RNG stubs, then verifies exact 6-digit PIN validation,
 PBKDF2-HMAC-SHA512 verifier storage, correct/wrong PIN checks, fresh salt,
 wipe behavior, and corrupt/failed-write fail-closed behavior. This verifier is
 a DEV_PROFILE local UX gate, not root-material encryption.
+
+The StackChan local-auth worker test is target-specific. It compiles the
+tracked `agent_q_local_auth_worker.cpp` task boundary with host FreeRTOS stubs,
+then verifies worker request queue entries carry only job metadata and never raw
+PIN bytes.
 
 The StackChan local-reset test is target-specific. It compiles the tracked
 `agent_q_local_reset.cpp` state machine with host NVS/material stubs, then

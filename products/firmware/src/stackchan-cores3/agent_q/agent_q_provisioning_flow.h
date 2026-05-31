@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "agent_q_bip39.h"
+#include "agent_q_local_auth_worker.h"
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
@@ -43,6 +44,7 @@ enum class AgentQProvisioningFlowGenerateResult {
 enum class AgentQProvisioningFlowPinSubmitResult {
     inactive,
     invalid_pin,
+    worker_unavailable,
     advanced_to_repeat,
     mismatch_restart,
     commit_started,
@@ -65,7 +67,8 @@ AgentQProvisioningFlowStage provisioning_flow_stage();
 bool provisioning_flow_active();
 bool provisioning_flow_stage_is(AgentQProvisioningFlowStage stage);
 bool provisioning_flow_stage_expired(TickType_t now);
-bool provisioning_flow_commit_ready(TickType_t now);
+bool provisioning_flow_fail_pin_commit_if_expired(TickType_t now);
+bool provisioning_flow_commit_job_active(uint32_t job_id);
 
 void provisioning_flow_wipe();
 void provisioning_flow_wipe_displayed_phrase_text();
@@ -103,11 +106,16 @@ bool provisioning_flow_clear_pin_entry(TickType_t deadline);
 bool provisioning_flow_backspace_pin(TickType_t deadline);
 AgentQProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     TickType_t retry_deadline,
-    TickType_t commit_ready_at);
+    TickType_t commit_ready_at,
+    TickType_t worker_deadline);
 
 bool provisioning_flow_commit_inputs(
     const uint8_t** root_material,
+    size_t* root_material_size);
+bool provisioning_flow_commit_worker_result(
+    const AgentQLocalAuthWorkerResult& result,
+    const uint8_t** root_material,
     size_t* root_material_size,
-    const char** pin);
+    const AgentQLocalAuthPreparedRecord** prepared_auth);
 
 }  // namespace agent_q

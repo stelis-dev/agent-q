@@ -6,9 +6,11 @@ usage() {
 Usage: tools/firmware/stackchan-cores3/test_persistent_material.sh
 
 Compiles the StackChan CoreS3 persistent material coordinator against host
-stubs and verifies setup commit rollback, reset wipe coverage, loaded-state
-consistency classification, and legacy missing-policy migration. This test uses
-only a host C++ compiler and does NOT require ESP-IDF.
+stubs and verifies setup commit rollback, reset wipe coverage,
+provisioning-state storage envelope consistency classification, and legacy
+missing-policy migration, including typed runtime material failure handling and
+persistent-material consistency error latch ownership. This test uses only a
+host C++ compiler and does NOT require ESP-IDF.
 EOF
 }
 
@@ -84,6 +86,7 @@ void reset_stubs()
     g_auth_status = agent_q::AgentQLocalAuthStatus::missing;
     g_persisted_state = agent_q::AgentQProvisioningRuntimeState::unprovisioned;
     g_consistency_error_count = 0;
+    agent_q::persistent_material_begin_load();
 }
 
 bool persist_state(agent_q::AgentQProvisioningRuntimeState state)
@@ -95,7 +98,7 @@ bool persist_state(agent_q::AgentQProvisioningRuntimeState state)
     return true;
 }
 
-void enter_consistency_error(const char*)
+void on_consistency_error(const char*)
 {
     ++g_consistency_error_count;
 }
@@ -104,7 +107,7 @@ agent_q::AgentQPersistentMaterialOps ops()
 {
     return agent_q::AgentQPersistentMaterialOps{
         persist_state,
-        enter_consistency_error,
+        on_consistency_error,
     };
 }
 
@@ -196,6 +199,37 @@ bool store_local_pin_verifier(const char* pin)
     return true;
 }
 
+bool prepare_local_pin_verifier_record(const char* pin, AgentQLocalAuthPreparedRecord* out)
+{
+    if (!is_valid_local_pin(pin) || out == nullptr) {
+        return false;
+    }
+    memset(out->bytes, 0, sizeof(out->bytes));
+    memcpy(out->bytes, pin, kLocalPinBufferSize);
+    return true;
+}
+
+bool store_prepared_local_pin_verifier(const AgentQLocalAuthPreparedRecord* prepared)
+{
+    if (prepared == nullptr || g_auth_store_fails) {
+        return false;
+    }
+    const char* pin = reinterpret_cast<const char*>(prepared->bytes);
+    if (!is_valid_local_pin(pin)) {
+        return false;
+    }
+    g_auth_present = true;
+    g_auth_status = AgentQLocalAuthStatus::active;
+    return true;
+}
+
+void wipe_local_pin_verifier_record(AgentQLocalAuthPreparedRecord* prepared)
+{
+    if (prepared != nullptr) {
+        memset(prepared->bytes, 0, sizeof(prepared->bytes));
+    }
+}
+
 bool verify_local_pin(const char*, bool*)
 {
     return false;
@@ -239,11 +273,25 @@ bool wipe_require_pin_on_connect()
 int main()
 {
     using State = agent_q::AgentQProvisioningRuntimeState;
+    using Storage = agent_q::AgentQProvisioningStateStorageStatus;
     using Consistency = agent_q::AgentQPersistentMaterialConsistencyResult;
     using Commit = agent_q::AgentQPersistentMaterialCommitResult;
     using Wipe = agent_q::AgentQPersistentMaterialWipeResult;
 
     uint8_t root[agent_q::kRootMaterialBytes] = {};
+
+    reset_stubs();
+    expect(agent_q::persistent_material_record_runtime_failure(
+               agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable, ops()) ==
+               Consistency::consistency_error,
+           "runtime material failure is recorded as consistency error");
+    expect(agent_q::persistent_material_consistency_error_active(),
+           "runtime material failure latches consistency error");
+    expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+               Commit::ok,
+           "setup commit succeeds after runtime failure is resolved");
+    expect(!agent_q::persistent_material_consistency_error_active(),
+           "setup commit success clears consistency error latch");
 
     reset_stubs();
     expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
@@ -271,24 +319,77 @@ int main()
     g_auth_present = true;
     g_auth_status = agent_q::AgentQLocalAuthStatus::active;
     g_connect_setting_present = true;
+    expect(agent_q::persistent_material_record_runtime_failure(
+               agent_q::AgentQPersistentMaterialRuntimeFailure::local_reset_root_wipe_failed, ops()) ==
+               Consistency::consistency_error,
+           "local reset material failure latches consistency error before wipe");
     expect(agent_q::persistent_material_wipe_all() == Wipe::ok,
            "wipe all succeeds");
     expect(!g_root_present && !g_policy_present && !g_auth_present && !g_connect_setting_present,
            "wipe all removes required and reset-scoped settings material");
+    expect(!agent_q::persistent_material_consistency_error_active(),
+           "wipe all success clears consistency error latch");
 
     reset_stubs();
     State effective = State::unprovisioned;
-    expect(agent_q::persistent_material_validate_loaded_state(State::unprovisioned, &effective, ops()) ==
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
                Consistency::ok,
-           "empty unprovisioned state is valid");
+           "missing state without material is valid unprovisioned");
     expect(effective == State::unprovisioned,
-           "empty unprovisioned effective state remains unprovisioned");
+           "missing state effective state remains unprovisioned");
+
+    reset_stubs();
+    g_root_present = true;
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
+               Consistency::consistency_error,
+           "missing state with material fails closed");
+    expect(g_consistency_error_count == 1,
+           "missing state with material reports consistency error");
+    expect(agent_q::persistent_material_consistency_error_active(),
+           "missing state with material latches persistent material error");
+
+    reset_stubs();
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::unreadable, nullptr, &effective, ops()) ==
+               Consistency::state_storage_error,
+           "unreadable state fails closed");
+    expect(g_consistency_error_count == 1,
+           "unreadable state reports consistency error");
+    expect(agent_q::persistent_material_consistency_error_active(),
+           "unreadable state latches persistent material error");
+
+    reset_stubs();
+    g_persisted_state = State::provisioned;
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "unknown", &effective, ops()) ==
+               Consistency::unknown_state_reset,
+           "unknown state without material resets to unprovisioned");
+    expect(g_persisted_state == State::unprovisioned,
+           "unknown state reset persists unprovisioned");
+
+    reset_stubs();
+    g_root_present = true;
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "unknown", &effective, ops()) ==
+               Consistency::consistency_error,
+           "unknown state with material fails closed");
+    expect(g_consistency_error_count == 1,
+           "unknown state with material reports consistency error");
+
+    reset_stubs();
+    g_root_present = true;
+    g_policy_present = true;
+    g_policy_status = agent_q::AgentQPolicyStoreStatus::active;
+    g_auth_present = true;
+    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+               Consistency::ok,
+           "complete provisioned material is valid");
+    expect(effective == State::provisioned,
+           "complete provisioned material loads provisioned state");
 
     reset_stubs();
     g_root_present = true;
     g_auth_present = true;
     g_auth_status = agent_q::AgentQLocalAuthStatus::active;
-    expect(agent_q::persistent_material_validate_loaded_state(State::provisioned, &effective, ops()) ==
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::legacy_policy_initialized,
            "legacy provisioned root plus auth initializes default policy");
     expect(effective == State::provisioned && g_policy_status == agent_q::AgentQPolicyStoreStatus::active,
@@ -299,7 +400,7 @@ int main()
     g_policy_status = agent_q::AgentQPolicyStoreStatus::invalid;
     g_auth_present = true;
     g_auth_status = agent_q::AgentQLocalAuthStatus::active;
-    expect(agent_q::persistent_material_validate_loaded_state(State::provisioned, &effective, ops()) ==
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::consistency_error,
            "invalid policy under provisioned state fails closed");
     expect(g_consistency_error_count == 1,
@@ -307,12 +408,12 @@ int main()
 
     reset_stubs();
     g_root_present = true;
-    expect(agent_q::persistent_material_validate_loaded_state(State::unprovisioned, &effective, ops()) ==
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "unprovisioned", &effective, ops()) ==
                Consistency::consistency_error,
            "material outside provisioned state fails closed");
 
     reset_stubs();
-    expect(agent_q::persistent_material_validate_loaded_state(State::provisioning, &effective, ops()) ==
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioning", &effective, ops()) ==
                Consistency::legacy_provisioning_reset,
            "legacy provisioning state is reset");
     expect(g_persisted_state == State::unprovisioned,

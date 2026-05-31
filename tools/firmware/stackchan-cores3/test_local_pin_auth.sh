@@ -65,6 +65,7 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 
 #include "agent_q_connect_settings.h"
 #include "agent_q_local_auth.h"
+#include "agent_q_local_auth_worker.h"
 #include "freertos/FreeRTOS.h"
 
 namespace {
@@ -72,6 +73,8 @@ namespace {
 TickType_t g_now = 1;
 char g_current_pin[agent_q::kLocalPinBufferSize] = "123456";
 bool g_require_pin_on_connect = true;
+uint32_t g_last_worker_job_id = 0;
+uint32_t g_last_cancelled_worker_job_id = 0;
 
 }  // namespace
 
@@ -95,6 +98,16 @@ bool test_current_pin_is(const char* pin)
 bool test_require_pin_on_connect()
 {
     return g_require_pin_on_connect;
+}
+
+uint32_t test_last_worker_job_id()
+{
+    return g_last_worker_job_id;
+}
+
+uint32_t test_last_cancelled_worker_job_id()
+{
+    return g_last_cancelled_worker_job_id;
 }
 
 void wipe_sensitive_buffer(void* data, size_t size)
@@ -126,6 +139,36 @@ bool store_local_pin_verifier(const char* pin)
     }
     strcpy(g_current_pin, pin);
     return true;
+}
+
+bool prepare_local_pin_verifier_record(const char* pin, AgentQLocalAuthPreparedRecord* out)
+{
+    if (!is_valid_local_pin(pin) || out == nullptr) {
+        return false;
+    }
+    wipe_sensitive_buffer(out->bytes, sizeof(out->bytes));
+    memcpy(out->bytes, pin, kLocalPinBufferSize);
+    return true;
+}
+
+bool store_prepared_local_pin_verifier(const AgentQLocalAuthPreparedRecord* prepared)
+{
+    if (prepared == nullptr) {
+        return false;
+    }
+    const char* pin = reinterpret_cast<const char*>(prepared->bytes);
+    if (!is_valid_local_pin(pin)) {
+        return false;
+    }
+    strcpy(g_current_pin, pin);
+    return true;
+}
+
+void wipe_local_pin_verifier_record(AgentQLocalAuthPreparedRecord* prepared)
+{
+    if (prepared != nullptr) {
+        wipe_sensitive_buffer(prepared->bytes, sizeof(prepared->bytes));
+    }
 }
 
 bool verify_local_pin(const char* pin, bool* verified)
@@ -172,6 +215,35 @@ bool wipe_require_pin_on_connect()
     return true;
 }
 
+bool local_auth_worker_submit_verify(
+    AgentQLocalAuthWorkerOwner owner,
+    const char* pin,
+    uint32_t* job_id)
+{
+    (void)owner;
+    static uint32_t next_job_id = 1;
+    if (job_id == nullptr || !is_valid_local_pin(pin)) {
+        return false;
+    }
+    *job_id = next_job_id++;
+    g_last_worker_job_id = *job_id;
+    return true;
+}
+
+bool local_auth_worker_submit_prepare_verifier(
+    AgentQLocalAuthWorkerOwner owner,
+    const char* pin,
+    uint32_t* job_id)
+{
+    return local_auth_worker_submit_verify(owner, pin, job_id);
+}
+
+bool local_auth_worker_cancel_job(uint32_t)
+{
+    g_last_cancelled_worker_job_id = g_last_worker_job_id;
+    return true;
+}
+
 }  // namespace agent_q
 CPP
 
@@ -184,6 +256,8 @@ namespace agent_q {
 void test_set_tick(TickType_t now);
 bool test_current_pin_is(const char* pin);
 bool test_require_pin_on_connect();
+uint32_t test_last_worker_job_id();
+uint32_t test_last_cancelled_worker_job_id();
 }
 
 namespace {
@@ -219,6 +293,28 @@ void expect_stage(
     expect(snapshot.stage == stage, label);
 }
 
+agent_q::AgentQLocalAuthWorkerResult make_verify_result(bool verified)
+{
+    agent_q::AgentQLocalAuthWorkerResult worker_result = {};
+    worker_result.job_id = agent_q::test_last_worker_job_id();
+    worker_result.owner = agent_q::AgentQLocalAuthWorkerOwner::local_pin_auth;
+    worker_result.operation = agent_q::AgentQLocalAuthWorkerOperation::verify_pin;
+    worker_result.status = agent_q::AgentQLocalAuthWorkerStatus::ok;
+    worker_result.verified = verified;
+    return worker_result;
+}
+
+agent_q::AgentQLocalAuthWorkerResult make_prepare_result(const char* pin)
+{
+    agent_q::AgentQLocalAuthWorkerResult worker_result = {};
+    worker_result.job_id = agent_q::test_last_worker_job_id();
+    worker_result.owner = agent_q::AgentQLocalAuthWorkerOwner::local_pin_auth;
+    worker_result.operation = agent_q::AgentQLocalAuthWorkerOperation::prepare_verifier_record;
+    worker_result.status = agent_q::AgentQLocalAuthWorkerStatus::ok;
+    agent_q::prepare_local_pin_verifier_record(pin, &worker_result.prepared_record);
+    return worker_result;
+}
+
 agent_q::AgentQLocalPinAuthVerifyResult submit_and_verify_wrong_pin(
     TickType_t now,
     TickType_t retry_deadline,
@@ -226,10 +322,15 @@ agent_q::AgentQLocalPinAuthVerifyResult submit_and_verify_wrong_pin(
 {
     agent_q::test_set_tick(now);
     enter_pin("000000", retry_deadline);
-    expect(agent_q::local_pin_auth_submit(now, 0, retry_deadline) ==
+    expect(agent_q::local_pin_auth_submit(now, 0, retry_deadline, now + 10) ==
                agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
            "wrong PIN starts verification");
-    return agent_q::local_pin_auth_verify_if_ready(now, retry_deadline, lockout_until, 0);
+    agent_q::AgentQLocalAuthWorkerResult worker_result = make_verify_result(false);
+    return agent_q::local_pin_auth_complete_verify_job(
+        worker_result,
+        retry_deadline,
+        lockout_until,
+        0);
 }
 
 }  // namespace
@@ -283,10 +384,11 @@ int main()
         agent_q::test_set_tick(300);
         agent_q::local_pin_auth_begin_connect_setting(false, 360);
         enter_pin("123456", 360);
-        expect(agent_q::local_pin_auth_submit(301, 0, 360) ==
+        expect(agent_q::local_pin_auth_submit(301, 0, 360, 330) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "settings toggle starts current-PIN verification");
-        expect(agent_q::local_pin_auth_verify_if_ready(301, 360, 0, 305) ==
+        agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
+        expect(agent_q::local_pin_auth_complete_verify_job(verify_result, 360, 0, 305) ==
                    agent_q::AgentQLocalPinAuthVerifyResult::started_setting_commit,
                "verified settings toggle starts commit stage");
         expect(agent_q::local_pin_auth_commit_if_ready(304) ==
@@ -305,10 +407,11 @@ int main()
         agent_q::test_set_tick(400);
         agent_q::local_pin_auth_begin_change_pin(460);
         enter_pin("123456", 460);
-        expect(agent_q::local_pin_auth_submit(401, 0, 460) ==
+        expect(agent_q::local_pin_auth_submit(401, 0, 460, 430) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "change PIN starts current-PIN verification");
-        expect(agent_q::local_pin_auth_verify_if_ready(401, 460, 0, 0) ==
+        agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
+        expect(agent_q::local_pin_auth_complete_verify_job(verify_result, 460, 0, 0) ==
                    agent_q::AgentQLocalPinAuthVerifyResult::advanced_to_change_pin,
                "verified current PIN advances to new PIN entry");
         expect_stage(
@@ -317,7 +420,7 @@ int main()
             "change PIN new-entry stage");
 
         enter_pin("654321", 460);
-        expect(agent_q::local_pin_auth_submit(402, 0, 460) ==
+        expect(agent_q::local_pin_auth_submit(402, 0, 460, 430) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::advanced_to_repeat_pin,
                "change PIN advances to repeat entry");
         expect_stage(
@@ -326,7 +429,7 @@ int main()
             "change PIN repeat-entry stage");
 
         enter_pin("111111", 460);
-        expect(agent_q::local_pin_auth_submit(403, 0, 460) ==
+        expect(agent_q::local_pin_auth_submit(403, 0, 460, 430) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::mismatch_restart,
                "change PIN mismatch restarts new PIN entry");
         expect_stage(
@@ -335,20 +438,67 @@ int main()
             "change PIN mismatch restart stage");
 
         enter_pin("654321", 460);
-        expect(agent_q::local_pin_auth_submit(404, 0, 460) ==
+        expect(agent_q::local_pin_auth_submit(404, 0, 460, 430) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::advanced_to_repeat_pin,
                "change PIN second new PIN advances");
         enter_pin("654321", 460);
-        expect(agent_q::local_pin_auth_submit(0, 405, 460) ==
+        expect(agent_q::local_pin_auth_submit(0, 405, 460, 430) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_pin_change_commit,
                "change PIN matching repeat starts commit");
-        expect(agent_q::local_pin_auth_commit_if_ready(405) ==
+        agent_q::AgentQLocalAuthWorkerResult prepare_result = make_prepare_result("654321");
+        expect(agent_q::local_pin_auth_complete_pin_change_job(prepare_result) ==
                    agent_q::AgentQLocalPinAuthCommitResult::pin_changed,
                "change PIN stores new verifier");
         expect(agent_q::test_current_pin_is("654321"),
                "change PIN persisted the new PIN");
         expect(!agent_q::local_pin_auth_snapshot(405).flow_active,
                "change PIN commit clears flow");
+    }
+
+    {
+        agent_q::test_set_tick(500);
+        agent_q::local_pin_auth_begin_connect(560);
+        enter_pin("654321", 560);
+        expect(agent_q::local_pin_auth_submit(501, 0, 560, 520) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "connect PIN starts verification before worker timeout");
+        expect(!agent_q::local_pin_auth_fail_processing_if_expired(519),
+               "connect PIN processing stays active before worker deadline");
+        expect(agent_q::local_pin_auth_fail_processing_if_expired(520),
+               "connect PIN processing timeout closes flow");
+        expect(agent_q::test_last_cancelled_worker_job_id() == agent_q::test_last_worker_job_id(),
+               "connect PIN processing timeout cancels worker job");
+        expect(!agent_q::local_pin_auth_snapshot(520).flow_active,
+               "connect PIN processing timeout clears flow");
+    }
+
+    {
+        agent_q::test_set_tick(600);
+        agent_q::local_pin_auth_begin_change_pin(660);
+        enter_pin("654321", 660);
+        expect(agent_q::local_pin_auth_submit(601, 0, 660, 620) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "change PIN current-PIN verification starts before worker timeout");
+        agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
+        expect(agent_q::local_pin_auth_complete_verify_job(verify_result, 660, 0, 0) ==
+                   agent_q::AgentQLocalPinAuthVerifyResult::advanced_to_change_pin,
+               "change PIN advances to new PIN before commit timeout test");
+        enter_pin("123456", 660);
+        expect(agent_q::local_pin_auth_submit(602, 0, 660, 620) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::advanced_to_repeat_pin,
+               "change PIN timeout test advances to repeat");
+        enter_pin("123456", 660);
+        expect(agent_q::local_pin_auth_submit(0, 605, 660, 620) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_pin_change_commit,
+               "change PIN commit starts before worker timeout");
+        expect(!agent_q::local_pin_auth_fail_processing_if_expired(619),
+               "change PIN commit stays active before worker deadline");
+        expect(agent_q::local_pin_auth_fail_processing_if_expired(620),
+               "change PIN commit timeout closes flow");
+        expect(agent_q::test_last_cancelled_worker_job_id() == agent_q::test_last_worker_job_id(),
+               "change PIN commit timeout cancels worker job");
+        expect(!agent_q::local_pin_auth_snapshot(620).flow_active,
+               "change PIN commit timeout clears flow");
     }
 
     if (failures != 0) {

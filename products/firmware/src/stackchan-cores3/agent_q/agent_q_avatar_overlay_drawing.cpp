@@ -48,6 +48,12 @@ AgentQMessagePresentation message_presentation(AgentQMessageKind kind)
         case AgentQMessageKind::error:
             return {
                 lv_color_hex(0xE25B5B), lv_color_hex(0xFFFFFF), stackchan::avatar::Emotion::Angry, false};
+        case AgentQMessageKind::usb_connected:
+            return {
+                lv_color_hex(0x7DE2A6), lv_color_hex(0x063A1D), stackchan::avatar::Emotion::Happy, true};
+        case AgentQMessageKind::usb_disconnected:
+            return {
+                lv_color_hex(0xB9C0CC), lv_color_hex(0x243040), stackchan::avatar::Emotion::Sad, false};
         case AgentQMessageKind::info:
         default:
             return {

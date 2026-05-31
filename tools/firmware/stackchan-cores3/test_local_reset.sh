@@ -116,6 +116,8 @@ bool g_auth_present = true;
 bool g_connect_setting_present = true;
 bool g_root_wipe_fails = false;
 bool g_require_pin_on_connect = true;
+uint32_t g_last_worker_job_id = 0;
+uint32_t g_last_cancelled_worker_job_id = 0;
 int g_clear_session_count = 0;
 int g_persist_unprovisioned_count = 0;
 int g_consistency_error_count = 0;
@@ -141,6 +143,8 @@ void reset_stubs()
     g_connect_setting_present = true;
     g_root_wipe_fails = false;
     g_require_pin_on_connect = true;
+    g_last_worker_job_id = 0;
+    g_last_cancelled_worker_job_id = 0;
     g_clear_session_count = 0;
     g_persist_unprovisioned_count = 0;
     g_consistency_error_count = 0;
@@ -158,7 +162,7 @@ bool persist_unprovisioned()
     return true;
 }
 
-void enter_consistency_error(const char*)
+void record_material_failure(agent_q::AgentQPersistentMaterialRuntimeFailure)
 {
     ++g_consistency_error_count;
 }
@@ -168,7 +172,7 @@ agent_q::AgentQLocalResetPersistenceOps ops()
     return agent_q::AgentQLocalResetPersistenceOps{
         clear_session,
         persist_unprovisioned,
-        enter_consistency_error,
+        record_material_failure,
     };
 }
 
@@ -304,6 +308,28 @@ bool verify_local_pin(const char*, bool* verified)
     return true;
 }
 
+bool prepare_local_pin_verifier_record(const char* pin, AgentQLocalAuthPreparedRecord* out)
+{
+    if (!is_valid_local_pin(pin) || out == nullptr) {
+        return false;
+    }
+    wipe_sensitive_buffer(out->bytes, sizeof(out->bytes));
+    memcpy(out->bytes, pin, kLocalPinBufferSize);
+    return true;
+}
+
+bool store_prepared_local_pin_verifier(const AgentQLocalAuthPreparedRecord*)
+{
+    return true;
+}
+
+void wipe_local_pin_verifier_record(AgentQLocalAuthPreparedRecord* prepared)
+{
+    if (prepared != nullptr) {
+        wipe_sensitive_buffer(prepared->bytes, sizeof(prepared->bytes));
+    }
+}
+
 bool wipe_require_pin_on_connect()
 {
     g_connect_setting_present = false;
@@ -332,6 +358,34 @@ bool store_require_pin_on_connect(bool required)
 
 bool store_local_pin_verifier(const char*)
 {
+    return true;
+}
+
+bool local_auth_worker_submit_verify(
+    AgentQLocalAuthWorkerOwner,
+    const char* pin,
+    uint32_t* job_id)
+{
+    static uint32_t next_job_id = 1;
+    if (job_id == nullptr || !is_valid_local_pin(pin)) {
+        return false;
+    }
+    *job_id = next_job_id++;
+    g_last_worker_job_id = *job_id;
+    return true;
+}
+
+bool local_auth_worker_submit_prepare_verifier(
+    AgentQLocalAuthWorkerOwner owner,
+    const char* pin,
+    uint32_t* job_id)
+{
+    return local_auth_worker_submit_verify(owner, pin, job_id);
+}
+
+bool local_auth_worker_cancel_job(uint32_t)
+{
+    g_last_cancelled_worker_job_id = g_last_worker_job_id;
     return true;
 }
 
@@ -410,11 +464,17 @@ int main()
         expect(agent_q::local_pin_auth_add_digit('0', 100) ==
                    agent_q::AgentQLocalPinAuthInputResult::accepted,
                "shared attempt setup digit 6 accepted");
-        expect(agent_q::local_pin_auth_submit(g_now, 0, 100) ==
+        expect(agent_q::local_pin_auth_submit(g_now, 0, 100, 90) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "shared attempt wrong connect PIN starts verification");
+        agent_q::AgentQLocalAuthWorkerResult worker_result = {};
+        worker_result.job_id = g_last_worker_job_id;
+        worker_result.owner = agent_q::AgentQLocalAuthWorkerOwner::local_pin_auth;
+        worker_result.operation = agent_q::AgentQLocalAuthWorkerOperation::verify_pin;
+        worker_result.status = agent_q::AgentQLocalAuthWorkerStatus::ok;
+        worker_result.verified = false;
         const agent_q::AgentQLocalPinAuthVerifyResult result =
-            agent_q::local_pin_auth_verify_if_ready(g_now, 100, 80, 0);
+            agent_q::local_pin_auth_complete_verify_job(worker_result, 100, 80, 0);
         expect(attempt == 4
                    ? result == agent_q::AgentQLocalPinAuthVerifyResult::locked
                    : result == agent_q::AgentQLocalPinAuthVerifyResult::wrong_pin,
@@ -425,7 +485,7 @@ int main()
     expect(agent_q::local_reset_begin_pin_entry(120), "reset PIN entry starts after connect failures");
     expect(agent_q::local_reset_snapshot(20).lockout_active,
            "reset PIN sees shared lockout from connect PIN failures");
-    expect(agent_q::local_reset_submit_pin_for_verification(20, 120) ==
+    expect(agent_q::local_reset_submit_pin_for_verification(20, 120, 90) ==
                agent_q::AgentQLocalResetPinSubmitResult::locked,
            "reset PIN submit is locked by shared attempt budget");
     expect(agent_q::local_reset_release_lockout_if_elapsed(80),
@@ -433,6 +493,26 @@ int main()
     expect(!agent_q::local_reset_snapshot(80).lockout_active,
            "reset PIN lockout release clears shared budget");
     agent_q::local_reset_wipe();
+
+    reset_stubs();
+    agent_q::local_reset_begin_settings(200);
+    expect(agent_q::local_reset_begin_pin_entry(200), "reset PIN entry starts before worker timeout");
+    const char reset_timeout_pin[] = "123456";
+    for (size_t index = 0; reset_timeout_pin[index] != '\0'; ++index) {
+        const char digit = reset_timeout_pin[index];
+        expect(agent_q::local_reset_add_pin_digit(digit, 200), "reset worker timeout PIN digit accepted");
+    }
+    expect(agent_q::local_reset_submit_pin_for_verification(110, 200, 130) ==
+               agent_q::AgentQLocalResetPinSubmitResult::started_verification,
+           "reset PIN verification starts before worker timeout");
+    expect(!agent_q::local_reset_fail_pin_verification_if_expired(129),
+           "reset PIN verification stays active before worker deadline");
+    expect(agent_q::local_reset_fail_pin_verification_if_expired(130),
+           "reset PIN verification timeout closes flow");
+    expect(g_last_cancelled_worker_job_id == g_last_worker_job_id,
+           "reset PIN verification timeout cancels worker job");
+    expect(!agent_q::local_reset_snapshot(130).flow_active,
+           "reset PIN verification timeout clears state");
 
     if (failures != 0) {
         fprintf(stderr, "%d local reset test(s) failed\n", failures);

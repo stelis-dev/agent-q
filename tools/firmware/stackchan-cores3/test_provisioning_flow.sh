@@ -56,6 +56,7 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include "agent_q_bip39_wordlist.h"
 #include "agent_q_entropy.h"
 #include "agent_q_local_auth.h"
+#include "agent_q_local_auth_worker.h"
 
 namespace {
 
@@ -68,6 +69,10 @@ const char* const kWords[] = {
 }  // namespace
 
 namespace agent_q {
+
+bool g_test_worker_accepts_jobs = true;
+uint32_t g_last_worker_job_id = 0;
+uint32_t g_last_cancelled_worker_job_id = 0;
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -143,6 +148,33 @@ bool is_valid_local_pin(const char* pin)
     return true;
 }
 
+bool local_auth_worker_submit_prepare_verifier(
+    AgentQLocalAuthWorkerOwner,
+    const char* pin,
+    uint32_t* job_id)
+{
+    if (!g_test_worker_accepts_jobs || !is_valid_local_pin(pin) || job_id == nullptr) {
+        return false;
+    }
+    *job_id = 1;
+    g_last_worker_job_id = *job_id;
+    return true;
+}
+
+bool local_auth_worker_submit_verify(
+    AgentQLocalAuthWorkerOwner owner,
+    const char* pin,
+    uint32_t* job_id)
+{
+    return local_auth_worker_submit_prepare_verifier(owner, pin, job_id);
+}
+
+bool local_auth_worker_cancel_job(uint32_t)
+{
+    g_last_cancelled_worker_job_id = g_last_worker_job_id;
+    return true;
+}
+
 }  // namespace agent_q
 CPP
 
@@ -151,6 +183,12 @@ cat >"${TMP_DIR}/provisioning_flow_test.cpp" <<'CPP'
 #include <string.h>
 
 #include "agent_q_provisioning_flow.h"
+
+namespace agent_q {
+extern bool g_test_worker_accepts_jobs;
+extern uint32_t g_last_worker_job_id;
+extern uint32_t g_last_cancelled_worker_job_id;
+}
 
 namespace {
 
@@ -193,28 +231,70 @@ int main()
     expect(agent_q::provisioning_flow_recovery_phrase()[0] == '\0', "phrase text wiped before PIN");
 
     enter_pin("123456", 310);
-    expect(agent_q::provisioning_flow_submit_pin(320, 400) == PinSubmitResult::advanced_to_repeat,
+    expect(agent_q::provisioning_flow_submit_pin(320, 400, 420) == PinSubmitResult::advanced_to_repeat,
            "first PIN advances to repeat");
     enter_pin("000000", 330);
-    expect(agent_q::provisioning_flow_submit_pin(340, 400) == PinSubmitResult::mismatch_restart,
+    expect(agent_q::provisioning_flow_submit_pin(340, 400, 420) == PinSubmitResult::mismatch_restart,
            "mismatch restarts first PIN");
     expect(agent_q::provisioning_flow_stage_is(Stage::pin_first_entry), "mismatch stage");
 
     enter_pin("123456", 350);
-    expect(agent_q::provisioning_flow_submit_pin(360, 450) == PinSubmitResult::advanced_to_repeat,
+    expect(agent_q::provisioning_flow_submit_pin(360, 450, 480) == PinSubmitResult::advanced_to_repeat,
            "first PIN accepted after mismatch");
     enter_pin("123456", 370);
-    expect(agent_q::provisioning_flow_submit_pin(380, 450) == PinSubmitResult::commit_started,
+    expect(agent_q::provisioning_flow_submit_pin(380, 450, 480) == PinSubmitResult::commit_started,
            "matching repeat starts commit");
-    expect(!agent_q::provisioning_flow_commit_ready(449), "commit waits for render delay");
-    expect(agent_q::provisioning_flow_commit_ready(450), "commit ready");
+    expect(agent_q::provisioning_flow_commit_job_active(1), "commit waits for worker result");
     const uint8_t* root = nullptr;
     size_t root_size = 0;
-    const char* pin = nullptr;
-    expect(agent_q::provisioning_flow_commit_inputs(&root, &root_size, &pin), "commit inputs available");
+    const agent_q::AgentQLocalAuthPreparedRecord* prepared = nullptr;
+    agent_q::AgentQLocalAuthWorkerResult worker_result = {};
+    worker_result.job_id = 1;
+    worker_result.owner = agent_q::AgentQLocalAuthWorkerOwner::provisioning_setup;
+    worker_result.operation = agent_q::AgentQLocalAuthWorkerOperation::prepare_verifier_record;
+    worker_result.status = agent_q::AgentQLocalAuthWorkerStatus::ok;
+    expect(agent_q::provisioning_flow_commit_worker_result(
+               worker_result,
+               &root,
+               &root_size,
+               &prepared),
+           "commit worker result exposes inputs");
     expect(root != nullptr && root_size == agent_q::kBip39EntropyBytes, "root input shape");
-    expect(pin != nullptr && strcmp(pin, "123456") == 0, "commit PIN input");
+
     agent_q::provisioning_flow_wipe();
+    expect(agent_q::provisioning_flow_begin_generate(500) == GenerateResult::ok, "generate before worker busy");
+    expect(agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(510), "confirm before worker busy");
+    enter_pin("123456", 520);
+    expect(agent_q::provisioning_flow_submit_pin(530, 540, 590) == PinSubmitResult::advanced_to_repeat,
+           "first PIN accepted before worker busy");
+    enter_pin("123456", 550);
+    agent_q::g_test_worker_accepts_jobs = false;
+    expect(agent_q::provisioning_flow_submit_pin(560, 570, 590) == PinSubmitResult::worker_unavailable,
+           "worker failure is not reported as invalid PIN");
+    expect(agent_q::provisioning_flow_stage_is(Stage::pin_repeat_entry),
+           "worker failure keeps repeat stage for retry");
+    agent_q::g_test_worker_accepts_jobs = true;
+    expect(prepared != nullptr, "prepared auth input shape");
+    agent_q::provisioning_flow_wipe();
+
+    expect(agent_q::provisioning_flow_begin_generate(700) == GenerateResult::ok,
+           "generate before commit timeout");
+    expect(agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(710),
+           "confirm before commit timeout");
+    enter_pin("123456", 720);
+    expect(agent_q::provisioning_flow_submit_pin(730, 740, 760) == PinSubmitResult::advanced_to_repeat,
+           "first PIN accepted before commit timeout");
+    enter_pin("123456", 750);
+    expect(agent_q::provisioning_flow_submit_pin(755, 780, 790) == PinSubmitResult::commit_started,
+           "matching repeat starts commit before timeout");
+    expect(!agent_q::provisioning_flow_fail_pin_commit_if_expired(789),
+           "PIN commit stays active before worker deadline");
+    expect(agent_q::provisioning_flow_fail_pin_commit_if_expired(790),
+           "PIN commit timeout wipes flow");
+    expect(agent_q::g_last_cancelled_worker_job_id == agent_q::g_last_worker_job_id,
+           "PIN commit timeout cancels worker job");
+    expect(!agent_q::provisioning_flow_active(),
+           "PIN commit timeout clears provisioning flow");
 
     agent_q::provisioning_flow_begin_recover(500);
     expect(agent_q::provisioning_flow_stage_is(Stage::recover_word_entry), "recover stage");

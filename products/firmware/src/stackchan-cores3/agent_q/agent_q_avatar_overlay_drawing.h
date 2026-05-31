@@ -21,6 +21,8 @@ enum class AgentQMessageKind {
     rejected,
     timeout,
     error,
+    usb_connected,
+    usb_disconnected,
 };
 
 void avatar_overlay_clear();

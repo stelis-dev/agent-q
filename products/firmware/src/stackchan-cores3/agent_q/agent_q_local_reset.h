@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "agent_q_persistent_material.h"
+#include "agent_q_local_auth_worker.h"
 #include "agent_q_pin_attempt.h"
 #include "freertos/FreeRTOS.h"
 
@@ -38,6 +40,7 @@ enum class AgentQLocalResetPinSubmitResult {
     invalid_pin,
     unavailable_stage,
     locked,
+    worker_unavailable,
 };
 
 enum class AgentQLocalResetPinVerifyResult {
@@ -58,12 +61,13 @@ struct AgentQLocalResetSnapshot {
 struct AgentQLocalResetPersistenceOps {
     void (*clear_active_session)();
     bool (*persist_unprovisioned_state)();
-    void (*enter_consistency_error)(const char* message);
+    void (*record_material_failure)(AgentQPersistentMaterialRuntimeFailure failure);
 };
 
 AgentQLocalResetSnapshot local_reset_snapshot(TickType_t now);
 bool local_reset_persistent_material_exists();
 bool local_reset_deadline_expired(TickType_t now);
+bool local_reset_fail_pin_verification_if_expired(TickType_t now);
 bool local_reset_release_lockout_if_elapsed(TickType_t now);
 bool local_reset_wipe_ready(TickType_t now);
 
@@ -77,9 +81,10 @@ bool local_reset_clear_pin(TickType_t deadline);
 bool local_reset_backspace_pin(TickType_t deadline);
 AgentQLocalResetPinSubmitResult local_reset_submit_pin_for_verification(
     TickType_t verify_ready_at,
-    TickType_t invalid_deadline);
-AgentQLocalResetPinVerifyResult local_reset_verify_pin_if_ready(
-    TickType_t now,
+    TickType_t invalid_deadline,
+    TickType_t worker_deadline);
+AgentQLocalResetPinVerifyResult local_reset_complete_pin_verify_job(
+    const AgentQLocalAuthWorkerResult& result,
     TickType_t retry_deadline,
     TickType_t lockout_until,
     TickType_t wipe_ready_at);
