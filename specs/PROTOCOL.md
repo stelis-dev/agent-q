@@ -279,21 +279,22 @@ Provisioning states:
 - `provisioning`: local provisioning is in progress.
 - `provisioned`: root signing material, active policy, and local PIN verifier are present.
 - `locked`: the provisioning state cannot be used until the device is unlocked.
+- `error`: Firmware detected persistent-material inconsistency and is failing closed.
 
 `provisioning.state` reports only the Firmware's provisioning state. It is not
 signing readiness, it does not prove that signing APIs exist, and it does not
 authorize Gateway to make policy decisions. Gateway must preserve and
 display the value without treating it as authority.
 
-The current StackChan CoreS3 target persists and reports `unprovisioned` and
-`provisioned`. It may report `provisioned` only when `prov_state`, the
-device-local root material blob, the active default-reject policy record, and
-the local PIN verifier all exist. It does not use `locked` because no unlock
-model is implemented. Source-level DEV_PROFILE recovery phrase display,
-persistent root material, active policy storage, and local PIN verifier storage
-exist, and read-only `get_accounts` Sui account derivation is implemented.
-Runtime mnemonic import, local reset, policy update, and signing APIs are not
-implemented.
+The current StackChan CoreS3 target persists `unprovisioned` and `provisioned`
+and may report `error` when the persisted state and material records disagree.
+It may report `provisioned` only when `prov_state`, the device-local root
+material blob, the active default-reject policy record, and the local PIN
+verifier all exist. It does not use `locked` because no unlock model is
+implemented. Source-level DEV_PROFILE recovery phrase display, persistent root
+material, active policy storage, local PIN verifier storage, local reset, and
+read-only `get_accounts` Sui account derivation are implemented. Runtime
+mnemonic import, policy update, and signing APIs are not implemented.
 
 For DEV_PROFILE upgrade compatibility, a target that boots with the previous
 development shape (`prov_state = provisioned` and valid root material, but no
@@ -340,8 +341,8 @@ object lifetime. The current substates are:
   active.
 - `pin_committing`: root entropy and matching PIN scratch exist in RAM while
   Firmware persists root material, policy, PIN verifier, and provisioned state;
-  the PIN panel is redrawn as a non-interactive saving state and further local
-  input is ignored.
+  the PIN panel remains active with a non-interactive processing overlay and
+  further local input is ignored.
 
 The UI panel is an output of this substate machine, not the source of truth. If
 the recovery phrase or PIN panel is removed, replaced, expires, is canceled, or
@@ -365,11 +366,16 @@ key, account data, policy data, or import text. BIP-39 English word prefixes of
 up to four letters identify the words and must be treated as secret material.
 
 The current protocol intentionally has no factory-reset or reprovisioning USB
-request. A future reset/recovery flow must be specified as normal product UX,
-must classify source and target states in `docs/STATE_MODEL.md`, and must keep
-Firmware as the authority for storage wipe, session cleanup, and physical
-approval. Until such a normal UX exists, material/state consistency errors fail
-closed rather than exposing a host-triggered destructive recovery path.
+request. Destructive material reset is device-local UX only. A target reset flow
+must start from `provisioned`, require local user action plus stored local
+authentication, wipe root material, active policy, local-auth verifier, and
+runtime session, and return to `unprovisioned`. Implementations that record an
+internal reset-pending marker before destructive wipe starts can resume an
+interrupted reset at boot. Wrong authentication, timeout, or cancel preserves
+existing material. Reset authentication lockout is target-local state, not a
+protocol state, and must not create a host-triggered recovery path. Material and
+state consistency errors still fail closed rather than exposing a host-triggered
+destructive recovery path.
 
 ## Identify Device
 
@@ -563,6 +569,10 @@ Disconnect rules:
 - `disconnect` does not require physical approval.
 - Firmware may return `busy` instead of clearing the session while an approval
   UI or device-only setup material display is active.
+- Firmware validates only the session lifecycle for `disconnect`; persistent
+  material readiness is not a prerequisite. If material inconsistency already
+  cleared the session, Firmware returns `invalid_session` rather than
+  `invalid_state`.
 - Firmware returns `invalid_session` when `sessionId` is missing, expired,
   unknown, or does not match the active Firmware session.
 

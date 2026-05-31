@@ -42,12 +42,12 @@ Legend:
 | USB JSONL transport | O | Uses ESP32-S3 USB Serial/JTAG. |
 | Persistent protocol `deviceId` | O | Stored in NVS namespace `agent_q`, key `device_id`. |
 | `get_status` | O | Returns device id, current state, and provisioning status without approval UI. |
-| Provisioning status reporting | △ | Reports `unprovisioned` or material-backed `provisioned`. Manual smoke observed `provisioned` after local setup on StackChan CoreS3; failure and recovery states still need targeted hardware checks. This is not signing readiness: read-only `get_accounts` and `get_policy` expose public/metadata state only, while signing remains unavailable. |
+| Provisioning status reporting | △ | Reports `unprovisioned`, material-backed `provisioned`, or `error` for persistent material inconsistency. Manual smoke observed `provisioned` after local setup on StackChan CoreS3; failure and recovery states still need targeted hardware checks. This is not signing readiness: read-only `get_accounts` and `get_policy` expose public/metadata state only, while signing remains unavailable. |
 | Mnemonic UI flow v0 | △ | The local setup speech bubble generates DEV_PROFILE BIP-39 root entropy into RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, advances to local 6-digit PIN entry after local backup confirmation, and stores root entropy plus an active default-reject policy plus a salt/PIN verifier only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. Local Confirm/Cancel and PIN keypad controls own the setup transitions; there are no USB setup transition requests. StackChan CoreS3 local setup and PIN entry were manually smoke-tested after commit `2cb243b`; rerun hardware smoke after setup UI or state changes. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `connect` | O | Source accepts connection only after material-backed `provisioned` state and physical approval. The session is RAM-only and does not authorize signing. Rerun hardware smoke after setup, session, or material-storage changes. |
-| `disconnect` | O | Source clears only a matching RAM-only Firmware session after material-backed `provisioned` state. Rerun hardware smoke after setup, session, or material-storage changes. |
-| Local reset / material wipe | X | No normal product reset/recovery UX is implemented. Host-triggered reset/debug protocol paths are intentionally not implemented. |
+| `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. Rerun hardware smoke after setup, session, or material-storage changes. |
+| Local reset / material wipe | △ | Source implements a device-local settings reset path for `provisioned`: local settings entry, Reset menu action, stored PIN verification, root material wipe, active policy wipe, PIN verifier wipe, session cleanup, and return to `unprovisioned`. Host-triggered reset/debug protocol paths are intentionally not implemented. Hardware smoke is still required. |
 | Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
@@ -138,6 +138,7 @@ Current UI behavior:
 | Recovery phrase displayed | Temporary setup panel with 12 numbered up-to-4-letter prefixes in 3 columns by 4 rows and bottom Cancel/Confirm buttons | `busy` |
 | Local recovery phrase Confirm | Uses the recovery phrase panel's bottom Confirm button and advances to local PIN entry | `busy` |
 | Local PIN setup | Temporary setup panel with numeric keypad, masked 6-digit entry, Clear, backspace icon, Cancel, and Confirm | `busy` |
+| Local settings reset | Temporary local settings menu and reset PIN entry panels; Reset opens PIN verification directly | `busy` |
 | Local recovery phrase Cancel | Uses the recovery phrase panel's bottom Cancel button | `idle` after scratch wipe |
 | Approved result | Temporary success speech and emotion | `idle` |
 | Rejected result | Temporary rejected speech and emotion | `idle` |
@@ -192,7 +193,9 @@ Firmware and held in RAM. A new approved `connect` replaces the previous
 Firmware session.
 
 `disconnect` clears the session only when the supplied session id matches the
-active Firmware session.
+active Firmware session. It is a session-lifecycle operation, so material
+readiness is not required; if a consistency error has already cleared the
+session, `disconnect` returns `invalid_session`.
 
 Sessions do not authorize signing. They only establish a communication session
 for future session-scoped protocol requests.
@@ -206,9 +209,11 @@ physical backup confirmation plus matching PIN repeat. The provisioning state
 flag is not signing material by itself and does not make the device ready to
 sign. The target reports `provisioned` only when the persisted state, valid root
 entropy blob, valid active policy record, and valid local PIN verifier all
-exist. It does not store the mnemonic display string, prefixes, seed, or account
-data to NVS. The local PIN verifier is a UX gate for local reset and future
-sensitive writes; it is not root-material encryption.
+exist. If those records disagree after boot or during runtime checks, the target
+reports `provisioning.state = error` and fails closed. It does not store the
+mnemonic display string, prefixes, seed, or account data to NVS. The local PIN
+verifier is a UX gate for local reset and future sensitive writes; it is not
+root-material encryption.
 For DEV_PROFILE upgrade compatibility, if the target boots with the previous
 development shape (`prov_state = provisioned` and valid root entropy, but no
 policy record), it initializes the default-reject active policy before reporting
@@ -223,6 +228,7 @@ are not migrated and fail closed until reprovisioned.
 | `agent_q` | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
 | `agent_q` | `policy_v0` | DEV_PROFILE active default-reject policy record |
 | `agent_q` | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
+| `agent_q` | `reset_pending` | Internal Firmware-owned marker used to resume an interrupted local reset wipe at boot; not a protocol state or host API |
 
 Agent-Q-owned modules are sources under `agent_q/` in this target tree. These
 modules may share the `agent_q` namespace. New keys should be named by feature,
@@ -265,8 +271,8 @@ device-local Confirm button advances to local PIN entry; it does not store
 persistent material by itself. The PIN entry screen accepts exactly six digits,
 asks for a repeat, wipes typed PIN scratch on mismatch, and returns to first PIN
 entry while retaining root entropy scratch. Matching PIN repeat enters
-`pin_committing`, redraws the PIN panel as a non-interactive saving state with
-disabled controls, stores the DEV_PROFILE root entropy blob, stores the active
+`pin_committing`, keeps the PIN panel active with a non-interactive processing
+overlay, stores the DEV_PROFILE root entropy blob, stores the active
 default-reject policy, stores a salt + PIN verifier, persists `provisioned`, and
 then wipes volatile scratch. Storage failure rolls back persistent setup
 material where possible, wipes scratch, and must not report `provisioned`.
@@ -288,10 +294,29 @@ later backup confirmation or PIN submit can use that scratch.
 
 The device-local Cancel button wipes volatile setup scratch and leaves
 persistent state `unprovisioned`. Cancellation does not erase already-confirmed
-root material, active policy, or PIN verifier. No local reset/recovery UX is implemented yet;
-when the target detects a material/state consistency error, it clears any active
-RAM session immediately and fails closed for session-scoped requests until a
-normal local reset/recovery path exists.
+root material, active policy, or PIN verifier.
+
+Local reset/material wipe is a separate device-local flow under `provisioned`.
+The target enters local settings only when no setup, approval, identification,
+or Agent-Q temporary UI is active. The settings screen presents Reset as a
+centered menu action and Close as the only bottom action. Reset opens stored
+6-digit PIN verification directly. Wrong PIN, timeout, or cancel leaves root
+material, active policy, PIN verifier, and `provisioned` state intact.
+After Reset PIN confirm, the target keeps the reset PIN panel active and adds a
+non-interactive processing overlay before PIN verification. Correct PIN
+verification advances to destructive wipe while keeping the processing overlay
+active, then wipes root material, active policy, PIN verifier, runtime session,
+and provisioning state before reporting `unprovisioned`. Before destructive wipe
+starts, Firmware writes an internal reset-pending marker; if power is lost
+mid-reset, boot resumes the material wipe before loading normal state. If the
+marker cannot be written, reset aborts before material is wiped. After the
+marker is written, partial wipe, marker-clear, or state persistence failure
+enters material/state consistency error. This reset flow is not exposed over USB
+and is not an error-state recovery path; when the target detects a
+material/state consistency error, it clears any active RAM session immediately
+and fails closed for session-scoped requests. Wrong reset PIN attempts use a
+RAM-only short lockout that is not cleared by closing and reopening the reset
+flow; power cycling clears it.
 
 Read-only public account derivation (`get_accounts`) is implemented. Mnemonic
 import, runtime policy APIs, signing APIs, and USER_PROFILE secure
@@ -362,6 +387,10 @@ Current verification expectations for this target:
   session id;
 - smoke-test `disconnect` clears a matching active session and rejects an
   unknown or expired session id;
+- smoke-test local settings reset from `provisioned`: wrong PIN leaves
+  `provisioned` material intact, cancel/timeout leaves material intact, correct
+  PIN wipes root material, active policy, PIN verifier, and session, then
+  `get_status` reports `unprovisioned`;
 - smoke-test three minutes of inactivity turns the screen backlight off, Agent-Q
   request UI wakes it, side-button short press toggles display power, and
   side-button long press powers off;

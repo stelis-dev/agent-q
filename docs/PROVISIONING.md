@@ -103,7 +103,9 @@ setup source also records a DEV_PROFILE local PIN verifier before reporting
 through `get_accounts` and rejected Sui `sign_transaction` policy-decision
 handling. StackChan CoreS3 local setup and PIN entry were manually smoke-tested
 after commit `2cb243b`; rerun hardware smoke after setup UI or state changes.
-Mnemonic import, local reset, and signing are not implemented.
+Source-level local settings reset/material wipe now exists for provisioned
+StackChan CoreS3 devices, but still requires hardware smoke. Mnemonic import
+and signing are not implemented.
 
 ## Chain Accounts
 
@@ -133,6 +135,8 @@ Target provisioning states:
 - `provisioning`: setup flow is active.
 - `provisioned`: root signing material, an active policy, and a local PIN
   verifier exist.
+- `error`: Firmware detected persistent-material inconsistency and is failing
+  closed.
 - `locked`: sensitive actions require local unlock.
 
 Runtime v0 implements the current StackChan CoreS3 mnemonic UI flow and
@@ -145,6 +149,9 @@ For existing DEV_PROFILE devices created before policy storage existed, Firmware
 may initialize the default-reject active policy at boot when `prov_state =
 provisioned` and root material is already valid. If that migration fails, the
 device fails closed.
+If the persisted state and required material records disagree after boot or
+during runtime checks, Firmware reports `provisioning.state = error`; it does
+not keep reporting `provisioned` while rejecting all session APIs.
 
 Runtime v0 does not import, export, or sign with root signing material; read-only
 public Sui account derivation is available via `get_accounts`. Current StackChan
@@ -210,11 +217,11 @@ the first PIN entry while retaining the root entropy scratch. If PIN setup is
 canceled, times out, or loses its panel, Firmware wipes PIN and root scratch and
 leaves persistent state `unprovisioned`.
 
-Only after the repeated PIN matches does Firmware enter `pin_committing`, redraw
-the PIN panel as a non-interactive saving state with disabled controls, then
-store the binary root entropy, store the active default-reject policy, store the
-salt + PIN verifier, persist `provisioning.state = provisioned`, and wipe
-volatile scratch. Firmware defers the storage step until after the saving state
+Only after the repeated PIN matches does Firmware enter `pin_committing`, keep
+the PIN panel active with a non-interactive processing overlay, then store the
+binary root entropy, store the active default-reject policy, store the salt +
+PIN verifier, persist `provisioning.state = provisioned`, and wipe volatile
+scratch. Firmware defers the storage step until after the processing overlay
 has had a render turn, so the user sees that input is locked while setup is
 being persisted. If root material, policy, PIN verifier, or state persistence
 fails, Firmware rolls back persistent setup material where possible, wipes
@@ -242,11 +249,17 @@ by the security-profile gates in `docs/SECURITY_MODEL.md`: secure firmware
 profile, encrypted storage, verified RNG readiness, destructive hardware
 rehearsal, and hardware smoke.
 
-No destructive reset or reprovisioning protocol request is implemented. A future
-reset/recovery flow must be normal device UX, not a host-triggered debug path:
-Firmware must own physical approval, stored-material wipe, active policy wipe,
-session cleanup, and post-failure state. Until that local UX exists,
-material/state consistency errors fail closed.
+No destructive reset or reprovisioning protocol request is implemented.
+StackChan CoreS3 source implements reset as normal device-local UX from the
+`provisioned` state: local settings entry, a Reset menu action, stored PIN
+verification, root material wipe, active policy wipe, PIN verifier wipe, session
+cleanup, and `unprovisioned` persistence. Firmware writes an internal
+reset-pending marker before destructive wipe starts, so boot can resume an
+interrupted reset wipe. PIN failure, timeout, or cancel leaves existing material
+intact. Wrong reset PIN attempts use a RAM-only short lockout that is not cleared
+by closing and reopening the reset flow; power cycling clears it.
+This is not an error-state recovery path; material/state consistency errors
+still fail closed.
 
 ## Implementation Order
 
@@ -267,9 +280,10 @@ Do not jump directly from mnemonic generation to user transaction signing.
 Current implementation status: steps 1 through 6 are implemented for the
 StackChan CoreS3 DEV_PROFILE source path. StackChan CoreS3 local setup and PIN
 entry were manually smoke-tested after commit `2cb243b`; rerun hardware smoke
-after setup UI or state changes. Sui `sign_personal_message` (step 7),
-mnemonic import, signing APIs, policy update, local reset/recovery UX, and
-USER_PROFILE secure provisioning are not implemented.
+after setup UI or state changes. Source-level local reset/material wipe exists
+and still needs hardware smoke. Sui `sign_personal_message` (step 7), mnemonic
+import, signing APIs, policy update, recovery import UX, and USER_PROFILE secure
+provisioning are not implemented.
 
 ## Completion Criteria
 

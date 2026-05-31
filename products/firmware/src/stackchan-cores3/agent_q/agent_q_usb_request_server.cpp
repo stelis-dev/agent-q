@@ -10,6 +10,7 @@
 #include "agent_q_display_power.h"
 #include "agent_q_entropy.h"
 #include "agent_q_local_auth.h"
+#include "agent_q_local_reset.h"
 #include "agent_q_motion_state.h"
 #include "agent_q_policy_store.h"
 #include "agent_q_root_material.h"
@@ -49,6 +50,7 @@ constexpr const char* kProvisioningStateKey = "prov_state";
 constexpr const char* kProvisioningStateUnprovisioned = "unprovisioned";
 constexpr const char* kProvisioningStateProvisioning = "provisioning";
 constexpr const char* kProvisioningStateProvisioned = "provisioned";
+constexpr const char* kProvisioningStateError = "error";
 constexpr uint32_t kIdentifyDisplayDefaultMs = 10000;
 constexpr uint32_t kIdentifyDisplayMaxMs = 30000;
 constexpr uint32_t kConnectApprovalDefaultMs = 30000;
@@ -56,6 +58,9 @@ constexpr uint32_t kConnectApprovalMaxMs = 60000;
 constexpr uint32_t kProvisioningApprovalMaxMs = 60000;
 constexpr uint32_t kRecoveryPhraseDisplayMs = kProvisioningApprovalMaxMs;
 constexpr uint32_t kLocalPinSetupMs = kProvisioningApprovalMaxMs;
+constexpr uint32_t kLocalProcessingRenderDelayMs = 250;
+constexpr uint32_t kLocalProcessingDisplayMs = 900;
+constexpr uint32_t kSettingsTouchEntryMs = 900;
 constexpr uint32_t kSessionTtlMs = 1800000;
 constexpr uint32_t kSessionExpiryCheckMs = 5000;
 constexpr size_t kLineBufferSize = 1024;
@@ -86,10 +91,25 @@ constexpr int kSetupActionButtonY =
     kScreenHeight - 16 - kRecoveryPhraseButtonHeight - kRecoveryPhraseButtonBottomMargin;
 constexpr int kPinPanelButtonRadius = 6;
 constexpr int kPinPanelButtonHeight = 22;
+constexpr int kPinKeypadButtonWidth = 90;
+constexpr int kPinKeypadGridLeft = 17;
+constexpr int kPinKeypadGridTop = 78;
+constexpr int kPinKeypadRowHeight = 25;
+constexpr int kSettingsMenuButtonCenterX = (kScreenWidth - 16 - kRecoveryPhraseButtonWidth) / 2;
+constexpr int kSettingsMenuResetButtonY = 100;
+constexpr int kPinProcessingOverlaySize = 50;
+constexpr int kPinProcessingOverlayX =
+    (kScreenWidth - 16 - kPinProcessingOverlaySize) / 2;
+constexpr int kPinProcessingOverlayY =
+    (kScreenHeight - 16 - kPinProcessingOverlaySize) / 2;
+constexpr int kPinProcessingSpinnerSize = 34;
+constexpr int kPinProcessingArcDegrees = 112;
+constexpr int kPinProcessingSpinMs = 650;
+constexpr int kSettingsTouchEntryWidth = 64;
+constexpr int kSettingsTouchEntryHeight = 56;
 constexpr uint32_t kSetupCellBorderColor = 0xB7E4C7;
 constexpr uint32_t kDisabledControlTextColor = 0x98A2B3;
 constexpr uint32_t kDisabledActionTextColor = 0xEAECF0;
-constexpr uint32_t kLocalSetupCommitDisplayDelayMs = 120;
 constexpr uint32_t kAgentQResultDisplayMs = 1800;
 
 enum class AgentQUiPanelKind {
@@ -97,6 +117,8 @@ enum class AgentQUiPanelKind {
     decision_strip,
     recovery_phrase_display,
     pin_entry,
+    settings_menu,
+    reset_pin_entry,
 };
 
 enum class AgentQUiMode {
@@ -130,6 +152,10 @@ enum class AgentQUiEventKind {
     panel_deleted,
     setup_requested,
     provisioning_welcome_requested,
+    settings_requested,
+    settings_cancel_requested,
+    settings_reset_requested,
+    reset_cancel_requested,
     recovery_phrase_cancel_requested,
     recovery_phrase_confirm_requested,
     pin_digit_requested,
@@ -305,6 +331,17 @@ struct ProvisioningScratchState {
     }
 };
 
+struct LocalSettingsTouchState {
+    bool active = false;
+    TickType_t started_at = 0;
+
+    void clear()
+    {
+        active = false;
+        started_at = 0;
+    }
+};
+
 char g_line_buffer[kLineBufferSize];
 size_t g_line_size = 0;
 char g_device_id[kDeviceIdSize];
@@ -315,6 +352,7 @@ IdentificationState g_identification;
 SessionState g_session;
 AgentQUiState g_ui;
 ProvisioningScratchState g_provisioning_scratch;
+LocalSettingsTouchState g_settings_touch;
 bool g_usb_ready = false;
 TaskHandle_t g_usb_task = nullptr;
 QueueHandle_t g_pending_choice_queue = nullptr;
@@ -323,6 +361,7 @@ QueueHandle_t g_ui_event_queue = nullptr;
 bool recovery_phrase_display_panel_active();
 bool refresh_persistent_material_consistency();
 bool persist_provisioning_state(ProvisioningRuntimeState next_state);
+agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops();
 
 void wipe_setup_scratch(const char* reason)
 {
@@ -333,9 +372,30 @@ void wipe_setup_scratch(const char* reason)
     }
 }
 
+void wipe_local_reset_scratch(const char* reason)
+{
+    const bool had_reset_scratch =
+        agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active;
+    agent_q::local_reset_wipe();
+    g_settings_touch.clear();
+    if (had_reset_scratch) {
+        ESP_LOGW(kTag, "Local reset scratch wiped: %s", reason != nullptr ? reason : "unspecified");
+    }
+}
+
 bool is_decision_panel_kind(AgentQUiPanelKind kind)
 {
     return kind == AgentQUiPanelKind::decision_strip;
+}
+
+bool local_reset_panel_matches_stage(AgentQUiPanelKind kind)
+{
+    const agent_q::AgentQLocalResetStage stage =
+        agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
+    return (kind == AgentQUiPanelKind::settings_menu &&
+            stage == agent_q::AgentQLocalResetStage::settings_menu) ||
+           (kind == AgentQUiPanelKind::reset_pin_entry &&
+            stage == agent_q::AgentQLocalResetStage::pin_entry);
 }
 
 bool tick_reached(TickType_t deadline)
@@ -509,7 +569,8 @@ const char* current_device_state()
     if (g_pending.active) {
         return "awaiting_approval";
     }
-    if (g_provisioning_scratch.setup_flow_active()) {
+    if (g_provisioning_scratch.setup_flow_active() ||
+        agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active) {
         return "busy";
     }
     return "idle";
@@ -526,6 +587,14 @@ const char* provisioning_state_to_string(ProvisioningRuntimeState state)
         default:
             return kProvisioningStateUnprovisioned;
     }
+}
+
+const char* reported_provisioning_state()
+{
+    if (g_persistent_material_consistency_error) {
+        return kProvisioningStateError;
+    }
+    return provisioning_state_to_string(g_provisioning_state);
 }
 
 bool parse_provisioning_state(const char* value, ProvisioningRuntimeState* output)
@@ -561,7 +630,7 @@ void write_status_response(const char* id)
     response["device"]["firmwareName"] = kFirmwareName;
     response["device"]["hardware"] = kHardwareId;
     response["device"]["firmwareVersion"] = kFirmwareVersion;
-    response["provisioning"]["state"] = provisioning_state_to_string(g_provisioning_state);
+    response["provisioning"]["state"] = reported_provisioning_state();
     write_json_document(response);
 }
 
@@ -737,11 +806,9 @@ void clear_active_session()
     g_session.clear();
 }
 
-bool persistent_setup_material_exists()
+bool persist_unprovisioned_state_for_local_reset()
 {
-    return agent_q::has_root_material() ||
-           agent_q::active_policy_status() != agent_q::AgentQPolicyStoreStatus::missing ||
-           agent_q::local_auth_status() != agent_q::AgentQLocalAuthStatus::missing;
+    return persist_provisioning_state(ProvisioningRuntimeState::unprovisioned);
 }
 
 void enter_persistent_material_consistency_error(const char* message)
@@ -751,9 +818,18 @@ void enter_persistent_material_consistency_error(const char* message)
     ESP_LOGE(kTag, "%s", message != nullptr ? message : "Persistent material consistency error; failing closed");
 }
 
+agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops()
+{
+    return agent_q::AgentQLocalResetPersistenceOps{
+        clear_active_session,
+        persist_unprovisioned_state_for_local_reset,
+        enter_persistent_material_consistency_error,
+    };
+}
+
 void enter_persistent_material_consistency_error_if_material_remains(const char* message)
 {
-    if (persistent_setup_material_exists()) {
+    if (agent_q::local_reset_persistent_material_exists()) {
         enter_persistent_material_consistency_error(message);
     }
 }
@@ -965,6 +1041,22 @@ void load_provisioning_state()
     g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
     g_persistent_material_consistency_error = false;
 
+    bool reset_marker_present = false;
+    const agent_q::AgentQLocalResetCommitResult reset_result =
+        agent_q::local_reset_resume_pending_if_needed(
+            local_reset_persistence_ops(),
+            &reset_marker_present);
+    if (reset_marker_present) {
+        ESP_LOGW(kTag, "Found pending local reset marker; resuming material wipe before loading state");
+        if (reset_result == agent_q::AgentQLocalResetCommitResult::ok) {
+            ESP_LOGW(kTag, "Pending local reset completed during boot");
+        } else {
+            enter_persistent_material_consistency_error(
+                "Pending local reset could not be completed during boot; failing closed");
+        }
+        return;
+    }
+
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
     if (result != ESP_OK) {
@@ -992,7 +1084,7 @@ void load_provisioning_state()
 
     ProvisioningRuntimeState parsed = ProvisioningRuntimeState::unprovisioned;
     if (!parse_provisioning_state(stored_state, &parsed)) {
-        if (persistent_setup_material_exists()) {
+        if (agent_q::local_reset_persistent_material_exists()) {
             enter_persistent_material_consistency_error(
                 "Unknown provisioning state with persistent setup material present; failing closed");
         } else {
@@ -1111,7 +1203,24 @@ bool provisioned_material_ready()
            refresh_persistent_material_consistency();
 }
 
-bool write_busy_if_pending_or_setup_flow_active(const char* id)
+bool agent_q_ui_idle_for_local_settings()
+{
+    LvglLockGuard lock;
+    return g_ui.panel == nullptr && g_ui.speech_mode == AgentQUiMode::none;
+}
+
+bool local_settings_touch_entry_candidate_allowed()
+{
+    return g_provisioning_state == ProvisioningRuntimeState::provisioned &&
+           !g_persistent_material_consistency_error &&
+           !g_pending.active &&
+           !g_identification.active &&
+           !g_provisioning_scratch.setup_flow_active() &&
+           !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
+           agent_q_ui_idle_for_local_settings();
+}
+
+bool write_busy_if_pending_or_local_flow_active(const char* id)
 {
     if (g_pending.active) {
         write_error_response(id, "busy", "Device is awaiting physical input.");
@@ -1119,6 +1228,10 @@ bool write_busy_if_pending_or_setup_flow_active(const char* id)
     }
     if (g_provisioning_scratch.setup_flow_active()) {
         write_error_response(id, "busy", "Device is showing setup material.");
+        return true;
+    }
+    if (agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active) {
+        write_error_response(id, "busy", "Device is showing local reset UI.");
         return true;
     }
     return false;
@@ -1189,6 +1302,21 @@ void on_no_clicked(lv_event_t*)
 void on_setup_clicked(lv_event_t*)
 {
     enqueue_ui_event(AgentQUiEventKind::setup_requested);
+}
+
+void on_settings_cancel_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::settings_cancel_requested);
+}
+
+void on_settings_reset_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::settings_reset_requested);
+}
+
+void on_reset_cancel_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::reset_cancel_requested);
 }
 
 void on_recovery_phrase_cancel_clicked(lv_event_t*)
@@ -1380,6 +1508,157 @@ bool make_setup_button(
     return true;
 }
 
+bool make_pin_keypad_buttons(lv_obj_t* parent, bool buttons_enabled)
+{
+    static const char* const kDigits[10] = {
+        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    };
+
+    for (int digit = 1; digit <= 9; ++digit) {
+        const int index = digit - 1;
+        const int column = index % 3;
+        const int row = index / 3;
+        if (!make_setup_button(
+                parent,
+                kDigits[digit],
+                kPinKeypadGridLeft + column * kPinKeypadButtonWidth,
+                kPinKeypadGridTop + row * kPinKeypadRowHeight,
+                kPinKeypadButtonWidth,
+                kPinPanelButtonHeight,
+                SetupButtonKind::outlined_keypad,
+                lv_color_hex(0x1D4ED8),
+                on_pin_digit_clicked,
+                kDigits[digit],
+                buttons_enabled)) {
+            return false;
+        }
+    }
+
+    return make_setup_button(
+               parent,
+               "Clear",
+               kPinKeypadGridLeft,
+               kPinKeypadGridTop + 3 * kPinKeypadRowHeight,
+               kPinKeypadButtonWidth,
+               kPinPanelButtonHeight,
+               SetupButtonKind::outlined_keypad,
+               lv_color_hex(0x667085),
+               on_pin_clear_clicked,
+               nullptr,
+               buttons_enabled) &&
+           make_setup_button(
+               parent,
+               kDigits[0],
+               kPinKeypadGridLeft + kPinKeypadButtonWidth,
+               kPinKeypadGridTop + 3 * kPinKeypadRowHeight,
+               kPinKeypadButtonWidth,
+               kPinPanelButtonHeight,
+               SetupButtonKind::outlined_keypad,
+               lv_color_hex(0x1D4ED8),
+               on_pin_digit_clicked,
+               kDigits[0],
+               buttons_enabled) &&
+           make_setup_button(
+               parent,
+               LV_SYMBOL_BACKSPACE,
+               kPinKeypadGridLeft + 2 * kPinKeypadButtonWidth,
+               kPinKeypadGridTop + 3 * kPinKeypadRowHeight,
+               kPinKeypadButtonWidth,
+               kPinPanelButtonHeight,
+               SetupButtonKind::outlined_keypad,
+               lv_color_hex(0x667085),
+               on_pin_backspace_clicked,
+               nullptr,
+               buttons_enabled);
+}
+
+void rotate_processing_arc(void* obj, int32_t rotation)
+{
+    lv_arc_set_rotation(static_cast<lv_obj_t*>(obj), rotation);
+}
+
+bool make_pin_processing_overlay(lv_obj_t* parent)
+{
+    lv_obj_t* blocker = lv_obj_create(parent);
+    if (blocker == nullptr) {
+        return false;
+    }
+
+    lv_obj_remove_style_all(blocker);
+    lv_obj_set_size(blocker, kScreenWidth - 16, kScreenHeight - 16);
+    lv_obj_align(blocker, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_remove_flag(blocker, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(blocker, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_add_flag(blocker, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_opa(blocker, LV_OPA_TRANSP, 0);
+
+    lv_obj_t* card = lv_obj_create(blocker);
+    if (card == nullptr) {
+        lv_obj_delete(blocker);
+        return false;
+    }
+
+    lv_obj_remove_style_all(card);
+    lv_obj_set_size(card, kPinProcessingOverlaySize, kPinProcessingOverlaySize);
+    lv_obj_align(card, LV_ALIGN_TOP_LEFT, kPinProcessingOverlayX, kPinProcessingOverlayY);
+    lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_radius(card, kPinPanelButtonRadius, 0);
+    lv_obj_set_style_border_width(card, 0, 0);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x667085), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_40, 0);
+
+#if LV_USE_ARC
+    lv_obj_t* spinner = lv_arc_create(card);
+    if (spinner == nullptr) {
+        lv_obj_delete(blocker);
+        return false;
+    }
+
+    lv_obj_remove_style(spinner, nullptr, LV_PART_KNOB);
+    lv_obj_remove_flag(spinner, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(spinner, kPinProcessingSpinnerSize, kPinProcessingSpinnerSize);
+    lv_arc_set_bg_angles(spinner, 0, 360);
+    lv_arc_set_angles(spinner, 0, kPinProcessingArcDegrees);
+    lv_arc_set_rotation(spinner, 270);
+    lv_obj_set_style_arc_width(spinner, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(spinner, 4, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(spinner, lv_color_hex(0xD0D5DD), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(spinner, lv_color_hex(0x24875A), LV_PART_INDICATOR);
+    lv_obj_center(spinner);
+
+    lv_anim_t animation;
+    lv_anim_init(&animation);
+    lv_anim_set_var(&animation, spinner);
+    lv_anim_set_values(&animation, 0, 360);
+    lv_anim_set_duration(&animation, kPinProcessingSpinMs);
+    lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&animation, lv_anim_path_linear);
+    lv_anim_set_exec_cb(&animation, rotate_processing_arc);
+    lv_anim_start(&animation);
+#else
+    lv_obj_t* loading = lv_label_create(card);
+    if (loading != nullptr) {
+        lv_label_set_text(loading, "...");
+        lv_obj_set_style_text_font(loading, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(loading, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_center(loading);
+    }
+#endif
+
+    lv_obj_move_foreground(blocker);
+    return true;
+}
+
+bool make_pin_processing_overlay_on_current_panel(AgentQUiPanelKind expected_kind)
+{
+    LvglLockGuard lock;
+    if (g_ui.panel == nullptr || g_ui.panel_kind != expected_kind) {
+        return false;
+    }
+    return make_pin_processing_overlay(g_ui.panel);
+}
+
 void on_agent_q_panel_deleted(lv_event_t* event)
 {
     lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(event));
@@ -1398,12 +1677,12 @@ void register_agent_q_panel_locked(AgentQUiPanelKind kind)
     lv_obj_add_event_cb(g_ui.panel, on_agent_q_panel_deleted, LV_EVENT_DELETE, nullptr);
 }
 
-enum class SensitiveSetupClearPolicy {
+enum class SensitiveUiClearPolicy {
     wipe,
     preserve,
 };
 
-void clear_panel_locked(SensitiveSetupClearPolicy policy = SensitiveSetupClearPolicy::wipe)
+void clear_panel_locked(SensitiveUiClearPolicy policy = SensitiveUiClearPolicy::wipe)
 {
     if (g_ui.panel != nullptr) {
         lv_obj_t* panel = g_ui.panel;
@@ -1411,12 +1690,18 @@ void clear_panel_locked(SensitiveSetupClearPolicy policy = SensitiveSetupClearPo
         g_ui.panel = nullptr;
         g_ui.panel_kind = AgentQUiPanelKind::none;
         const bool wipe_setup_after_delete =
-            policy == SensitiveSetupClearPolicy::wipe &&
+            policy == SensitiveUiClearPolicy::wipe &&
             (panel_kind == AgentQUiPanelKind::recovery_phrase_display ||
              panel_kind == AgentQUiPanelKind::pin_entry);
+        const bool wipe_reset_after_delete =
+            policy == SensitiveUiClearPolicy::wipe &&
+            local_reset_panel_matches_stage(panel_kind);
         lv_obj_delete(panel);
         if (wipe_setup_after_delete) {
             wipe_setup_scratch("sensitive setup panel cleared");
+        }
+        if (wipe_reset_after_delete) {
+            wipe_local_reset_scratch("local reset panel cleared");
         }
     } else {
         g_ui.panel_kind = AgentQUiPanelKind::none;
@@ -1533,6 +1818,7 @@ bool provisioning_welcome_available()
            !g_pending.active &&
            !g_identification.active &&
            !g_provisioning_scratch.setup_flow_active() &&
+           !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
            ui_display_idle;
 }
 
@@ -1867,7 +2153,7 @@ bool show_pin_setup_panel(const char* notice = nullptr)
     clear_agent_q_avatar_ui();
 
     LvglLockGuard lock;
-    clear_panel_locked(SensitiveSetupClearPolicy::preserve);
+    clear_panel_locked(SensitiveUiClearPolicy::preserve);
 
     g_ui.panel = lv_obj_create(lv_screen_active());
     if (g_ui.panel == nullptr) {
@@ -1932,70 +2218,7 @@ bool show_pin_setup_panel(const char* notice = nullptr)
     lv_obj_set_style_text_color(pin_label, lv_color_hex(0x111827), 0);
     lv_obj_align(pin_label, LV_ALIGN_TOP_MID, 0, 58);
 
-    static const char* const kDigits[10] = {
-        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-    };
-    constexpr int kButtonWidth = 90;
-    constexpr int kGridLeft = 17;
-    constexpr int kGridTop = 78;
-    constexpr int kRowHeight = 25;
-    for (int digit = 1; digit <= 9; ++digit) {
-        const int index = digit - 1;
-        const int column = index % 3;
-        const int row = index / 3;
-        if (!make_setup_button(
-                g_ui.panel,
-                kDigits[digit],
-                kGridLeft + column * kButtonWidth,
-                kGridTop + row * kRowHeight,
-                kButtonWidth,
-                kPinPanelButtonHeight,
-                SetupButtonKind::outlined_keypad,
-                lv_color_hex(0x1D4ED8),
-                on_pin_digit_clicked,
-                kDigits[digit],
-                buttons_enabled)) {
-            clear_panel_locked();
-            return false;
-        }
-    }
-
-    if (!make_setup_button(
-            g_ui.panel,
-            "Clear",
-            kGridLeft,
-            kGridTop + 3 * kRowHeight,
-            kButtonWidth,
-            kPinPanelButtonHeight,
-            SetupButtonKind::outlined_keypad,
-            lv_color_hex(0x667085),
-            on_pin_clear_clicked,
-            nullptr,
-            buttons_enabled) ||
-        !make_setup_button(
-            g_ui.panel,
-            kDigits[0],
-            kGridLeft + kButtonWidth,
-            kGridTop + 3 * kRowHeight,
-            kButtonWidth,
-            kPinPanelButtonHeight,
-            SetupButtonKind::outlined_keypad,
-            lv_color_hex(0x1D4ED8),
-            on_pin_digit_clicked,
-            kDigits[0],
-            buttons_enabled) ||
-        !make_setup_button(
-            g_ui.panel,
-            LV_SYMBOL_BACKSPACE,
-            kGridLeft + 2 * kButtonWidth,
-            kGridTop + 3 * kRowHeight,
-            kButtonWidth,
-            kPinPanelButtonHeight,
-            SetupButtonKind::outlined_keypad,
-            lv_color_hex(0x667085),
-            on_pin_backspace_clicked,
-            nullptr,
-            buttons_enabled)) {
+    if (!make_pin_keypad_buttons(g_ui.panel, buttons_enabled)) {
         clear_panel_locked();
         return false;
     }
@@ -2024,6 +2247,193 @@ bool show_pin_setup_panel(const char* notice = nullptr)
             on_pin_submit_clicked,
             nullptr,
             buttons_enabled)) {
+        clear_panel_locked();
+        return false;
+    }
+
+    if (committing_stage && !make_pin_processing_overlay(g_ui.panel)) {
+        clear_panel_locked();
+        return false;
+    }
+
+    lv_obj_move_foreground(g_ui.panel);
+    return true;
+}
+
+bool show_settings_menu_panel()
+{
+    clear_agent_q_avatar_ui();
+
+    LvglLockGuard lock;
+    agent_q::request_display_power_wake();
+    clear_panel_locked(SensitiveUiClearPolicy::preserve);
+
+    g_ui.panel = lv_obj_create(lv_screen_active());
+    if (g_ui.panel == nullptr) {
+        g_ui.panel_kind = AgentQUiPanelKind::none;
+        return false;
+    }
+    register_agent_q_panel_locked(AgentQUiPanelKind::settings_menu);
+    lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(g_ui.panel, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(g_ui.panel, kScreenWidth - 16, kScreenHeight - 16);
+    lv_obj_align(g_ui.panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_radius(g_ui.panel, 8, 0);
+    lv_obj_set_style_border_width(g_ui.panel, 0, 0);
+    lv_obj_set_style_bg_color(g_ui.panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(g_ui.panel, 0, 0);
+
+    lv_obj_t* title = lv_label_create(g_ui.panel);
+    if (title == nullptr) {
+        clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(title, "Settings");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
+
+    // Settings actions are centered menu rows. Add future settings with the
+    // same button style and vertical spacing instead of adding explanatory text.
+    if (!make_setup_button(
+            g_ui.panel,
+            "Reset",
+            kSettingsMenuButtonCenterX,
+            kSettingsMenuResetButtonY,
+            kRecoveryPhraseButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0xA53B3B),
+            on_settings_reset_clicked) ||
+        !make_setup_button(
+            g_ui.panel,
+            "Close",
+            kSettingsMenuButtonCenterX,
+            kSetupActionButtonY,
+            kRecoveryPhraseButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0x667085),
+            on_settings_cancel_clicked)) {
+        clear_panel_locked();
+        return false;
+    }
+
+    lv_obj_move_foreground(g_ui.panel);
+    return true;
+}
+
+bool show_reset_pin_panel(const char* notice = nullptr)
+{
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(xTaskGetTickCount());
+    clear_agent_q_avatar_ui();
+
+    LvglLockGuard lock;
+    agent_q::request_display_power_wake();
+    clear_panel_locked(SensitiveUiClearPolicy::preserve);
+
+    g_ui.panel = lv_obj_create(lv_screen_active());
+    if (g_ui.panel == nullptr) {
+        g_ui.panel_kind = AgentQUiPanelKind::none;
+        return false;
+    }
+    register_agent_q_panel_locked(AgentQUiPanelKind::reset_pin_entry);
+    lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_set_scrollbar_mode(g_ui.panel, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(g_ui.panel, kScreenWidth - 16, kScreenHeight - 16);
+    lv_obj_align(g_ui.panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_radius(g_ui.panel, 8, 0);
+    lv_obj_set_style_border_width(g_ui.panel, 0, 0);
+    lv_obj_set_style_bg_color(g_ui.panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(g_ui.panel, 0, 0);
+
+    const bool processing_stage =
+        reset.stage == agent_q::AgentQLocalResetStage::pin_verifying ||
+        reset.stage == agent_q::AgentQLocalResetStage::wiping;
+    const bool locked_stage = reset.lockout_active;
+    const bool buttons_enabled = !processing_stage && !locked_stage;
+
+    lv_obj_t* title = lv_label_create(g_ui.panel);
+    if (title == nullptr) {
+        clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(title, processing_stage ? "Processing reset" : "Enter reset PIN");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    lv_obj_t* message = lv_label_create(g_ui.panel);
+    if (message == nullptr) {
+        clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(
+        message,
+        notice != nullptr && notice[0] != '\0'
+            ? notice
+            : (processing_stage ? "Processing. Please wait." : "Confirm reset with local PIN."));
+    lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(message, kScreenWidth - 44);
+    lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(message, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(message, lv_color_hex(0x3A2B00), 0);
+    lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 30);
+
+    char pin_mask[agent_q::kLocalPinDigits + 1] = {};
+    for (size_t index = 0; index < agent_q::kLocalPinDigits; ++index) {
+        pin_mask[index] = index < reset.pin_entry_length ? '*' : '_';
+    }
+    char pin_text[16] = {};
+    snprintf(pin_text, sizeof(pin_text), "PIN: %s", pin_mask);
+    lv_obj_t* pin_label = lv_label_create(g_ui.panel);
+    if (pin_label == nullptr) {
+        clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(pin_label, pin_text);
+    lv_obj_set_style_text_font(pin_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(pin_label, lv_color_hex(0x111827), 0);
+    lv_obj_align(pin_label, LV_ALIGN_TOP_MID, 0, 58);
+
+    if (!make_pin_keypad_buttons(g_ui.panel, buttons_enabled)) {
+        clear_panel_locked();
+        return false;
+    }
+
+    if (!make_setup_button(
+            g_ui.panel,
+            "Cancel",
+            kRecoveryPhraseButtonLeftX,
+            kSetupActionButtonY,
+            kRecoveryPhraseButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0x667085),
+            on_reset_cancel_clicked,
+            nullptr,
+            !processing_stage) ||
+        !make_setup_button(
+            g_ui.panel,
+            "Reset",
+            kRecoveryPhraseButtonRightX,
+            kSetupActionButtonY,
+            kRecoveryPhraseButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0xA53B3B),
+            on_pin_submit_clicked,
+            nullptr,
+            buttons_enabled)) {
+        clear_panel_locked();
+        return false;
+    }
+
+    if (processing_stage && !make_pin_processing_overlay(g_ui.panel)) {
         clear_panel_locked();
         return false;
     }
@@ -2214,9 +2624,10 @@ void handle_pin_submit_from_local_ui()
 
     g_provisioning_scratch.setup_stage = SetupScratchStage::pin_committing;
     g_provisioning_scratch.pin_commit_ready_at =
-        xTaskGetTickCount() + pdMS_TO_TICKS(kLocalSetupCommitDisplayDelayMs);
+        xTaskGetTickCount() + pdMS_TO_TICKS(kLocalProcessingDisplayMs);
     agent_q::wipe_sensitive_buffer(g_provisioning_scratch.pin_first, sizeof(g_provisioning_scratch.pin_first));
-    if (!show_pin_setup_panel()) {
+    if (!make_pin_processing_overlay_on_current_panel(AgentQUiPanelKind::pin_entry) &&
+        !show_pin_setup_panel()) {
         ESP_LOGW(kTag, "Local setup committing panel could not be shown");
         wipe_setup_scratch("local PIN setup committing display allocation failed");
         show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -2252,6 +2663,280 @@ void commit_local_setup_if_ready()
             ESP_LOGW(kTag, "Local PIN confirmation storage error");
             show_agent_q_message("Storage error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
             break;
+    }
+}
+
+void clear_local_reset_if_needed()
+{
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQLocalResetSnapshot reset = agent_q::local_reset_snapshot(now);
+    if (reset.stage == agent_q::AgentQLocalResetStage::none ||
+        reset.stage == agent_q::AgentQLocalResetStage::pin_verifying ||
+        reset.stage == agent_q::AgentQLocalResetStage::wiping) {
+        return;
+    }
+
+    if (agent_q::local_reset_release_lockout_if_elapsed(now)) {
+        if (!show_reset_pin_panel("Try again.")) {
+            wipe_local_reset_scratch("local reset PIN panel allocation failed");
+            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        }
+        return;
+    }
+
+    bool panel_active = false;
+    {
+        LvglLockGuard lock;
+        panel_active = g_ui.panel != nullptr &&
+                       local_reset_panel_matches_stage(g_ui.panel_kind);
+    }
+    const bool expired = agent_q::local_reset_deadline_expired(now);
+    if (panel_active && !expired) {
+        return;
+    }
+
+    if (panel_active) {
+        clear_agent_q_panel();
+    } else {
+        wipe_local_reset_scratch("local reset panel lost");
+    }
+
+    if (expired) {
+        show_agent_q_message("Reset canceled", AgentQMessageKind::timeout, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void commit_local_reset_if_ready()
+{
+    if (!agent_q::local_reset_wipe_ready(xTaskGetTickCount())) {
+        return;
+    }
+
+    const agent_q::AgentQLocalResetCommitResult result =
+        agent_q::local_reset_commit_material(local_reset_persistence_ops());
+    clear_agent_q_panel();
+    wipe_local_reset_scratch("local reset completed");
+    switch (result) {
+        case agent_q::AgentQLocalResetCommitResult::ok:
+            g_persistent_material_consistency_error = false;
+            ESP_LOGW(kTag, "Local reset completed; device returned to unprovisioned");
+            show_agent_q_message("Device reset", AgentQMessageKind::success, AgentQUiMode::result, kAgentQResultDisplayMs);
+            break;
+        case agent_q::AgentQLocalResetCommitResult::missing_state:
+            ESP_LOGW(kTag, "Local reset commit missing state");
+            show_agent_q_message("Reset unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            break;
+        case agent_q::AgentQLocalResetCommitResult::reset_marker_storage_error:
+            ESP_LOGW(kTag, "Local reset aborted before wiping material because the reset marker could not be stored");
+            show_agent_q_message("Reset error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            break;
+        case agent_q::AgentQLocalResetCommitResult::root_wipe_error:
+        case agent_q::AgentQLocalResetCommitResult::policy_wipe_error:
+        case agent_q::AgentQLocalResetCommitResult::local_auth_wipe_error:
+        case agent_q::AgentQLocalResetCommitResult::material_remaining_error:
+        case agent_q::AgentQLocalResetCommitResult::state_storage_error:
+            ESP_LOGE(kTag, "Local reset failed and device entered consistency error");
+            show_agent_q_message("Reset error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            break;
+    }
+}
+
+void start_local_settings_from_touch()
+{
+    if (!provisioned_material_ready() ||
+        g_pending.active ||
+        g_identification.active ||
+        g_provisioning_scratch.setup_flow_active() ||
+        agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active ||
+        !agent_q_ui_idle_for_local_settings()) {
+        ESP_LOGW(kTag, "Local settings touch ignored because settings are unavailable");
+        g_settings_touch.clear();
+        return;
+    }
+
+    agent_q::local_reset_begin_settings(
+        xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs));
+    if (!show_settings_menu_panel()) {
+        wipe_local_reset_scratch("local settings display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void cancel_local_reset_from_ui(const char* message)
+{
+    if (agent_q::local_reset_snapshot(xTaskGetTickCount()).stage !=
+        agent_q::AgentQLocalResetStage::pin_entry) {
+        ESP_LOGW(kTag, "Stale local reset cancel ignored");
+        return;
+    }
+
+    clear_agent_q_panel();
+    wipe_local_reset_scratch("local reset canceled");
+    show_agent_q_message(
+        message != nullptr && message[0] != '\0' ? message : "Reset canceled",
+        AgentQMessageKind::rejected,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+}
+
+void close_local_settings_from_ui()
+{
+    if (agent_q::local_reset_snapshot(xTaskGetTickCount()).stage !=
+        agent_q::AgentQLocalResetStage::settings_menu) {
+        ESP_LOGW(kTag, "Stale local settings close ignored");
+        return;
+    }
+
+    clear_agent_q_panel();
+    wipe_local_reset_scratch("local settings closed");
+}
+
+void start_reset_pin_from_settings_menu()
+{
+    if (!provisioned_material_ready() ||
+        !agent_q::local_reset_begin_pin_entry(
+            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs))) {
+        ESP_LOGW(kTag, "Stale local reset menu action ignored");
+        return;
+    }
+
+    if (!show_reset_pin_panel()) {
+        wipe_local_reset_scratch("local reset PIN display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void handle_reset_pin_digit_from_local_ui(char digit)
+{
+    if (!agent_q::local_reset_add_pin_digit(
+            digit,
+            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs))) {
+        return;
+    }
+
+    if (!show_reset_pin_panel()) {
+        wipe_local_reset_scratch("local reset PIN display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void handle_reset_pin_clear_from_local_ui()
+{
+    if (!agent_q::local_reset_clear_pin(
+            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs))) {
+        return;
+    }
+    if (!show_reset_pin_panel()) {
+        wipe_local_reset_scratch("local reset PIN display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void handle_reset_pin_backspace_from_local_ui()
+{
+    if (!agent_q::local_reset_backspace_pin(
+            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs))) {
+        return;
+    }
+    if (!show_reset_pin_panel()) {
+        wipe_local_reset_scratch("local reset PIN display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void handle_reset_pin_submit_from_local_ui()
+{
+    if (!provisioned_material_ready()) {
+        wipe_local_reset_scratch("local reset material state unavailable");
+        clear_agent_q_panel();
+        show_agent_q_message("Reset unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        return;
+    }
+
+    const agent_q::AgentQLocalResetPinSubmitResult submit_result =
+        agent_q::local_reset_submit_pin_for_verification(
+            xTaskGetTickCount() + pdMS_TO_TICKS(kLocalProcessingRenderDelayMs),
+            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs));
+    if (submit_result == agent_q::AgentQLocalResetPinSubmitResult::unavailable_stage) {
+        ESP_LOGW(kTag, "Stale local reset PIN submit ignored");
+        return;
+    }
+    if (submit_result == agent_q::AgentQLocalResetPinSubmitResult::locked) {
+        return;
+    }
+    if (submit_result == agent_q::AgentQLocalResetPinSubmitResult::invalid_pin) {
+        if (!show_reset_pin_panel("Enter exactly 6 digits.")) {
+            wipe_local_reset_scratch("local reset PIN display allocation failed");
+            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        }
+        return;
+    }
+
+    if (!make_pin_processing_overlay_on_current_panel(AgentQUiPanelKind::reset_pin_entry) &&
+        !show_reset_pin_panel()) {
+        wipe_local_reset_scratch("local reset PIN verification display allocation failed");
+        clear_agent_q_panel();
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void verify_local_reset_pin_if_ready()
+{
+    if (!provisioned_material_ready()) {
+        const agent_q::AgentQLocalResetSnapshot reset =
+            agent_q::local_reset_snapshot(xTaskGetTickCount());
+        if (reset.stage != agent_q::AgentQLocalResetStage::pin_verifying) {
+            return;
+        }
+        wipe_local_reset_scratch("local reset material state unavailable during PIN verification");
+        clear_agent_q_panel();
+        show_agent_q_message("Reset unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        return;
+    }
+
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQLocalResetPinVerifyResult verify_result =
+        agent_q::local_reset_verify_pin_if_ready(
+            now,
+            now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs),
+            now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetPinLockoutMs),
+            now + pdMS_TO_TICKS(kLocalProcessingDisplayMs));
+    switch (verify_result) {
+        case agent_q::AgentQLocalResetPinVerifyResult::not_ready:
+            return;
+        case agent_q::AgentQLocalResetPinVerifyResult::auth_unavailable:
+            enter_persistent_material_consistency_error("Local reset could not verify stored PIN; failing closed");
+            wipe_local_reset_scratch("local reset PIN verifier unavailable");
+            clear_agent_q_panel();
+            show_agent_q_message("Auth error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
+        case agent_q::AgentQLocalResetPinVerifyResult::locked:
+            if (!show_reset_pin_panel("Too many wrong PINs. Wait 30s.")) {
+                wipe_local_reset_scratch("local reset PIN lockout display allocation failed");
+                show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            }
+            return;
+        case agent_q::AgentQLocalResetPinVerifyResult::wrong_pin:
+            if (!show_reset_pin_panel("Wrong PIN.")) {
+                wipe_local_reset_scratch("local reset PIN display allocation failed");
+                show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            }
+            return;
+        case agent_q::AgentQLocalResetPinVerifyResult::verified:
+            break;
+    }
+
+    bool reset_panel_active = false;
+    {
+        LvglLockGuard lock;
+        reset_panel_active = g_ui.panel != nullptr &&
+                             g_ui.panel_kind == AgentQUiPanelKind::reset_pin_entry;
+    }
+    if (!reset_panel_active) {
+        if (!show_reset_pin_panel()) {
+            ESP_LOGW(kTag, "Local reset wiping panel could not be shown");
+            commit_local_reset_if_ready();
+        }
     }
 }
 
@@ -2291,6 +2976,38 @@ void poll_touch_fallback()
 
     g_pending.choice = relative_x < panel_width / 2 ? PendingChoice::no : PendingChoice::yes;
     g_pending.touch_armed = false;
+}
+
+void poll_local_settings_touch_entry()
+{
+    if (!local_settings_touch_entry_candidate_allowed()) {
+        g_settings_touch.clear();
+        return;
+    }
+
+    const auto touch = hal_bridge::get_touch_point();
+    const bool inside_entry_corner = touch.num > 0 &&
+                                     touch.x >= kScreenWidth - kSettingsTouchEntryWidth &&
+                                     touch.y >= 0 &&
+                                     touch.y < kSettingsTouchEntryHeight;
+    if (!inside_entry_corner) {
+        g_settings_touch.clear();
+        return;
+    }
+
+    const TickType_t now = xTaskGetTickCount();
+    if (!g_settings_touch.active) {
+        g_settings_touch.active = true;
+        g_settings_touch.started_at = now;
+        return;
+    }
+    if (static_cast<int32_t>(now - g_settings_touch.started_at) <
+        static_cast<int32_t>(pdMS_TO_TICKS(kSettingsTouchEntryMs))) {
+        return;
+    }
+
+    g_settings_touch.clear();
+    enqueue_ui_event(AgentQUiEventKind::settings_requested);
 }
 
 void drain_pending_choice_events()
@@ -2396,6 +3113,26 @@ void drain_ui_events()
             continue;
         }
 
+        if (event.kind == AgentQUiEventKind::settings_requested) {
+            start_local_settings_from_touch();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::settings_cancel_requested) {
+            close_local_settings_from_ui();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::settings_reset_requested) {
+            start_reset_pin_from_settings_menu();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::reset_cancel_requested) {
+            cancel_local_reset_from_ui("Reset canceled");
+            continue;
+        }
+
         if (event.kind == AgentQUiEventKind::recovery_phrase_cancel_requested) {
             cancel_setup_from_local_ui();
             continue;
@@ -2407,27 +3144,62 @@ void drain_ui_events()
         }
 
         if (event.kind == AgentQUiEventKind::pin_digit_requested) {
-            handle_pin_digit_from_local_ui(event.digit);
+            const agent_q::AgentQLocalResetStage reset_stage =
+                agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
+            if (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry ||
+                g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry) {
+                handle_pin_digit_from_local_ui(event.digit);
+            } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
+                handle_reset_pin_digit_from_local_ui(event.digit);
+            }
             continue;
         }
 
         if (event.kind == AgentQUiEventKind::pin_clear_requested) {
-            handle_pin_clear_from_local_ui();
+            const agent_q::AgentQLocalResetStage reset_stage =
+                agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
+            if (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry ||
+                g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry) {
+                handle_pin_clear_from_local_ui();
+            } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
+                handle_reset_pin_clear_from_local_ui();
+            }
             continue;
         }
 
         if (event.kind == AgentQUiEventKind::pin_backspace_requested) {
-            handle_pin_backspace_from_local_ui();
+            const agent_q::AgentQLocalResetStage reset_stage =
+                agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
+            if (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry ||
+                g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry) {
+                handle_pin_backspace_from_local_ui();
+            } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
+                handle_reset_pin_backspace_from_local_ui();
+            }
             continue;
         }
 
         if (event.kind == AgentQUiEventKind::pin_submit_requested) {
-            handle_pin_submit_from_local_ui();
+            const agent_q::AgentQLocalResetStage reset_stage =
+                agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
+            if (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry ||
+                g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry) {
+                handle_pin_submit_from_local_ui();
+            } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
+                handle_reset_pin_submit_from_local_ui();
+            }
             continue;
         }
 
         if (event.kind == AgentQUiEventKind::pin_cancel_requested) {
-            cancel_setup_from_local_ui();
+            const agent_q::AgentQLocalResetStage reset_stage =
+                agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
+            if (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry ||
+                g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry) {
+                cancel_setup_from_local_ui();
+            } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
+                cancel_local_reset_from_ui("Reset canceled");
+            }
             continue;
         }
 
@@ -2441,6 +3213,8 @@ void drain_ui_events()
                    (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry ||
                     g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry)) {
             wipe_setup_scratch("local PIN setup panel deleted");
+        } else if (local_reset_panel_matches_stage(event.panel_kind)) {
+            wipe_local_reset_scratch("local reset panel deleted");
         }
     }
 }
@@ -2541,7 +3315,7 @@ void handle_line(const char* line)
     }
 
     if (strcmp(type, "identify_device") == 0) {
-        if (write_busy_if_pending_or_setup_flow_active(id)) {
+        if (write_busy_if_pending_or_local_flow_active(id)) {
             return;
         }
 
@@ -2568,7 +3342,7 @@ void handle_line(const char* line)
             write_error_response(id, "invalid_state", "Connect is available only after provisioning is complete.");
             return;
         }
-        if (write_busy_if_pending_or_setup_flow_active(id)) {
+        if (write_busy_if_pending_or_local_flow_active(id)) {
             return;
         }
 
@@ -2591,11 +3365,7 @@ void handle_line(const char* line)
     }
 
     if (strcmp(type, "disconnect") == 0) {
-        if (!provisioned_material_ready()) {
-            write_error_response(id, "invalid_state", "Disconnect is available only after provisioning is complete.");
-            return;
-        }
-        if (write_busy_if_pending_or_setup_flow_active(id)) {
+        if (write_busy_if_pending_or_local_flow_active(id)) {
             return;
         }
 
@@ -2616,7 +3386,7 @@ void handle_line(const char* line)
             write_error_response(id, "invalid_state", "Capabilities are available only after provisioning is complete.");
             return;
         }
-        if (write_busy_if_pending_or_setup_flow_active(id)) {
+        if (write_busy_if_pending_or_local_flow_active(id)) {
             return;
         }
 
@@ -2638,7 +3408,7 @@ void handle_line(const char* line)
             write_error_response(id, "invalid_state", "Accounts are available only after provisioning is complete.");
             return;
         }
-        if (write_busy_if_pending_or_setup_flow_active(id)) {
+        if (write_busy_if_pending_or_local_flow_active(id)) {
             return;
         }
 
@@ -2664,7 +3434,7 @@ void handle_line(const char* line)
             write_error_response(id, "invalid_state", "Policy is available only after provisioning is complete.");
             return;
         }
-        if (write_busy_if_pending_or_setup_flow_active(id)) {
+        if (write_busy_if_pending_or_local_flow_active(id)) {
             return;
         }
 
@@ -2690,7 +3460,7 @@ void handle_line(const char* line)
             write_error_response(id, "invalid_state", "call_method is available only after provisioning is complete.");
             return;
         }
-        if (write_busy_if_pending_or_setup_flow_active(id)) {
+        if (write_busy_if_pending_or_local_flow_active(id)) {
             return;
         }
 
@@ -2772,8 +3542,12 @@ void usb_request_task(void*)
         clear_agent_q_message_if_needed();
         clear_recovery_phrase_if_needed();
         clear_pin_setup_if_needed();
+        clear_local_reset_if_needed();
         commit_local_setup_if_ready();
+        verify_local_reset_pin_if_ready();
+        commit_local_reset_if_ready();
         expire_session_if_needed();
+        poll_local_settings_touch_entry();
         send_choice_response_if_needed();
         ensure_pending_request_ui();
         if (g_usb_ready) {
@@ -2796,6 +3570,7 @@ void init_usb_request_server()
     g_pending.clear();
     g_identification.clear();
     wipe_setup_scratch("usb request server init");
+    wipe_local_reset_scratch("usb request server init");
     if (g_pending_choice_queue == nullptr) {
         g_pending_choice_queue = xQueueCreate(4, sizeof(PendingChoice));
         if (g_pending_choice_queue == nullptr) {

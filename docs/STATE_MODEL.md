@@ -41,7 +41,7 @@ stateDiagram-v2
     Provisioning --> Provisioned: future setup complete, root material, active policy, and local PIN verifier stored
     Provisioned --> Locked: future local lock condition
     Locked --> Provisioned: future local unlock
-    Provisioned --> Unprovisioned: future local reset + physical approval
+    Provisioned --> Unprovisioned: local settings reset + PIN verification + material wipe
 
     Unprovisioned: get_status, identify_device
     Unprovisioned: device-local setup bubble and recovery phrase controls
@@ -76,8 +76,13 @@ Firmware reports device `error` and fails closed for normal setup and session
 requests. Detecting the consistency error also clears any active RAM session
 immediately, so a session created before the error is not retained as a stale
 local capability. The current StackChan CoreS3 source does not expose a USB
-reset or debug recovery request; a future reset/recovery path must be a
-device-local UX flow with physical approval.
+reset or debug recovery request. Its local reset path is device-local UX only:
+provisioned devices can enter local settings, choose Reset, verify the stored
+local PIN, and then wipe root material, active policy, PIN verifier,
+runtime session, and provisioning state before returning to `unprovisioned`.
+Firmware records an internal reset-pending marker before destructive wipe starts
+so an interrupted reset can resume at boot. This reset path is not an
+error-state recovery path.
 
 ## State Layers And Owners
 
@@ -166,9 +171,10 @@ Root signing material and an active policy exist in device-local storage. In
 the current StackChan CoreS3 DEV_PROFILE implementation this means a binary
 BIP-39 entropy blob, the active default-reject policy record, and a local
 6-digit PIN verifier record are stored in ordinary NVS and `prov_state` is
-`provisioned`; read-only Sui account derivation and read-only active policy
-summary are implemented, while signing, policy update, local reset, and
-USER_PROFILE secure storage gates are still separate work.
+`provisioned`; read-only Sui account derivation, read-only active policy
+summary, and source-level local reset/material wipe are implemented, while
+signing, policy update, and USER_PROFILE secure storage gates are still
+separate work.
 
 Allowed:
 
@@ -181,6 +187,8 @@ Allowed:
 - `get_policy` (read-only, session-scoped)
 - `call_method` runtime skeleton (session-scoped; unknown methods reject, and Sui
   `sign_transaction` is recognized only for rejected policy-decision smoke)
+- device-local settings reset/material wipe after a local Settings Reset action
+  and stored PIN verification
 - policy update only after an authorization/update surface is implemented
 
 This state is not blanket signing approval. Policy still decides whether each
@@ -209,6 +217,34 @@ There is no automatic migration for provisioned DEV_PROFILE devices that lack
 the local PIN verifier; those devices fail closed until erased and reprovisioned
 through a local UX or development reflash workflow.
 
+### `error`
+
+Firmware detected a persistent-material consistency error. This is a fail-closed
+runtime report, not a persisted provisioning state. It is used when the stored
+provisioning flag and the required material records disagree, or when material
+becomes unreadable after a session had existed.
+
+Allowed:
+
+- `get_status`
+- `identify_device`
+- `disconnect` only as session lifecycle cleanup; if the session was already
+  cleared, Firmware returns `invalid_session`
+
+Rejected:
+
+- `connect`
+- `get_capabilities`
+- `get_accounts`
+- `get_policy`
+- `call_method`
+- policy update
+- signing
+
+This state currently has no normal on-device erase-only recovery path. Recovery
+requires a separate product decision because it would allow destructive material
+wipe without a readable PIN verifier.
+
 ### `locked`
 
 Sensitive actions require local unlock.
@@ -232,22 +268,24 @@ This state is reserved until an unlock model is implemented.
 
 ## API / State Matrix
 
-| Function | `unprovisioned` | `provisioning` | `provisioned` | `locked` | Owner |
-|---|---:|---:|---:|---:|---|
-| `get_status` | O | O | O | O | Firmware |
-| `identify_device` | O | O* | O | O | Firmware |
-| `connect` | X | X | O | TBD | Firmware |
-| `disconnect` | X | X | O | O | Firmware |
-| USB provisioning/reset/diagnostic requests | X | X | X | X | Firmware |
-| `get_capabilities` | X | X | O | X | Firmware |
-| `get_accounts` | X | X | O | X | Firmware |
-| `get_policy` | X | X | O | X | Firmware |
-| `call_method` | X | X | O | X | Firmware |
-| policy read | X | X | O | X | Firmware |
-| policy update | X | X | X (future: authorization required) | X | Firmware |
+| Function | `unprovisioned` | `provisioning` | `provisioned` | `error` | `locked` | Owner |
+|---|---:|---:|---:|---:|---:|---|
+| `get_status` | O | O | O | O | O | Firmware |
+| `identify_device` | O | O* | O | O | O | Firmware |
+| `connect` | X | X | O | X | TBD | Firmware |
+| `disconnect` | S | S | S | S | S | Firmware |
+| USB provisioning/reset/diagnostic requests | X | X | X | X | X | Firmware |
+| `get_capabilities` | X | X | O | X | X | Firmware |
+| `get_accounts` | X | X | O | X | X | Firmware |
+| `get_policy` | X | X | O | X | X | Firmware |
+| `call_method` | X | X | O | X | X | Firmware |
+| policy read | X | X | O | X | X | Firmware |
+| policy update | X | X | X (future: authorization required) | X | X | Firmware |
 
-`O*`: allowed only when the request does not disrupt local setup UI. Other `O`
-operations may still return `busy` while a physical
+`O*`: allowed only when the request does not disrupt local setup UI. `S` means
+session cleanup only: Firmware does not require material readiness, but a
+missing or mismatched session returns `invalid_session`. Other `O` operations
+may still return `busy` while a physical
 approval prompt or device-only setup material display is active.
 
 Gateway may hide unavailable operations, but Firmware must still reject them.

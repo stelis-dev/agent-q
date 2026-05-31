@@ -185,6 +185,32 @@ test("parses busy status while setup material is displayed", () => {
   assert.equal(response.provisioning.state, "unprovisioned");
 });
 
+test("parses consistency-error provisioning status", () => {
+  const response = assertStatusResponse(
+    parseProtocolResponse(
+      JSON.stringify({
+        id: "req_error",
+        version: 1,
+        type: "status",
+        device: {
+          deviceId: "a508d833-5c83-4680-88bb-18aee976881e",
+          state: "error",
+          firmwareName: "Agent-Q Firmware",
+          hardware: "hardware-id",
+          firmwareVersion: "0.0.0",
+        },
+        provisioning: {
+          state: "error",
+        },
+      }),
+      "req_error",
+    ),
+  );
+
+  assert.equal(response.device.state, "error");
+  assert.equal(response.provisioning.state, "error");
+});
+
 test("status response requires provisioning and rejects invalid provisioning state", () => {
   for (const provisioning of [undefined, { state: "signing_ready" }]) {
     assert.throws(

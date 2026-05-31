@@ -20,7 +20,7 @@
 // than by a regex literal, so this source file never contains raw control bytes.
 
 export const DEVICE_STATES = ["idle", "busy", "awaiting_approval", "locked", "error"] as const;
-export const PROVISIONING_STATES = ["unprovisioned", "provisioning", "provisioned", "locked"] as const;
+export const PROVISIONING_STATES = ["unprovisioned", "provisioning", "provisioned", "locked", "error"] as const;
 
 export type DeviceState = (typeof DEVICE_STATES)[number];
 export type ProvisioningState = (typeof PROVISIONING_STATES)[number];

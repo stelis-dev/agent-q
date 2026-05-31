@@ -36,6 +36,10 @@ The current implementation includes:
   after the repeated PIN matches. The recovery phrase and PIN panels also have
   local `Cancel` controls that wipe volatile setup scratch. These setup
   transitions are not exposed as USB JSONL requests.
+- a device-local settings reset flow for `provisioned` devices. Reset requires
+  the local Settings Reset action plus the stored 6-digit PIN, wipes root material,
+  active policy, PIN verifier, runtime session, and provisioning state, and is
+  not exposed as a USB JSONL request. Hardware smoke is still required.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP

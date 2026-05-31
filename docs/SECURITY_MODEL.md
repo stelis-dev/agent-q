@@ -58,10 +58,14 @@ Implemented today:
   StackChan CoreS3 local setup and PIN entry were manually smoke-tested after
   commit `2cb243b`; rerun hardware smoke after setup UI or state changes. This
   is not USER_PROFILE key provisioning.
-- No implemented local reset/recovery UX. Host-triggered reset/debug protocol
-  paths are intentionally not implemented; material/state consistency errors
-  fail closed until a normal device-local reset or recovery flow is specified
-  and built.
+- A source-level local reset/material wipe path for provisioned StackChan CoreS3
+  devices. It is device-local UX only: local settings entry, Reset menu action,
+  stored PIN verification, root material wipe, active policy wipe, PIN verifier
+  wipe, session cleanup, and return to `unprovisioned`.
+  Firmware records an internal reset-pending marker so boot can resume an
+  interrupted reset wipe. Host-triggered reset/debug protocol paths are
+  intentionally not implemented. Hardware smoke is still required, and
+  material/state consistency errors are not recovered by this reset path.
 - Read-only Sui account and public-key discovery over an approved runtime
   session. Firmware derives public identity from the DEV_PROFILE root entropy
   on demand and does not return mnemonic, seed, entropy, or private key
