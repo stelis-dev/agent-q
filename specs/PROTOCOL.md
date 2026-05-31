@@ -291,10 +291,11 @@ and may report `error` when the persisted state and material records disagree.
 It may report `provisioned` only when `prov_state`, the device-local root
 material blob, the active default-reject policy record, and the local PIN
 verifier all exist. It does not use `locked` because no unlock model is
-implemented. Source-level DEV_PROFILE recovery phrase display, persistent root
-material, active policy storage, local PIN verifier storage, local reset, and
-read-only `get_accounts` Sui account derivation are implemented. Runtime
-mnemonic import, policy update, and signing APIs are not implemented.
+implemented. Source-level DEV_PROFILE recovery phrase display, device-local
+mnemonic recovery entry, persistent root material, active policy storage, local
+PIN verifier storage, local reset, and read-only `get_accounts` Sui account
+derivation are implemented. USB/Gateway/MCP mnemonic import, policy update, and
+signing APIs are not implemented.
 
 For DEV_PROFILE upgrade compatibility, a target that boots with the previous
 development shape (`prov_state = provisioned` and valid root material, but no
@@ -318,22 +319,29 @@ parsing a response:
 Provisioning setup and destructive material reset are device-local UX flows in
 the current protocol. Gateway can observe the resulting state through
 `get_status`, but it cannot trigger setup, cancellation, recovery phrase backup
-confirmation, factory reset, or diagnostic display approval by sending a USB
-request.
+confirmation, mnemonic import/recovery, factory reset, or diagnostic display
+approval by sending a USB request.
 
 The StackChan CoreS3 target enters setup from the local unprovisioned setup
-speech bubble. Firmware generates a 12-word BIP-39 recovery phrase in RAM,
-displays up-to-4-letter word prefixes on the device in a 3-column by 4-row
-grid, and exposes only local Cancel and Confirm controls on the recovery phrase
-panel. Three-letter BIP-39 words are displayed as the full word.
+speech bubble and then shows a local Generate/Recover choice. Generate creates
+a 12-word BIP-39 recovery phrase in RAM, displays up-to-4-letter word prefixes
+on the device in a 3-column by 4-row grid, and exposes only local Cancel and
+Confirm controls on the recovery phrase panel. Three-letter BIP-39 words are
+displayed as the full word.
 
 Firmware owns the volatile setup scratch substate, separate from
 persistent `provisioning.state`, session state, display power state, and LVGL
 object lifetime. The current substates are:
 
 - `none`: no generated recovery phrase is valid in RAM.
+- `setup_choice`: local setup mode selection is active; no root material is
+  valid yet.
 - `recovery_phrase_displayed`: root entropy and recovery phrase scratch exist
   in RAM and the device recovery phrase panel is active.
+- `recover_word_entry`: local mnemonic recovery word-entry scratch exists in
+  RAM; the device shows three word-entry cells per page, local A-Z prefix
+  buttons, and scrollable BIP-39 candidate bubbles. No persistent material is
+  stored in this state.
 - `pin_first_entry`: root entropy and the first typed PIN scratch exist in RAM
   and the device-local numeric PIN setup panel is active.
 - `pin_repeat_entry`: root entropy, the first PIN scratch, and the repeat typed
@@ -351,19 +359,25 @@ the scratch substate to `none`. Screen/backlight sleep does not by itself change
 the security state; Agent-Q UI wakes the display before showing setup material
 or approval UI.
 
-Local Confirm is the only implemented backup confirmation transition. It stores
-no persistent material by itself; it advances the scratch state to local
-6-digit PIN entry and wipes phrase text/prefix scratch. Matching PIN repeat
-stores binary root material, the active default-reject policy, and the salt +
-PIN verifier first, then persists `provisioned`, then wipes volatile scratch.
-If root material, policy, PIN verifier, or state persistence fails, Firmware
-rolls back persistent setup material where possible, wipes volatile scratch, and
-must not report `provisioned`. Local Cancel wipes volatile scratch and leaves
-persistent state `unprovisioned`.
+Local Confirm is the only implemented backup confirmation transition for the
+Generate path. It stores no persistent material by itself; it advances the
+scratch state to local 6-digit PIN entry and wipes phrase text/prefix scratch.
+The Recover path accepts mnemonic input only through the device-local word-entry
+UI: three word cells per page, A-Z prefix buttons, and on-device candidate
+selection. After 12 selected BIP-39 words pass checksum validation, Firmware
+reconstructs root entropy in RAM and enters the same local PIN setup state as
+Generate. Matching PIN repeat stores binary root material, the active
+default-reject policy, and the salt + PIN verifier first, then persists
+`provisioned`, then wipes volatile scratch. If root material, policy, PIN
+verifier, or state persistence fails, Firmware rolls back persistent setup
+material where possible, wipes volatile scratch, and must not report
+`provisioned`. Local Cancel wipes volatile scratch and leaves persistent state
+`unprovisioned`.
 
-Gateway must not receive the phrase, displayed prefixes, entropy, seed, private
-key, account data, policy data, or import text. BIP-39 English word prefixes of
-up to four letters identify the words and must be treated as secret material.
+Gateway must not receive the generated phrase, displayed prefixes, recovered
+words, entropy, seed, private key, account data, policy data, or import text.
+BIP-39 English word prefixes of up to four letters identify the words and must
+be treated as secret material.
 
 The current protocol intentionally has no factory-reset or reprovisioning USB
 request. Destructive material reset is device-local UX only. A target reset flow

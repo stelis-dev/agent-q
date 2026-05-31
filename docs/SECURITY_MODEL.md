@@ -51,13 +51,15 @@ Implemented today:
 - A DEV_PROFILE recovery phrase setup path in StackChan CoreS3 source. It can
   generate BIP-39 root entropy into RAM from an Agent-Q CSPRNG seeded from
   early boot entropy, display only up-to-4-letter word prefixes on the device,
-  require a local 6-digit PIN entry/repeat after backup confirmation, store
-  root entropy plus a salt + PIN verifier after the PIN matches, and wipe
-  volatile scratch on local cancel, confirmation, display expiry, PIN setup
-  timeout, or failure. Firmware build verification is required for each change.
-  StackChan CoreS3 local setup and PIN entry were manually smoke-tested after
-  commit `2cb243b`; rerun hardware smoke after setup UI or state changes. This
-  is not USER_PROFILE key provisioning.
+  accept device-local BIP-39 recovery word entry with checksum verification,
+  require a local 6-digit PIN entry/repeat after backup confirmation or
+  successful recovery verification, store root entropy plus a salt + PIN
+  verifier after the PIN matches, and wipe volatile scratch on local cancel,
+  confirmation, display expiry, PIN setup timeout, or failure. Firmware build
+  verification is required for each change. StackChan CoreS3 Generate setup and
+  PIN entry were manually smoke-tested after commit `2cb243b`; Recover was
+  manually smoke-tested on StackChan CoreS3 during the recovery-entry slice.
+  This is not USER_PROFILE key provisioning.
 - A source-level local reset/material wipe path for provisioned StackChan CoreS3
   devices. It is device-local UX only: local settings entry, Reset menu action,
   stored PIN verification, root material wipe, active policy wipe, PIN verifier
@@ -81,7 +83,7 @@ Implemented today:
 Designed but not implemented (do not treat as present):
 
 - USER_PROFILE persistent signing keys and on-device key generation.
-- Key import.
+- Host-assisted key import.
 - USER_PROFILE first-install mnemonic generation or import.
 - zkLogin signing material.
 - USER_PROFILE policy storage and policy update authorization.

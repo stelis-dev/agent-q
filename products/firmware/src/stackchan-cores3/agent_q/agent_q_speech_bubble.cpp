@@ -84,6 +84,7 @@ AgentQSpeechBubbleDecorator::AgentQSpeechBubbleDecorator(
     container_ = lv_obj_create(parent);
     lv_obj_set_size(container_, kContainerWidth, kContainerHeight);
     lv_obj_align(container_, LV_ALIGN_TOP_LEFT, kContainerX, kContainerY);
+    lv_obj_add_flag(container_, LV_OBJ_FLAG_FLOATING);
     lv_obj_remove_flag(container_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(container_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_radius(container_, 0, 0);

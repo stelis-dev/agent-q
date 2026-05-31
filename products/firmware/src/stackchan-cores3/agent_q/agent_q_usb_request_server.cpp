@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include <memory>
 #include "agent_q_bip39.h"
+#include "agent_q_bip39_wordlist.h"
 #include "agent_q_call_method_validation.h"
 #include "agent_q_display_power.h"
 #include "agent_q_entropy.h"
@@ -74,6 +75,10 @@ constexpr size_t kGatewayNameSize = 65;
 constexpr size_t kConnectDisplayMessageSize = 96;
 constexpr size_t kRecoveryPhrasePrefixCellCount = 12;
 constexpr size_t kRecoveryPhrasePrefixCellSize = 8;
+constexpr size_t kRecoverWordsPerPage = 3;
+constexpr size_t kRecoverPageCount = agent_q::kBip39MnemonicWordCount / kRecoverWordsPerPage;
+constexpr size_t kRecoverPrefixMaxChars = 4;
+constexpr size_t kRecoverPrefixBufferSize = kRecoverPrefixMaxChars + 1;
 constexpr int kScreenHeight = 240;
 constexpr int kScreenWidth = 320;
 constexpr int kDecisionStripHeight = 34;
@@ -97,6 +102,26 @@ constexpr int kPinKeypadGridTop = 78;
 constexpr int kPinKeypadRowHeight = 25;
 constexpr int kSettingsMenuButtonCenterX = (kScreenWidth - 16 - kRecoveryPhraseButtonWidth) / 2;
 constexpr int kSettingsMenuResetButtonY = 100;
+constexpr int kSetupMenuGenerateButtonY = 78;
+constexpr int kSetupMenuRecoverButtonY = 114;
+constexpr int kMnemonicWordCellWidth = 90;
+constexpr int kMnemonicWordCellHeight = 22;
+constexpr int kMnemonicWordCellLeft = 17;
+constexpr int kMnemonicWordIndexWidth = 22;
+constexpr int kMnemonicWordPrefixLeft = 30;
+constexpr int kMnemonicWordPrefixWidth = 54;
+constexpr int kRecoverWordCellTop = 42;
+constexpr int kRecoverAlphabetButtonWidth = 22;
+constexpr int kRecoverAlphabetButtonHeight = 18;
+constexpr int kRecoverAlphabetLeft = 9;
+constexpr int kRecoverAlphabetTop = 82;
+constexpr int kRecoverCandidateLeft = 17;
+constexpr int kRecoverCandidateTop = 124;
+constexpr int kRecoverCandidateWidth = 270;
+constexpr int kRecoverCandidateHeight = 58;
+constexpr int kRecoverCandidateButtonWidth = 84;
+constexpr int kRecoverCandidateButtonHeight = 22;
+constexpr int kRecoverNavigationButtonWidth = 68;
 constexpr int kPinProcessingOverlaySize = 50;
 constexpr int kPinProcessingOverlayX =
     (kScreenWidth - 16 - kPinProcessingOverlaySize) / 2;
@@ -108,6 +133,7 @@ constexpr int kPinProcessingSpinMs = 650;
 constexpr int kSettingsTouchEntryWidth = 64;
 constexpr int kSettingsTouchEntryHeight = 56;
 constexpr uint32_t kSetupCellBorderColor = 0xB7E4C7;
+constexpr uint32_t kSetupInputPressedColor = 0x1D4ED8;
 constexpr uint32_t kDisabledControlTextColor = 0x98A2B3;
 constexpr uint32_t kDisabledActionTextColor = 0xEAECF0;
 constexpr uint32_t kAgentQResultDisplayMs = 1800;
@@ -115,7 +141,9 @@ constexpr uint32_t kAgentQResultDisplayMs = 1800;
 enum class AgentQUiPanelKind {
     none,
     decision_strip,
+    setup_choice,
     recovery_phrase_display,
+    recovery_word_entry,
     pin_entry,
     settings_menu,
     reset_pin_entry,
@@ -151,6 +179,9 @@ enum class PendingChoice {
 enum class AgentQUiEventKind {
     panel_deleted,
     setup_requested,
+    setup_generate_requested,
+    setup_recover_requested,
+    setup_cancel_requested,
     provisioning_welcome_requested,
     settings_requested,
     settings_cancel_requested,
@@ -163,12 +194,22 @@ enum class AgentQUiEventKind {
     pin_backspace_requested,
     pin_submit_requested,
     pin_cancel_requested,
+    recover_slot_requested,
+    recover_letter_requested,
+    recover_clear_requested,
+    recover_candidate_requested,
+    recover_previous_requested,
+    recover_next_requested,
+    recover_cancel_requested,
 };
 
 struct AgentQUiEvent {
     AgentQUiEventKind kind = AgentQUiEventKind::panel_deleted;
     AgentQUiPanelKind panel_kind = AgentQUiPanelKind::none;
     char digit = '\0';
+    char letter = '\0';
+    uint8_t slot = 0;
+    uint16_t word_index = 0;
 };
 
 enum class PendingKind {
@@ -271,7 +312,9 @@ struct AgentQUiState {
 
 enum class SetupScratchStage {
     none,
+    setup_choice,
     recovery_phrase_displayed,
+    recover_word_entry,
     pin_first_entry,
     pin_repeat_entry,
     pin_committing,
@@ -287,11 +330,18 @@ struct ProvisioningScratchState {
     uint8_t root_material[agent_q::kRootMaterialBytes] = {};
     char recovery_phrase[agent_q::kBip39MnemonicMaxChars] = {};
     char recovery_phrase_prefix_cells[kRecoveryPhrasePrefixCellCount][kRecoveryPhrasePrefixCellSize] = {};
+    uint16_t recover_word_indices[agent_q::kBip39MnemonicWordCount] = {};
+    bool recover_word_selected[agent_q::kBip39MnemonicWordCount] = {};
+    char recover_prefixes[agent_q::kBip39MnemonicWordCount][kRecoverPrefixBufferSize] = {};
     char pin_first[agent_q::kLocalPinBufferSize] = {};
     char pin_entry[agent_q::kLocalPinBufferSize] = {};
     size_t pin_entry_length = 0;
+    uint8_t recover_page = 0;
+    uint8_t recover_active_slot = 0;
     SetupScratchStage setup_stage = SetupScratchStage::none;
+    TickType_t setup_choice_deadline = 0;
     TickType_t recovery_phrase_deadline = 0;
+    TickType_t recover_word_deadline = 0;
     TickType_t pin_deadline = 0;
     TickType_t pin_commit_ready_at = 0;
 
@@ -302,9 +352,16 @@ struct ProvisioningScratchState {
         agent_q::wipe_sensitive_buffer(
             recovery_phrase_prefix_cells,
             kRecoveryPhrasePrefixCellCount * kRecoveryPhrasePrefixCellSize);
+        agent_q::wipe_sensitive_buffer(recover_word_indices, sizeof(recover_word_indices));
+        agent_q::wipe_sensitive_buffer(recover_word_selected, sizeof(recover_word_selected));
+        agent_q::wipe_sensitive_buffer(recover_prefixes, sizeof(recover_prefixes));
         wipe_pin_only();
+        recover_page = 0;
+        recover_active_slot = 0;
         setup_stage = SetupScratchStage::none;
+        setup_choice_deadline = 0;
         recovery_phrase_deadline = 0;
+        recover_word_deadline = 0;
         pin_commit_ready_at = 0;
     }
 
@@ -357,8 +414,8 @@ bool g_usb_ready = false;
 TaskHandle_t g_usb_task = nullptr;
 QueueHandle_t g_pending_choice_queue = nullptr;
 QueueHandle_t g_ui_event_queue = nullptr;
+uint16_t g_recover_candidate_event_indices[agent_q::kBip39WordCount] = {};
 
-bool recovery_phrase_display_panel_active();
 bool refresh_persistent_material_consistency();
 bool persist_provisioning_state(ProvisioningRuntimeState next_state);
 agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops();
@@ -510,6 +567,90 @@ bool format_recovery_phrase_prefix_cells(
         return false;
     }
     return true;
+}
+
+size_t recover_global_word_slot()
+{
+    return static_cast<size_t>(g_provisioning_scratch.recover_page) * kRecoverWordsPerPage +
+           g_provisioning_scratch.recover_active_slot;
+}
+
+size_t recover_global_word_slot_for(uint8_t page, uint8_t slot)
+{
+    return static_cast<size_t>(page) * kRecoverWordsPerPage + slot;
+}
+
+bool recover_current_page_complete()
+{
+    if (g_provisioning_scratch.recover_page >= kRecoverPageCount) {
+        return false;
+    }
+    for (size_t slot = 0; slot < kRecoverWordsPerPage; ++slot) {
+        const size_t global_slot = recover_global_word_slot_for(g_provisioning_scratch.recover_page, slot);
+        if (global_slot >= agent_q::kBip39MnemonicWordCount ||
+            !g_provisioning_scratch.recover_word_selected[global_slot]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool recover_all_words_complete()
+{
+    for (size_t index = 0; index < agent_q::kBip39MnemonicWordCount; ++index) {
+        if (!g_provisioning_scratch.recover_word_selected[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool word_starts_with_prefix(const char* word, const char* prefix)
+{
+    if (word == nullptr || prefix == nullptr || prefix[0] == '\0') {
+        return false;
+    }
+    for (size_t index = 0; prefix[index] != '\0'; ++index) {
+        if (word[index] != prefix[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void write_selected_word_prefix(size_t global_slot, uint16_t word_index)
+{
+    if (global_slot >= agent_q::kBip39MnemonicWordCount) {
+        return;
+    }
+    char* prefix = g_provisioning_scratch.recover_prefixes[global_slot];
+    agent_q::wipe_sensitive_buffer(prefix, kRecoverPrefixBufferSize);
+    const char* word = agent_q::bip39_english_word(word_index);
+    if (word == nullptr) {
+        return;
+    }
+    size_t index = 0;
+    while (index < kRecoverPrefixMaxChars && word[index] != '\0') {
+        prefix[index] = word[index];
+        ++index;
+    }
+    prefix[index] = '\0';
+}
+
+void wipe_recover_word_entry_scratch()
+{
+    agent_q::wipe_sensitive_buffer(
+        g_provisioning_scratch.recover_word_indices,
+        sizeof(g_provisioning_scratch.recover_word_indices));
+    agent_q::wipe_sensitive_buffer(
+        g_provisioning_scratch.recover_word_selected,
+        sizeof(g_provisioning_scratch.recover_word_selected));
+    agent_q::wipe_sensitive_buffer(
+        g_provisioning_scratch.recover_prefixes,
+        sizeof(g_provisioning_scratch.recover_prefixes));
+    g_provisioning_scratch.recover_page = 0;
+    g_provisioning_scratch.recover_active_slot = 0;
+    g_provisioning_scratch.recover_word_deadline = 0;
 }
 
 bool is_safe_session_id(const char* value)
@@ -1160,11 +1301,11 @@ bool local_setup_start_allowed()
            !g_pending.active;
 }
 
-bool recovery_phrase_display_panel_active()
+bool agent_q_panel_active(AgentQUiPanelKind kind)
 {
     LvglLockGuard lock;
     return g_ui.panel != nullptr &&
-           g_ui.panel_kind == AgentQUiPanelKind::recovery_phrase_display;
+           g_ui.panel_kind == kind;
 }
 
 bool refresh_persistent_material_consistency()
@@ -1304,6 +1445,21 @@ void on_setup_clicked(lv_event_t*)
     enqueue_ui_event(AgentQUiEventKind::setup_requested);
 }
 
+void on_setup_generate_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::setup_generate_requested);
+}
+
+void on_setup_recover_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::setup_recover_requested);
+}
+
+void on_setup_cancel_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::setup_cancel_requested);
+}
+
 void on_settings_cancel_clicked(lv_event_t*)
 {
     enqueue_ui_event(AgentQUiEventKind::settings_cancel_requested);
@@ -1365,6 +1521,72 @@ void on_pin_submit_clicked(lv_event_t*)
 void on_pin_cancel_clicked(lv_event_t*)
 {
     enqueue_ui_event(AgentQUiEventKind::pin_cancel_requested);
+}
+
+void on_recover_slot_clicked(lv_event_t* event)
+{
+    const uint8_t* slot = static_cast<const uint8_t*>(lv_event_get_user_data(event));
+    if (slot == nullptr || *slot >= kRecoverWordsPerPage || g_ui_event_queue == nullptr) {
+        return;
+    }
+
+    AgentQUiEvent ui_event;
+    ui_event.kind = AgentQUiEventKind::recover_slot_requested;
+    ui_event.slot = *slot;
+    if (xQueueSend(g_ui_event_queue, &ui_event, 0) != pdTRUE) {
+        ESP_LOGW(kTag, "UI event queue is full");
+    }
+}
+
+void on_recover_letter_clicked(lv_event_t* event)
+{
+    const char* letter = static_cast<const char*>(lv_event_get_user_data(event));
+    if (letter == nullptr || letter[0] < 'a' || letter[0] > 'z' || g_ui_event_queue == nullptr) {
+        return;
+    }
+
+    AgentQUiEvent ui_event;
+    ui_event.kind = AgentQUiEventKind::recover_letter_requested;
+    ui_event.letter = letter[0];
+    if (xQueueSend(g_ui_event_queue, &ui_event, 0) != pdTRUE) {
+        ESP_LOGW(kTag, "UI event queue is full");
+    }
+}
+
+void on_recover_candidate_clicked(lv_event_t* event)
+{
+    const uint16_t* word_index = static_cast<const uint16_t*>(lv_event_get_user_data(event));
+    if (word_index == nullptr || *word_index >= agent_q::kBip39WordCount ||
+        g_ui_event_queue == nullptr) {
+        return;
+    }
+
+    AgentQUiEvent ui_event;
+    ui_event.kind = AgentQUiEventKind::recover_candidate_requested;
+    ui_event.word_index = *word_index;
+    if (xQueueSend(g_ui_event_queue, &ui_event, 0) != pdTRUE) {
+        ESP_LOGW(kTag, "UI event queue is full");
+    }
+}
+
+void on_recover_clear_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::recover_clear_requested);
+}
+
+void on_recover_previous_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::recover_previous_requested);
+}
+
+void on_recover_next_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::recover_next_requested);
+}
+
+void on_recover_cancel_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::recover_cancel_requested);
 }
 
 void clear_agent_q_avatar_ui();
@@ -1504,7 +1726,16 @@ bool make_setup_button(
     lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(label, label_color, 0);
     lv_obj_set_style_bg_opa(label, LV_OPA_TRANSP, 0);
+    if (enabled && kind == SetupButtonKind::outlined_keypad) {
+        lv_obj_set_style_radius(label, kPinPanelButtonRadius, LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(label, color, LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(label, LV_OPA_30, LV_STATE_PRESSED);
+    }
     lv_obj_center(label);
+    if (enabled) {
+        lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(label, callback, LV_EVENT_CLICKED, callback_data);
+    }
     return true;
 }
 
@@ -1526,7 +1757,7 @@ bool make_pin_keypad_buttons(lv_obj_t* parent, bool buttons_enabled)
                 kPinKeypadButtonWidth,
                 kPinPanelButtonHeight,
                 SetupButtonKind::outlined_keypad,
-                lv_color_hex(0x1D4ED8),
+                lv_color_hex(kSetupInputPressedColor),
                 on_pin_digit_clicked,
                 kDigits[digit],
                 buttons_enabled)) {
@@ -1554,7 +1785,7 @@ bool make_pin_keypad_buttons(lv_obj_t* parent, bool buttons_enabled)
                kPinKeypadButtonWidth,
                kPinPanelButtonHeight,
                SetupButtonKind::outlined_keypad,
-               lv_color_hex(0x1D4ED8),
+               lv_color_hex(kSetupInputPressedColor),
                on_pin_digit_clicked,
                kDigits[0],
                buttons_enabled) &&
@@ -1674,6 +1905,7 @@ void on_agent_q_panel_deleted(lv_event_t* event)
 void register_agent_q_panel_locked(AgentQUiPanelKind kind)
 {
     g_ui.panel_kind = kind;
+    lv_obj_add_flag(g_ui.panel, LV_OBJ_FLAG_FLOATING);
     lv_obj_add_event_cb(g_ui.panel, on_agent_q_panel_deleted, LV_EVENT_DELETE, nullptr);
 }
 
@@ -1682,7 +1914,7 @@ enum class SensitiveUiClearPolicy {
     preserve,
 };
 
-void clear_panel_locked(SensitiveUiClearPolicy policy = SensitiveUiClearPolicy::wipe)
+void clear_panel_locked(SensitiveUiClearPolicy policy)
 {
     if (g_ui.panel != nullptr) {
         lv_obj_t* panel = g_ui.panel;
@@ -1691,7 +1923,9 @@ void clear_panel_locked(SensitiveUiClearPolicy policy = SensitiveUiClearPolicy::
         g_ui.panel_kind = AgentQUiPanelKind::none;
         const bool wipe_setup_after_delete =
             policy == SensitiveUiClearPolicy::wipe &&
-            (panel_kind == AgentQUiPanelKind::recovery_phrase_display ||
+            (panel_kind == AgentQUiPanelKind::setup_choice ||
+             panel_kind == AgentQUiPanelKind::recovery_phrase_display ||
+             panel_kind == AgentQUiPanelKind::recovery_word_entry ||
              panel_kind == AgentQUiPanelKind::pin_entry);
         const bool wipe_reset_after_delete =
             policy == SensitiveUiClearPolicy::wipe &&
@@ -1835,7 +2069,7 @@ void show_provisioning_welcome_if_available()
 void clear_agent_q_panel()
 {
     LvglLockGuard lock;
-    clear_panel_locked();
+    clear_panel_locked(SensitiveUiClearPolicy::wipe);
 }
 
 void clear_agent_q_request_ui()
@@ -1850,7 +2084,7 @@ void show_decision_panel()
 
     {
         LvglLockGuard lock;
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
 
         g_ui.panel = lv_obj_create(lv_screen_active());
         register_agent_q_panel_locked(AgentQUiPanelKind::decision_strip);
@@ -2010,6 +2244,424 @@ SetupCommitResult commit_setup_material_after_pin_match(const char* pin, const c
     return SetupCommitResult::ok;
 }
 
+bool show_setup_choice_panel()
+{
+    clear_agent_q_avatar_ui();
+
+    LvglLockGuard lock;
+    agent_q::request_display_power_wake();
+    clear_panel_locked(SensitiveUiClearPolicy::preserve);
+
+    g_ui.panel = lv_obj_create(lv_screen_active());
+    if (g_ui.panel == nullptr) {
+        g_ui.panel_kind = AgentQUiPanelKind::none;
+        return false;
+    }
+    register_agent_q_panel_locked(AgentQUiPanelKind::setup_choice);
+    lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(g_ui.panel, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(g_ui.panel, kScreenWidth - 16, kScreenHeight - 16);
+    lv_obj_align(g_ui.panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_radius(g_ui.panel, 8, 0);
+    lv_obj_set_style_border_width(g_ui.panel, 0, 0);
+    lv_obj_set_style_bg_color(g_ui.panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(g_ui.panel, 0, 0);
+
+    lv_obj_t* title = lv_label_create(g_ui.panel);
+    if (title == nullptr) {
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
+        return false;
+    }
+    lv_label_set_text(title, "Set up Agent-Q");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
+
+    if (!make_setup_button(
+            g_ui.panel,
+            "Generate",
+            kSettingsMenuButtonCenterX,
+            kSetupMenuGenerateButtonY,
+            kRecoveryPhraseButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0x24875A),
+            on_setup_generate_clicked) ||
+        !make_setup_button(
+            g_ui.panel,
+            "Recover",
+            kSettingsMenuButtonCenterX,
+            kSetupMenuRecoverButtonY,
+            kRecoveryPhraseButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0x1D4ED8),
+            on_setup_recover_clicked) ||
+        !make_setup_button(
+            g_ui.panel,
+            "Cancel",
+            kSettingsMenuButtonCenterX,
+            kSetupActionButtonY,
+            kRecoveryPhraseButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0x667085),
+            on_setup_cancel_clicked)) {
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
+        return false;
+    }
+
+    lv_obj_move_foreground(g_ui.panel);
+    return true;
+}
+
+bool make_recover_word_cell(lv_obj_t* parent, uint8_t slot)
+{
+    static const uint8_t kSlotUserData[kRecoverWordsPerPage] = {0, 1, 2};
+    if (slot >= kRecoverWordsPerPage) {
+        return false;
+    }
+
+    const size_t global_slot =
+        recover_global_word_slot_for(g_provisioning_scratch.recover_page, slot);
+    if (global_slot >= agent_q::kBip39MnemonicWordCount) {
+        return false;
+    }
+
+    lv_obj_t* cell = lv_obj_create(parent);
+    if (cell == nullptr) {
+        return false;
+    }
+    lv_obj_remove_flag(cell, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(cell, kMnemonicWordCellWidth, kMnemonicWordCellHeight);
+    lv_obj_align(
+        cell,
+        LV_ALIGN_TOP_LEFT,
+        kMnemonicWordCellLeft + static_cast<int>(slot) * kMnemonicWordCellWidth,
+        kRecoverWordCellTop);
+    lv_obj_set_style_radius(cell, 4, 0);
+    lv_obj_set_style_border_width(cell, 1, 0);
+    lv_obj_set_style_border_color(cell, lv_color_hex(kSetupCellBorderColor), 0);
+    lv_obj_set_style_bg_color(cell, lv_color_hex(
+        slot == g_provisioning_scratch.recover_active_slot ? 0xE9F8EF : 0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(cell, lv_color_hex(kSetupInputPressedColor), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(cell, LV_OPA_30, LV_STATE_PRESSED);
+    lv_obj_set_style_pad_all(cell, 0, 0);
+    lv_obj_add_flag(cell, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(
+        cell,
+        on_recover_slot_clicked,
+        LV_EVENT_CLICKED,
+        const_cast<uint8_t*>(&kSlotUserData[slot]));
+
+    lv_obj_t* index_label = lv_label_create(cell);
+    if (index_label == nullptr) {
+        return false;
+    }
+    char index_text[3] = {};
+    snprintf(index_text, sizeof(index_text), "%02u", static_cast<unsigned>(global_slot + 1));
+    lv_label_set_text(index_label, index_text);
+    lv_label_set_long_mode(index_label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(index_label, kMnemonicWordIndexWidth);
+    lv_obj_set_style_text_align(index_label, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_font(index_label, &lv_font_unscii_8, 0);
+    lv_obj_set_style_text_color(index_label, lv_color_hex(0x475467), 0);
+    lv_obj_set_style_bg_opa(index_label, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(index_label, 4, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(index_label, lv_color_hex(kSetupInputPressedColor), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(index_label, LV_OPA_30, LV_STATE_PRESSED);
+    lv_obj_align(index_label, LV_ALIGN_LEFT_MID, 4, 0);
+    lv_obj_add_flag(index_label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(
+        index_label,
+        on_recover_slot_clicked,
+        LV_EVENT_CLICKED,
+        const_cast<uint8_t*>(&kSlotUserData[slot]));
+
+    lv_obj_t* prefix_label = lv_label_create(cell);
+    if (prefix_label == nullptr) {
+        return false;
+    }
+    const char* prefix = g_provisioning_scratch.recover_prefixes[global_slot];
+    lv_label_set_text(prefix_label, prefix[0] != '\0' ? prefix : "____");
+    lv_label_set_long_mode(prefix_label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(prefix_label, kMnemonicWordPrefixWidth);
+    lv_obj_set_style_text_align(prefix_label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_font(prefix_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(prefix_label, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_bg_opa(prefix_label, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(prefix_label, 4, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(prefix_label, lv_color_hex(kSetupInputPressedColor), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(prefix_label, LV_OPA_30, LV_STATE_PRESSED);
+    lv_obj_align(prefix_label, LV_ALIGN_LEFT_MID, kMnemonicWordPrefixLeft, 0);
+    lv_obj_add_flag(prefix_label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(
+        prefix_label,
+        on_recover_slot_clicked,
+        LV_EVENT_CLICKED,
+        const_cast<uint8_t*>(&kSlotUserData[slot]));
+    return true;
+}
+
+bool make_recover_alphabet_buttons(lv_obj_t* parent)
+{
+    static const char* const kLetters[26] = {
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+        "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+    };
+
+    for (int index = 0; index < 26; ++index) {
+        char label[2] = {};
+        label[0] = static_cast<char>('A' + index);
+        const int column = index % 13;
+        const int row = index / 13;
+        if (!make_setup_button(
+                parent,
+                label,
+                kRecoverAlphabetLeft + column * kRecoverAlphabetButtonWidth,
+                kRecoverAlphabetTop + row * (kRecoverAlphabetButtonHeight + 4),
+                kRecoverAlphabetButtonWidth,
+                kRecoverAlphabetButtonHeight,
+                SetupButtonKind::outlined_keypad,
+                lv_color_hex(kSetupInputPressedColor),
+                on_recover_letter_clicked,
+                kLetters[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool make_recover_candidate_area(lv_obj_t* parent)
+{
+    lv_obj_t* area = lv_obj_create(parent);
+    if (area == nullptr) {
+        return false;
+    }
+    lv_obj_remove_style_all(area);
+    lv_obj_set_size(area, kRecoverCandidateWidth, kRecoverCandidateHeight);
+    lv_obj_align(area, LV_ALIGN_TOP_LEFT, kRecoverCandidateLeft, kRecoverCandidateTop);
+    lv_obj_set_scroll_dir(area, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(area, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_style_pad_all(area, 0, 0);
+    lv_obj_set_style_bg_opa(area, LV_OPA_TRANSP, 0);
+
+    const size_t global_slot = recover_global_word_slot();
+    const char* prefix = global_slot < agent_q::kBip39MnemonicWordCount
+        ? g_provisioning_scratch.recover_prefixes[global_slot]
+        : "";
+    if (prefix[0] == '\0') {
+        lv_obj_t* label = lv_label_create(area);
+        if (label == nullptr) {
+            return false;
+        }
+        lv_label_set_text(label, "Tap a letter to list BIP-39 words.");
+        lv_obj_set_width(label, kRecoverCandidateWidth - 8);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(0x475467), 0);
+        lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 16);
+        return true;
+    }
+
+    size_t candidate_count = 0;
+    for (uint16_t word_index = 0; word_index < agent_q::kBip39WordCount; ++word_index) {
+        const char* word = agent_q::bip39_english_word(word_index);
+        if (!word_starts_with_prefix(word, prefix)) {
+            continue;
+        }
+        if (candidate_count >= agent_q::kBip39WordCount) {
+            break;
+        }
+        g_recover_candidate_event_indices[candidate_count] = word_index;
+
+        lv_obj_t* button = lv_obj_create(area);
+        if (button == nullptr) {
+            return false;
+        }
+        const int column = static_cast<int>(candidate_count % 3);
+        const int row = static_cast<int>(candidate_count / 3);
+        lv_obj_remove_style_all(button);
+        lv_obj_set_size(button, kRecoverCandidateButtonWidth, kRecoverCandidateButtonHeight);
+        lv_obj_align(
+            button,
+            LV_ALIGN_TOP_LEFT,
+            column * (kRecoverCandidateButtonWidth + 6),
+            row * (kRecoverCandidateButtonHeight + 4));
+        lv_obj_set_style_radius(button, kPinPanelButtonRadius, 0);
+        lv_obj_set_style_border_width(button, 1, 0);
+        lv_obj_set_style_border_color(button, lv_color_hex(kSetupCellBorderColor), 0);
+        lv_obj_set_style_bg_opa(button, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(kSetupInputPressedColor), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(button, LV_OPA_30, LV_STATE_PRESSED);
+        lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(
+            button,
+            on_recover_candidate_clicked,
+            LV_EVENT_CLICKED,
+            &g_recover_candidate_event_indices[candidate_count]);
+
+        lv_obj_t* label = lv_label_create(button);
+        if (label == nullptr) {
+            return false;
+        }
+        lv_obj_remove_style_all(label);
+        lv_label_set_text_static(label, word);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
+        lv_obj_set_width(label, kRecoverCandidateButtonWidth - 6);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_font(label, &lv_font_unscii_8, 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(0x111827), 0);
+        lv_obj_set_style_bg_opa(label, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_radius(label, kPinPanelButtonRadius, LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(label, lv_color_hex(kSetupInputPressedColor), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(label, LV_OPA_30, LV_STATE_PRESSED);
+        lv_obj_center(label);
+        lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(
+            label,
+            on_recover_candidate_clicked,
+            LV_EVENT_CLICKED,
+            &g_recover_candidate_event_indices[candidate_count]);
+        ++candidate_count;
+    }
+
+    if (candidate_count == 0) {
+        lv_obj_t* label = lv_label_create(area);
+        if (label == nullptr) {
+            return false;
+        }
+        lv_label_set_text(label, "No matching BIP-39 words.");
+        lv_obj_set_width(label, kRecoverCandidateWidth - 8);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(0xA53B3B), 0);
+        lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 16);
+    }
+
+    return true;
+}
+
+bool show_recover_word_entry_panel(const char* notice = nullptr)
+{
+    clear_agent_q_avatar_ui();
+
+    LvglLockGuard lock;
+    agent_q::request_display_power_wake();
+    clear_panel_locked(SensitiveUiClearPolicy::preserve);
+
+    g_ui.panel = lv_obj_create(lv_screen_active());
+    if (g_ui.panel == nullptr) {
+        g_ui.panel_kind = AgentQUiPanelKind::none;
+        return false;
+    }
+    register_agent_q_panel_locked(AgentQUiPanelKind::recovery_word_entry);
+    lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(g_ui.panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_set_scrollbar_mode(g_ui.panel, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(g_ui.panel, kScreenWidth - 16, kScreenHeight - 16);
+    lv_obj_align(g_ui.panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_radius(g_ui.panel, 8, 0);
+    lv_obj_set_style_border_width(g_ui.panel, 0, 0);
+    lv_obj_set_style_bg_color(g_ui.panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_opa(g_ui.panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(g_ui.panel, 0, 0);
+
+    char title_text[32] = {};
+    snprintf(title_text, sizeof(title_text), "Recover words %u-%u",
+             static_cast<unsigned>(g_provisioning_scratch.recover_page * kRecoverWordsPerPage + 1),
+             static_cast<unsigned>((g_provisioning_scratch.recover_page + 1) * kRecoverWordsPerPage));
+    lv_obj_t* title = lv_label_create(g_ui.panel);
+    if (title == nullptr) {
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
+        return false;
+    }
+    lv_label_set_text(title, title_text);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    if (notice != nullptr && notice[0] != '\0') {
+        lv_obj_t* notice_label = lv_label_create(g_ui.panel);
+        if (notice_label == nullptr) {
+            clear_panel_locked(SensitiveUiClearPolicy::wipe);
+            return false;
+        }
+        lv_label_set_text(notice_label, notice);
+        lv_obj_set_width(notice_label, kScreenWidth - 44);
+        lv_obj_set_style_text_align(notice_label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_font(notice_label, &lv_font_unscii_8, 0);
+        lv_obj_set_style_text_color(notice_label, lv_color_hex(0xA53B3B), 0);
+        lv_obj_align(notice_label, LV_ALIGN_TOP_MID, 0, 26);
+    }
+
+    for (uint8_t slot = 0; slot < kRecoverWordsPerPage; ++slot) {
+        if (!make_recover_word_cell(g_ui.panel, slot)) {
+            clear_panel_locked(SensitiveUiClearPolicy::wipe);
+            return false;
+        }
+    }
+
+    if (!make_recover_alphabet_buttons(g_ui.panel) ||
+        !make_recover_candidate_area(g_ui.panel)) {
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
+        return false;
+    }
+
+    if (!make_setup_button(
+            g_ui.panel,
+            "Cancel",
+            kRecoveryPhraseButtonLeftX,
+            kSetupActionButtonY,
+            kRecoverNavigationButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0xA53B3B),
+            on_recover_cancel_clicked) ||
+        !make_setup_button(
+            g_ui.panel,
+            "Clear",
+            kRecoveryPhraseButtonLeftX + kRecoverNavigationButtonWidth + 8,
+            kSetupActionButtonY,
+            kRecoverNavigationButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::outlined_keypad,
+            lv_color_hex(0x667085),
+            on_recover_clear_clicked) ||
+        !make_setup_button(
+            g_ui.panel,
+            "Prev",
+            kRecoveryPhraseButtonLeftX + 2 * (kRecoverNavigationButtonWidth + 8),
+            kSetupActionButtonY,
+            kRecoverNavigationButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0x667085),
+            on_recover_previous_clicked,
+            nullptr,
+            g_provisioning_scratch.recover_page > 0) ||
+        !make_setup_button(
+            g_ui.panel,
+            g_provisioning_scratch.recover_page + 1 >= kRecoverPageCount ? "Verify" : "Next",
+            kRecoveryPhraseButtonLeftX + 3 * (kRecoverNavigationButtonWidth + 8),
+            kSetupActionButtonY,
+            kRecoverNavigationButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0x24875A),
+            on_recover_next_clicked,
+            nullptr,
+            recover_current_page_complete())) {
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
+        return false;
+    }
+
+    lv_obj_move_foreground(g_ui.panel);
+    return true;
+}
+
 bool show_recovery_phrase_display(const char* recovery_phrase)
 {
     if (!format_recovery_phrase_prefix_cells(
@@ -2017,10 +2669,10 @@ bool show_recovery_phrase_display(const char* recovery_phrase)
         return false;
     }
 
-    clear_agent_q_request_ui();
+    clear_agent_q_avatar_ui();
 
     LvglLockGuard lock;
-    clear_panel_locked();
+    clear_panel_locked(SensitiveUiClearPolicy::preserve);
 
     g_ui.panel = lv_obj_create(lv_screen_active());
     if (g_ui.panel == nullptr) {
@@ -2041,7 +2693,7 @@ bool show_recovery_phrase_display(const char* recovery_phrase)
 
     lv_obj_t* title = lv_label_create(g_ui.panel);
     if (title == nullptr) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
     lv_label_set_text(title, "BIP-39 prefixes (DEV)");
@@ -2051,7 +2703,7 @@ bool show_recovery_phrase_display(const char* recovery_phrase)
 
     lv_obj_t* warning = lv_label_create(g_ui.panel);
     if (warning == nullptr) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
     lv_label_set_text(warning, "Write up-to-4-letter prefixes. Host cannot read them.");
@@ -2062,22 +2714,16 @@ bool show_recovery_phrase_display(const char* recovery_phrase)
     lv_obj_set_style_text_color(warning, lv_color_hex(0x3A2B00), 0);
     lv_obj_align(warning, LV_ALIGN_TOP_MID, 0, 22 + kRecoveryPhraseTopMargin);
 
-    constexpr int kGridLeft = 17;
     constexpr int kGridTop = 58 + kRecoveryPhraseTopMargin;
-    constexpr int kGridCellWidth = 90;
-    constexpr int kGridCellHeight = 22;
     constexpr int kGridRowHeight = 25;
-    constexpr int kIndexWidth = 22;
-    constexpr int kPrefixLeft = 30;
-    constexpr int kPrefixWidth = 54;
     for (size_t index = 0; index < kRecoveryPhrasePrefixCellCount; ++index) {
         lv_obj_t* cell = lv_obj_create(g_ui.panel);
         if (cell == nullptr) {
-            clear_panel_locked();
+            clear_panel_locked(SensitiveUiClearPolicy::wipe);
             return false;
         }
         lv_obj_remove_flag(cell, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_size(cell, kGridCellWidth, kGridCellHeight);
+        lv_obj_set_size(cell, kMnemonicWordCellWidth, kMnemonicWordCellHeight);
         lv_obj_set_style_radius(cell, 4, 0);
         lv_obj_set_style_border_width(cell, 1, 0);
         lv_obj_set_style_border_color(cell, lv_color_hex(0xB7E4C7), 0);
@@ -2089,19 +2735,19 @@ bool show_recovery_phrase_display(const char* recovery_phrase)
         lv_obj_align(
             cell,
             LV_ALIGN_TOP_LEFT,
-            kGridLeft + column * kGridCellWidth,
+            kMnemonicWordCellLeft + column * kMnemonicWordCellWidth,
             kGridTop + row * kGridRowHeight);
 
         lv_obj_t* index_label = lv_label_create(cell);
         if (index_label == nullptr) {
-            clear_panel_locked();
+            clear_panel_locked(SensitiveUiClearPolicy::wipe);
             return false;
         }
         char index_text[3] = {};
         snprintf(index_text, sizeof(index_text), "%02u", static_cast<unsigned>(index + 1));
         lv_label_set_text(index_label, index_text);
         lv_label_set_long_mode(index_label, LV_LABEL_LONG_CLIP);
-        lv_obj_set_width(index_label, kIndexWidth);
+        lv_obj_set_width(index_label, kMnemonicWordIndexWidth);
         lv_obj_set_style_text_align(index_label, LV_TEXT_ALIGN_RIGHT, 0);
         lv_obj_set_style_text_font(index_label, &lv_font_unscii_8, 0);
         lv_obj_set_style_text_color(index_label, lv_color_hex(0x475467), 0);
@@ -2109,16 +2755,16 @@ bool show_recovery_phrase_display(const char* recovery_phrase)
 
         lv_obj_t* prefix_label = lv_label_create(cell);
         if (prefix_label == nullptr) {
-            clear_panel_locked();
+            clear_panel_locked(SensitiveUiClearPolicy::wipe);
             return false;
         }
         lv_label_set_text_static(prefix_label, g_provisioning_scratch.recovery_phrase_prefix_cells[index]);
         lv_label_set_long_mode(prefix_label, LV_LABEL_LONG_CLIP);
-        lv_obj_set_width(prefix_label, kPrefixWidth);
+        lv_obj_set_width(prefix_label, kMnemonicWordPrefixWidth);
         lv_obj_set_style_text_align(prefix_label, LV_TEXT_ALIGN_LEFT, 0);
         lv_obj_set_style_text_font(prefix_label, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(prefix_label, lv_color_hex(0x111827), 0);
-        lv_obj_align(prefix_label, LV_ALIGN_LEFT_MID, kPrefixLeft, 0);
+        lv_obj_align(prefix_label, LV_ALIGN_LEFT_MID, kMnemonicWordPrefixLeft, 0);
     }
     if (!make_setup_button(
             g_ui.panel,
@@ -2140,7 +2786,7 @@ bool show_recovery_phrase_display(const char* recovery_phrase)
             SetupButtonKind::solid_action,
             lv_color_hex(0x24875A),
             on_recovery_phrase_confirm_clicked)) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
 
@@ -2177,7 +2823,7 @@ bool show_pin_setup_panel(const char* notice = nullptr)
     const bool buttons_enabled = !committing_stage;
     lv_obj_t* title = lv_label_create(g_ui.panel);
     if (title == nullptr) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
     lv_label_set_text(title, committing_stage ? "Saving setup" : (repeat_stage ? "Repeat 6-digit PIN" : "Set 6-digit PIN"));
@@ -2187,7 +2833,7 @@ bool show_pin_setup_panel(const char* notice = nullptr)
 
     lv_obj_t* message = lv_label_create(g_ui.panel);
     if (message == nullptr) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
     lv_label_set_text(
@@ -2210,7 +2856,7 @@ bool show_pin_setup_panel(const char* notice = nullptr)
     snprintf(pin_text, sizeof(pin_text), "PIN: %s", pin_mask);
     lv_obj_t* pin_label = lv_label_create(g_ui.panel);
     if (pin_label == nullptr) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
     lv_label_set_text(pin_label, pin_text);
@@ -2219,7 +2865,7 @@ bool show_pin_setup_panel(const char* notice = nullptr)
     lv_obj_align(pin_label, LV_ALIGN_TOP_MID, 0, 58);
 
     if (!make_pin_keypad_buttons(g_ui.panel, buttons_enabled)) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
 
@@ -2247,12 +2893,12 @@ bool show_pin_setup_panel(const char* notice = nullptr)
             on_pin_submit_clicked,
             nullptr,
             buttons_enabled)) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
 
     if (committing_stage && !make_pin_processing_overlay(g_ui.panel)) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
 
@@ -2286,7 +2932,7 @@ bool show_settings_menu_panel()
 
     lv_obj_t* title = lv_label_create(g_ui.panel);
     if (title == nullptr) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
     lv_label_set_text(title, "Settings");
@@ -2316,7 +2962,7 @@ bool show_settings_menu_panel()
             SetupButtonKind::solid_action,
             lv_color_hex(0x667085),
             on_settings_cancel_clicked)) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
 
@@ -2359,7 +3005,7 @@ bool show_reset_pin_panel(const char* notice = nullptr)
 
     lv_obj_t* title = lv_label_create(g_ui.panel);
     if (title == nullptr) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
     lv_label_set_text(title, processing_stage ? "Processing reset" : "Enter reset PIN");
@@ -2369,7 +3015,7 @@ bool show_reset_pin_panel(const char* notice = nullptr)
 
     lv_obj_t* message = lv_label_create(g_ui.panel);
     if (message == nullptr) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
     lv_label_set_text(
@@ -2392,7 +3038,7 @@ bool show_reset_pin_panel(const char* notice = nullptr)
     snprintf(pin_text, sizeof(pin_text), "PIN: %s", pin_mask);
     lv_obj_t* pin_label = lv_label_create(g_ui.panel);
     if (pin_label == nullptr) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
     lv_label_set_text(pin_label, pin_text);
@@ -2401,7 +3047,7 @@ bool show_reset_pin_panel(const char* notice = nullptr)
     lv_obj_align(pin_label, LV_ALIGN_TOP_MID, 0, 58);
 
     if (!make_pin_keypad_buttons(g_ui.panel, buttons_enabled)) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
 
@@ -2429,12 +3075,12 @@ bool show_reset_pin_panel(const char* notice = nullptr)
             on_pin_submit_clicked,
             nullptr,
             buttons_enabled)) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
 
     if (processing_stage && !make_pin_processing_overlay(g_ui.panel)) {
-        clear_panel_locked();
+        clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
 
@@ -2467,13 +3113,87 @@ RecoveryPhraseGenerationResult generate_recovery_phrase_scratch()
     return RecoveryPhraseGenerationResult::ok;
 }
 
+void begin_recovery_word_entry_scratch()
+{
+    wipe_setup_scratch("recovery import reset");
+    g_provisioning_scratch.setup_stage = SetupScratchStage::recover_word_entry;
+    g_provisioning_scratch.recover_page = 0;
+    g_provisioning_scratch.recover_active_slot = 0;
+    g_provisioning_scratch.recover_word_deadline =
+        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
+}
+
+bool setup_choice_action_allowed()
+{
+    if (g_provisioning_scratch.setup_stage != SetupScratchStage::setup_choice ||
+        g_provisioning_scratch.setup_choice_deadline == 0 ||
+        tick_reached(g_provisioning_scratch.setup_choice_deadline) ||
+        g_pending.active ||
+        agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active) {
+        return false;
+    }
+    if (!refresh_persistent_material_consistency()) {
+        return false;
+    }
+    return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
+           !g_persistent_material_consistency_error;
+}
+
+void clear_setup_choice_if_needed()
+{
+    if (g_provisioning_scratch.setup_stage != SetupScratchStage::setup_choice) {
+        return;
+    }
+
+    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::setup_choice);
+    const bool expired = g_provisioning_scratch.setup_choice_deadline != 0 &&
+                         tick_reached(g_provisioning_scratch.setup_choice_deadline);
+    if (panel_active && !expired) {
+        return;
+    }
+
+    if (panel_active) {
+        clear_agent_q_panel();
+    } else {
+        wipe_setup_scratch("setup choice panel lost");
+    }
+
+    if (expired) {
+        show_agent_q_message("Setup expired", AgentQMessageKind::timeout, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void clear_recovery_word_entry_if_needed()
+{
+    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry) {
+        return;
+    }
+
+    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::recovery_word_entry);
+    const bool expired = g_provisioning_scratch.recover_word_deadline != 0 &&
+                         tick_reached(g_provisioning_scratch.recover_word_deadline);
+    if (panel_active && !expired) {
+        return;
+    }
+
+    if (panel_active) {
+        clear_agent_q_panel();
+    } else {
+        wipe_setup_scratch("recovery word entry panel lost");
+    }
+
+    if (expired) {
+        show_agent_q_message("Recovery expired", AgentQMessageKind::timeout, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
 void clear_recovery_phrase_if_needed()
 {
     if (g_provisioning_scratch.setup_stage != SetupScratchStage::recovery_phrase_displayed) {
         return;
     }
 
-    const bool panel_active = recovery_phrase_display_panel_active();
+    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::recovery_phrase_display);
     const bool expired = g_provisioning_scratch.recovery_phrase_deadline != 0 &&
                          tick_reached(g_provisioning_scratch.recovery_phrase_deadline);
     if (panel_active && !expired) {
@@ -2498,12 +3218,7 @@ void clear_pin_setup_if_needed()
         return;
     }
 
-    bool panel_active = false;
-    {
-        LvglLockGuard lock;
-        panel_active = g_ui.panel != nullptr &&
-                       g_ui.panel_kind == AgentQUiPanelKind::pin_entry;
-    }
+    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::pin_entry);
     const bool expired = g_provisioning_scratch.pin_deadline != 0 &&
                          tick_reached(g_provisioning_scratch.pin_deadline);
     if (panel_active && !expired) {
@@ -3027,14 +3742,11 @@ void drain_pending_choice_events()
 
 void start_local_provisioning_from_setup_touch()
 {
-    if (!local_setup_start_allowed()) {
-        ESP_LOGW(kTag, "Local setup touch ignored because setup is unavailable");
-        clear_agent_q_request_ui();
-        show_agent_q_message("Setup unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    if (!setup_choice_action_allowed()) {
+        ESP_LOGW(kTag, "Stale local setup generate action ignored");
         return;
     }
 
-    clear_agent_q_request_ui();
     const RecoveryPhraseGenerationResult generation_result = generate_recovery_phrase_scratch();
     if (generation_result == RecoveryPhraseGenerationResult::ok) {
         if (show_recovery_phrase_display(g_provisioning_scratch.recovery_phrase)) {
@@ -3055,6 +3767,39 @@ void start_local_provisioning_from_setup_touch()
 
     ESP_LOGW(kTag, "Local setup phrase generation failed");
     show_agent_q_message("Generation error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+}
+
+void show_setup_choice_from_setup_touch()
+{
+    if (!local_setup_start_allowed()) {
+        ESP_LOGW(kTag, "Local setup touch ignored because setup is unavailable");
+        clear_agent_q_request_ui();
+        show_agent_q_message("Setup unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        return;
+    }
+
+    wipe_setup_scratch("setup choice reset");
+    g_provisioning_scratch.setup_stage = SetupScratchStage::setup_choice;
+    g_provisioning_scratch.setup_choice_deadline =
+        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
+    if (!show_setup_choice_panel()) {
+        wipe_setup_scratch("setup choice display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void start_local_recovery_from_setup_choice()
+{
+    if (!setup_choice_action_allowed()) {
+        ESP_LOGW(kTag, "Stale local recover action ignored");
+        return;
+    }
+
+    begin_recovery_word_entry_scratch();
+    if (!show_recover_word_entry_panel()) {
+        wipe_setup_scratch("recovery word entry display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
 }
 
 void cancel_setup_from_local_ui()
@@ -3095,6 +3840,177 @@ void confirm_recovery_phrase_from_local_ui()
     ESP_LOGI(kTag, "Local backup confirmed; setup PIN entry started");
 }
 
+void handle_recover_slot_from_local_ui(uint8_t slot)
+{
+    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry ||
+        slot >= kRecoverWordsPerPage) {
+        return;
+    }
+    g_provisioning_scratch.recover_active_slot = slot;
+    g_provisioning_scratch.recover_word_deadline =
+        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
+    if (!show_recover_word_entry_panel()) {
+        wipe_setup_scratch("recovery word entry display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void handle_recover_letter_from_local_ui(char letter)
+{
+    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry ||
+        letter < 'a' || letter > 'z') {
+        return;
+    }
+    const size_t global_slot = recover_global_word_slot();
+    if (global_slot >= agent_q::kBip39MnemonicWordCount) {
+        return;
+    }
+    char* prefix = g_provisioning_scratch.recover_prefixes[global_slot];
+    size_t length = strlen(prefix);
+    if (length >= kRecoverPrefixMaxChars) {
+        g_provisioning_scratch.recover_word_deadline =
+            xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
+        if (!show_recover_word_entry_panel()) {
+            wipe_setup_scratch("recovery word entry display allocation failed");
+            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        }
+        return;
+    }
+    prefix[length++] = letter;
+    prefix[length] = '\0';
+    g_provisioning_scratch.recover_word_selected[global_slot] = false;
+    g_provisioning_scratch.recover_word_indices[global_slot] = 0;
+    g_provisioning_scratch.recover_word_deadline =
+        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
+    if (!show_recover_word_entry_panel()) {
+        wipe_setup_scratch("recovery word entry display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void handle_recover_clear_from_local_ui()
+{
+    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry) {
+        return;
+    }
+    const size_t global_slot = recover_global_word_slot();
+    if (global_slot >= agent_q::kBip39MnemonicWordCount) {
+        return;
+    }
+    agent_q::wipe_sensitive_buffer(
+        g_provisioning_scratch.recover_prefixes[global_slot],
+        kRecoverPrefixBufferSize);
+    g_provisioning_scratch.recover_word_selected[global_slot] = false;
+    g_provisioning_scratch.recover_word_indices[global_slot] = 0;
+    g_provisioning_scratch.recover_word_deadline =
+        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
+    if (!show_recover_word_entry_panel()) {
+        wipe_setup_scratch("recovery word entry display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void handle_recover_candidate_from_local_ui(uint16_t word_index)
+{
+    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry ||
+        word_index >= agent_q::kBip39WordCount ||
+        agent_q::bip39_english_word(word_index) == nullptr) {
+        return;
+    }
+    const size_t global_slot = recover_global_word_slot();
+    if (global_slot >= agent_q::kBip39MnemonicWordCount) {
+        return;
+    }
+    g_provisioning_scratch.recover_word_indices[global_slot] = word_index;
+    g_provisioning_scratch.recover_word_selected[global_slot] = true;
+    write_selected_word_prefix(global_slot, word_index);
+    if (g_provisioning_scratch.recover_active_slot + 1 < kRecoverWordsPerPage) {
+        ++g_provisioning_scratch.recover_active_slot;
+    }
+    g_provisioning_scratch.recover_word_deadline =
+        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
+    if (!show_recover_word_entry_panel()) {
+        wipe_setup_scratch("recovery word entry display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void handle_recover_previous_from_local_ui()
+{
+    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry ||
+        g_provisioning_scratch.recover_page == 0) {
+        return;
+    }
+    --g_provisioning_scratch.recover_page;
+    g_provisioning_scratch.recover_active_slot = 0;
+    g_provisioning_scratch.recover_word_deadline =
+        xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
+    if (!show_recover_word_entry_panel()) {
+        wipe_setup_scratch("recovery word entry display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void start_pin_setup_after_recovered_entropy()
+{
+    g_provisioning_scratch.setup_stage = SetupScratchStage::pin_first_entry;
+    wipe_recover_word_entry_scratch();
+    agent_q::wipe_sensitive_buffer(g_provisioning_scratch.pin_first, sizeof(g_provisioning_scratch.pin_first));
+    agent_q::wipe_sensitive_buffer(g_provisioning_scratch.pin_entry, sizeof(g_provisioning_scratch.pin_entry));
+    g_provisioning_scratch.pin_entry_length = 0;
+    g_provisioning_scratch.pin_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kLocalPinSetupMs);
+
+    if (!show_pin_setup_panel()) {
+        wipe_setup_scratch("local PIN setup display allocation failed after recovery");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
+void handle_recover_next_from_local_ui()
+{
+    if (g_provisioning_scratch.setup_stage != SetupScratchStage::recover_word_entry ||
+        !recover_current_page_complete()) {
+        return;
+    }
+
+    if (g_provisioning_scratch.recover_page + 1 < kRecoverPageCount) {
+        ++g_provisioning_scratch.recover_page;
+        g_provisioning_scratch.recover_active_slot = 0;
+        g_provisioning_scratch.recover_word_deadline =
+            xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
+        if (!show_recover_word_entry_panel()) {
+            wipe_setup_scratch("recovery word entry display allocation failed");
+            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        }
+        return;
+    }
+
+    if (!recover_all_words_complete()) {
+        return;
+    }
+
+    const agent_q::Bip39EntropyRecoveryResult result =
+        agent_q::recover_bip39_entropy_12_words(
+            g_provisioning_scratch.recover_word_indices,
+            agent_q::kBip39MnemonicWordCount,
+            g_provisioning_scratch.root_material,
+            sizeof(g_provisioning_scratch.root_material));
+    if (result != agent_q::Bip39EntropyRecoveryResult::ok) {
+        agent_q::wipe_sensitive_buffer(
+            g_provisioning_scratch.root_material,
+            sizeof(g_provisioning_scratch.root_material));
+        g_provisioning_scratch.recover_word_deadline =
+            xTaskGetTickCount() + pdMS_TO_TICKS(kProvisioningApprovalMaxMs);
+        if (!show_recover_word_entry_panel("Checksum failed. Recheck words.")) {
+            wipe_setup_scratch("recovery checksum failure display allocation failed");
+            show_agent_q_message("Recovery error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        }
+        return;
+    }
+
+    start_pin_setup_after_recovered_entropy();
+}
+
 void drain_ui_events()
 {
     if (g_ui_event_queue == nullptr) {
@@ -3104,7 +4020,22 @@ void drain_ui_events()
     AgentQUiEvent event;
     while (xQueueReceive(g_ui_event_queue, &event, 0) == pdTRUE) {
         if (event.kind == AgentQUiEventKind::setup_requested) {
+            show_setup_choice_from_setup_touch();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::setup_generate_requested) {
             start_local_provisioning_from_setup_touch();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::setup_recover_requested) {
+            start_local_recovery_from_setup_choice();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::setup_cancel_requested) {
+            cancel_setup_from_local_ui();
             continue;
         }
 
@@ -3140,6 +4071,41 @@ void drain_ui_events()
 
         if (event.kind == AgentQUiEventKind::recovery_phrase_confirm_requested) {
             confirm_recovery_phrase_from_local_ui();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::recover_slot_requested) {
+            handle_recover_slot_from_local_ui(event.slot);
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::recover_letter_requested) {
+            handle_recover_letter_from_local_ui(event.letter);
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::recover_clear_requested) {
+            handle_recover_clear_from_local_ui();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::recover_candidate_requested) {
+            handle_recover_candidate_from_local_ui(event.word_index);
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::recover_previous_requested) {
+            handle_recover_previous_from_local_ui();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::recover_next_requested) {
+            handle_recover_next_from_local_ui();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::recover_cancel_requested) {
+            cancel_setup_from_local_ui();
             continue;
         }
 
@@ -3209,6 +4175,12 @@ void drain_ui_events()
         if (event.panel_kind == AgentQUiPanelKind::recovery_phrase_display &&
             g_provisioning_scratch.setup_stage == SetupScratchStage::recovery_phrase_displayed) {
             wipe_setup_scratch("recovery phrase panel deleted");
+        } else if (event.panel_kind == AgentQUiPanelKind::setup_choice &&
+                   g_provisioning_scratch.setup_stage == SetupScratchStage::setup_choice) {
+            wipe_setup_scratch("setup choice panel deleted");
+        } else if (event.panel_kind == AgentQUiPanelKind::recovery_word_entry &&
+                   g_provisioning_scratch.setup_stage == SetupScratchStage::recover_word_entry) {
+            wipe_setup_scratch("recovery word entry panel deleted");
         } else if (event.panel_kind == AgentQUiPanelKind::pin_entry &&
                    (g_provisioning_scratch.setup_stage == SetupScratchStage::pin_first_entry ||
                     g_provisioning_scratch.setup_stage == SetupScratchStage::pin_repeat_entry)) {
@@ -3537,12 +4509,14 @@ void usb_request_task(void*)
     // (poll_usb_input). A new request therefore cannot be handled until the
     // in-flight approval response has been written in the same loop pass.
     while (true) {
-        drain_ui_events();
         clear_identification_if_needed();
         clear_agent_q_message_if_needed();
+        clear_setup_choice_if_needed();
         clear_recovery_phrase_if_needed();
+        clear_recovery_word_entry_if_needed();
         clear_pin_setup_if_needed();
         clear_local_reset_if_needed();
+        drain_ui_events();
         commit_local_setup_if_ready();
         verify_local_reset_pin_if_ready();
         commit_local_reset_if_ready();

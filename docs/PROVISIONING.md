@@ -181,15 +181,16 @@ stateDiagram-v2
 ```
 
 The current runtime does not expose USB requests for provisioning start,
-provisioning cancel, recovery phrase backup confirmation, factory reset, or
-diagnostic display signaling. These transitions are device-local UX only.
+provisioning cancel, recovery phrase backup confirmation, mnemonic import,
+factory reset, or diagnostic display signaling. These transitions are
+device-local UX only.
 
 ## Recovery Phrase Setup v0
 
-Current StackChan CoreS3 source enters recovery phrase setup only through the
-local setup speech bubble shown while the device is `unprovisioned`. The
-recovery phrase panel has device-local Cancel/Confirm buttons. Gateway/MCP
-cannot start, cancel, or confirm this setup flow through USB protocol messages.
+Current StackChan CoreS3 source enters setup only through the local setup speech
+bubble shown while the device is `unprovisioned`. The first local setup panel
+offers `Generate` and `Recover`. Gateway/MCP cannot start, cancel, confirm, or
+import this setup flow through USB protocol messages.
 
 Local setup generates 128-bit BIP-39 root entropy from an Agent-Q CSPRNG seeded
 from early boot entropy before HAL initialization, then uses BIP-39 checksum
@@ -203,20 +204,35 @@ receives them. No protocol response carries the phrase, prefixes, entropy,
 seed, private key, account data, or policy data.
 
 Firmware tracks the volatile setup flow with explicit RAM scratch substates:
-`none`, `recovery_phrase_displayed`, `pin_first_entry`, `pin_repeat_entry`, and
-`pin_committing`. This substate is separate from the persistent
+`none`, `setup_choice`, `recovery_phrase_displayed`, `recover_word_entry`,
+`pin_first_entry`, `pin_repeat_entry`, and `pin_committing`. This substate is
+separate from the persistent
 `provisioning.state`, session state, display power state, and LVGL panel state.
 The UI is not the source of truth; panel deletion or replacement is treated as
 an event that must wipe or invalidate the current setup scratch.
 
-Backup confirmation is accepted only after a phrase has been displayed. The
-device-local Confirm button does not store material by itself. It advances the
-RAM scratch state to local PIN setup, wipes phrase text/prefix scratch, and
-requires the user to enter and repeat a 6-digit numeric PIN on the device. If
-the two entries mismatch, Firmware wipes only typed PIN scratch and returns to
-the first PIN entry while retaining the root entropy scratch. If PIN setup is
-canceled, times out, or loses its panel, Firmware wipes PIN and root scratch and
-leaves persistent state `unprovisioned`.
+In the local recovery path, the device shows three word-entry cells per page for
+four pages. The cells use the same numbered, bordered visual style as the
+generated mnemonic prefix grid. The user selects a word cell, enters a
+lowercase BIP-39 prefix through device-local A-Z buttons, then selects a
+matching BIP-39 word from the scrollable on-device candidate bubbles. Recovery
+word input is secret scratch owned by Firmware. `Next` is available only after
+all three words on the page are selected. After all 12 words are selected,
+Firmware reconstructs the 128-bit BIP-39 entropy and verifies the checksum.
+Checksum failure stores nothing and keeps the user in local recovery entry;
+Cancel, timeout, panel deletion, or display allocation failure wipes recovery
+word scratch and leaves persistent state `unprovisioned`.
+
+Backup confirmation is accepted only after a generated phrase has been
+displayed. The device-local Confirm button does not store material by itself.
+It advances the RAM scratch state to local PIN setup, wipes phrase text/prefix
+scratch, and requires the user to enter and repeat a 6-digit numeric PIN on the
+device. The recovery path reaches the same PIN setup state only after 12
+selected BIP-39 words pass checksum validation. If the two PIN entries mismatch,
+Firmware wipes only typed PIN scratch and returns to the first PIN entry while
+retaining the root entropy scratch. If PIN setup is canceled, times out, or
+loses its panel, Firmware wipes PIN and root scratch and leaves persistent state
+`unprovisioned`.
 
 Only after the repeated PIN matches does Firmware enter `pin_committing`, keep
 the PIN panel active with a non-interactive processing overlay, then store the
@@ -244,8 +260,9 @@ persistent state `unprovisioned`. If display expiry, UI replacement, or another
 failure removes the panel, Firmware must wipe scratch and the user must start
 the local setup flow again.
 
-This v0 flow provides read-only `get_accounts` but deliberately stops before
-signing, policy, and USER_PROFILE secure provisioning. USER_PROFILE signing material remains blocked
+This v0 flow provides read-only `get_accounts` and device-local mnemonic
+recovery, but deliberately stops before signing, policy update, and
+USER_PROFILE secure provisioning. USER_PROFILE signing material remains blocked
 by the security-profile gates in `docs/SECURITY_MODEL.md`: secure firmware
 profile, encrypted storage, verified RNG readiness, destructive hardware
 rehearsal, and hardware smoke.
@@ -283,9 +300,10 @@ StackChan CoreS3 DEV_PROFILE source path. StackChan CoreS3 local setup and PIN
 entry were manually smoke-tested after commit `2cb243b`; rerun hardware smoke
 after setup UI or state changes. Source-level local reset/material wipe exists
 and was manually smoke-tested after commit `7c6e65c`; rerun hardware smoke after
-reset UI or reset-state changes. Sui `sign_personal_message` (step 7), mnemonic
-import, signing APIs, policy update, recovery import UX, and USER_PROFILE secure
-provisioning are not implemented.
+reset UI or reset-state changes. Source-level device-local mnemonic recovery
+entry exists; hardware smoke is still required before claiming target UX
+verification. Sui `sign_personal_message` (step 7), signing APIs, policy
+update, and USER_PROFILE secure provisioning are not implemented.
 
 ## Completion Criteria
 

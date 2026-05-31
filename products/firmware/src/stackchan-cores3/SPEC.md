@@ -42,8 +42,8 @@ Legend:
 | USB JSONL transport | O | Uses ESP32-S3 USB Serial/JTAG. |
 | Persistent protocol `deviceId` | O | Stored in NVS namespace `agent_q`, key `device_id`. |
 | `get_status` | O | Returns device id, current state, and provisioning status without approval UI. |
-| Provisioning status reporting | △ | Reports `unprovisioned`, material-backed `provisioned`, or `error` for persistent material inconsistency. Manual smoke observed `provisioned` after local setup on StackChan CoreS3; failure and recovery states still need targeted hardware checks. This is not signing readiness: read-only `get_accounts` and `get_policy` expose public/metadata state only, while signing remains unavailable. |
-| Mnemonic UI flow v0 | △ | The local setup speech bubble generates DEV_PROFILE BIP-39 root entropy into RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, advances to local 6-digit PIN entry after local backup confirmation, and stores root entropy plus an active default-reject policy plus a salt/PIN verifier only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. Local Confirm/Cancel and PIN keypad controls own the setup transitions; there are no USB setup transition requests. StackChan CoreS3 local setup and PIN entry were manually smoke-tested after commit `2cb243b`; rerun hardware smoke after setup UI or state changes. |
+| Provisioning status reporting | △ | Reports `unprovisioned`, material-backed `provisioned`, or `error` for persistent material inconsistency. Manual smoke observed `provisioned` after local setup and recovery setup on StackChan CoreS3; failure and consistency-error states still need targeted hardware checks. This is not signing readiness: read-only `get_accounts` and `get_policy` expose public/metadata state only, while signing remains unavailable. |
+| Mnemonic UI flow v0 | △ | The local setup speech bubble opens a Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and advances to local 6-digit PIN entry after local backup confirmation. Recover accepts 12 BIP-39 words through a device-local 3-word-per-page prefix/candidate UI, verifies checksum, then enters the same PIN setup path. The target stores root entropy plus an active default-reject policy plus a salt/PIN verifier only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. Local controls own the setup transitions; there are no USB setup transition requests. Generate setup and PIN entry were manually smoke-tested after commit `2cb243b`; Recover was manually smoke-tested on StackChan CoreS3 during the recovery-entry slice. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `connect` | O | Source accepts connection only after material-backed `provisioned` state and physical approval. The session is RAM-only and does not authorize signing. Rerun hardware smoke after setup, session, or material-storage changes. |
 | `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. Rerun hardware smoke after setup, session, or material-storage changes. |
@@ -59,7 +59,7 @@ Legend:
 | `get_policy` | △ | Source implements a session-scoped read-only summary of the active DEV_PROFILE default-reject policy (`agentq.policy.v0`, hash id, `reject`, zero rules). Corrupt/unreadable policy fails closed; missing policy is migrated only for legacy root-only DEV_PROFILE devices. Gateway/MCP parser tests and target policy-store host tests cover this path; hardware smoke is still required. |
 | `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke. It consumes the stored active default-reject policy; corrupt/unreadable policy is a material-consistency error rather than a normal `provisioned` state, while missing policy is migrated only for legacy root-only DEV_PROFILE devices. Host tests cover the request field/type validation helper and policy store provider. Hardware smoke remains required for the stored-policy path. No approval UI, capability advertisement, or signing is connected. |
 | Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation plus matching PIN repeat. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
-| Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display, local 6-digit PIN setup, and backup-confirmed root entropy storage source exists. Mnemonic import and USER_PROFILE secure provisioning are not implemented. |
+| Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display, device-local mnemonic recovery entry, local 6-digit PIN setup, and backup-confirmed/checksum-verified root entropy storage source exists. USB/Gateway/MCP mnemonic import and USER_PROFILE secure provisioning are not implemented. |
 | Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat stores root entropy, initializes the active default-reject policy, and stores the local PIN verifier. Public account derivation is implemented via `get_accounts`; signing and USER_PROFILE secure provisioning are not implemented. |
 | Policy evaluator foundation | △ | Links the common host-tested policy evaluator, stored-policy provider boundary, and Sui restricted-transfer facts adapter. Sui `sign_transaction` consumes the stored active default-reject decision only as a rejected policy-decision smoke result; it does not sign. |
 | Policy storage/read | △ | Stores only the DEV_PROFILE active default-reject policy record in NVS, exposes a read-only `get_policy` summary, migrates legacy root-only missing policy to the default-reject record, and treats corrupt/unreadable records as a material-consistency error. Policy update authorization and custom policy content are not implemented. |
@@ -135,7 +135,9 @@ Current UI behavior:
 | `unprovisioned` idle | Touchable setup speech bubble | `idle` |
 | `get_status` | No UI | `idle` unless approval UI is active |
 | `identify_device` | Temporary speech bubble with short code | `idle` |
+| Local setup choice | Temporary Generate/Recover setup panel | `busy` |
 | Recovery phrase displayed | Temporary setup panel with 12 numbered up-to-4-letter prefixes in 3 columns by 4 rows and bottom Cancel/Confirm buttons | `busy` |
+| Mnemonic recovery entry | Temporary setup panel with three numbered word cells, A-Z prefix buttons, scrollable BIP-39 candidate bubbles, and local Cancel/Clear/Previous/Next controls | `busy` |
 | Local recovery phrase Confirm | Uses the recovery phrase panel's bottom Confirm button and advances to local PIN entry | `busy` |
 | Local PIN setup | Temporary setup panel with numeric keypad, masked 6-digit entry, Clear, backspace icon, Cancel, and Confirm | `busy` |
 | Local settings reset | Temporary local settings menu and reset PIN entry panels; Reset opens PIN verification directly | `busy` |
@@ -244,40 +246,55 @@ smoke is still required. `get_status` returns `provisioning.state`.
 
 Setup transition paths are local device UX only. The target does not implement
 USB requests for setup start, setup cancel, recovery phrase backup
-confirmation, factory reset, or diagnostic display signaling. `provisioned` is
-set only after local backup confirmation, matching local PIN repeat, and
-successful root entropy, active policy, local PIN verifier, and
-provisioning-state persistence. `locked` is not used because no unlock model
-exists.
+confirmation, mnemonic import/recovery, factory reset, or diagnostic display
+signaling. `provisioned` is set only after local backup confirmation or
+checksum-verified local recovery, matching local PIN repeat, and successful
+root entropy, active policy, local PIN verifier, and provisioning-state
+persistence. `locked` is not used because no unlock model exists.
 
 Recovery phrase setup v0 starts from the local setup speech bubble shown while
-the device is `unprovisioned`. The flow uses an Agent-Q CSPRNG seeded from early
-boot entropy before HAL initialization plus BIP-39 checksum logic to create a
-12-word DEV_PROFILE recovery phrase in RAM, then displays only the
-up-to-4-letter word prefixes on the device in a 3-column by 4-row grid.
-Three-letter BIP-39 words are displayed as the full word. BIP-39 English
-prefixes identify the words and are secret material. No protocol response
-contains the phrase, prefixes, entropy, seed, private key, account data, or
-policy data.
+the device is `unprovisioned`, then shows local Generate and Recover choices.
+Generate uses an Agent-Q CSPRNG seeded from early boot entropy before HAL
+initialization plus BIP-39 checksum logic to create a 12-word DEV_PROFILE
+recovery phrase in RAM, then displays only the up-to-4-letter word prefixes on
+the device in a 3-column by 4-row grid. Three-letter BIP-39 words are displayed
+as the full word. Recover uses a device-local word-entry panel with three
+numbered word cells per page for four pages. The user taps a cell, enters a
+BIP-39 prefix through local A-Z buttons, and selects a matching word from
+scrollable on-device candidate bubbles. BIP-39 English prefixes and recovered
+words are secret material. No protocol response contains the phrase, prefixes,
+recovered words, entropy, seed, private key, account data, or policy data.
 The target tracks volatile setup with RAM-only scratch substates: `none`,
-`recovery_phrase_displayed`, `pin_first_entry`, `pin_repeat_entry`, and
-`pin_committing`. This substate is separate from persistent
+`setup_choice`, `recovery_phrase_displayed`, `recover_word_entry`,
+`pin_first_entry`, `pin_repeat_entry`, and `pin_committing`. This substate is
+separate from persistent
 `provisioning.state`, session state, display power state, and the LVGL panel
 pointer.
+
+Recover `Next` is enabled only when all three words on the current page are
+selected. After 12 words are selected, Firmware reconstructs 128-bit BIP-39
+entropy and verifies the checksum before entering PIN setup. Checksum failure
+stores nothing and keeps recovery entry active. Cancel, timeout, panel
+deletion, or display allocation failure wipes recovery scratch and leaves the
+target `unprovisioned`.
 
 Backup confirmation is accepted only from the recovery phrase panel's local
 Confirm button after the scratch substate is `recovery_phrase_displayed`. The
 device-local Confirm button advances to local PIN entry; it does not store
-persistent material by itself. The PIN entry screen accepts exactly six digits,
-asks for a repeat, wipes typed PIN scratch on mismatch, and returns to first PIN
-entry while retaining root entropy scratch. Matching PIN repeat enters
+persistent material by itself. The recovery path reaches the same PIN entry only
+after 12 selected BIP-39 words pass checksum validation. The PIN entry screen
+accepts exactly six digits, asks for a repeat, wipes typed PIN scratch on
+mismatch, and returns to first PIN entry while retaining root entropy scratch.
+Matching PIN repeat enters
 `pin_committing`, keeps the PIN panel active with a non-interactive processing
 overlay, stores the DEV_PROFILE root entropy blob, stores the active
 default-reject policy, stores a salt + PIN verifier, persists `provisioned`, and
 then wipes volatile scratch. Storage failure rolls back persistent setup
 material where possible, wipes scratch, and must not report `provisioned`.
-StackChan CoreS3 local setup and PIN entry were manually smoke-tested after
-commit `2cb243b`; rerun hardware smoke after setup UI or state changes.
+StackChan CoreS3 Generate setup and PIN entry were manually smoke-tested after
+commit `2cb243b`; Recover entry was manually smoke-tested on StackChan CoreS3
+during the recovery-entry slice. Rerun hardware smoke after setup UI or state
+changes.
 
 The LVGL panel is not the source of truth for setup scratch validity. If the
 recovery phrase display or PIN panel is removed or replaced while the matching

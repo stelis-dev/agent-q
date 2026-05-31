@@ -115,7 +115,8 @@ Allowed:
 
 - `get_status`
 - `identify_device`
-- device-local setup speech bubble and recovery phrase Cancel/Confirm controls
+- device-local setup speech bubble, Generate/Recover choice, recovery phrase
+  Cancel/Confirm controls, and mnemonic recovery word-entry controls
 
 Rejected:
 
@@ -129,10 +130,11 @@ Rejected:
 - signing
 - external evidence or price fetch
 
-Current mnemonic setup is a volatile substate under `unprovisioned` until the
-user physically confirms backup, enters and repeats a 6-digit local PIN, and
-Firmware stores root material, active policy, and the PIN verifier. The host
-never receives the phrase, its up-to-4-letter prefixes, or the PIN.
+Current mnemonic setup and mnemonic recovery are volatile substates under
+`unprovisioned` until the user physically confirms backup or completes local
+word entry, enters and repeats a 6-digit local PIN, and Firmware stores root
+material, active policy, and the PIN verifier. The host never receives the
+phrase, its up-to-4-letter prefixes, entered recovery words, or the PIN.
 
 ### `provisioning`
 
@@ -157,8 +159,9 @@ Scratch signing material may exist only inside Firmware during setup steps.
 Canceling setup must wipe scratch material before returning to `unprovisioned`.
 Current StackChan CoreS3 source limits recovery phrase and typed PIN scratch to
 RAM and tracks setup with volatile substates: `none`,
-`recovery_phrase_displayed`, `pin_first_entry`, `pin_repeat_entry`, and
-`pin_committing`. Those scratch substates are separate from persistent
+`setup_choice`, `recovery_phrase_displayed`, `recover_word_entry`,
+`pin_first_entry`, `pin_repeat_entry`, and `pin_committing`. Those scratch
+substates are separate from persistent
 `provisioning.state`, pending approval state, and UI panel state.
 The current StackChan CoreS3 persistent material slice resets stale
 `provisioning` state to `unprovisioned` when no valid root material or active

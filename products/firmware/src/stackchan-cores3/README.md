@@ -28,14 +28,16 @@ The current implementation includes:
   rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only
   for restricted-transfer policy-decision smoke. It does not ask for signing
   approval or sign.
-- a device-local mnemonic setup flow. The local setup speech bubble generates
-  DEV_PROFILE BIP-39 root entropy in RAM, displays only the up-to-4-letter word
-  prefixes on device in a 3-column by 4-row grid, advances to local 6-digit PIN
-  entry after the recovery phrase panel's local `Confirm` button, and stores
-  the root entropy plus active default-reject policy plus salt/PIN verifier only
-  after the repeated PIN matches. The recovery phrase and PIN panels also have
-  local `Cancel` controls that wipe volatile setup scratch. These setup
-  transitions are not exposed as USB JSONL requests.
+- a device-local mnemonic setup flow. The local setup speech bubble opens a
+  Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
+  RAM, displays only the up-to-4-letter word prefixes on device in a 3-column
+  by 4-row grid, and advances to local 6-digit PIN entry after the recovery
+  phrase panel's local `Confirm` button. Recover accepts 12 BIP-39 words
+  through a device-local 3-word-per-page prefix/candidate UI, verifies checksum,
+  and then advances to the same local PIN setup path. The target stores the root
+  entropy plus active default-reject policy plus salt/PIN verifier only after
+  the repeated PIN matches. Local Cancel controls wipe volatile setup scratch.
+  These setup transitions are not exposed as USB JSONL requests.
 - a device-local settings reset flow for `provisioned` devices. Reset requires
   the local Settings Reset action plus the stored 6-digit PIN, wipes root material,
   active policy, PIN verifier, runtime session, and provisioning state, and is
@@ -202,10 +204,13 @@ verifier are not migrated and fail closed until reprovisioned.
 | `policy_v0` | DEV_PROFILE active default-reject policy record |
 | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
 
-Recovery phrase setup v0 stores generated phrase text only in RAM, displays
-only up-to-4-letter prefixes on device, advances to local 6-digit PIN setup on
-backup confirmation, and wipes volatile setup scratch on cancel, display expiry,
-PIN timeout, storage failure, or firmware restart. Backup-confirmed root entropy
+Recovery phrase setup v0 stores generated phrase text and recovered mnemonic
+word-entry scratch only in RAM. Generate displays only up-to-4-letter prefixes
+on device and advances to local 6-digit PIN setup on backup confirmation.
+Recover uses device-local A-Z prefix buttons and scrollable BIP-39 candidate
+bubbles, verifies checksum, and then advances to the same PIN setup path.
+Volatile setup scratch is wiped on cancel, display expiry, PIN timeout, storage
+failure, or firmware restart. Backup-confirmed or checksum-verified root entropy
 is stored as DEV_PROFILE scaffolding only after the repeated PIN matches; this
 build does not enable USER_PROFILE encrypted storage. Three-letter BIP-39 words
 are displayed as the full word.
