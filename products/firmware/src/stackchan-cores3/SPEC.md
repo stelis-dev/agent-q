@@ -47,7 +47,7 @@ Legend:
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `connect` | O | Source accepts connection only after material-backed `provisioned` state and physical approval. The session is RAM-only and does not authorize signing. Rerun hardware smoke after setup, session, or material-storage changes. |
 | `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. Rerun hardware smoke after setup, session, or material-storage changes. |
-| Local reset / material wipe | △ | Source implements a device-local settings reset path for `provisioned`: local settings entry, Reset menu action, stored PIN verification, root material wipe, active policy wipe, PIN verifier wipe, session cleanup, and return to `unprovisioned`. Host-triggered reset/debug protocol paths are intentionally not implemented. Hardware smoke is still required. |
+| Local reset / material wipe | △ | Source implements a device-local settings reset path for `provisioned`: local settings entry, Reset menu action, stored PIN verification, root material wipe, active policy wipe, PIN verifier wipe, session cleanup, and return to `unprovisioned`. Host-triggered reset/debug protocol paths are intentionally not implemented. StackChan CoreS3 local reset was manually smoke-tested after commit `7c6e65c`; rerun hardware smoke after reset UI or reset-state changes. |
 | Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |

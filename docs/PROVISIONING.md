@@ -104,7 +104,8 @@ through `get_accounts` and rejected Sui `sign_transaction` policy-decision
 handling. StackChan CoreS3 local setup and PIN entry were manually smoke-tested
 after commit `2cb243b`; rerun hardware smoke after setup UI or state changes.
 Source-level local settings reset/material wipe now exists for provisioned
-StackChan CoreS3 devices, but still requires hardware smoke. Mnemonic import
+StackChan CoreS3 devices and was manually smoke-tested after commit `7c6e65c`.
+Mnemonic import
 and signing are not implemented.
 
 ## Chain Accounts
@@ -281,7 +282,8 @@ Current implementation status: steps 1 through 6 are implemented for the
 StackChan CoreS3 DEV_PROFILE source path. StackChan CoreS3 local setup and PIN
 entry were manually smoke-tested after commit `2cb243b`; rerun hardware smoke
 after setup UI or state changes. Source-level local reset/material wipe exists
-and still needs hardware smoke. Sui `sign_personal_message` (step 7), mnemonic
+and was manually smoke-tested after commit `7c6e65c`; rerun hardware smoke after
+reset UI or reset-state changes. Sui `sign_personal_message` (step 7), mnemonic
 import, signing APIs, policy update, recovery import UX, and USER_PROFILE secure
 provisioning are not implemented.
 

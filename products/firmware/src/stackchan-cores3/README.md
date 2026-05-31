@@ -39,7 +39,9 @@ The current implementation includes:
 - a device-local settings reset flow for `provisioned` devices. Reset requires
   the local Settings Reset action plus the stored 6-digit PIN, wipes root material,
   active policy, PIN verifier, runtime session, and provisioning state, and is
-  not exposed as a USB JSONL request. Hardware smoke is still required.
+  not exposed as a USB JSONL request. StackChan CoreS3 local reset was manually
+  smoke-tested after commit `7c6e65c`; rerun hardware smoke after reset UI or
+  reset-state changes.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP
