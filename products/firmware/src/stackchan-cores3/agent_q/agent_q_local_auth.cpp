@@ -195,6 +195,44 @@ AgentQLocalAuthStatus read_local_auth_record(StoredLocalAuthRecord* out, bool lo
     return AgentQLocalAuthStatus::active;
 }
 
+bool active_record_matches(const StoredLocalAuthRecord& expected)
+{
+    StoredLocalAuthRecord current = {};
+    const bool matches =
+        read_local_auth_record(&current, false) == AgentQLocalAuthStatus::active &&
+        memcmp(&current, &expected, sizeof(current)) == 0;
+    wipe_sensitive_buffer(&current, sizeof(current));
+    return matches;
+}
+
+bool stored_pin_verifies(const char* pin, bool* verified, bool log_failures)
+{
+    if (verified != nullptr) {
+        *verified = false;
+    }
+    if (verified == nullptr || !is_valid_local_pin(pin)) {
+        return false;
+    }
+
+    StoredLocalAuthRecord record = {};
+    if (read_local_auth_record(&record, log_failures) != AgentQLocalAuthStatus::active) {
+        return false;
+    }
+
+    uint8_t candidate[kVerifierBytes] = {};
+    const bool derived = derive_pin_verifier(pin, record.salt, candidate);
+    if (!derived) {
+        wipe_sensitive_buffer(&record, sizeof(record));
+        wipe_sensitive_buffer(candidate, sizeof(candidate));
+        return false;
+    }
+
+    *verified = constant_time_equal(candidate, record.verifier, sizeof(candidate));
+    wipe_sensitive_buffer(&record, sizeof(record));
+    wipe_sensitive_buffer(candidate, sizeof(candidate));
+    return true;
+}
+
 }  // namespace
 
 bool is_valid_local_pin(const char* pin)
@@ -217,13 +255,19 @@ bool store_local_pin_verifier(const char* pin)
         return false;
     }
 
+    StoredLocalAuthRecord previous_record = {};
+    const bool had_previous_record =
+        read_local_auth_record(&previous_record, false) == AgentQLocalAuthStatus::active;
+
     StoredLocalAuthRecord record = make_empty_record();
     if (!fill_secure_random(record.salt, sizeof(record.salt))) {
         ESP_LOGE(kTag, "Secure RNG unavailable for local PIN salt");
+        wipe_sensitive_buffer(&previous_record, sizeof(previous_record));
         wipe_sensitive_buffer(&record, sizeof(record));
         return false;
     }
     if (!derive_pin_verifier(pin, record.salt, record.verifier)) {
+        wipe_sensitive_buffer(&previous_record, sizeof(previous_record));
         wipe_sensitive_buffer(&record, sizeof(record));
         return false;
     }
@@ -232,6 +276,7 @@ bool store_local_pin_verifier(const char* pin)
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
     if (result != ESP_OK) {
         ESP_LOGW(kTag, "NVS open failed while storing local auth: %s", esp_err_to_name(result));
+        wipe_sensitive_buffer(&previous_record, sizeof(previous_record));
         wipe_sensitive_buffer(&record, sizeof(record));
         return false;
     }
@@ -245,40 +290,43 @@ bool store_local_pin_verifier(const char* pin)
 
     if (result != ESP_OK) {
         ESP_LOGW(kTag, "NVS write failed for local auth: %s", esp_err_to_name(result));
+        bool new_pin_active = false;
+        if (stored_pin_verifies(pin, &new_pin_active, false) && new_pin_active) {
+            wipe_sensitive_buffer(&previous_record, sizeof(previous_record));
+            ESP_LOGW(kTag, "Local PIN verifier write reported failure but replacement is active");
+            return true;
+        }
+        if (had_previous_record && active_record_matches(previous_record)) {
+            wipe_sensitive_buffer(&previous_record, sizeof(previous_record));
+            return false;
+        }
+        if (!had_previous_record && local_auth_status() == AgentQLocalAuthStatus::missing) {
+            wipe_sensitive_buffer(&previous_record, sizeof(previous_record));
+            return false;
+        }
+
+        ESP_LOGE(kTag, "Local PIN verifier write left ambiguous auth state; wiping verifier");
+        wipe_sensitive_buffer(&previous_record, sizeof(previous_record));
         wipe_local_auth();
         return false;
     }
 
+    bool new_pin_active = false;
+    if (!stored_pin_verifies(pin, &new_pin_active, false) || !new_pin_active) {
+        ESP_LOGE(kTag, "Local PIN verifier write did not produce an active matching verifier");
+        wipe_sensitive_buffer(&previous_record, sizeof(previous_record));
+        wipe_local_auth();
+        return false;
+    }
+
+    wipe_sensitive_buffer(&previous_record, sizeof(previous_record));
     ESP_LOGI(kTag, "Stored DEV_PROFILE local PIN verifier");
     return true;
 }
 
 bool verify_local_pin(const char* pin, bool* verified)
 {
-    if (verified != nullptr) {
-        *verified = false;
-    }
-    if (verified == nullptr || !is_valid_local_pin(pin)) {
-        return false;
-    }
-
-    StoredLocalAuthRecord record = {};
-    if (read_local_auth_record(&record, true) != AgentQLocalAuthStatus::active) {
-        return false;
-    }
-
-    uint8_t candidate[kVerifierBytes] = {};
-    const bool derived = derive_pin_verifier(pin, record.salt, candidate);
-    if (!derived) {
-        wipe_sensitive_buffer(&record, sizeof(record));
-        wipe_sensitive_buffer(candidate, sizeof(candidate));
-        return false;
-    }
-
-    *verified = constant_time_equal(candidate, record.verifier, sizeof(candidate));
-    wipe_sensitive_buffer(&record, sizeof(record));
-    wipe_sensitive_buffer(candidate, sizeof(candidate));
-    return true;
+    return stored_pin_verifies(pin, verified, true);
 }
 
 bool wipe_local_auth()

@@ -46,8 +46,8 @@ Legend:
 | Mnemonic UI flow v0 | △ | The local setup speech bubble opens a Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and advances to local 6-digit PIN entry after local backup confirmation. Recover accepts 12 BIP-39 words through a device-local 3-word-per-page prefix/candidate UI, verifies checksum, then enters the same PIN setup path. The target stores root entropy plus an active default-reject policy plus a salt/PIN verifier only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. Local controls own the setup transitions; there are no USB setup transition requests. Generate setup and PIN entry were manually smoke-tested after commit `2cb243b`; Recover was manually smoke-tested on StackChan CoreS3 during the recovery-entry slice. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `connect` | O | Source accepts connection only after material-backed `provisioned` state. Default connect approval requires local PIN entry on device; local settings can switch connect approval to physical Confirm after PIN verification. The session is RAM-only and does not authorize signing. Rerun hardware smoke after setup, session, or material-storage changes. |
-| `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. Rerun hardware smoke after setup, session, or material-storage changes. |
-| Local reset / material wipe | △ | Source implements a device-local settings reset path for `provisioned`: local settings entry, Reset menu action, stored PIN verification, root material wipe, active policy wipe, PIN verifier wipe, connect-approval setting wipe, session cleanup, and return to `unprovisioned`. Host-triggered reset/debug protocol paths are intentionally not implemented. StackChan CoreS3 local reset was manually smoke-tested after commit `7c6e65c`; rerun hardware smoke after reset UI or reset-state changes. |
+| `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. It returns `busy` while local setup/settings/PIN/reset flow state is active, including Change PIN, so external session teardown cannot interleave with device-local sensitive UI. Rerun hardware smoke after setup, session, or material-storage changes. |
+| Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: connect PIN toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, connect-approval setting, session, and returns to `unprovisioned`. Host-triggered reset/debug/PIN-change protocol paths are intentionally not implemented. StackChan CoreS3 local reset was manually smoke-tested after commit `7c6e65c`; rerun hardware smoke after settings or reset UI/state changes. |
 | Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
@@ -140,7 +140,7 @@ Current UI behavior:
 | Mnemonic recovery entry | Temporary setup panel with three numbered word cells, A-Z prefix buttons, scrollable BIP-39 candidate bubbles, and local Cancel/Clear/Previous/Next controls | `busy` |
 | Local recovery phrase Confirm | Uses the recovery phrase panel's bottom Confirm button and advances to local PIN entry | `busy` |
 | Local PIN setup | Temporary setup panel with numeric keypad, masked 6-digit entry, Clear, backspace icon, Cancel, and Confirm | `busy` |
-| Local settings menu | Temporary settings menu with fixed label/control rows. Current implemented actions are connect PIN toggle and Reset. Each sensitive action opens local PIN verification directly. | `busy` |
+| Local settings menu | Temporary settings menu with fixed label/control rows. Current implemented actions are connect PIN toggle, Change PIN, and Reset. Each sensitive action opens local PIN verification directly. | `busy` |
 | Local recovery phrase Cancel | Uses the recovery phrase panel's bottom Cancel button | `idle` after scratch wipe |
 | Approved result | Temporary success speech and emotion | `idle` |
 | Rejected result | Temporary rejected speech and emotion | `idle` |
@@ -331,15 +331,18 @@ The device-local Cancel button wipes volatile setup scratch and leaves
 persistent state `unprovisioned`. Cancellation does not erase already-confirmed
 root material, active policy, or PIN verifier.
 
-Local reset/material wipe is a separate device-local flow under `provisioned`.
+Local settings actions are separate device-local flows under `provisioned`.
 The target enters local settings only when no setup, approval, identification,
 or Agent-Q temporary UI is active. The settings screen presents fixed
 label/control rows and Close as the only bottom action. Current implemented
-settings actions are the connect PIN toggle and Reset. Selecting a sensitive
-action opens stored 6-digit PIN verification directly.
-Canceling connect-toggle PIN verification, canceling Reset PIN verification,
-and successfully changing the connect-toggle setting return to the settings menu
-instead of closing local settings.
+settings actions are the connect PIN toggle, Change PIN, and Reset. Selecting a
+sensitive action opens stored 6-digit PIN verification directly. Change PIN then
+accepts and repeats a new 6-digit PIN, stores only the replacement salt/verifier,
+and returns to Settings; storage failure either leaves the old verifier in place
+or fails closed if the post-write verifier state cannot be proven.
+Canceling connect-toggle, Change PIN, or Reset PIN verification, and
+successfully changing the connect-toggle setting or PIN verifier, return to the
+settings menu instead of closing local settings.
 Wrong PIN, timeout, or cancel leaves root material, active policy, PIN verifier,
 the local connect setting, and `provisioned` state intact.
 After Reset PIN confirm, the target keeps the reset PIN panel active and adds a
@@ -434,6 +437,9 @@ Current verification expectations for this target:
 - smoke-test local settings connect PIN toggle requires current PIN, changes
   only that local setting, and leaves it unchanged after wrong PIN, cancel, or
   timeout;
+- smoke-test local settings Change PIN requires the current PIN, stores the new
+  PIN only after repeated new PIN entry, leaves the old PIN valid on mismatch,
+  cancel, timeout, or storage failure, and never changes root material or policy;
 - smoke-test USB host SOF loss clears the Firmware RAM session;
 - smoke-test `disconnect` clears a matching active session and rejects an
   unknown or expired session id;

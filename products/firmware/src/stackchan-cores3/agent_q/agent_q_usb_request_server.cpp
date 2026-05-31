@@ -108,6 +108,7 @@ constexpr int kSettingsMenuRowLabelX = 24;
 constexpr int kSettingsMenuRowControlX = 218;
 constexpr int kSettingsMenuRowOneY = 62;
 constexpr int kSettingsMenuRowTwoY = 100;
+constexpr int kSettingsMenuRowThreeY = 138;
 constexpr int kSettingsMenuActionButtonWidth = 72;
 constexpr int kSettingsMenuActionButtonHeight = 26;
 constexpr int kSetupMenuGenerateButtonY = 78;
@@ -195,6 +196,7 @@ enum class AgentQUiEventKind {
     settings_requested,
     settings_cancel_requested,
     settings_connect_pin_requested,
+    settings_change_pin_requested,
     settings_reset_requested,
     reset_cancel_requested,
     recovery_phrase_cancel_requested,
@@ -232,13 +234,17 @@ enum class LocalPinAuthPurpose {
     none,
     connect,
     settings_connect_pin,
+    settings_change_pin,
 };
 
 enum class LocalPinAuthStage {
     none,
     pin_entry,
     pin_verifying,
+    new_pin_entry,
+    repeat_pin_entry,
     committing_setting,
+    committing_pin_change,
 };
 
 enum class ProvisioningRuntimeState {
@@ -342,6 +348,7 @@ struct AgentQUiState {
 
 struct LocalPinAuthState {
     char pin_entry[agent_q::kLocalPinBufferSize] = {};
+    char new_pin[agent_q::kLocalPinBufferSize] = {};
     size_t pin_entry_length = 0;
     LocalPinAuthPurpose purpose = LocalPinAuthPurpose::none;
     LocalPinAuthStage stage = LocalPinAuthStage::none;
@@ -359,6 +366,7 @@ struct LocalPinAuthState {
     void clear_flow()
     {
         agent_q::wipe_sensitive_buffer(pin_entry, sizeof(pin_entry));
+        agent_q::wipe_sensitive_buffer(new_pin, sizeof(new_pin));
         pin_entry_length = 0;
         purpose = LocalPinAuthPurpose::none;
         stage = LocalPinAuthStage::none;
@@ -374,6 +382,11 @@ struct LocalPinAuthState {
         pin_entry_length = 0;
         verify_ready_at = 0;
         commit_ready_at = 0;
+    }
+
+    void clear_new_pin()
+    {
+        agent_q::wipe_sensitive_buffer(new_pin, sizeof(new_pin));
     }
 
     void clear_attempts()
@@ -536,6 +549,14 @@ bool local_pin_auth_panel_matches_stage(AgentQUiPanelKind kind)
 {
     return kind == AgentQUiPanelKind::local_pin_auth &&
            g_local_pin_auth.flow_active();
+}
+
+bool local_pin_auth_accepts_keypad_input()
+{
+    return g_local_pin_auth.flow_active() &&
+           (g_local_pin_auth.stage == LocalPinAuthStage::pin_entry ||
+            g_local_pin_auth.stage == LocalPinAuthStage::new_pin_entry ||
+            g_local_pin_auth.stage == LocalPinAuthStage::repeat_pin_entry);
 }
 
 bool local_reset_panel_matches_stage(AgentQUiPanelKind kind)
@@ -1524,8 +1545,15 @@ bool write_busy_if_pending_or_local_flow_active(const char* id)
         write_error_response(id, "busy", "Device is showing setup material.");
         return true;
     }
-    if (agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active) {
-        write_error_response(id, "busy", "Device is showing local reset UI.");
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(xTaskGetTickCount());
+    if (reset.flow_active) {
+        write_error_response(
+            id,
+            "busy",
+            reset.stage == agent_q::AgentQLocalResetStage::settings_menu
+                ? "Device is showing local settings UI."
+                : "Device is showing local reset UI.");
         return true;
     }
     if (g_local_pin_auth.flow_active()) {
@@ -1630,6 +1658,11 @@ void on_settings_reset_clicked(lv_event_t*)
 void on_settings_connect_pin_clicked(lv_event_t*)
 {
     enqueue_ui_event(AgentQUiEventKind::settings_connect_pin_requested);
+}
+
+void on_settings_change_pin_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::settings_change_pin_requested);
 }
 
 void on_reset_cancel_clicked(lv_event_t*)
@@ -3140,17 +3173,28 @@ bool show_settings_menu_panel()
             kSettingsMenuRowOneY,
             kSettingsMenuActionButtonWidth,
             kSettingsMenuActionButtonHeight,
-            SetupButtonKind::solid_action,
-            lv_color_hex(require_pin_on_connect ? 0x24875A : 0x667085),
+            SetupButtonKind::outlined_keypad,
+            lv_color_hex(0x24875A),
             connect_setting_read_ok ? on_settings_connect_pin_clicked : nullptr,
             nullptr,
             connect_setting_read_ok) ||
-        !make_settings_row_label(g_ui.panel, "Reset device", kSettingsMenuRowTwoY) ||
+        !make_settings_row_label(g_ui.panel, "Change PIN", kSettingsMenuRowTwoY) ||
+        !make_setup_button(
+            g_ui.panel,
+            "CHANGE",
+            kSettingsMenuRowControlX,
+            kSettingsMenuRowTwoY,
+            kSettingsMenuActionButtonWidth,
+            kSettingsMenuActionButtonHeight,
+            SetupButtonKind::outlined_keypad,
+            lv_color_hex(0x24875A),
+            on_settings_change_pin_clicked) ||
+        !make_settings_row_label(g_ui.panel, "Reset device", kSettingsMenuRowThreeY) ||
         !make_setup_button(
             g_ui.panel,
             "RESET",
             kSettingsMenuRowControlX,
-            kSettingsMenuRowTwoY,
+            kSettingsMenuRowThreeY,
             kSettingsMenuActionButtonWidth,
             kSettingsMenuActionButtonHeight,
             SetupButtonKind::solid_action,
@@ -3163,8 +3207,8 @@ bool show_settings_menu_panel()
             kSetupActionButtonY,
             kRecoveryPhraseButtonWidth,
             kRecoveryPhraseButtonHeight,
-            SetupButtonKind::solid_action,
-            lv_color_hex(0x667085),
+            SetupButtonKind::outlined_keypad,
+            lv_color_hex(0x24875A),
             on_settings_cancel_clicked)) {
         clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
@@ -3303,7 +3347,36 @@ const char* local_pin_auth_default_message(bool processing_stage, bool locked_st
     if (g_local_pin_auth.purpose == LocalPinAuthPurpose::connect) {
         return "Enter local PIN to connect.";
     }
+    if (g_local_pin_auth.purpose == LocalPinAuthPurpose::settings_change_pin) {
+        if (g_local_pin_auth.stage == LocalPinAuthStage::new_pin_entry) {
+            return "Enter new PIN.";
+        }
+        if (g_local_pin_auth.stage == LocalPinAuthStage::repeat_pin_entry) {
+            return "Repeat new PIN.";
+        }
+        return "Enter current PIN.";
+    }
     return "Enter PIN to change setting.";
+}
+
+const char* local_pin_auth_title(bool processing_stage)
+{
+    if (processing_stage) {
+        return "Processing PIN";
+    }
+    if (g_local_pin_auth.purpose == LocalPinAuthPurpose::connect) {
+        return "Connect PIN";
+    }
+    if (g_local_pin_auth.purpose == LocalPinAuthPurpose::settings_change_pin) {
+        if (g_local_pin_auth.stage == LocalPinAuthStage::new_pin_entry) {
+            return "New PIN";
+        }
+        if (g_local_pin_auth.stage == LocalPinAuthStage::repeat_pin_entry) {
+            return "Repeat PIN";
+        }
+        return "Change PIN";
+    }
+    return "Settings PIN";
 }
 
 bool show_local_pin_auth_panel(const char* notice = nullptr)
@@ -3337,7 +3410,8 @@ bool show_local_pin_auth_panel(const char* notice = nullptr)
 
     const bool processing_stage =
         g_local_pin_auth.stage == LocalPinAuthStage::pin_verifying ||
-        g_local_pin_auth.stage == LocalPinAuthStage::committing_setting;
+        g_local_pin_auth.stage == LocalPinAuthStage::committing_setting ||
+        g_local_pin_auth.stage == LocalPinAuthStage::committing_pin_change;
     const TickType_t now = xTaskGetTickCount();
     agent_q::pin_attempt_release_if_elapsed(&g_local_pin_auth.pin_attempt, now);
     const bool locked_stage =
@@ -3349,11 +3423,7 @@ bool show_local_pin_auth_panel(const char* notice = nullptr)
         clear_panel_locked(SensitiveUiClearPolicy::wipe);
         return false;
     }
-    lv_label_set_text(
-        title,
-        processing_stage
-            ? "Processing PIN"
-            : (g_local_pin_auth.purpose == LocalPinAuthPurpose::connect ? "Connect PIN" : "Settings PIN"));
+    lv_label_set_text(title, local_pin_auth_title(processing_stage));
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
@@ -3762,7 +3832,13 @@ void clear_local_reset_if_needed()
     }
 
     if (expired) {
-        show_agent_q_message("Reset canceled", AgentQMessageKind::timeout, AgentQUiMode::result, kAgentQResultDisplayMs);
+        show_agent_q_message(
+            reset.stage == agent_q::AgentQLocalResetStage::settings_menu
+                ? "Settings timed out"
+                : "Reset canceled",
+            AgentQMessageKind::timeout,
+            AgentQUiMode::result,
+            kAgentQResultDisplayMs);
     }
 }
 
@@ -3923,10 +3999,34 @@ void start_settings_connect_pin_from_settings_menu()
     }
 }
 
+void start_settings_change_pin_from_settings_menu()
+{
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(xTaskGetTickCount());
+    if (!provisioned_material_ready() ||
+        reset.stage != agent_q::AgentQLocalResetStage::settings_menu ||
+        g_local_pin_auth.flow_active()) {
+        ESP_LOGW(kTag, "Stale settings Change PIN action ignored");
+        return;
+    }
+
+    agent_q::local_reset_wipe();
+    g_local_pin_auth.clear_flow();
+    g_local_pin_auth.purpose = LocalPinAuthPurpose::settings_change_pin;
+    g_local_pin_auth.stage = LocalPinAuthStage::pin_entry;
+    g_local_pin_auth.deadline =
+        xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
+
+    if (!show_local_pin_auth_panel()) {
+        wipe_local_pin_auth_scratch("settings Change PIN display allocation failed");
+        show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
 void cancel_local_pin_auth_from_ui(const char* message)
 {
     if (!g_local_pin_auth.flow_active() ||
-        g_local_pin_auth.stage != LocalPinAuthStage::pin_entry) {
+        !local_pin_auth_accepts_keypad_input()) {
         ESP_LOGW(kTag, "Stale local PIN authorization cancel ignored");
         return;
     }
@@ -3944,7 +4044,8 @@ void cancel_local_pin_auth_from_ui(const char* message)
         show_agent_q_message("Connection rejected", AgentQMessageKind::rejected, AgentQUiMode::result, kAgentQResultDisplayMs);
         return;
     }
-    if (purpose == LocalPinAuthPurpose::settings_connect_pin) {
+    if (purpose == LocalPinAuthPurpose::settings_connect_pin ||
+        purpose == LocalPinAuthPurpose::settings_change_pin) {
         agent_q::local_reset_begin_settings(
             xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs));
         if (!show_settings_menu_panel()) {
@@ -3966,7 +4067,7 @@ void handle_local_pin_auth_digit_from_ui(char digit)
     const TickType_t now = xTaskGetTickCount();
     agent_q::pin_attempt_release_if_elapsed(&g_local_pin_auth.pin_attempt, now);
     if (!g_local_pin_auth.flow_active() ||
-        g_local_pin_auth.stage != LocalPinAuthStage::pin_entry ||
+        !local_pin_auth_accepts_keypad_input() ||
         agent_q::pin_attempt_locked_at(g_local_pin_auth.pin_attempt, now) ||
         digit < '0' || digit > '9') {
         return;
@@ -3996,7 +4097,7 @@ void handle_local_pin_auth_clear_from_ui()
     const TickType_t now = xTaskGetTickCount();
     agent_q::pin_attempt_release_if_elapsed(&g_local_pin_auth.pin_attempt, now);
     if (!g_local_pin_auth.flow_active() ||
-        g_local_pin_auth.stage != LocalPinAuthStage::pin_entry ||
+        !local_pin_auth_accepts_keypad_input() ||
         agent_q::pin_attempt_locked_at(g_local_pin_auth.pin_attempt, now)) {
         return;
     }
@@ -4014,7 +4115,7 @@ void handle_local_pin_auth_backspace_from_ui()
     const TickType_t now = xTaskGetTickCount();
     agent_q::pin_attempt_release_if_elapsed(&g_local_pin_auth.pin_attempt, now);
     if (!g_local_pin_auth.flow_active() ||
-        g_local_pin_auth.stage != LocalPinAuthStage::pin_entry ||
+        !local_pin_auth_accepts_keypad_input() ||
         agent_q::pin_attempt_locked_at(g_local_pin_auth.pin_attempt, now)) {
         return;
     }
@@ -4034,7 +4135,7 @@ void handle_local_pin_auth_submit_from_ui()
     const TickType_t now = xTaskGetTickCount();
     agent_q::pin_attempt_release_if_elapsed(&g_local_pin_auth.pin_attempt, now);
     if (!g_local_pin_auth.flow_active() ||
-        g_local_pin_auth.stage != LocalPinAuthStage::pin_entry) {
+        !local_pin_auth_accepts_keypad_input()) {
         ESP_LOGW(kTag, "Stale local PIN authorization submit ignored");
         return;
     }
@@ -4047,6 +4148,51 @@ void handle_local_pin_auth_submit_from_ui()
             xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
         if (!show_local_pin_auth_panel("Enter exactly 6 digits.")) {
             wipe_local_pin_auth_scratch("local PIN authorization display allocation failed");
+            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        }
+        return;
+    }
+
+    if (g_local_pin_auth.purpose == LocalPinAuthPurpose::settings_change_pin &&
+        g_local_pin_auth.stage == LocalPinAuthStage::new_pin_entry) {
+        strlcpy(g_local_pin_auth.new_pin,
+                g_local_pin_auth.pin_entry,
+                sizeof(g_local_pin_auth.new_pin));
+        g_local_pin_auth.clear_pin_only();
+        g_local_pin_auth.stage = LocalPinAuthStage::repeat_pin_entry;
+        g_local_pin_auth.deadline =
+            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
+        if (!show_local_pin_auth_panel()) {
+            wipe_local_pin_auth_scratch("Change PIN repeat display allocation failed");
+            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        }
+        return;
+    }
+
+    if (g_local_pin_auth.purpose == LocalPinAuthPurpose::settings_change_pin &&
+        g_local_pin_auth.stage == LocalPinAuthStage::repeat_pin_entry) {
+        if (strcmp(g_local_pin_auth.new_pin, g_local_pin_auth.pin_entry) != 0) {
+            g_local_pin_auth.clear_new_pin();
+            g_local_pin_auth.clear_pin_only();
+            g_local_pin_auth.stage = LocalPinAuthStage::new_pin_entry;
+            g_local_pin_auth.deadline =
+                xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
+            if (!show_local_pin_auth_panel("PINs did not match.")) {
+                wipe_local_pin_auth_scratch("Change PIN mismatch display allocation failed");
+                show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            }
+            return;
+        }
+
+        g_local_pin_auth.clear_pin_only();
+        g_local_pin_auth.stage = LocalPinAuthStage::committing_pin_change;
+        g_local_pin_auth.commit_ready_at =
+            xTaskGetTickCount() + pdMS_TO_TICKS(kLocalProcessingDisplayMs);
+        g_local_pin_auth.deadline = 0;
+        if (!make_pin_processing_overlay_on_current_panel(AgentQUiPanelKind::local_pin_auth) &&
+            !show_local_pin_auth_panel()) {
+            wipe_local_pin_auth_scratch("Change PIN commit display allocation failed");
+            clear_agent_q_panel();
             show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
         }
         return;
@@ -4260,6 +4406,16 @@ void verify_local_pin_auth_if_ready()
     g_local_pin_auth.verify_ready_at = 0;
     g_local_pin_auth.clear_attempts();
 
+    if (purpose == LocalPinAuthPurpose::settings_change_pin) {
+        g_local_pin_auth.stage = LocalPinAuthStage::new_pin_entry;
+        g_local_pin_auth.deadline = now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
+        if (!show_local_pin_auth_panel()) {
+            wipe_local_pin_auth_scratch("Change PIN new PIN display allocation failed");
+            show_agent_q_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        }
+        return;
+    }
+
     if (purpose == LocalPinAuthPurpose::connect) {
         char request_id[kMaxRequestIdSize] = {};
         if (g_pending.kind == PendingKind::connect_pin) {
@@ -4299,25 +4455,49 @@ void verify_local_pin_auth_if_ready()
 void commit_local_pin_setting_if_ready()
 {
     if (!g_local_pin_auth.flow_active() ||
-        g_local_pin_auth.stage != LocalPinAuthStage::committing_setting ||
+        (g_local_pin_auth.stage != LocalPinAuthStage::committing_setting &&
+         g_local_pin_auth.stage != LocalPinAuthStage::committing_pin_change) ||
         g_local_pin_auth.commit_ready_at == 0 ||
         !tick_reached(g_local_pin_auth.commit_ready_at)) {
         return;
     }
 
+    const LocalPinAuthStage stage = g_local_pin_auth.stage;
     const bool next_value = g_local_pin_auth.target_require_pin_on_connect;
-    const bool stored = agent_q::store_require_pin_on_connect(next_value);
+    const bool stored =
+        stage == LocalPinAuthStage::committing_pin_change
+            ? agent_q::store_local_pin_verifier(g_local_pin_auth.new_pin)
+            : agent_q::store_require_pin_on_connect(next_value);
     clear_agent_q_panel();
     if (!stored) {
-        show_agent_q_message("Settings error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        if (stage == LocalPinAuthStage::committing_pin_change &&
+            agent_q::local_auth_status() != agent_q::AgentQLocalAuthStatus::active) {
+            enter_persistent_material_consistency_error(
+                "Change PIN failed and local PIN verifier is unavailable; failing closed");
+            show_agent_q_message(
+                "Auth error",
+                AgentQMessageKind::error,
+                AgentQUiMode::result,
+                kAgentQResultDisplayMs);
+            return;
+        }
+        show_agent_q_message(
+            stage == LocalPinAuthStage::committing_pin_change ? "PIN change failed" : "Settings error",
+            AgentQMessageKind::error,
+            AgentQUiMode::result,
+            kAgentQResultDisplayMs);
         return;
     }
 
     agent_q::local_reset_begin_settings(
         xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs));
     if (!show_settings_menu_panel()) {
-        wipe_local_reset_scratch("local settings display allocation failed after PIN setting commit");
-        show_agent_q_message("Settings saved", AgentQMessageKind::success, AgentQUiMode::result, kAgentQResultDisplayMs);
+        wipe_local_reset_scratch("local settings display allocation failed after PIN commit");
+        show_agent_q_message(
+            stage == LocalPinAuthStage::committing_pin_change ? "PIN changed" : "Settings saved",
+            AgentQMessageKind::success,
+            AgentQUiMode::result,
+            kAgentQResultDisplayMs);
     }
 }
 
@@ -4325,7 +4505,8 @@ void clear_local_pin_auth_if_needed()
 {
     if (!g_local_pin_auth.flow_active() ||
         g_local_pin_auth.stage == LocalPinAuthStage::pin_verifying ||
-        g_local_pin_auth.stage == LocalPinAuthStage::committing_setting) {
+        g_local_pin_auth.stage == LocalPinAuthStage::committing_setting ||
+        g_local_pin_auth.stage == LocalPinAuthStage::committing_pin_change) {
         return;
     }
 
@@ -4784,6 +4965,11 @@ void drain_ui_events()
             continue;
         }
 
+        if (event.kind == AgentQUiEventKind::settings_change_pin_requested) {
+            start_settings_change_pin_from_settings_menu();
+            continue;
+        }
+
         if (event.kind == AgentQUiEventKind::settings_reset_requested) {
             start_reset_pin_from_settings_menu();
             continue;
@@ -4847,7 +5033,7 @@ void drain_ui_events()
                 handle_pin_digit_from_local_ui(event.digit);
             } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
                 handle_reset_pin_digit_from_local_ui(event.digit);
-            } else if (g_local_pin_auth.stage == LocalPinAuthStage::pin_entry) {
+            } else if (local_pin_auth_accepts_keypad_input()) {
                 handle_local_pin_auth_digit_from_ui(event.digit);
             }
             continue;
@@ -4861,7 +5047,7 @@ void drain_ui_events()
                 handle_pin_clear_from_local_ui();
             } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
                 handle_reset_pin_clear_from_local_ui();
-            } else if (g_local_pin_auth.stage == LocalPinAuthStage::pin_entry) {
+            } else if (local_pin_auth_accepts_keypad_input()) {
                 handle_local_pin_auth_clear_from_ui();
             }
             continue;
@@ -4875,7 +5061,7 @@ void drain_ui_events()
                 handle_pin_backspace_from_local_ui();
             } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
                 handle_reset_pin_backspace_from_local_ui();
-            } else if (g_local_pin_auth.stage == LocalPinAuthStage::pin_entry) {
+            } else if (local_pin_auth_accepts_keypad_input()) {
                 handle_local_pin_auth_backspace_from_ui();
             }
             continue;
@@ -4889,7 +5075,7 @@ void drain_ui_events()
                 handle_pin_submit_from_local_ui();
             } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
                 handle_reset_pin_submit_from_local_ui();
-            } else if (g_local_pin_auth.stage == LocalPinAuthStage::pin_entry) {
+            } else if (local_pin_auth_accepts_keypad_input()) {
                 handle_local_pin_auth_submit_from_ui();
             }
             continue;
@@ -4903,7 +5089,7 @@ void drain_ui_events()
                 cancel_setup_from_local_ui();
             } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
                 cancel_local_reset_from_ui("Reset canceled");
-            } else if (g_local_pin_auth.stage == LocalPinAuthStage::pin_entry) {
+            } else if (local_pin_auth_accepts_keypad_input()) {
                 cancel_local_pin_auth_from_ui("Settings canceled");
             }
             continue;

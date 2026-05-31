@@ -169,8 +169,13 @@ void test_set_rng_fails(bool value);
 namespace {
 
 std::vector<uint8_t> g_blob;
+std::vector<uint8_t> g_pending_blob;
+bool g_pending_set = false;
+bool g_pending_erase = false;
 bool g_open_fails = false;
 bool g_commit_fails = false;
+bool g_set_fails_after_write = false;
+bool g_set_fails_with_corrupt_write = false;
 int failures = 0;
 
 void expect(bool condition, const char* label)
@@ -199,6 +204,9 @@ esp_err_t nvs_open(const char* name, int open_mode, nvs_handle_t* out_handle)
 void nvs_close(nvs_handle_t handle)
 {
     (void)handle;
+    g_pending_blob.clear();
+    g_pending_set = false;
+    g_pending_erase = false;
 }
 
 esp_err_t nvs_get_blob(nvs_handle_t handle, const char* key, void* out_value, size_t* length)
@@ -229,7 +237,17 @@ esp_err_t nvs_set_blob(nvs_handle_t handle, const char* key, const void* value, 
     (void)handle;
     (void)key;
     const uint8_t* bytes = static_cast<const uint8_t*>(value);
-    g_blob.assign(bytes, bytes + length);
+    if (g_set_fails_with_corrupt_write) {
+        g_blob.assign(length, 0);
+        return 1;
+    }
+    if (g_set_fails_after_write) {
+        g_blob.assign(bytes, bytes + length);
+        return 1;
+    }
+    g_pending_blob.assign(bytes, bytes + length);
+    g_pending_set = true;
+    g_pending_erase = false;
     return ESP_OK;
 }
 
@@ -240,14 +258,27 @@ esp_err_t nvs_erase_key(nvs_handle_t handle, const char* key)
     if (g_blob.empty()) {
         return ESP_ERR_NVS_NOT_FOUND;
     }
-    g_blob.clear();
+    g_pending_blob.clear();
+    g_pending_set = false;
+    g_pending_erase = true;
     return ESP_OK;
 }
 
 esp_err_t nvs_commit(nvs_handle_t handle)
 {
     (void)handle;
-    return g_commit_fails ? 1 : ESP_OK;
+    if (g_commit_fails) {
+        return 1;
+    }
+    if (g_pending_erase) {
+        g_blob.clear();
+    } else if (g_pending_set) {
+        g_blob = g_pending_blob;
+    }
+    g_pending_blob.clear();
+    g_pending_set = false;
+    g_pending_erase = false;
+    return ESP_OK;
 }
 
 }  // extern "C"
@@ -301,13 +332,50 @@ int main()
     g_blob.clear();
     g_commit_fails = true;
     expect(!agent_q::store_local_pin_verifier("444444"), "commit failure fails closed");
-    expect(g_blob.empty(), "commit failure wipes partial local auth");
+    expect(g_blob.empty(), "commit failure leaves no local auth when none existed");
     expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::missing, "commit failure status missing");
     g_commit_fails = false;
 
+    expect(agent_q::store_local_pin_verifier("666666"), "restore local auth before failed replacement");
+    const std::vector<uint8_t> previous_blob = g_blob;
+    g_commit_fails = true;
+    expect(!agent_q::store_local_pin_verifier("777777"), "failed replacement refuses storage");
+    expect(g_blob == previous_blob, "failed replacement preserves previous verifier record");
+    verified = false;
+    expect(agent_q::verify_local_pin("666666", &verified) && verified, "old PIN still verifies after failed replacement");
+    verified = true;
+    expect(agent_q::verify_local_pin("777777", &verified), "new PIN verify call succeeds after failed replacement");
+    expect(!verified, "new PIN does not verify after failed replacement");
+    g_commit_fails = false;
+
+    expect(agent_q::store_local_pin_verifier("101010"), "restore local auth before set failure with replacement");
+    g_set_fails_after_write = true;
+    expect(agent_q::store_local_pin_verifier("202020"), "set failure with active replacement is treated as success");
+    verified = false;
+    expect(agent_q::verify_local_pin("202020", &verified) && verified, "replacement PIN verifies after set failure");
+    verified = true;
+    expect(agent_q::verify_local_pin("101010", &verified), "old PIN verify call succeeds after set failure replacement");
+    expect(!verified, "old PIN no longer verifies after set failure replacement");
+    g_set_fails_after_write = false;
+
+    expect(agent_q::store_local_pin_verifier("303030"), "restore local auth before corrupt set failure");
+    g_set_fails_with_corrupt_write = true;
+    expect(!agent_q::store_local_pin_verifier("404040"), "corrupt set failure refuses storage");
+    expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::missing,
+           "corrupt set failure wipes ambiguous verifier state");
+    g_set_fails_with_corrupt_write = false;
+
+    expect(agent_q::wipe_local_auth(), "wipe local auth before empty RNG failure");
     agent_q::test_set_rng_fails(true);
-    expect(!agent_q::store_local_pin_verifier("555555"), "RNG failure refuses storage");
-    expect(g_blob.empty(), "RNG failure leaves no local auth");
+    expect(!agent_q::store_local_pin_verifier("555555"), "RNG failure refuses empty storage");
+    expect(g_blob.empty(), "RNG failure leaves no local auth when none existed");
+    agent_q::test_set_rng_fails(false);
+
+    expect(agent_q::store_local_pin_verifier("888888"), "restore local auth before RNG replacement failure");
+    const std::vector<uint8_t> rng_previous_blob = g_blob;
+    agent_q::test_set_rng_fails(true);
+    expect(!agent_q::store_local_pin_verifier("999999"), "RNG replacement failure refuses storage");
+    expect(g_blob == rng_previous_blob, "RNG replacement failure preserves previous verifier record");
     agent_q::test_set_rng_fails(false);
 
     g_open_fails = true;

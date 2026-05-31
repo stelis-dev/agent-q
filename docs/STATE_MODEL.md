@@ -76,10 +76,11 @@ Firmware reports device `error` and fails closed for normal setup and session
 requests. Detecting the consistency error also clears any active RAM session
 immediately, so a session created before the error is not retained as a stale
 local capability. The current StackChan CoreS3 source does not expose a USB
-reset or debug recovery request. Its local reset path is device-local UX only:
-provisioned devices can enter local settings, choose Reset, verify the stored
-local PIN, and then wipe root material, active policy, PIN verifier,
-runtime session, and provisioning state before returning to `unprovisioned`.
+reset or debug recovery request. Its local settings paths are device-local UX
+only: provisioned devices can enter local settings, verify the stored local PIN
+to change the local PIN verifier, or choose Reset, verify the stored local PIN,
+and then wipe root material, active policy, PIN verifier, runtime session, and
+provisioning state before returning to `unprovisioned`.
 Firmware records an internal reset-pending marker before destructive wipe starts
 so an interrupted reset can resume at boot. This reset path is not an
 error-state recovery path.
@@ -292,18 +293,22 @@ This state is reserved until an unlock model is implemented.
 
 `O*`: allowed only when the request does not disrupt local setup UI. `S` means
 session cleanup only: Firmware does not require material readiness, but a
-missing or mismatched session returns `invalid_session`. Other `O` operations
-may still return `busy` while a physical
+missing or mismatched session returns `invalid_session`. `S` operations may
+still return `busy` while local setup/settings/PIN/reset flow state is active,
+because external session teardown must not interleave with device-local
+sensitive UI. Other `O` operations may still return `busy` while a physical
 approval prompt or device-only setup material display is active.
 
 Gateway may hide unavailable operations, but Firmware must still reject them.
 
 The current StackChan CoreS3 target has an explicit `local_pin_auth` runtime
-substate for local PIN authorization. It records `purpose`
-(`connect` or `settings_toggle`), `stage` (`pin_entry`, `pin_verifying`, or
-`committing_setting`), typed PIN scratch, deadline, and RAM-only attempt state.
-The UI panel may display that state, but panel existence is not the source of
-truth. The target must not expose a USB/Gateway/MCP PIN submit request.
+substate for local PIN authorization. It records `purpose` (`connect`,
+`settings_toggle`, or `settings_change_pin`), `stage` (`pin_entry`,
+`pin_verifying`, `new_pin_entry`, `repeat_pin_entry`, `committing_setting`, or
+`committing_pin_change`), typed PIN scratch, new-PIN scratch where applicable,
+deadline, and RAM-only attempt state. The UI panel may display that state, but
+panel existence is not the source of truth. The target must not expose a
+USB/Gateway/MCP PIN submit request.
 
 ## Boot Flows
 

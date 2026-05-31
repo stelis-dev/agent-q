@@ -268,10 +268,14 @@ profile, encrypted storage, verified RNG readiness, destructive hardware
 rehearsal, and hardware smoke.
 
 No destructive reset or reprovisioning protocol request is implemented.
-StackChan CoreS3 source implements reset as normal device-local UX from the
-`provisioned` state: local settings entry, a Reset menu action, stored PIN
-verification, root material wipe, active policy wipe, PIN verifier wipe, session
-cleanup, connect-approval setting wipe, and `unprovisioned` persistence.
+StackChan CoreS3 source implements settings actions as normal device-local UX
+from the `provisioned` state. The Change PIN action verifies the current stored
+PIN, accepts and repeats a new 6-digit PIN, stores only the replacement
+salt/verifier, and returns to Settings; no root material is changed and no PIN is
+sent over USB. Reset uses the same Settings entry point: a Reset menu action,
+stored PIN verification, root material wipe, active policy wipe, PIN verifier
+wipe, session cleanup, connect-approval setting wipe, and `unprovisioned`
+persistence.
 Firmware writes an internal reset-pending marker before destructive wipe starts,
 so boot can resume an interrupted reset wipe. PIN failure, timeout, or cancel
 leaves existing material and settings intact. Wrong reset PIN attempts use a
