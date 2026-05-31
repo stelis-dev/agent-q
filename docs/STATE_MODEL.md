@@ -315,9 +315,10 @@ substate for local PIN authorization. It records `purpose` (`connect`,
 `settings_toggle`, or `settings_change_pin`), `stage` (`pin_entry`,
 `pin_verifying`, `new_pin_entry`, `repeat_pin_entry`, `committing_setting`, or
 `committing_pin_change`), typed PIN scratch, new-PIN scratch where applicable,
-deadline, and RAM-only attempt state. The UI panel may display that state, but
-panel existence is not the source of truth. The target must not expose a
-USB/Gateway/MCP PIN submit request.
+deadline, and the RAM-only stored-PIN attempt budget shared with reset PIN
+verification. The UI panel may display that state, but panel existence is not
+the source of truth. The target must not expose a USB/Gateway/MCP PIN submit
+request.
 
 ## Boot Flows
 

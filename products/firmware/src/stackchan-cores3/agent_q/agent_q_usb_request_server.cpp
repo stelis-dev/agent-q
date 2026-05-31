@@ -15,15 +15,14 @@
 #include "agent_q_local_auth.h"
 #include "agent_q_local_pin_auth.h"
 #include "agent_q_local_reset.h"
+#include "agent_q_method_runtime.h"
 #include "agent_q_modal_drawing.h"
+#include "agent_q_persistent_material.h"
 #include "agent_q_policy_store.h"
 #include "agent_q_provisioning_flow.h"
-#include "agent_q_root_material.h"
+#include "agent_q_session.h"
 #include "agent_q_sui_account.h"
 #include "agent_q_sui_account_store.h"
-#include "agent_q_common/policy/agent_q_policy_runtime.h"
-#include "agent_q_common/sui/agent_q_sui_policy_adapter.h"
-#include "agent_q_common/sui/agent_q_sui_transaction_facts.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -52,6 +51,7 @@ using ProvisioningFlowGenerateResult = agent_q::AgentQProvisioningFlowGenerateRe
 using ProvisioningFlowPanel = agent_q::AgentQProvisioningFlowPanel;
 using ProvisioningFlowPinSubmitResult = agent_q::AgentQProvisioningFlowPinSubmitResult;
 using ProvisioningFlowStage = agent_q::AgentQProvisioningFlowStage;
+using ProvisioningRuntimeState = agent_q::AgentQProvisioningRuntimeState;
 using SensitiveUiClearPolicy = agent_q::SensitiveUiClearPolicy;
 
 constexpr const char* kTag = "UsbRequestServer";
@@ -62,9 +62,6 @@ constexpr const char* kFirmwareVersion = "0.0.0";
 constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kDeviceIdKey = "device_id";
 constexpr const char* kProvisioningStateKey = "prov_state";
-constexpr const char* kProvisioningStateUnprovisioned = "unprovisioned";
-constexpr const char* kProvisioningStateProvisioning = "provisioning";
-constexpr const char* kProvisioningStateProvisioned = "provisioned";
 constexpr const char* kProvisioningStateError = "error";
 constexpr uint32_t kIdentifyDisplayDefaultMs = 10000;
 constexpr uint32_t kIdentifyDisplayMaxMs = 30000;
@@ -76,8 +73,6 @@ constexpr uint32_t kLocalPinSetupMs = kProvisioningApprovalMaxMs;
 constexpr uint32_t kLocalProcessingRenderDelayMs = 250;
 constexpr uint32_t kLocalProcessingDisplayMs = 900;
 constexpr uint32_t kSettingsTouchEntryMs = 900;
-constexpr uint32_t kSessionTtlMs = 1800000;
-constexpr uint32_t kSessionExpiryCheckMs = 5000;
 constexpr uint32_t kUsbHostLinkCheckMs = 250;
 constexpr size_t kLineBufferSize = 1024;
 constexpr size_t kResponseBufferSize = 512;
@@ -85,7 +80,6 @@ constexpr size_t kMaxRequestIdSize = 80;
 constexpr size_t kDeviceIdSize = 37;
 constexpr size_t kProvisioningStateSize = 16;
 constexpr size_t kIdentifyCodeSize = 5;
-constexpr size_t kSessionIdSize = 26;
 constexpr size_t kGatewayNameSize = 65;
 constexpr size_t kConnectDisplayMessageSize = 96;
 constexpr size_t kRecoverWordsPerPage = agent_q::kProvisioningFlowRecoverWordsPerPage;
@@ -144,12 +138,6 @@ enum class PendingKind {
     none,
     connect,
     connect_pin,
-};
-
-enum class ProvisioningRuntimeState {
-    unprovisioned,
-    provisioning,
-    provisioned,
 };
 
 // Firmware-owned state is kept separate from StackChan-owned avatar/app state.
@@ -217,23 +205,6 @@ struct IdentificationState {
     }
 };
 
-struct SessionState {
-    char id[kSessionIdSize] = {};
-    TickType_t expiry = 0;
-    TickType_t next_expiry_check = 0;
-
-    void clear()
-    {
-        id[0] = '\0';
-        expiry = 0;
-    }
-
-    bool active() const
-    {
-        return id[0] != '\0' && expiry != 0;
-    }
-};
-
 struct LocalSettingsTouchState {
     bool active = false;
     TickType_t started_at = 0;
@@ -252,7 +223,6 @@ ProvisioningRuntimeState g_provisioning_state = ProvisioningRuntimeState::unprov
 bool g_persistent_material_consistency_error = false;
 PendingApprovalState g_pending;
 IdentificationState g_identification;
-SessionState g_session;
 LocalSettingsTouchState g_settings_touch;
 bool g_usb_ready = false;
 bool g_usb_host_connected_known = false;
@@ -409,32 +379,6 @@ bool is_printable_ascii_gateway_name(const char* value)
     return true;
 }
 
-bool is_safe_session_id(const char* value)
-{
-    if (value == nullptr) {
-        return false;
-    }
-    const char* expected_prefix = "session_";
-    const size_t prefix_length = 8;
-    for (size_t index = 0; index < prefix_length; ++index) {
-        if (value[index] != expected_prefix[index]) {
-            return false;
-        }
-    }
-    size_t length = prefix_length;
-    for (const char* cursor = value + prefix_length; *cursor != '\0'; ++cursor) {
-        if (++length >= kSessionIdSize) {
-            return false;
-        }
-        const char c = *cursor;
-        const bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-        if (!ok) {
-            return false;
-        }
-    }
-    return length > prefix_length;
-}
-
 void write_json_document(JsonDocument& response)
 {
     char buffer[kResponseBufferSize];
@@ -477,45 +421,12 @@ const char* current_device_state()
     return "idle";
 }
 
-const char* provisioning_state_to_string(ProvisioningRuntimeState state)
-{
-    switch (state) {
-        case ProvisioningRuntimeState::provisioned:
-            return kProvisioningStateProvisioned;
-        case ProvisioningRuntimeState::provisioning:
-            return kProvisioningStateProvisioning;
-        case ProvisioningRuntimeState::unprovisioned:
-        default:
-            return kProvisioningStateUnprovisioned;
-    }
-}
-
 const char* reported_provisioning_state()
 {
     if (g_persistent_material_consistency_error) {
         return kProvisioningStateError;
     }
-    return provisioning_state_to_string(g_provisioning_state);
-}
-
-bool parse_provisioning_state(const char* value, ProvisioningRuntimeState* output)
-{
-    if (value == nullptr || output == nullptr) {
-        return false;
-    }
-    if (strcmp(value, kProvisioningStateUnprovisioned) == 0) {
-        *output = ProvisioningRuntimeState::unprovisioned;
-        return true;
-    }
-    if (strcmp(value, kProvisioningStateProvisioning) == 0) {
-        *output = ProvisioningRuntimeState::provisioning;
-        return true;
-    }
-    if (strcmp(value, kProvisioningStateProvisioned) == 0) {
-        *output = ProvisioningRuntimeState::provisioned;
-        return true;
-    }
-    return false;
+    return agent_q::provisioning_runtime_state_to_string(g_provisioning_state);
 }
 
 void write_status_response(const char* id)
@@ -558,8 +469,8 @@ void write_connect_approved_response(const char* id)
     response["version"] = kProtocolVersion;
     response["type"] = "connect_result";
     response["status"] = "approved";
-    response["sessionId"] = g_session.id;
-    response["sessionTtlMs"] = kSessionTtlMs;
+    response["sessionId"] = agent_q::session_id();
+    response["sessionTtlMs"] = agent_q::kAgentQSessionTtlMs;
     response["device"]["deviceId"] = g_device_id;
     response["device"]["state"] = "idle";
     response["device"]["firmwareName"] = kFirmwareName;
@@ -639,72 +550,9 @@ bool write_policy_response(const char* id)
     return true;
 }
 
-void write_sui_sign_transaction_policy_decision(const char* id, JsonDocument& request)
-{
-    JsonVariant params = request["params"];
-    size_t decoded_tx_size = 0;
-    if (!agent_q::validate_sui_sign_transaction_params(params, &decoded_tx_size)) {
-        write_error_response(id, "invalid_params", "Invalid sui/sign_transaction params.");
-        return;
-    }
-
-    const char* network = params["network"].as<const char*>();
-    const char* tx_bytes_base64 = params["txBytes"].as<const char*>();
-    uint8_t tx_bytes[agent_q::kSuiSignTransactionTxBytesMaxBytes] = {};
-    if (base64_to_bytes(tx_bytes_base64, strlen(tx_bytes_base64), tx_bytes, sizeof(tx_bytes)) != 0) {
-        write_error_response(id, "invalid_params", "Invalid sui/sign_transaction txBytes.");
-        return;
-    }
-
-    agent_q::SuiTransferFacts sui_facts = {};
-    const agent_q::SuiTransactionFactsResult parse_result =
-        agent_q::parse_sui_transfer_facts(tx_bytes, decoded_tx_size, &sui_facts);
-    memset(tx_bytes, 0, sizeof(tx_bytes));
-
-    if (parse_result == agent_q::SuiTransactionFactsResult::malformed) {
-        write_rejected_method_result(id, "malformed_transaction", "Transaction bytes are malformed.");
-        ESP_LOGI(kTag, "sui/sign_transaction malformed txBytes: id=%s", id);
-        return;
-    }
-    if (parse_result != agent_q::SuiTransactionFactsResult::ok) {
-        write_rejected_method_result(id, "unsupported_transaction", "Transaction shape is not supported.");
-        ESP_LOGI(kTag, "sui/sign_transaction unsupported tx shape: id=%s result=%s",
-                 id, agent_q::sui_transaction_facts_result_name(parse_result));
-        return;
-    }
-
-    agent_q::AgentQTransactionFacts policy_facts = {};
-    if (!agent_q::make_sui_transfer_policy_facts(sui_facts, network, &policy_facts)) {
-        write_rejected_method_result(id, "unsupported_transaction", "Transaction shape is not supported.");
-        ESP_LOGI(kTag, "sui/sign_transaction facts adapter rejected tx: id=%s", id);
-        return;
-    }
-
-    const agent_q::AgentQPolicyProvider policy_provider = agent_q::active_policy_provider();
-    const agent_q::AgentQPolicyDecision decision =
-        agent_q::evaluate_agent_q_policy_runtime(policy_provider, policy_facts);
-    if (decision.reason == agent_q::AgentQPolicyDecisionReason::invalid_policy) {
-        write_rejected_method_result(id, "policy_error", "Active policy is unavailable.");
-        ESP_LOGW(kTag, "sui/sign_transaction active policy unavailable: id=%s", id);
-        return;
-    }
-    if (decision.action == agent_q::AgentQPolicyAction::reject) {
-        write_rejected_method_result(id, "policy_rejected", "The request was rejected by device policy.");
-        ESP_LOGI(kTag, "sui/sign_transaction policy rejected: id=%s reason=%s",
-                 id, agent_q::agent_q_policy_decision_reason_name(decision.reason));
-        return;
-    }
-
-    write_rejected_method_result(id, "policy_action_not_implemented", "Policy action is not implemented.");
-    ESP_LOGW(kTag, "sui/sign_transaction policy action not implemented: id=%s action=%s reason=%s",
-             id,
-             agent_q::agent_q_policy_action_name(decision.action),
-             agent_q::agent_q_policy_decision_reason_name(decision.reason));
-}
-
 void clear_active_session()
 {
-    g_session.clear();
+    agent_q::session_clear();
 }
 
 bool persist_unprovisioned_state_for_local_reset()
@@ -728,41 +576,12 @@ agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops()
     };
 }
 
-void enter_persistent_material_consistency_error_if_material_remains(const char* message)
+agent_q::AgentQPersistentMaterialOps persistent_material_ops()
 {
-    if (agent_q::local_reset_persistent_material_exists()) {
-        enter_persistent_material_consistency_error(message);
-    }
-}
-
-bool ensure_active_policy_for_legacy_provisioned_state(agent_q::AgentQPolicyStoreStatus* policy_status)
-{
-    if (policy_status == nullptr) {
-        return false;
-    }
-    if (*policy_status == agent_q::AgentQPolicyStoreStatus::active) {
-        return true;
-    }
-    if (*policy_status != agent_q::AgentQPolicyStoreStatus::missing) {
-        enter_persistent_material_consistency_error(
-            "Existing provisioned material has invalid or unreadable active policy; failing closed");
-        return false;
-    }
-
-    ESP_LOGW(kTag, "Provisioned state has root material but no active policy; installing default-reject policy");
-    if (!agent_q::store_default_policy()) {
-        enter_persistent_material_consistency_error(
-            "Could not initialize active policy for existing provisioned material; failing closed");
-        return false;
-    }
-
-    *policy_status = agent_q::active_policy_status();
-    if (*policy_status != agent_q::AgentQPolicyStoreStatus::active) {
-        enter_persistent_material_consistency_error(
-            "Initialized active policy is unreadable for existing provisioned material; failing closed");
-        return false;
-    }
-    return true;
+    return agent_q::AgentQPersistentMaterialOps{
+        persist_provisioning_state,
+        enter_persistent_material_consistency_error,
+    };
 }
 
 // Writes the Sui Ed25519 account (index 0, m/44'/784'/0'/0'/0') response after
@@ -820,51 +639,15 @@ bool fill_protocol_random(void* output, size_t size, const char* purpose)
     return false;
 }
 
-bool format_session_id(char* output, size_t output_size)
+bool fill_session_random(void* output, size_t size, void*)
 {
-    uint8_t bytes[8] = {};
-    if (!fill_protocol_random(bytes, sizeof(bytes), "session id")) {
-        return false;
-    }
-    snprintf(output,
-             output_size,
-             "session_%02x%02x%02x%02x%02x%02x%02x%02x",
-             bytes[0],
-             bytes[1],
-             bytes[2],
-             bytes[3],
-             bytes[4],
-             bytes[5],
-             bytes[6],
-             bytes[7]);
-    agent_q::wipe_sensitive_buffer(bytes, sizeof(bytes));
-    return true;
+    return fill_protocol_random(output, size, "session id");
 }
 
 bool replace_active_session()
 {
-    char next_id[kSessionIdSize] = {};
-    if (!format_session_id(next_id, sizeof(next_id))) {
-        return false;
-    }
-    snprintf(g_session.id, sizeof(g_session.id), "%s", next_id);
-    g_session.expiry = xTaskGetTickCount() + pdMS_TO_TICKS(kSessionTtlMs);
-    return true;
-}
-
-void expire_session_if_needed()
-{
-    if (!tick_reached(g_session.next_expiry_check)) {
-        return;
-    }
-    g_session.next_expiry_check = xTaskGetTickCount() + pdMS_TO_TICKS(kSessionExpiryCheckMs);
-
-    if (!g_session.active()) {
-        return;
-    }
-    if (tick_reached(g_session.expiry)) {
-        clear_active_session();
-    }
+    return agent_q::session_replace(xTaskGetTickCount(), fill_session_random, nullptr) ==
+           agent_q::AgentQSessionStartResult::ok;
 }
 
 void poll_usb_host_connection()
@@ -890,7 +673,7 @@ void poll_usb_host_connection()
         return;
     }
 
-    const bool had_session = g_session.active();
+    const bool had_session = agent_q::session_active();
     const bool had_pending_connect = g_pending.active &&
                                      (g_pending.kind == PendingKind::connect ||
                                       g_pending.kind == PendingKind::connect_pin);
@@ -1031,8 +814,10 @@ void load_provisioning_state()
     nvs_close(nvs);
 
     if (result == ESP_ERR_NVS_NOT_FOUND) {
-        enter_persistent_material_consistency_error_if_material_remains(
-            "Persistent setup material exists without provisioning state; failing closed");
+        if (agent_q::persistent_material_exists()) {
+            enter_persistent_material_consistency_error(
+                "Persistent setup material exists without provisioning state; failing closed");
+        }
         ESP_LOGI(kTag, "Provisioning state not found in NVS; using unprovisioned");
         return;
     }
@@ -1043,8 +828,8 @@ void load_provisioning_state()
     }
 
     ProvisioningRuntimeState parsed = ProvisioningRuntimeState::unprovisioned;
-    if (!parse_provisioning_state(stored_state, &parsed)) {
-        if (agent_q::local_reset_persistent_material_exists()) {
+    if (!agent_q::parse_provisioning_runtime_state(stored_state, &parsed)) {
+        if (agent_q::persistent_material_exists()) {
             enter_persistent_material_consistency_error(
                 "Unknown provisioning state with persistent setup material present; failing closed");
         } else {
@@ -1054,33 +839,18 @@ void load_provisioning_state()
         return;
     }
 
-    const bool has_root = agent_q::has_root_material();
-    agent_q::AgentQPolicyStoreStatus policy_status = agent_q::active_policy_status();
-    const agent_q::AgentQLocalAuthStatus local_auth_status = agent_q::local_auth_status();
-    if (parsed == ProvisioningRuntimeState::provisioned) {
-        if (has_root &&
-            ensure_active_policy_for_legacy_provisioned_state(&policy_status) &&
-            local_auth_status == agent_q::AgentQLocalAuthStatus::active) {
-            g_provisioning_state = ProvisioningRuntimeState::provisioned;
-        } else {
-            g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
-            enter_persistent_material_consistency_error(
-                "Stored provisioned state is missing root material, active policy, or local PIN verifier; failing closed");
-        }
-    } else if (has_root ||
-               policy_status != agent_q::AgentQPolicyStoreStatus::missing ||
-               local_auth_status != agent_q::AgentQLocalAuthStatus::missing) {
-        g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
-        enter_persistent_material_consistency_error(
-            "Persistent setup material exists without provisioned state; failing closed");
-    } else if (parsed == ProvisioningRuntimeState::provisioning) {
-        g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
+    ProvisioningRuntimeState effective_state = ProvisioningRuntimeState::unprovisioned;
+    const agent_q::AgentQPersistentMaterialConsistencyResult consistency_result =
+        agent_q::persistent_material_validate_loaded_state(
+            parsed,
+            &effective_state,
+            persistent_material_ops());
+    if (consistency_result == agent_q::AgentQPersistentMaterialConsistencyResult::legacy_provisioning_reset) {
         ESP_LOGW(kTag, "Resetting legacy provisioning state for persistent root material flow");
-        persist_provisioning_state(ProvisioningRuntimeState::unprovisioned);
-    } else {
-        g_provisioning_state = parsed;
     }
-    ESP_LOGI(kTag, "Loaded provisioning state from NVS: %s", provisioning_state_to_string(g_provisioning_state));
+    g_provisioning_state = effective_state;
+    ESP_LOGI(kTag, "Loaded provisioning state from NVS: %s",
+             agent_q::provisioning_runtime_state_to_string(g_provisioning_state));
 }
 
 bool persist_provisioning_state(ProvisioningRuntimeState next_state)
@@ -1092,7 +862,7 @@ bool persist_provisioning_state(ProvisioningRuntimeState next_state)
         return false;
     }
 
-    result = nvs_set_str(nvs, kProvisioningStateKey, provisioning_state_to_string(next_state));
+    result = nvs_set_str(nvs, kProvisioningStateKey, agent_q::provisioning_runtime_state_to_string(next_state));
     if (result == ESP_OK) {
         result = nvs_commit(nvs);
     }
@@ -1104,7 +874,8 @@ bool persist_provisioning_state(ProvisioningRuntimeState next_state)
     }
 
     g_provisioning_state = next_state;
-    ESP_LOGI(kTag, "Stored provisioning state: %s", provisioning_state_to_string(g_provisioning_state));
+    ESP_LOGI(kTag, "Stored provisioning state: %s",
+             agent_q::provisioning_runtime_state_to_string(g_provisioning_state));
     return true;
 }
 
@@ -1133,28 +904,9 @@ bool refresh_persistent_material_consistency()
         return false;
     }
 
-    const bool has_root = agent_q::has_root_material();
-    const agent_q::AgentQPolicyStoreStatus policy_status = agent_q::active_policy_status();
-    const agent_q::AgentQLocalAuthStatus local_auth_status = agent_q::local_auth_status();
-    if (g_provisioning_state == ProvisioningRuntimeState::provisioned) {
-        if (has_root &&
-            policy_status == agent_q::AgentQPolicyStoreStatus::active &&
-            local_auth_status == agent_q::AgentQLocalAuthStatus::active) {
-            return true;
-        }
-        enter_persistent_material_consistency_error(
-            "Provisioned state lost root material, active policy, or local PIN verifier; failing closed");
-        return false;
-    }
-
-    if (has_root ||
-        policy_status != agent_q::AgentQPolicyStoreStatus::missing ||
-        local_auth_status != agent_q::AgentQLocalAuthStatus::missing) {
-        enter_persistent_material_consistency_error(
-            "Persistent setup material exists outside provisioned state; failing closed");
-        return false;
-    }
-    return true;
+    return agent_q::persistent_material_validate_runtime_state(
+        g_provisioning_state,
+        persistent_material_ops());
 }
 
 bool provisioned_material_ready()
@@ -1216,25 +968,19 @@ bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_setti
 
 bool require_active_matching_session(const char* id, const char* session_id)
 {
-    if (!is_safe_session_id(session_id)) {
-        write_error_response(id, "invalid_session", "Invalid sessionId.");
-        return false;
+    switch (agent_q::session_validate(session_id, xTaskGetTickCount())) {
+        case agent_q::AgentQSessionValidationResult::ok:
+            return true;
+        case agent_q::AgentQSessionValidationResult::invalid_format:
+            write_error_response(id, "invalid_session", "Invalid sessionId.");
+            return false;
+        case agent_q::AgentQSessionValidationResult::missing:
+        case agent_q::AgentQSessionValidationResult::expired:
+        case agent_q::AgentQSessionValidationResult::mismatch:
+        default:
+            write_error_response(id, "invalid_session", "Session is unknown or already ended.");
+            return false;
     }
-    if (!g_session.active()) {
-        clear_active_session();
-        write_error_response(id, "invalid_session", "Session is unknown or already ended.");
-        return false;
-    }
-    if (tick_reached(g_session.expiry)) {
-        clear_active_session();
-        write_error_response(id, "invalid_session", "Session is unknown or already ended.");
-        return false;
-    }
-    if (strcmp(session_id, g_session.id) != 0) {
-        write_error_response(id, "invalid_session", "Session is unknown or already ended.");
-        return false;
-    }
-    return true;
 }
 
 bool recovery_phrase_backup_confirmation_ready()
@@ -1608,21 +1354,7 @@ void show_connect_decision(const char* gateway_name)
     ESP_LOGW(kTag, "connect could not show Agent-Q avatar decision UI");
 }
 
-enum class SetupCommitResult {
-    ok,
-    missing_scratch,
-    root_storage_error,
-    policy_storage_error,
-    local_auth_storage_error,
-    state_storage_error,
-};
-
-void rollback_persistent_setup_material_after_failed_commit()
-{
-    agent_q::wipe_local_auth();
-    agent_q::wipe_policy();
-    agent_q::wipe_root_material();
-}
+using SetupCommitResult = agent_q::AgentQPersistentMaterialCommitResult;
 
 SetupCommitResult commit_setup_material_after_pin_match(const char* reason)
 {
@@ -1630,44 +1362,20 @@ SetupCommitResult commit_setup_material_after_pin_match(const char* reason)
     size_t root_material_size = 0;
     const char* setup_pin = nullptr;
     if (!agent_q::provisioning_flow_commit_inputs(&root_material, &root_material_size, &setup_pin)) {
-        return SetupCommitResult::missing_scratch;
+        return SetupCommitResult::missing_input;
     }
 
-    if (!agent_q::store_root_material(root_material, root_material_size)) {
-        rollback_persistent_setup_material_after_failed_commit();
-        enter_persistent_material_consistency_error_if_material_remains(
-            "Root material storage left partial persistent setup material; failing closed");
-        wipe_setup_scratch(reason);
-        return SetupCommitResult::root_storage_error;
-    }
-
-    if (!agent_q::store_default_policy()) {
-        rollback_persistent_setup_material_after_failed_commit();
-        enter_persistent_material_consistency_error_if_material_remains(
-            "Policy storage failed with persistent setup material present; failing closed");
-        wipe_setup_scratch(reason);
-        return SetupCommitResult::policy_storage_error;
-    }
-
-    if (!agent_q::store_local_pin_verifier(setup_pin)) {
-        rollback_persistent_setup_material_after_failed_commit();
-        enter_persistent_material_consistency_error_if_material_remains(
-            "Local PIN verifier storage failed with persistent setup material present; failing closed");
-        wipe_setup_scratch(reason);
-        return SetupCommitResult::local_auth_storage_error;
-    }
-
-    if (!persist_provisioning_state(ProvisioningRuntimeState::provisioned)) {
-        rollback_persistent_setup_material_after_failed_commit();
-        enter_persistent_material_consistency_error_if_material_remains(
-            "Provisioning state storage failed with persistent setup material present; failing closed");
-        wipe_setup_scratch(reason);
-        return SetupCommitResult::state_storage_error;
-    }
-
-    g_persistent_material_consistency_error = false;
+    const SetupCommitResult result =
+        agent_q::persistent_material_commit_setup(
+            root_material,
+            root_material_size,
+            setup_pin,
+            persistent_material_ops());
     wipe_setup_scratch(reason);
-    return SetupCommitResult::ok;
+    if (result == SetupCommitResult::ok) {
+        g_persistent_material_consistency_error = false;
+    }
+    return result;
 }
 
 bool setup_choice_action_allowed()
@@ -1872,7 +1580,7 @@ void commit_local_setup_if_ready()
             ESP_LOGI(kTag, "Local setup PIN confirmed and provisioned");
             agent_q::avatar_overlay_show_message("Provisioned", AgentQMessageKind::success, AgentQUiMode::result, kAgentQResultDisplayMs);
             break;
-        case SetupCommitResult::missing_scratch:
+        case SetupCommitResult::missing_input:
             ESP_LOGW(kTag, "Local PIN confirmation missing scratch");
             agent_q::avatar_overlay_show_message("Setup unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
             break;
@@ -3474,13 +3182,19 @@ void handle_line(const char* line)
 
         const char* chain = request["chain"] | "";
         const char* method = request["method"] | "";
-        if (strcmp(chain, "sui") == 0 && strcmp(method, "sign_transaction") == 0) {
-            write_sui_sign_transaction_policy_decision(id, request);
+        const agent_q::AgentQMethodRuntimeResult method_result =
+            agent_q::evaluate_call_method(chain, method, request["params"]);
+        if (method_result.status == agent_q::AgentQMethodRuntimeStatus::invalid_params) {
+            write_error_response(id, method_result.code, method_result.message);
             return;
         }
 
-        write_rejected_method_result(id, "unsupported_method", "Method is not supported.");
-        ESP_LOGI(kTag, "call_method unsupported: id=%s", id);
+        write_rejected_method_result(id, method_result.code, method_result.message);
+        ESP_LOGI(kTag, "call_method rejected: id=%s chain=%s method=%s code=%s",
+                 id,
+                 chain,
+                 method,
+                 method_result.code);
         return;
     }
 
@@ -3540,7 +3254,7 @@ void usb_request_task(void*)
         commit_local_reset_if_ready();
         verify_local_pin_auth_if_ready();
         commit_local_pin_setting_if_ready();
-        expire_session_if_needed();
+        agent_q::session_expire_if_needed(xTaskGetTickCount());
         poll_local_settings_touch_entry();
         show_persistent_error_recovery_if_needed();
         send_choice_response_if_needed();
@@ -3561,8 +3275,7 @@ void init_usb_request_server()
 {
     load_or_create_device_id();
     load_provisioning_state();
-    g_session.clear();
-    g_session.next_expiry_check = 0;
+    agent_q::session_init();
     g_pending.clear();
     g_identification.clear();
     wipe_setup_scratch("usb request server init");

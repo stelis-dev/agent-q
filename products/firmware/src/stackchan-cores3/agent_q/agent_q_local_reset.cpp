@@ -1,9 +1,7 @@
 #include "agent_q_local_reset.h"
 
-#include "agent_q_connect_settings.h"
 #include "agent_q_local_auth.h"
-#include "agent_q_policy_store.h"
-#include "agent_q_root_material.h"
+#include "agent_q_persistent_material.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/task.h"
@@ -23,7 +21,6 @@ struct LocalResetState {
     TickType_t deadline = 0;
     TickType_t verify_ready_at = 0;
     TickType_t wipe_ready_at = 0;
-    AgentQPinAttemptState pin_attempt;
 
     void wipe()
     {
@@ -42,7 +39,7 @@ struct LocalResetState {
 
     void clear_lockout()
     {
-        pin_attempt_clear(&pin_attempt);
+        pin_attempt_clear();
     }
 };
 
@@ -55,7 +52,7 @@ bool tick_reached(TickType_t deadline, TickType_t now)
 
 bool local_reset_pin_locked_at(TickType_t now)
 {
-    return pin_attempt_locked_at(g_local_reset.pin_attempt, now);
+    return pin_attempt_locked_at(now);
 }
 
 bool set_local_reset_pending_marker()
@@ -120,30 +117,25 @@ AgentQLocalResetCommitResult wipe_persistent_material_for_local_reset(
         ops.clear_active_session();
     }
 
-    const bool root_wiped = wipe_root_material();
-    const bool policy_wiped = wipe_policy();
-    const bool local_auth_wiped = wipe_local_auth();
-    const bool connect_setting_wiped = wipe_require_pin_on_connect();
-
-    if (!root_wiped) {
-        enter_consistency_error(ops, "Local reset could not wipe root material; failing closed");
-        return AgentQLocalResetCommitResult::root_wipe_error;
-    }
-    if (!policy_wiped) {
-        enter_consistency_error(ops, "Local reset could not wipe active policy; failing closed");
-        return AgentQLocalResetCommitResult::policy_wipe_error;
-    }
-    if (!local_auth_wiped) {
-        enter_consistency_error(ops, "Local reset could not wipe local PIN verifier; failing closed");
-        return AgentQLocalResetCommitResult::local_auth_wipe_error;
-    }
-    if (!connect_setting_wiped) {
-        enter_consistency_error(ops, "Local reset could not wipe connect PIN setting; failing closed");
-        return AgentQLocalResetCommitResult::connect_setting_wipe_error;
-    }
-    if (local_reset_persistent_material_exists()) {
-        enter_consistency_error(ops, "Local reset reported success but persistent material remains; failing closed");
-        return AgentQLocalResetCommitResult::material_remaining_error;
+    switch (persistent_material_wipe_all()) {
+        case AgentQPersistentMaterialWipeResult::ok:
+            break;
+        case AgentQPersistentMaterialWipeResult::root_wipe_error:
+            enter_consistency_error(ops, "Local reset could not wipe root material; failing closed");
+            return AgentQLocalResetCommitResult::root_wipe_error;
+        case AgentQPersistentMaterialWipeResult::policy_wipe_error:
+            enter_consistency_error(ops, "Local reset could not wipe active policy; failing closed");
+            return AgentQLocalResetCommitResult::policy_wipe_error;
+        case AgentQPersistentMaterialWipeResult::local_auth_wipe_error:
+            enter_consistency_error(ops, "Local reset could not wipe local PIN verifier; failing closed");
+            return AgentQLocalResetCommitResult::local_auth_wipe_error;
+        case AgentQPersistentMaterialWipeResult::connect_setting_wipe_error:
+            enter_consistency_error(ops, "Local reset could not wipe connect PIN setting; failing closed");
+            return AgentQLocalResetCommitResult::connect_setting_wipe_error;
+        case AgentQPersistentMaterialWipeResult::material_remaining_error:
+        default:
+            enter_consistency_error(ops, "Local reset reported success but persistent material remains; failing closed");
+            return AgentQLocalResetCommitResult::material_remaining_error;
     }
 
     if (ops.persist_unprovisioned_state == nullptr ||
@@ -177,9 +169,7 @@ AgentQLocalResetSnapshot local_reset_snapshot(TickType_t now)
 
 bool local_reset_persistent_material_exists()
 {
-    return has_root_material() ||
-           active_policy_status() != AgentQPolicyStoreStatus::missing ||
-           local_auth_status() != AgentQLocalAuthStatus::missing;
+    return persistent_material_exists();
 }
 
 bool local_reset_deadline_expired(TickType_t now)
@@ -190,7 +180,7 @@ bool local_reset_deadline_expired(TickType_t now)
 bool local_reset_release_lockout_if_elapsed(TickType_t now)
 {
     if (g_local_reset.stage != AgentQLocalResetStage::pin_entry ||
-        !pin_attempt_release_if_elapsed(&g_local_reset.pin_attempt, now)) {
+        !pin_attempt_release_if_elapsed(now)) {
         return false;
     }
 
@@ -229,7 +219,7 @@ bool local_reset_begin_pin_entry(TickType_t deadline)
         return false;
     }
 
-    pin_attempt_release_if_elapsed(&g_local_reset.pin_attempt, xTaskGetTickCount());
+    pin_attempt_release_if_elapsed(xTaskGetTickCount());
     g_local_reset.stage = AgentQLocalResetStage::pin_entry;
     g_local_reset.wipe_pin_only();
     g_local_reset.deadline = deadline;
@@ -338,7 +328,7 @@ AgentQLocalResetPinVerifyResult local_reset_verify_pin_if_ready(
         wipe_sensitive_buffer(g_local_reset.pin_entry, sizeof(g_local_reset.pin_entry));
         g_local_reset.pin_entry_length = 0;
         g_local_reset.deadline = retry_deadline;
-        if (pin_attempt_record_failure(&g_local_reset.pin_attempt, lockout_until)) {
+        if (pin_attempt_record_failure(lockout_until)) {
             return AgentQLocalResetPinVerifyResult::locked;
         }
         return AgentQLocalResetPinVerifyResult::wrong_pin;

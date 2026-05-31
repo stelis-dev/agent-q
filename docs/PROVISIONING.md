@@ -279,8 +279,8 @@ persistence.
 Firmware writes an internal reset-pending marker before destructive wipe starts,
 so boot can resume an interrupted reset wipe. PIN failure, timeout, or cancel
 leaves existing material and settings intact. Wrong reset PIN attempts use a
-RAM-only short lockout that is not cleared by closing and reopening the reset
-flow; power cycling clears it.
+RAM-only short lockout shared with connect and Settings PIN verification; it is
+not cleared by closing and reopening a local PIN flow. Power cycling clears it.
 The same destructive wipe machinery is also used by the StackChan CoreS3
 device-local error-state erase recovery. That path is PIN-less because the
 stored PIN verifier may be unreadable, but it still requires on-device

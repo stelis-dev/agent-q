@@ -544,7 +544,8 @@ Connect rules:
 - When `requirePinOnConnect` is ON, successful device-local PIN entry is the
   connect approval. Firmware must not add a second Confirm step after PIN
   success. Wrong PIN attempts are rate-limited as device-local touch attempts:
-  five wrong PINs lock the local PIN UI for 30 seconds in RAM. Canceling and
+  five wrong stored-PIN verification attempts across connect, Settings, Change
+  PIN, and reset lock the local PIN UI for 30 seconds in RAM. Canceling and
   reopening the PIN UI must not clear the lockout. Power cycling clears it.
 - When `requirePinOnConnect` is OFF, the target uses the existing physical
   Confirm approval path.

@@ -21,7 +21,6 @@ struct AgentQLocalPinAuthState {
     TickType_t deadline = 0;
     TickType_t verify_ready_at = 0;
     TickType_t commit_ready_at = 0;
-    AgentQPinAttemptState pin_attempt;
 
     bool flow_active() const
     {
@@ -72,7 +71,7 @@ bool processing_stage(AgentQLocalPinAuthStage stage)
 
 bool release_lockout_if_elapsed(TickType_t now, TickType_t retry_deadline)
 {
-    if (!pin_attempt_release_if_elapsed(&g_state.pin_attempt, now)) {
+    if (!pin_attempt_release_if_elapsed(now)) {
         return false;
     }
     g_state.deadline = retry_deadline;
@@ -96,7 +95,7 @@ AgentQLocalPinAuthSnapshot local_pin_auth_snapshot(TickType_t now)
         g_state.flow_active(),
         accepts,
         processing_stage(g_state.stage),
-        pin_attempt_locked_at(g_state.pin_attempt, now),
+        pin_attempt_locked_at(now),
     };
 }
 
@@ -160,7 +159,7 @@ AgentQLocalPinAuthInputResult local_pin_auth_add_digit(char digit, TickType_t de
     if (!local_pin_auth_accepts_keypad_input()) {
         return AgentQLocalPinAuthInputResult::inactive;
     }
-    if (pin_attempt_locked_at(g_state.pin_attempt, now)) {
+    if (pin_attempt_locked_at(now)) {
         return AgentQLocalPinAuthInputResult::locked;
     }
     if (digit < '0' || digit > '9') {
@@ -182,7 +181,7 @@ bool local_pin_auth_clear_pin(TickType_t deadline)
     const TickType_t now = xTaskGetTickCount();
     release_lockout_if_elapsed(now, deadline);
     if (!local_pin_auth_accepts_keypad_input() ||
-        pin_attempt_locked_at(g_state.pin_attempt, now)) {
+        pin_attempt_locked_at(now)) {
         return false;
     }
     g_state.clear_pin_only();
@@ -195,7 +194,7 @@ bool local_pin_auth_backspace_pin(TickType_t deadline)
     const TickType_t now = xTaskGetTickCount();
     release_lockout_if_elapsed(now, deadline);
     if (!local_pin_auth_accepts_keypad_input() ||
-        pin_attempt_locked_at(g_state.pin_attempt, now)) {
+        pin_attempt_locked_at(now)) {
         return false;
     }
     if (g_state.pin_entry_length > 0) {
@@ -215,7 +214,7 @@ AgentQLocalPinAuthSubmitResult local_pin_auth_submit(
     if (!local_pin_auth_accepts_keypad_input()) {
         return AgentQLocalPinAuthSubmitResult::unavailable_stage;
     }
-    if (pin_attempt_locked_at(g_state.pin_attempt, now)) {
+    if (pin_attempt_locked_at(now)) {
         return AgentQLocalPinAuthSubmitResult::locked;
     }
     if (g_state.pin_entry_length != kLocalPinDigits ||
@@ -279,13 +278,13 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_verify_if_ready(
         g_state.clear_pin_only();
         g_state.stage = AgentQLocalPinAuthStage::pin_entry;
         g_state.deadline = retry_deadline;
-        const bool locked = pin_attempt_record_failure(&g_state.pin_attempt, lockout_until);
+        const bool locked = pin_attempt_record_failure(lockout_until);
         return locked ? AgentQLocalPinAuthVerifyResult::locked
                       : AgentQLocalPinAuthVerifyResult::wrong_pin;
     }
 
     g_state.clear_pin_only();
-    pin_attempt_clear(&g_state.pin_attempt);
+    pin_attempt_clear();
 
     if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         g_state.stage = AgentQLocalPinAuthStage::new_pin_entry;

@@ -106,10 +106,13 @@ tools/firmware/common/generate_sui_transaction_fixtures.mjs
 tools/firmware/common/test_sui_transaction_facts.sh
 tools/firmware/common/test_policy_v0.sh
 tools/firmware/stackchan-cores3/test_call_method_validation.sh
+tools/firmware/stackchan-cores3/test_method_runtime.sh
 tools/firmware/stackchan-cores3/test_policy_store.sh
+tools/firmware/stackchan-cores3/test_persistent_material.sh
 tools/firmware/stackchan-cores3/test_local_auth.sh
 tools/firmware/stackchan-cores3/test_local_pin_auth.sh
 tools/firmware/stackchan-cores3/test_connect_settings.sh
+tools/firmware/stackchan-cores3/test_session.sh
 tools/firmware/stackchan-cores3/test_bip39_vectors.sh
 tools/firmware/stackchan-cores3/test_sui_account_vectors.sh
 ```
@@ -149,6 +152,17 @@ host NVS stubs, then verifies default-policy storage, policy id calculation,
 summary reads, wipe behavior, active-policy availability checks, and
 missing/corrupt/failed-write fail-closed provider behavior.
 
+The StackChan method-runtime test is target-specific. It compiles the tracked
+`agent_q_method_runtime.cpp` runtime boundary with ArduinoJson, the common Sui
+facts parser, the common policy runtime, and pinned MicroSui base64 helpers,
+then verifies unsupported method rejection, invalid Sui params, and the
+default-reject policy result for a valid restricted SUI transfer fixture.
+
+The StackChan persistent-material test is target-specific. It compiles the
+tracked `agent_q_persistent_material.cpp` coordinator with host material stubs,
+then verifies setup commit ordering and rollback, reset wipe coverage, loaded
+state consistency classification, and legacy missing-policy migration.
+
 The StackChan local-auth test is target-specific. It compiles the tracked
 `agent_q_local_auth.cpp` verifier store with the pinned MicroSui Monocypher
 source plus host NVS/RNG stubs, then verifies exact 6-digit PIN validation,
@@ -166,6 +180,11 @@ The StackChan provisioning-flow test is target-specific. It compiles the
 tracked `agent_q_provisioning_flow.cpp` state machine with host stubs, then
 verifies Generate/Recover/setup-PIN volatile state transitions, scratch
 lifetime, panel-loss cleanup, and commit-readiness without LVGL or USB.
+
+The StackChan session test is target-specific. It compiles the tracked
+`agent_q_session.cpp` RAM session core with host stubs, then verifies session id
+generation, validation result classification, mismatch handling, expiry, and
+scheduled cleanup without USB JSON response code.
 
 During preparation, the tracked build tools also patch the pinned upstream host
 tree so the Agent-Q build does not start the StackChan/Xiaozhi remote AI

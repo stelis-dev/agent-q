@@ -370,10 +370,11 @@ RAM session immediately and fails closed for session-scoped requests. The error
 panel offers only a device-local destructive erase recovery: it cannot read,
 repair, unlock, or export stored material, it does not require PIN because the
 PIN verifier may be unreadable, and it uses the same reset-pending marker plus
-material wipe transaction before returning to `unprovisioned`. Wrong reset PIN attempts use a
-RAM-only short lockout that is not cleared by closing and reopening the reset
-flow; connect/settings PIN attempts use the same 5-failure, 30-second,
-RAM-only lockout policy. Power cycling clears these local lockouts.
+material wipe transaction before returning to `unprovisioned`. Connect,
+settings, Change PIN, and reset PIN verification share one RAM-only
+5-failure, 30-second stored-PIN attempt budget. Closing one local PIN flow and
+opening another does not clear that budget. Power cycling clears the local
+lockout.
 
 Read-only public account derivation (`get_accounts`) is implemented. Mnemonic
 import, runtime policy APIs, signing APIs, and USER_PROFILE secure

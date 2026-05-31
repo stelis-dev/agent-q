@@ -7,8 +7,9 @@ Usage: tools/firmware/stackchan-cores3/test_local_reset.sh
 
 Compiles the StackChan CoreS3 local reset state machine against host stubs and
 verifies normal reset and error-state erase transitions, reset-pending marker
-behavior, and destructive wipe orchestration. This test uses only a host C++
-compiler and does NOT require ESP-IDF.
+behavior, destructive wipe orchestration, and the shared stored-PIN attempt
+budget used by reset and connect/settings PIN authorization. This test uses
+only a host C++ compiler and does NOT require ESP-IDF.
 EOF
 }
 
@@ -95,7 +96,9 @@ cat >"${TMP_DIR}/local_reset_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
+#include "agent_q_connect_settings.h"
 #include "agent_q_local_auth.h"
+#include "agent_q_local_pin_auth.h"
 #include "agent_q_local_reset.h"
 #include "agent_q_policy_store.h"
 #include "esp_err.h"
@@ -112,6 +115,7 @@ bool g_policy_present = true;
 bool g_auth_present = true;
 bool g_connect_setting_present = true;
 bool g_root_wipe_fails = false;
+bool g_require_pin_on_connect = true;
 int g_clear_session_count = 0;
 int g_persist_unprovisioned_count = 0;
 int g_consistency_error_count = 0;
@@ -136,6 +140,7 @@ void reset_stubs()
     g_auth_present = true;
     g_connect_setting_present = true;
     g_root_wipe_fails = false;
+    g_require_pin_on_connect = true;
     g_clear_session_count = 0;
     g_persist_unprovisioned_count = 0;
     g_consistency_error_count = 0;
@@ -246,6 +251,12 @@ bool wipe_root_material()
     return true;
 }
 
+bool store_root_material(const uint8_t*, size_t)
+{
+    g_root_present = true;
+    return true;
+}
+
 AgentQPolicyStoreStatus active_policy_status()
 {
     return g_policy_present ? AgentQPolicyStoreStatus::active : AgentQPolicyStoreStatus::missing;
@@ -254,6 +265,12 @@ AgentQPolicyStoreStatus active_policy_status()
 bool wipe_policy()
 {
     g_policy_present = false;
+    return true;
+}
+
+bool store_default_policy()
+{
+    g_policy_present = true;
     return true;
 }
 
@@ -283,13 +300,38 @@ bool wipe_local_auth()
 
 bool verify_local_pin(const char*, bool* verified)
 {
-    *verified = true;
+    *verified = false;
     return true;
 }
 
 bool wipe_require_pin_on_connect()
 {
     g_connect_setting_present = false;
+    return true;
+}
+
+bool read_require_pin_on_connect(bool* required)
+{
+    if (required == nullptr) {
+        return false;
+    }
+    *required = g_require_pin_on_connect;
+    return true;
+}
+
+bool connect_requires_pin()
+{
+    return g_require_pin_on_connect;
+}
+
+bool store_require_pin_on_connect(bool required)
+{
+    g_require_pin_on_connect = required;
+    return true;
+}
+
+bool store_local_pin_verifier(const char*)
+{
     return true;
 }
 
@@ -346,6 +388,52 @@ int main()
     expect(!agent_q::local_reset_begin_error_recovery_wipe(100),
            "error recovery wipe cannot start without confirmation state");
 
+    reset_stubs();
+    agent_q::local_pin_auth_begin_connect(100);
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        g_now = 10 + attempt;
+        expect(agent_q::local_pin_auth_add_digit('0', 100) ==
+                   agent_q::AgentQLocalPinAuthInputResult::accepted,
+               "shared attempt setup digit 1 accepted");
+        expect(agent_q::local_pin_auth_add_digit('0', 100) ==
+                   agent_q::AgentQLocalPinAuthInputResult::accepted,
+               "shared attempt setup digit 2 accepted");
+        expect(agent_q::local_pin_auth_add_digit('0', 100) ==
+                   agent_q::AgentQLocalPinAuthInputResult::accepted,
+               "shared attempt setup digit 3 accepted");
+        expect(agent_q::local_pin_auth_add_digit('0', 100) ==
+                   agent_q::AgentQLocalPinAuthInputResult::accepted,
+               "shared attempt setup digit 4 accepted");
+        expect(agent_q::local_pin_auth_add_digit('0', 100) ==
+                   agent_q::AgentQLocalPinAuthInputResult::accepted,
+               "shared attempt setup digit 5 accepted");
+        expect(agent_q::local_pin_auth_add_digit('0', 100) ==
+                   agent_q::AgentQLocalPinAuthInputResult::accepted,
+               "shared attempt setup digit 6 accepted");
+        expect(agent_q::local_pin_auth_submit(g_now, 0, 100) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "shared attempt wrong connect PIN starts verification");
+        const agent_q::AgentQLocalPinAuthVerifyResult result =
+            agent_q::local_pin_auth_verify_if_ready(g_now, 100, 80, 0);
+        expect(attempt == 4
+                   ? result == agent_q::AgentQLocalPinAuthVerifyResult::locked
+                   : result == agent_q::AgentQLocalPinAuthVerifyResult::wrong_pin,
+               "connect PIN failures drive shared lockout");
+    }
+    agent_q::local_pin_auth_clear_flow();
+    agent_q::local_reset_begin_settings(120);
+    expect(agent_q::local_reset_begin_pin_entry(120), "reset PIN entry starts after connect failures");
+    expect(agent_q::local_reset_snapshot(20).lockout_active,
+           "reset PIN sees shared lockout from connect PIN failures");
+    expect(agent_q::local_reset_submit_pin_for_verification(20, 120) ==
+               agent_q::AgentQLocalResetPinSubmitResult::locked,
+           "reset PIN submit is locked by shared attempt budget");
+    expect(agent_q::local_reset_release_lockout_if_elapsed(80),
+           "reset PIN releases elapsed shared lockout");
+    expect(!agent_q::local_reset_snapshot(80).lockout_active,
+           "reset PIN lockout release clears shared budget");
+    agent_q::local_reset_wipe();
+
     if (failures != 0) {
         fprintf(stderr, "%d local reset test(s) failed\n", failures);
         return 1;
@@ -360,6 +448,8 @@ CPP
   -I"${TMP_DIR}" \
   -I"${AGENT_Q_DIR}" \
   "${AGENT_Q_DIR}/agent_q_pin_attempt.cpp" \
+  "${AGENT_Q_DIR}/agent_q_persistent_material.cpp" \
+  "${AGENT_Q_DIR}/agent_q_local_pin_auth.cpp" \
   "${AGENT_Q_DIR}/agent_q_local_reset.cpp" \
   "${TMP_DIR}/local_reset_test.cpp" \
   -o "${TMP_DIR}/local_reset_test"
