@@ -34,7 +34,7 @@ as the active device for a named routing purpose.
 assignments, and any in-memory connection session. `set_device_metadata`
 updates a device's human-readable label. `connect_device` opens a
 communication session by sending a Firmware connect request that requires
-physical approval when the target supports sessions. The current StackChan
+device-local approval when the target supports sessions. The current StackChan
 CoreS3 target accepts `connect` only after persistent root material and
 material-backed `provisioned` state exist. `disconnect_device` ends the runtime
 session when one exists. `get_capabilities` and `get_accounts` are read-only
@@ -60,11 +60,9 @@ only for rejected policy-decision smoke. It is not signing support.
   only the local record - Firmware cannot observe it and keeps its session
   until its TTL, a reboot, a disconnect, or replacement by a new approved
   connect.
-- While Gateway holds a non-expired runtime session, `connect_device` returns
-  it from local memory without contacting Firmware and without re-approval. This
-  is a local optimization and does not re-verify with Firmware; a session
-  Firmware has already dropped surfaces as `invalid_session` on the next
-  disconnect or session-scoped call.
+- `connect_device` does not reuse an existing Gateway-local runtime session.
+  Each call locates the live device and sends a Firmware `connect` request, so
+  Firmware remains the only authority that can issue a fresh session.
 - Gateway evicts an expired runtime session lazily, on the next access after
   its local TTL passes, not on a timer. Firmware remains the session authority.
 - Not yet implemented: concrete signing methods, runtime policy evaluation,

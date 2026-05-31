@@ -15,6 +15,7 @@ import {
   MAX_APPROVAL_TIMEOUT_MS,
   type Account,
   type CapabilityChain,
+  type ConnectResponse,
   type DeviceStatusSnapshot,
   type IdentifyDeviceResponse,
   type MethodResultResponse,
@@ -132,7 +133,6 @@ export interface SetDeviceMetadataResult {
 export interface ConnectDeviceResult {
   source: "connected";
   deviceId: string;
-  reused: boolean;
   sessionTtlMs: number;
   connectedAt: string;
   expiresAt: string;
@@ -411,26 +411,16 @@ export class GatewayCore {
     const target = await this.resolveTargetDevice(input);
     const scanTimeoutMs = validateTimeoutMs(input.timeoutMs);
 
-    const existingSession = this.peekRuntimeSession(target.deviceId);
-    if (existingSession !== null) {
-      // A non-expired runtime session is reused from local memory without
-      // contacting Firmware and without re-approval: the session was already
-      // physically approved when it was established. This reflects Gateway's
-      // local view only. If Firmware has dropped the session (for example after
-      // a reboot), Gateway does not detect it here; the loss surfaces as
-      // invalid_session on the next disconnect or session-scoped request.
-      return {
-        source: "connected",
-        deviceId: target.deviceId,
-        reused: true,
-        sessionTtlMs: existingSession.sessionTtlMs,
-        connectedAt: existingSession.connectedAt,
-        expiresAt: existingSession.expiresAt,
-        device: target.record.lastStatus.device,
-      };
+    let matchingPort: UsbStatusResult;
+    try {
+      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+    } catch (error) {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+      }
+      throw error;
     }
-
-    const matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
     // Record the live device before sending connect so a rejected or timed-out
     // attempt still refreshes lastSeenAt and the cached status for this device.
     await this.configStore.rememberUsbStatus(
@@ -440,12 +430,21 @@ export class GatewayCore {
     );
 
     const transportTimeoutMs = approvalTimeoutMs + CONNECT_TRANSPORT_MARGIN_MS;
-    const response = await this.usbDriver.connectDevice(
-      matchingPort.portPath,
-      gatewayName,
-      transportTimeoutMs,
-      approvalTimeoutMs,
-    );
+    let response: ConnectResponse;
+    try {
+      response = await this.usbDriver.connectDevice(
+        matchingPort.portPath,
+        gatewayName,
+        transportTimeoutMs,
+        approvalTimeoutMs,
+      );
+    } catch (error) {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+      }
+      throw error;
+    }
 
     if (response.status === "rejected") {
       throw new GatewayError(
@@ -471,7 +470,6 @@ export class GatewayCore {
     return {
       source: "connected",
       deviceId: target.deviceId,
-      reused: false,
       sessionTtlMs: session.sessionTtlMs,
       connectedAt: session.connectedAt,
       expiresAt: session.expiresAt,
@@ -951,7 +949,7 @@ function toRuntimeSessionView(session: RuntimeSession | null): RuntimeSessionVie
   };
 }
 
-// Single owner of the disconnect-failure session policy (see specs/PROTOCOL.md):
+// Single owner of the session-clearing transport policy (see specs/PROTOCOL.md):
 // these failures mean Gateway can no longer confirm the session, so it clears its
 // local view to avoid reusing a session Firmware may have already dropped. The
 // returned reason explains why; an unrecognized error returns null, so the caller

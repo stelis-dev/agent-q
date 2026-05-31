@@ -138,17 +138,20 @@ Flow rules:
 - Gateway may store the selected `deviceId` and transport hint locally.
 - A stored transport hint is not identity. Gateway must confirm identity with
   Firmware before treating a device as live.
-- `connect` establishes a session and requires physical approval.
+- `connect` establishes a session and requires Firmware-owned device-local
+  approval. Hardware targets may implement that approval as a physical confirm
+  or as local PIN verification, but PIN entry must never be a USB protocol
+  request.
 - `get_capabilities`, `get_accounts`, `get_policy`, and `call_method` require
   `sessionId`.
 - `disconnect` ends the session.
 - Firmware should reject session-scoped requests with an unknown or expired
   `sessionId`.
-- When Gateway has an active runtime session and a disconnect attempt ends with
-  `invalid_session`, `timeout`, `port_not_found`, `port_in_use`, or
-  `transport_closed`, Gateway must clear its local session view. This does not
-  prove Firmware observed disconnect; it prevents Gateway from reusing a session
-  it can no longer confirm.
+- When Gateway has an active runtime session and a session teardown or fresh
+  connect attempt ends with `invalid_session`, `timeout`, `port_not_found`,
+  `port_in_use`, or `transport_closed`, Gateway must clear its local session
+  view. This does not prove Firmware observed disconnect; it prevents Gateway
+  from keeping a session it can no longer confirm.
 
 Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
 `get_capabilities`, `get_accounts`, `get_policy`, the `call_method` runtime
@@ -168,6 +171,9 @@ display signaling.
 `connect` and `disconnect` are defined by the protocol and parsed by Gateway.
 The current StackChan CoreS3 target accepts `connect` only after persistent root
 material, active policy, local PIN verifier, and a `provisioned` state exist.
+Its default device-local approval is local PIN entry on the device. The target's
+local settings can switch connect approval back to physical Confirm, but changing
+that setting itself requires local PIN verification.
 
 `connect` and `disconnect` establish and end a runtime communication session
 between Gateway and Firmware. A connection session does not authorize signing,
@@ -256,7 +262,7 @@ Device states:
 
 - `idle`: ready for read-only requests.
 - `busy`: processing another request.
-- `awaiting_approval`: physical approval UI is active.
+- `awaiting_approval`: Firmware-owned device-local approval UI is active.
 - `locked`: device requires local unlock before sensitive actions.
 - `error`: device is running but cannot currently serve requests.
 
@@ -447,8 +453,8 @@ temporary layer.
 ## Connect
 
 Gateway opens a communication session by sending `connect`. Connect requires
-physical approval on Firmware every time. Connect is not signing approval and
-does not authorize signing.
+Firmware-owned device-local approval every time. Connect is not signing approval
+and does not authorize signing.
 
 Request:
 
@@ -521,17 +527,25 @@ Timeout response uses the rejected shape with:
 
 Connect rules:
 
-- Establishing a session requires physical approval every time a Firmware
-  `connect` request is sent. Firmware does not remember a previously approved
-  Gateway.
-- Reuse is a Gateway-local optimization, not a Firmware behavior. While Gateway
-  holds a non-expired runtime session for the target device, a `connect_device`
-  call returns that session from local memory without sending a Firmware
-  `connect` request and without re-approval. The session was already physically
-  approved when it was established. Reuse reflects Gateway's local view only:
-  Gateway does not re-verify with Firmware and cannot detect Firmware-side
-  session loss (for example after a reboot). Such loss surfaces as
-  `invalid_session` on the next disconnect or session-scoped request.
+- Establishing a session requires Firmware-owned device-local approval every
+  time a Firmware `connect` request is sent. Firmware does not remember a
+  previously approved Gateway.
+- `connect_device` must not approve from Gateway-local session memory without
+  contacting Firmware. Every `connect_device` call sends Firmware `connect`;
+  Firmware remains the only authority that can issue a fresh `sessionId`.
+- The current StackChan CoreS3 target stores a local `requirePinOnConnect`
+  setting. Missing setting means the secure default, ON. Invalid stored values
+  fail closed to ON and are logged. The setting is device-local; there is no USB,
+  Gateway, or MCP request for changing it.
+- When `requirePinOnConnect` is ON, successful device-local PIN entry is the
+  connect approval. Firmware must not add a second Confirm step after PIN
+  success. Wrong PIN attempts are rate-limited as device-local touch attempts:
+  five wrong PINs lock the local PIN UI for 30 seconds in RAM. Canceling and
+  reopening the PIN UI must not clear the lockout. Power cycling clears it.
+- When `requirePinOnConnect` is OFF, the target uses the existing physical
+  Confirm approval path.
+- PIN is never submitted over USB. There is no protocol request or parameter for
+  connect PIN, settings PIN, reset PIN, PIN verifier write, or PIN reset.
 - `connect` does not authorize signing.
 - `connect` does not prove which agent or upstream user triggered the request.
 - `sessionId` is generated by Firmware. The format is `session_` followed by
@@ -552,6 +566,11 @@ Connect rules:
   Gateway's in-memory record. Firmware cannot observe a Gateway restart and
   keeps its active session until its TTL, a reboot, an explicit disconnect, or
   replacement by a new approved connect.
+- Firmware targets may clear an active session earlier when the transport link
+  is lost. On StackChan CoreS3, USB connected means USB host SOF is observed by
+  `usb_serial_jtag_is_connected()`. It does not prove Gateway is running or that
+  the serial port is open. Cable removal, host suspend, or SOF loss can clear
+  the Firmware RAM session by policy.
 - Gateway TTL checks are local guards; Firmware remains the session authority.
   Gateway evicts an expired runtime session lazily, on the next access after
   `connectedAt + sessionTtlMs`, not on a timer.

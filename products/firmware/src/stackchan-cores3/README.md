@@ -17,8 +17,10 @@ The current implementation includes:
 - a USB JSONL `identify_device` request that shows a short temporary code over
   the current screen and then returns to the previous device state.
 - protocol handling for `connect` and `disconnect`. The current target accepts
-  `connect` only after material-backed `provisioned` state and physical
-  approval. Firmware sessions are RAM-only and do not authorize signing.
+  `connect` only after material-backed `provisioned` state and device-local
+  approval. By default that approval is stored-PIN entry on the device; a local
+  settings toggle can switch connect approval to physical Confirm after PIN
+  verification. Firmware sessions are RAM-only and do not authorize signing.
 - a USB JSONL `get_capabilities` request that returns Firmware-authored Sui
   Ed25519 account identity capability over an approved session while
   `provisioned`. The current `methods` list is empty because signing methods are
@@ -40,10 +42,10 @@ The current implementation includes:
   These setup transitions are not exposed as USB JSONL requests.
 - a device-local settings reset flow for `provisioned` devices. Reset requires
   the local Settings Reset action plus the stored 6-digit PIN, wipes root material,
-  active policy, PIN verifier, runtime session, and provisioning state, and is
-  not exposed as a USB JSONL request. StackChan CoreS3 local reset was manually
-  smoke-tested after commit `7c6e65c`; rerun hardware smoke after reset UI or
-  reset-state changes.
+  active policy, PIN verifier, connect-approval setting, runtime session, and
+  provisioning state, and is not exposed as a USB JSONL request. StackChan
+  CoreS3 local reset was manually smoke-tested after commit `7c6e65c`; rerun
+  hardware smoke after reset UI or reset-state changes.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP
@@ -104,6 +106,7 @@ tools/firmware/common/test_policy_v0.sh
 tools/firmware/stackchan-cores3/test_call_method_validation.sh
 tools/firmware/stackchan-cores3/test_policy_store.sh
 tools/firmware/stackchan-cores3/test_local_auth.sh
+tools/firmware/stackchan-cores3/test_connect_settings.sh
 tools/firmware/stackchan-cores3/test_bip39_vectors.sh
 tools/firmware/stackchan-cores3/test_sui_account_vectors.sh
 ```
@@ -188,8 +191,8 @@ In the hardware firmware tree:
 ## Persistent Storage
 
 This target stores the protocol `deviceId`, provisioning state, DEV_PROFILE root
-entropy, active default-reject policy, and local PIN verifier in NVS namespace
-`agent_q`.
+entropy, active default-reject policy, local PIN verifier, and the optional
+connect-PIN setting in NVS namespace `agent_q`.
 When a previous DEV_PROFILE build already has `prov_state = provisioned` and
 valid root entropy but no policy record, boot initializes the default-reject
 policy before reporting `provisioned`; if that write fails, the target fails
@@ -203,6 +206,7 @@ verifier are not migrated and fail closed until reprovisioned.
 | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
 | `policy_v0` | DEV_PROFILE active default-reject policy record |
 | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
+| `pin_on_connect` | Optional local connect approval setting; missing means require PIN on connect; local reset erases it back to the missing-key default |
 
 Recovery phrase setup v0 stores generated phrase text and recovered mnemonic
 word-entry scratch only in RAM. Generate displays only up-to-4-letter prefixes

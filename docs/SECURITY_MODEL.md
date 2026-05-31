@@ -39,8 +39,9 @@ Implemented today:
 - Gateway-local device selection and registry (labels, purpose routing).
 - A connect/disconnect runtime session held in Firmware RAM after
   material-backed `provisioned` state. The session does not authorize signing.
-- A physical approval modal on the StackChan CoreS3 target for `connect`: the
-  user accepts or rejects on the device's screen.
+- Device-local approval on the StackChan CoreS3 target for `connect`. The
+  default is local 6-digit PIN entry on the device; a local setting can switch
+  connect approval to the physical Confirm path after PIN verification.
 - A material-backed provisioning state on the StackChan CoreS3 target. It
   reports `provisioned` only when the persisted state, valid DEV_PROFILE root
   entropy blob, active default-reject policy record, and local PIN verifier all
@@ -174,9 +175,10 @@ Agents, MCP clients, the Admin Page, and CLI input:
 
 - Request sources only. They are never authority.
 
-The physical approval that exists today gates `connect` / session establishment,
-not individual signatures. Per-signature approval is a property of the device
-capability tier (section 12) and depends on signing, which is not implemented.
+The device-local approval that exists today gates `connect` / session
+establishment, not individual signatures. Per-signature approval is a property
+of the device capability tier (section 12) and depends on signing, which is not
+implemented.
 
 ## 6. Device Profiles
 

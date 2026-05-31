@@ -271,11 +271,12 @@ No destructive reset or reprovisioning protocol request is implemented.
 StackChan CoreS3 source implements reset as normal device-local UX from the
 `provisioned` state: local settings entry, a Reset menu action, stored PIN
 verification, root material wipe, active policy wipe, PIN verifier wipe, session
-cleanup, and `unprovisioned` persistence. Firmware writes an internal
-reset-pending marker before destructive wipe starts, so boot can resume an
-interrupted reset wipe. PIN failure, timeout, or cancel leaves existing material
-intact. Wrong reset PIN attempts use a RAM-only short lockout that is not cleared
-by closing and reopening the reset flow; power cycling clears it.
+cleanup, connect-approval setting wipe, and `unprovisioned` persistence.
+Firmware writes an internal reset-pending marker before destructive wipe starts,
+so boot can resume an interrupted reset wipe. PIN failure, timeout, or cancel
+leaves existing material and settings intact. Wrong reset PIN attempts use a
+RAM-only short lockout that is not cleared by closing and reopening the reset
+flow; power cycling clears it.
 This is not an error-state recovery path; material/state consistency errors
 still fail closed.
 

@@ -74,7 +74,6 @@ const noOpCore = {
     return {
       source: "connected",
       deviceId: "device-1",
-      reused: false,
       sessionTtlMs: 1800000,
       connectedAt: "2026-05-28T00:00:00.000Z",
       expiresAt: "2026-05-28T00:30:00.000Z",
@@ -172,7 +171,6 @@ test("connect_device output omits sessionId and secret fields", () => {
   const sample = gatewayToolDefinitions.connectDevice.outputSchema.safeParse({
     source: "connected",
     deviceId: "device-1",
-    reused: false,
     sessionTtlMs: 1800000,
     connectedAt: "2026-05-28T00:00:00.000Z",
     expiresAt: "2026-05-28T00:30:00.000Z",
@@ -190,7 +188,6 @@ test("connect_device output omits sessionId and secret fields", () => {
   const withSessionId = gatewayToolDefinitions.connectDevice.outputSchema.safeParse({
     source: "connected",
     deviceId: "device-1",
-    reused: false,
     sessionId: "session_aabbccdd",
     sessionTtlMs: 1800000,
     connectedAt: "2026-05-28T00:00:00.000Z",
@@ -565,7 +562,6 @@ const leakyCore = {
     return {
       source: "connected",
       deviceId: "device-1",
-      reused: false,
       sessionTtlMs: 1800000,
       connectedAt: "2026-05-28T00:00:00.000Z",
       expiresAt: "2026-05-28T00:30:00.000Z",
@@ -927,7 +923,7 @@ test("output that fails sanitization returns a generic internal_output_error, no
   const malformedCore = {
     ...noOpCore,
     async connectDevice() {
-      // Missing required fields (reused/sessionTtlMs/...): unsanitizable success.
+      // Missing required fields (sessionTtlMs/...): unsanitizable success.
       return { source: "connected", deviceId: "device-1", sessionId: "SESSION_LEAK" };
     },
   };
@@ -952,7 +948,6 @@ test("MCP boundary fails closed when a success result carries unsanitized displa
       return {
         source: "connected",
         deviceId: "device-1",
-        reused: false,
         sessionTtlMs: 1800000,
         connectedAt: "2026-05-28T00:00:00.000Z",
         expiresAt: "2026-05-28T00:30:00.000Z",
@@ -1020,7 +1015,6 @@ test("MCP boundary fails closed on unsafe top-level identifiers, purposes, and t
           return {
             source: "connected",
             deviceId: "device-1",
-            reused: false,
             sessionTtlMs: 1800000,
             connectedAt: "not-a-date",
             expiresAt: "2026-05-28T00:30:00.000Z",

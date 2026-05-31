@@ -241,7 +241,6 @@ const setDeviceMetadataToolOutputShape = z.discriminatedUnion("source", [
 const connectDeviceSuccessOutputShape = z.object({
   source: z.literal("connected"),
   deviceId: safeDeviceIdShape,
-  reused: z.boolean(),
   sessionTtlMs: z.number().int().positive(),
   connectedAt: isoInstantShape,
   expiresAt: isoInstantShape,
@@ -550,7 +549,7 @@ export const gatewayToolDefinitions = {
     name: "connect_device",
     title: "Connect device",
     description:
-      "Open a communication session with a known Agent-Q Firmware device. Resolves the target device by deviceId, by purpose, or by the default active device. Sends a connect request that requires physical approval on the device. Writes a status handshake to candidate USB serial ports while locating the device. Connect is not signing approval and does not authorize signing. Session is held in Gateway memory only.",
+      "Open a communication session with a known Agent-Q Firmware device. Resolves the target device by deviceId, by purpose, or by the default active device. Sends a connect request that requires Firmware-owned device-local approval. Writes a status handshake to candidate USB serial ports while locating the device. Connect is not signing approval and does not authorize signing. Session is held in Gateway memory only.",
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),

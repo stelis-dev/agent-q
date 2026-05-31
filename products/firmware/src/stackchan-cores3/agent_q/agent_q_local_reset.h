@@ -3,13 +3,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "agent_q_pin_attempt.h"
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
 
 constexpr uint32_t kAgentQLocalResetEntryMs = 60000;
-constexpr uint32_t kAgentQLocalResetPinLockoutMs = 30000;
-constexpr uint8_t kAgentQLocalResetMaxWrongPinAttempts = 5;
+constexpr uint32_t kAgentQLocalResetPinLockoutMs = kAgentQPinLockoutMs;
+constexpr uint8_t kAgentQLocalResetMaxWrongPinAttempts = kAgentQMaxWrongPinAttempts;
 
 enum class AgentQLocalResetStage {
     none,
@@ -25,6 +26,7 @@ enum class AgentQLocalResetCommitResult {
     root_wipe_error,
     policy_wipe_error,
     local_auth_wipe_error,
+    connect_setting_wipe_error,
     material_remaining_error,
     reset_marker_storage_error,
     state_storage_error,

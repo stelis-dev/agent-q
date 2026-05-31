@@ -94,7 +94,8 @@ hardware and must be documented in each target's `SPEC.md`.
 |---|---|---|---:|
 | Persistent device state | provisioning state, stored root material, policy, local PIN verifier, account availability | Firmware | Yes |
 | Volatile sensitive scratch | generated recovery phrase, setup entropy, pending backup confirmation, typed PIN digits | Firmware | Yes |
-| Pending approval state | active physical approval request, timeout, requested action | Firmware | Yes |
+| Local PIN authorization state | connect/settings/reset PIN entry purpose, verification stage, timeout, RAM-only lockout | Firmware | Yes |
+| Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or connect PIN approval; timeout; requested action | Firmware | Yes |
 | Runtime session state | active protocol session id and expiry | Firmware; Gateway mirrors its own client session state | Yes |
 | Target-local display state | screen on/off, brightness, screensaver replacement | Firmware target display module | No |
 | Target-local posture state | servo position, haptics, LEDs, temporary expression feedback | Firmware target UI/motion module | No |
@@ -191,7 +192,11 @@ Allowed:
 - `call_method` runtime skeleton (session-scoped; unknown methods reject, and Sui
   `sign_transaction` is recognized only for rejected policy-decision smoke)
 - device-local settings reset/material wipe after a local Settings Reset action
-  and stored PIN verification
+  and stored PIN verification; successful reset also erases the local
+  connect-approval setting so the next setup returns to the missing-key
+  secure default
+- device-local settings toggle for whether USB `connect` requires local PIN;
+  changing the toggle requires stored PIN verification
 - policy update only after an authorization/update surface is implemented
 
 This state is not blanket signing approval. Policy still decides whether each
@@ -292,6 +297,13 @@ may still return `busy` while a physical
 approval prompt or device-only setup material display is active.
 
 Gateway may hide unavailable operations, but Firmware must still reject them.
+
+The current StackChan CoreS3 target has an explicit `local_pin_auth` runtime
+substate for local PIN authorization. It records `purpose`
+(`connect` or `settings_toggle`), `stage` (`pin_entry`, `pin_verifying`, or
+`committing_setting`), typed PIN scratch, deadline, and RAM-only attempt state.
+The UI panel may display that state, but panel existence is not the source of
+truth. The target must not expose a USB/Gateway/MCP PIN submit request.
 
 ## Boot Flows
 

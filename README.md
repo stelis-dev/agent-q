@@ -93,8 +93,9 @@ Implemented:
 - Gateway-local device registry with human-readable labels.
 - Gateway-local routing assignments by purpose name. Purpose routing is local
   Gateway metadata, not Firmware policy.
-- Connection sessions. A `connect_device` call requests physical approval on
-  Firmware, and an approved session is held in Gateway memory only.
+- Connection sessions. A `connect_device` call always contacts Firmware, and
+  Firmware issues an approved session only after its device-local approval
+  conditions pass. The approved session is held in Gateway memory only.
 - Disconnect.
 - Read-only Sui account and public-key discovery over an approved runtime
   session.

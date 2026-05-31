@@ -511,7 +511,6 @@ test("connectDevice approved stores in-memory session and does not persist sessi
     const result = await core.connectDevice({});
     assert.equal(connectCalls, 1);
     assert.equal(result.source, "connected");
-    assert.equal(result.reused, false);
     assert.equal("sessionId" in result, false, "connect result must not expose sessionId");
     assert.equal(result.sessionTtlMs, 1800000);
 
@@ -520,7 +519,7 @@ test("connectDevice approved stores in-memory session and does not persist sessi
   });
 });
 
-test("connectDevice reuses a non-expired runtime session without contacting Firmware again", async () => {
+test("connectDevice always asks Firmware for a fresh session", async () => {
   await withStore(async (store) => {
     let connectCalls = 0;
     const core = new GatewayCore(
@@ -528,23 +527,20 @@ test("connectDevice reuses a non-expired runtime session without contacting Firm
       defaultDriver({
         async connectDevice() {
           connectCalls += 1;
-          return approvedConnectResponse();
+          return approvedConnectResponse({ sessionId: `session_${connectCalls.toString(16).padStart(2, "0")}` });
         },
       }),
     );
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
-    const first = await core.connectDevice({});
-    const second = await core.connectDevice({});
-    assert.equal(connectCalls, 1);
-    assert.equal(second.reused, true);
-    assert.equal(second.connectedAt, first.connectedAt);
-    assert.equal(second.expiresAt, first.expiresAt);
+    await core.connectDevice({});
+    await core.connectDevice({});
+    assert.equal(connectCalls, 2);
   });
 });
 
-test("connectDevice reuse is local: it does not scan ports or contact Firmware", async () => {
+test("connectDevice does not reuse a stale local session when the device disappears", async () => {
   await withStore(async (store) => {
     let listPortsCalls = 0;
     let connectCalls = 0;
@@ -577,17 +573,43 @@ test("connectDevice reuse is local: it does not scan ports or contact Firmware",
     assert.equal(connectCalls, 1);
 
     const listPortsAfterConnect = listPortsCalls;
-    // Device physically disappears, but reuse must not scan or contact Firmware:
-    // it returns Gateway's local session view. Firmware-side loss only surfaces
-    // later on disconnect or a session-scoped request.
     portAvailable = false;
-    const reused = await core.connectDevice({});
-    assert.equal(reused.reused, true);
-    assert.equal(connectCalls, 1, "reuse must not send a Firmware connect");
-    assert.equal(listPortsCalls, listPortsAfterConnect, "reuse must not scan ports");
+    await assert.rejects(() => core.connectDevice({ timeoutMs: 1 }), { code: "port_not_found" });
+    assert.equal(connectCalls, 1, "missing device must not receive a Firmware connect");
+    assert.ok(listPortsCalls > listPortsAfterConnect, "connect must scan instead of reusing local session");
 
     const listed = await core.listDevices();
-    assert.notEqual(listed.devices[0].runtimeSession, null);
+    assert.equal(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("connectDevice clears a stale local session when fresh transport connect fails", async () => {
+  await withStore(async (store) => {
+    let connectCalls = 0;
+    let failFreshConnect = false;
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async connectDevice() {
+          connectCalls += 1;
+          if (failFreshConnect) {
+            throw new GatewayError("transport_closed", "USB transport closed.", true);
+          }
+          return approvedConnectResponse();
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+    assert.equal(connectCalls, 1);
+
+    failFreshConnect = true;
+    await assert.rejects(() => core.connectDevice({}), { code: "transport_closed" });
+    assert.equal(connectCalls, 2);
+
+    const listed = await core.listDevices();
+    assert.equal(listed.devices[0].runtimeSession, null);
   });
 });
 
@@ -611,9 +633,8 @@ test("connectDevice asks Firmware again after local TTL expiry", async () => {
     await core.connectDevice({});
     // Advance past the session TTL.
     now = new Date(now.getTime() + 1800001);
-    const second = await core.connectDevice({});
+    await core.connectDevice({});
     assert.equal(connectCalls, 2);
-    assert.equal(second.reused, false);
   });
 });
 
@@ -923,18 +944,16 @@ test("after a disconnect timeout, connectDevice contacts Firmware again instead 
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
-    const first = await core.connectDevice({});
+    await core.connectDevice({});
     assert.equal(connectCalls, 1);
-    assert.equal(first.reused, false);
 
     const disconnect = await core.disconnectDevice({ timeoutMs: 50 });
     assert.equal(disconnect.reason, "timeout");
 
-    // The cleared session must not be reused: a fresh connect re-contacts
-    // Firmware rather than short-circuiting to reused: true.
-    const second = await core.connectDevice({});
+    // The cleared session must not survive locally: a fresh connect re-contacts
+    // Firmware rather than short-circuiting through Gateway memory.
+    await core.connectDevice({});
     assert.equal(connectCalls, 2);
-    assert.equal(second.reused, false);
   });
 });
 
