@@ -64,7 +64,7 @@ Legend:
 | Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat stores root entropy, initializes the active default-reject policy, and stores the local PIN verifier. Public account derivation is implemented via `get_accounts`; signing and USER_PROFILE secure provisioning are not implemented. |
 | Policy evaluator foundation | △ | Links the common host-tested policy evaluator, stored-policy provider boundary, and Sui restricted-transfer method adapter. The common evaluator matches allowlisted namespace/field facts and owns only shared `common.*` fields; chain-specific field identifiers, descriptors, and transaction semantics stay in the method adapter. Sui `sign_transaction` consumes the stored active default-reject decision only as a rejected policy-decision smoke result; it does not sign. |
 | Policy storage/read | △ | Stores only the DEV_PROFILE active default-reject policy record in NVS, exposes a read-only `get_policy` summary, migrates legacy root-only missing policy to the default-reject record, and treats corrupt/unreadable records as a material-consistency error. Policy update authorization and custom policy content are not implemented. |
-| Policy update | X | Not implemented. |
+| Policy update | X | Not implemented. The future contract is specified as a Firmware-owned `propose_policy_update` flow with bounded proposal validation, device-local approval, rollback-safe canonical storage, and no direct policy setter. This target has no policy-update protocol parser, pending-update state, approval UI, custom policy storage, or Gateway/Admin surface yet. |
 | Secure user profile | X | Not implemented. |
 
 ## Chain And Method Support

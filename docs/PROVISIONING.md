@@ -316,9 +316,13 @@ on StackChan CoreS3 during the recovery-entry slice.
 
 The next work after this provisioning foundation is not another provisioning
 step. The dependency order is: finish the policy facts / method adapter boundary,
-add authorized custom policy update, then connect concrete signing methods such
-as Sui `sign_transaction`. Sui `sign_personal_message`, signing APIs, policy
-update, and USER_PROFILE secure provisioning are not implemented.
+define and implement authorized custom policy update, then connect concrete
+signing methods such as Sui `sign_transaction`. The custom policy update
+contract is specified as a future Firmware-owned proposal flow, not as a direct
+state setter: Gateway/Admin may submit a bounded proposal, but Firmware must
+validate it, require device-local approval, and commit it through rollback-safe
+storage. Sui `sign_personal_message`, signing APIs, policy update, and
+USER_PROFILE secure provisioning are not implemented.
 
 ## Completion Criteria
 

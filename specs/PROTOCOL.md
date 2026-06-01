@@ -1017,10 +1017,13 @@ parser:
 
 ## Admin Methods
 
-Admin is not a separate protocol. Admin actions are methods exposed through
-capabilities. Like `get_capabilities` and `call_method`, these admin methods are
-designed but not yet implemented. `get_accounts` is implemented as a read-only
-identity request and does not perform any admin or signing action.
+Admin is not a separate protocol. Admin actions are namespaced methods exposed
+through capabilities in the shared protocol. Chain signing methods continue to
+use `chain` plus `method`; admin/write methods must not overload `chain` with a
+control namespace or route through a chain adapter. Like `get_capabilities` and
+`call_method`, these admin methods are designed but not yet implemented.
+`get_accounts` is implemented as a read-only identity request and does not
+perform any admin or signing action.
 
 Example methods:
 
@@ -1029,3 +1032,155 @@ Example methods:
 - `propose_key_import`
 
 Firmware must physically approve write methods before saving changes.
+
+### Designed Future: `propose_policy_update`
+
+`propose_policy_update` is the planned policy-write method. It is not
+implemented and must not be advertised in `get_capabilities` until the Firmware,
+Gateway/Admin, state model, storage, UI approval, and tests are all connected.
+
+The method is a proposal, not a setter. Gateway or Admin may submit a bounded
+policy document, but Firmware remains the authority that validates the document,
+shows device-local approval, commits the active policy, and reports the result.
+
+Planned request shape:
+
+```json
+{
+  "id": "req_policy_update",
+  "version": 1,
+  "type": "call_method",
+  "sessionId": "session_001",
+  "methodNamespace": "admin",
+  "method": "propose_policy_update",
+  "params": {
+    "policy": {
+      "schema": "agentq.policy.v0",
+      "defaultAction": "reject",
+      "rules": [
+        {
+          "id": "reject-sui-mainnet-transfer",
+          "chain": "sui",
+          "method": "sign_transaction",
+          "action": "reject",
+          "criteria": [
+            {
+              "field": "common.network",
+              "op": "eq",
+              "value": "mainnet"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+`methodNamespace: "admin"` is a planned shared-protocol namespace for
+Firmware-owned administrative proposal methods. It is not implemented today.
+Admin methods must reject a `chain` field; chain-scoped signing methods must
+continue to use `chain` and must not use `methodNamespace`.
+
+Policy document rules for the planned first version:
+
+- Wire format: JSON inside the existing JSONL protocol envelope. Firmware must
+  parse the JSON into a bounded internal policy AST before validation or
+  storage. The wire JSON is not stored directly.
+- Stored format: a Firmware-canonical binary policy record derived from the
+  bounded AST. Policy hash/id is computed over that canonical record.
+- `schema` must be `agentq.policy.v0`.
+- `defaultAction` must be `reject`.
+- A policy may contain at most 16 rules.
+- A rule id is a bounded printable identifier, not an authorization token.
+- Each rule has `chain`, `method`, `action`, and `criteria`.
+- The policy schema may define `reject`, `ask`, and `sign`, but Firmware must
+  reject any proposed action it cannot enforce in the current runtime. A policy
+  update must not store unsupported `ask` or `sign` rules for future activation.
+  Disabled policy drafts are out of scope for this version.
+- A `reject` rule may have zero criteria. `ask` and `sign` rules require at
+  least one criterion.
+- A rule may contain at most 8 criteria.
+- Criterion `field` is a bounded namespace/field id such as `common.network` or
+  `sui.amount_raw`. Common fields are owned by the common policy evaluator;
+  chain-specific fields are owned by the corresponding method adapter.
+- Criterion `op` may be `eq`, `in`, or `lte` only where the active method
+  adapter's field descriptor allows that operator.
+- `eq` and `lte` use exactly one scalar `value`. `in` uses exactly one
+  non-empty `values[]` list with at most 16 entries. Unused scalar/list fields
+  are rejected.
+- `u64_decimal` values must be canonical unsigned decimal strings in the
+  `uint64` range.
+- No policy may depend on Gateway labels, purpose routing, gateway name, raw
+  request id, session id, external market data, network fetches, JavaScript,
+  Rego, CEL, JSONPath, or arbitrary code execution.
+
+Planned state and authorization rules:
+
+- `unprovisioned`, `provisioning`, `error`, and `locked` reject policy update
+  proposals with the state error defined for unavailable methods.
+- `provisioned` plus a matching active session may accept a proposal for
+  Firmware validation.
+- A valid proposal enters a Firmware-owned pending policy-update state. The
+  pending state is not a protocol state setter and is not derived from UI object
+  lifetime.
+- A second policy update proposal while one is pending is rejected with `busy`.
+- Device-local approval is required before commit. For the current display
+  target, the intended approval model is local PIN verification plus an
+  on-device summary showing policy id/hash, rule count, default action, affected
+  chains/methods, and highest-risk action (`sign`, `ask`, or `reject`). A future
+  display-confirmed diff may strengthen this, but the first implementation must
+  not rely on host-only confirmation.
+- During pending approval, read-only session methods may remain available only
+  if they do not dismiss or mutate the pending state. `call_method` and nested
+  policy updates must return `busy` while a policy update is pending or
+  committing.
+- `get_policy` returns the committed active policy only. It must not include or
+  imply the pending proposal unless a separate future review API is specified.
+- `disconnect` may perform session cleanup except during the commit critical
+  section, where Firmware may return `busy`.
+
+Planned storage and rollback rules:
+
+- The active policy store uses two bounded binary slots plus small metadata
+  identifying the current committed slot. NVS key names must fit the target
+  NVS key limit.
+- Commit writes and validates the inactive slot first, then flips the active
+  metadata. The old policy remains authoritative until the metadata flip
+  commits.
+- On write or validation failure before the metadata flip, Firmware keeps the
+  old policy and reports failure.
+- On ambiguous boot state, Firmware selects the newest valid committed slot. If
+  no valid active slot exists while the device otherwise claims `provisioned`,
+  Firmware reports a persistent-material consistency error.
+- DEV_PROFILE slot selection is not rollback protection. USER_PROFILE policy
+  storage requires secure anti-rollback or monotonic commit protection before it
+  can claim rollback resistance.
+- Local reset and error-state erase wipe all policy slots and policy metadata.
+
+Planned response outcomes:
+
+- `applied`: Firmware validated, approved, committed, and activated the new
+  policy.
+- `rejected`: local user rejected the proposal.
+- `timed_out`: local approval expired with no change.
+- `invalid_policy`: Firmware rejected the proposal before approval or commit.
+- `storage_error`: Firmware could not commit the new policy; the old policy
+  remains active unless Firmware reports a persistent-material consistency
+  error on an ambiguous state.
+- `busy`: another sensitive local flow or policy update is active.
+
+Policy update history:
+
+- Firmware must record policy update proposal outcomes as approval-history
+  metadata once that decision path exists.
+- Policy-update outcome history is part of the terminal-result contract. The
+  implementation must not report `applied` unless the committed policy and the
+  corresponding history record are both durable. If required history cannot be
+  persisted, Firmware leaves the previous active policy unchanged and reports
+  the failure instead of silently applying or silently omitting the record.
+- History records may include sequence, uptime, event kind, result, policy
+  hash/id, rule count, highest-risk action, and reason code.
+- History records must not store raw policy documents, full rule content,
+  session ids, request ids, gateway names, PINs, mnemonic text, seed, or private
+  key material.

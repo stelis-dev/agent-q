@@ -317,6 +317,31 @@ present the change for local approval. A device without trusted local input must
 use either a password model (with the host-compromise limits above) or a
 provisioning-only model.
 
+Designed policy-update contract:
+
+- A policy update is a proposal submitted to Firmware, not a state setter.
+- Gateway, Admin, CLI, and MCP clients are request sources only. They may relay a
+  proposal but do not authorize or apply it.
+- Firmware validates the bounded policy document, shows device-local approval,
+  and commits only after approval.
+- Firmware must reject policy actions it cannot enforce in the current runtime.
+  Unsupported `ask` or `sign` rules must not be stored as dormant future
+  behavior unless a separate disabled-draft model is specified and approved.
+- The first planned wire format is JSON inside the existing protocol envelope.
+  Firmware must canonicalize the accepted policy into a bounded binary policy
+  record before storage and hash calculation; raw JSON is not the active policy
+  storage format.
+- The active policy store must preserve the old policy until the new policy is
+  fully written, validated, and selected as active. Ambiguous storage state is a
+  persistent-material consistency error.
+- DEV_PROFILE slot selection is not rollback protection. USER_PROFILE policy
+  storage requires secure anti-rollback or monotonic commit protection before it
+  can claim rollback resistance.
+- Policy update history may record metadata such as result, policy hash, rule
+  count, and highest-risk action, but must not record raw policy documents,
+  complete rule content, session ids, request ids, gateway names, PINs, mnemonic
+  text, seed, or private key material.
+
 ## 9. Firmware Integrity
 
 Firmware integrity is the root requirement, above key and policy protection.
@@ -416,6 +441,9 @@ Allowed direction:
 - Admin/update mode is separated from signing method calls.
 - A policy write requires Firmware-side authorization (section 8).
 - Firmware update accepts signed images only.
+- Policy update proposals use a dedicated Admin/update method such as
+  `propose_policy_update`; they must not be exposed as `set_policy`,
+  `force_policy`, `clear_policy`, or another direct state-changing setter.
 
 Enforcement today:
 

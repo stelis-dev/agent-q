@@ -43,6 +43,9 @@ stateDiagram-v2
     Provisioned --> Locked: future local lock condition
     Locked --> Provisioned: future local unlock
     Provisioned --> Unprovisioned: local settings reset + PIN verification + material wipe
+    Provisioned --> PolicyUpdatePending: future valid policy update proposal + local approval requested
+    PolicyUpdatePending --> Provisioned: approve + commit succeeds, reject, timeout, or validation failure
+    PolicyUpdatePending --> Error: ambiguous policy commit state
 
     Unprovisioned: get_status, identify_device
     Unprovisioned: device-local setup bubble and recovery phrase controls
@@ -101,6 +104,7 @@ hardware and must be documented in each target's `SPEC.md`.
 | Volatile sensitive scratch | generated recovery phrase, setup entropy, pending backup confirmation, typed PIN digits | Firmware | Yes |
 | Local PIN authorization state | connect/settings/reset PIN entry purpose, verification stage, timeout, RAM-only lockout | Firmware | Yes |
 | Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or connect PIN approval; timeout; requested action | Firmware | Yes |
+| Pending policy update state | future validated policy proposal summary, policy hash, approval deadline, commit stage | Firmware | Yes |
 | Runtime session state | active protocol session id and expiry | Firmware; Gateway mirrors its own client session state | Yes |
 | Target-local display state | screen on/off, brightness, screensaver replacement | Firmware target display module | No |
 | Target-local posture state | servo position, haptics, LEDs, temporary expression feedback | Firmware target UI/motion module | No |
@@ -236,6 +240,57 @@ There is no automatic migration for provisioned DEV_PROFILE devices that lack
 the local PIN verifier; those devices fail closed until erased and reprovisioned
 through a local UX or development reflash workflow.
 
+#### Designed Future: Pending Policy Update
+
+Policy update is not implemented. When implemented, it must be a Firmware-owned
+pending substate under `provisioned`, not an external state setter.
+
+Intended transition:
+
+```text
+provisioned
+-> valid session-scoped policy proposal
+-> Firmware validates bounded policy document
+-> pending policy update approval on device
+-> local approval + canonical policy commit
+-> provisioned with new active policy
+```
+
+Failure behavior:
+
+- invalid policy, user rejection, timeout, or cancellation returns to
+  `provisioned` with the previous active policy unchanged;
+- storage failure before the active-slot flip returns to `provisioned` with the
+  previous active policy unchanged;
+- ambiguous storage state after interruption reports `error` instead of a normal
+  `provisioned` state;
+- a second policy update proposal while pending is rejected with `busy`.
+
+Allowed while pending:
+
+- `get_status`;
+- read-only session APIs only if they do not dismiss, overwrite, or mutate the
+  pending proposal;
+- `get_policy`, if allowed, reports only the committed active policy and not the
+  pending proposal;
+- `disconnect` as session cleanup except during the commit critical section,
+  where Firmware may return `busy`.
+
+Rejected while pending:
+
+- nested policy updates;
+- `call_method`, because request evaluation must not race an uncommitted active
+  policy replacement;
+- host-triggered reset, debug, import, or state-changing shortcuts.
+
+The pending state may be displayed by UI, but UI object lifetime is not the
+source of truth. Firmware owns the proposal summary, approval deadline, commit
+stage, cleanup, and rollback behavior.
+
+Firmware must reject policy actions that the current runtime cannot enforce.
+Unsupported `ask` or `sign` rules are not stored as dormant future behavior
+unless a separate disabled-draft model is specified and approved.
+
 ### `error`
 
 Firmware detected a persistent-material consistency error. This is a fail-closed
@@ -306,9 +361,10 @@ This state is reserved until an unlock model is implemented.
 | `get_approval_history` | X | X | O | X | X | Firmware |
 | `call_method` | X | X | O | X | X | Firmware |
 | policy read | X | X | O | X | X | Firmware |
-| policy update | X | X | X (future: authorization required) | X | X | Firmware |
+| policy update | X | X | D (future: validated proposal + device-local approval) | X | X | Firmware |
 
-`O*`: allowed only when the request does not disrupt local setup UI. `S` means
+`O*`: allowed only when the request does not disrupt local setup UI. `D` means
+designed but not implemented. `S` means
 session cleanup only: Firmware does not require material readiness, but a
 missing or mismatched session returns `invalid_session`. `S` operations may
 still return `busy` while local setup/PIN/reset or sensitive settings subflow
