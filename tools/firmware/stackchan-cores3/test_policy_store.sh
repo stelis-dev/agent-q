@@ -123,16 +123,30 @@ void expect(bool condition, const char* label)
     }
 }
 
-agent_q::AgentQTransactionFacts valid_facts()
+agent_q::AgentQPolicyFacts valid_facts()
 {
-    return agent_q::AgentQTransactionFacts{
-        "sui",
-        "sign_transaction",
-        "devnet",
-        "transfer",
-        "0x1111111111111111111111111111111111111111111111111111111111111111",
-        "1",
-        "1000",
+    static const agent_q::AgentQPolicyFact entries[] = {
+        {
+            "common.chain",
+            agent_q::AgentQPolicyValueType::string,
+            "sui",
+        },
+        {
+            "common.method",
+            agent_q::AgentQPolicyValueType::string,
+            "sign_transaction",
+        },
+        {
+            "common.network",
+            agent_q::AgentQPolicyValueType::string,
+            "devnet",
+        },
+    };
+    return agent_q::AgentQPolicyFacts{
+        entries,
+        sizeof(entries) / sizeof(entries[0]),
+        nullptr,
+        0,
     };
 }
 

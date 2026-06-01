@@ -932,14 +932,19 @@ Firmware must not advertise `sign_transaction` in `get_capabilities` until Sui
 txBytes decoding, policy evaluation, negative parser fixtures, physical approval
 where required, and signing are all implemented and connected to the runtime
 request path. The current
-restricted Sui transaction facts parser, Sui policy facts adapter, default-reject
+restricted Sui transaction facts parser, Sui method adapter, default-reject
 policy provider boundary, and policy evaluator are Firmware-internal source
 foundations; they do not make `call_method` a signing API.
 
 Policy evaluation is currently a Firmware common-source foundation. It accepts
 already extracted transaction facts, loads the stored active policy through a
 Firmware-owned provider boundary, applies a declarative deny-by-default
-policy model, and returns an internal `sign`, `reject`, or `ask` decision. That
+policy model over allowlisted namespace/field facts, and returns an internal
+`sign`, `reject`, or `ask` decision. The common evaluator owns only the shared
+`common.*` policy fields; chain-specific field identifiers, descriptor
+enablement, and transaction meaning stay in the corresponding method adapter.
+The common evaluator does not decode Sui, EVM, or Solana transaction semantics.
+That
 decision is not a signature, does not update device state, does not trigger
 physical approval yet, and is not exposed through Gateway or MCP as authority.
 Missing or invalid active policy providers fail closed; in normal boot-time

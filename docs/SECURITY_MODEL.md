@@ -84,6 +84,12 @@ Implemented today:
   ordinary NVS, reads a public summary through `get_policy`, and consumes that
   active policy only for Sui `sign_transaction` policy-decision smoke. It does
   not sign, update policy, or trigger physical approval.
+- A bounded persistent approval-history read path. The current StackChan CoreS3
+  target stores only Firmware-authored method-decision metadata for validated
+  policy-rejected `call_method` skeleton decisions. It does not store raw
+  txBytes, decoded transactions, session ids, request ids, gateway names, PINs,
+  secret material, or full policy documents. Local reset and error-state erase
+  recovery wipe the history.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 

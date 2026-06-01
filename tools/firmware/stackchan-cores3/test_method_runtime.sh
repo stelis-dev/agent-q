@@ -40,7 +40,7 @@ for required in \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_runtime.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_policy_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -90,7 +90,7 @@ namespace {
 int failures = 0;
 agent_q::AgentQPolicyAction g_policy_action = agent_q::AgentQPolicyAction::reject;
 agent_q::AgentQPolicyCriterion g_policy_criterion = {
-    agent_q::AgentQPolicyCriterionType::network,
+    "common.network",
     agent_q::AgentQPolicyOperator::eq,
     "devnet",
     nullptr,
@@ -338,7 +338,7 @@ CPP
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_runtime.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_policy_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${TMP_DIR}/byte_conversions.o" \
   -o "${TMP_DIR}/method_runtime_test"

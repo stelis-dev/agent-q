@@ -6,7 +6,7 @@
 #include "agent_q_call_method_validation.h"
 #include "agent_q_policy_store.h"
 #include "agent_q_common/policy/agent_q_policy_runtime.h"
-#include "agent_q_common/sui/agent_q_sui_policy_adapter.h"
+#include "agent_q_common/sui/agent_q_sui_method_adapter.h"
 #include "agent_q_common/sui/agent_q_sui_transaction_facts.h"
 
 extern "C" {
@@ -125,8 +125,8 @@ AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
             "Transaction shape is not supported.");
     }
 
-    AgentQTransactionFacts policy_facts = {};
-    if (!make_sui_transfer_policy_facts(sui_facts, network, &policy_facts)) {
+    AgentQSuiSignTransactionPolicyFacts policy_facts = {};
+    if (!make_sui_sign_transaction_policy_facts(sui_facts, network, &policy_facts)) {
         return rejected(
             "unsupported_transaction",
             "Transaction shape is not supported.");
@@ -135,7 +135,7 @@ AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
     AgentQStoredPolicySummary policy_summary = {};
     const bool policy_summary_ready = read_active_policy_summary(&policy_summary);
     const AgentQPolicyDecision decision =
-        evaluate_agent_q_policy_runtime(active_policy_provider(), policy_facts);
+        evaluate_agent_q_policy_runtime(active_policy_provider(), policy_facts.facts);
     if (decision.reason == AgentQPolicyDecisionReason::invalid_policy) {
         return rejected(
             "policy_error",

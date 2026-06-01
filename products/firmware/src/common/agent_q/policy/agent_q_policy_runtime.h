@@ -15,6 +15,6 @@ bool load_agent_q_default_reject_policy(AgentQPolicyDocument* out, void* context
 
 AgentQPolicyDecision evaluate_agent_q_policy_runtime(
     const AgentQPolicyProvider& provider,
-    const AgentQTransactionFacts& facts);
+    const AgentQPolicyFacts& facts);
 
 }  // namespace agent_q

@@ -148,7 +148,7 @@ the restricted SUI transfer parser. StackChan CoreS3 connects the parser only to
 Sui `sign_transaction` policy-decision smoke; it is not signing.
 
 The policy test is also a common host-side check. It compiles
-`products/firmware/src/common/agent_q/policy` plus the Sui facts adapter and
+`products/firmware/src/common/agent_q/policy` plus the Sui method adapter and
 verifies deny-by-default, `sign`/`reject`/`ask` decision calculation, default
 provider behavior, missing/invalid policy provider rejection, malformed policy
 rejection, and unsupported-facts rejection. StackChan CoreS3 consumes the
@@ -227,7 +227,7 @@ In the hardware firmware tree:
 
 - Add `agent_q/*.cpp` to the main firmware component sources.
 - Add `agent_q_common/sui/*.cpp` to the main firmware component sources for the
-  shared hardware-independent Sui parser.
+  shared hardware-independent Sui parser and method adapter.
 - Add `agent_q_common/policy/*.cpp` to the main firmware component sources for
   the shared hardware-independent policy evaluator.
 - Add the `signing_crypto` component to the main firmware component
@@ -275,7 +275,7 @@ verifier are not migrated and fail closed until reprovisioned.
 | `pin_on_connect` | Optional local connect approval setting; missing means require PIN on connect; local reset erases it back to the missing-key default |
 | `approval_hist` | Fixed-size 32-record binary approval-history ring buffer; local reset and error-state erase wipe it |
 
-Recovery phrase setup v0 stores generated phrase text and recovered mnemonic
+Device-local recovery phrase setup stores generated phrase text and recovered mnemonic
 word-entry scratch only in RAM. Generate displays only up-to-4-letter prefixes
 on device and advances to local 6-digit PIN setup on backup confirmation.
 Recover uses device-local A-Z prefix buttons and scrollable BIP-39 candidate

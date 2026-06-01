@@ -20,12 +20,9 @@ enum class AgentQPolicyDecisionReason {
     unsupported_facts,
 };
 
-enum class AgentQPolicyCriterionType {
-    network,
-    kind,
-    recipient,
-    amount,
-    gas_budget,
+enum class AgentQPolicyValueType {
+    string,
+    u64_decimal,
 };
 
 enum class AgentQPolicyOperator {
@@ -35,7 +32,7 @@ enum class AgentQPolicyOperator {
 };
 
 struct AgentQPolicyCriterion {
-    AgentQPolicyCriterionType type;
+    const char* field;
     AgentQPolicyOperator op;
     const char* value;
     const char* const* values;
@@ -58,14 +55,25 @@ struct AgentQPolicyDocument {
     size_t rule_count;
 };
 
-struct AgentQTransactionFacts {
-    const char* chain;
-    const char* operation;
-    const char* network;
-    const char* kind;
-    const char* recipient;
-    const char* amount;
-    const char* gas_budget;
+struct AgentQPolicyFact {
+    const char* field;
+    AgentQPolicyValueType type;
+    const char* value;
+};
+
+struct AgentQPolicyFieldDescriptor {
+    const char* field;
+    AgentQPolicyValueType type;
+    bool allow_eq;
+    bool allow_in;
+    bool allow_lte;
+};
+
+struct AgentQPolicyFacts {
+    const AgentQPolicyFact* entries;
+    size_t entry_count;
+    const AgentQPolicyFieldDescriptor* field_descriptors;
+    size_t field_descriptor_count;
 };
 
 struct AgentQPolicyDecision {
@@ -79,6 +87,6 @@ const char* agent_q_policy_decision_reason_name(AgentQPolicyDecisionReason reaso
 
 AgentQPolicyDecision evaluate_agent_q_policy_v0(
     const AgentQPolicyDocument& policy,
-    const AgentQTransactionFacts& facts);
+    const AgentQPolicyFacts& facts);
 
 }  // namespace agent_q

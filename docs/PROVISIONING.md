@@ -77,13 +77,17 @@ Recovery or migration path:
 ```text
 user provides mnemonic
   -> Firmware validates it
+  -> user enters and repeats a 6-digit local PIN on device
   -> Firmware stores root material locally
   -> Firmware stores an active policy locally
+  -> Firmware stores a salt + PIN verifier locally
   -> Firmware exposes only public keys / addresses
 ```
 
-Direct device input is preferred when hardware supports it. Host-assisted input
-is weaker because the host sees the root secret, and must be labeled as such.
+Direct device input is preferred when hardware supports it. The current
+StackChan CoreS3 DEV_PROFILE source implements device-local Recover. Host-assisted
+input is not implemented and would be weaker because the host sees the root
+secret; if added later, it must be labeled as weaker.
 
 ## Hardware Capability
 
@@ -105,8 +109,8 @@ handling. StackChan CoreS3 local setup and PIN entry were manually smoke-tested
 after commit `2cb243b`; rerun hardware smoke after setup UI or state changes.
 Source-level local settings reset/material wipe now exists for provisioned
 StackChan CoreS3 devices and was manually smoke-tested after commit `7c6e65c`.
-Mnemonic import
-and signing are not implemented.
+Device-local Recover is implemented for DEV_PROFILE. USB/Gateway/MCP mnemonic
+import, host-assisted import, and signing are not implemented.
 
 ## Chain Accounts
 
@@ -140,7 +144,7 @@ Target provisioning states:
   closed.
 - `locked`: sensitive actions require local unlock.
 
-Runtime v0 implements the current StackChan CoreS3 mnemonic UI flow and
+The current DEV_PROFILE runtime implements the StackChan CoreS3 mnemonic UI flow and
 persistent root material slice. It loads and reports `provisioning.state`, but
 does not persist `provisioning` during the normal create-new-mnemonic flow.
 After physical backup confirmation, Firmware stores the binary BIP-39 root
@@ -154,7 +158,7 @@ If the persisted state and required material records disagree after boot or
 during runtime checks, Firmware reports `provisioning.state = error`; it does
 not keep reporting `provisioned` while rejecting all session APIs.
 
-Runtime v0 does not import, export, or sign with root signing material; read-only
+The current DEV_PROFILE runtime does not import, export, or sign with root signing material; read-only
 public Sui account derivation is available via `get_accounts`. Current StackChan
 CoreS3 source can generate a BIP-39 recovery
 phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
@@ -165,7 +169,7 @@ provisioning. Firmware must not set `provisioned` unless root signing material
 an active policy, and a local PIN verifier exist in device-local storage.
 Firmware must not set `locked` until an unlock model exists.
 
-Runtime v0 state transitions:
+Current DEV_PROFILE state transitions:
 
 ```mermaid
 stateDiagram-v2
@@ -185,7 +189,7 @@ provisioning cancel, recovery phrase backup confirmation, mnemonic import,
 factory reset, or diagnostic display signaling. These transitions are
 device-local UX only.
 
-## Recovery Phrase Setup v0
+## Device-Local Recovery Phrase Setup
 
 Current StackChan CoreS3 source enters setup only through the local setup speech
 bubble shown while the device is `unprovisioned`. The first local setup panel
@@ -260,7 +264,7 @@ persistent state `unprovisioned`. If display expiry, UI replacement, or another
 failure removes the panel, Firmware must wipe scratch and the user must start
 the local setup flow again.
 
-This v0 flow provides read-only `get_accounts` and device-local mnemonic
+This DEV_PROFILE flow provides read-only `get_accounts` and device-local mnemonic
 recovery, but deliberately stops before signing, policy update, and
 USER_PROFILE secure provisioning. USER_PROFILE signing material remains blocked
 by the security-profile gates in `docs/SECURITY_MODEL.md`: secure firmware
@@ -289,28 +293,31 @@ a USB/Gateway/MCP recovery request.
 
 ## Implementation Order
 
-Recommended first slice:
+Provisioning-specific sequence:
 
 1. Report whether a device is provisioned.
-2. Add setup-step messages that still store no persistent assets.
+2. Add device-local setup entry that still stores no persistent assets.
 3. Add DEV_PROFILE BIP-39 recovery phrase display with volatile wipe and no
    host exposure.
-4. Add DEV_PROFILE persistent root material, active policy, and local PIN
-   verifier storage after backup confirmation plus matching PIN repeat.
-5. Add Sui Ed25519 account derivation.
-6. Add `get_accounts`.
-7. Add Sui `sign_personal_message`.
-
-Do not jump directly from mnemonic generation to user transaction signing.
+4. Add DEV_PROFILE device-local mnemonic recovery entry with checksum
+   validation.
+5. Add DEV_PROFILE persistent root material, active policy, and local PIN
+   verifier storage after backup confirmation or successful recovery plus
+   matching PIN repeat.
+6. Add Sui Ed25519 account derivation and read-only `get_accounts`.
 
 Current implementation status: steps 1 through 6 are implemented for the
 StackChan CoreS3 DEV_PROFILE source path. StackChan CoreS3 local setup and PIN
 entry were manually smoke-tested after commit `2cb243b`; rerun hardware smoke
 after setup UI or state changes. Source-level local reset/material wipe exists
 and was manually smoke-tested after commit `7c6e65c`; rerun hardware smoke after
-reset UI or reset-state changes. Source-level device-local mnemonic recovery
-entry exists; hardware smoke is still required before claiming target UX
-verification. Sui `sign_personal_message` (step 7), signing APIs, policy
+reset UI or reset-state changes. Device-local Recover was manually smoke-tested
+on StackChan CoreS3 during the recovery-entry slice.
+
+The next work after this provisioning foundation is not another provisioning
+step. The dependency order is: finish the policy facts / method adapter boundary,
+add authorized custom policy update, then connect concrete signing methods such
+as Sui `sign_transaction`. Sui `sign_personal_message`, signing APIs, policy
 update, and USER_PROFILE secure provisioning are not implemented.
 
 ## Completion Criteria

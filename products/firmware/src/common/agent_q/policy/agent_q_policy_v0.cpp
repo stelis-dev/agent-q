@@ -8,8 +8,18 @@ namespace {
 constexpr size_t kMaxPolicyRules = 16;
 constexpr size_t kMaxRuleCriteria = 8;
 constexpr size_t kMaxCriterionValues = 16;
+constexpr size_t kMaxPolicyFacts = 24;
+constexpr size_t kMaxPolicyFieldDescriptors = 24;
+constexpr size_t kMaxPolicyFieldIdLength = 48;
 constexpr size_t kMaxU64DecimalDigits = 20;
 constexpr const char* kMaxU64DecimalString = "18446744073709551615";
+
+constexpr AgentQPolicyFieldDescriptor kCommonFieldRegistry[] = {
+    {"common.chain", AgentQPolicyValueType::string, true, true, false},
+    {"common.method", AgentQPolicyValueType::string, true, true, false},
+    {"common.network", AgentQPolicyValueType::string, true, true, false},
+    {"common.intent", AgentQPolicyValueType::string, true, true, false},
+};
 
 AgentQPolicyDecision reject_decision(AgentQPolicyDecisionReason reason)
 {
@@ -37,17 +47,83 @@ bool is_known_action(AgentQPolicyAction action)
     return false;
 }
 
-bool is_known_criterion_type(AgentQPolicyCriterionType type)
+bool is_safe_field_id(const char* value)
+{
+    if (!string_present(value)) {
+        return false;
+    }
+
+    size_t length = 0;
+    bool has_dot = false;
+    for (const char* cursor = value; *cursor != '\0'; ++cursor) {
+        const char ch = *cursor;
+        const bool valid_char =
+            (ch >= 'a' && ch <= 'z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '_' ||
+            ch == '.';
+        if (!valid_char) {
+            return false;
+        }
+        if (ch == '.') {
+            if (has_dot || cursor == value || cursor[1] == '\0') {
+                return false;
+            }
+            has_dot = true;
+        }
+        ++length;
+        if (length > kMaxPolicyFieldIdLength) {
+            return false;
+        }
+    }
+    return has_dot;
+}
+
+bool is_known_value_type(AgentQPolicyValueType type)
 {
     switch (type) {
-        case AgentQPolicyCriterionType::network:
-        case AgentQPolicyCriterionType::kind:
-        case AgentQPolicyCriterionType::recipient:
-        case AgentQPolicyCriterionType::amount:
-        case AgentQPolicyCriterionType::gas_budget:
+        case AgentQPolicyValueType::string:
+        case AgentQPolicyValueType::u64_decimal:
             return true;
     }
     return false;
+}
+
+const AgentQPolicyFieldDescriptor* find_common_field_descriptor(const char* field)
+{
+    for (const AgentQPolicyFieldDescriptor& descriptor : kCommonFieldRegistry) {
+        if (string_eq(descriptor.field, field)) {
+            return &descriptor;
+        }
+    }
+    return nullptr;
+}
+
+const AgentQPolicyFieldDescriptor* find_adapter_field_descriptor(
+    const AgentQPolicyFacts& facts,
+    const char* field)
+{
+    if (facts.field_descriptors == nullptr) {
+        return nullptr;
+    }
+    for (size_t index = 0; index < facts.field_descriptor_count; ++index) {
+        const AgentQPolicyFieldDescriptor& descriptor = facts.field_descriptors[index];
+        if (string_eq(descriptor.field, field)) {
+            return &descriptor;
+        }
+    }
+    return nullptr;
+}
+
+const AgentQPolicyFieldDescriptor* find_field_descriptor(
+    const AgentQPolicyFacts& facts,
+    const char* field)
+{
+    const AgentQPolicyFieldDescriptor* descriptor = find_common_field_descriptor(field);
+    if (descriptor != nullptr) {
+        return descriptor;
+    }
+    return find_adapter_field_descriptor(facts, field);
 }
 
 bool is_known_operator(AgentQPolicyOperator op)
@@ -82,6 +158,19 @@ bool is_decimal_u64_string(const char* value)
     return true;
 }
 
+bool operator_allowed(const AgentQPolicyFieldDescriptor& descriptor, AgentQPolicyOperator op)
+{
+    switch (op) {
+        case AgentQPolicyOperator::eq:
+            return descriptor.allow_eq;
+        case AgentQPolicyOperator::in:
+            return descriptor.allow_in;
+        case AgentQPolicyOperator::lte:
+            return descriptor.allow_lte;
+    }
+    return false;
+}
+
 const char* skip_leading_zeroes(const char* value)
 {
     while (value[0] == '0' && value[1] != '\0') {
@@ -112,36 +201,47 @@ int compare_decimal_u64_strings(const char* left, const char* right)
     return 0;
 }
 
-bool validate_criterion(const AgentQPolicyCriterion& criterion)
+bool validate_criterion(
+    const AgentQPolicyCriterion& criterion,
+    const AgentQPolicyFacts& facts)
 {
-    if (!is_known_criterion_type(criterion.type) || !is_known_operator(criterion.op)) {
+    const AgentQPolicyFieldDescriptor* descriptor =
+        find_field_descriptor(facts, criterion.field);
+    if (descriptor == nullptr || !is_known_operator(criterion.op) ||
+        !operator_allowed(*descriptor, criterion.op)) {
         return false;
     }
 
-    switch (criterion.type) {
-        case AgentQPolicyCriterionType::network:
-        case AgentQPolicyCriterionType::kind:
-            return criterion.op == AgentQPolicyOperator::eq && string_present(criterion.value);
-        case AgentQPolicyCriterionType::recipient:
-            if (criterion.op != AgentQPolicyOperator::in || criterion.values == nullptr ||
-                criterion.value_count == 0 || criterion.value_count > kMaxCriterionValues) {
+    switch (criterion.op) {
+        case AgentQPolicyOperator::eq:
+        case AgentQPolicyOperator::lte:
+            if (!string_present(criterion.value) ||
+                criterion.values != nullptr || criterion.value_count != 0) {
+                return false;
+            }
+            return descriptor->type != AgentQPolicyValueType::u64_decimal ||
+                   is_decimal_u64_string(criterion.value);
+        case AgentQPolicyOperator::in:
+            if (criterion.value != nullptr ||
+                criterion.values == nullptr || criterion.value_count == 0 ||
+                criterion.value_count > kMaxCriterionValues) {
                 return false;
             }
             for (size_t index = 0; index < criterion.value_count; ++index) {
-                if (!string_present(criterion.values[index])) {
+                if (!string_present(criterion.values[index]) ||
+                    (descriptor->type == AgentQPolicyValueType::u64_decimal &&
+                     !is_decimal_u64_string(criterion.values[index]))) {
                     return false;
                 }
             }
             return true;
-        case AgentQPolicyCriterionType::amount:
-        case AgentQPolicyCriterionType::gas_budget:
-            return criterion.op == AgentQPolicyOperator::lte &&
-                   is_decimal_u64_string(criterion.value);
     }
     return false;
 }
 
-bool validate_rule(const AgentQPolicyRule& rule)
+bool validate_rule(
+    const AgentQPolicyRule& rule,
+    const AgentQPolicyFacts& facts)
 {
     if (!string_present(rule.id) || !string_present(rule.chain) ||
         !string_present(rule.operation) || !is_known_action(rule.action)) {
@@ -155,14 +255,16 @@ bool validate_rule(const AgentQPolicyRule& rule)
         return false;
     }
     for (size_t index = 0; index < rule.criterion_count; ++index) {
-        if (!validate_criterion(rule.criteria[index])) {
+        if (!validate_criterion(rule.criteria[index], facts)) {
             return false;
         }
     }
     return true;
 }
 
-bool validate_policy(const AgentQPolicyDocument& policy)
+bool validate_policy(
+    const AgentQPolicyDocument& policy,
+    const AgentQPolicyFacts& facts)
 {
     if (policy.schema != kAgentQPolicyV0Schema ||
         policy.default_action != AgentQPolicyAction::reject ||
@@ -171,46 +273,129 @@ bool validate_policy(const AgentQPolicyDocument& policy)
         return false;
     }
     for (size_t index = 0; index < policy.rule_count; ++index) {
-        if (!validate_rule(policy.rules[index])) {
+        if (!validate_rule(policy.rules[index], facts)) {
             return false;
         }
     }
     return true;
 }
 
-bool validate_facts(const AgentQTransactionFacts& facts)
+const AgentQPolicyFact* find_fact(
+    const AgentQPolicyFacts& facts,
+    const char* field)
 {
-    return string_present(facts.chain) && string_present(facts.operation) &&
-           string_present(facts.network) && string_present(facts.kind) &&
-           string_present(facts.recipient) && is_decimal_u64_string(facts.amount) &&
-           is_decimal_u64_string(facts.gas_budget);
+    if (facts.entries == nullptr) {
+        return nullptr;
+    }
+    for (size_t index = 0; index < facts.entry_count; ++index) {
+        const AgentQPolicyFact& fact = facts.entries[index];
+        if (string_eq(fact.field, field)) {
+            return &fact;
+        }
+    }
+    return nullptr;
 }
 
-bool criterion_matches(const AgentQPolicyCriterion& criterion, const AgentQTransactionFacts& facts)
+bool validate_field_descriptor(const AgentQPolicyFieldDescriptor& descriptor)
 {
-    switch (criterion.type) {
-        case AgentQPolicyCriterionType::network:
-            return string_eq(facts.network, criterion.value);
-        case AgentQPolicyCriterionType::kind:
-            return string_eq(facts.kind, criterion.value);
-        case AgentQPolicyCriterionType::recipient:
+    if (!is_safe_field_id(descriptor.field) ||
+        strncmp(descriptor.field, "common.", 7) == 0 ||
+        !is_known_value_type(descriptor.type)) {
+        return false;
+    }
+    return descriptor.allow_eq || descriptor.allow_in || descriptor.allow_lte;
+}
+
+bool validate_field_descriptors(const AgentQPolicyFacts& facts)
+{
+    if (facts.field_descriptor_count == 0) {
+        return facts.field_descriptors == nullptr;
+    }
+    if (facts.field_descriptors == nullptr ||
+        facts.field_descriptor_count > kMaxPolicyFieldDescriptors) {
+        return false;
+    }
+    for (size_t index = 0; index < facts.field_descriptor_count; ++index) {
+        if (!validate_field_descriptor(facts.field_descriptors[index])) {
+            return false;
+        }
+        for (size_t other = index + 1; other < facts.field_descriptor_count; ++other) {
+            if (string_eq(
+                    facts.field_descriptors[index].field,
+                    facts.field_descriptors[other].field)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool validate_fact(
+    const AgentQPolicyFact& fact,
+    const AgentQPolicyFacts& facts)
+{
+    const AgentQPolicyFieldDescriptor* descriptor =
+        find_field_descriptor(facts, fact.field);
+    if (descriptor == nullptr || descriptor->type != fact.type || !string_present(fact.value)) {
+        return false;
+    }
+    return fact.type != AgentQPolicyValueType::u64_decimal ||
+           is_decimal_u64_string(fact.value);
+}
+
+bool validate_facts(const AgentQPolicyFacts& facts)
+{
+    if (facts.entries == nullptr || facts.entry_count == 0 ||
+        facts.entry_count > kMaxPolicyFacts) {
+        return false;
+    }
+    if (!validate_field_descriptors(facts)) {
+        return false;
+    }
+    for (size_t index = 0; index < facts.entry_count; ++index) {
+        if (!validate_fact(facts.entries[index], facts)) {
+            return false;
+        }
+        for (size_t other = index + 1; other < facts.entry_count; ++other) {
+            if (string_eq(facts.entries[index].field, facts.entries[other].field)) {
+                return false;
+            }
+        }
+    }
+    return find_fact(facts, "common.chain") != nullptr &&
+           find_fact(facts, "common.method") != nullptr;
+}
+
+bool criterion_matches(const AgentQPolicyCriterion& criterion, const AgentQPolicyFacts& facts)
+{
+    const AgentQPolicyFact* fact = find_fact(facts, criterion.field);
+    if (fact == nullptr) {
+        return false;
+    }
+    switch (criterion.op) {
+        case AgentQPolicyOperator::eq:
+            return string_eq(fact->value, criterion.value);
+        case AgentQPolicyOperator::in:
             for (size_t index = 0; index < criterion.value_count; ++index) {
-                if (string_eq(facts.recipient, criterion.values[index])) {
+                if (string_eq(fact->value, criterion.values[index])) {
                     return true;
                 }
             }
             return false;
-        case AgentQPolicyCriterionType::amount:
-            return compare_decimal_u64_strings(facts.amount, criterion.value) <= 0;
-        case AgentQPolicyCriterionType::gas_budget:
-            return compare_decimal_u64_strings(facts.gas_budget, criterion.value) <= 0;
+        case AgentQPolicyOperator::lte:
+            return compare_decimal_u64_strings(fact->value, criterion.value) <= 0;
     }
     return false;
 }
 
-bool rule_matches(const AgentQPolicyRule& rule, const AgentQTransactionFacts& facts)
+bool rule_matches(const AgentQPolicyRule& rule, const AgentQPolicyFacts& facts)
 {
-    if (!string_eq(rule.chain, facts.chain) || !string_eq(rule.operation, facts.operation)) {
+    const AgentQPolicyFact* chain =
+        find_fact(facts, "common.chain");
+    const AgentQPolicyFact* method =
+        find_fact(facts, "common.method");
+    if (chain == nullptr || method == nullptr ||
+        !string_eq(rule.chain, chain->value) || !string_eq(rule.operation, method->value)) {
         return false;
     }
     for (size_t index = 0; index < rule.criterion_count; ++index) {
@@ -253,13 +438,13 @@ const char* agent_q_policy_decision_reason_name(AgentQPolicyDecisionReason reaso
 
 AgentQPolicyDecision evaluate_agent_q_policy_v0(
     const AgentQPolicyDocument& policy,
-    const AgentQTransactionFacts& facts)
+    const AgentQPolicyFacts& facts)
 {
-    if (!validate_policy(policy)) {
-        return reject_decision(AgentQPolicyDecisionReason::invalid_policy);
-    }
     if (!validate_facts(facts)) {
         return reject_decision(AgentQPolicyDecisionReason::unsupported_facts);
+    }
+    if (!validate_policy(policy, facts)) {
+        return reject_decision(AgentQPolicyDecisionReason::invalid_policy);
     }
 
     for (size_t index = 0; index < policy.rule_count; ++index) {

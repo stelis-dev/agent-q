@@ -27,8 +27,9 @@ state as signing readiness and must not decide whether signing is safe.
 ## Product State Diagram
 
 This diagram shows product state, not UI state. Firmware owns these transitions.
-Gateway, MCP clients, and Admin Page requests may ask for transitions, but they
-are not authority.
+Gateway, MCP clients, and Admin Page requests may submit requests, but they are
+not authority. Firmware state transitions occur only as consequences of
+Firmware-owned conditions and validated local input.
 
 ```mermaid
 stateDiagram-v2
@@ -48,7 +49,7 @@ stateDiagram-v2
     Provisioning: get_status
     Provisioning: future local cancel
     Provisioned: get_status, identify_device, connect, disconnect
-    Provisioned: get_capabilities, get_accounts (read-only, session-scoped)
+    Provisioned: get_capabilities, get_accounts, get_policy, get_approval_history (read-only, session-scoped)
     Provisioned: call_method runtime skeleton
     Locked: get_status, identify_device, unlock flow
 ```
@@ -222,7 +223,7 @@ Future signing txBytes decoding is allowed only inside a session-scoped
 `call_method` signing path after `provisioned`; it must remain unavailable in
 `unprovisioned`, `provisioning`, `locked`, and the internal consistency-error
 condition. Current common firmware source includes a restricted host-tested SUI
-transfer facts parser, a Sui facts-to-policy adapter, a stored-policy provider
+transfer facts parser, a Sui method adapter, a stored-policy provider
 boundary, and a host-tested policy evaluator. These are firmware foundations
 only: StackChan CoreS3 consumes the stored active default-reject policy decision
 for Sui `sign_transaction` policy-decision smoke, capabilities still advertise no
