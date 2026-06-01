@@ -60,7 +60,7 @@ stateDiagram-v2
 Current StackChan CoreS3 persistent root material flow starts from
 `unprovisioned`. It generates recovery phrase scratch in RAM, displays only
 up-to-4-letter BIP-39 word prefixes on the device in a 3-column by 4-row grid,
-stores the binary BIP-39 root entropy and active default-reject policy only
+stores the binary BIP-39 root entropy and an active policy record only
 after physical backup confirmation and local 6-digit PIN setup, and wipes
 scratch on confirmation, cancellation, timeout, failure, or display expiry.
 Three-letter BIP-39 words are displayed as the full word. `provisioned` may be
@@ -69,10 +69,10 @@ policy, and stored local PIN verifier all exist. The PIN verifier is a
 DEV_PROFILE local UX gate only; it does not encrypt root material.
 `locked` remains a design target until an unlock model exists.
 
-For DEV_PROFILE upgrade compatibility, if Firmware boots with the previous
-development shape (`prov_state = provisioned` and valid root material, but no
-policy record), it initializes the default-reject active policy before reporting
-`provisioned`. Any failure to initialize that policy is a consistency error.
+Firmware recognizes only the current tracked active-policy storage layout as
+product state. If Firmware boots with `prov_state = provisioned` but no valid
+active policy record, the device enters persistent material consistency error
+until a device-local destructive wipe clears the material set.
 
 If persisted state, stored root material, and stored active policy disagree,
 or if the stored local PIN verifier is missing or invalid while `provisioned`,
@@ -84,7 +84,8 @@ reset or debug recovery request. Its local settings paths are device-local UX
 only: provisioned devices can enter local settings, verify the stored local PIN
 to change the local PIN verifier, or choose Reset, verify the stored local PIN,
 and then wipe root material, active policy, PIN verifier, approval history,
-runtime session, and provisioning state before returning to `unprovisioned`.
+policy-update terminal marker, local connect setting, runtime session, and
+provisioning state before returning to `unprovisioned`.
 Firmware records an internal reset-pending marker before destructive wipe starts
 so an interrupted reset can resume at boot. The same destructive wipe machinery
 is also used by a device-local erase-only recovery from the `error` state.
@@ -100,7 +101,7 @@ hardware and must be documented in each target's `SPEC.md`.
 
 | Layer | Examples | Owner | May gate protocol APIs? |
 |---|---|---|---:|
-| Persistent device state | provisioning state, stored root material, policy, local PIN verifier, approval history, account availability | Firmware | Yes |
+| Persistent device state | provisioning state, stored root material, policy, local PIN verifier, approval history, policy-update terminal marker, account availability | Firmware | Yes |
 | Volatile sensitive scratch | generated recovery phrase, setup entropy, pending backup confirmation, typed PIN digits | Firmware | Yes |
 | Local PIN authorization state | connect/settings/reset PIN entry purpose, verification stage, timeout, RAM-only lockout | Firmware | Yes |
 | Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or connect PIN approval; timeout; requested action | Firmware | Yes |
@@ -207,8 +208,9 @@ Allowed:
   `sign_transaction` is recognized only for rejected policy-decision smoke)
 - device-local settings reset/material wipe after a local Settings Reset action
   and stored PIN verification; successful reset also erases the local
-  connect-approval setting and approval history so the next setup returns to
-  the missing-key secure default without prior decision records
+  connect-approval setting, approval history, and policy-update terminal marker
+  so the next setup returns to the missing-key secure default without prior
+  decision records or an incomplete policy-update terminal state
 - device-local settings toggle for whether USB `connect` requires local PIN;
   changing the toggle requires stored PIN verification
 - policy update only after an authorization/update surface is implemented
@@ -231,14 +233,11 @@ transfer facts parser, a Sui method adapter, a stored-policy provider
 boundary, and a host-tested policy evaluator. These are firmware foundations
 only: StackChan CoreS3 consumes the committed active policy for Sui
 `sign_transaction` policy-decision smoke, capabilities still advertise no signing
-methods, and Gateway must not evaluate policy. A corrupt or unreadable
-active policy is a persistent-material consistency error, not a normal
-`provisioned` state. A missing active policy is migrated only for the documented
-DEV_PROFILE legacy shape where `prov_state = provisioned` and root material is
-valid; outside that compatibility path it is also a consistency error.
-There is no automatic migration for provisioned DEV_PROFILE devices that lack
-the local PIN verifier; those devices fail closed until erased and reprovisioned
-through a local UX or development reflash workflow.
+methods, and Gateway must not evaluate policy. A corrupt, unreadable, missing,
+or unsupported current active policy is a persistent-material consistency
+error, not a normal `provisioned` state. Provisioned DEV_PROFILE devices that
+lack the current local PIN verifier or active canonical policy fail closed until
+erased and reprovisioned through a local UX or development reflash workflow.
 
 #### Designed Future: Pending Policy Update
 
@@ -253,6 +252,7 @@ provisioned
 -> Firmware validates bounded policy document
 -> pending policy update approval on device
 -> local approval + canonical policy commit
+-> required policy-update history record
 -> provisioned with new active policy
 ```
 
@@ -262,8 +262,8 @@ Failure behavior:
   `provisioned` with the previous active policy unchanged;
 - storage failure before the active-slot flip returns to `provisioned` with the
   previous active policy unchanged;
-- ambiguous storage state after interruption reports `error` instead of a normal
-  `provisioned` state;
+- ambiguous storage state after interruption, including a leftover policy-update
+  terminal marker, reports `error` instead of a normal `provisioned` state;
 - a second policy update proposal while pending is rejected with `busy`.
 
 Allowed while pending:
@@ -306,8 +306,8 @@ Allowed:
   cleared, Firmware returns `invalid_session`
 - device-local erase-only recovery after destructive on-device confirmation;
   this wipes root material, active policy, PIN verifier, local connect setting,
-  approval history, runtime session, and provisioning state before returning to
-  `unprovisioned`
+  approval history, policy-update terminal marker, runtime session, and
+  provisioning state before returning to `unprovisioned`
 
 Rejected:
 

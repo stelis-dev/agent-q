@@ -4,12 +4,11 @@
 
 #include "agent_q_approval_history.h"
 #include "agent_q_connect_settings.h"
-#include "esp_log.h"
+#include "agent_q_policy_update_marker.h"
 
 namespace agent_q {
 namespace {
 
-constexpr const char* kTag = "AgentQMaterial";
 bool g_consistency_error = false;
 
 void latch_consistency_error(
@@ -73,6 +72,8 @@ const char* runtime_failure_message(AgentQPersistentMaterialRuntimeFailure failu
             return "Local reset could not wipe connect PIN setting; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::local_reset_approval_history_wipe_failed:
             return "Local reset could not wipe approval history; failing closed";
+        case AgentQPersistentMaterialRuntimeFailure::local_reset_policy_update_marker_wipe_failed:
+            return "Local reset could not wipe policy update marker; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::local_reset_material_remaining:
             return "Local reset reported success but persistent material remains; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::local_reset_state_storage_failed:
@@ -101,30 +102,9 @@ AgentQPersistentMaterialConsistencyResult validate_loaded_runtime_state(
             *effective_state = AgentQProvisioningRuntimeState::provisioned;
             return AgentQPersistentMaterialConsistencyResult::ok;
         }
-        if (status.root_present &&
-            status.policy_status == AgentQPolicyStoreStatus::missing &&
-            status.local_auth_status == AgentQLocalAuthStatus::active) {
-            ESP_LOGW(kTag, "Provisioned state has root material but no active policy; installing default-reject policy");
-            if (!store_default_policy()) {
-                latch_consistency_error(
-                    ops,
-                    "Could not initialize active policy for existing provisioned material; failing closed");
-                return AgentQPersistentMaterialConsistencyResult::consistency_error;
-            }
-            status = persistent_material_status();
-            if (!status.complete()) {
-                latch_consistency_error(
-                    ops,
-                    "Initialized active policy is unreadable for existing provisioned material; failing closed");
-                return AgentQPersistentMaterialConsistencyResult::consistency_error;
-            }
-            *effective_state = AgentQProvisioningRuntimeState::provisioned;
-            return AgentQPersistentMaterialConsistencyResult::legacy_policy_initialized;
-        }
-
         latch_consistency_error(
             ops,
-            "Stored provisioned state is missing root material, active policy, or local PIN verifier; failing closed");
+            "Stored provisioned state is missing root material, active policy, local PIN verifier, or has pending policy update material; failing closed");
         return AgentQPersistentMaterialConsistencyResult::consistency_error;
     }
 
@@ -139,10 +119,10 @@ AgentQPersistentMaterialConsistencyResult validate_loaded_runtime_state(
         if (!persist_state(ops, AgentQProvisioningRuntimeState::unprovisioned)) {
             latch_consistency_error(
                 ops,
-                "Legacy provisioning state could not be reset; failing closed");
+                "Stale provisioning state could not be reset; failing closed");
             return AgentQPersistentMaterialConsistencyResult::state_storage_error;
         }
-        return AgentQPersistentMaterialConsistencyResult::legacy_provisioning_reset;
+        return AgentQPersistentMaterialConsistencyResult::provisioning_state_reset;
     }
 
     *effective_state = stored_state;
@@ -155,14 +135,16 @@ bool AgentQPersistentMaterialStatus::complete() const
 {
     return root_present &&
            policy_status == AgentQPolicyStoreStatus::active &&
-           local_auth_status == AgentQLocalAuthStatus::active;
+           local_auth_status == AgentQLocalAuthStatus::active &&
+           policy_update_marker_status == AgentQPolicyUpdateMarkerStatus::clear;
 }
 
 bool AgentQPersistentMaterialStatus::any_material() const
 {
     return root_present ||
            policy_status != AgentQPolicyStoreStatus::missing ||
-           local_auth_status != AgentQLocalAuthStatus::missing;
+           local_auth_status != AgentQLocalAuthStatus::missing ||
+           policy_update_marker_status != AgentQPolicyUpdateMarkerStatus::clear;
 }
 
 const char* provisioning_runtime_state_to_string(AgentQProvisioningRuntimeState state)
@@ -184,6 +166,7 @@ AgentQPersistentMaterialStatus persistent_material_status()
         has_root_material(),
         active_policy_status(),
         local_auth_status(),
+        policy_update_marker_status(),
     };
 }
 
@@ -273,7 +256,7 @@ bool persistent_material_validate_runtime_state(
         }
         latch_consistency_error(
             ops,
-            "Provisioned state lost root material, active policy, or local PIN verifier; failing closed");
+            "Provisioned state lost root material, active policy, local PIN verifier, or has pending policy update material; failing closed");
         return false;
     }
 
@@ -373,6 +356,7 @@ AgentQPersistentMaterialWipeResult persistent_material_wipe_all()
     const bool local_auth_wiped = wipe_local_auth();
     const bool connect_setting_wiped = wipe_require_pin_on_connect();
     const bool approval_history_wiped = approval_history_wipe();
+    const bool policy_update_marker_wiped = policy_update_marker_clear();
 
     if (!root_wiped) {
         return AgentQPersistentMaterialWipeResult::root_wipe_error;
@@ -388,6 +372,9 @@ AgentQPersistentMaterialWipeResult persistent_material_wipe_all()
     }
     if (!approval_history_wiped) {
         return AgentQPersistentMaterialWipeResult::approval_history_wipe_error;
+    }
+    if (!policy_update_marker_wiped) {
+        return AgentQPersistentMaterialWipeResult::policy_update_marker_wipe_error;
     }
     if (persistent_material_exists()) {
         return AgentQPersistentMaterialWipeResult::material_remaining_error;

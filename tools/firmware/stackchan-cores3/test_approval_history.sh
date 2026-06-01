@@ -140,52 +140,34 @@ agent_q::AgentQApprovalHistoryAppendInput policy_rejected_input(const char* reas
     };
 }
 
-struct LegacyApprovalHistoryRecordV1 {
-    uint64_t sequence;
-    uint64_t uptime_ms;
-    uint8_t decision;
-    uint8_t confirmation_kind;
-    uint8_t flags;
-    uint8_t reserved[5];
-    char chain[agent_q::kAgentQApprovalHistoryChainSize];
-    char method[agent_q::kAgentQApprovalHistoryMethodSize];
-    char reason_code[agent_q::kAgentQApprovalHistoryReasonCodeSize];
-    char rule_ref[16];
-    uint8_t payload_digest[32];
-    uint8_t policy_hash[32];
-};
-
-struct LegacyApprovalHistoryV1 {
-    uint8_t magic[4];
-    uint8_t format_version;
-    uint8_t reserved0;
-    uint16_t start;
-    uint16_t count;
-    uint16_t reserved1;
-    uint64_t next_sequence;
-    LegacyApprovalHistoryRecordV1 records[agent_q::kAgentQApprovalHistoryCapacity];
-};
-
-void write_legacy_history_blob()
+agent_q::AgentQPolicyUpdateHistoryAppendInput policy_update_input(
+    const char* result = "applied",
+    const char* reason = "device_confirmed",
+    const char* highest_action = "reject")
 {
-    LegacyApprovalHistoryV1 legacy = {};
-    legacy.magic[0] = 'A';
-    legacy.magic[1] = 'Q';
-    legacy.magic[2] = 'A';
-    legacy.magic[3] = 'H';
-    legacy.format_version = 1;
-    legacy.count = 1;
-    legacy.next_sequence = 2;
-    legacy.records[0].sequence = 1;
-    legacy.records[0].uptime_ms = 77;
-    legacy.records[0].decision = 1;
-    legacy.records[0].confirmation_kind = 1;
-    strcpy(legacy.records[0].chain, "sui");
-    strcpy(legacy.records[0].method, "sign_transaction");
-    strcpy(legacy.records[0].reason_code, "policy_rejected");
-    strcpy(legacy.records[0].rule_ref, "legacy_rule");
-    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&legacy);
-    g_blob.assign(bytes, bytes + sizeof(legacy));
+    return agent_q::AgentQPolicyUpdateHistoryAppendInput{
+        result,
+        reason,
+        "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+        1,
+        highest_action,
+    };
+}
+
+bool replace_blob_token(const char* from, const char* to)
+{
+    const size_t from_size = strlen(from);
+    const size_t to_size = strlen(to);
+    if (from_size != to_size || from_size == 0) {
+        return false;
+    }
+    for (size_t index = 0; index + from_size <= g_blob.size(); ++index) {
+        if (memcmp(g_blob.data() + index, from, from_size) == 0) {
+            memcpy(g_blob.data() + index, to, to_size);
+            return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -352,20 +334,12 @@ int main()
            "wiped approval history reads as empty");
     expect(page.count == 0, "wiped page is empty");
 
-    write_legacy_history_blob();
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
-           "legacy approval history layout migrates for read");
-    expect(page.count == 1 && page.records[0].sequence == 1,
-           "legacy approval history record is readable");
-    expect(strcmp(page.records[0].rule_ref, "legacy_rule") == 0,
-           "legacy approval history ruleRef is preserved");
-    expect(agent_q::approval_history_append(policy_rejected_input(), 900),
-           "append migrates legacy approval history layout");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
-           "read migrated approval history after append");
-    expect(page.count == 2 && page.records[0].sequence == 2,
-           "migrated approval history appends after legacy sequence");
-    expect(agent_q::approval_history_wipe(), "wipe approval history after legacy migration test");
+    g_blob.assign(31, 0xA5);
+    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+           "unsupported approval history blob is rejected");
+    expect(!agent_q::approval_history_append(policy_rejected_input(), 900),
+           "append refuses unsupported approval history blob");
+    expect(agent_q::approval_history_wipe(), "wipe unsupported approval history blob");
 
     for (size_t index = 0; index < agent_q::kAgentQApprovalHistoryWriteBudgetMax; ++index) {
         expect(agent_q::approval_history_append(policy_rejected_input(), 1000 + index),
@@ -375,11 +349,77 @@ int main()
                policy_rejected_input(),
                1000 + agent_q::kAgentQApprovalHistoryWriteBudgetMax),
            "approval history write budget rejects excessive writes in one window");
+    expect(agent_q::approval_history_append_required_policy_update(
+               policy_update_input(),
+               1000 + agent_q::kAgentQApprovalHistoryWriteBudgetMax + 1),
+           "required policy-update history bypasses method-decision write budget");
+    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+           "read policy-update record after budget exhaustion");
+    expect(page.count == 4 &&
+               page.records[0].event_kind == agent_q::AgentQApprovalHistoryEventKind::policy_update,
+           "policy-update record is newest approval-history event");
+    expect(strcmp(page.records[0].policy_result, "applied") == 0 &&
+               strcmp(page.records[0].reason_code, "device_confirmed") == 0 &&
+               strcmp(page.records[0].highest_action, "reject") == 0 &&
+               page.records[0].rule_count == 1,
+           "policy-update record metadata is preserved");
+	    const char* allowed_results[] = {
+	        "applied",
+	        "rejected",
+	        "timed_out",
+	        "invalid_policy",
+	        "storage_error",
+	    };
+    for (const char* result : allowed_results) {
+        expect(agent_q::approval_history_wipe(), "wipe before allowed policy-update result test");
+        expect(agent_q::approval_history_append_required_policy_update(
+                   policy_update_input(result),
+                   1500),
+               "allowed policy-update result is storable");
+    }
+    expect(agent_q::approval_history_wipe(), "wipe before stored result corruption test");
+    expect(agent_q::approval_history_append_required_policy_update(policy_update_input(), 1501),
+           "append policy-update result before corruption");
+    expect(replace_blob_token("applied", "approve"), "mutate stored policy-update result token");
+    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+           "stored unsupported policy-update result fails closed");
+    expect(agent_q::approval_history_wipe(), "wipe before stored highest-action corruption test");
+    expect(agent_q::approval_history_append_required_policy_update(policy_update_input(), 1502),
+           "append policy-update highest action before corruption");
+    expect(replace_blob_token("reject", "accept"), "mutate stored highest-action token");
+    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+           "stored unsupported highest action fails closed");
+    expect(agent_q::approval_history_wipe(), "wipe after policy-update corruption tests");
     expect(agent_q::approval_history_append(
                policy_rejected_input(),
                1000 + agent_q::kAgentQApprovalHistoryWriteBudgetWindowMs),
            "approval history write budget resets after window elapses");
     expect(agent_q::approval_history_wipe(), "wipe approval history after budget test");
+
+	    expect(!agent_q::approval_history_append_required_policy_update(
+	               policy_update_input("Applied"),
+	               1200),
+	           "policy-update history rejects invalid result token");
+	    expect(!agent_q::approval_history_append_required_policy_update(
+	               policy_update_input("history_error"),
+	               1201),
+	           "policy-update history rejects top-level history error as stored result");
+	    expect(!agent_q::approval_history_append_required_policy_update(
+	               policy_update_input("consistency_error"),
+	               1202),
+	           "policy-update history rejects consistency state as stored result");
+	    expect(!agent_q::approval_history_append_required_policy_update(
+	               policy_update_input("applied", "device_confirmed", "approve"),
+	               1203),
+	           "policy-update history rejects unsupported highest action");
+	    agent_q::AgentQPolicyUpdateHistoryAppendInput invalid_policy_hash = policy_update_input();
+	    invalid_policy_hash.policy_hash = "not-a-digest";
+	    expect(!agent_q::approval_history_append_required_policy_update(invalid_policy_hash, 1204),
+	           "policy-update history rejects invalid policy hash");
+	    agent_q::AgentQPolicyUpdateHistoryAppendInput overlarge_rule_count = policy_update_input();
+	    overlarge_rule_count.rule_count = agent_q::kAgentQPolicyMaxRules + 1;
+	    expect(!agent_q::approval_history_append_required_policy_update(overlarge_rule_count, 1205),
+	           "policy-update history rejects overlarge rule count");
 
     expect(agent_q::approval_history_append(policy_rejected_input(), 500),
            "append after wipe reinitializes");

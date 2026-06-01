@@ -14,6 +14,8 @@ constexpr size_t kAgentQApprovalHistoryMethodSize = 32;
 constexpr size_t kAgentQApprovalHistoryReasonCodeSize = 32;
 constexpr size_t kAgentQApprovalHistoryRuleRefSize = kAgentQPolicyMaxRuleIdLength + 1;
 constexpr size_t kAgentQApprovalHistoryDigestSize = 72;  // "sha256:" + 64 hex chars + NUL.
+constexpr size_t kAgentQApprovalHistoryPolicyResultSize = 32;
+constexpr size_t kAgentQApprovalHistoryHighestActionSize = 8;
 constexpr uint64_t kAgentQApprovalHistoryWriteBudgetWindowMs = 60000;
 constexpr size_t kAgentQApprovalHistoryWriteBudgetMax = 12;
 
@@ -38,6 +40,11 @@ enum class AgentQApprovalHistoryReadResult {
     invalid,
 };
 
+enum class AgentQApprovalHistoryEventKind {
+    method_decision,
+    policy_update,
+};
+
 struct AgentQApprovalHistoryAppendInput {
     AgentQApprovalHistoryDecision decision;
     AgentQApprovalHistoryConfirmationKind confirmation_kind;
@@ -49,9 +56,18 @@ struct AgentQApprovalHistoryAppendInput {
     const char* rule_ref;
 };
 
+struct AgentQPolicyUpdateHistoryAppendInput {
+    const char* result;
+    const char* reason_code;
+    const char* policy_hash;
+    size_t rule_count;
+    const char* highest_action;
+};
+
 struct AgentQApprovalHistoryRecord {
     uint64_t sequence;
     uint64_t uptime_ms;
+    AgentQApprovalHistoryEventKind event_kind;
     AgentQApprovalHistoryDecision decision;
     AgentQApprovalHistoryConfirmationKind confirmation_kind;
     char chain[kAgentQApprovalHistoryChainSize];
@@ -60,6 +76,9 @@ struct AgentQApprovalHistoryRecord {
     char payload_digest[kAgentQApprovalHistoryDigestSize];
     char policy_hash[kAgentQApprovalHistoryDigestSize];
     char rule_ref[kAgentQApprovalHistoryRuleRefSize];
+    char policy_result[kAgentQApprovalHistoryPolicyResultSize];
+    char highest_action[kAgentQApprovalHistoryHighestActionSize];
+    size_t rule_count;
 };
 
 struct AgentQApprovalHistoryPage {
@@ -76,6 +95,9 @@ bool approval_history_digest_payload(
 bool approval_history_parse_sequence(const char* value, uint64_t* output);
 bool approval_history_append(
     const AgentQApprovalHistoryAppendInput& input,
+    uint64_t uptime_ms);
+bool approval_history_append_required_policy_update(
+    const AgentQPolicyUpdateHistoryAppendInput& input,
     uint64_t uptime_ms);
 AgentQApprovalHistoryReadResult approval_history_read_page(
     uint64_t before_sequence,

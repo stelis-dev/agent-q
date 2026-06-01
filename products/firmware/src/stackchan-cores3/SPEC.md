@@ -47,7 +47,7 @@ Legend:
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `connect` | O | Source accepts connection only after material-backed `provisioned` state. Default connect approval requires local PIN entry on device; local settings can switch connect approval to physical Confirm after PIN verification. The session is RAM-only and does not authorize signing. Manual hardware smoke verified local PIN approval and fresh reconnect after USB detach/replug. Rerun hardware smoke after setup, session, or material-storage changes. |
 | `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. It returns `busy` while local setup/PIN/reset or sensitive settings subflow state is active, including Change PIN, so external session teardown cannot interleave with device-local sensitive UI. Idle Settings menu does not block disconnect. Rerun hardware smoke after setup, session, or material-storage changes. |
-| Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: connect PIN toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, approval history, connect-approval setting, session, and returns to `unprovisioned`. Source also implements device-local destructive erase-only recovery from persistent-material consistency `error`, without PIN because the verifier may be unreadable, using the same reset-pending marker and wipe transaction. Host-triggered reset/debug/recovery/PIN-change protocol paths are intentionally not implemented. StackChan CoreS3 local reset was manually smoke-tested after commit `7c6e65c`; a manual session/settings smoke verified idle Settings read access, Change PIN session retention, and USB detach/replug session invalidation. Focused hardware smoke verified that the error-state erase recovery modal appears above the avatar and that erase/cancel interaction does not block the screen flow; broader failure-path coverage remains limited. Rerun hardware smoke after settings or reset UI/state changes. |
+| Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: connect PIN toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, approval history, policy-update terminal marker, connect-approval setting, session, and returns to `unprovisioned`. Source also implements device-local destructive erase-only recovery from persistent-material consistency `error`, without PIN because the verifier may be unreadable, using the same reset-pending marker and wipe transaction. Host-triggered reset/debug/recovery/PIN-change protocol paths are intentionally not implemented. StackChan CoreS3 local reset was manually smoke-tested after commit `7c6e65c`; a manual session/settings smoke verified idle Settings read access, Change PIN session retention, and USB detach/replug session invalidation. Focused hardware smoke verified that the error-state erase recovery modal appears above the avatar and that erase/cancel interaction does not block the screen flow; broader failure-path coverage remains limited. Rerun hardware smoke after settings or reset UI/state changes. |
 | Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
@@ -56,15 +56,15 @@ Legend:
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
 | `get_capabilities` | O | Source reports Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until concrete signing methods are implemented. Rerun hardware smoke after setup, session, or material-storage changes. |
 | `get_accounts` | O | Source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is verified against Sui SDK address vectors on host; manual hardware smoke verified this path while idle Settings is open, after Change PIN on the same session, and after reconnect. Rerun hardware smoke after setup, session, or material-storage changes. |
-| `get_policy` | △ | Source implements a session-scoped read-only summary of the committed active `agentq.policy.v0` policy record. The current product flow still installs only the DEV_PROFILE default-reject policy, but the target active-policy store can load canonical custom reject-policy records through its internal storage boundary. Corrupt/unreadable active policy fails closed; missing policy is migrated only for legacy root-only DEV_PROFILE devices. Gateway/MCP parser tests, target policy-store host tests, and manual hardware smoke for idle-Settings read access cover this path. |
-| `get_approval_history` | △ | Source implements a session-scoped read-only view of persistent Firmware-authored method-decision metadata. Records are stored in a fixed-size binary NVS ring buffer, newest-first paginated, rate-limited to reduce flash wear, and wiped by local reset or error-state erase recovery. The current runtime records only validated `call_method` policy-rejected decisions; invalid parameter, malformed transaction, and unsupported-method errors are not persisted as approval history. User approval decisions and signing decisions do not exist yet. Gateway/MCP parser tests and target approval-history host tests cover this path. Hardware smoke remains required. |
-| `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke, and persists bounded approval-history metadata for those method decisions. If that required history write fails or is rate-limited, Firmware returns top-level `history_error` instead of the method result. It consumes the committed active policy; corrupt/unreadable policy is a material-consistency error rather than a normal `provisioned` state, while missing policy is migrated only for legacy root-only DEV_PROFILE devices. Host tests cover the request field/type validation helper and policy store provider. Hardware smoke remains required for the stored-policy path. No approval UI, capability advertisement, or signing is connected. |
+| `get_policy` | △ | Source implements a session-scoped read-only summary of the committed active `agentq.policy.v0` policy record. The current product flow still installs only the DEV_PROFILE default-reject policy, but the target active-policy store can load canonical custom reject-policy records through its internal storage boundary. Corrupt/unreadable active policy or missing policy under `provisioned` fails closed. Gateway/MCP parser tests, target policy-store host tests, and manual hardware smoke for idle-Settings read access cover this path. |
+| `get_approval_history` | △ | Source implements a session-scoped read-only view of persistent Firmware-authored method-decision metadata. Records are stored in a fixed-size binary NVS ring buffer, newest-first paginated, and wiped by local reset or error-state erase recovery. The current runtime records only validated `call_method` policy-rejected decisions; invalid parameter, malformed transaction, and unsupported-method errors are not persisted as approval history. The storage/read schema also supports future policy-update terminal records through a required-write path that is separate from method-decision write budgeting, but no current protocol flow emits those records. User approval decisions and signing decisions do not exist yet. Gateway/MCP parser tests and target approval-history host tests cover this path. Hardware smoke remains required. |
+| `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke, and persists bounded approval-history metadata for those method decisions. If that required history write fails or is rate-limited, Firmware returns top-level `history_error` instead of the method result. It consumes the committed active policy; corrupt/unreadable or missing policy is a material-consistency error rather than a normal `provisioned` state. Host tests cover the request field/type validation helper and policy store provider. Hardware smoke remains required for the stored-policy path. No approval UI, capability advertisement, or signing is connected. |
 | Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation plus matching PIN repeat. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display, device-local mnemonic recovery entry, local 6-digit PIN setup, and backup-confirmed/checksum-verified root entropy storage source exists. USB/Gateway/MCP mnemonic import and USER_PROFILE secure provisioning are not implemented. |
 | Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat stores root entropy, initializes the active default-reject policy, and stores the local PIN verifier. Public account derivation is implemented via `get_accounts`; signing and USER_PROFILE secure provisioning are not implemented. |
 | Policy evaluator foundation | △ | Links the common host-tested policy evaluator, stored-policy provider boundary, and Sui restricted-transfer method adapter. The common evaluator matches allowlisted namespace/field facts and owns only shared `common.*` fields; chain-specific field identifiers, descriptors, and transaction semantics stay in the method adapter. Sui `sign_transaction` consumes the committed active policy only as a rejected policy-decision smoke result; it does not sign. |
-| Policy storage/read | △ | Stores the active policy as canonical `agentq.policy.v0` binary records in two bounded NVS slots plus commit metadata and a pending-write marker, exposes a read-only `get_policy` summary, preserves the old committed policy only for interrupted writes identified by that pending marker, treats metadata flip as the commit point, classifies each write as applied, unchanged failure, or consistency error, tolerates stale pending markers that exactly match the selected committed policy, cleans legacy pending-owned modern residue before starting a new modern write, removes stale commit metadata before slot reuse, migrates legacy root-only missing policy to the default-reject record, and treats corrupt/unreadable committed records, invalid commit metadata without a matching pending marker, or pending targets that overlap active material without exactly matching it as a material-consistency error. The current product flow still installs only the DEV_PROFILE default-reject policy. |
-| Policy update | X | Not implemented. The future contract is specified as a Firmware-owned `propose_policy_update` flow with bounded proposal validation, device-local approval, canonical active-policy commit, and no direct policy setter. This target now has a target-local JSON policy-proposal parser/validator source and two-slot active-policy storage foundation for the future flow, but it still has no raw protocol envelope handler, pending-update state, approval UI, policy proposal commit flow, or Gateway/Admin surface. |
+| Policy storage/read | △ | Stores the active policy as canonical `agentq.policy.v0` binary records in two bounded NVS slots plus commit metadata and a pending-write marker, exposes a read-only `get_policy` summary, preserves the old committed policy only for interrupted writes identified by that pending marker, treats metadata flip as the commit point, classifies each write as applied, unchanged failure, or consistency error, tolerates stale pending markers that exactly match the selected committed policy, removes stale commit metadata before slot reuse, and treats corrupt/unreadable committed records, invalid commit metadata without a matching pending marker, or pending targets that overlap active material without exactly matching it as a material-consistency error. The current product flow still installs only the DEV_PROFILE default-reject policy. |
+| Policy update | X | Not implemented. The future contract is specified as a Firmware-owned `propose_policy_update` flow with bounded proposal validation, device-local approval, canonical active-policy commit, required terminal history recording, and no direct policy setter. This target now has a target-local JSON policy-proposal parser/validator source, two-slot active-policy storage foundation, and a small persistent terminal marker that makes an incomplete post-commit policy-update terminal sequence a material-consistency error on reboot, but it still has no raw protocol envelope handler, pending-update state, approval UI, policy proposal commit flow, or Gateway/Admin surface. |
 | Secure user profile | X | Not implemented. |
 
 ## Chain And Method Support
@@ -78,7 +78,7 @@ parser; none of these are signing APIs.
 |---|---:|---|
 | Sui Ed25519 self-test | △ | Diagnostic only. It proves the signing dependency links and works on-device. |
 | Sui `sign_personal_message` | X | Not implemented. |
-| Sui `sign_transaction` | △ | This method is recognized inside `call_method` only for policy-decision smoke. It validates `network` and base64 `txBytes`, decodes the restricted SUI transfer shape, consumes the committed active policy runtime decision, and returns a rejected `method_result`; corrupt/unreadable policy fails closed as material inconsistency before normal session-scoped methods are available, and missing policy is migrated only for legacy root-only DEV_PROFILE devices. It is not advertised in `get_capabilities`, does not sign, and does not trigger approval UI. Hardware smoke remains required for the stored-policy path. |
+| Sui `sign_transaction` | △ | This method is recognized inside `call_method` only for policy-decision smoke. It validates `network` and base64 `txBytes`, decodes the restricted SUI transfer shape, consumes the committed active policy runtime decision, and returns a rejected `method_result`; corrupt/unreadable or missing policy fails closed as material inconsistency before normal session-scoped methods are available. It is not advertised in `get_capabilities`, does not sign, and does not trigger approval UI. Hardware smoke remains required for the stored-policy path. |
 | Sui txBytes decoding | △ | The StackChan build links the common restricted SUI transfer facts parser. Host fixtures cover valid SUI transfer facts and malformed/unsupported rejects. The runtime connects it only to Sui `sign_transaction` policy-decision smoke, not capability advertisement or signing. |
 | Sui zkLogin | X | Not implemented; requires a separate trust model. |
 | EVM signing | X | Not implemented. |
@@ -236,22 +236,22 @@ reports `provisioning.state = error` and fails closed. It does not store the
 mnemonic display string, prefixes, seed, or account data to NVS. The local PIN
 verifier is a UX gate for local reset and future sensitive writes; it is not
 root-material encryption.
-For DEV_PROFILE upgrade compatibility, if the target boots with the previous
-development shape (`prov_state = provisioned` and valid root entropy, but no
-policy record), it initializes the default-reject active policy before reporting
-`provisioned`; failure to initialize that policy enters material/state
-consistency error. Existing DEV_PROFILE devices without the local PIN verifier
-are not migrated and fail closed until reprovisioned.
+If the target boots with `prov_state = provisioned` and valid root entropy but
+no active canonical policy record, it enters material/state consistency error.
+Unsupported current policy-history or policy-storage blobs are not accepted as
+product state; destructive local reset or error-state erase is the supported
+recovery path. Existing DEV_PROFILE devices without the current local PIN
+verifier fail closed until reprovisioned.
 
 | Namespace | Key | Purpose |
 |---|---|---|
 | `agent_q` | `device_id` | Gateway reconnect and device-selection identity |
 | `agent_q` | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy, active policy, and local PIN verifier present |
 | `agent_q` | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
-| `agent_q` | `policy_v0` | Legacy DEV_PROFILE default-reject policy record key, read only for migration compatibility |
 | `agent_q` | `pol_s0`, `pol_s1` | Active policy canonical record slots |
 | `agent_q` | `pol_c0`, `pol_c1` | Active policy commit metadata records |
 | `agent_q` | `pol_p` | Active policy pending-write marker used to distinguish interrupted inactive-slot writes from post-commit corruption |
+| `agent_q` | `pol_um` | Policy-update terminal marker; presence means an incomplete policy-update terminal sequence is material inconsistency |
 | `agent_q` | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
 | `agent_q` | `pin_on_connect` | Optional local connect approval setting; missing means require PIN on connect; local reset erases it back to the missing-key default |
 | `agent_q` | `approval_hist` | Fixed-size 32-record binary ring buffer of Firmware-authored approval/method-decision metadata; local reset and error-state erase wipe it |
@@ -276,20 +276,25 @@ are reserved until signing and approval paths are implemented.
 
 The history is a fixed-size binary NVS ring buffer under `approval_hist`, capped
 at 32 records so it fits in the current StackChan CoreS3 NVS partition alongside
-the other Agent-Q material records. Firmware migrates the previous v1 binary
-layout in memory before read or append so DEV_PROFILE devices that already
-stored decision history do not get stuck on a size-only layout change.
-Persistent writes are rate-limited by Firmware to reduce flash wear. If a
-current decision requires a history record and the write fails or the write
-budget is exhausted, `call_method` returns top-level `history_error` rather than
-claiming the decision result was delivered.
+the other Agent-Q material records. Unsupported current approval-history blobs
+are not accepted as product state; destructive local reset or error-state erase
+is the supported recovery path.
+Persistent method-decision writes are rate-limited by Firmware to reduce flash
+wear. Required future policy-update terminal history records are not consumed
+from that method-decision spam budget; the future policy-update flow must have
+its own admission and device-local approval gates before it can emit them. If a
+current method decision requires a history record and the write fails or the
+write budget is exhausted, `call_method` returns top-level `history_error`
+rather than claiming the decision result was delivered.
 It stores sequence, uptime in milliseconds, decision kind, confirmation kind,
 chain, method, reason code, optional payload digest, optional policy hash, and
-optional rule reference. It does not store raw `txBytes`, full decoded
-transactions, session ids, raw request ids, gateway names, mnemonic text, seed,
-private key material, PINs, or full policy documents. Local reset and
-error-state erase recovery wipe the history with the rest of the local material
-set.
+optional rule reference for method decisions. Future policy-update terminal
+records store result, reason code, policy hash, rule count, and highest action.
+It does not store raw `txBytes`, full decoded transactions, raw policy
+documents, full rule content, session ids, raw request ids, gateway names,
+mnemonic text, seed, private key material, PINs, or full policy documents.
+Local reset and error-state erase recovery wipe the history with the rest of
+the local material set.
 
 The `get_approval_history` protocol request is session-scoped and read-only.
 It is available only when the target is material-backed `provisioned` and the
@@ -396,8 +401,8 @@ After Reset PIN confirm, the target keeps the reset PIN panel active and adds a
 non-interactive processing overlay before PIN verification. Correct PIN
 verification advances to destructive wipe while keeping the processing overlay
 active, then wipes root material, active policy, PIN verifier, the local
-connect setting, approval history, runtime session, and provisioning state
-before reporting `unprovisioned`. Before destructive wipe starts, Firmware
+connect setting, approval history, policy-update terminal marker, runtime
+session, and provisioning state before reporting `unprovisioned`. Before destructive wipe starts, Firmware
 writes an internal
 reset-pending marker; if power is lost
 mid-reset, boot resumes the material wipe before loading normal state. If the
@@ -512,7 +517,7 @@ Current verification expectations for this target:
 - smoke-test local settings reset from `provisioned`: wrong PIN leaves
   `provisioned` material intact, cancel/timeout leaves material intact, correct
   PIN wipes root material, active policy, PIN verifier, approval history,
-  connect-approval setting, and session, then `get_status` reports
+  policy-update terminal marker, connect-approval setting, and session, then `get_status` reports
   `unprovisioned`;
 - smoke-test three minutes of inactivity turns the screen backlight off, Agent-Q
   request UI wakes it, side-button short press toggles display power, and

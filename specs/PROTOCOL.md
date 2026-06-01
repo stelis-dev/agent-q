@@ -318,12 +318,10 @@ PIN verifier storage, local reset, and read-only `get_accounts` Sui account
 derivation are implemented. USB/Gateway/MCP mnemonic import, policy update, and
 signing APIs are not implemented.
 
-For DEV_PROFILE upgrade compatibility, a target that boots with the previous
-development shape (`prov_state = provisioned` and valid root material, but no
-policy record) may initialize the default-reject active policy before reporting
-`provisioned`. If that initialization fails, Firmware must fail closed instead
+If a target boots with `prov_state = provisioned` but missing, unreadable, or
+unsupported current active policy material, Firmware must fail closed instead
 of reporting normal `provisioned`. Existing DEV_PROFILE devices without the
-local PIN verifier are not migrated and fail closed until reprovisioned.
+current local PIN verifier fail closed until reprovisioned.
 
 Device metadata strings are untrusted input and Gateway bounds them when
 parsing a response:
@@ -403,16 +401,18 @@ be treated as secret material.
 The current protocol intentionally has no factory-reset or reprovisioning USB
 request. Destructive material reset is device-local UX only. A target reset flow
 must start from `provisioned`, require local user action plus stored local
-authentication, wipe root material, active policy, local-auth verifier, and
-runtime session, and return to `unprovisioned`. Implementations that record an
-internal reset-pending marker before destructive wipe starts can resume an
-interrupted reset at boot. Wrong authentication, timeout, or cancel preserves
-existing material. Reset authentication lockout is target-local state, not a
-protocol state, and must not create a host-triggered recovery path. A target may
-offer a device-local, PIN-less, destructive erase-only recovery from
-material/state consistency `error` when the PIN verifier may be unreadable, but
-that path still must not be exposed as a USB/Gateway/MCP request and must not
-read, export, repair, or unlock stored material.
+authentication, wipe root material, active policy, local-auth verifier,
+approval-history records, policy-update terminal markers, reset-scoped local
+settings such as connect-approval preferences, and runtime session, and return
+to `unprovisioned`. Implementations that record an internal reset-pending marker
+before destructive wipe starts can resume an interrupted reset at boot. Wrong
+authentication, timeout, or cancel preserves existing material. Reset
+authentication lockout is target-local state, not a protocol state, and must not
+create a host-triggered recovery path. A target may offer a device-local,
+PIN-less, destructive erase-only recovery from material/state consistency
+`error` when the PIN verifier may be unreadable, but that path still must not be
+exposed as a USB/Gateway/MCP request and must not read, export, repair, or
+unlock stored material.
 
 ## Identify Device
 
@@ -801,12 +801,10 @@ Rules:
 - Firmware returns a policy summary only when `provisioning.state` is
   `provisioned`, persistent material is consistent, a committed active policy
   record exists, and the request has a matching active session.
-- Corrupt or unreadable active policy is a persistent-material consistency
-  error. Missing active policy is migrated only for the documented DEV_PROFILE
-  legacy shape where `prov_state = provisioned` and root material is valid;
-  outside that compatibility path, missing policy is also a consistency error.
-  Firmware must fail closed instead of continuing to report a normal
-  `provisioned` state when the policy cannot be made active.
+- Corrupt, unreadable, missing, or unsupported current active policy material is a
+  persistent-material consistency error. Firmware must fail closed instead of
+  continuing to report a normal `provisioned` state when the policy cannot be
+  made active.
 - `policyId` is the lowercase SHA-256 identifier for the canonical stored
   policy record. It is metadata for drift detection, not an authorization token.
 - The current StackChan CoreS3 target supports only `agentq.policy.v0`,
@@ -865,6 +863,17 @@ Response:
       "payloadDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       "policyHash": "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
       "ruleRef": "default"
+    },
+    {
+      "seq": "40",
+      "uptimeMs": "183100",
+      "timeSource": "uptime",
+      "eventKind": "policy_update",
+      "result": "applied",
+      "reasonCode": "device_confirmed",
+      "policyHash": "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+      "ruleCount": 1,
+      "highestAction": "reject"
     }
   ],
   "hasMore": false
@@ -884,16 +893,20 @@ Rules:
 - Current StackChan CoreS3 source records only validated `policy_rejected`
   decisions from the `call_method` skeleton. Invalid parameter, malformed
   transaction, and unsupported-method errors are not persisted as approval
-  history. Future signing work may add `policy_approved`, `method_error`,
-  `user_approved`, `user_rejected`, and `user_timeout` records only when those
-  decision paths exist.
+  history. The response schema also has a `policy_update` record kind for the
+  future policy-update terminal path, but the current protocol has no policy
+  update ingress that emits it. Future signing work may add `policy_approved`,
+  `method_error`, `user_approved`, `user_rejected`, and `user_timeout` records
+  only when those decision paths exist.
 - Approval-history persistence is part of the terminal decision contract for
   decisions that are recorded. If Firmware cannot persist a required history
   record or its write budget is exhausted, `call_method` returns the top-level
   `history_error` protocol error instead of a `method_result`.
 - Firmware rate-limits persistent history writes to reduce flash wear. The
   limit is Firmware-owned and does not authorize Gateway to retry unbounded
-  signing or method requests.
+  signing or method requests. Required future policy-update terminal records
+  are not consumed from the method-decision spam budget; the policy-update flow
+  must have its own admission and approval gating before it can emit them.
 - History records must not store or return raw `txBytes`, full decoded
   transactions, session ids, raw request ids, gateway names, mnemonic text,
   seed, private key material, PINs, or complete policy documents.
@@ -927,10 +940,9 @@ into the Firmware-owned policy runtime, and returns a rejected method result.
 The current active stored policy is default reject, so valid supported
 transactions return `policy_rejected` after the corresponding approval-history
 record is persisted; if that required history write fails or is rate-limited,
-Firmware returns top-level `history_error`. A corrupt or unreadable active policy
-fails closed as a persistent-material consistency error before normal
-session-scoped methods are available; missing active policy is migrated only for
-legacy root-only DEV_PROFILE devices. Malformed BCS returns
+Firmware returns top-level `history_error`. A corrupt, unreadable, missing, or
+unsupported current active policy fails closed as a persistent-material
+consistency error before normal session-scoped methods are available. Malformed BCS returns
 `malformed_transaction`; unsupported transaction shapes return
 `unsupported_transaction`. If a future test policy yields `sign` or `ask`, this
 runtime still returns `policy_action_not_implemented`. No signature, physical
@@ -1098,7 +1110,9 @@ Policy document rules for the planned first version:
 - The future protocol handler must enforce raw JSONL envelope size before
   deserialization. Target-local proposal parser source may additionally bound
   the serialized policy object after deserialization; that check is not a
-  substitute for the raw envelope limit.
+  substitute for the raw envelope limit. The first implementation must choose a
+  raw envelope limit that fits the Firmware request line reader or deliberately
+  raise that reader bound with matching tests before exposing the protocol.
 - Stored format: a Firmware-canonical binary policy record derived from the
   bounded AST. Policy hash/id is computed over that canonical record.
 - `schema` must be `agentq.policy.v0`.
@@ -1178,9 +1192,8 @@ Planned storage and rollback rules:
   slot or target commit record may be ignored in favor of the previous committed
   policy, and pending targets that overlap the selected active slot or commit
   metadata without exactly matching it are treated as corruption rather than
-  erased. If a legacy `policy_v0` record is selected while pending-owned modern
-  residue exists, Firmware must clean that residue before starting a new modern
-  policy write or reject the write with the legacy policy still active.
+  erased. Firmware recognizes only the current tracked active-policy storage
+  layout as product state.
 - On ambiguous boot state, Firmware selects the newest valid committed slot
   unless a valid pending marker identifies an interrupted write target. Present
   but invalid commit metadata without that pending marker is a
@@ -1208,9 +1221,11 @@ Policy update history:
   metadata once that decision path exists.
 - Policy-update outcome history is part of the terminal-result contract. The
   implementation must not report `applied` unless the committed policy and the
-  corresponding history record are both durable. If required history cannot be
-  persisted, Firmware leaves the previous active policy unchanged and reports
-  the failure instead of silently applying or silently omitting the record.
+  corresponding history record are both durable. Before the policy commit point,
+  required-history failure leaves the previous active policy unchanged. After the
+  policy commit point, required-history failure is an ambiguous terminal state:
+  Firmware must leave/report persistent-material consistency error rather than
+  claiming the old policy remained active.
 - History records may include sequence, uptime, event kind, result, policy
   hash/id, rule count, highest-risk action, and reason code.
 - History records must not store raw policy documents, full rule content,

@@ -31,6 +31,7 @@ enum class AgentQLocalResetCommitResult {
     local_auth_wipe_error,
     connect_setting_wipe_error,
     approval_history_wipe_error,
+    policy_update_marker_wipe_error,
     material_remaining_error,
     reset_marker_storage_error,
     state_storage_error,

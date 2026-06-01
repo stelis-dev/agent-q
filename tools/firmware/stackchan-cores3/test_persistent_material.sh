@@ -7,8 +7,8 @@ Usage: tools/firmware/stackchan-cores3/test_persistent_material.sh
 
 Compiles the StackChan CoreS3 persistent material coordinator against host
 stubs and verifies setup commit rollback, reset wipe coverage,
-provisioning-state storage envelope consistency classification, and legacy
-missing-policy migration, including typed runtime material failure handling and
+provisioning-state storage envelope consistency classification, policy-update
+marker coverage, typed runtime material failure handling, and
 persistent-material consistency error latch ownership. This test uses only a
 host C++ compiler and does NOT require ESP-IDF.
 EOF
@@ -52,14 +52,18 @@ bool g_policy_present = false;
 bool g_auth_present = false;
 bool g_connect_setting_present = false;
 bool g_approval_history_present = false;
+bool g_policy_update_marker_present = false;
 bool g_root_store_fails = false;
 bool g_policy_store_fails = false;
 bool g_auth_store_fails = false;
 bool g_root_wipe_fails = false;
 bool g_approval_history_wipe_fails = false;
+bool g_policy_update_marker_wipe_fails = false;
 bool g_persist_state_fails = false;
 agent_q::AgentQPolicyStoreStatus g_policy_status = agent_q::AgentQPolicyStoreStatus::missing;
 agent_q::AgentQLocalAuthStatus g_auth_status = agent_q::AgentQLocalAuthStatus::missing;
+agent_q::AgentQPolicyUpdateMarkerStatus g_policy_update_marker_status =
+    agent_q::AgentQPolicyUpdateMarkerStatus::clear;
 agent_q::AgentQProvisioningRuntimeState g_persisted_state =
     agent_q::AgentQProvisioningRuntimeState::unprovisioned;
 int g_consistency_error_count = 0;
@@ -80,14 +84,17 @@ void reset_stubs()
     g_auth_present = false;
     g_connect_setting_present = false;
     g_approval_history_present = false;
+    g_policy_update_marker_present = false;
     g_root_store_fails = false;
     g_policy_store_fails = false;
     g_auth_store_fails = false;
     g_root_wipe_fails = false;
     g_approval_history_wipe_fails = false;
+    g_policy_update_marker_wipe_fails = false;
     g_persist_state_fails = false;
     g_policy_status = agent_q::AgentQPolicyStoreStatus::missing;
     g_auth_status = agent_q::AgentQLocalAuthStatus::missing;
+    g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::clear;
     g_persisted_state = agent_q::AgentQProvisioningRuntimeState::unprovisioned;
     g_consistency_error_count = 0;
     agent_q::persistent_material_begin_load();
@@ -281,6 +288,36 @@ bool approval_history_wipe()
     return true;
 }
 
+AgentQPolicyUpdateMarkerStatus policy_update_marker_status()
+{
+    return g_policy_update_marker_status;
+}
+
+AgentQPolicyUpdateMarkerBeginResult policy_update_marker_begin(
+    const uint8_t*,
+    size_t policy_digest_size,
+    size_t rule_count,
+    AgentQPolicyUpdateHighestAction)
+{
+    if (policy_digest_size != kAgentQPolicyUpdateDigestBytes ||
+        rule_count > kAgentQPolicyMaxRules) {
+        return AgentQPolicyUpdateMarkerBeginResult::invalid_input;
+    }
+    g_policy_update_marker_present = true;
+    g_policy_update_marker_status = AgentQPolicyUpdateMarkerStatus::pending;
+    return AgentQPolicyUpdateMarkerBeginResult::written;
+}
+
+bool policy_update_marker_clear()
+{
+    if (g_policy_update_marker_wipe_fails) {
+        return false;
+    }
+    g_policy_update_marker_present = false;
+    g_policy_update_marker_status = AgentQPolicyUpdateMarkerStatus::clear;
+    return true;
+}
+
 }  // namespace agent_q
 
 int main()
@@ -292,6 +329,7 @@ int main()
     using Wipe = agent_q::AgentQPersistentMaterialWipeResult;
 
     uint8_t root[agent_q::kRootMaterialBytes] = {};
+    State effective = State::unprovisioned;
 
     reset_stubs();
     expect(agent_q::persistent_material_record_runtime_failure(
@@ -333,6 +371,8 @@ int main()
     g_auth_status = agent_q::AgentQLocalAuthStatus::active;
     g_connect_setting_present = true;
     g_approval_history_present = true;
+    g_policy_update_marker_present = true;
+    g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::pending;
     expect(agent_q::persistent_material_record_runtime_failure(
                agent_q::AgentQPersistentMaterialRuntimeFailure::local_reset_root_wipe_failed, ops()) ==
                Consistency::consistency_error,
@@ -340,13 +380,44 @@ int main()
     expect(agent_q::persistent_material_wipe_all() == Wipe::ok,
            "wipe all succeeds");
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
-               !g_connect_setting_present && !g_approval_history_present,
-           "wipe all removes required, reset-scoped settings, and approval-history material");
+               !g_connect_setting_present && !g_approval_history_present &&
+               !g_policy_update_marker_present,
+           "wipe all removes required, reset-scoped settings, approval-history, and policy-update marker material");
     expect(!agent_q::persistent_material_consistency_error_active(),
            "wipe all success clears consistency error latch");
 
     reset_stubs();
-    State effective = State::unprovisioned;
+    g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::pending;
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
+               Consistency::consistency_error,
+           "missing state with policy-update marker fails closed");
+    expect(g_consistency_error_count == 1,
+           "missing state with policy-update marker reports consistency error");
+
+    reset_stubs();
+    g_root_present = true;
+    g_policy_present = true;
+    g_policy_status = agent_q::AgentQPolicyStoreStatus::active;
+    g_auth_present = true;
+    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    g_policy_update_marker_present = true;
+    g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::pending;
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+               Consistency::consistency_error,
+           "pending policy-update marker blocks provisioned material readiness");
+    expect(g_consistency_error_count == 1,
+           "pending policy-update marker reports consistency error");
+
+    reset_stubs();
+    g_policy_update_marker_present = true;
+    g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::pending;
+    g_policy_update_marker_wipe_fails = true;
+    expect(agent_q::persistent_material_wipe_all() == Wipe::policy_update_marker_wipe_error,
+           "policy-update marker wipe failure is reported");
+    expect(g_policy_update_marker_present,
+           "failed policy-update marker wipe leaves marker for caller-owned fail-closed handling");
+
+    reset_stubs();
     expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
                Consistency::ok,
            "missing state without material is valid unprovisioned");
@@ -405,10 +476,10 @@ int main()
     g_auth_present = true;
     g_auth_status = agent_q::AgentQLocalAuthStatus::active;
     expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
-               Consistency::legacy_policy_initialized,
-           "legacy provisioned root plus auth initializes default policy");
-    expect(effective == State::provisioned && g_policy_status == agent_q::AgentQPolicyStoreStatus::active,
-           "legacy policy migration yields provisioned material");
+               Consistency::consistency_error,
+           "provisioned root plus auth without active policy fails closed");
+    expect(g_consistency_error_count == 1,
+           "missing active policy reports consistency error");
 
     reset_stubs();
     g_root_present = true;
@@ -429,10 +500,10 @@ int main()
 
     reset_stubs();
     expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioning", &effective, ops()) ==
-               Consistency::legacy_provisioning_reset,
-           "legacy provisioning state is reset");
+               Consistency::provisioning_state_reset,
+           "stale provisioning state is reset");
     expect(g_persisted_state == State::unprovisioned,
-           "legacy provisioning reset persists unprovisioned");
+           "stale provisioning reset persists unprovisioned");
 
     if (failures != 0) {
         fprintf(stderr, "%d persistent material test(s) failed\n", failures);

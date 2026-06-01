@@ -244,20 +244,45 @@ export type ApprovalHistoryDecisionKind =
 
 export type ApprovalHistoryConfirmationKind = "none" | "policy" | "physical_confirm";
 
-export interface ApprovalHistoryRecord {
+export type ApprovalHistoryPolicyUpdateResult =
+  | "applied"
+  | "rejected"
+  | "timed_out"
+  | "invalid_policy"
+  | "storage_error";
+
+export type ApprovalHistoryHighestAction = "reject" | "ask" | "sign";
+
+interface ApprovalHistoryRecordBase {
   seq: string;
   uptimeMs: string;
   timeSource: "uptime";
+  eventKind: "method_decision" | "policy_update";
+  reasonCode: string;
+}
+
+export interface MethodDecisionApprovalHistoryRecord extends ApprovalHistoryRecordBase {
   eventKind: "method_decision";
   decisionKind: ApprovalHistoryDecisionKind;
   confirmationKind: ApprovalHistoryConfirmationKind;
   chain: string;
   method: string;
-  reasonCode: string;
   payloadDigest?: string;
   policyHash?: string;
   ruleRef?: string;
 }
+
+export interface PolicyUpdateApprovalHistoryRecord extends ApprovalHistoryRecordBase {
+  eventKind: "policy_update";
+  result: ApprovalHistoryPolicyUpdateResult;
+  policyHash: string;
+  ruleCount: number;
+  highestAction: ApprovalHistoryHighestAction;
+}
+
+export type ApprovalHistoryRecord =
+  | MethodDecisionApprovalHistoryRecord
+  | PolicyUpdateApprovalHistoryRecord;
 
 export interface ApprovalHistoryResponse {
   id: string;
@@ -939,6 +964,14 @@ export const APPROVAL_HISTORY_CONFIRMATION_KINDS = [
   "policy",
   "physical_confirm",
 ] as const;
+export const APPROVAL_HISTORY_POLICY_UPDATE_RESULTS = [
+  "applied",
+  "rejected",
+  "timed_out",
+  "invalid_policy",
+  "storage_error",
+] as const;
+export const APPROVAL_HISTORY_HIGHEST_ACTIONS = ["reject", "ask", "sign"] as const;
 export const CALL_METHOD_CHAIN_PATTERN = /^[a-z][a-z0-9_.-]{0,31}$/;
 export const CALL_METHOD_NAME_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
 // The method runtime keeps request bodies bounded by the current Firmware JSONL
@@ -1264,6 +1297,9 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
     "payloadDigest",
     "policyHash",
     "ruleRef",
+    "result",
+    "ruleCount",
+    "highestAction",
   ];
   if (!hasOnlyObjectKeys(value, allowedKeys)) {
     throw new ProtocolError("protocol_error", "Approval history record contains unsupported fields.");
@@ -1274,13 +1310,53 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
     typeof value.uptimeMs !== "string" ||
     !isUint64DecimalString(value.uptimeMs) ||
     value.timeSource !== "uptime" ||
+    typeof value.reasonCode !== "string" ||
+    !APPROVAL_HISTORY_REASON_CODE_PATTERN.test(value.reasonCode)
+  ) {
+    throw new ProtocolError("protocol_error", "Approval history record is malformed.");
+  }
+
+  if (value.eventKind === "policy_update") {
+    if (
+      value.decisionKind !== undefined ||
+      value.confirmationKind !== undefined ||
+      value.chain !== undefined ||
+      value.method !== undefined ||
+      value.payloadDigest !== undefined ||
+      value.ruleRef !== undefined ||
+      !APPROVAL_HISTORY_POLICY_UPDATE_RESULTS.includes(value.result as ApprovalHistoryPolicyUpdateResult) ||
+      typeof value.policyHash !== "string" ||
+      !POLICY_ID_PATTERN.test(value.policyHash) ||
+      typeof value.ruleCount !== "number" ||
+      !Number.isInteger(value.ruleCount) ||
+      value.ruleCount < 0 ||
+      value.ruleCount > MAX_POLICY_RULE_COUNT ||
+      !APPROVAL_HISTORY_HIGHEST_ACTIONS.includes(value.highestAction as ApprovalHistoryHighestAction)
+    ) {
+      throw new ProtocolError("protocol_error", "Approval history policy update record is malformed.");
+    }
+    return {
+      seq: value.seq,
+      uptimeMs: value.uptimeMs,
+      timeSource: "uptime",
+      eventKind: "policy_update",
+      reasonCode: value.reasonCode,
+      result: value.result as ApprovalHistoryPolicyUpdateResult,
+      policyHash: value.policyHash,
+      ruleCount: value.ruleCount,
+      highestAction: value.highestAction as ApprovalHistoryHighestAction,
+    };
+  }
+
+  if (
     value.eventKind !== "method_decision" ||
+    value.result !== undefined ||
+    value.ruleCount !== undefined ||
+    value.highestAction !== undefined ||
     !APPROVAL_HISTORY_DECISION_KINDS.includes(value.decisionKind as ApprovalHistoryDecisionKind) ||
     !APPROVAL_HISTORY_CONFIRMATION_KINDS.includes(value.confirmationKind as ApprovalHistoryConfirmationKind) ||
     !isCallMethodChain(value.chain) ||
-    !isCallMethodName(value.method) ||
-    typeof value.reasonCode !== "string" ||
-    !APPROVAL_HISTORY_REASON_CODE_PATTERN.test(value.reasonCode)
+    !isCallMethodName(value.method)
   ) {
     throw new ProtocolError("protocol_error", "Approval history record is malformed.");
   }
@@ -1307,11 +1383,11 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
     uptimeMs: value.uptimeMs,
     timeSource: "uptime",
     eventKind: "method_decision",
+    reasonCode: value.reasonCode,
     decisionKind: value.decisionKind as ApprovalHistoryDecisionKind,
     confirmationKind: value.confirmationKind as ApprovalHistoryConfirmationKind,
     chain: value.chain,
     method: value.method,
-    reasonCode: value.reasonCode,
     ...(value.payloadDigest === undefined ? {} : { payloadDigest: value.payloadDigest }),
     ...(value.policyHash === undefined ? {} : { policyHash: value.policyHash }),
     ...(value.ruleRef === undefined ? {} : { ruleRef: value.ruleRef }),

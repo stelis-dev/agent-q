@@ -708,6 +708,29 @@ const approvalHistoryLine = (recordOverrides = {}, topLevelOverrides = {}) =>
     ...topLevelOverrides,
   });
 
+const approvalHistoryPolicyUpdateRecord = (overrides = {}) => ({
+  seq: "3",
+  uptimeMs: "12346",
+  timeSource: "uptime",
+  eventKind: "policy_update",
+  reasonCode: "device_confirmed",
+  result: "applied",
+  policyHash: APPROVAL_DIGEST,
+  ruleCount: 1,
+  highestAction: "reject",
+  ...overrides,
+});
+
+const approvalHistoryPolicyUpdateLine = (recordOverrides = {}, topLevelOverrides = {}) =>
+  JSON.stringify({
+    id: "req_approval_history",
+    version: 1,
+    type: "approval_history",
+    records: [approvalHistoryPolicyUpdateRecord(recordOverrides)],
+    hasMore: false,
+    ...topLevelOverrides,
+  });
+
 test("parseProtocolResponse accepts bounded approval history pages", () => {
   const response = assertApprovalHistoryResponse(
     parseProtocolResponse(approvalHistoryLine(), "req_approval_history"),
@@ -719,6 +742,29 @@ test("parseProtocolResponse accepts bounded approval history pages", () => {
   assert.equal(response.records[0].decisionKind, "policy_rejected");
   assert.equal(response.records[0].confirmationKind, "policy");
   assert.equal(response.records[0].payloadDigest, APPROVAL_DIGEST);
+});
+
+test("parseProtocolResponse accepts policy update approval history records", () => {
+  const response = assertApprovalHistoryResponse(
+    parseProtocolResponse(approvalHistoryPolicyUpdateLine(), "req_approval_history"),
+  );
+  assert.equal(response.type, "approval_history");
+  assert.equal(response.records.length, 1);
+  assert.equal(response.records[0].eventKind, "policy_update");
+  assert.equal(response.records[0].result, "applied");
+  assert.equal(response.records[0].policyHash, APPROVAL_DIGEST);
+  assert.equal(response.records[0].ruleCount, 1);
+  assert.equal(response.records[0].highestAction, "reject");
+});
+
+test("parseProtocolResponse rejects non-recordable policy update results", () => {
+  for (const result of ["history_error", "consistency_error"]) {
+    assert.throws(
+      () => parseProtocolResponse(approvalHistoryPolicyUpdateLine({ result }), "req_approval_history"),
+      { code: "protocol_error" },
+      `${result} is not a durable policy update history result`,
+    );
+  }
 });
 
 test("parseProtocolResponse rejects approval history carrying secret material", () => {
@@ -751,12 +797,40 @@ test("parseProtocolResponse rejects malformed approval history records", () => {
     { payloadDigest: "not-a-digest" },
     { policyHash: "not-a-digest" },
     { ruleRef: "has space" },
+    { result: "applied" },
+    { ruleCount: 1 },
+    { highestAction: "reject" },
     { sessionId: "session_abcdef0123456789" },
   ]) {
     assert.throws(
       () => parseProtocolResponse(approvalHistoryLine(recordOverride), "req_approval_history"),
       { code: "protocol_error" },
       `approval history override should be rejected: ${JSON.stringify(recordOverride)}`,
+    );
+  }
+});
+
+test("parseProtocolResponse rejects malformed policy update approval history records", () => {
+  for (const recordOverride of [
+    { result: "success" },
+    { reasonCode: "DeviceConfirmed" },
+    { policyHash: "not-a-digest" },
+    { ruleCount: -1 },
+    { ruleCount: 17 },
+    { ruleCount: 1.5 },
+    { highestAction: "approve" },
+    { decisionKind: "policy_rejected" },
+    { confirmationKind: "policy" },
+    { chain: "sui" },
+    { method: "sign_transaction" },
+    { payloadDigest: APPROVAL_DIGEST },
+    { ruleRef: "default" },
+    { sessionId: "session_abcdef0123456789" },
+  ]) {
+    assert.throws(
+      () => parseProtocolResponse(approvalHistoryPolicyUpdateLine(recordOverride), "req_approval_history"),
+      { code: "protocol_error" },
+      `policy update approval history override should be rejected: ${JSON.stringify(recordOverride)}`,
     );
   }
 });

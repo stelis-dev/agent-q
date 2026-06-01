@@ -32,6 +32,8 @@ import {
   AGENT_Q_POLICY_SCHEMA,
   APPROVAL_HISTORY_CONFIRMATION_KINDS,
   APPROVAL_HISTORY_DECISION_KINDS,
+  APPROVAL_HISTORY_HIGHEST_ACTIONS,
+  APPROVAL_HISTORY_POLICY_UPDATE_RESULTS,
   APPROVAL_HISTORY_REASON_CODE_PATTERN,
   APPROVAL_HISTORY_RULE_REF_PATTERN,
   MAX_ACCOUNTS_PER_RESPONSE,
@@ -394,20 +396,33 @@ const approvalHistoryRecordShape = z.object({
   seq: z.string().regex(UINT_DECIMAL_STRING_PATTERN).refine((value) => isUint64DecimalString(value)),
   uptimeMs: z.string().regex(UINT_DECIMAL_STRING_PATTERN).refine((value) => isUint64DecimalString(value)),
   timeSource: z.literal("uptime"),
+  reasonCode: z.string().regex(APPROVAL_HISTORY_REASON_CODE_PATTERN),
+});
+const methodDecisionApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
   eventKind: z.literal("method_decision"),
   decisionKind: z.enum(APPROVAL_HISTORY_DECISION_KINDS),
   confirmationKind: z.enum(APPROVAL_HISTORY_CONFIRMATION_KINDS),
   chain: z.string().regex(CALL_METHOD_CHAIN_PATTERN),
   method: z.string().regex(CALL_METHOD_NAME_PATTERN),
-  reasonCode: z.string().regex(APPROVAL_HISTORY_REASON_CODE_PATTERN),
   payloadDigest: z.string().regex(POLICY_ID_PATTERN).optional(),
   policyHash: z.string().regex(POLICY_ID_PATTERN).optional(),
   ruleRef: z.string().regex(APPROVAL_HISTORY_RULE_REF_PATTERN).optional(),
 });
+const policyUpdateApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
+  eventKind: z.literal("policy_update"),
+  result: z.enum(APPROVAL_HISTORY_POLICY_UPDATE_RESULTS),
+  policyHash: z.string().regex(POLICY_ID_PATTERN),
+  ruleCount: z.number().int().min(0).max(MAX_POLICY_RULE_COUNT),
+  highestAction: z.enum(APPROVAL_HISTORY_HIGHEST_ACTIONS),
+});
+const approvalHistoryRecordOutputShape = z.discriminatedUnion("eventKind", [
+  methodDecisionApprovalHistoryRecordShape,
+  policyUpdateApprovalHistoryRecordShape,
+]);
 const liveApprovalHistoryOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
-  records: z.array(approvalHistoryRecordShape).max(MAX_APPROVAL_HISTORY_RECORDS),
+  records: z.array(approvalHistoryRecordOutputShape).max(MAX_APPROVAL_HISTORY_RECORDS),
   hasMore: z.boolean(),
 });
 const notConnectedApprovalHistoryOutputShape = z.object({

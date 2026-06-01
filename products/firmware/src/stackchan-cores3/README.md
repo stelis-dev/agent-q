@@ -49,8 +49,9 @@ The current implementation includes:
   current stored 6-digit PIN, accepts and repeats a new PIN, and replaces only
   the salt/PIN verifier. Reset requires the local Settings Reset action plus
   the stored PIN, wipes root material, active policy, PIN verifier,
-  approval history, connect-approval setting, runtime session, and provisioning
-  state, and is not exposed as a USB JSONL request. StackChan CoreS3 local reset
+  approval history, policy-update terminal marker, connect-approval setting,
+  runtime session, and provisioning state, and is not exposed as a USB JSONL
+  request. StackChan CoreS3 local reset
   was manually smoke-tested after commit `7c6e65c`; rerun hardware smoke after
   settings or reset UI/state changes.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
@@ -86,15 +87,16 @@ does persist bounded approval-history metadata for those method decisions. The
 persisted values in this target implementation are the protocol `deviceId`,
 provisioning state flag, DEV_PROFILE root entropy blob after backup
 confirmation, canonical active policy slots plus commit metadata and a
-pending-write marker, a DEV_PROFILE local PIN verifier, the optional
-connect-PIN setting, and the approval-history ring buffer. The normal product
+pending-write marker, a policy-update terminal marker, a DEV_PROFILE local PIN
+verifier, the optional connect-PIN setting, and the approval-history ring
+buffer. The normal product
 flow still installs only the default-reject policy because policy update
 authorization is not implemented.
 
 The active policy store treats commit metadata write as the commit point. The
 write path classifies terminal state as applied, previous policy proven
-unchanged, or consistency error; it also cleans pending-owned legacy migration
-residue before starting a modern-slot write.
+unchanged, or consistency error. Firmware recognizes only the current tracked
+active-policy storage layout as product state.
 
 Agent-Q firmware is intentionally not a general StackChan AI firmware. It does
 not include StackChan World login, Xiaozhi cloud sessions, camera upload, screen
@@ -114,24 +116,43 @@ The pinned upstream host source and ESP-IDF version live in this directory's
 and GitHub Actions use the same inputs:
 
 ```bash
-source /path/to/esp-idf-v5.5.4/export.sh
-tools/firmware/stackchan-cores3/build.sh
+AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+  tools/firmware/stackchan-cores3/with-idf.sh \
+  tools/firmware/stackchan-cores3/build.sh
+```
+
+The `with-idf.sh` launcher activates ESP-IDF with Python 3.11 by default so the
+same build directory is not reconfigured by different ESP-IDF Python virtual
+environments. Set `AGENT_Q_IDF_PYTHON=/path/to/python` only if the local machine
+does not expose `python3.11`.
+
+Host checks that require ESP-IDF should use the same launcher around the
+specific command:
+
+```bash
+AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+  tools/firmware/stackchan-cores3/with-idf.sh \
+  tools/firmware/stackchan-cores3/test_policy_store.sh
+```
+
+Other checks can be run directly when their script header says ESP-IDF is not
+required:
+
+```bash
 tools/firmware/common/generate_sui_transaction_fixtures.mjs
 tools/firmware/common/test_sui_transaction_facts.sh
 tools/firmware/common/test_policy_v0.sh
 tools/firmware/stackchan-cores3/test_call_method_validation.sh
 tools/firmware/stackchan-cores3/test_method_runtime.sh
 tools/firmware/stackchan-cores3/test_policy_proposal_parser.sh
-tools/firmware/stackchan-cores3/test_policy_store.sh
+tools/firmware/stackchan-cores3/test_policy_update_marker.sh
 tools/firmware/stackchan-cores3/test_persistent_material.sh
 tools/firmware/stackchan-cores3/test_provisioning_state_store.sh
 tools/firmware/stackchan-cores3/test_local_auth.sh
 tools/firmware/stackchan-cores3/test_local_auth_worker.sh
 tools/firmware/stackchan-cores3/test_local_pin_auth.sh
 tools/firmware/stackchan-cores3/test_connect_settings.sh
-tools/firmware/stackchan-cores3/test_approval_history.sh
 tools/firmware/stackchan-cores3/test_session.sh
-tools/firmware/stackchan-cores3/test_bip39_vectors.sh
 tools/firmware/stackchan-cores3/test_sui_account_vectors.sh
 ```
 
@@ -175,8 +196,16 @@ missing/corrupt/failed-write fail-closed provider behavior.
 The StackChan approval-history test is target-specific. It compiles the tracked
 `agent_q_approval_history.cpp` store with ESP-IDF mbedTLS SHA-256 sources and
 host NVS stubs, then verifies persistent ring-buffer append, newest-first
-pagination, payload digest formatting, old binary-layout migration, wipe
-behavior, and corrupt-record fail-closed behavior.
+pagination, payload digest formatting, unsupported-layout rejection, wipe
+behavior, required policy-update terminal record shape, method-decision write
+budgeting, and corrupt-record fail-closed behavior.
+
+The StackChan policy-update marker test is target-specific. It compiles the
+tracked `agent_q_policy_update_marker.cpp` NVS record boundary with host stubs,
+then verifies the persistent terminal marker's pending/clear states, input
+validation, corrupt-marker fail-closed behavior, and storage-error reporting.
+This marker is a policy-update terminal substrate only; it is not a protocol
+policy-update handler.
 
 The StackChan method-runtime test is target-specific. It compiles the tracked
 `agent_q_method_runtime.cpp` runtime boundary with ArduinoJson, the common Sui
@@ -199,7 +228,7 @@ tracked `agent_q_persistent_material.cpp` coordinator with host material stubs,
 then verifies setup commit ordering and rollback, reset wipe coverage,
 provisioning-state storage envelope classification, loaded-state consistency
 classification, typed runtime material failure handling, persistent-material
-consistency error latch ownership, and legacy missing-policy migration.
+consistency error latch ownership, and policy-update marker wipe coverage.
 
 The StackChan provisioning-state store test is target-specific. It compiles the
 tracked `agent_q_provisioning_state_store.cpp` NVS adapter with host NVS stubs,
@@ -279,21 +308,22 @@ This target stores the protocol `deviceId`, provisioning state, DEV_PROFILE root
 entropy, committed active policy records, local PIN verifier, optional
 connect-PIN setting, and approval-history ring buffer in NVS namespace
 `agent_q`.
-When a previous DEV_PROFILE build already has `prov_state = provisioned` and
-valid root entropy but no policy record, boot initializes the default-reject
-policy before reporting `provisioned`; if that write fails, the target fails
-closed with a material/state consistency error. Devices missing the local PIN
-verifier are not migrated and fail closed until reprovisioned.
+If NVS has `prov_state = provisioned` and valid root entropy but no active
+canonical policy record, Firmware fails closed with a material/state consistency
+error. Unsupported current policy-history or policy-storage blobs are not
+accepted as product state; destructive local reset or error-state erase is the
+supported recovery path. Devices missing the current local PIN verifier fail
+closed until reprovisioned.
 
 | Key | Purpose |
 |---|---|
 | `device_id` | Gateway reconnect and device-selection identity |
 | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy, active policy, and local PIN verifier present |
 | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
-| `policy_v0` | Legacy DEV_PROFILE default-reject policy record key, read only for migration compatibility |
 | `pol_s0`, `pol_s1` | Active policy canonical record slots |
 | `pol_c0`, `pol_c1` | Active policy commit metadata records |
 | `pol_p` | Active policy pending-write marker used to distinguish interrupted inactive-slot writes from post-commit corruption |
+| `pol_um` | Policy-update terminal marker; presence means an incomplete policy-update terminal sequence is material inconsistency |
 | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
 | `pin_on_connect` | Optional local connect approval setting; missing means require PIN on connect; local reset erases it back to the missing-key default |
 | `approval_hist` | Fixed-size 32-record binary approval-history ring buffer; local reset and error-state erase wipe it |

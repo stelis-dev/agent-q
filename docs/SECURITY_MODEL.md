@@ -65,8 +65,8 @@ Implemented today:
   They are device-local UX only: Change PIN verifies the stored PIN and replaces
   only the local PIN verifier after repeated new PIN entry, and Reset verifies
   the stored PIN before root material wipe, active policy wipe, PIN verifier
-  wipe, connect-approval setting wipe, session cleanup, and return to
-  `unprovisioned`.
+  wipe, approval history wipe, policy-update terminal marker wipe,
+  connect-approval setting wipe, session cleanup, and return to `unprovisioned`.
   Firmware records an internal reset-pending marker so boot can resume an
   interrupted reset wipe. Host-triggered reset/debug protocol paths are
   intentionally not implemented. StackChan CoreS3 source also uses this
@@ -343,12 +343,10 @@ Designed policy-update contract:
   match the selected committed policy are ignored by active-policy selection,
   and stale commit metadata is removed before its slot or metadata key is
   reused. Each write must end as applied, previous policy proven unchanged, or
-  persistent-material consistency error. If a legacy `policy_v0` record is
-  selected while pending-owned modern residue exists, Firmware must clean that
-  residue before starting a new modern write or reject the write with the legacy
-  policy still active. Invalid commit metadata without a matching pending
-  marker, or pending targets that overlap but do not exactly match the selected
-  active material, is ambiguous storage state and therefore a
+  persistent-material consistency error. Firmware recognizes only the current
+  tracked active-policy storage layout as product state. Invalid commit metadata
+  without a matching pending marker, or pending targets that overlap but do not
+  exactly match the selected active material, is ambiguous storage state and therefore a
   persistent-material consistency error.
 - DEV_PROFILE slot selection is not rollback protection. USER_PROFILE policy
   storage requires secure anti-rollback or monotonic commit protection before it
@@ -357,6 +355,12 @@ Designed policy-update contract:
   count, and highest-risk action, but must not record raw policy documents,
   complete rule content, session ids, request ids, gateway names, PINs, mnemonic
   text, seed, or private key material.
+- Once a future policy update reaches the post-commit terminal phase, Firmware
+  must persist a small policy-update terminal marker until both the policy commit
+  and required history record are durable. A leftover terminal marker at boot is
+  persistent-material inconsistency, not a normal `provisioned` state. Local
+  reset and error-state erase wipe the marker with the rest of the policy
+  material.
 
 ## 9. Firmware Integrity
 

@@ -72,7 +72,7 @@ Rules:
 
 ### Import Existing Mnemonic
 
-Recovery or migration path:
+Device-local recovery path:
 
 ```text
 user provides mnemonic
@@ -150,10 +150,11 @@ does not persist `provisioning` during the normal create-new-mnemonic flow.
 After physical backup confirmation, Firmware stores the binary BIP-39 root
 entropy, the active default-reject policy, and a salt + PIN verifier in
 ordinary DEV_PROFILE device-local NVS and only then moves to `provisioned`.
-For existing DEV_PROFILE devices created before policy storage existed, Firmware
-may initialize the default-reject active policy at boot when `prov_state =
-provisioned` and root material is already valid. If that migration fails, the
-device fails closed.
+Existing DEV_PROFILE devices with `prov_state = provisioned` but missing,
+unreadable, or unsupported current active policy material fail closed.
+Destructive local reset or error-state erase is the supported recovery path;
+Firmware recognizes only the current tracked policy storage layout as product
+state.
 If the persisted state and required material records disagree after boot or
 during runtime checks, Firmware reports `provisioning.state = error`; it does
 not keep reporting `provisioned` while rejecting all session APIs.
@@ -278,8 +279,8 @@ PIN, accepts and repeats a new 6-digit PIN, stores only the replacement
 salt/verifier, and returns to Settings; no root material is changed and no PIN is
 sent over USB. Reset uses the same Settings entry point: a Reset menu action,
 stored PIN verification, root material wipe, active policy wipe, PIN verifier
-wipe, session cleanup, connect-approval setting wipe, and `unprovisioned`
-persistence.
+wipe, approval history wipe, policy-update terminal marker wipe, session
+cleanup, connect-approval setting wipe, and `unprovisioned` persistence.
 Firmware writes an internal reset-pending marker before destructive wipe starts,
 so boot can resume an interrupted reset wipe. PIN failure, timeout, or cancel
 leaves existing material and settings intact. Wrong reset PIN attempts use a

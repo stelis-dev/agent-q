@@ -13,9 +13,7 @@ namespace {
 constexpr const char* kTag = "AgentQApprovalHist";
 constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kApprovalHistoryKey = "approval_hist";
-constexpr uint8_t kStoredApprovalHistoryFormatVersion = 2;
-constexpr uint8_t kLegacyStoredApprovalHistoryFormatVersion = 1;
-constexpr size_t kLegacyApprovalHistoryRuleRefSize = 16;
+constexpr uint8_t kStoredApprovalHistoryFormatVersion = 3;
 constexpr uint8_t kStoredDecisionPolicyApproved = 0;
 constexpr uint8_t kStoredDecisionPolicyRejected = 1;
 constexpr uint8_t kStoredDecisionUserApproved = 2;
@@ -27,6 +25,8 @@ constexpr uint8_t kStoredConfirmationPolicy = 1;
 constexpr uint8_t kStoredConfirmationPhysicalConfirm = 2;
 constexpr uint8_t kStoredDigestPayload = 1 << 0;
 constexpr uint8_t kStoredDigestPolicy = 1 << 1;
+constexpr uint8_t kStoredEventMethodDecision = 0;
+constexpr uint8_t kStoredEventPolicyUpdate = 1;
 
 bool g_write_budget_active = false;
 uint64_t g_write_budget_window_start_ms = 0;
@@ -38,11 +38,15 @@ struct StoredApprovalHistoryRecord {
     uint8_t decision;
     uint8_t confirmation_kind;
     uint8_t flags;
-    uint8_t reserved[5];
+    uint8_t event_kind;
+    uint16_t rule_count;
+    uint8_t reserved[2];
     char chain[kAgentQApprovalHistoryChainSize];
     char method[kAgentQApprovalHistoryMethodSize];
     char reason_code[kAgentQApprovalHistoryReasonCodeSize];
     char rule_ref[kAgentQApprovalHistoryRuleRefSize];
+    char policy_result[kAgentQApprovalHistoryPolicyResultSize];
+    char highest_action[kAgentQApprovalHistoryHighestActionSize];
     uint8_t payload_digest[32];
     uint8_t policy_hash[32];
 };
@@ -58,33 +62,7 @@ struct StoredApprovalHistory {
     StoredApprovalHistoryRecord records[kAgentQApprovalHistoryCapacity];
 };
 
-struct LegacyStoredApprovalHistoryRecordV1 {
-    uint64_t sequence;
-    uint64_t uptime_ms;
-    uint8_t decision;
-    uint8_t confirmation_kind;
-    uint8_t flags;
-    uint8_t reserved[5];
-    char chain[kAgentQApprovalHistoryChainSize];
-    char method[kAgentQApprovalHistoryMethodSize];
-    char reason_code[kAgentQApprovalHistoryReasonCodeSize];
-    char rule_ref[kLegacyApprovalHistoryRuleRefSize];
-    uint8_t payload_digest[32];
-    uint8_t policy_hash[32];
-};
-
-struct LegacyStoredApprovalHistoryV1 {
-    uint8_t magic[4];
-    uint8_t format_version;
-    uint8_t reserved0;
-    uint16_t start;
-    uint16_t count;
-    uint16_t reserved1;
-    uint64_t next_sequence;
-    LegacyStoredApprovalHistoryRecordV1 records[kAgentQApprovalHistoryCapacity];
-};
-
-static_assert(sizeof(StoredApprovalHistoryRecord) <= 224,
+static_assert(sizeof(StoredApprovalHistoryRecord) <= 256,
               "Approval history record must stay bounded for NVS storage");
 static_assert(sizeof(StoredApprovalHistory) <= 8192,
               "Approval history blob must fit alongside Agent-Q material records in NVS");
@@ -103,55 +81,38 @@ void init_history(StoredApprovalHistory* history)
     history->next_sequence = 1;
 }
 
+bool stored_event_kind_valid(uint8_t value)
+{
+    return value == kStoredEventMethodDecision ||
+           value == kStoredEventPolicyUpdate;
+}
+
 bool valid_history_header(const StoredApprovalHistory& history)
 {
-    return history.magic[0] == 'A' &&
-           history.magic[1] == 'Q' &&
-           history.magic[2] == 'A' &&
-           history.magic[3] == 'H' &&
-           history.format_version == kStoredApprovalHistoryFormatVersion &&
-           history.start < kAgentQApprovalHistoryCapacity &&
-           history.count <= kAgentQApprovalHistoryCapacity &&
-           history.next_sequence != 0;
-}
-
-bool valid_legacy_history_header(const LegacyStoredApprovalHistoryV1& history)
-{
-    return history.magic[0] == 'A' &&
-           history.magic[1] == 'Q' &&
-           history.magic[2] == 'A' &&
-           history.magic[3] == 'H' &&
-           history.format_version == kLegacyStoredApprovalHistoryFormatVersion &&
-           history.start < kAgentQApprovalHistoryCapacity &&
-           history.count <= kAgentQApprovalHistoryCapacity &&
-           history.next_sequence != 0;
-}
-
-void migrate_legacy_history(const LegacyStoredApprovalHistoryV1& legacy, StoredApprovalHistory* history)
-{
-    init_history(history);
-    if (history == nullptr) {
-        return;
+    if (history.magic[0] != 'A' ||
+        history.magic[1] != 'Q' ||
+        history.magic[2] != 'A' ||
+        history.magic[3] != 'H' ||
+        history.format_version != kStoredApprovalHistoryFormatVersion ||
+        history.start >= kAgentQApprovalHistoryCapacity ||
+        history.count > kAgentQApprovalHistoryCapacity ||
+        history.next_sequence == 0) {
+        return false;
     }
-    history->start = legacy.start;
-    history->count = legacy.count;
-    history->next_sequence = legacy.next_sequence;
     for (size_t index = 0; index < kAgentQApprovalHistoryCapacity; ++index) {
-        const LegacyStoredApprovalHistoryRecordV1& source = legacy.records[index];
-        StoredApprovalHistoryRecord& target = history->records[index];
-        target.sequence = source.sequence;
-        target.uptime_ms = source.uptime_ms;
-        target.decision = source.decision;
-        target.confirmation_kind = source.confirmation_kind;
-        target.flags = source.flags;
-        memcpy(target.reserved, source.reserved, sizeof(target.reserved));
-        memcpy(target.chain, source.chain, sizeof(source.chain));
-        memcpy(target.method, source.method, sizeof(source.method));
-        memcpy(target.reason_code, source.reason_code, sizeof(source.reason_code));
-        memcpy(target.rule_ref, source.rule_ref, sizeof(source.rule_ref));
-        memcpy(target.payload_digest, source.payload_digest, sizeof(source.payload_digest));
-        memcpy(target.policy_hash, source.policy_hash, sizeof(source.policy_hash));
+        if (!stored_event_kind_valid(history.records[index].event_kind) ||
+            history.records[index].rule_count > kAgentQPolicyMaxRules) {
+            return false;
+        }
     }
+    return true;
+}
+
+AgentQApprovalHistoryEventKind public_event_kind(uint8_t value)
+{
+    return value == kStoredEventPolicyUpdate
+               ? AgentQApprovalHistoryEventKind::policy_update
+               : AgentQApprovalHistoryEventKind::method_decision;
 }
 
 void reset_write_budget()
@@ -222,6 +183,34 @@ bool history_rule_ref_char(char value, bool first)
            value == ':' ||
            value == '/' ||
            value == '-';
+}
+
+bool history_policy_result_char(char value, bool first)
+{
+    return history_reason_char(value, first);
+}
+
+bool history_highest_action_char(char value, bool first)
+{
+    return history_reason_char(value, first);
+}
+
+bool policy_update_result_supported(const char* value)
+{
+    return value != nullptr &&
+	           (strcmp(value, "applied") == 0 ||
+	            strcmp(value, "rejected") == 0 ||
+	            strcmp(value, "timed_out") == 0 ||
+	            strcmp(value, "invalid_policy") == 0 ||
+	            strcmp(value, "storage_error") == 0);
+}
+
+bool highest_action_supported(const char* value)
+{
+    return value != nullptr &&
+           (strcmp(value, "reject") == 0 ||
+            strcmp(value, "ask") == 0 ||
+            strcmp(value, "sign") == 0);
 }
 
 bool store_history_token(
@@ -450,31 +439,11 @@ AgentQApprovalHistoryReadResult load_history(StoredApprovalHistory* history, boo
         ESP_LOGW(kTag, "Approval history size read failed: %s", esp_err_to_name(result));
         return AgentQApprovalHistoryReadResult::storage_error;
     }
-    if (history_size != sizeof(*history) &&
-        history_size != sizeof(LegacyStoredApprovalHistoryV1)) {
+    if (history_size != sizeof(*history)) {
         nvs_close(nvs);
         ESP_LOGW(kTag, "Approval history has invalid size: %u",
                  static_cast<unsigned>(history_size));
         return AgentQApprovalHistoryReadResult::invalid;
-    }
-
-    if (history_size == sizeof(LegacyStoredApprovalHistoryV1)) {
-        LegacyStoredApprovalHistoryV1 legacy = {};
-        result = nvs_get_blob(nvs, kApprovalHistoryKey, &legacy, &history_size);
-        nvs_close(nvs);
-        if (result != ESP_OK || history_size != sizeof(legacy)) {
-            ESP_LOGW(kTag, "Legacy approval history read failed: %s size=%u",
-                     esp_err_to_name(result),
-                     static_cast<unsigned>(history_size));
-            return AgentQApprovalHistoryReadResult::storage_error;
-        }
-        if (!valid_legacy_history_header(legacy)) {
-            ESP_LOGW(kTag, "Legacy approval history validation failed");
-            return AgentQApprovalHistoryReadResult::invalid;
-        }
-        migrate_legacy_history(legacy, history);
-        memset(&legacy, 0, sizeof(legacy));
-        return AgentQApprovalHistoryReadResult::ok;
     }
 
     result = nvs_get_blob(nvs, kApprovalHistoryKey, history, &history_size);
@@ -529,21 +498,42 @@ bool materialize_record(const StoredApprovalHistoryRecord& stored, AgentQApprova
     memset(output, 0, sizeof(*output));
     output->sequence = stored.sequence;
     output->uptime_ms = stored.uptime_ms;
+    output->event_kind = public_event_kind(stored.event_kind);
     output->decision = public_decision(stored.decision);
     output->confirmation_kind = public_confirmation(stored.confirmation_kind);
-    if (!copy_stored_history_token(output->chain, sizeof(output->chain), stored.chain, sizeof(stored.chain), true, history_chain_or_method_char) ||
-        !copy_stored_history_token(output->method, sizeof(output->method), stored.method, sizeof(stored.method), true, history_chain_or_method_char) ||
-        !copy_stored_history_token(output->reason_code, sizeof(output->reason_code), stored.reason_code, sizeof(stored.reason_code), true, history_reason_char) ||
-        !copy_stored_history_token(output->rule_ref, sizeof(output->rule_ref), stored.rule_ref, sizeof(stored.rule_ref), false, history_rule_ref_char)) {
+    if (!copy_stored_history_token(output->reason_code, sizeof(output->reason_code), stored.reason_code, sizeof(stored.reason_code), true, history_reason_char)) {
         memset(output, 0, sizeof(*output));
         return false;
     }
-    if ((stored.flags & kStoredDigestPayload) != 0) {
-        digest_to_string(stored.payload_digest, output->payload_digest, sizeof(output->payload_digest));
+    if (output->event_kind == AgentQApprovalHistoryEventKind::method_decision) {
+        if (!copy_stored_history_token(output->chain, sizeof(output->chain), stored.chain, sizeof(stored.chain), true, history_chain_or_method_char) ||
+            !copy_stored_history_token(output->method, sizeof(output->method), stored.method, sizeof(stored.method), true, history_chain_or_method_char) ||
+            !copy_stored_history_token(output->rule_ref, sizeof(output->rule_ref), stored.rule_ref, sizeof(stored.rule_ref), false, history_rule_ref_char)) {
+            memset(output, 0, sizeof(*output));
+            return false;
+        }
+        if ((stored.flags & kStoredDigestPayload) != 0) {
+            digest_to_string(stored.payload_digest, output->payload_digest, sizeof(output->payload_digest));
+        }
+        if ((stored.flags & kStoredDigestPolicy) != 0) {
+            digest_to_string(stored.policy_hash, output->policy_hash, sizeof(output->policy_hash));
+        }
+        return true;
     }
-    if ((stored.flags & kStoredDigestPolicy) != 0) {
-        digest_to_string(stored.policy_hash, output->policy_hash, sizeof(output->policy_hash));
+    if (!copy_stored_history_token(output->policy_result, sizeof(output->policy_result), stored.policy_result, sizeof(stored.policy_result), true, history_policy_result_char) ||
+        !copy_stored_history_token(output->highest_action, sizeof(output->highest_action), stored.highest_action, sizeof(stored.highest_action), true, history_highest_action_char) ||
+        !policy_update_result_supported(output->policy_result) ||
+        !highest_action_supported(output->highest_action)) {
+        memset(output, 0, sizeof(*output));
+        return false;
     }
+    if ((stored.flags & kStoredDigestPolicy) == 0 ||
+        !digest_to_string(stored.policy_hash, output->policy_hash, sizeof(output->policy_hash)) ||
+        stored.rule_count > kAgentQPolicyMaxRules) {
+        memset(output, 0, sizeof(*output));
+        return false;
+    }
+    output->rule_count = stored.rule_count;
     return true;
 }
 
@@ -566,6 +556,31 @@ bool approval_history_digest_payload(
     const bool formatted = digest_to_string(digest, output, output_size);
     memset(digest, 0, sizeof(digest));
     return formatted;
+}
+
+bool append_record(StoredApprovalHistory* history, StoredApprovalHistoryRecord** record)
+{
+    if (history == nullptr || record == nullptr) {
+        return false;
+    }
+
+    size_t slot = 0;
+    if (history->count < kAgentQApprovalHistoryCapacity) {
+        slot = (history->start + history->count) % kAgentQApprovalHistoryCapacity;
+        ++history->count;
+    } else {
+        slot = history->start;
+        history->start = (history->start + 1) % kAgentQApprovalHistoryCapacity;
+    }
+
+    StoredApprovalHistoryRecord* next = &history->records[slot];
+    memset(next, 0, sizeof(*next));
+    next->sequence = history->next_sequence++;
+    if (history->next_sequence == 0) {
+        history->next_sequence = 1;
+    }
+    *record = next;
+    return true;
 }
 
 bool approval_history_parse_sequence(const char* value, uint64_t* output)
@@ -602,22 +617,12 @@ bool approval_history_append(
         return false;
     }
 
-    size_t slot = 0;
-    if (history.count < kAgentQApprovalHistoryCapacity) {
-        slot = (history.start + history.count) % kAgentQApprovalHistoryCapacity;
-        ++history.count;
-    } else {
-        slot = history.start;
-        history.start = (history.start + 1) % kAgentQApprovalHistoryCapacity;
-    }
-
-    StoredApprovalHistoryRecord* record = &history.records[slot];
-    memset(record, 0, sizeof(*record));
-    record->sequence = history.next_sequence++;
-    if (history.next_sequence == 0) {
-        history.next_sequence = 1;
+    StoredApprovalHistoryRecord* record = nullptr;
+    if (!append_record(&history, &record)) {
+        return false;
     }
     record->uptime_ms = uptime_ms;
+    record->event_kind = kStoredEventMethodDecision;
     record->decision = stored_decision(input.decision);
     record->confirmation_kind = stored_confirmation(input.confirmation_kind);
     if (!store_history_token(record->chain, sizeof(record->chain), input.chain, true, history_chain_or_method_char) ||
@@ -638,6 +643,39 @@ bool approval_history_append(
         return false;
     }
 
+    return store_history(history);
+}
+
+bool approval_history_append_required_policy_update(
+    const AgentQPolicyUpdateHistoryAppendInput& input,
+    uint64_t uptime_ms)
+{
+    StoredApprovalHistory history = {};
+    const AgentQApprovalHistoryReadResult load_result = load_history(&history, true);
+    if (load_result != AgentQApprovalHistoryReadResult::ok) {
+        return false;
+    }
+
+    StoredApprovalHistoryRecord* record = nullptr;
+    if (!append_record(&history, &record)) {
+        return false;
+    }
+    record->uptime_ms = uptime_ms;
+    record->event_kind = kStoredEventPolicyUpdate;
+    record->decision = kStoredDecisionMethodError;
+    record->confirmation_kind = kStoredConfirmationPolicy;
+    if (input.rule_count > kAgentQPolicyMaxRules ||
+        !policy_update_result_supported(input.result) ||
+        !highest_action_supported(input.highest_action) ||
+        !store_history_token(record->policy_result, sizeof(record->policy_result), input.result, true, history_policy_result_char) ||
+        !store_history_token(record->reason_code, sizeof(record->reason_code), input.reason_code, true, history_reason_char) ||
+        !store_history_token(record->highest_action, sizeof(record->highest_action), input.highest_action, true, history_highest_action_char) ||
+        !digest_from_string(input.policy_hash, record->policy_hash)) {
+        ESP_LOGW(kTag, "Refusing policy update history record with invalid metadata");
+        return false;
+    }
+    record->rule_count = static_cast<uint16_t>(input.rule_count);
+    record->flags |= kStoredDigestPolicy;
     return store_history(history);
 }
 

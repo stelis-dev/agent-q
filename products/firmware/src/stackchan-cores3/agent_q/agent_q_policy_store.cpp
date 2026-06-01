@@ -15,7 +15,6 @@ namespace {
 
 constexpr const char* kTag = "AgentQPolicyStore";
 constexpr const char* kNvsNamespace = "agent_q";
-constexpr const char* kLegacyPolicyKey = "policy_v0";
 constexpr const char* kPolicySlotKeys[2] = {"pol_s0", "pol_s1"};
 constexpr const char* kPolicyCommitKeys[2] = {"pol_c0", "pol_c1"};
 constexpr const char* kPolicyPendingKey = "pol_p";
@@ -53,16 +52,9 @@ struct PolicyPendingWrite {
 
 struct ActivePolicySelection {
     AgentQPolicyStoreStatus status;
-    bool legacy;
     uint8_t slot;
     uint64_t sequence;
     size_t record_size;
-};
-
-enum class LegacyResidueCleanupResult {
-    ok,
-    unchanged_failure,
-    consistency_error,
 };
 
 AgentQPolicyStoreStatus select_active_policy(ActivePolicySelection* out, bool log_failures);
@@ -326,35 +318,12 @@ bool pending_overlaps_selection(
             pending.slot == selected.slot);
 }
 
-bool modern_material_is_limited_to_pending_target(
-    const PolicyPendingWrite& pending,
-    const PolicyCommit commits[2],
-    const bool slot_present[2])
-{
-    if (!pending.valid) {
-        return false;
-    }
-    for (uint8_t index = 0; index < 2; ++index) {
-        if (commits[index].present && index != pending.commit_index) {
-            return false;
-        }
-        if (slot_present[index] && index != pending.slot) {
-            return false;
-        }
-    }
-    return true;
-}
-
 bool selections_refer_to_same_policy(const ActivePolicySelection& left, const ActivePolicySelection& right)
 {
     if (left.status != AgentQPolicyStoreStatus::active ||
         right.status != AgentQPolicyStoreStatus::active ||
-        left.legacy != right.legacy ||
         left.sequence != right.sequence) {
         return false;
-    }
-    if (left.legacy) {
-        return true;
     }
     return left.slot == right.slot;
 }
@@ -367,7 +336,6 @@ bool selection_matches_written_policy(
     size_t record_size)
 {
     return selection.status == AgentQPolicyStoreStatus::active &&
-           !selection.legacy &&
            selection.slot == slot &&
            selection.sequence == sequence &&
            selection.record_size == record_size &&
@@ -463,59 +431,6 @@ AgentQPolicyStoreWriteResult classify_pending_write_failure_terminal_state(
         record,
         record_size,
         false);
-}
-
-LegacyResidueCleanupResult cleanup_legacy_modern_residue_before_write()
-{
-    PolicyPendingWrite pending = {};
-    const AgentQPolicyStoreStatus pending_status = read_pending_record(&pending, true);
-    if (pending_status == AgentQPolicyStoreStatus::storage_error ||
-        pending_status == AgentQPolicyStoreStatus::invalid) {
-        return LegacyResidueCleanupResult::consistency_error;
-    }
-
-    PolicyCommit commits[2] = {};
-    bool modern_material_present = pending.present;
-    for (uint8_t index = 0; index < 2; ++index) {
-        const AgentQPolicyStoreStatus commit_status = read_commit_record(index, &commits[index], true);
-        if (commit_status == AgentQPolicyStoreStatus::storage_error) {
-            return LegacyResidueCleanupResult::consistency_error;
-        }
-        if (commit_status == AgentQPolicyStoreStatus::invalid &&
-            (!pending.valid || pending.commit_index != index)) {
-            return LegacyResidueCleanupResult::consistency_error;
-        }
-        modern_material_present = modern_material_present || commits[index].present;
-    }
-
-    bool slot_present[2] = {};
-    for (uint8_t index = 0; index < 2; ++index) {
-        size_t slot_size = 0;
-        const AgentQPolicyStoreStatus slot_status =
-            read_blob(kPolicySlotKeys[index], g_policy_record_buffer, sizeof(g_policy_record_buffer), &slot_size, false);
-        if (slot_status == AgentQPolicyStoreStatus::storage_error) {
-            return LegacyResidueCleanupResult::consistency_error;
-        }
-        slot_present[index] = slot_status != AgentQPolicyStoreStatus::missing;
-        modern_material_present = modern_material_present || slot_present[index];
-    }
-
-    if (!modern_material_present) {
-        return LegacyResidueCleanupResult::ok;
-    }
-    if (!modern_material_is_limited_to_pending_target(pending, commits, slot_present)) {
-        return LegacyResidueCleanupResult::consistency_error;
-    }
-    if (erase_interrupted_policy_write(pending)) {
-        return LegacyResidueCleanupResult::ok;
-    }
-
-    ActivePolicySelection after = {};
-    if (select_active_policy(&after, true) == AgentQPolicyStoreStatus::active &&
-        after.legacy) {
-        return LegacyResidueCleanupResult::unchanged_failure;
-    }
-    return LegacyResidueCleanupResult::consistency_error;
 }
 
 AgentQPolicyStoreStatus read_policy_record_key(
@@ -790,31 +705,6 @@ AgentQPolicyStoreStatus select_active_policy(ActivePolicySelection* out, bool lo
         policy_material_present = policy_material_present || slot_present[index];
     }
 
-    const AgentQPolicyStoreStatus legacy_status =
-        read_policy_record_key(
-            kLegacyPolicyKey,
-            g_policy_record_buffer,
-            sizeof(g_policy_record_buffer),
-            &out->record_size,
-            log_failures);
-    if (legacy_status == AgentQPolicyStoreStatus::active) {
-        if (policy_material_present) {
-            if (!modern_material_is_limited_to_pending_target(pending, commits, slot_present)) {
-                out->status = AgentQPolicyStoreStatus::invalid;
-                return out->status;
-            }
-        }
-        out->legacy = true;
-        out->sequence = 0;
-        out->status = AgentQPolicyStoreStatus::active;
-        return out->status;
-    }
-    if (legacy_status == AgentQPolicyStoreStatus::storage_error) {
-        out->status = AgentQPolicyStoreStatus::storage_error;
-        return out->status;
-    }
-    policy_material_present = policy_material_present || legacy_status != AgentQPolicyStoreStatus::missing;
-
     out->status = policy_material_present ? AgentQPolicyStoreStatus::invalid : AgentQPolicyStoreStatus::missing;
     return out->status;
 }
@@ -871,18 +761,8 @@ AgentQPolicyStoreWriteResult store_active_policy_record(const uint8_t* record, s
         return AgentQPolicyStoreWriteResult::consistency_error;
     }
 
-    if (current_status == AgentQPolicyStoreStatus::active && current.legacy) {
-        const LegacyResidueCleanupResult cleanup_status = cleanup_legacy_modern_residue_before_write();
-        if (cleanup_status == LegacyResidueCleanupResult::unchanged_failure) {
-            return AgentQPolicyStoreWriteResult::unchanged_failure;
-        }
-        if (cleanup_status != LegacyResidueCleanupResult::ok) {
-            return AgentQPolicyStoreWriteResult::consistency_error;
-        }
-    }
-
     const uint8_t next_slot =
-        current_status == AgentQPolicyStoreStatus::active && !current.legacy && current.slot == 0 ? 1 : 0;
+        current_status == AgentQPolicyStoreStatus::active && current.slot == 0 ? 1 : 0;
     const uint64_t next_sequence =
         current_status == AgentQPolicyStoreStatus::active ? current.sequence + 1 : 1;
     if (next_sequence == 0) {
@@ -968,7 +848,6 @@ AgentQPolicyStoreWriteResult store_active_policy_record(const uint8_t* record, s
 
     ActivePolicySelection after = {};
     if (select_active_policy(&after, true) != AgentQPolicyStoreStatus::active ||
-        after.legacy ||
         after.slot != next_slot ||
         after.sequence != next_sequence ||
         after.record_size != record_size ||
@@ -1003,7 +882,7 @@ bool wipe_policy()
         return false;
     }
 
-    bool erased = erase_key_if_present(nvs, kLegacyPolicyKey);
+    bool erased = true;
     for (const char* key : kPolicySlotKeys) {
         erased = erase_key_if_present(nvs, key) && erased;
     }

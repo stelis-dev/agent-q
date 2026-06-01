@@ -62,6 +62,15 @@ Non-negotiable boundaries:
   behavior as implemented behavior.
 - Do not create separate chain-specific product APIs. Chains must be exposed as
   supported methods in the shared protocol.
+- Before a public release, do not add automatic backward-compatibility,
+  migration, or named handling for previous Firmware storage, protocol, policy,
+  or approval-history formats unless the user explicitly approves that product
+  requirement. Firmware should know only the current tracked layout.
+  Unknown or unsupported persistent data must not become product state; it
+  should fail closed through the existing current-state gates and recover
+  through device-local erase, reprovisioning, or a development flash-erase
+  workflow. Version or format fields are allowed only to identify and accept the
+  current schema or reject unsupported data, not to quietly accept it.
 
 ## 1. Start From Evidence
 

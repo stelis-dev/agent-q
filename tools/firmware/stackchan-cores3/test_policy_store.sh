@@ -590,44 +590,6 @@ int main()
     expect(g_blobs.empty(), "all policy slots and metadata wiped");
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "wiped policy status");
 
-    g_blobs["policy_v0"] = default_record;
-    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "legacy policy status");
-    expect(agent_q::read_active_policy_summary(&summary), "legacy policy summary");
-    decision = evaluate_active_policy();
-    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "legacy policy provider");
-    g_blobs["pol_s0"] = {0};
-    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "legacy fallback rejects modern slot residue without pending marker");
-    g_blobs.erase("pol_s0");
-    set_pending_policy_write(0, 0, 2);
-    g_blobs["pol_s0"] = {0};
-    g_blobs["pol_c0"] = {0};
-    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "legacy fallback recovers pending modern slot residue");
-    expect(g_blobs.find("pol_p") != g_blobs.end(), "legacy pending marker is not erased during read selection");
-    expect(g_blobs.find("pol_c0") != g_blobs.end(), "legacy pending target commit is not erased during read selection");
-    expect(g_blobs.find("pol_s0") != g_blobs.end(), "legacy pending target slot is not erased during read selection");
-    g_blobs["pol_s1"] = {0};
-    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "legacy fallback rejects modern residue outside pending target");
-    g_blobs.erase("pol_s1");
-    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "legacy fallback accepts only pending-owned modern residue");
-
-    g_erase_fails_for_key = "pol_s0";
-    expect(store_record(custom_record) == agent_q::AgentQPolicyStoreWriteResult::unchanged_failure, "legacy residue cleanup failure rejects write without changing active policy");
-    g_erase_fails_for_key.clear();
-    decision = evaluate_active_policy();
-    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "legacy residue cleanup failure preserves legacy policy");
-    expect(store_record_applied(custom_record), "legacy pending residue is cleaned before modern policy write");
-    decision = evaluate_active_policy();
-    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::matched_rule, "legacy residue write activates custom policy");
-    expect(strcmp(decision.rule_id, "reject-devnet") == 0, "legacy residue write records custom rule");
-    expect(g_blobs.find("pol_p") == g_blobs.end(), "legacy residue write clears pending marker");
-
-    expect(agent_q::wipe_policy(), "wipe modern policy after legacy residue write");
-    g_blobs["policy_v0"] = default_record;
-    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "legacy policy restored after residue write test");
-    g_blobs["policy_v0"][0] = 0;
-    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "corrupt legacy policy status");
-    expect(agent_q::wipe_policy(), "wipe legacy policy");
-
     expect(agent_q::store_default_policy(), "restore default policy");
     g_blobs["pol_s0"][0] = 0;
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "corrupt policy status");

@@ -593,21 +593,29 @@ bool write_approval_history_response(const char* id, uint64_t before_sequence, s
         record["seq"] = sequence;
         record["uptimeMs"] = uptime_ms;
         record["timeSource"] = "uptime";
-        record["eventKind"] = "method_decision";
-        record["decisionKind"] = agent_q::approval_history_decision_to_string(source.decision);
-        record["confirmationKind"] =
-            agent_q::approval_history_confirmation_kind_to_string(source.confirmation_kind);
-        record["chain"] = source.chain;
-        record["method"] = source.method;
         record["reasonCode"] = source.reason_code;
-        if (source.payload_digest[0] != '\0') {
-            record["payloadDigest"] = source.payload_digest;
-        }
-        if (source.policy_hash[0] != '\0') {
+        if (source.event_kind == agent_q::AgentQApprovalHistoryEventKind::policy_update) {
+            record["eventKind"] = "policy_update";
+            record["result"] = source.policy_result;
             record["policyHash"] = source.policy_hash;
-        }
-        if (source.rule_ref[0] != '\0') {
-            record["ruleRef"] = source.rule_ref;
+            record["ruleCount"] = source.rule_count;
+            record["highestAction"] = source.highest_action;
+        } else {
+            record["eventKind"] = "method_decision";
+            record["decisionKind"] = agent_q::approval_history_decision_to_string(source.decision);
+            record["confirmationKind"] =
+                agent_q::approval_history_confirmation_kind_to_string(source.confirmation_kind);
+            record["chain"] = source.chain;
+            record["method"] = source.method;
+            if (source.payload_digest[0] != '\0') {
+                record["payloadDigest"] = source.payload_digest;
+            }
+            if (source.policy_hash[0] != '\0') {
+                record["policyHash"] = source.policy_hash;
+            }
+            if (source.rule_ref[0] != '\0') {
+                record["ruleRef"] = source.rule_ref;
+            }
         }
     }
     write_json_document(response);
@@ -963,12 +971,10 @@ void load_provisioning_state()
             stored_state.value,
             &effective_state,
             persistent_material_ops());
-    if (consistency_result == agent_q::AgentQPersistentMaterialConsistencyResult::legacy_provisioning_reset) {
-        ESP_LOGW(kTag, "Resetting legacy provisioning state for persistent root material flow");
+    if (consistency_result == agent_q::AgentQPersistentMaterialConsistencyResult::provisioning_state_reset) {
+        ESP_LOGW(kTag, "Resetting stale provisioning state for persistent root material flow");
     } else if (consistency_result == agent_q::AgentQPersistentMaterialConsistencyResult::unknown_state_reset) {
         ESP_LOGW(kTag, "Resetting unknown provisioning state without persistent material");
-    } else if (consistency_result == agent_q::AgentQPersistentMaterialConsistencyResult::legacy_policy_initialized) {
-        ESP_LOGW(kTag, "Initialized missing default policy for legacy provisioned material");
     } else if (stored_state.status == agent_q::AgentQProvisioningStateStorageStatus::missing &&
                consistency_result == agent_q::AgentQPersistentMaterialConsistencyResult::ok) {
         ESP_LOGI(kTag, "Provisioning state not found in NVS; using unprovisioned");
@@ -1813,6 +1819,7 @@ void commit_local_reset_if_ready()
         case agent_q::AgentQLocalResetCommitResult::local_auth_wipe_error:
         case agent_q::AgentQLocalResetCommitResult::connect_setting_wipe_error:
         case agent_q::AgentQLocalResetCommitResult::approval_history_wipe_error:
+        case agent_q::AgentQLocalResetCommitResult::policy_update_marker_wipe_error:
         case agent_q::AgentQLocalResetCommitResult::material_remaining_error:
         case agent_q::AgentQLocalResetCommitResult::state_storage_error:
             ESP_LOGE(kTag, "Local reset failed and device entered consistency error");
@@ -3482,9 +3489,10 @@ void handle_line(const char* line)
 
     if (strcmp(type, "get_approval_history") == 0) {
         // get_approval_history is read-only and session-scoped. It returns
-        // Firmware-authored method decision metadata only; raw requests,
-        // session ids, private material, PINs, and policy documents are never
-        // stored or returned.
+        // Firmware-authored approval-history metadata such as method decisions
+        // and future policy-update terminal records; raw requests, session ids,
+        // private material, PINs, and policy documents are never stored or
+        // returned.
         if (!provisioned_material_ready()) {
             write_error_response(id, "invalid_state", "Approval history is available only after provisioning is complete.");
             return;
