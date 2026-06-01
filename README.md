@@ -1,11 +1,55 @@
 # Agent-Q
 
-Agent-Q separates agent execution from signing authority.
+Agent-Q is a device-based policy wallet for AI agents.
 
-Agents send signing requests through Agent-Q Gateway. A separate Agent-Q device
-stores keys and policies locally, evaluates each request against those policies,
-and decides whether to sign automatically, ask for physical approval, or reject
-it.
+It focuses on delegated role authority: keeping keys, policies, and approval
+decisions outside the agent runtime.
+
+Agents can request actions, but role authority lives on separate Agent-Q
+devices. Each device is designed to evaluate requests locally and, according to
+its implemented capabilities and policy, reject the request, ask for physical
+approval, or sign where supported.
+
+The agent can request. The device decides.
+
+## Philosophy
+
+For Agent-Q, agent identity is not personality. It is the role authority an
+agent is allowed to exercise. An agent's model, prompt, tools, and runtime may
+change, but a role can persist: Treasury, Deployment, Procurement, Recovery, or
+Personal Spending. Each role needs keys, policies, limits, approval rules, and
+eventually an audit trail.
+
+Agent-Q treats that role authority as something that should live outside the
+agent runtime.
+
+## Positioning
+
+AI identity is a broad space. Some systems focus on agent discovery,
+reputation, verification, ownership, enterprise access, or payment mandates.
+
+Agent-Q focuses on one narrower layer: delegated role authority for signing and
+policy-controlled actions.
+
+In Agent-Q, a device represents a role. The agent can request actions under that
+role, but the role's keys, policies, approval rules, and decision records stay
+on or originate from the device.
+
+Agent-Q is designed to complement the broader AI identity ecosystem by focusing
+on the authority boundary: what an agent is allowed to do, under which role, and
+under which device-held policy.
+
+## Current Scope
+
+Agent-Q does not try to cover every part of the AI identity stack today. It does
+not currently provide discovery registries, reputation scoring, ownership
+protocols, enterprise identity management, payment mandate infrastructure, or
+runtime-risk verification.
+
+Some of those layers may connect to Agent-Q later. Runtime-risk verification
+remains outside Agent-Q's authority boundary. The current focus is
+device-backed role authority: keeping keys, policies, and approval decisions
+outside the agent runtime.
 
 ## Security Boundary
 
@@ -25,8 +69,7 @@ Agent-Q has two deployable products:
 - Agent-Q Gateway
 - Agent-Q Firmware
 
-Admin is not a separate product. The Admin Page and Admin API are intended
-Gateway capabilities, not yet implemented (see Current Status below).
+Admin features are planned as Gateway capabilities, not as a separate product.
 
 ## Agent-Q Gateway
 
@@ -35,14 +78,17 @@ Agent-Q Gateway is distributed as an npm package.
 It runs locally through `npx`, exposes an MCP server for agents, and
 communicates with Agent-Q Firmware over a supported transport.
 
-Gateway does not store keys and does not make signing or policy decisions.
+Gateway does not store keys and does not make signing or policy decisions. It
+may relay requests, validate protocol shapes, and display summaries, but
+Firmware owns the device-authorized policy boundary.
 
 ## Agent-Q Firmware
 
 Agent-Q Firmware is installed on hardware.
 
-Firmware stores keys and policies, evaluates signing requests, handles physical
-approval, and returns signatures or rejections to Gateway.
+Firmware is the authority component: it stores device-held key material and
+policies, evaluates requests locally, handles physical approval, and, where
+supported, returns signatures or rejections to Gateway.
 
 Firmware source is organized by hardware under `products/firmware/src/`.
 
@@ -65,6 +111,8 @@ get_status
   -> connect
     -> get_capabilities
     -> get_accounts
+    -> get_policy
+    -> get_approval_history
     -> call_method*
   -> disconnect
 ```
@@ -99,21 +147,33 @@ Implemented:
 - Disconnect.
 - Read-only Sui account and public-key discovery over an approved runtime
   session.
+- Session-scoped capability, policy-summary, and approval-history reads for the
+  currently implemented device metadata and method-decision records.
 - A session-scoped `call_method` runtime skeleton that keeps unknown methods
   rejected and recognizes Sui `sign_transaction` only for rejected
   policy-decision smoke. It is not signing support.
 - A common host-tested policy evaluator and default-reject runtime boundary that
   are not connected to runtime signing.
 
-Not yet implemented: concrete signing outputs, policy storage/update, Admin
-Page, and broad chain-specific transaction logic. Connection is not signing
-approval and does not authorize signing. A connection session does not
-prove agent identity. Labels and purpose names are local Gateway metadata and
-are not security boundaries.
+Not yet implemented: concrete signing outputs, per-request physical approval,
+spending and rate limits, multi-role separation, custom policy update, Admin
+Page, multi-device approval, device revocation or transfer, a production audit
+layer beyond the current fixed-size approval-history record, and broad
+chain-specific transaction logic. Connection is not signing approval and does
+not authorize signing. A connection session does not prove agent identity.
+Labels and purpose names are local Gateway metadata and are not security
+boundaries. Firmware policy must not rely on Gateway labels, purpose names, or
+routing assignments as authorization facts.
 
 ## Repository Layout
 
 ```text
+docs/
+  IMPLEMENTATION_STATUS.md
+  PROVISIONING.md
+  SECURITY_MODEL.md
+  STATE_MODEL.md
+
 specs/
   PROTOCOL.md
 
