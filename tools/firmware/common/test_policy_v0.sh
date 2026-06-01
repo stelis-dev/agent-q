@@ -27,6 +27,9 @@ FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
 for required in \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.h" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_schema.h" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_u64.h" \
   "${COMMON_POLICY_DIR}/agent_q_policy_runtime.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_runtime.h" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
@@ -739,6 +742,7 @@ CPP
   -I"${COMMON_POLICY_DIR}" \
   -I"${COMMON_SUI_DIR}" \
   "${TMP_DIR}/policy_v0_test.cpp" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_runtime.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \

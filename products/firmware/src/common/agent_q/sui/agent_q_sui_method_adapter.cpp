@@ -111,4 +111,17 @@ bool make_sui_sign_transaction_policy_facts(
     return true;
 }
 
+AgentQPolicyMethodDescriptor sui_sign_transaction_policy_method_descriptor()
+{
+    return AgentQPolicyMethodDescriptor{
+        kAgentQSuiPolicyChain,
+        kAgentQSuiPolicyOperationSignTransaction,
+        kSuiSignTransactionPolicyFields,
+        sizeof(kSuiSignTransactionPolicyFields) / sizeof(kSuiSignTransactionPolicyFields[0]),
+        true,
+        false,
+        false,
+    };
+}
+
 }  // namespace agent_q

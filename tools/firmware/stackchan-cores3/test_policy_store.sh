@@ -38,6 +38,11 @@ fi
 for required in \
   "${TARGET_ROOT}/agent_q/agent_q_policy_store.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_store.h" \
+  "${COMMON_ROOT}/policy/agent_q_policy_canonical.cpp" \
+  "${COMMON_ROOT}/policy/agent_q_policy_canonical.h" \
+  "${COMMON_ROOT}/policy/agent_q_policy_schema.cpp" \
+  "${COMMON_ROOT}/policy/agent_q_policy_schema.h" \
+  "${COMMON_ROOT}/policy/agent_q_policy_u64.h" \
   "${COMMON_ROOT}/policy/agent_q_policy_v0.cpp" \
   "${COMMON_ROOT}/policy/agent_q_policy_runtime.cpp"; do
   if [[ ! -f "${required}" ]]; then
@@ -301,6 +306,8 @@ CXX_BIN="${CXX:-c++}"
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/policy_store_test.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_store.cpp" \
+  "${COMMON_ROOT}/policy/agent_q_policy_canonical.cpp" \
+  "${COMMON_ROOT}/policy/agent_q_policy_schema.cpp" \
   "${COMMON_ROOT}/policy/agent_q_policy_v0.cpp" \
   "${COMMON_ROOT}/policy/agent_q_policy_runtime.cpp" \
   "${TMP_DIR}/sha256.o" \

@@ -7,44 +7,15 @@
 #include "mbedtls/sha256.h"
 #include "nvs.h"
 
+#include "agent_q_common/policy/agent_q_policy_canonical.h"
+
 namespace agent_q {
 namespace {
 
 constexpr const char* kTag = "AgentQPolicyStore";
 constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kPolicyKey = "policy_v0";
-constexpr uint8_t kStoredPolicyFormatVersion = 1;
-constexpr uint8_t kStoredPolicySchemaV0 = 1;
-constexpr uint8_t kStoredPolicyActionReject = 0;
-
-struct StoredPolicyRecord {
-    uint8_t magic[4];
-    uint8_t format_version;
-    uint8_t schema;
-    uint8_t default_action;
-    uint8_t rule_count;
-    uint8_t reserved[8];
-};
-
-static_assert(sizeof(StoredPolicyRecord) == 16, "Stored policy record must stay fixed-size");
-
-StoredPolicyRecord default_policy_record()
-{
-    return StoredPolicyRecord{
-        {'A', 'Q', 'P', '0'},
-        kStoredPolicyFormatVersion,
-        kStoredPolicySchemaV0,
-        kStoredPolicyActionReject,
-        0,
-        {},
-    };
-}
-
-bool validate_policy_record(const StoredPolicyRecord& record)
-{
-    const StoredPolicyRecord expected = default_policy_record();
-    return memcmp(&record, &expected, sizeof(record)) == 0;
-}
+constexpr size_t kDefaultPolicyRecordBytes = kAgentQPolicyDefaultCanonicalRecordBytes;
 
 void write_hex_byte(uint8_t value, char* output)
 {
@@ -53,17 +24,25 @@ void write_hex_byte(uint8_t value, char* output)
     output[1] = kHex[value & 0x0F];
 }
 
-bool policy_id_for_record(const StoredPolicyRecord& record, char* output, size_t output_size)
+bool default_policy_record(uint8_t* output, size_t output_capacity, size_t* output_size)
 {
-    if (output == nullptr || output_size != kAgentQPolicyIdSize) {
+    return encode_agent_q_policy_v0_default_record(output, output_capacity, output_size) ==
+               AgentQPolicyCanonicalStatus::ok &&
+           *output_size == kDefaultPolicyRecordBytes;
+}
+
+bool policy_id_for_record(const uint8_t* record, size_t record_size, char* output, size_t output_size)
+{
+    if (record == nullptr || record_size == 0 ||
+        output == nullptr || output_size != kAgentQPolicyIdSize) {
         return false;
     }
     memset(output, 0, output_size);
 
     uint8_t digest[32] = {};
     if (mbedtls_sha256(
-            reinterpret_cast<const unsigned char*>(&record),
-            sizeof(record),
+            reinterpret_cast<const unsigned char*>(record),
+            record_size,
             digest,
             0) != 0) {
         return false;
@@ -80,12 +59,13 @@ bool policy_id_for_record(const StoredPolicyRecord& record, char* output, size_t
     return true;
 }
 
-AgentQPolicyStoreStatus read_policy_record(StoredPolicyRecord* out, bool log_failures)
+AgentQPolicyStoreStatus read_policy_record(uint8_t* out, size_t out_capacity, size_t* out_size, bool log_failures)
 {
-    if (out == nullptr) {
+    if (out == nullptr || out_size == nullptr) {
         return AgentQPolicyStoreStatus::storage_error;
     }
-    memset(out, 0, sizeof(*out));
+    memset(out, 0, out_capacity);
+    *out_size = 0;
 
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READONLY, &nvs);
@@ -112,7 +92,14 @@ AgentQPolicyStoreStatus read_policy_record(StoredPolicyRecord* out, bool log_fai
         }
         return AgentQPolicyStoreStatus::storage_error;
     }
-    if (policy_size != sizeof(*out)) {
+    uint8_t expected[kDefaultPolicyRecordBytes] = {};
+    size_t expected_size = 0;
+    if (!default_policy_record(expected, sizeof(expected), &expected_size)) {
+        nvs_close(nvs);
+        return AgentQPolicyStoreStatus::storage_error;
+    }
+
+    if (policy_size != expected_size || policy_size > out_capacity) {
         nvs_close(nvs);
         if (log_failures) {
             ESP_LOGW(kTag, "Policy record has invalid size: %u",
@@ -124,23 +111,24 @@ AgentQPolicyStoreStatus read_policy_record(StoredPolicyRecord* out, bool log_fai
     result = nvs_get_blob(nvs, kPolicyKey, out, &policy_size);
     nvs_close(nvs);
 
-    if (result != ESP_OK || policy_size != sizeof(*out)) {
+    if (result != ESP_OK || policy_size != expected_size) {
         if (log_failures) {
             ESP_LOGW(kTag, "Policy read failed: %s size=%u",
                      esp_err_to_name(result),
                      static_cast<unsigned>(policy_size));
         }
-        memset(out, 0, sizeof(*out));
+        memset(out, 0, out_capacity);
         return AgentQPolicyStoreStatus::storage_error;
     }
 
-    if (!validate_policy_record(*out)) {
+    if (memcmp(out, expected, expected_size) != 0) {
         if (log_failures) {
             ESP_LOGW(kTag, "Policy record validation failed");
         }
-        memset(out, 0, sizeof(*out));
+        memset(out, 0, out_capacity);
         return AgentQPolicyStoreStatus::invalid;
     }
+    *out_size = expected_size;
     return AgentQPolicyStoreStatus::active;
 }
 
@@ -150,8 +138,9 @@ bool load_active_policy(AgentQPolicyDocument* out, void* context)
     if (out == nullptr) {
         return false;
     }
-    StoredPolicyRecord record = {};
-    if (read_policy_record(&record, true) != AgentQPolicyStoreStatus::active) {
+    uint8_t record[kDefaultPolicyRecordBytes] = {};
+    size_t record_size = 0;
+    if (read_policy_record(record, sizeof(record), &record_size, true) != AgentQPolicyStoreStatus::active) {
         return false;
     }
     *out = AgentQPolicyDocument{
@@ -167,7 +156,12 @@ bool load_active_policy(AgentQPolicyDocument* out, void* context)
 
 bool store_default_policy()
 {
-    const StoredPolicyRecord record = default_policy_record();
+    uint8_t record[kDefaultPolicyRecordBytes] = {};
+    size_t record_size = 0;
+    if (!default_policy_record(record, sizeof(record), &record_size)) {
+        ESP_LOGW(kTag, "Could not build default policy record");
+        return false;
+    }
 
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
@@ -176,7 +170,7 @@ bool store_default_policy()
         return false;
     }
 
-    result = nvs_set_blob(nvs, kPolicyKey, &record, sizeof(record));
+    result = nvs_set_blob(nvs, kPolicyKey, record, record_size);
     if (result == ESP_OK) {
         result = nvs_commit(nvs);
     }
@@ -222,8 +216,9 @@ bool wipe_policy()
 
 AgentQPolicyStoreStatus active_policy_status()
 {
-    StoredPolicyRecord record = {};
-    return read_policy_record(&record, false);
+    uint8_t record[kDefaultPolicyRecordBytes] = {};
+    size_t record_size = 0;
+    return read_policy_record(record, sizeof(record), &record_size, false);
 }
 
 AgentQPolicyProvider active_policy_provider()
@@ -238,11 +233,12 @@ bool read_active_policy_summary(AgentQStoredPolicySummary* out)
     }
     memset(out, 0, sizeof(*out));
 
-    StoredPolicyRecord record = {};
-    if (read_policy_record(&record, true) != AgentQPolicyStoreStatus::active) {
+    uint8_t record[kDefaultPolicyRecordBytes] = {};
+    size_t record_size = 0;
+    if (read_policy_record(record, sizeof(record), &record_size, true) != AgentQPolicyStoreStatus::active) {
         return false;
     }
-    if (!policy_id_for_record(record, out->policy_id, sizeof(out->policy_id))) {
+    if (!policy_id_for_record(record, record_size, out->policy_id, sizeof(out->policy_id))) {
         return false;
     }
 

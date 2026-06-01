@@ -37,6 +37,7 @@ for required in \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
   "${AGENT_Q_DIR}/agent_q_method_runtime.cpp" \
   "${AGENT_Q_DIR}/agent_q_call_method_validation.cpp" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_runtime.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
@@ -335,6 +336,7 @@ CPP
   "${TMP_DIR}/method_runtime_test.cpp" \
   "${AGENT_Q_DIR}/agent_q_method_runtime.cpp" \
   "${AGENT_Q_DIR}/agent_q_call_method_validation.cpp" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_runtime.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \

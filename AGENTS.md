@@ -249,6 +249,8 @@ Current common firmware helper commands:
   does not require ESP-IDF): `tools/firmware/common/test_sui_transaction_facts.sh`
 - Test common policy v0 evaluator fixtures (host C++ compiler only; does not
   require ESP-IDF): `tools/firmware/common/test_policy_v0.sh`
+- Test common policy v0 canonicalization fixtures (host C++ compiler only; does
+  not require ESP-IDF): `tools/firmware/common/test_policy_canonical.sh`
 
 Hardware-specific firmware commands live in the corresponding target
 documentation under `products/firmware/src/<hardware-id>/`. Read that target's

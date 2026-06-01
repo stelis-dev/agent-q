@@ -2,6 +2,7 @@
 
 #include "agent_q_sui_transaction_facts.h"
 
+#include "../policy/agent_q_policy_schema.h"
 #include "../policy/agent_q_policy_v0.h"
 
 namespace agent_q {
@@ -21,5 +22,7 @@ bool make_sui_sign_transaction_policy_facts(
     const SuiTransferFacts& sui_facts,
     const char* network,
     AgentQSuiSignTransactionPolicyFacts* out);
+
+AgentQPolicyMethodDescriptor sui_sign_transaction_policy_method_descriptor();
 
 }  // namespace agent_q
