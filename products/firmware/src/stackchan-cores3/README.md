@@ -114,6 +114,7 @@ tools/firmware/common/test_sui_transaction_facts.sh
 tools/firmware/common/test_policy_v0.sh
 tools/firmware/stackchan-cores3/test_call_method_validation.sh
 tools/firmware/stackchan-cores3/test_method_runtime.sh
+tools/firmware/stackchan-cores3/test_policy_proposal_parser.sh
 tools/firmware/stackchan-cores3/test_policy_store.sh
 tools/firmware/stackchan-cores3/test_persistent_material.sh
 tools/firmware/stackchan-cores3/test_provisioning_state_store.sh
@@ -174,6 +175,15 @@ facts parser, the common policy runtime, and pinned MicroSui base64 helpers,
 then verifies unsupported method rejection, invalid Sui params, approval-history
 metadata exposure, and the default-reject policy result for a valid restricted
 SUI transfer fixture.
+
+The StackChan policy-proposal parser test is target-specific. It compiles the
+tracked `agent_q_policy_proposal_parser.cpp` parser with ArduinoJson and the
+common policy canonicalizer, then verifies bounded serialized proposal-object parsing,
+reject-only action enforcement, method/field/operator validation, embedded-NUL
+string rejection, canonical unsigned integer policy values, serialized
+policy-object bounds, and canonical record compatibility. The parser does not
+implement raw protocol envelope handling, policy storage, pending update state,
+or approval UI by itself.
 
 The StackChan persistent-material test is target-specific. It compiles the
 tracked `agent_q_persistent_material.cpp` coordinator with host material stubs,

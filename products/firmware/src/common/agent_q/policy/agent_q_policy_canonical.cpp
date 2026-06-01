@@ -266,7 +266,7 @@ AgentQPolicyCanonicalStatus copy_criterion(
                 return AgentQPolicyCanonicalStatus::invalid_policy;
             }
             if (descriptor->type == AgentQPolicyValueType::u64_decimal &&
-                !agent_q_policy_is_decimal_u64_string(input.value)) {
+                !agent_q_policy_is_canonical_decimal_u64_string(input.value)) {
                 return AgentQPolicyCanonicalStatus::invalid_policy;
             }
             return add_string(policy, input.value, kAgentQPolicyMaxValueLength, &output->value)
@@ -282,7 +282,7 @@ AgentQPolicyCanonicalStatus copy_criterion(
             for (size_t index = 0; index < input.value_count; ++index) {
                 if (!string_present(input.values[index]) ||
                     (descriptor->type == AgentQPolicyValueType::u64_decimal &&
-                     !agent_q_policy_is_decimal_u64_string(input.values[index])) ||
+                     !agent_q_policy_is_canonical_decimal_u64_string(input.values[index])) ||
                     !add_string(
                         policy,
                         input.values[index],

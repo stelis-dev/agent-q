@@ -2,15 +2,18 @@
 
 #include <string.h>
 
+#include "agent_q_json_input.h"
+
 namespace agent_q {
 namespace {
 
 const char* json_string_or_null(JsonVariantConst value)
 {
-    if (!value.is<const char*>()) {
+    const char* output = nullptr;
+    if (!agent_q_json_value_c_string(value, &output)) {
         return nullptr;
     }
-    return value.as<const char*>();
+    return output;
 }
 
 int base64_value(char c)
@@ -165,8 +168,8 @@ bool validate_sui_sign_transaction_params(JsonVariant params, size_t* decoded_tx
 
     JsonObject params_object = params.as<JsonObject>();
     for (JsonPair item : params_object) {
-        const char* key = item.key().c_str();
-        if (strcmp(key, "network") != 0 && strcmp(key, "txBytes") != 0) {
+        if (!agent_q_json_string_equals(item.key(), "network") &&
+            !agent_q_json_string_equals(item.key(), "txBytes")) {
             return false;
         }
     }

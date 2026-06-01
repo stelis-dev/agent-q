@@ -4,6 +4,7 @@
 
 #include "agent_q_bip39.h"
 #include "agent_q_call_method_validation.h"
+#include "agent_q_json_input.h"
 #include "agent_q_policy_store.h"
 #include "agent_q_common/policy/agent_q_policy_runtime.h"
 #include "agent_q_common/sui/agent_q_sui_method_adapter.h"
@@ -98,8 +99,12 @@ AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
         return invalid_params("Invalid sui/sign_transaction params.");
     }
 
-    const char* network = params["network"].as<const char*>();
-    const char* tx_bytes_base64 = params["txBytes"].as<const char*>();
+    const char* network = nullptr;
+    const char* tx_bytes_base64 = nullptr;
+    if (!agent_q_json_value_c_string(params["network"], &network) ||
+        !agent_q_json_value_c_string(params["txBytes"], &tx_bytes_base64)) {
+        return invalid_params("Invalid sui/sign_transaction params.");
+    }
     uint8_t tx_bytes[kSuiSignTransactionTxBytesMaxBytes] = {};
     if (base64_to_bytes(tx_bytes_base64, strlen(tx_bytes_base64), tx_bytes, sizeof(tx_bytes)) != 0) {
         return invalid_params("Invalid sui/sign_transaction txBytes.");

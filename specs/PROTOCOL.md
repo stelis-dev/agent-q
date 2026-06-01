@@ -48,6 +48,11 @@ in [Admin Methods](#admin-methods), which are not implemented yet.
 All request and response messages use JSON Lines. Each JSON value is one
 complete message followed by `\n`.
 
+Firmware rejects JSONL frames that contain a raw NUL byte or exceed the target
+line buffer, and discards the rest of that frame until the next newline. JSON
+escape sequences such as `\u0000` are parsed as JSON strings and then rejected
+by string validators when the field requires a C-string-safe protocol value.
+
 All request messages must include:
 
 - `id`: request correlation id
@@ -1087,6 +1092,10 @@ Policy document rules for the planned first version:
 - Wire format: JSON inside the existing JSONL protocol envelope. Firmware must
   parse the JSON into a bounded internal policy AST before validation or
   storage. The wire JSON is not stored directly.
+- The future protocol handler must enforce raw JSONL envelope size before
+  deserialization. Target-local proposal parser source may additionally bound
+  the serialized policy object after deserialization; that check is not a
+  substitute for the raw envelope limit.
 - Stored format: a Firmware-canonical binary policy record derived from the
   bounded AST. Policy hash/id is computed over that canonical record.
 - `schema` must be `agentq.policy.v0`.

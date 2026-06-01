@@ -13,6 +13,7 @@
 #include "agent_q_connect_settings.h"
 #include "agent_q_drawing_surface.h"
 #include "agent_q_entropy.h"
+#include "agent_q_json_input.h"
 #include "agent_q_local_auth.h"
 #include "agent_q_local_auth_worker.h"
 #include "agent_q_local_pin_auth.h"
@@ -220,6 +221,7 @@ struct LocalSettingsTouchState {
 
 char g_line_buffer[kLineBufferSize];
 size_t g_line_size = 0;
+bool g_discarding_invalid_line = false;
 char g_device_id[kDeviceIdSize];
 ProvisioningRuntimeState g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
 PendingApprovalState g_pending;
@@ -630,9 +632,8 @@ bool parse_approval_history_params(JsonDocument& request, size_t* limit, uint64_
 
     JsonObject params_object = params.as<JsonObject>();
     for (JsonPair pair : params_object) {
-        const char* key = pair.key().c_str();
         JsonVariant value = pair.value();
-        if (strcmp(key, "limit") == 0) {
+        if (agent_q::agent_q_json_string_equals(pair.key(), "limit")) {
             if (!value.is<unsigned int>()) {
                 return false;
             }
@@ -644,8 +645,11 @@ bool parse_approval_history_params(JsonDocument& request, size_t* limit, uint64_
             *limit = requested_limit;
             continue;
         }
-        if (strcmp(key, "beforeSeq") == 0) {
-            const char* before_value = value.as<const char*>();
+        if (agent_q::agent_q_json_string_equals(pair.key(), "beforeSeq")) {
+            const char* before_value = nullptr;
+            if (!agent_q::agent_q_json_value_c_string(value, &before_value)) {
+                return false;
+            }
             if (!agent_q::approval_history_parse_sequence(before_value, before_sequence)) {
                 return false;
             }
@@ -3270,6 +3274,11 @@ void send_choice_response_if_needed()
 
 void handle_line(const char* line)
 {
+    if (!agent_q::agent_q_json_line_is_single_object(line)) {
+        write_error_response(nullptr, "invalid_json", "Invalid JSON.");
+        return;
+    }
+
     JsonDocument request;
     const DeserializationError error = deserializeJson(request, line);
     if (error) {
@@ -3277,7 +3286,11 @@ void handle_line(const char* line)
         return;
     }
 
-    const char* id = request["id"] | "";
+    const char* id = nullptr;
+    if (!agent_q::agent_q_json_value_c_string(request["id"], &id)) {
+        write_error_response(nullptr, "invalid_id", "Invalid request id.");
+        return;
+    }
     if (!is_safe_id(id)) {
         write_error_response(nullptr, "invalid_id", "Invalid request id.");
         return;
@@ -3289,7 +3302,11 @@ void handle_line(const char* line)
         return;
     }
 
-    const char* type = request["type"] | "";
+    const char* type = nullptr;
+    if (!agent_q::agent_q_json_optional_c_string(request["type"], "", &type)) {
+        write_error_response(id, "unsupported_type", "Unsupported request type.");
+        return;
+    }
     if (strcmp(type, "get_status") == 0) {
         write_status_response(id);
         return;
@@ -3300,7 +3317,11 @@ void handle_line(const char* line)
             return;
         }
 
-        const char* code = request["params"]["code"] | "";
+        const char* code = nullptr;
+        if (!agent_q::agent_q_json_optional_c_string(request["params"]["code"], "", &code)) {
+            write_error_response(id, "invalid_code", "Invalid identification code.");
+            return;
+        }
         if (!is_safe_identification_code(code)) {
             write_error_response(id, "invalid_code", "Invalid identification code.");
             return;
@@ -3327,7 +3348,11 @@ void handle_line(const char* line)
             return;
         }
 
-        const char* gateway_name = request["params"]["gatewayName"] | "";
+        const char* gateway_name = nullptr;
+        if (!agent_q::agent_q_json_optional_c_string(request["params"]["gatewayName"], "", &gateway_name)) {
+            write_error_response(id, "invalid_gateway_name", "gatewayName must be 1-64 printable ASCII characters.");
+            return;
+        }
         if (!is_printable_ascii_gateway_name(gateway_name)) {
             write_error_response(id, "invalid_gateway_name", "gatewayName must be 1-64 printable ASCII characters.");
             return;
@@ -3356,7 +3381,11 @@ void handle_line(const char* line)
             return;
         }
 
-        const char* session_id = request["sessionId"] | "";
+        const char* session_id = nullptr;
+        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
+            write_error_response(id, "invalid_session", "Invalid or expired session.");
+            return;
+        }
         if (!require_active_matching_session(id, session_id)) {
             return;
         }
@@ -3377,7 +3406,11 @@ void handle_line(const char* line)
             return;
         }
 
-        const char* session_id = request["sessionId"] | "";
+        const char* session_id = nullptr;
+        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
+            write_error_response(id, "invalid_session", "Invalid or expired session.");
+            return;
+        }
         if (!require_active_matching_session(id, session_id)) {
             return;
         }
@@ -3399,7 +3432,11 @@ void handle_line(const char* line)
             return;
         }
 
-        const char* session_id = request["sessionId"] | "";
+        const char* session_id = nullptr;
+        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
+            write_error_response(id, "invalid_session", "Invalid or expired session.");
+            return;
+        }
         if (!require_active_matching_session(id, session_id)) {
             return;
         }
@@ -3425,7 +3462,11 @@ void handle_line(const char* line)
             return;
         }
 
-        const char* session_id = request["sessionId"] | "";
+        const char* session_id = nullptr;
+        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
+            write_error_response(id, "invalid_session", "Invalid or expired session.");
+            return;
+        }
         if (!require_active_matching_session(id, session_id)) {
             return;
         }
@@ -3452,7 +3493,11 @@ void handle_line(const char* line)
             return;
         }
 
-        const char* session_id = request["sessionId"] | "";
+        const char* session_id = nullptr;
+        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
+            write_error_response(id, "invalid_session", "Invalid or expired session.");
+            return;
+        }
         if (!require_active_matching_session(id, session_id)) {
             return;
         }
@@ -3485,7 +3530,11 @@ void handle_line(const char* line)
             return;
         }
 
-        const char* session_id = request["sessionId"] | "";
+        const char* session_id = nullptr;
+        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
+            write_error_response(id, "invalid_session", "Invalid or expired session.");
+            return;
+        }
         if (!require_active_matching_session(id, session_id)) {
             return;
         }
@@ -3504,8 +3553,13 @@ void handle_line(const char* line)
                 return;
         }
 
-        const char* chain = request["chain"] | "";
-        const char* method = request["method"] | "";
+        const char* chain = nullptr;
+        const char* method = nullptr;
+        if (!agent_q::agent_q_json_value_c_string(request["chain"], &chain) ||
+            !agent_q::agent_q_json_value_c_string(request["method"], &method)) {
+            write_error_response(id, "invalid_method", "Invalid call_method chain or method.");
+            return;
+        }
         const agent_q::AgentQMethodRuntimeResult method_result =
             agent_q::evaluate_call_method(chain, method, request["params"]);
         if (method_result.has_approval_history) {
@@ -3563,6 +3617,11 @@ void poll_usb_input()
             continue;
         }
         if (c == '\n') {
+            if (g_discarding_invalid_line) {
+                g_discarding_invalid_line = false;
+                g_line_size = 0;
+                continue;
+            }
             g_line_buffer[g_line_size] = '\0';
             if (g_line_size > 0) {
                 handle_line(g_line_buffer);
@@ -3571,8 +3630,20 @@ void poll_usb_input()
             continue;
         }
 
+        if (g_discarding_invalid_line) {
+            continue;
+        }
+
+        if (c == '\0') {
+            g_line_size = 0;
+            g_discarding_invalid_line = true;
+            write_error_response(nullptr, "invalid_json", "JSON line contains a NUL byte.");
+            continue;
+        }
+
         if (g_line_size + 1 >= sizeof(g_line_buffer)) {
             g_line_size = 0;
+            g_discarding_invalid_line = true;
             write_error_response(nullptr, "invalid_json", "JSON line is too long.");
             continue;
         }

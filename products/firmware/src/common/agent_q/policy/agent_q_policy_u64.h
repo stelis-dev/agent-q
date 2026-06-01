@@ -31,6 +31,14 @@ inline bool agent_q_policy_is_decimal_u64_string(const char* value)
     return true;
 }
 
+inline bool agent_q_policy_is_canonical_decimal_u64_string(const char* value)
+{
+    if (!agent_q_policy_is_decimal_u64_string(value)) {
+        return false;
+    }
+    return value[0] != '0' || value[1] == '\0';
+}
+
 inline const char* agent_q_policy_skip_leading_zeroes(const char* value)
 {
     while (value[0] == '0' && value[1] != '\0') {

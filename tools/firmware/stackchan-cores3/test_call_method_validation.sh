@@ -49,6 +49,7 @@ cat >"${TMP_DIR}/call_method_validation_test.cpp" <<'CPP'
 #include <string>
 
 #include "agent_q_call_method_validation.h"
+#include "agent_q_json_input.h"
 
 namespace {
 
@@ -106,6 +107,16 @@ void expect_sui_params(const char* label, const std::string& params_json, bool e
     }
 }
 
+void expect_single_json_object_frame(const char* label, const char* line, bool expected)
+{
+    const bool actual = agent_q::agent_q_json_line_is_single_object(line);
+    if (actual != expected) {
+        fprintf(stderr, "%s: expected single-object frame result %s, got %s\n",
+                label, expected ? "true" : "false", actual ? "true" : "false");
+        ++failures;
+    }
+}
+
 std::string request_with_params(const std::string& params)
 {
     return "{\"chain\":\"sui\",\"method\":\"sign_transaction\",\"params\":" + params + "}";
@@ -116,6 +127,15 @@ std::string request_with_params(const std::string& params)
 int main()
 {
     using agent_q::CallMethodFieldValidation;
+
+    expect_single_json_object_frame("single object frame", "{\"id\":\"1\"}", true);
+    expect_single_json_object_frame("single object frame with whitespace", "  {\"id\":\"1\"}  ", true);
+    expect_single_json_object_frame("single object frame with nested object", "{\"params\":{\"txBytes\":\"AAAA\"}}", true);
+    expect_single_json_object_frame("trailing garbage rejected", "{\"id\":\"1\"}xxx", false);
+    expect_single_json_object_frame("second json object rejected", "{\"id\":\"1\"} {\"id\":\"2\"}", false);
+    expect_single_json_object_frame("array envelope rejected", "[]", false);
+    expect_single_json_object_frame("unterminated object rejected", "{\"id\":\"1\"", false);
+    expect_single_json_object_frame("unterminated string rejected", "{\"id\":\"1}", false);
 
     expect_field_result(
         "valid envelope",
@@ -147,6 +167,10 @@ int main()
         "{\"chain\":\"Sui\",\"method\":\"sign_transaction\",\"params\":{}}",
         CallMethodFieldValidation::invalid_method);
     expect_field_result(
+        "chain embedded nul",
+        "{\"chain\":\"sui\\u0000x\",\"method\":\"sign_transaction\",\"params\":{}}",
+        CallMethodFieldValidation::invalid_method);
+    expect_field_result(
         "chain too long",
         "{\"chain\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"method\":\"sign_transaction\",\"params\":{}}",
         CallMethodFieldValidation::invalid_method);
@@ -162,6 +186,10 @@ int main()
     expect_field_result(
         "method unsafe char",
         "{\"chain\":\"sui\",\"method\":\"sign/transaction\",\"params\":{}}",
+        CallMethodFieldValidation::invalid_method);
+    expect_field_result(
+        "method embedded nul",
+        "{\"chain\":\"sui\",\"method\":\"sign_transaction\\u0000x\",\"params\":{}}",
         CallMethodFieldValidation::invalid_method);
     expect_field_result(
         "method too long",
@@ -197,12 +225,15 @@ int main()
 
     expect_sui_params("params not object", "[]", false, 0);
     expect_sui_params("extra field", "{\"network\":\"devnet\",\"txBytes\":\"AAAA\",\"seed\":\"x\"}", false, 0);
+    expect_sui_params("embedded nul field", "{\"network\\u0000x\":\"devnet\",\"txBytes\":\"AAAA\"}", false, 0);
     expect_sui_params("network missing", "{\"txBytes\":\"AAAA\"}", false, 0);
     expect_sui_params("network number", "{\"network\":1,\"txBytes\":\"AAAA\"}", false, 0);
+    expect_sui_params("network embedded nul", "{\"network\":\"devnet\\u0000x\",\"txBytes\":\"AAAA\"}", false, 0);
     expect_sui_params("network unsupported", "{\"network\":\"prodnet\",\"txBytes\":\"AAAA\"}", false, 0);
     expect_sui_params("txBytes missing", "{\"network\":\"devnet\"}", false, 0);
     expect_sui_params("txBytes number", "{\"network\":\"devnet\",\"txBytes\":1}", false, 0);
     expect_sui_params("txBytes empty", "{\"network\":\"devnet\",\"txBytes\":\"\"}", false, 0);
+    expect_sui_params("txBytes embedded nul", "{\"network\":\"devnet\",\"txBytes\":\"AAAA\\u0000x\"}", false, 0);
     expect_sui_params("txBytes malformed", "{\"network\":\"devnet\",\"txBytes\":\"!!!!\"}", false, 0);
     expect_sui_params("txBytes non-canonical", "{\"network\":\"devnet\",\"txBytes\":\"AAB=\"}", false, 0);
 
