@@ -109,6 +109,23 @@ bool is_supported_sui_network(const char* network)
             strcmp(network, "localnet") == 0);
 }
 
+bool json_object_has_key(JsonDocument& request, const char* key)
+{
+    if (key == nullptr) {
+        return false;
+    }
+    JsonObjectConst object = request.as<JsonObjectConst>();
+    if (object.isNull()) {
+        return false;
+    }
+    for (JsonPairConst pair : object) {
+        if (agent_q_json_string_equals(pair.key(), key)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 bool is_call_method_identifier(const char* value, size_t max_length)
@@ -138,8 +155,24 @@ bool is_call_method_identifier(const char* value, size_t max_length)
     return length > 0;
 }
 
+CallMethodNamespaceValidation classify_call_method_namespace(JsonDocument& request)
+{
+    const bool has_chain = json_object_has_key(request, "chain");
+    const bool has_method_namespace = json_object_has_key(request, "methodNamespace");
+    if (has_chain == has_method_namespace) {
+        return CallMethodNamespaceValidation::invalid_namespace;
+    }
+    return has_method_namespace ?
+        CallMethodNamespaceValidation::admin_scoped :
+        CallMethodNamespaceValidation::chain_scoped;
+}
+
 CallMethodFieldValidation validate_call_method_request_fields(JsonDocument& request)
 {
+    if (classify_call_method_namespace(request) != CallMethodNamespaceValidation::chain_scoped) {
+        return CallMethodFieldValidation::invalid_method;
+    }
+
     const char* chain = json_string_or_null(request["chain"]);
     const char* method = json_string_or_null(request["method"]);
     if (!is_call_method_identifier(chain, kCallMethodChainMaxLength) ||

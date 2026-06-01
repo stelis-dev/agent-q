@@ -171,6 +171,14 @@ void local_pin_auth_begin_change_pin(TickType_t deadline)
     g_state.deadline = deadline;
 }
 
+void local_pin_auth_begin_policy_update(TickType_t deadline)
+{
+    g_state.clear_flow();
+    g_state.purpose = AgentQLocalPinAuthPurpose::policy_update;
+    g_state.stage = AgentQLocalPinAuthStage::pin_entry;
+    g_state.deadline = deadline;
+}
+
 AgentQLocalPinAuthInputResult local_pin_auth_add_digit(char digit, TickType_t deadline)
 {
     const TickType_t now = xTaskGetTickCount();
@@ -347,6 +355,10 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
         g_state.commit_ready_at = setting_commit_ready_at;
         g_state.deadline = 0;
         return AgentQLocalPinAuthVerifyResult::started_setting_commit;
+    }
+
+    if (g_state.purpose == AgentQLocalPinAuthPurpose::policy_update) {
+        return AgentQLocalPinAuthVerifyResult::verified_policy_update;
     }
 
     return AgentQLocalPinAuthVerifyResult::verified_connect;

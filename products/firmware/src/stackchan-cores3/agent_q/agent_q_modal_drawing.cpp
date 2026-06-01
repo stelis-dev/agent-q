@@ -10,6 +10,7 @@
 #include "agent_q_local_auth.h"
 #include "agent_q_local_pin_auth.h"
 #include "agent_q_local_reset.h"
+#include "agent_q_policy_update_flow.h"
 #include "agent_q_provisioning_flow.h"
 #include "hal/hal.h"
 
@@ -1458,6 +1459,30 @@ static const char* local_pin_auth_default_message(
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::connect) {
         return "Enter local PIN to connect.";
     }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::policy_update) {
+        static char message[128] = {};
+        const AgentQPolicyUpdateFlowSnapshot update = policy_update_flow_snapshot();
+        const char* hash = update.policy_hash != nullptr ? update.policy_hash : "";
+        char hash_short[24] = {};
+        if (strlen(hash) >= 18) {
+            memcpy(hash_short, hash, 13);
+            memcpy(hash_short + 13, "...", 3);
+            memcpy(hash_short + 16, hash + strlen(hash) - 4, 4);
+            hash_short[20] = '\0';
+        } else {
+            strlcpy(hash_short, hash, sizeof(hash_short));
+        }
+        snprintf(
+            message,
+            sizeof(message),
+            "Approve policy.\n%s rules:%u default:%s\n%s action:%s",
+            hash_short,
+            static_cast<unsigned>(update.rule_count),
+            update.default_action != nullptr ? update.default_action : "",
+            update.method_summary != nullptr ? update.method_summary : "",
+            update.highest_action != nullptr ? update.highest_action : "");
+        return message;
+    }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {
             return "Enter new PIN.";
@@ -1477,6 +1502,9 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::connect) {
         return "Connect PIN";
+    }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::policy_update) {
+        return "Policy PIN";
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {

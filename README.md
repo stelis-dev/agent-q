@@ -148,22 +148,28 @@ Implemented:
 - Read-only Sui account and public-key discovery over an approved runtime
   session.
 - Session-scoped capability, policy-summary, and approval-history reads for the
-  currently implemented device metadata and method-decision records.
+  currently implemented device metadata, method-decision records, and
+  policy-update terminal records.
 - A session-scoped `call_method` runtime skeleton that keeps unknown methods
   rejected and recognizes Sui `sign_transaction` only for rejected
   policy-decision smoke. It is not signing support.
+- A bounded policy-update proposal path for currently enforceable reject
+  policies. Gateway/MCP can submit proposals, but Firmware validates them,
+  requires device-local approval, commits the active policy, and records the
+  terminal result.
 - A common host-tested policy evaluator and default-reject runtime boundary that
   are not connected to runtime signing.
 
 Not yet implemented: concrete signing outputs, per-request physical approval,
-spending and rate limits, multi-role separation, custom policy update, Admin
-Page, multi-device approval, device revocation or transfer, a production audit
-layer beyond the current fixed-size approval-history record, and broad
-chain-specific transaction logic. Connection is not signing approval and does
-not authorize signing. A connection session does not prove agent identity.
-Labels and purpose names are local Gateway metadata and are not security
-boundaries. Firmware policy must not rely on Gateway labels, purpose names, or
-routing assignments as authorization facts.
+spending and rate limits, multi-role separation, custom policy update beyond
+the current bounded reject-policy proposal flow, Admin Page, multi-device
+approval, device revocation or transfer, a production audit layer beyond the
+current fixed-size approval-history record, and broad chain-specific transaction
+logic. Connection is not signing approval and does not authorize signing. A
+connection session does not prove agent identity. Labels and purpose names are
+local Gateway metadata and are not security boundaries. Firmware policy must not
+rely on Gateway labels, purpose names, or routing assignments as authorization
+facts.
 
 ## Repository Layout
 

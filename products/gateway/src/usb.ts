@@ -6,6 +6,7 @@ import {
   assertApprovalHistoryResponse,
   assertCapabilitiesResponse,
   assertMethodResultResponse,
+  assertPolicyUpdateResultResponse,
   assertPolicyResponse,
   assertConnectResponse,
   assertDisconnectResponse,
@@ -17,6 +18,7 @@ import {
   makeGetCapabilitiesRequest,
   makeGetAccountsRequest,
   makeGetApprovalHistoryRequest,
+  makeProposePolicyUpdateRequest,
   makeIdentifyDeviceRequest,
   makeGetPolicyRequest,
   makeGetStatusRequest,
@@ -31,6 +33,7 @@ import {
   type DisconnectResponse,
   type IdentifyDeviceResponse,
   type MethodResultResponse,
+  type PolicyUpdateResultResponse,
   type PolicyResponse,
   type ProtocolRequest,
   type ProtocolResponse,
@@ -132,6 +135,12 @@ export interface UsbSerialDriver {
     params: Record<string, unknown>,
     timeoutMs: number,
   ): Promise<MethodResultResponse>;
+  proposePolicyUpdate(
+    portPath: string,
+    sessionId: string,
+    policy: Record<string, unknown>,
+    timeoutMs: number,
+  ): Promise<PolicyUpdateResultResponse>;
 }
 
 export class SerialPortUsbDriver implements UsbSerialDriver {
@@ -214,6 +223,15 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     timeoutMs: number,
   ): Promise<MethodResultResponse> {
     return callMethodOverSerial(portPath, sessionId, chain, method, params, timeoutMs);
+  }
+
+  async proposePolicyUpdate(
+    portPath: string,
+    sessionId: string,
+    policy: Record<string, unknown>,
+    timeoutMs: number,
+  ): Promise<PolicyUpdateResultResponse> {
+    return proposePolicyUpdateOverSerial(portPath, sessionId, policy, timeoutMs);
   }
 }
 
@@ -353,6 +371,12 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         driver.callMethod(portPath, sessionId, chain, method, params, timeoutMs),
         timeoutMs,
         "USB call_method exceeded its timeout.",
+      ),
+    proposePolicyUpdate: (portPath, sessionId, policy, timeoutMs) =>
+      raceDeadline(
+        driver.proposePolicyUpdate(portPath, sessionId, policy, timeoutMs),
+        timeoutMs,
+        "USB policy update proposal exceeded its timeout.",
       ),
   };
 }
@@ -524,6 +548,16 @@ async function callMethodOverSerial(
 ): Promise<MethodResultResponse> {
   const request = makeCallMethodRequest(sessionId, chain, method, params);
   return requestOverSerial(portPath, request, timeoutMs, (response) => assertMethodResultResponse(response));
+}
+
+async function proposePolicyUpdateOverSerial(
+  portPath: string,
+  sessionId: string,
+  policy: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<PolicyUpdateResultResponse> {
+  const request = makeProposePolicyUpdateRequest(sessionId, policy);
+  return requestOverSerial(portPath, request, timeoutMs, (response) => assertPolicyUpdateResultResponse(response));
 }
 
 async function requestOverSerial<TResponse extends ProtocolResponse>(

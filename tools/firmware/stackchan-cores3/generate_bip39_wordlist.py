@@ -2,8 +2,25 @@
 from __future__ import annotations
 
 import re
+import shutil
 import sys
 from pathlib import Path
+
+
+def remove_output_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def prepare_output_file_path(path: Path) -> None:
+    parent = path.parent
+    if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
+        raise SystemExit(f"Refusing to write generated wordlist through non-regular output parent: {parent}")
+    parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        remove_output_path(path)
 
 
 def generate_wordlist_source(wordlist_path: Path, output_path: Path) -> None:
@@ -51,8 +68,11 @@ def generate_wordlist_source(wordlist_path: Path, output_path: Path) -> None:
             "",
         ]
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text("\n".join(lines), encoding="utf-8")
+    output = "\n".join(lines)
+    prepare_output_file_path(output_path)
+    if output_path.exists() and output_path.read_text(encoding="utf-8") == output:
+        return
+    output_path.write_text(output, encoding="utf-8")
 
 
 def main() -> int:

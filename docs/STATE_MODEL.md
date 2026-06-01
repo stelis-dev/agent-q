@@ -43,8 +43,9 @@ stateDiagram-v2
     Provisioned --> Locked: future local lock condition
     Locked --> Provisioned: future local unlock
     Provisioned --> Unprovisioned: local settings reset + PIN verification + material wipe
-    Provisioned --> PolicyUpdatePending: future valid policy update proposal + local approval requested
-    PolicyUpdatePending --> Provisioned: approve + commit succeeds, reject, timeout, or validation failure
+    Provisioned --> PolicyUpdatePending: valid policy update proposal + local approval requested
+    Provisioned --> Provisioned: invalid policy proposal rejected before pending approval
+    PolicyUpdatePending --> Provisioned: approve + commit succeeds, reject, timeout, cancel, ui_error, or pre-commit storage_error
     PolicyUpdatePending --> Error: ambiguous policy commit state
 
     Unprovisioned: get_status, identify_device
@@ -103,9 +104,9 @@ hardware and must be documented in each target's `SPEC.md`.
 |---|---|---|---:|
 | Persistent device state | provisioning state, stored root material, policy, local PIN verifier, approval history, policy-update terminal marker, account availability | Firmware | Yes |
 | Volatile sensitive scratch | generated recovery phrase, setup entropy, pending backup confirmation, typed PIN digits | Firmware | Yes |
-| Local PIN authorization state | connect/settings/reset PIN entry purpose, verification stage, timeout, RAM-only lockout | Firmware | Yes |
+| Local PIN authorization state | connect/settings/policy-update/reset PIN entry purpose, verification stage, timeout, RAM-only lockout | Firmware | Yes |
 | Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or connect PIN approval; timeout; requested action | Firmware | Yes |
-| Pending policy update state | future validated policy proposal summary, policy hash, approval deadline, commit stage | Firmware | Yes |
+| Pending policy update state | validated policy proposal summary, policy hash, approval deadline, commit stage | Firmware | Yes |
 | Runtime session state | active protocol session id and expiry | Firmware; Gateway mirrors its own client session state | Yes |
 | Target-local display state | screen on/off, brightness, screensaver replacement | Firmware target display module | No |
 | Target-local posture state | servo position, haptics, LEDs, temporary expression feedback | Firmware target UI/motion module | No |
@@ -190,9 +191,11 @@ storage. In the current StackChan CoreS3 DEV_PROFILE implementation this means a
 binary BIP-39 entropy blob, a canonical active policy record, and a local
 6-digit PIN verifier record are stored in ordinary NVS and `prov_state` is
 `provisioned`; the normal product flow installs the default-reject policy, while
-read-only Sui account derivation, read-only active policy summary, and
-source-level local reset/material wipe are implemented. Signing, policy update,
-and USER_PROFILE secure storage gates are still separate work.
+read-only Sui account derivation, read-only active policy summary,
+source-level local reset/material wipe, and the Firmware-owned
+`propose_policy_update` proposal flow for custom reject policies are
+implemented. Signing and USER_PROFILE secure storage gates are still separate
+work.
 
 Allowed:
 
@@ -213,7 +216,10 @@ Allowed:
   decision records or an incomplete policy-update terminal state
 - device-local settings toggle for whether USB `connect` requires local PIN;
   changing the toggle requires stored PIN verification
-- policy update only after an authorization/update surface is implemented
+- policy update through the Firmware-owned `propose_policy_update` proposal
+  flow, which requires an active session, Firmware validation, and device-local
+  approval; the pending approval remains tied to the same session and cannot
+  commit after that session expires or disconnects
 
 This state is not blanket signing approval. Policy still decides whether each
 request signs, rejects, or asks. In the current StackChan CoreS3
@@ -239,12 +245,12 @@ error, not a normal `provisioned` state. Provisioned DEV_PROFILE devices that
 lack the current local PIN verifier or active canonical policy fail closed until
 erased and reprovisioned through a local UX or development reflash workflow.
 
-#### Designed Future: Pending Policy Update
+#### Pending Policy Update
 
-Policy update is not implemented. When implemented, it must be a Firmware-owned
-pending substate under `provisioned`, not an external state setter.
+Policy update is a Firmware-owned pending substate under `provisioned`, not an
+external state setter.
 
-Intended transition:
+Transition:
 
 ```text
 provisioned
@@ -258,12 +264,18 @@ provisioned
 
 Failure behavior:
 
-- invalid policy, user rejection, timeout, or cancellation returns to
+- invalid policy returns `invalid_policy` before pending approval starts, with
+  the previous active policy unchanged;
+- user rejection, timeout, cancellation, or approval UI failure returns to
   `provisioned` with the previous active policy unchanged;
+- required-history failure before the active-slot flip returns a top-level
+  `history_error`, clears the pending proposal, and leaves the previous active
+  policy unchanged;
 - storage failure before the active-slot flip returns to `provisioned` with the
   previous active policy unchanged;
-- ambiguous storage state after interruption, including a leftover policy-update
-  terminal marker, reports `error` instead of a normal `provisioned` state;
+- required-history failure after the active-slot flip, or ambiguous storage
+  state after interruption including a leftover policy-update terminal marker,
+  reports `error` instead of a normal `provisioned` state;
 - a second policy update proposal while pending is rejected with `busy`.
 
 Allowed while pending:
@@ -361,10 +373,9 @@ This state is reserved until an unlock model is implemented.
 | `get_approval_history` | X | X | O | X | X | Firmware |
 | `call_method` | X | X | O | X | X | Firmware |
 | policy read | X | X | O | X | X | Firmware |
-| policy update | X | X | D (future: validated proposal + device-local approval) | X | X | Firmware |
+| policy update | X | X | O (validated proposal + device-local approval) | X | X | Firmware |
 
-`O*`: allowed only when the request does not disrupt local setup UI. `D` means
-designed but not implemented. `S` means
+`O*`: allowed only when the request does not disrupt local setup UI. `S` means
 session cleanup only: Firmware does not require material readiness, but a
 missing or mismatched session returns `invalid_session`. `S` operations may
 still return `busy` while local setup/PIN/reset or sensitive settings subflow
@@ -378,13 +389,15 @@ Gateway may hide unavailable operations, but Firmware must still reject them.
 
 The current StackChan CoreS3 target has an explicit `local_pin_auth` runtime
 substate for local PIN authorization. It records `purpose` (`connect`,
-`settings_toggle`, or `settings_change_pin`), `stage` (`pin_entry`,
-`pin_verifying`, `new_pin_entry`, `repeat_pin_entry`, `committing_setting`, or
-`committing_pin_change`), typed PIN scratch, new-PIN scratch where applicable,
-deadline, and the RAM-only stored-PIN attempt budget shared with reset PIN
-verification. The UI panel may display that state, but panel existence is not
-the source of truth. The target must not expose a USB/Gateway/MCP PIN submit
-request.
+`settings_connect_pin`, `settings_change_pin`, or `policy_update`), `stage`
+(`pin_entry`, `pin_verifying`, `new_pin_entry`, `repeat_pin_entry`,
+`committing_setting`, or `committing_pin_change`), typed PIN scratch, new-PIN
+scratch where applicable, deadline, and the RAM-only stored-PIN attempt budget
+shared with reset PIN verification. For policy updates, `local_pin_auth` owns
+only PIN verification; the pending proposal summary, policy hash, commit stage,
+and terminal result remain owned by the policy-update flow. The UI panel may
+display that state, but panel existence is not the source of truth. The target
+must not expose a USB/Gateway/MCP PIN submit request.
 
 ## Boot Flows
 

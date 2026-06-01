@@ -26,14 +26,89 @@ if [[ ! -d "${TARGET_ROOT}/agent_q" || ! -d "${TARGET_ROOT}/components/signing_c
   exit 1
 fi
 
-rm -rf "${FIRMWARE_DIR}/main/agent_q"
-cp -R "${TARGET_ROOT}/agent_q" "${FIRMWARE_DIR}/main/agent_q"
-rm -rf "${FIRMWARE_DIR}/main/agent_q_common"
-cp -R "${COMMON_ROOT}" "${FIRMWARE_DIR}/main/agent_q_common"
+python3 - \
+  "${TARGET_ROOT}/agent_q" "${FIRMWARE_DIR}/main/agent_q" "agent_q_bip39_wordlist.cpp" \
+  "${COMMON_ROOT}" "${FIRMWARE_DIR}/main/agent_q_common" "" \
+  "${TARGET_ROOT}/components/signing_crypto" "${FIRMWARE_DIR}/components/signing_crypto" "" <<'PY'
+from __future__ import annotations
 
-mkdir -p "${FIRMWARE_DIR}/components"
-rm -rf "${FIRMWARE_DIR}/components/signing_crypto"
-cp -R "${TARGET_ROOT}/components/signing_crypto" "${FIRMWARE_DIR}/components/signing_crypto"
+import filecmp
+import shutil
+import sys
+from pathlib import Path
+
+
+def remove_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def prepare_target_root(target_root: Path) -> None:
+    parent = target_root.parent
+    if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
+        raise SystemExit(f"Refusing to sync through non-regular target parent: {parent}")
+    if target_root.is_symlink() or (target_root.exists() and not target_root.is_dir()):
+        remove_path(target_root)
+    target_root.mkdir(parents=True, exist_ok=True)
+
+
+def copy_file_if_changed(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_symlink():
+        remove_path(target)
+    if target.exists() and not target.is_file():
+        remove_path(target)
+    if target.exists() and target.is_file() and filecmp.cmp(source, target, shallow=False):
+        return
+    shutil.copy2(source, target)
+
+
+def sync_tree(source_root: Path, target_root: Path, keep_relative_paths: set[Path]) -> None:
+    if not source_root.is_dir():
+        raise SystemExit(f"Source tree does not exist: {source_root}")
+    prepare_target_root(target_root)
+
+    source_entries: set[Path] = set()
+    for source_path in source_root.rglob("*"):
+        relative_path = source_path.relative_to(source_root)
+        source_entries.add(relative_path)
+        target_path = target_root / relative_path
+
+        if source_path.is_dir():
+            if target_path.is_symlink() or (target_path.exists() and not target_path.is_dir()):
+                remove_path(target_path)
+            target_path.mkdir(parents=True, exist_ok=True)
+            continue
+        if source_path.is_symlink():
+            if target_path.exists() or target_path.is_symlink():
+                remove_path(target_path)
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.symlink_to(source_path.readlink())
+            continue
+        copy_file_if_changed(source_path, target_path)
+
+    if not target_root.exists():
+        return
+
+    for target_path in sorted(target_root.rglob("*"), key=lambda path: len(path.parts), reverse=True):
+        relative_path = target_path.relative_to(target_root)
+        if relative_path in keep_relative_paths:
+            continue
+        if relative_path not in source_entries:
+            remove_path(target_path)
+
+
+if len(sys.argv) != 10:
+    raise SystemExit("Expected three source/target/keep triplets.")
+
+for index in range(1, len(sys.argv), 3):
+    source = Path(sys.argv[index])
+    target = Path(sys.argv[index + 1])
+    keep = {Path(value) for value in sys.argv[index + 2].split(":") if value}
+    sync_tree(source, target, keep)
+PY
 
 BIP39_WORDLIST_FILE="${AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE:-}"
 if [[ -z "${BIP39_WORDLIST_FILE}" && -n "${AGENT_Q_BIP39_WORDLIST_ROOT:-}" && -n "${AGENT_Q_BIP39_ENGLISH_WORDLIST_PATH:-}" ]]; then
@@ -124,11 +199,40 @@ def assert_not_contains(text: str, forbidden: str, label: str) -> None:
         raise SystemExit(f"Agent-Q firmware hardening failed; {label} remains.")
 
 
+def assert_no_symlink_ancestors(path: Path, root: Path, label: str) -> None:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        raise SystemExit(f"Could not patch {label}; path is outside firmware tree: {path}")
+
+    current = root
+    for part in relative.parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise SystemExit(f"Could not patch {label}; symlink ancestor in generated firmware path: {current}")
+
+
+def write_text_if_changed(path: Path, text: str) -> None:
+    assert_no_symlink_ancestors(path, firmware_dir, str(path))
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise SystemExit(f"Refusing to write through non-regular generated firmware path: {path}")
+    if path.exists() and path.read_text() == text:
+        return
+    path.write_text(text)
+
+
+def read_text_file(path: Path, label: str) -> str:
+    assert_no_symlink_ancestors(path, firmware_dir, label)
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit(f"Could not patch {label}; expected regular file at {path}.")
+    return path.read_text()
+
+
 cmake_path = Path(sys.argv[1])
 main_path = Path(sys.argv[2])
 firmware_dir = main_path.parents[1]
 
-cmake = cmake_path.read_text()
+cmake = read_text_file(cmake_path, "main/CMakeLists.txt")
 cmake = insert_after_once(
     cmake,
     '    "hal/*.cpp"\n',
@@ -202,9 +306,9 @@ cmake = insert_after_once(
     "                        bootloader_support\n",
     "main/CMakeLists.txt early entropy dependency",
 )
-cmake_path.write_text(cmake)
+write_text_if_changed(cmake_path, cmake)
 
-main_cpp = main_path.read_text()
+main_cpp = read_text_file(main_path, "main.cpp")
 main_cpp = insert_after_once(
     main_cpp,
     "#include <hal/hal.h>\n",
@@ -273,10 +377,10 @@ assert_not_contains(main_cpp, "GetMooncake().installApp(std::make_unique<AppAppC
 assert_not_contains(main_cpp, "GetMooncake().installApp(std::make_unique<AppEzdata>", "main.cpp EzData app install")
 assert_not_contains(main_cpp, "GetMooncake().installApp(std::make_unique<AppDance>", "main.cpp dance app install")
 assert_not_contains(main_cpp, "GetMooncake().installApp(std::make_unique<AppSetup>", "main.cpp setup app install")
-main_path.write_text(main_cpp)
+write_text_if_changed(main_path, main_cpp)
 
 hal_path = firmware_dir / "main/hal/hal.cpp"
-hal = hal_path.read_text()
+hal = read_text_file(hal_path, "hal.cpp")
 hal = replace_once(
     hal,
     "    xiaozhi_mcp_init();\n",
@@ -299,11 +403,11 @@ hal = replace_function(
     "hal.cpp xiaozhi runtime disabled",
 )
 assert_not_contains(hal, "xiaozhi_mcp_init();", "hal.cpp Xiaozhi MCP registration")
-hal_path.write_text(hal)
+write_text_if_changed(hal_path, hal)
 
 launcher_path = firmware_dir / "main/apps/app_launcher/app_launcher.cpp"
 launcher_header_path = firmware_dir / "main/apps/app_launcher/app_launcher.h"
-launcher_header = launcher_header_path.read_text()
+launcher_header = read_text_file(launcher_header_path, "app_launcher.h")
 launcher_header = remove_once(
     launcher_header,
     "#include <apps/app_setup/workers/workers.h>\n",
@@ -318,9 +422,9 @@ launcher_header = remove_once(
 )
 assert_not_contains(launcher_header, "setup_workers::StartupWorker", "app_launcher.h setup startup worker")
 assert_not_contains(launcher_header, "apps/app_setup/workers/workers.h", "app_launcher.h setup worker include")
-launcher_header_path.write_text(launcher_header)
+write_text_if_changed(launcher_header_path, launcher_header)
 
-launcher = launcher_path.read_text()
+launcher = read_text_file(launcher_path, "app_launcher.cpp")
 launcher = insert_after_once(
     launcher,
     "#include <stackchan/stackchan.h>\n",
@@ -450,10 +554,10 @@ launcher = replace_once(
     "app_launcher.cpp Agent-Q screen sleep without screensaver",
 )
 assert_not_contains(launcher, "_startup_worker", "app_launcher.cpp setup startup worker")
-launcher_path.write_text(launcher)
+write_text_if_changed(launcher_path, launcher)
 
 board_path = firmware_dir / "main/hal/board/stackchan.cc"
-board = board_path.read_text()
+board = read_text_file(board_path, "stackchan.cc")
 board = insert_after_once(
     board,
     "#include \"hal_bridge.h\"\n",
@@ -589,10 +693,10 @@ board = insert_after_once(
 """,
     "stackchan.cc enables AXP2101 power key IRQs",
 )
-board_path.write_text(board)
+write_text_if_changed(board_path, board)
 
 mcp_path = firmware_dir / "xiaozhi-esp32/main/mcp_server.cc"
-mcp = mcp_path.read_text()
+mcp = read_text_file(mcp_path, "mcp_server.cc")
 mcp = replace_function(
     mcp,
     "void McpServer::AddCommonTools()",
@@ -624,10 +728,10 @@ mcp = replace_function(
 assert_not_contains(mcp, "self.camera.take_photo", "Xiaozhi camera MCP tool")
 assert_not_contains(mcp, "self.screen.snapshot", "Xiaozhi screen snapshot MCP tool")
 assert_not_contains(mcp, "camera->SetExplainUrl", "Xiaozhi vision upload capability")
-mcp_path.write_text(mcp)
+write_text_if_changed(mcp_path, mcp)
 
 ws_avatar_path = firmware_dir / "main/hal/hal_ws_avatar.cpp"
-ws_avatar = ws_avatar_path.read_text()
+ws_avatar = read_text_file(ws_avatar_path, "hal_ws_avatar.cpp")
 ws_avatar = replace_function(
     ws_avatar,
     "void Hal::startWebSocketAvatarService(std::function<void(std::string_view)> onStartLog)",
@@ -638,7 +742,7 @@ ws_avatar = replace_function(
 """,
     "hal_ws_avatar.cpp websocket avatar disabled",
 )
-ws_avatar_path.write_text(ws_avatar)
+write_text_if_changed(ws_avatar_path, ws_avatar)
 PY
 
 python3 - "${FIRMWARE_DIR}/sdkconfig.defaults" "${FIRMWARE_DIR}/sdkconfig" <<'PY'
@@ -651,6 +755,8 @@ from pathlib import Path
 def enable_unscii_8(config_path: Path) -> None:
     if not config_path.exists():
         return
+    if config_path.is_symlink() or not config_path.is_file():
+        raise SystemExit(f"Refusing to write through non-regular config path: {config_path}")
 
     text = config_path.read_text()
     if "CONFIG_LV_FONT_UNSCII_8=y" in text:

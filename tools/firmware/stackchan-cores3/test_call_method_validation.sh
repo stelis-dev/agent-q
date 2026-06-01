@@ -91,6 +91,21 @@ void expect_field_result(
     }
 }
 
+void expect_namespace_result(
+    const char* label,
+    const std::string& json,
+    agent_q::CallMethodNamespaceValidation expected)
+{
+    JsonDocument document = parse_json(label, json);
+    const agent_q::CallMethodNamespaceValidation actual =
+        agent_q::classify_call_method_namespace(document);
+    if (actual != expected) {
+        fprintf(stderr, "%s: expected namespace result %d, got %d\n",
+                label, static_cast<int>(expected), static_cast<int>(actual));
+        ++failures;
+    }
+}
+
 void expect_sui_params(const char* label, const std::string& params_json, bool expected, size_t expected_size)
 {
     JsonDocument document = parse_json(label, params_json);
@@ -127,6 +142,7 @@ std::string request_with_params(const std::string& params)
 int main()
 {
     using agent_q::CallMethodFieldValidation;
+    using agent_q::CallMethodNamespaceValidation;
 
     expect_single_json_object_frame("single object frame", "{\"id\":\"1\"}", true);
     expect_single_json_object_frame("single object frame with whitespace", "  {\"id\":\"1\"}  ", true);
@@ -141,6 +157,34 @@ int main()
         "valid envelope",
         request_with_params("{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
         CallMethodFieldValidation::valid);
+    expect_namespace_result(
+        "chain namespace",
+        request_with_params("{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
+        CallMethodNamespaceValidation::chain_scoped);
+    expect_namespace_result(
+        "admin namespace",
+        "{\"methodNamespace\":\"admin\",\"method\":\"propose_policy_update\",\"params\":{\"policy\":{}}}",
+        CallMethodNamespaceValidation::admin_scoped);
+    expect_namespace_result(
+        "admin namespace rejects chain null by presence",
+        "{\"methodNamespace\":\"admin\",\"chain\":null,\"method\":\"propose_policy_update\",\"params\":{\"policy\":{}}}",
+        CallMethodNamespaceValidation::invalid_namespace);
+    expect_namespace_result(
+        "admin namespace rejects chain string by presence",
+        "{\"methodNamespace\":\"admin\",\"chain\":\"sui\",\"method\":\"propose_policy_update\",\"params\":{\"policy\":{}}}",
+        CallMethodNamespaceValidation::invalid_namespace);
+    expect_namespace_result(
+        "chain namespace rejects methodNamespace null by presence",
+        "{\"chain\":\"sui\",\"methodNamespace\":null,\"method\":\"sign_transaction\",\"params\":{}}",
+        CallMethodNamespaceValidation::invalid_namespace);
+    expect_namespace_result(
+        "chain namespace rejects methodNamespace string by presence",
+        "{\"chain\":\"sui\",\"methodNamespace\":\"admin\",\"method\":\"sign_transaction\",\"params\":{}}",
+        CallMethodNamespaceValidation::invalid_namespace);
+    expect_namespace_result(
+        "missing chain and method namespace is invalid",
+        "{\"method\":\"sign_transaction\",\"params\":{}}",
+        CallMethodNamespaceValidation::invalid_namespace);
 
     expect_field_result(
         "chain missing",
@@ -161,6 +205,14 @@ int main()
     expect_field_result(
         "chain null",
         "{\"chain\":null,\"method\":\"sign_transaction\",\"params\":{}}",
+        CallMethodFieldValidation::invalid_method);
+    expect_field_result(
+        "chain methodNamespace null",
+        "{\"chain\":\"sui\",\"methodNamespace\":null,\"method\":\"sign_transaction\",\"params\":{}}",
+        CallMethodFieldValidation::invalid_method);
+    expect_field_result(
+        "chain methodNamespace string",
+        "{\"chain\":\"sui\",\"methodNamespace\":\"admin\",\"method\":\"sign_transaction\",\"params\":{}}",
         CallMethodFieldValidation::invalid_method);
     expect_field_result(
         "chain uppercase",

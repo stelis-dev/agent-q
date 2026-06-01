@@ -84,15 +84,17 @@ Implemented today:
   while the target stores the committed active policy as a canonical binary
   record in ordinary NVS and can load canonical custom reject-policy records
   through its internal storage boundary. Firmware reads a public summary through
-  `get_policy` and consumes that active policy only for Sui `sign_transaction`
-  policy-decision smoke. It does not expose policy update authorization, sign,
-  or trigger physical approval for signing requests.
+  `get_policy`, consumes that active policy for Sui `sign_transaction`
+  policy-decision smoke, and exposes policy update authorization only through
+  the Firmware-owned `propose_policy_update` proposal flow for custom reject
+  policies. It does not sign or trigger physical approval for signing requests.
 - A bounded persistent approval-history read path. The current StackChan CoreS3
-  target stores only Firmware-authored method-decision metadata for validated
-  policy-rejected `call_method` skeleton decisions. It does not store raw
-  txBytes, decoded transactions, session ids, request ids, gateway names, PINs,
-  secret material, or full policy documents. Local reset and error-state erase
-  recovery wipe the history.
+  target stores Firmware-authored method-decision metadata for validated
+  policy-rejected `call_method` skeleton decisions and recordable terminal
+  metadata from `propose_policy_update`. It does not store raw txBytes, decoded
+  transactions, raw policy documents, full rule content, session ids, request
+  ids, gateway names, PINs, secret material, or full policy documents. Local
+  reset and error-state erase recovery wipe the history.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
@@ -207,8 +209,9 @@ DEV_PROFILE - the default development path:
 - Current StackChan CoreS3 DEV_PROFILE root entropy persistence uses ordinary
   NVS unless the platform build is separately configured for encrypted storage.
 - The current StackChan CoreS3 local PIN verifier is also stored in ordinary
-  NVS. It is a local UX gate for reset and future sensitive writes, not root
-  material encryption or physical extraction defense.
+  NVS. It is a local UX gate for connect approval when enabled, settings
+  changes, local reset, the current policy-update proposal flow, and future
+  sensitive writes, not root material encryption or physical extraction defense.
 - Makes no security claim. Tools and docs must show a "do not use with real
   assets" warning.
 
@@ -320,7 +323,7 @@ present the change for local approval. A device without trusted local input must
 use either a password model (with the host-compromise limits above) or a
 provisioning-only model.
 
-Designed policy-update contract:
+Policy-update contract:
 
 - A policy update is a proposal submitted to Firmware, not a state setter.
 - Gateway, Admin, CLI, and MCP clients are request sources only. They may relay a
@@ -330,7 +333,7 @@ Designed policy-update contract:
 - Firmware must reject policy actions it cannot enforce in the current runtime.
   Unsupported `ask` or `sign` rules must not be stored as dormant future
   behavior unless a separate disabled-draft model is specified and approved.
-- The first planned wire format is JSON inside the existing protocol envelope.
+- The first wire format is JSON inside the existing protocol envelope.
   Firmware must canonicalize the accepted policy into a bounded binary policy
   record before storage and hash calculation; raw JSON is not the active policy
   storage format.
@@ -355,7 +358,7 @@ Designed policy-update contract:
   count, and highest-risk action, but must not record raw policy documents,
   complete rule content, session ids, request ids, gateway names, PINs, mnemonic
   text, seed, or private key material.
-- Once a future policy update reaches the post-commit terminal phase, Firmware
+- Once a policy update reaches the post-commit terminal phase, Firmware
   must persist a small policy-update terminal marker until both the policy commit
   and required history record are durable. A leftover terminal marker at boot is
   persistent-material inconsistency, not a normal `provisioned` state. Local

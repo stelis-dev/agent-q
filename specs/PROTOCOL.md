@@ -39,9 +39,10 @@ Agent-Q Firmware:
 - asks for physical approval when required
 - signs, rejects, or times out requests
 
-Intended but not yet implemented: a local Admin Page served by Gateway, and
-Firmware persistence of approved admin changes. Both depend on the admin methods
-in [Admin Methods](#admin-methods), which are not implemented yet.
+The local Admin Page served by Gateway is not implemented yet. Firmware-owned
+admin methods exist only where this protocol and a target implementation say so;
+Gateway/Admin clients submit requests, but Firmware remains the authority for
+validation, device-local approval, persistence, and failure state.
 
 ## Message Envelope
 
@@ -315,8 +316,9 @@ use `locked` because no unlock model is
 implemented. Source-level DEV_PROFILE recovery phrase display, device-local
 mnemonic recovery entry, persistent root material, active policy storage, local
 PIN verifier storage, local reset, and read-only `get_accounts` Sui account
-derivation are implemented. USB/Gateway/MCP mnemonic import, policy update, and
-signing APIs are not implemented.
+derivation are implemented. USB/Gateway/MCP mnemonic import and signing APIs are
+not implemented. Policy updates are available only through the Firmware-owned
+`propose_policy_update` proposal flow for custom reject policies.
 
 If a target boots with `prov_state = provisioned` but missing, unreadable, or
 unsupported current active policy material, Firmware must fail closed instead
@@ -626,6 +628,11 @@ Disconnect rules:
   UI, device-only setup material display, or sensitive local PIN/reset/settings
   subflow is active. Idle target Settings menus do not by themselves block
   `disconnect`.
+- A pending policy-update approval is session-bound rather than generic local
+  UI. A matching `disconnect` cancels that pending proposal and clears the
+  session unless Firmware is already inside the policy commit critical section.
+  The canceled `propose_policy_update` request is terminated with
+  `invalid_session`; the `disconnect` request receives `disconnect_result`.
 - Firmware validates only the session lifecycle for `disconnect`; persistent
   material readiness is not a prerequisite. If material inconsistency already
   cleared the session, Firmware returns `invalid_session` rather than
@@ -809,8 +816,9 @@ Rules:
   policy record. It is metadata for drift detection, not an authorization token.
 - The current StackChan CoreS3 target supports only `agentq.policy.v0`,
   `defaultAction: "reject"`, and a bounded `ruleCount` summary. The normal
-  product flow still installs `ruleCount: 0`; custom policy update
-  authorization and full policy content exposure are not implemented.
+  product flow still installs `ruleCount: 0`; custom reject-policy records may
+  become active only through the Firmware-owned `propose_policy_update`
+  proposal flow. Full policy content exposure is not implemented.
 - Gateway validates the response strictly, rejects secret-like fields and any
   unexpected `sessionId`, and does not evaluate policy.
 - The Gateway MCP `get_policy` tool never exposes the session id.
@@ -890,23 +898,23 @@ Rules:
 - Records are newest-first. `seq` and `uptimeMs` are unsigned decimal strings.
   `timeSource: "uptime"` means the timestamp is device uptime, not wall-clock
   time.
-- Current StackChan CoreS3 source records only validated `policy_rejected`
-  decisions from the `call_method` skeleton. Invalid parameter, malformed
-  transaction, and unsupported-method errors are not persisted as approval
-  history. The response schema also has a `policy_update` record kind for the
-  future policy-update terminal path, but the current protocol has no policy
-  update ingress that emits it. Future signing work may add `policy_approved`,
-  `method_error`, `user_approved`, `user_rejected`, and `user_timeout` records
-  only when those decision paths exist.
+- Current StackChan CoreS3 source records validated `policy_rejected` decisions
+  from the `call_method` skeleton and recordable terminal metadata from
+  `propose_policy_update`. Invalid parameter, malformed transaction, and
+  unsupported-method errors are not persisted as approval history. Future
+  signing work may add `policy_approved`, `method_error`, `user_approved`,
+  `user_rejected`, and `user_timeout` records only when those decision paths
+  exist.
 - Approval-history persistence is part of the terminal decision contract for
   decisions that are recorded. If Firmware cannot persist a required history
   record or its write budget is exhausted, `call_method` returns the top-level
   `history_error` protocol error instead of a `method_result`.
-- Firmware rate-limits persistent history writes to reduce flash wear. The
-  limit is Firmware-owned and does not authorize Gateway to retry unbounded
-  signing or method requests. Required future policy-update terminal records
-  are not consumed from the method-decision spam budget; the policy-update flow
-  must have its own admission and approval gating before it can emit them.
+- Firmware rate-limits persistent method-decision history writes to reduce
+  flash wear. The limit is Firmware-owned and does not authorize Gateway to
+  retry unbounded signing or method requests. Required policy-update terminal
+  records are not consumed from the method-decision spam budget; the
+  policy-update flow has its own active-session, proposal-validation, and
+  device-local approval gates before it can emit them.
 - History records must not store or return raw `txBytes`, full decoded
   transactions, session ids, raw request ids, gateway names, mnemonic text,
   seed, private key material, PINs, or complete policy documents.
@@ -1037,33 +1045,38 @@ parser:
 
 ## Admin Methods
 
-Admin is not a separate protocol. Admin actions are namespaced methods exposed
-through capabilities in the shared protocol. Chain signing methods continue to
-use `chain` plus `method`; admin/write methods must not overload `chain` with a
-control namespace or route through a chain adapter. Like `get_capabilities` and
-`call_method`, these admin methods are designed but not yet implemented.
-`get_accounts` is implemented as a read-only identity request and does not
-perform any admin or signing action.
+Admin is not a separate protocol. Admin actions are namespaced methods in the
+shared protocol. Chain signing methods continue to use `chain` plus `method`;
+admin/write methods must not overload `chain` with a control namespace or route
+through a chain adapter. `get_accounts` is implemented as a read-only identity
+request and does not perform any admin or signing action.
 
 Example methods:
 
-- `propose_policy_update`
+- `propose_policy_update` (implemented for the StackChan CoreS3 target as a
+  policy-update proposal flow)
 - `propose_key_generate`
 - `propose_key_import`
 
 Firmware must physically approve write methods before saving changes.
 
-### Designed Future: `propose_policy_update`
+### `propose_policy_update`
 
-`propose_policy_update` is the planned policy-write method. It is not
-implemented and must not be advertised in `get_capabilities` until the Firmware,
-Gateway/Admin, state model, storage, UI approval, and tests are all connected.
+`propose_policy_update` is a policy-write proposal method. StackChan CoreS3
+Firmware and Gateway/MCP implement the first slice: a session-scoped proposal is
+validated by Firmware, shown on device for local PIN approval, committed through
+the canonical active-policy store, and reported as `policy_update_result`.
+The local Admin Page is not implemented.
 
 The method is a proposal, not a setter. Gateway or Admin may submit a bounded
 policy document, but Firmware remains the authority that validates the document,
 shows device-local approval, commits the active policy, and reports the result.
+The pending proposal remains bound to the same active `sessionId` until the
+terminal result. If that session expires, disconnects, or no longer matches
+before commit, Firmware must cancel the pending proposal and must not change the
+active policy.
 
-Planned request shape:
+Request shape:
 
 ```json
 {
@@ -1097,22 +1110,21 @@ Planned request shape:
 }
 ```
 
-`methodNamespace: "admin"` is a planned shared-protocol namespace for
-Firmware-owned administrative proposal methods. It is not implemented today.
-Admin methods must reject a `chain` field; chain-scoped signing methods must
-continue to use `chain` and must not use `methodNamespace`.
+`methodNamespace: "admin"` is the shared-protocol namespace for Firmware-owned
+administrative proposal methods. Admin methods must reject a `chain` field;
+chain-scoped signing methods must continue to use `chain` and must not use
+`methodNamespace`.
 
-Policy document rules for the planned first version:
+Policy document rules for the first version:
 
 - Wire format: JSON inside the existing JSONL protocol envelope. Firmware must
   parse the JSON into a bounded internal policy AST before validation or
   storage. The wire JSON is not stored directly.
-- The future protocol handler must enforce raw JSONL envelope size before
-  deserialization. Target-local proposal parser source may additionally bound
-  the serialized policy object after deserialization; that check is not a
-  substitute for the raw envelope limit. The first implementation must choose a
-  raw envelope limit that fits the Firmware request line reader or deliberately
-  raise that reader bound with matching tests before exposing the protocol.
+- The protocol handler enforces a 4096-byte maximum raw JSON object before
+  deserialization, not counting the trailing newline. Target-local proposal
+  parser source may additionally
+  bound the serialized policy object after deserialization; that check is not a
+  substitute for the raw envelope limit.
 - Stored format: a Firmware-canonical binary policy record derived from the
   bounded AST. Policy hash/id is computed over that canonical record.
 - `schema` must be `agentq.policy.v0`.
@@ -1144,7 +1156,7 @@ Policy document rules for the planned first version:
   request id, session id, external market data, network fetches, JavaScript,
   Rego, CEL, JSONPath, or arbitrary code execution.
 
-Planned state and authorization rules:
+State and authorization rules:
 
 - `unprovisioned`, `provisioning`, `error`, and `locked` reject policy update
   proposals with the state error defined for unavailable methods.
@@ -1155,11 +1167,11 @@ Planned state and authorization rules:
   lifetime.
 - A second policy update proposal while one is pending is rejected with `busy`.
 - Device-local approval is required before commit. For the current display
-  target, the intended approval model is local PIN verification plus an
-  on-device summary showing policy id/hash, rule count, default action, affected
-  chains/methods, and highest-risk action (`sign`, `ask`, or `reject`). A future
-  display-confirmed diff may strengthen this, but the first implementation must
-  not rely on host-only confirmation.
+  target, the approval model is local PIN verification plus an on-device summary
+  showing policy id/hash, rule count, default action, affected chains/methods,
+  and highest-risk action (`sign`, `ask`, or `reject`). A future
+  display-confirmed diff may strengthen this, but this implementation does not
+  rely on host-only confirmation.
 - During pending approval, read-only session methods may remain available only
   if they do not dismiss or mutate the pending state. `call_method` and nested
   policy updates must return `busy` while a policy update is pending or
@@ -1169,7 +1181,7 @@ Planned state and authorization rules:
 - `disconnect` may perform session cleanup except during the commit critical
   section, where Firmware may return `busy`.
 
-Planned storage and rollback rules:
+Storage and rollback rules:
 
 - The active policy store uses two bounded binary slots plus small metadata
   identifying the current committed slot. NVS key names must fit the target
@@ -1203,22 +1215,81 @@ Planned storage and rollback rules:
   can claim rollback resistance.
 - Local reset and error-state erase wipe all policy slots and policy metadata.
 
-Planned response outcomes:
+Response shape:
+
+`propose_policy_update` returns `policy_update_result` only after Firmware has
+accepted the protocol envelope, authenticated the active session, and classified
+the policy proposal path. Envelope, version, request id, session, state, busy,
+and oversized raw-message failures remain top-level protocol errors.
+
+When Firmware has a canonical policy proposal, `policy` is required:
+
+```json
+{
+  "id": "req_policy_update",
+  "version": 1,
+  "type": "policy_update_result",
+  "status": "applied",
+  "reasonCode": "device_confirmed",
+  "policy": {
+    "policyHash": "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+    "ruleCount": 1,
+    "highestAction": "reject"
+  }
+}
+```
+
+For `invalid_policy`, `policy` must be omitted because Firmware may not have a
+canonical policy hash, rule count, or highest action:
+
+```json
+{
+  "id": "req_policy_update",
+  "version": 1,
+  "type": "policy_update_result",
+  "status": "invalid_policy",
+  "reasonCode": "invalid_policy"
+}
+```
+
+Response outcomes:
 
 - `applied`: Firmware validated, approved, committed, and activated the new
-  policy.
-- `rejected`: local user rejected the proposal.
-- `timed_out`: local approval expired with no change.
-- `invalid_policy`: Firmware rejected the proposal before approval or commit.
+  policy. The `policy` metadata is required.
+- `rejected`: local user rejected the proposal. The `policy` metadata is
+  required.
+- `timed_out`: local approval expired with no change. The `policy` metadata is
+  required.
+- `invalid_policy`: Firmware rejected the proposal before a canonical policy was
+  available. The `policy` metadata is forbidden.
+- `ui_error`: Firmware accepted and canonicalized the proposal but could not
+  display or restore the required device-local approval UI, so no policy changed.
+  The `policy` metadata is required. This is not a user timeout and is not a
+  durable policy-update history result.
 - `storage_error`: Firmware could not commit the new policy; the old policy
   remains active unless Firmware reports a persistent-material consistency
-  error on an ambiguous state.
-- `busy`: another sensitive local flow or policy update is active.
+  error on an ambiguous state. The `policy` metadata is required.
+- `consistency_error`: Firmware reached an ambiguous policy-update terminal
+  state, typically after the commit point. Firmware must fail closed through the
+  persistent-material consistency boundary. The `policy` metadata is required
+  when the response is tied to a canonical proposal.
+
+`busy` is a top-level protocol error for a request that cannot enter the policy
+update flow because another sensitive local flow or policy update is active. It
+is not a `policy_update_result` status and is not stored as policy-update
+history.
 
 Policy update history:
 
-- Firmware must record policy update proposal outcomes as approval-history
-  metadata once that decision path exists.
+- Firmware records policy update proposal outcomes as approval-history metadata
+  when the outcome is recordable.
+  Recordable policy-update history results are `applied`, `rejected`,
+  `timed_out`, and `storage_error`. `invalid_policy` is a response-only result
+  for proposals rejected before a canonical policy hash exists. `ui_error` is a
+  response-only display failure before local approval was usable. `history_error`
+  is a top-level error meaning the required history record could not be
+  persisted; `consistency_error` is a device/material state and must not be
+  stored as a durable policy-update history `result`.
 - Policy-update outcome history is part of the terminal-result contract. The
   implementation must not report `applied` unless the committed policy and the
   corresponding history record are both durable. Before the policy commit point,

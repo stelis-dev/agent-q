@@ -17,6 +17,7 @@ const expectedToolNames = [
   "get_policy",
   "identify_devices",
   "list_devices",
+  "propose_policy_update",
   "scan_devices",
   "select_device",
   "set_device_metadata",
@@ -166,6 +167,19 @@ const noOpCore = {
       error: {
         code: "unsupported_method",
         message: "Method is not supported.",
+      },
+    };
+  },
+  async proposePolicyUpdate() {
+    return {
+      source: "live",
+      deviceId: "device-1",
+      status: "applied",
+      reasonCode: "device_confirmed",
+      policy: {
+        policyHash: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+        ruleCount: 1,
+        highestAction: "reject",
       },
     };
   },
@@ -382,6 +396,16 @@ const dispatchCases = [
   { name: "get_policy", arguments: {} },
   { name: "get_approval_history", arguments: {} },
   { name: "call_method", arguments: { chain: "sui", method: "sign_transaction", params: {} } },
+  {
+    name: "propose_policy_update",
+    arguments: {
+      policy: {
+        schema: "agentq.policy.v0",
+        defaultAction: "reject",
+        rules: [],
+      },
+    },
+  },
 ];
 
 test("MCP client lists exactly the Agent-Q tool set over a real transport", async () => {
@@ -488,6 +512,26 @@ test("call_method dispatch returns a rejected skeleton result without a session 
     assert.equal(result.structuredContent.source, "live");
     assert.equal(result.structuredContent.status, "rejected");
     assert.equal(result.structuredContent.error.code, "unsupported_method");
+    assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
+  });
+});
+
+test("propose_policy_update dispatch returns Firmware-authored terminal metadata without a session token", async () => {
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({
+      name: "propose_policy_update",
+      arguments: {
+        policy: {
+          schema: "agentq.policy.v0",
+          defaultAction: "reject",
+          rules: [],
+        },
+      },
+    });
+    assert.equal(result.structuredContent.source, "live");
+    assert.equal(result.structuredContent.status, "applied");
+    assert.equal(result.structuredContent.reasonCode, "device_confirmed");
+    assert.equal(result.structuredContent.policy.highestAction, "reject");
     assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
   });
 });
@@ -690,6 +734,21 @@ const leakyCore = {
       error: {
         code: "unsupported_method",
         message: "Method is not supported.",
+      },
+      ...SECRET_EXTRAS,
+    };
+  },
+  async proposePolicyUpdate() {
+    return {
+      source: "live",
+      deviceId: "device-1",
+      status: "applied",
+      reasonCode: "device_confirmed",
+      policy: {
+        policyHash: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+        ruleCount: 1,
+        highestAction: "reject",
+        ...SECRET_EXTRAS,
       },
       ...SECRET_EXTRAS,
     };
@@ -962,6 +1021,10 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       name: "call_method",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
+    {
+      name: "propose_policy_update",
+      result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
+    },
   ];
 
   for (const testCase of cases) {
@@ -985,11 +1048,16 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       async callMethod() {
         return testCase.result;
       },
+      async proposePolicyUpdate() {
+        return testCase.result;
+      },
     };
     await withConnectedClient(async (client) => {
       const args = testCase.name === "call_method"
         ? { chain: "sui", method: "sign_transaction", params: {} }
-        : {};
+        : testCase.name === "propose_policy_update"
+          ? { policy: { schema: "agentq.policy.v0", defaultAction: "reject", rules: [] } }
+          : {};
       const result = await client.callTool({ name: testCase.name, arguments: args });
       assert.equal(result.isError, true, `${testCase.name}: source/reason mismatch must fail closed`);
       assert.equal(result.structuredContent.error.code, "internal_output_error");

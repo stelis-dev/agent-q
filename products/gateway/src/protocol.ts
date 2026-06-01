@@ -125,6 +125,18 @@ export interface CallMethodRequest {
   params: Record<string, unknown>;
 }
 
+export interface ProposePolicyUpdateRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "call_method";
+  sessionId: string;
+  methodNamespace: "admin";
+  method: "propose_policy_update";
+  params: {
+    policy: Record<string, unknown>;
+  };
+}
+
 export type ProtocolRequest =
   | GetStatusRequest
   | IdentifyDeviceRequest
@@ -134,7 +146,8 @@ export type ProtocolRequest =
   | GetAccountsRequest
   | GetPolicyRequest
   | GetApprovalHistoryRequest
-  | CallMethodRequest;
+  | CallMethodRequest
+  | ProposePolicyUpdateRequest;
 
 export interface StatusResponse {
   id: string;
@@ -248,7 +261,6 @@ export type ApprovalHistoryPolicyUpdateResult =
   | "applied"
   | "rejected"
   | "timed_out"
-  | "invalid_policy"
   | "storage_error";
 
 export type ApprovalHistoryHighestAction = "reject" | "ask" | "sign";
@@ -292,6 +304,30 @@ export interface ApprovalHistoryResponse {
   hasMore: boolean;
 }
 
+export type PolicyUpdateResultStatus =
+  | "applied"
+  | "rejected"
+  | "timed_out"
+  | "invalid_policy"
+  | "ui_error"
+  | "storage_error"
+  | "consistency_error";
+
+export interface PolicyUpdateResultPolicySummary {
+  policyHash: string;
+  ruleCount: number;
+  highestAction: ApprovalHistoryHighestAction;
+}
+
+export interface PolicyUpdateResultResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "policy_update_result";
+  status: PolicyUpdateResultStatus;
+  reasonCode: string;
+  policy?: PolicyUpdateResultPolicySummary;
+}
+
 export interface MethodResultResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -322,6 +358,7 @@ export type ProtocolResponse =
   | AccountsResponse
   | PolicyResponse
   | ApprovalHistoryResponse
+  | PolicyUpdateResultResponse
   | MethodResultResponse
   | ProtocolErrorResponse;
 
@@ -496,6 +533,40 @@ export function makeCallMethodRequest(
   };
 }
 
+export function makeProposePolicyUpdateRequest(
+  sessionId: string,
+  policy: Record<string, unknown>,
+  id = createRequestId(),
+): ProposePolicyUpdateRequest {
+  validateRequestId(id);
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  validatePolicyUpdateProposalInput(policy);
+  const request: ProposePolicyUpdateRequest = {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "call_method",
+    sessionId,
+    methodNamespace: "admin",
+    method: "propose_policy_update",
+    params: {
+      policy,
+    },
+  };
+  if (Buffer.byteLength(JSON.stringify(request), "utf8") > MAX_POLICY_UPDATE_REQUEST_JSON_BYTES) {
+    throw new ProtocolError("invalid_params", "policy update request is too large for the runtime.");
+  }
+  return request;
+}
+
+export function validateProposePolicyUpdateRequestInput(
+  sessionId: string,
+  policy: Record<string, unknown>,
+): void {
+  makeProposePolicyUpdateRequest(sessionId, policy, "req_000000000000000000000000");
+}
+
 export function validateCallMethodInput(
   chain: unknown,
   method: unknown,
@@ -510,6 +581,24 @@ export function validateCallMethodInput(
   validateCallMethodParams(params);
   if (chain === SUI_CHAIN_ID && method === SUI_SIGN_TRANSACTION_METHOD) {
     validateSuiSignTransactionParams(params);
+  }
+}
+
+export function validatePolicyUpdateProposalInput(policy: unknown): asserts policy is Record<string, unknown> {
+  if (!isRecord(policy) || Array.isArray(policy)) {
+    throw new ProtocolError("invalid_params", "policy update proposal must be an object.");
+  }
+  if (hasSecretPayloadKey(policy)) {
+    throw new ProtocolError("invalid_params", "policy update proposal must not include secret material.");
+  }
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(policy);
+  } catch {
+    throw new ProtocolError("invalid_params", "policy update proposal must be JSON serializable.");
+  }
+  if (serialized === undefined) {
+    throw new ProtocolError("invalid_params", "policy update proposal must be JSON serializable.");
   }
 }
 
@@ -768,6 +857,41 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
+  if (value.type === "policy_update_result") {
+    if (typeof value.id !== "string") {
+      throw new ProtocolError("protocol_error", "Policy update result id is malformed.");
+    }
+    if (hasSecretPayloadKey(value)) {
+      throw new ProtocolError("protocol_error", "Policy update result must not include secret material.");
+    }
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "reasonCode", "policy"])) {
+      throw new ProtocolError("protocol_error", "Policy update result contains unsupported fields.");
+    }
+    if (
+      !POLICY_UPDATE_RESULT_STATUSES.includes(value.status as PolicyUpdateResultStatus) ||
+      typeof value.reasonCode !== "string" ||
+      !APPROVAL_HISTORY_REASON_CODE_PATTERN.test(value.reasonCode)
+    ) {
+      throw new ProtocolError("protocol_error", "Policy update result is malformed.");
+    }
+    const policy = sanitizePolicyUpdateResultPolicy(value.policy);
+    if (value.status === "invalid_policy") {
+      if (policy !== undefined) {
+        throw new ProtocolError("protocol_error", "Invalid policy result must not include policy metadata.");
+      }
+    } else if (policy === undefined) {
+      throw new ProtocolError("protocol_error", "Policy update result policy metadata is malformed.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "policy_update_result",
+      status: value.status as PolicyUpdateResultStatus,
+      reasonCode: value.reasonCode,
+      ...(policy !== undefined ? { policy } : {}),
+    };
+  }
+
   if (value.type === "method_result") {
     if (typeof value.id !== "string" || value.status !== "rejected") {
       throw new ProtocolError("protocol_error", "Method result response is malformed.");
@@ -881,6 +1005,16 @@ export function assertApprovalHistoryResponse(response: ProtocolResponse): Appro
   return response;
 }
 
+export function assertPolicyUpdateResultResponse(response: ProtocolResponse): PolicyUpdateResultResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "policy_update_result") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not policy_update_result.");
+  }
+  return response;
+}
+
 export function assertMethodResultResponse(response: ProtocolResponse): MethodResultResponse {
   if (response.type === "error") {
     throw new ProtocolError(response.error.code, response.error.message);
@@ -968,15 +1102,24 @@ export const APPROVAL_HISTORY_POLICY_UPDATE_RESULTS = [
   "applied",
   "rejected",
   "timed_out",
-  "invalid_policy",
   "storage_error",
 ] as const;
 export const APPROVAL_HISTORY_HIGHEST_ACTIONS = ["reject", "ask", "sign"] as const;
+export const POLICY_UPDATE_RESULT_STATUSES = [
+  "applied",
+  "rejected",
+  "timed_out",
+  "invalid_policy",
+  "ui_error",
+  "storage_error",
+  "consistency_error",
+] as const;
 export const CALL_METHOD_CHAIN_PATTERN = /^[a-z][a-z0-9_.-]{0,31}$/;
 export const CALL_METHOD_NAME_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
 // The method runtime keeps request bodies bounded by the current Firmware JSONL
 // input buffer. Specific methods can add stricter semantic limits inside this cap.
 export const MAX_CALL_METHOD_PARAMS_JSON_BYTES = 600;
+export const MAX_POLICY_UPDATE_REQUEST_JSON_BYTES = 4096;
 export const SUI_CHAIN_ID = "sui";
 export const SUI_SIGN_TRANSACTION_METHOD = "sign_transaction";
 export const SUI_SIGN_TRANSACTION_NETWORKS = ["mainnet", "testnet", "devnet", "localnet"] as const;
@@ -1274,6 +1417,37 @@ function sanitizePolicySummary(value: unknown): PolicySummary | null {
     policyId: value.policyId,
     defaultAction: value.defaultAction,
     ruleCount: value.ruleCount,
+  };
+}
+
+function sanitizePolicyUpdateResultPolicy(value: unknown): PolicyUpdateResultPolicySummary | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new ProtocolError("protocol_error", "Policy update result policy metadata is malformed.");
+  }
+  if (hasSecretPayloadKey(value)) {
+    throw new ProtocolError("protocol_error", "Policy update result policy metadata must not include secret material.");
+  }
+  if (!hasOnlyObjectKeys(value, ["policyHash", "ruleCount", "highestAction"])) {
+    throw new ProtocolError("protocol_error", "Policy update result policy metadata contains unsupported fields.");
+  }
+  if (
+    typeof value.policyHash !== "string" ||
+    !POLICY_ID_PATTERN.test(value.policyHash) ||
+    typeof value.ruleCount !== "number" ||
+    !Number.isInteger(value.ruleCount) ||
+    value.ruleCount < 0 ||
+    value.ruleCount > MAX_POLICY_RULE_COUNT ||
+    !APPROVAL_HISTORY_HIGHEST_ACTIONS.includes(value.highestAction as ApprovalHistoryHighestAction)
+  ) {
+    throw new ProtocolError("protocol_error", "Policy update result policy metadata is malformed.");
+  }
+  return {
+    policyHash: value.policyHash,
+    ruleCount: value.ruleCount,
+    highestAction: value.highestAction as ApprovalHistoryHighestAction,
   };
 }
 

@@ -33,6 +33,8 @@ enum class AgentQPolicyStoreWriteResult {
 
 bool store_default_policy();
 AgentQPolicyStoreWriteResult store_active_policy_record(const uint8_t* record, size_t record_size);
+bool policy_store_digest_for_record(const uint8_t* record, size_t record_size, uint8_t* output, size_t output_size);
+bool policy_store_policy_id_for_record(const uint8_t* record, size_t record_size, char* output, size_t output_size);
 bool wipe_policy();
 AgentQPolicyStoreStatus active_policy_status();
 

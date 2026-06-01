@@ -20,11 +20,14 @@ import {
   type DeviceStatusSnapshot,
   type IdentifyDeviceResponse,
   type MethodResultResponse,
+  type PolicyUpdateResultResponse,
   type PolicySummary,
   ProtocolError,
   type StatusResponse,
   validateApprovalHistoryInput,
   validateCallMethodInput,
+  validatePolicyUpdateProposalInput,
+  validateProposePolicyUpdateRequestInput,
 } from "./protocol.js";
 import {
   DEFAULT_SCAN_TIMEOUT_MS,
@@ -176,6 +179,8 @@ export const GET_APPROVAL_HISTORY_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_E
 export type GetApprovalHistorySessionEndedReason = GetAccountsSessionEndedReason;
 export const CALL_METHOD_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
 export type CallMethodSessionEndedReason = GetAccountsSessionEndedReason;
+export const PROPOSE_POLICY_UPDATE_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
+export type ProposePolicyUpdateSessionEndedReason = GetAccountsSessionEndedReason;
 
 export type DisconnectDeviceResult =
   | { source: "disconnected"; deviceId: string; reason: DisconnectEndedReason }
@@ -225,6 +230,17 @@ export type CallMethodResult =
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: CallMethodSessionEndedReason };
 
+export type ProposePolicyUpdateResult =
+  | {
+      source: "live";
+      deviceId: string;
+      status: PolicyUpdateResultResponse["status"];
+      reasonCode: PolicyUpdateResultResponse["reasonCode"];
+      policy?: PolicyUpdateResultResponse["policy"];
+    }
+  | { source: "not_connected"; deviceId: string; reason: "not_connected" }
+  | { source: "session_ended"; deviceId: string; reason: ProposePolicyUpdateSessionEndedReason };
+
 export const DEFAULT_IDENTIFY_DURATION_MS = 10000;
 export const MAX_IDENTIFY_DURATION_MS = 30000;
 export const DEFAULT_GATEWAY_NAME = "Agent-Q Gateway";
@@ -234,6 +250,21 @@ export const DEFAULT_GATEWAY_NAME = "Agent-Q Gateway";
 // are well under 100ms; 1000ms is a generous margin.
 export const CONNECT_TRANSPORT_MARGIN_MS = 1000;
 export const DEFAULT_DISCONNECT_TIMEOUT_MS = DEFAULT_SCAN_TIMEOUT_MS;
+export const DEFAULT_POLICY_UPDATE_TIMEOUT_MS = MAX_APPROVAL_TIMEOUT_MS + CONNECT_TRANSPORT_MARGIN_MS;
+
+function validatePolicyUpdateTimeoutMs(value: unknown): number {
+  if (!Number.isInteger(value) || typeof value !== "number" || value <= 0) {
+    throw new GatewayError("invalid_timeout", "timeoutMs must be a positive integer.", false);
+  }
+  if (value !== DEFAULT_POLICY_UPDATE_TIMEOUT_MS) {
+    throw new GatewayError(
+      "invalid_timeout",
+      `timeoutMs must equal the Firmware approval window plus transport margin (${DEFAULT_POLICY_UPDATE_TIMEOUT_MS}).`,
+      false,
+    );
+  }
+  return value;
+}
 
 export class GatewayCore {
   private readonly runtimeSessions = new Map<string, RuntimeSession>();
@@ -758,6 +789,63 @@ export class GatewayCore {
       );
       // Method-level rejection is not a session failure. Keep the session live.
       return { source: "live", deviceId: target.deviceId, status: response.status, error: response.error };
+    } catch (error) {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+  }
+
+  async proposePolicyUpdate(input: {
+    deviceId?: string;
+    purpose?: string;
+    policy: Record<string, unknown>;
+    timeoutMs?: number;
+  }): Promise<ProposePolicyUpdateResult> {
+    const target = await this.resolveTargetDevice(input);
+    const scanTimeoutMs = validateTimeoutMs(DEFAULT_DISCONNECT_TIMEOUT_MS);
+    const policyUpdateTimeoutMs = validatePolicyUpdateTimeoutMs(input.timeoutMs ?? DEFAULT_POLICY_UPDATE_TIMEOUT_MS);
+
+    const session = this.peekRuntimeSession(target.deviceId);
+    if (session === null) {
+      return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
+    }
+
+    validatePolicyUpdateProposalInput(input.policy);
+    validateProposePolicyUpdateRequestInput(session.sessionId, input.policy);
+
+    let matchingPort: UsbStatusResult | undefined;
+    try {
+      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+    } catch (error) {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+
+    try {
+      const response = await this.usbDriver.proposePolicyUpdate(
+        matchingPort.portPath,
+        session.sessionId,
+        input.policy,
+        policyUpdateTimeoutMs,
+      );
+      if (response.status === "consistency_error") {
+        this.runtimeSessions.delete(target.deviceId);
+      }
+      return {
+        source: "live",
+        deviceId: target.deviceId,
+        status: response.status,
+        reasonCode: response.reasonCode,
+        ...(response.policy === undefined ? {} : { policy: response.policy }),
+      };
     } catch (error) {
       const reason = localSessionClearReason(error);
       if (reason !== null) {

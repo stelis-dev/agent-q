@@ -19,7 +19,18 @@ enum class CallMethodFieldValidation {
     invalid_params_size,
 };
 
+enum class CallMethodNamespaceValidation {
+    chain_scoped,
+    admin_scoped,
+    invalid_namespace,
+};
+
 bool is_call_method_identifier(const char* value, size_t max_length);
+
+// Classify the call_method namespace by field presence, not by field value.
+// Admin methods must not carry chain, and chain-scoped methods must not carry
+// methodNamespace, even when the extra field is explicit JSON null.
+CallMethodNamespaceValidation classify_call_method_namespace(JsonDocument& request);
 
 // Validate the shared call_method request fields after Firmware state/session
 // gates have passed. This helper intentionally does not inspect provisioning,

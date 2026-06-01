@@ -21,7 +21,9 @@ Its current role is:
 - provide hardware smoke coverage for future signing flows.
 
 It is not the signing product yet. It does not persist chain private keys,
-expose MCP directly, update policy, or sign user requests. It links a
+expose MCP directly, or sign user requests. Policy updates enter only through
+the Firmware-owned `propose_policy_update` proposal flow; there is no direct
+policy setter. It links a
 restricted host-tested Sui transaction facts parser plus a common policy
 evaluator, stores DEV_PROFILE root entropy and a DEV_PROFILE active
 default-reject policy record plus a DEV_PROFILE local PIN verifier, and
@@ -46,7 +48,7 @@ Legend:
 | Mnemonic UI flow | △ | The local setup speech bubble opens a Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and advances to local 6-digit PIN entry after local backup confirmation. Recover accepts 12 BIP-39 words through a device-local 3-word-per-page prefix/candidate UI, verifies checksum, then enters the same PIN setup path. The target stores root entropy plus an active default-reject policy plus a salt/PIN verifier only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. The target keeps setup/recover volatile state and cleanup decisions in a provisioning-flow state module; USB/UI code routes events and renders the current state. Local controls own the setup transitions; there are no USB setup transition requests. Generate setup and PIN entry were manually smoke-tested after commit `2cb243b`; Recover was manually smoke-tested on StackChan CoreS3 during the recovery-entry slice. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `connect` | O | Source accepts connection only after material-backed `provisioned` state. Default connect approval requires local PIN entry on device; local settings can switch connect approval to physical Confirm after PIN verification. The session is RAM-only and does not authorize signing. Manual hardware smoke verified local PIN approval and fresh reconnect after USB detach/replug. Rerun hardware smoke after setup, session, or material-storage changes. |
-| `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. It returns `busy` while local setup/PIN/reset or sensitive settings subflow state is active, including Change PIN, so external session teardown cannot interleave with device-local sensitive UI. Idle Settings menu does not block disconnect. Rerun hardware smoke after setup, session, or material-storage changes. |
+| `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. It returns `busy` while local setup/PIN/reset or sensitive settings subflow state is active, including Change PIN, so external session teardown cannot interleave with device-local sensitive UI. A matching disconnect cancels a pending policy update before the commit critical section, because that proposal is session-bound rather than generic local UI; the canceled policy-update request receives `invalid_session`, and the disconnect request receives `disconnect_result`. Idle Settings menu does not block disconnect. Rerun hardware smoke after setup, session, or material-storage changes. |
 | Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: connect PIN toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, approval history, policy-update terminal marker, connect-approval setting, session, and returns to `unprovisioned`. Source also implements device-local destructive erase-only recovery from persistent-material consistency `error`, without PIN because the verifier may be unreadable, using the same reset-pending marker and wipe transaction. Host-triggered reset/debug/recovery/PIN-change protocol paths are intentionally not implemented. StackChan CoreS3 local reset was manually smoke-tested after commit `7c6e65c`; a manual session/settings smoke verified idle Settings read access, Change PIN session retention, and USB detach/replug session invalidation. Focused hardware smoke verified that the error-state erase recovery modal appears above the avatar and that erase/cancel interaction does not block the screen flow; broader failure-path coverage remains limited. Rerun hardware smoke after settings or reset UI/state changes. |
 | Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
@@ -57,14 +59,14 @@ Legend:
 | `get_capabilities` | O | Source reports Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until concrete signing methods are implemented. Rerun hardware smoke after setup, session, or material-storage changes. |
 | `get_accounts` | O | Source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is verified against Sui SDK address vectors on host; manual hardware smoke verified this path while idle Settings is open, after Change PIN on the same session, and after reconnect. Rerun hardware smoke after setup, session, or material-storage changes. |
 | `get_policy` | △ | Source implements a session-scoped read-only summary of the committed active `agentq.policy.v0` policy record. The current product flow still installs only the DEV_PROFILE default-reject policy, but the target active-policy store can load canonical custom reject-policy records through its internal storage boundary. Corrupt/unreadable active policy or missing policy under `provisioned` fails closed. Gateway/MCP parser tests, target policy-store host tests, and manual hardware smoke for idle-Settings read access cover this path. |
-| `get_approval_history` | △ | Source implements a session-scoped read-only view of persistent Firmware-authored method-decision metadata. Records are stored in a fixed-size binary NVS ring buffer, newest-first paginated, and wiped by local reset or error-state erase recovery. The current runtime records only validated `call_method` policy-rejected decisions; invalid parameter, malformed transaction, and unsupported-method errors are not persisted as approval history. The storage/read schema also supports future policy-update terminal records through a required-write path that is separate from method-decision write budgeting, but no current protocol flow emits those records. User approval decisions and signing decisions do not exist yet. Gateway/MCP parser tests and target approval-history host tests cover this path. Hardware smoke remains required. |
+| `get_approval_history` | △ | Source implements a session-scoped read-only view of persistent Firmware-authored method-decision and policy-update terminal metadata. Records are stored in a fixed-size binary NVS ring buffer, newest-first paginated, and wiped by local reset or error-state erase recovery. The current method runtime records only validated `call_method` policy-rejected decisions; invalid parameter, malformed transaction, and unsupported-method errors are not persisted as approval history. The policy-update flow records `applied`, `rejected`, `timed_out`, and `storage_error` terminal records through a required-write path that is separate from method-decision write budgeting. User approval decisions for signing and signing decisions do not exist yet. Gateway/MCP parser tests and target approval-history host tests cover this path. Hardware smoke remains required. |
 | `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke, and persists bounded approval-history metadata for those method decisions. If that required history write fails or is rate-limited, Firmware returns top-level `history_error` instead of the method result. It consumes the committed active policy; corrupt/unreadable or missing policy is a material-consistency error rather than a normal `provisioned` state. Host tests cover the request field/type validation helper and policy store provider. Hardware smoke remains required for the stored-policy path. No approval UI, capability advertisement, or signing is connected. |
 | Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation plus matching PIN repeat. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display, device-local mnemonic recovery entry, local 6-digit PIN setup, and backup-confirmed/checksum-verified root entropy storage source exists. USB/Gateway/MCP mnemonic import and USER_PROFILE secure provisioning are not implemented. |
 | Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat stores root entropy, initializes the active default-reject policy, and stores the local PIN verifier. Public account derivation is implemented via `get_accounts`; signing and USER_PROFILE secure provisioning are not implemented. |
 | Policy evaluator foundation | △ | Links the common host-tested policy evaluator, stored-policy provider boundary, and Sui restricted-transfer method adapter. The common evaluator matches allowlisted namespace/field facts and owns only shared `common.*` fields; chain-specific field identifiers, descriptors, and transaction semantics stay in the method adapter. Sui `sign_transaction` consumes the committed active policy only as a rejected policy-decision smoke result; it does not sign. |
 | Policy storage/read | △ | Stores the active policy as canonical `agentq.policy.v0` binary records in two bounded NVS slots plus commit metadata and a pending-write marker, exposes a read-only `get_policy` summary, preserves the old committed policy only for interrupted writes identified by that pending marker, treats metadata flip as the commit point, classifies each write as applied, unchanged failure, or consistency error, tolerates stale pending markers that exactly match the selected committed policy, removes stale commit metadata before slot reuse, and treats corrupt/unreadable committed records, invalid commit metadata without a matching pending marker, or pending targets that overlap active material without exactly matching it as a material-consistency error. The current product flow still installs only the DEV_PROFILE default-reject policy. |
-| Policy update | X | Not implemented. The future contract is specified as a Firmware-owned `propose_policy_update` flow with bounded proposal validation, device-local approval, canonical active-policy commit, required terminal history recording, and no direct policy setter. This target now has a target-local JSON policy-proposal parser/validator source, two-slot active-policy storage foundation, and a small persistent terminal marker that makes an incomplete post-commit policy-update terminal sequence a material-consistency error on reboot, but it still has no raw protocol envelope handler, pending-update state, approval UI, policy proposal commit flow, or Gateway/Admin surface. |
+| Policy update | △ | Source implements a Firmware-owned `propose_policy_update` admin-method flow for active sessions: bounded proposal validation, device-local local-PIN approval with on-device summary, canonical active-policy commit, required terminal history recording, and no direct policy setter. The target stores only currently enforceable reject policies and rejects unsupported `ask`/`sign` proposals. The flow uses the two-slot active-policy store plus a persistent policy-update terminal marker that makes an incomplete post-commit terminal sequence a material-consistency error on reboot. Gateway/MCP request/parser surface exists; the local Admin Page and hardware smoke for this flow are not implemented yet. |
 | Secure user profile | X | Not implemented. |
 
 ## Chain And Method Support
@@ -234,8 +236,9 @@ entropy blob, valid active policy record, and valid local PIN verifier all
 exist. If those records disagree after boot or during runtime checks, the target
 reports `provisioning.state = error` and fails closed. It does not store the
 mnemonic display string, prefixes, seed, or account data to NVS. The local PIN
-verifier is a UX gate for local reset and future sensitive writes; it is not
-root-material encryption.
+verifier is a UX gate for connect approval when enabled, settings changes, local
+reset, the current policy-update proposal flow, and future sensitive writes; it
+is not root-material encryption.
 If the target boots with `prov_state = provisioned` and valid root entropy but
 no active canonical policy record, it enters material/state consistency error.
 Unsupported current policy-history or policy-storage blobs are not accepted as
@@ -280,16 +283,17 @@ the other Agent-Q material records. Unsupported current approval-history blobs
 are not accepted as product state; destructive local reset or error-state erase
 is the supported recovery path.
 Persistent method-decision writes are rate-limited by Firmware to reduce flash
-wear. Required future policy-update terminal history records are not consumed
-from that method-decision spam budget; the future policy-update flow must have
-its own admission and device-local approval gates before it can emit them. If a
+wear. Required policy-update terminal history records are not consumed from
+that method-decision spam budget; the policy-update flow has its own active
+session, proposal validation, and device-local approval gates before it can
+emit them. If a
 current method decision requires a history record and the write fails or the
 write budget is exhausted, `call_method` returns top-level `history_error`
 rather than claiming the decision result was delivered.
 It stores sequence, uptime in milliseconds, decision kind, confirmation kind,
 chain, method, reason code, optional payload digest, optional policy hash, and
-optional rule reference for method decisions. Future policy-update terminal
-records store result, reason code, policy hash, rule count, and highest action.
+optional rule reference for method decisions. Policy-update terminal records
+store result, reason code, policy hash, rule count, and highest action.
 It does not store raw `txBytes`, full decoded transactions, raw policy
 documents, full rule content, session ids, raw request ids, gateway names,
 mnemonic text, seed, private key material, PINs, or full policy documents.
@@ -420,18 +424,20 @@ settings, Change PIN, and reset PIN verification share one RAM-only
 opening another does not clear that budget. Power cycling clears the local
 lockout.
 
-Read-only public account derivation (`get_accounts`) is implemented. Mnemonic
-import, runtime policy APIs, signing APIs, and USER_PROFILE secure
-root-material handling are not implemented on this target.
+Read-only public account derivation (`get_accounts`) and the Firmware-owned
+`propose_policy_update` proposal flow are implemented. Mnemonic import, direct
+policy setters, local Admin Page policy editing, signing APIs, and USER_PROFILE
+secure root-material handling are not implemented on this target.
 
-StackChan CoreS3 has a display and touch input, so it is a candidate for a
-future local provisioning flow:
+StackChan CoreS3 has a display and touch input, so the current DEV_PROFILE local
+provisioning flow can:
 
 - generate a new mnemonic on the device;
 - show the mnemonic on the device once for backup;
 - require local confirmation before storing it;
 - require local 6-digit PIN entry/repeat before storing it;
-- accept imported mnemonic input only through an explicitly weaker setup path;
+- accept device-local mnemonic recovery input only through an explicitly weaker
+  DEV_PROFILE setup path;
 - expose only public keys and addresses after provisioning.
 
 Until signing and signing policy exist, this target must not be described as
@@ -481,6 +487,9 @@ Current verification expectations for this target:
   v5.5.4 is active to check the persistent approval-history NVS ring buffer,
   newest-first pagination, payload digest formatting, wipe behavior, and
   corrupt-record fail-closed behavior;
+- run `tools/firmware/stackchan-cores3/test_prepare_sync.sh` to check that
+  `prepare.sh` materializes tracked overlay sources and generated wordlist
+  output into the generated firmware tree and replaces stale target symlinks;
 - build with `tools/firmware/stackchan-cores3/build.sh` after ESP-IDF v5.5.4 is
   active;
 - flash to a StackChan CoreS3 device when hardware is available;

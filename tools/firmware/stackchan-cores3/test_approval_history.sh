@@ -367,7 +367,6 @@ int main()
 	        "applied",
 	        "rejected",
 	        "timed_out",
-	        "invalid_policy",
 	        "storage_error",
 	    };
     for (const char* result : allowed_results) {

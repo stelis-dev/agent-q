@@ -22,6 +22,7 @@
 #include "agent_q_modal_drawing.h"
 #include "agent_q_persistent_material.h"
 #include "agent_q_policy_store.h"
+#include "agent_q_policy_update_flow.h"
 #include "agent_q_provisioning_flow.h"
 #include "agent_q_provisioning_state_store.h"
 #include "agent_q_session.h"
@@ -78,7 +79,8 @@ constexpr uint32_t kLocalProcessingRenderDelayMs = 250;
 constexpr uint32_t kLocalProcessingDisplayMs = 900;
 constexpr uint32_t kSettingsTouchEntryMs = 900;
 constexpr uint32_t kUsbHostLinkCheckMs = 10;
-constexpr size_t kLineBufferSize = 1024;
+constexpr size_t kMaxRawJsonObjectBytes = 4096;
+constexpr size_t kLineBufferSize = kMaxRawJsonObjectBytes + 1;
 constexpr size_t kResponseBufferSize = 4096;
 constexpr size_t kMaxRequestIdSize = 80;
 constexpr size_t kDeviceIdSize = 37;
@@ -141,6 +143,7 @@ enum class PendingKind {
     none,
     connect,
     connect_pin,
+    policy_update_pin,
 };
 
 // Firmware-owned state is kept separate from StackChan-owned avatar/app state.
@@ -149,6 +152,7 @@ enum class PendingKind {
 struct PendingApprovalState {
     char id[kMaxRequestIdSize] = {};
     char gateway_name[kGatewayNameSize] = {};
+    char session_id[agent_q::kAgentQSessionIdSize] = {};
     bool active = false;
     bool touch_armed = false;
     TickType_t deadline = 0;
@@ -164,6 +168,7 @@ struct PendingApprovalState {
     {
         id[0] = '\0';
         gateway_name[0] = '\0';
+        session_id[0] = '\0';
         active = false;
         touch_armed = false;
         deadline = 0;
@@ -185,6 +190,16 @@ struct PendingApprovalState {
     {
         begin_connect(request_id, request_gateway_name, timeout_ms);
         kind = PendingKind::connect_pin;
+    }
+
+    void begin_policy_update_pin(const char* request_id, const char* request_session_id, uint32_t timeout_ms)
+    {
+        clear();
+        strlcpy(id, request_id, sizeof(id));
+        strlcpy(session_id, request_session_id, sizeof(session_id));
+        active = true;
+        kind = PendingKind::policy_update_pin;
+        deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
     }
 };
 
@@ -247,6 +262,7 @@ bool clear_agent_q_panel_if_local_reset_stage(
 bool clear_agent_q_panel_if_local_pin_auth_stage(
     SensitiveUiClearPolicy policy = SensitiveUiClearPolicy::wipe);
 void clear_pending_state();
+void cancel_policy_update_after_session_loss(const char* log_reason);
 void show_persistent_error_recovery_if_needed();
 
 void wipe_setup_scratch(const char* reason)
@@ -622,6 +638,29 @@ bool write_approval_history_response(const char* id, uint64_t before_sequence, s
     return true;
 }
 
+void write_policy_update_result_response(
+    const char* id,
+    const char* status,
+    const char* reason_code,
+    bool include_policy)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "policy_update_result";
+    response["status"] = status;
+    response["reasonCode"] = reason_code;
+    if (include_policy) {
+        const agent_q::AgentQPolicyUpdateFlowSnapshot snapshot =
+            agent_q::policy_update_flow_snapshot();
+        JsonObject policy = response["policy"].to<JsonObject>();
+        policy["policyHash"] = snapshot.policy_hash;
+        policy["ruleCount"] = snapshot.rule_count;
+        policy["highestAction"] = snapshot.highest_action;
+    }
+    write_json_document(response);
+}
+
 bool parse_approval_history_params(JsonDocument& request, size_t* limit, uint64_t* before_sequence)
 {
     if (limit == nullptr || before_sequence == nullptr) {
@@ -783,9 +822,11 @@ bool usb_host_loss_relevant()
     return agent_q::session_active() ||
            (g_pending.active &&
             (g_pending.kind == PendingKind::connect ||
-             g_pending.kind == PendingKind::connect_pin)) ||
+             g_pending.kind == PendingKind::connect_pin ||
+             g_pending.kind == PendingKind::policy_update_pin)) ||
            (pin_auth.flow_active &&
-            pin_auth.purpose == LocalPinAuthPurpose::connect);
+            (pin_auth.purpose == LocalPinAuthPurpose::connect ||
+             pin_auth.purpose == LocalPinAuthPurpose::policy_update));
 }
 
 void show_usb_disconnected_message()
@@ -803,27 +844,36 @@ void clear_usb_session_state_for_host_loss(bool notify)
     const bool had_pending_connect = g_pending.active &&
                                      (g_pending.kind == PendingKind::connect ||
                                       g_pending.kind == PendingKind::connect_pin);
+    const bool had_pending_policy_update = g_pending.active &&
+                                           g_pending.kind == PendingKind::policy_update_pin;
     const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
         agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
     const bool had_connect_pin =
         pin_auth.flow_active &&
         pin_auth.purpose == LocalPinAuthPurpose::connect;
+    const bool had_policy_update_pin =
+        pin_auth.flow_active &&
+        pin_auth.purpose == LocalPinAuthPurpose::policy_update;
 
     clear_active_session();
     g_line_size = 0;
-    if (had_pending_connect) {
+    if (had_pending_connect || had_pending_policy_update) {
         clear_pending_state();
     }
-    if (had_connect_pin) {
-        wipe_local_pin_auth_scratch("USB host link lost during connect PIN authorization");
+    if (had_connect_pin || had_policy_update_pin) {
+        wipe_local_pin_auth_scratch("USB host link lost during local PIN authorization");
+    }
+    if (had_pending_policy_update || had_policy_update_pin) {
+        agent_q::policy_update_flow_clear();
     }
 
     clear_agent_q_panel_if_kind(AgentQUiPanelKind::decision_strip, SensitiveUiClearPolicy::preserve);
-    if (had_connect_pin) {
+    if (had_connect_pin || had_policy_update_pin) {
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
     }
 
-    if (had_session || had_pending_connect || had_connect_pin) {
+    if (had_session || had_pending_connect || had_connect_pin ||
+        had_pending_policy_update || had_policy_update_pin) {
         if (notify) {
             show_usb_disconnected_message();
         }
@@ -1068,6 +1118,10 @@ bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_setti
         write_error_response(id, "busy", "Device is awaiting local input.");
         return true;
     }
+    if (agent_q::policy_update_flow_active()) {
+        write_error_response(id, "busy", "Device has a pending policy update.");
+        return true;
+    }
     if (agent_q::provisioning_flow_active()) {
         write_error_response(id, "busy", "Device is showing setup material.");
         return true;
@@ -1103,12 +1157,185 @@ bool require_active_matching_session(const char* id, const char* session_id)
             write_error_response(id, "invalid_session", "Invalid sessionId.");
             return false;
         case agent_q::AgentQSessionValidationResult::missing:
+            cancel_policy_update_after_session_loss("active session missing during request validation");
+            write_error_response(id, "invalid_session", "Session is unknown or already ended.");
+            return false;
         case agent_q::AgentQSessionValidationResult::expired:
+            cancel_policy_update_after_session_loss("active session expired during request validation");
+            write_error_response(id, "invalid_session", "Session is unknown or already ended.");
+            return false;
         case agent_q::AgentQSessionValidationResult::mismatch:
         default:
             write_error_response(id, "invalid_session", "Session is unknown or already ended.");
             return false;
     }
+}
+
+void write_policy_update_invalid_session_and_clear(const char* request_id, const char* log_reason)
+{
+    if (request_id != nullptr && request_id[0] != '\0') {
+        write_error_response(request_id, "invalid_session", "Policy update session is unknown or already ended.");
+    }
+    agent_q::policy_update_flow_clear();
+    clear_pending_state();
+    ESP_LOGW(kTag, "Policy update canceled: %s", log_reason != nullptr ? log_reason : "invalid session");
+    agent_q::avatar_overlay_show_message(
+        "Session ended",
+        AgentQMessageKind::error,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+}
+
+void cancel_policy_update_after_session_loss(const char* log_reason)
+{
+    if (g_pending.kind == PendingKind::policy_update_pin) {
+        const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
+            agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
+        if (pin_auth.flow_active &&
+            pin_auth.purpose == LocalPinAuthPurpose::policy_update) {
+            wipe_local_pin_auth_scratch("session loss canceled pending policy update");
+            clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+        }
+        char request_id[kMaxRequestIdSize] = {};
+        strlcpy(request_id, g_pending.id, sizeof(request_id));
+        write_policy_update_invalid_session_and_clear(request_id, log_reason);
+        return;
+    }
+
+    if (agent_q::policy_update_flow_active()) {
+        agent_q::policy_update_flow_clear();
+    }
+}
+
+bool require_pending_policy_update_session(const char* request_id)
+{
+    if (g_pending.kind != PendingKind::policy_update_pin ||
+        g_pending.session_id[0] == '\0') {
+        write_policy_update_invalid_session_and_clear(request_id, "missing pending policy update session");
+        return false;
+    }
+
+    switch (agent_q::session_validate(g_pending.session_id, xTaskGetTickCount())) {
+        case agent_q::AgentQSessionValidationResult::ok:
+            return true;
+        case agent_q::AgentQSessionValidationResult::invalid_format:
+        case agent_q::AgentQSessionValidationResult::missing:
+        case agent_q::AgentQSessionValidationResult::expired:
+        case agent_q::AgentQSessionValidationResult::mismatch:
+        default:
+            write_policy_update_invalid_session_and_clear(request_id, "pending policy update session invalid");
+            return false;
+    }
+}
+
+bool pending_request_id_for_local_pin_purpose(
+    LocalPinAuthPurpose purpose,
+    char* output,
+    size_t output_size)
+{
+    if (output == nullptr || output_size == 0) {
+        return false;
+    }
+    output[0] = '\0';
+    if (purpose == LocalPinAuthPurpose::connect &&
+        g_pending.kind == PendingKind::connect_pin) {
+        strlcpy(output, g_pending.id, output_size);
+        return output[0] != '\0';
+    }
+    if (purpose == LocalPinAuthPurpose::policy_update &&
+        g_pending.kind == PendingKind::policy_update_pin) {
+        strlcpy(output, g_pending.id, output_size);
+        return output[0] != '\0';
+    }
+    return false;
+}
+
+TickType_t local_pin_auth_retry_deadline(
+    LocalPinAuthPurpose purpose,
+    TickType_t now)
+{
+    if (((purpose == LocalPinAuthPurpose::connect &&
+          g_pending.kind == PendingKind::connect_pin) ||
+         (purpose == LocalPinAuthPurpose::policy_update &&
+          g_pending.kind == PendingKind::policy_update_pin)) &&
+        g_pending.deadline != 0) {
+        return g_pending.deadline;
+    }
+    return now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs);
+}
+
+bool protocol_local_pin_deadline_reached(LocalPinAuthPurpose purpose, TickType_t now)
+{
+    if ((purpose != LocalPinAuthPurpose::connect ||
+         g_pending.kind != PendingKind::connect_pin) &&
+        (purpose != LocalPinAuthPurpose::policy_update ||
+         g_pending.kind != PendingKind::policy_update_pin)) {
+        return false;
+    }
+    return g_pending.deadline != 0 &&
+           static_cast<int32_t>(now - g_pending.deadline) >= 0;
+}
+
+void expire_session_and_dependent_flows_if_needed()
+{
+    if (!agent_q::session_expire_if_needed(xTaskGetTickCount())) {
+        return;
+    }
+
+    const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
+        agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
+    const bool had_policy_update_pending =
+        g_pending.active && g_pending.kind == PendingKind::policy_update_pin;
+    const bool had_policy_update_pin =
+        pin_auth.flow_active && pin_auth.purpose == LocalPinAuthPurpose::policy_update;
+    const bool had_policy_update_flow = agent_q::policy_update_flow_active();
+    if (!had_policy_update_pending && !had_policy_update_pin && !had_policy_update_flow) {
+        return;
+    }
+
+    char request_id[kMaxRequestIdSize] = {};
+    if (g_pending.kind == PendingKind::policy_update_pin) {
+        strlcpy(request_id, g_pending.id, sizeof(request_id));
+    }
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+    if (had_policy_update_pin) {
+        wipe_local_pin_auth_scratch("policy update session expired during local PIN authorization");
+    }
+    write_policy_update_invalid_session_and_clear(
+        request_id,
+        "session expired during pending policy update");
+}
+
+bool disconnect_pending_policy_update_for_session(const char* id, const char* session_id)
+{
+    if (g_pending.kind != PendingKind::policy_update_pin ||
+        g_pending.session_id[0] == '\0' ||
+        strcmp(g_pending.session_id, session_id) != 0) {
+        return false;
+    }
+
+    char policy_request_id[kMaxRequestIdSize] = {};
+    strlcpy(policy_request_id, g_pending.id, sizeof(policy_request_id));
+    const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
+        agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
+    if (pin_auth.flow_active &&
+        pin_auth.purpose == LocalPinAuthPurpose::policy_update) {
+        wipe_local_pin_auth_scratch("disconnect canceled pending policy update");
+        clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+    }
+    if (policy_request_id[0] != '\0' &&
+        (id == nullptr || strcmp(policy_request_id, id) != 0)) {
+        write_error_response(
+            policy_request_id,
+            "invalid_session",
+            "Policy update session is unknown or already ended.");
+    }
+    agent_q::policy_update_flow_clear();
+    clear_pending_state();
+    clear_active_session();
+    write_disconnect_result(id);
+    ESP_LOGI(kTag, "disconnect canceled pending policy update: id=%s", id);
+    return true;
 }
 
 bool recovery_phrase_backup_confirmation_ready()
@@ -1497,7 +1724,8 @@ void show_result_and_clear_pending(const char* message, AgentQMessageKind kind)
 {
     if (g_pending.kind == PendingKind::connect) {
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::decision_strip, SensitiveUiClearPolicy::preserve);
-    } else if (g_pending.kind == PendingKind::connect_pin) {
+    } else if (g_pending.kind == PendingKind::connect_pin ||
+               g_pending.kind == PendingKind::policy_update_pin) {
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
     }
     agent_q::avatar_overlay_show_message(message, kind, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -2002,6 +2230,146 @@ void begin_connect_pin_auth(const char* id, const char* gateway_name, uint32_t a
     }
 }
 
+void finish_policy_update_terminal(
+    const char* request_id,
+    agent_q::AgentQPolicyUpdateFlowTerminalResult result)
+{
+    if (request_id == nullptr || request_id[0] == '\0') {
+        agent_q::policy_update_flow_clear();
+        clear_pending_state();
+        return;
+    }
+
+    switch (result) {
+        case agent_q::AgentQPolicyUpdateFlowTerminalResult::applied:
+            write_policy_update_result_response(
+                request_id,
+                agent_q::policy_update_flow_terminal_status(result),
+                agent_q::policy_update_flow_terminal_reason(result),
+                true);
+            agent_q::policy_update_flow_clear();
+            clear_pending_state();
+            agent_q::avatar_overlay_show_message(
+                "Policy updated", AgentQMessageKind::success, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
+        case agent_q::AgentQPolicyUpdateFlowTerminalResult::rejected:
+            write_policy_update_result_response(
+                request_id,
+                agent_q::policy_update_flow_terminal_status(result),
+                agent_q::policy_update_flow_terminal_reason(result),
+                true);
+            agent_q::policy_update_flow_clear();
+            clear_pending_state();
+            agent_q::avatar_overlay_show_message(
+                "Policy rejected", AgentQMessageKind::rejected, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
+        case agent_q::AgentQPolicyUpdateFlowTerminalResult::timed_out:
+            write_policy_update_result_response(
+                request_id,
+                agent_q::policy_update_flow_terminal_status(result),
+                agent_q::policy_update_flow_terminal_reason(result),
+                true);
+            agent_q::policy_update_flow_clear();
+            clear_pending_state();
+            agent_q::avatar_overlay_show_message(
+                "Policy timed out", AgentQMessageKind::timeout, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
+        case agent_q::AgentQPolicyUpdateFlowTerminalResult::ui_error:
+            write_policy_update_result_response(
+                request_id,
+                agent_q::policy_update_flow_terminal_status(result),
+                agent_q::policy_update_flow_terminal_reason(result),
+                true);
+            agent_q::policy_update_flow_clear();
+            clear_pending_state();
+            agent_q::avatar_overlay_show_message(
+                "Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
+        case agent_q::AgentQPolicyUpdateFlowTerminalResult::storage_error:
+            write_policy_update_result_response(
+                request_id,
+                agent_q::policy_update_flow_terminal_status(result),
+                agent_q::policy_update_flow_terminal_reason(result),
+                true);
+            agent_q::policy_update_flow_clear();
+            clear_pending_state();
+            agent_q::avatar_overlay_show_message(
+                "Policy failed", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
+        case agent_q::AgentQPolicyUpdateFlowTerminalResult::consistency_error:
+            write_policy_update_result_response(
+                request_id,
+                agent_q::policy_update_flow_terminal_status(result),
+                agent_q::policy_update_flow_terminal_reason(result),
+                true);
+            agent_q::policy_update_flow_clear();
+            clear_pending_state();
+            refresh_persistent_material_consistency();
+            agent_q::avatar_overlay_show_message(
+                "Policy error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
+        case agent_q::AgentQPolicyUpdateFlowTerminalResult::history_error:
+            write_error_response(request_id, "history_error", "Could not record policy update.");
+            agent_q::policy_update_flow_clear();
+            clear_pending_state();
+            agent_q::avatar_overlay_show_message(
+                "History error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
+        case agent_q::AgentQPolicyUpdateFlowTerminalResult::invalid_state:
+        default:
+            write_error_response(request_id, "invalid_state", "Policy update is unavailable.");
+            agent_q::policy_update_flow_clear();
+            clear_pending_state();
+            agent_q::avatar_overlay_show_message(
+                "Policy unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
+    }
+}
+
+void begin_policy_update_pin_auth(const char* id, const char* session_id, uint32_t approval_timeout_ms)
+{
+    g_identification.clear();
+    g_pending.begin_policy_update_pin(id, session_id, approval_timeout_ms);
+    agent_q::local_pin_auth_begin_policy_update(g_pending.deadline);
+
+    if (!agent_q::modal_draw_local_pin_auth_panel()) {
+        wipe_local_pin_auth_scratch("policy update PIN display allocation failed");
+        finish_policy_update_terminal(
+            id,
+            agent_q::policy_update_flow_record_ui_error());
+    }
+}
+
+void handle_local_pin_auth_display_failure(const char* reason, bool clear_panel = false)
+{
+    const agent_q::AgentQLocalPinAuthSnapshot snapshot =
+        agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
+    if (snapshot.purpose == LocalPinAuthPurpose::policy_update &&
+        g_pending.kind == PendingKind::policy_update_pin &&
+        g_pending.id[0] != '\0') {
+        char request_id[kMaxRequestIdSize] = {};
+        strlcpy(request_id, g_pending.id, sizeof(request_id));
+        wipe_local_pin_auth_scratch(reason);
+        if (clear_panel) {
+            clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+        }
+        finish_policy_update_terminal(
+            request_id,
+            agent_q::policy_update_flow_record_ui_error());
+        return;
+    }
+
+    wipe_local_pin_auth_scratch(reason);
+    if (clear_panel) {
+        clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+    }
+    agent_q::avatar_overlay_show_message(
+        "Display error",
+        AgentQMessageKind::error,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+}
+
 void start_settings_connect_pin_from_settings_menu()
 {
     const agent_q::AgentQLocalResetSnapshot reset =
@@ -2067,12 +2435,17 @@ void cancel_local_pin_auth_from_ui(const char* message)
 
     const LocalPinAuthPurpose purpose = snapshot.purpose;
     char request_id[kMaxRequestIdSize] = {};
-    if (purpose == LocalPinAuthPurpose::connect && g_pending.kind == PendingKind::connect_pin) {
-        strlcpy(request_id, g_pending.id, sizeof(request_id));
-    }
+    pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
 
     clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
     wipe_local_pin_auth_scratch("local PIN authorization canceled");
+    if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
+        finish_policy_update_terminal(
+            request_id,
+            agent_q::policy_update_flow_record_rejected(
+                static_cast<uint64_t>(esp_timer_get_time() / 1000LL)));
+        return;
+    }
     if (purpose == LocalPinAuthPurpose::connect && request_id[0] != '\0') {
         write_connect_rejected_response(request_id, "rejected", "Connection rejected.");
         clear_pending_state();
@@ -2099,53 +2472,63 @@ void cancel_local_pin_auth_from_ui(const char* message)
 
 void handle_local_pin_auth_digit_from_ui(char digit)
 {
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQLocalPinAuthSnapshot snapshot =
+        agent_q::local_pin_auth_snapshot(now);
     const agent_q::AgentQLocalPinAuthInputResult result =
         agent_q::local_pin_auth_add_digit(
             digit,
-            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs));
+            local_pin_auth_retry_deadline(snapshot.purpose, now));
     if (result == agent_q::AgentQLocalPinAuthInputResult::inactive ||
         result == agent_q::AgentQLocalPinAuthInputResult::locked ||
         result == agent_q::AgentQLocalPinAuthInputResult::invalid_digit) {
         return;
     }
     if (!agent_q::modal_draw_local_pin_auth_panel()) {
-        wipe_local_pin_auth_scratch("local PIN authorization display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        handle_local_pin_auth_display_failure("local PIN authorization display allocation failed");
     }
 }
 
 void handle_local_pin_auth_clear_from_ui()
 {
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQLocalPinAuthSnapshot snapshot =
+        agent_q::local_pin_auth_snapshot(now);
     if (!agent_q::local_pin_auth_clear_pin(
-            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs))) {
+            local_pin_auth_retry_deadline(snapshot.purpose, now))) {
         return;
     }
     if (!agent_q::modal_draw_local_pin_auth_panel()) {
-        wipe_local_pin_auth_scratch("local PIN authorization display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        handle_local_pin_auth_display_failure("local PIN authorization display allocation failed");
     }
 }
 
 void handle_local_pin_auth_backspace_from_ui()
 {
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQLocalPinAuthSnapshot snapshot =
+        agent_q::local_pin_auth_snapshot(now);
     if (!agent_q::local_pin_auth_backspace_pin(
-            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs))) {
+            local_pin_auth_retry_deadline(snapshot.purpose, now))) {
         return;
     }
     if (!agent_q::modal_draw_local_pin_auth_panel()) {
-        wipe_local_pin_auth_scratch("local PIN authorization display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        handle_local_pin_auth_display_failure("local PIN authorization display allocation failed");
     }
 }
 
 void handle_local_pin_auth_submit_from_ui()
 {
     const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQLocalPinAuthSnapshot snapshot =
+        agent_q::local_pin_auth_snapshot(now);
+    const TickType_t retry_deadline =
+        local_pin_auth_retry_deadline(snapshot.purpose, now);
     const agent_q::AgentQLocalPinAuthSubmitResult result =
         agent_q::local_pin_auth_submit(
             now + pdMS_TO_TICKS(kLocalProcessingRenderDelayMs),
             now + pdMS_TO_TICKS(kLocalProcessingDisplayMs),
-            now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs),
+            retry_deadline,
             now + pdMS_TO_TICKS(agent_q::kAgentQLocalAuthWorkerMaxMs));
     switch (result) {
         case agent_q::AgentQLocalPinAuthSubmitResult::unavailable_stage:
@@ -2155,43 +2538,40 @@ void handle_local_pin_auth_submit_from_ui()
             return;
         case agent_q::AgentQLocalPinAuthSubmitResult::worker_unavailable:
             if (!agent_q::modal_draw_local_pin_auth_panel("Auth worker busy. Try again.")) {
-                wipe_local_pin_auth_scratch("local PIN worker unavailable display allocation failed");
-                clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-                agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                handle_local_pin_auth_display_failure(
+                    "local PIN worker unavailable display allocation failed",
+                    true);
             }
             return;
         case agent_q::AgentQLocalPinAuthSubmitResult::invalid_pin:
             if (!agent_q::modal_draw_local_pin_auth_panel("Enter exactly 6 digits.")) {
-                wipe_local_pin_auth_scratch("local PIN authorization display allocation failed");
-                agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                handle_local_pin_auth_display_failure("local PIN authorization display allocation failed");
             }
             return;
         case agent_q::AgentQLocalPinAuthSubmitResult::advanced_to_repeat_pin:
             if (!agent_q::modal_draw_local_pin_auth_panel()) {
-                wipe_local_pin_auth_scratch("Change PIN repeat display allocation failed");
-                agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                handle_local_pin_auth_display_failure("Change PIN repeat display allocation failed");
             }
             return;
         case agent_q::AgentQLocalPinAuthSubmitResult::mismatch_restart:
             if (!agent_q::modal_draw_local_pin_auth_panel("PINs did not match.")) {
-                wipe_local_pin_auth_scratch("Change PIN mismatch display allocation failed");
-                agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                handle_local_pin_auth_display_failure("Change PIN mismatch display allocation failed");
             }
             return;
         case agent_q::AgentQLocalPinAuthSubmitResult::started_pin_change_commit:
             if (!agent_q::modal_draw_processing_overlay_on_current_panel(AgentQUiPanelKind::local_pin_auth) &&
                 !agent_q::modal_draw_local_pin_auth_panel()) {
-                wipe_local_pin_auth_scratch("Change PIN commit display allocation failed");
-                clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-                agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                handle_local_pin_auth_display_failure(
+                    "Change PIN commit display allocation failed",
+                    true);
             }
             return;
         case agent_q::AgentQLocalPinAuthSubmitResult::started_verification:
             if (!agent_q::modal_draw_processing_overlay_on_current_panel(AgentQUiPanelKind::local_pin_auth) &&
                 !agent_q::modal_draw_local_pin_auth_panel()) {
-                wipe_local_pin_auth_scratch("local PIN authorization verification display allocation failed");
-                clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-                agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                handle_local_pin_auth_display_failure(
+                    "local PIN authorization verification display allocation failed",
+                    true);
             }
             return;
     }
@@ -2449,12 +2829,19 @@ void handle_local_pin_auth_verify_worker_result(
     const LocalPinAuthPurpose purpose = snapshot.purpose;
     if (!provisioned_material_ready()) {
         char request_id[kMaxRequestIdSize] = {};
-        if (purpose == LocalPinAuthPurpose::connect && g_pending.kind == PendingKind::connect_pin) {
-            strlcpy(request_id, g_pending.id, sizeof(request_id));
-        }
+        pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
         wipe_local_pin_auth_scratch("local PIN authorization material state unavailable");
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+        if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
+            write_error_response(request_id, "invalid_state", "Policy update is unavailable.");
+            agent_q::policy_update_flow_clear();
+            clear_pending_state();
+        }
         if (request_id[0] != '\0') {
+            if (purpose == LocalPinAuthPurpose::policy_update) {
+                agent_q::avatar_overlay_show_message("PIN unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                return;
+            }
             write_connect_rejected_response(request_id, "invalid_state", "Connect is unavailable.");
             clear_pending_state();
         }
@@ -2465,7 +2852,7 @@ void handle_local_pin_auth_verify_worker_result(
     const agent_q::AgentQLocalPinAuthVerifyResult result =
         agent_q::local_pin_auth_complete_verify_job(
             worker_result,
-            now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs),
+            local_pin_auth_retry_deadline(purpose, now),
             now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetPinLockoutMs),
             now + pdMS_TO_TICKS(kLocalProcessingDisplayMs));
     switch (result) {
@@ -2473,14 +2860,19 @@ void handle_local_pin_auth_verify_worker_result(
             return;
         case agent_q::AgentQLocalPinAuthVerifyResult::auth_unavailable: {
             char request_id[kMaxRequestIdSize] = {};
-            if (purpose == LocalPinAuthPurpose::connect && g_pending.kind == PendingKind::connect_pin) {
-                strlcpy(request_id, g_pending.id, sizeof(request_id));
-            }
+            pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
             agent_q::persistent_material_record_runtime_failure(
                 agent_q::AgentQPersistentMaterialRuntimeFailure::local_pin_auth_unavailable,
                 persistent_material_ops());
             wipe_local_pin_auth_scratch("local PIN authorization verifier unavailable");
             clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+            if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
+                write_policy_update_result_response(request_id, "consistency_error", "consistency_error", true);
+                agent_q::policy_update_flow_clear();
+                clear_pending_state();
+                agent_q::avatar_overlay_show_message("Auth error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                return;
+            }
             if (request_id[0] != '\0') {
                 write_connect_rejected_response(request_id, "auth_unavailable", "Local PIN verifier unavailable.");
                 clear_pending_state();
@@ -2490,27 +2882,22 @@ void handle_local_pin_auth_verify_worker_result(
         }
         case agent_q::AgentQLocalPinAuthVerifyResult::locked:
             if (!agent_q::modal_draw_local_pin_auth_panel("Too many wrong PINs. Wait 30s.")) {
-                wipe_local_pin_auth_scratch("local PIN authorization display allocation failed after wrong PIN");
-                agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                handle_local_pin_auth_display_failure("local PIN authorization display allocation failed after wrong PIN");
             }
             return;
         case agent_q::AgentQLocalPinAuthVerifyResult::wrong_pin:
             if (!agent_q::modal_draw_local_pin_auth_panel("Wrong PIN.")) {
-                wipe_local_pin_auth_scratch("local PIN authorization display allocation failed after wrong PIN");
-                agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                handle_local_pin_auth_display_failure("local PIN authorization display allocation failed after wrong PIN");
             }
             return;
         case agent_q::AgentQLocalPinAuthVerifyResult::advanced_to_change_pin:
             if (!agent_q::modal_draw_local_pin_auth_panel()) {
-                wipe_local_pin_auth_scratch("Change PIN new PIN display allocation failed");
-                agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                handle_local_pin_auth_display_failure("Change PIN new PIN display allocation failed");
             }
             return;
         case agent_q::AgentQLocalPinAuthVerifyResult::verified_connect: {
             char request_id[kMaxRequestIdSize] = {};
-            if (g_pending.kind == PendingKind::connect_pin) {
-                strlcpy(request_id, g_pending.id, sizeof(request_id));
-            }
+            pending_request_id_for_local_pin_purpose(LocalPinAuthPurpose::connect, request_id, sizeof(request_id));
             g_pending.active = false;
             if (!replace_active_session()) {
                 if (request_id[0] != '\0') {
@@ -2531,6 +2918,20 @@ void handle_local_pin_auth_verify_worker_result(
             clear_pending_state();
             ESP_LOGI(kTag, "connect PIN approved: id=%s", request_id);
             agent_q::avatar_overlay_show_message("Connected", AgentQMessageKind::success, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
+        }
+        case agent_q::AgentQLocalPinAuthVerifyResult::verified_policy_update: {
+            char request_id[kMaxRequestIdSize] = {};
+            pending_request_id_for_local_pin_purpose(LocalPinAuthPurpose::policy_update, request_id, sizeof(request_id));
+            clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+            wipe_local_pin_auth_scratch("policy update PIN approved");
+            if (!require_pending_policy_update_session(request_id)) {
+                return;
+            }
+            finish_policy_update_terminal(
+                request_id,
+                agent_q::policy_update_flow_commit(
+                    static_cast<uint64_t>(esp_timer_get_time() / 1000LL)));
             return;
         }
         case agent_q::AgentQLocalPinAuthVerifyResult::started_setting_commit:
@@ -2623,10 +3024,15 @@ void clear_local_pin_auth_if_needed()
 
         const LocalPinAuthPurpose purpose = snapshot.purpose;
         char request_id[kMaxRequestIdSize] = {};
-        if (purpose == LocalPinAuthPurpose::connect && g_pending.kind == PendingKind::connect_pin) {
-            strlcpy(request_id, g_pending.id, sizeof(request_id));
-        }
+        pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+        if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
+            finish_policy_update_terminal(
+                request_id,
+                agent_q::policy_update_flow_record_timed_out(
+                    static_cast<uint64_t>(esp_timer_get_time() / 1000LL)));
+            return;
+        }
         if (request_id[0] != '\0') {
             write_connect_rejected_response(request_id, "timeout", "Connection PIN timed out.");
             clear_pending_state();
@@ -2640,12 +3046,34 @@ void clear_local_pin_auth_if_needed()
         return;
     }
 
+    const LocalPinAuthPurpose purpose = snapshot.purpose;
+    char request_id[kMaxRequestIdSize] = {};
+    pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
+    if (request_id[0] != '\0' &&
+        protocol_local_pin_deadline_reached(purpose, now)) {
+        clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+        wipe_local_pin_auth_scratch("protocol-backed local PIN authorization timed out");
+        if (purpose == LocalPinAuthPurpose::policy_update) {
+            finish_policy_update_terminal(
+                request_id,
+                agent_q::policy_update_flow_record_timed_out(
+                    static_cast<uint64_t>(esp_timer_get_time() / 1000LL)));
+            return;
+        }
+        write_connect_rejected_response(request_id, "timeout", "Connection PIN timed out.");
+        clear_pending_state();
+        agent_q::avatar_overlay_show_message("Connection timed out",
+                             AgentQMessageKind::timeout,
+                             AgentQUiMode::result,
+                             kAgentQResultDisplayMs);
+        return;
+    }
+
     if (agent_q::local_pin_auth_release_lockout_if_elapsed(
             now,
-            now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs))) {
+            local_pin_auth_retry_deadline(purpose, now))) {
         if (!agent_q::modal_draw_local_pin_auth_panel("Try again.")) {
-            wipe_local_pin_auth_scratch("local PIN authorization lockout display allocation failed");
-            agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            handle_local_pin_auth_display_failure("local PIN authorization lockout display allocation failed");
         }
         return;
     }
@@ -2662,14 +3090,15 @@ void clear_local_pin_auth_if_needed()
         return;
     }
 
-    const LocalPinAuthPurpose purpose = snapshot.purpose;
-    char request_id[kMaxRequestIdSize] = {};
-    if (purpose == LocalPinAuthPurpose::connect && g_pending.kind == PendingKind::connect_pin) {
-        strlcpy(request_id, g_pending.id, sizeof(request_id));
-    }
-
     if (!panel_active && !expired) {
         if (!agent_q::modal_draw_local_pin_auth_panel()) {
+            if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
+                wipe_local_pin_auth_scratch("policy update PIN UI recovery failed");
+                finish_policy_update_terminal(
+                    request_id,
+                    agent_q::policy_update_flow_record_ui_error());
+                return;
+            }
             if (purpose == LocalPinAuthPurpose::connect && request_id[0] != '\0') {
                 write_connect_rejected_response(request_id, "ui_error", "Could not restore local PIN UI.");
                 clear_pending_state();
@@ -2685,11 +3114,18 @@ void clear_local_pin_auth_if_needed()
 
     if (panel_active) {
         clear_agent_q_panel_if_local_pin_auth_stage();
-    } else {
-        wipe_local_pin_auth_scratch("local PIN authorization panel lost");
     }
+    wipe_local_pin_auth_scratch(
+        expired ? "local PIN authorization timed out" : "local PIN authorization panel lost");
 
     if (request_id[0] != '\0') {
+        if (purpose == LocalPinAuthPurpose::policy_update) {
+            finish_policy_update_terminal(
+                request_id,
+                agent_q::policy_update_flow_record_timed_out(
+                    static_cast<uint64_t>(esp_timer_get_time() / 1000LL)));
+            return;
+        }
         write_connect_rejected_response(request_id,
                                         expired ? "timeout" : "rejected",
                                         expired ? "Connection PIN timed out." : "Connection PIN UI closed.");
@@ -3239,6 +3675,20 @@ void send_choice_response_if_needed()
         return;
     }
 
+    if (g_pending.active && g_pending.kind == PendingKind::policy_update_pin) {
+        if (g_pending.deadline != 0 && tick_reached(g_pending.deadline)) {
+            char request_id[kMaxRequestIdSize] = {};
+            strlcpy(request_id, g_pending.id, sizeof(request_id));
+            wipe_local_pin_auth_scratch("policy update PIN pending timed out");
+            clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+            finish_policy_update_terminal(
+                request_id,
+                agent_q::policy_update_flow_record_timed_out(
+                    static_cast<uint64_t>(esp_timer_get_time() / 1000LL)));
+        }
+        return;
+    }
+
     if (!g_pending.active || g_pending.choice == PendingChoice::none) {
         if (g_pending.active && g_pending.deadline != 0 &&
             tick_reached(g_pending.deadline)) {
@@ -3384,16 +3834,18 @@ void handle_line(const char* line)
     }
 
     if (strcmp(type, "disconnect") == 0) {
-        if (write_busy_if_pending_or_local_flow_active(id, true)) {
-            return;
-        }
-
         const char* session_id = nullptr;
         if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
             write_error_response(id, "invalid_session", "Invalid or expired session.");
             return;
         }
         if (!require_active_matching_session(id, session_id)) {
+            return;
+        }
+        if (disconnect_pending_policy_update_for_session(id, session_id)) {
+            return;
+        }
+        if (write_busy_if_pending_or_local_flow_active(id, true)) {
             return;
         }
         clear_active_session();
@@ -3547,6 +3999,63 @@ void handle_line(const char* line)
             return;
         }
 
+        const agent_q::CallMethodNamespaceValidation namespace_validation =
+            agent_q::classify_call_method_namespace(request);
+        if (namespace_validation == agent_q::CallMethodNamespaceValidation::invalid_namespace) {
+            write_error_response(id, "invalid_method", "Invalid call_method namespace fields.");
+            return;
+        }
+
+        if (namespace_validation == agent_q::CallMethodNamespaceValidation::admin_scoped) {
+            const char* method_namespace = nullptr;
+            const char* method = nullptr;
+            if (!agent_q::agent_q_json_value_c_string(request["methodNamespace"], &method_namespace) ||
+                strcmp(method_namespace, "admin") != 0 ||
+                !agent_q::agent_q_json_value_c_string(request["method"], &method) ||
+                strcmp(method, "propose_policy_update") != 0) {
+                write_error_response(id, "invalid_method", "Invalid admin method request.");
+                return;
+            }
+            if (write_busy_if_pending_or_local_flow_active(id)) {
+                return;
+            }
+
+            JsonVariant params = request["params"];
+            if (!params.is<JsonObject>()) {
+                write_error_response(id, "invalid_params", "Policy update params must be an object.");
+                return;
+            }
+            JsonObject params_object = params.as<JsonObject>();
+            bool saw_policy = false;
+            for (JsonPair pair : params_object) {
+                if (agent_q::agent_q_json_string_equals(pair.key(), "policy")) {
+                    saw_policy = true;
+                    continue;
+                }
+                write_error_response(id, "invalid_params", "Policy update params contain unsupported fields.");
+                return;
+            }
+            if (!saw_policy) {
+                write_error_response(id, "invalid_params", "Policy update params require policy.");
+                return;
+            }
+
+            const agent_q::AgentQPolicyUpdateFlowBeginResult begin_result =
+                agent_q::policy_update_flow_begin(params_object["policy"]);
+            if (begin_result != agent_q::AgentQPolicyUpdateFlowBeginResult::ok) {
+                write_policy_update_result_response(
+                    id,
+                    "invalid_policy",
+                    agent_q::policy_update_flow_begin_result_reason(begin_result),
+                    false);
+                return;
+            }
+
+            begin_policy_update_pin_auth(id, session_id, kProvisioningApprovalMaxMs);
+            ESP_LOGI(kTag, "policy update waiting for local PIN: id=%s", id);
+            return;
+        }
+
         switch (agent_q::validate_call_method_request_fields(request)) {
             case agent_q::CallMethodFieldValidation::valid:
                 break;
@@ -3675,11 +4184,11 @@ void usb_request_task(void*)
         clear_recovery_word_entry_if_needed();
         clear_pin_setup_if_needed();
         clear_local_reset_if_needed();
+        expire_session_and_dependent_flows_if_needed();
         clear_local_pin_auth_if_needed();
         drain_ui_events();
         commit_local_reset_if_ready();
         commit_local_pin_setting_if_ready();
-        agent_q::session_expire_if_needed(xTaskGetTickCount());
         poll_local_settings_touch_entry();
         show_persistent_error_recovery_if_needed();
         send_choice_response_if_needed();

@@ -6,6 +6,7 @@ import {
   assertCapabilitiesResponse,
   assertMethodResultResponse,
   assertPolicyResponse,
+  assertPolicyUpdateResultResponse,
   assertConnectResponse,
   assertDisconnectResponse,
   assertStatusResponse,
@@ -25,6 +26,7 @@ import {
   makeGetPolicyRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
+  makeProposePolicyUpdateRequest,
   MAX_SESSION_TTL_MS,
   parseProtocolResponse,
   sanitizeDisplayText,
@@ -412,6 +414,55 @@ test("makeCallMethodRequest validates Sui sign_transaction params", () => {
   );
 });
 
+test("makeProposePolicyUpdateRequest builds admin proposal requests without chain authority", () => {
+  const policy = {
+    schema: "agentq.policy.v0",
+    defaultAction: "reject",
+    rules: [
+      {
+        id: "reject_devnet",
+        chain: "sui",
+        method: "sign_transaction",
+        action: "reject",
+        criteria: [{ field: "common.network", op: "eq", value: "devnet" }],
+      },
+    ],
+  };
+  const request = makeProposePolicyUpdateRequest(
+    "session_abcdef0123456789",
+    policy,
+    "req_policy_update_1",
+  );
+  assert.deepEqual(request, {
+    id: "req_policy_update_1",
+    version: 1,
+    type: "call_method",
+    sessionId: "session_abcdef0123456789",
+    methodNamespace: "admin",
+    method: "propose_policy_update",
+    params: { policy },
+  });
+  assert.equal("chain" in request, false);
+  assert.ok(Buffer.byteLength(serializeRequest(request), "utf8") <= 4097);
+
+  assert.throws(
+    () => makeProposePolicyUpdateRequest("not_a_session", policy),
+    /sessionId/,
+  );
+  assert.throws(
+    () => makeProposePolicyUpdateRequest("session_abcdef0123456789", []),
+    /proposal/,
+  );
+  assert.throws(
+    () => makeProposePolicyUpdateRequest("session_abcdef0123456789", { seed: "must-not-forward" }),
+    /secret material/,
+  );
+  assert.throws(
+    () => makeProposePolicyUpdateRequest("session_abcdef0123456789", { data: "x".repeat(5000) }),
+    /too large/,
+  );
+});
+
 test("makeGetCapabilitiesRequest validates sessionId", () => {
   const request = makeGetCapabilitiesRequest("session_abcdef0123456789", "req_get_capabilities_1");
   assert.deepEqual(request, {
@@ -758,7 +809,7 @@ test("parseProtocolResponse accepts policy update approval history records", () 
 });
 
 test("parseProtocolResponse rejects non-recordable policy update results", () => {
-  for (const result of ["history_error", "consistency_error"]) {
+  for (const result of ["history_error", "consistency_error", "invalid_policy"]) {
     assert.throws(
       () => parseProtocolResponse(approvalHistoryPolicyUpdateLine({ result }), "req_approval_history"),
       { code: "protocol_error" },
@@ -854,6 +905,79 @@ test("parseProtocolResponse rejects unsupported approval history response shape"
     () => parseProtocolResponse(approvalHistoryLine({}, { sessionId: "session_abcdef0123456789" }), "req_approval_history"),
     { code: "protocol_error" },
   );
+});
+
+const policyUpdateResultPolicy = (overrides = {}) => ({
+  policyHash: APPROVAL_DIGEST,
+  ruleCount: 1,
+  highestAction: "reject",
+  ...overrides,
+});
+
+const policyUpdateResultLine = (overrides = {}, policyOverrides = undefined) =>
+  JSON.stringify({
+    id: "req_policy_update",
+    version: 1,
+    type: "policy_update_result",
+    status: "applied",
+    reasonCode: "device_confirmed",
+    policy: policyOverrides === null ? undefined : policyUpdateResultPolicy(policyOverrides),
+    ...overrides,
+  });
+
+test("parseProtocolResponse accepts policy_update_result terminal outcomes", () => {
+  for (const status of ["applied", "rejected", "timed_out", "ui_error", "storage_error", "consistency_error"]) {
+    const response = assertPolicyUpdateResultResponse(
+      parseProtocolResponse(policyUpdateResultLine({ status }), "req_policy_update"),
+    );
+    assert.equal(response.type, "policy_update_result");
+    assert.equal(response.status, status);
+    assert.equal(response.reasonCode, "device_confirmed");
+    assert.equal(response.policy.policyHash, APPROVAL_DIGEST);
+    assert.equal(response.policy.ruleCount, 1);
+    assert.equal(response.policy.highestAction, "reject");
+  }
+
+  const invalid = assertPolicyUpdateResultResponse(
+    parseProtocolResponse(
+      policyUpdateResultLine({ status: "invalid_policy", reasonCode: "invalid_policy" }, null),
+      "req_policy_update",
+    ),
+  );
+  assert.equal(invalid.status, "invalid_policy");
+  assert.equal(invalid.policy, undefined);
+});
+
+test("parseProtocolResponse rejects malformed policy_update_result responses", () => {
+  for (const override of [
+    { status: "busy" },
+    { status: "history_error" },
+    { status: "invalid_policy" },
+    { reasonCode: "DeviceConfirmed" },
+    { policy: undefined },
+    { sessionId: "session_abcdef0123456789" },
+  ]) {
+    assert.throws(
+      () => parseProtocolResponse(policyUpdateResultLine(override), "req_policy_update"),
+      { code: "protocol_error" },
+      `policy_update_result override should be rejected: ${JSON.stringify(override)}`,
+    );
+  }
+
+  for (const policyOverride of [
+    { policyHash: "not-a-digest" },
+    { ruleCount: -1 },
+    { ruleCount: 17 },
+    { ruleCount: 1.5 },
+    { highestAction: "approve" },
+    { sessionId: "session_abcdef0123456789" },
+  ]) {
+    assert.throws(
+      () => parseProtocolResponse(policyUpdateResultLine({}, policyOverride), "req_policy_update"),
+      { code: "protocol_error" },
+      `policy_update_result policy override should be rejected: ${JSON.stringify(policyOverride)}`,
+    );
+  }
 });
 
 const methodResultLine = (overrides = {}, errorOverrides = {}) =>

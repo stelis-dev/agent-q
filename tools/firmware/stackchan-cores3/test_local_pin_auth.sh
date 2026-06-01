@@ -6,9 +6,9 @@ usage() {
 Usage: tools/firmware/stackchan-cores3/test_local_pin_auth.sh
 
 Compiles the StackChan CoreS3 local PIN authorization state machine against
-host stubs and verifies connect, settings toggle, change-PIN, lockout, and
-deadline transitions. This test uses only a host C++ compiler and does NOT
-require ESP-IDF.
+host stubs and verifies connect, settings toggle, change-PIN, policy update,
+lockout, and deadline transitions. This test uses only a host C++ compiler and
+does NOT require ESP-IDF.
 EOF
 }
 
@@ -401,6 +401,24 @@ int main()
                "settings toggle persisted PIN-on-connect OFF");
         expect(!agent_q::local_pin_auth_snapshot(305).flow_active,
                "settings toggle commit clears flow");
+    }
+
+    {
+        agent_q::test_set_tick(400);
+        agent_q::local_pin_auth_begin_policy_update(460);
+        enter_pin("123456", 460);
+        expect(agent_q::local_pin_auth_submit(401, 0, 460, 430) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "policy update starts current-PIN verification");
+        agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
+        expect(agent_q::local_pin_auth_complete_verify_job(verify_result, 460, 0, 0) ==
+                   agent_q::AgentQLocalPinAuthVerifyResult::verified_policy_update,
+               "verified policy update returns policy-update result");
+        expect_stage(
+            agent_q::AgentQLocalPinAuthPurpose::policy_update,
+            agent_q::AgentQLocalPinAuthStage::pin_verifying,
+            "policy update waits for caller-owned terminal handling");
+        agent_q::local_pin_auth_clear_flow();
     }
 
     {

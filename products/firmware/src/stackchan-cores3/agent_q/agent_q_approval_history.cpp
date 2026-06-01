@@ -198,11 +198,10 @@ bool history_highest_action_char(char value, bool first)
 bool policy_update_result_supported(const char* value)
 {
     return value != nullptr &&
-	           (strcmp(value, "applied") == 0 ||
-	            strcmp(value, "rejected") == 0 ||
-	            strcmp(value, "timed_out") == 0 ||
-	            strcmp(value, "invalid_policy") == 0 ||
-	            strcmp(value, "storage_error") == 0);
+           (strcmp(value, "applied") == 0 ||
+            strcmp(value, "rejected") == 0 ||
+            strcmp(value, "timed_out") == 0 ||
+            strcmp(value, "storage_error") == 0);
 }
 
 bool highest_action_supported(const char* value)

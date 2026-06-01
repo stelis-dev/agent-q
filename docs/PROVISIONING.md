@@ -66,9 +66,10 @@ Rules:
 - If setup is canceled, Firmware wipes the generated material.
 - A device is not `provisioned` unless root material, an active policy, and a
   local PIN verifier are all present.
-- The local PIN verifier is a DEV_PROFILE UX gate for local reset and future
-  sensitive writes. It is not root-material encryption or physical extraction
-  defense.
+- The local PIN verifier is a DEV_PROFILE UX gate for connect approval when
+  enabled, settings changes, local reset, the current policy-update proposal
+  flow, and future sensitive writes. It is not root-material encryption or
+  physical extraction defense.
 
 ### Import Existing Mnemonic
 
@@ -265,12 +266,13 @@ persistent state `unprovisioned`. If display expiry, UI replacement, or another
 failure removes the panel, Firmware must wipe scratch and the user must start
 the local setup flow again.
 
-This DEV_PROFILE flow provides read-only `get_accounts` and device-local mnemonic
-recovery, but deliberately stops before signing, policy update, and
-USER_PROFILE secure provisioning. USER_PROFILE signing material remains blocked
-by the security-profile gates in `docs/SECURITY_MODEL.md`: secure firmware
-profile, encrypted storage, verified RNG readiness, destructive hardware
-rehearsal, and hardware smoke.
+This DEV_PROFILE provisioning flow provides read-only `get_accounts` and
+device-local mnemonic recovery, but deliberately stops before signing and
+USER_PROFILE secure provisioning. Custom reject-policy updates are a separate
+provisioned-state proposal flow, not part of provisioning. USER_PROFILE signing
+material remains blocked by the security-profile gates in
+`docs/SECURITY_MODEL.md`: secure firmware profile, encrypted storage, verified
+RNG readiness, destructive hardware rehearsal, and hardware smoke.
 
 No destructive reset or reprovisioning protocol request is implemented.
 StackChan CoreS3 source implements settings actions as normal device-local UX
@@ -316,13 +318,13 @@ reset UI or reset-state changes. Device-local Recover was manually smoke-tested
 on StackChan CoreS3 during the recovery-entry slice.
 
 The next work after this provisioning foundation is not another provisioning
-step. The dependency order is: finish the policy facts / method adapter boundary,
-define and implement authorized custom policy update, then connect concrete
-signing methods such as Sui `sign_transaction`. The custom policy update
-contract is specified as a future Firmware-owned proposal flow, not as a direct
-state setter: Gateway/Admin may submit a bounded proposal, but Firmware must
-validate it, require device-local approval, and commit it through rollback-safe
-storage. Sui `sign_personal_message`, signing APIs, policy update, and
+step. The dependency order is: keep the policy facts / method adapter boundary
+stable, use the Firmware-owned `propose_policy_update` flow for custom
+reject-policy updates, then connect concrete signing methods such as Sui
+`sign_transaction`. Policy update remains a proposal flow, not a direct state
+setter: Gateway/Admin may submit a bounded proposal, but Firmware validates it,
+requires device-local approval, and commits it through rollback-safe storage.
+Sui `sign_personal_message`, signing APIs, the local Admin Page, and
 USER_PROFILE secure provisioning are not implemented.
 
 ## Completion Criteria

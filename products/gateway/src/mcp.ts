@@ -10,6 +10,7 @@ import {
   GET_APPROVAL_HISTORY_SESSION_ENDED_REASONS,
   GET_CAPABILITIES_SESSION_ENDED_REASONS,
   GET_POLICY_SESSION_ENDED_REASONS,
+  PROPOSE_POLICY_UPDATE_SESSION_ENDED_REASONS,
   GatewayCore,
   MAX_IDENTIFY_DURATION_MS,
   type ConnectDeviceResult,
@@ -21,6 +22,7 @@ import {
   type GetApprovalHistoryResult,
   type GetCapabilitiesResult,
   type GetPolicyResult,
+  type ProposePolicyUpdateResult,
   type SetDeviceMetadataResult,
 } from "./core.js";
 import { GatewayError, toGatewayError } from "./errors.js";
@@ -44,6 +46,7 @@ import {
   MAX_POLICY_RULE_COUNT,
   METHOD_RESULT_ERROR_MESSAGES,
   POLICY_ID_PATTERN,
+  POLICY_UPDATE_RESULT_STATUSES,
   SUI_ADDRESS_PATTERN,
   SUI_DERIVATION_PATH,
   UINT_DECIMAL_STRING_PATTERN,
@@ -481,6 +484,44 @@ const callMethodToolOutputShape = z.discriminatedUnion("source", [
   errorToolResultShape,
 ]);
 
+const policyUpdateResultPolicyShape = z.object({
+  policyHash: z.string().regex(POLICY_ID_PATTERN),
+  ruleCount: z.number().int().min(0).max(MAX_POLICY_RULE_COUNT),
+  highestAction: z.enum(APPROVAL_HISTORY_HIGHEST_ACTIONS),
+});
+const liveProposePolicyUpdateOutputShape = z
+  .object({
+    source: z.literal("live"),
+    deviceId: safeDeviceIdShape,
+    status: z.enum(POLICY_UPDATE_RESULT_STATUSES),
+    reasonCode: z.string().regex(APPROVAL_HISTORY_REASON_CODE_PATTERN),
+    policy: policyUpdateResultPolicyShape.optional(),
+  })
+  .refine((value) => (value.status === "invalid_policy") === (value.policy === undefined), {
+    message: "invalid_policy omits policy metadata; other policy update results include it",
+  });
+const notConnectedProposePolicyUpdateOutputShape = z.object({
+  source: z.literal("not_connected"),
+  deviceId: safeDeviceIdShape,
+  reason: z.literal("not_connected"),
+});
+const sessionEndedProposePolicyUpdateOutputShape = z.object({
+  source: z.literal("session_ended"),
+  deviceId: safeDeviceIdShape,
+  reason: z.enum(PROPOSE_POLICY_UPDATE_SESSION_ENDED_REASONS),
+});
+const proposePolicyUpdateSuccessOutputShape = z.discriminatedUnion("source", [
+  liveProposePolicyUpdateOutputShape,
+  notConnectedProposePolicyUpdateOutputShape,
+  sessionEndedProposePolicyUpdateOutputShape,
+]);
+const proposePolicyUpdateToolOutputShape = z.discriminatedUnion("source", [
+  liveProposePolicyUpdateOutputShape,
+  notConnectedProposePolicyUpdateOutputShape,
+  sessionEndedProposePolicyUpdateOutputShape,
+  errorToolResultShape,
+]);
+
 // get_device_status success is itself a live | cached union, which the SDK
 // output-schema model cannot represent, so this tool is the one registered
 // without an SDK outputSchema. The success union is still used at the run()
@@ -708,6 +749,20 @@ export const gatewayToolDefinitions = {
     },
     outputSchema: callMethodToolOutputShape,
     successOutputSchema: callMethodSuccessOutputShape,
+  },
+  proposePolicyUpdate: {
+    name: "propose_policy_update",
+    title: "Propose policy update",
+    description:
+      "Submit a bounded active-policy proposal to Agent-Q Firmware for device-local PIN approval. This is a request path only: Gateway and MCP do not store, apply, or decide policy, and Firmware returns the terminal policy_update_result.",
+    inputSchema: {
+      deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
+      purpose: purposeSchema.optional(),
+      policy: z.object({}).passthrough(),
+      timeoutMs: z.number().int().positive().max(MAX_APPROVAL_TIMEOUT_MS + 1000).optional(),
+    },
+    outputSchema: proposePolicyUpdateToolOutputShape,
+    successOutputSchema: proposePolicyUpdateSuccessOutputShape,
   },
 } as const;
 
@@ -938,6 +993,22 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
     async ({ deviceId, purpose, chain, method, params, timeoutMs }) =>
       run(gatewayToolDefinitions.callMethod.successOutputSchema, () =>
         core.callMethod({ deviceId, purpose, chain, method, params, timeoutMs }),
+      ),
+  );
+
+  server.registerTool(
+    gatewayToolDefinitions.proposePolicyUpdate.name,
+    {
+      title: gatewayToolDefinitions.proposePolicyUpdate.title,
+      description: gatewayToolDefinitions.proposePolicyUpdate.description,
+      inputSchema: gatewayToolDefinitions.proposePolicyUpdate.inputSchema,
+      // Success is a discriminated union (live | not_connected | session_ended),
+      // which the SDK outputSchema model cannot represent; it is sanitized at the
+      // run() boundary below instead.
+    },
+    async ({ deviceId, purpose, policy, timeoutMs }) =>
+      run(gatewayToolDefinitions.proposePolicyUpdate.successOutputSchema, () =>
+        core.proposePolicyUpdate({ deviceId, purpose, policy, timeoutMs }),
       ),
   );
 

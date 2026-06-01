@@ -747,6 +747,16 @@ bool store_default_policy()
     return true;
 }
 
+bool policy_store_digest_for_record(const uint8_t* record, size_t record_size, uint8_t* output, size_t output_size)
+{
+    return sha256_for_record(record, record_size, output, output_size);
+}
+
+bool policy_store_policy_id_for_record(const uint8_t* record, size_t record_size, char* output, size_t output_size)
+{
+    return policy_id_for_record(record, record_size, output, output_size);
+}
+
 AgentQPolicyStoreWriteResult store_active_policy_record(const uint8_t* record, size_t record_size)
 {
     if (!validate_policy_record(record, record_size)) {

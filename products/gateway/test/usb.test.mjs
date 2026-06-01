@@ -9,7 +9,7 @@ import {
   tryParseMatchingResponseLine,
   validateTimeoutMs,
 } from "../dist/usb.js";
-import { assertStatusResponse } from "../dist/protocol.js";
+import { assertPolicyUpdateResultResponse, assertStatusResponse } from "../dist/protocol.js";
 import { GatewayError } from "../dist/errors.js";
 
 const status = {
@@ -125,6 +125,34 @@ test("surfaces id-less Firmware error responses for the in-flight request", () =
       ),
     {
       code: "invalid_json",
+    },
+  );
+});
+
+test("ignores terminal responses for a different in-flight request id", () => {
+  const canceledPolicyUpdate = JSON.stringify({
+    id: "req_policy_update",
+    version: 1,
+    type: "error",
+    error: {
+      code: "invalid_session",
+      message: "Policy update session is unknown or already ended.",
+    },
+  });
+
+  assert.equal(
+    tryParseMatchingResponseLine(canceledPolicyUpdate, "req_disconnect", assertStatusResponse),
+    undefined,
+  );
+  assert.throws(
+    () =>
+      tryParseMatchingResponseLine(
+        canceledPolicyUpdate,
+        "req_policy_update",
+        assertPolicyUpdateResultResponse,
+      ),
+    {
+      code: "invalid_session",
     },
   );
 });

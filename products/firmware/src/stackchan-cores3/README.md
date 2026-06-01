@@ -26,10 +26,11 @@ The current implementation includes:
   `provisioned`. The current `methods` list is empty because signing methods are
   not implemented.
 - a USB JSONL `get_approval_history` request that returns bounded persistent
-  Firmware-authored method-decision metadata over an approved session. It is
-  read-only, rate-limits persistent writes to reduce flash wear, stores no raw
-  requests or secrets, and currently records only validated `call_method`
-  policy-rejected decisions.
+  Firmware-authored method-decision and policy-update terminal metadata over an
+  approved session. It is read-only, rate-limits method-decision persistent
+  writes to reduce flash wear, stores no raw requests or secrets, and currently
+  records validated `call_method` policy-rejected decisions plus recordable
+  `propose_policy_update` terminal results.
 - a USB JSONL `call_method` runtime skeleton. It requires material-backed
   `provisioned` state plus a matching active session, keeps unknown methods
   rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only
@@ -81,17 +82,22 @@ This is not the signing product yet. It reports read-only identity capability
 identity (`get_accounts`), and links a restricted host-tested Sui transaction
 facts parser plus a common stored-policy runtime boundary. The current
 `call_method` skeleton consumes the committed active policy decision
-only for Sui `sign_transaction` policy-decision smoke; it does not sign, update
-policy, expose MCP directly, or apply signing policy to produce signatures. It
-does persist bounded approval-history metadata for those method decisions. The
+only for Sui `sign_transaction` policy-decision smoke; it does not sign or
+apply signing policy to produce signatures. It also implements the
+Firmware-owned `propose_policy_update` admin method for bounded reject-policy
+proposals over an active session, local PIN approval, canonical active-policy
+commit, and required policy-update terminal history. It does not expose MCP
+directly; Gateway/MCP only submit requests and parse Firmware responses. It
+does persist bounded approval-history metadata for method decisions and policy
+update terminal records. The
 persisted values in this target implementation are the protocol `deviceId`,
 provisioning state flag, DEV_PROFILE root entropy blob after backup
 confirmation, canonical active policy slots plus commit metadata and a
 pending-write marker, a policy-update terminal marker, a DEV_PROFILE local PIN
 verifier, the optional connect-PIN setting, and the approval-history ring
-buffer. The normal product
-flow still installs only the default-reject policy because policy update
-authorization is not implemented.
+buffer. The normal provisioning flow still installs only the default-reject
+policy; custom policies enter only through the session-scoped
+`propose_policy_update` proposal path.
 
 The active policy store treats commit metadata write as the commit point. The
 write path classifies terminal state as applied, previous policy proven
@@ -145,7 +151,9 @@ tools/firmware/common/test_policy_v0.sh
 tools/firmware/stackchan-cores3/test_call_method_validation.sh
 tools/firmware/stackchan-cores3/test_method_runtime.sh
 tools/firmware/stackchan-cores3/test_policy_proposal_parser.sh
+tools/firmware/stackchan-cores3/test_policy_update_flow.sh
 tools/firmware/stackchan-cores3/test_policy_update_marker.sh
+tools/firmware/stackchan-cores3/test_prepare_sync.sh
 tools/firmware/stackchan-cores3/test_persistent_material.sh
 tools/firmware/stackchan-cores3/test_provisioning_state_store.sh
 tools/firmware/stackchan-cores3/test_local_auth.sh
@@ -182,8 +190,9 @@ verifies deny-by-default, `sign`/`reject`/`ask` decision calculation, default
 provider behavior, missing/invalid policy provider rejection, malformed policy
 rejection, and unsupported-facts rejection. StackChan CoreS3 consumes the
 committed active policy only for Sui `sign_transaction`
-policy-decision smoke; policy is not connected to physical approval, capability
-advertisement, policy update, or signing.
+policy-decision smoke; policy is not connected to signing or signing-request
+physical approval. Custom reject-policy updates enter separately through the
+Firmware-owned `propose_policy_update` proposal flow.
 
 The StackChan policy-store test is target-specific. It compiles the tracked
 `agent_q_policy_store.cpp` provider with ESP-IDF mbedTLS SHA-256 sources and
