@@ -14,6 +14,7 @@ import {
   DEFAULT_APPROVAL_TIMEOUT_MS,
   MAX_APPROVAL_TIMEOUT_MS,
   type Account,
+  type ApprovalHistoryRecord,
   type CapabilityChain,
   type ConnectResponse,
   type DeviceStatusSnapshot,
@@ -22,6 +23,7 @@ import {
   type PolicySummary,
   ProtocolError,
   type StatusResponse,
+  validateApprovalHistoryInput,
   validateCallMethodInput,
 } from "./protocol.js";
 import {
@@ -170,6 +172,8 @@ export const GET_CAPABILITIES_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED
 export type GetCapabilitiesSessionEndedReason = GetAccountsSessionEndedReason;
 export const GET_POLICY_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
 export type GetPolicySessionEndedReason = GetAccountsSessionEndedReason;
+export const GET_APPROVAL_HISTORY_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
+export type GetApprovalHistorySessionEndedReason = GetAccountsSessionEndedReason;
 export const CALL_METHOD_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
 export type CallMethodSessionEndedReason = GetAccountsSessionEndedReason;
 
@@ -199,6 +203,13 @@ export type GetPolicyResult =
   | { source: "live"; deviceId: string; policy: PolicySummary }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: GetPolicySessionEndedReason };
+
+// get_approval_history is read-only and session-scoped. Firmware owns the
+// stored decision records; Gateway validates and transports only bounded pages.
+export type GetApprovalHistoryResult =
+  | { source: "live"; deviceId: string; records: ApprovalHistoryRecord[]; hasMore: boolean }
+  | { source: "not_connected"; deviceId: string; reason: "not_connected" }
+  | { source: "session_ended"; deviceId: string; reason: GetApprovalHistorySessionEndedReason };
 
 // call_method is the common method path. The current runtime keeps
 // sessions/state gates intact, rejects unknown methods, and recognizes Sui
@@ -641,6 +652,60 @@ export class GatewayCore {
         scanTimeoutMs,
       );
       return { source: "live", deviceId: target.deviceId, policy: response.policy };
+    } catch (error) {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+  }
+
+  async getApprovalHistory(input: {
+    deviceId?: string;
+    purpose?: string;
+    limit?: number;
+    beforeSeq?: string;
+    timeoutMs?: number;
+  } = {}): Promise<GetApprovalHistoryResult> {
+    const params = validateApprovalHistoryInput({
+      limit: input.limit,
+      beforeSeq: input.beforeSeq,
+    });
+    const target = await this.resolveTargetDevice(input);
+    const scanTimeoutMs = validateTimeoutMs(input.timeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS);
+
+    const session = this.peekRuntimeSession(target.deviceId);
+    if (session === null) {
+      return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
+    }
+
+    let matchingPort: UsbStatusResult | undefined;
+    try {
+      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+    } catch (error) {
+      const reason = localSessionClearReason(error);
+      if (reason !== null) {
+        this.runtimeSessions.delete(target.deviceId);
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+
+    try {
+      const response = await this.usbDriver.getApprovalHistory(
+        matchingPort.portPath,
+        session.sessionId,
+        params,
+        scanTimeoutMs,
+      );
+      return {
+        source: "live",
+        deviceId: target.deviceId,
+        records: response.records,
+        hasMore: response.hasMore,
+      };
     } catch (error) {
       const reason = localSessionClearReason(error);
       if (reason !== null) {

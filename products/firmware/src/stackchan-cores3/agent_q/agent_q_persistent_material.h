@@ -31,6 +31,7 @@ enum class AgentQPersistentMaterialRuntimeFailure {
     local_reset_policy_wipe_failed,
     local_reset_local_auth_wipe_failed,
     local_reset_connect_setting_wipe_failed,
+    local_reset_approval_history_wipe_failed,
     local_reset_material_remaining,
     local_reset_state_storage_failed,
     local_reset_marker_clear_failed,
@@ -54,6 +55,7 @@ enum class AgentQPersistentMaterialWipeResult {
     policy_wipe_error,
     local_auth_wipe_error,
     connect_setting_wipe_error,
+    approval_history_wipe_error,
     material_remaining_error,
 };
 

@@ -2,6 +2,8 @@
 
 #include <ArduinoJson.h>
 
+#include "agent_q_approval_history.h"
+
 namespace agent_q {
 
 enum class AgentQMethodRuntimeStatus {
@@ -13,6 +15,17 @@ struct AgentQMethodRuntimeResult {
     AgentQMethodRuntimeStatus status;
     const char* code;
     const char* message;
+    bool has_approval_history;
+    struct {
+        AgentQApprovalHistoryDecision decision;
+        AgentQApprovalHistoryConfirmationKind confirmation_kind;
+        char chain[kAgentQApprovalHistoryChainSize];
+        char method[kAgentQApprovalHistoryMethodSize];
+        char reason_code[kAgentQApprovalHistoryReasonCodeSize];
+        char payload_digest[kAgentQApprovalHistoryDigestSize];
+        char policy_hash[kAgentQApprovalHistoryDigestSize];
+        char rule_ref[kAgentQApprovalHistoryRuleRefSize];
+    } approval_history;
 };
 
 AgentQMethodRuntimeResult evaluate_call_method(

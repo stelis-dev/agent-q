@@ -138,6 +138,30 @@ function defaultDriver(overrides = {}) {
         },
       };
     },
+    async getApprovalHistory() {
+      return {
+        id: "req_approval_history",
+        version: 1,
+        type: "approval_history",
+        records: [
+          {
+            seq: "1",
+            uptimeMs: "1200",
+            timeSource: "uptime",
+            eventKind: "method_decision",
+            decisionKind: "policy_rejected",
+            confirmationKind: "policy",
+            chain: "sui",
+            method: "sign_transaction",
+            reasonCode: "default_reject",
+            payloadDigest: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+            policyHash: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+            ruleRef: "default",
+          },
+        ],
+        hasMore: false,
+      };
+    },
     async callMethod() {
       return {
         id: "req_call_method",
@@ -1124,6 +1148,110 @@ test("getPolicy clears the local session when Firmware reports invalid_session",
   });
 });
 
+test("getApprovalHistory without a runtime session returns not_connected", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(store, defaultDriver());
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+
+    const result = await core.getApprovalHistory({});
+    assert.equal(result.source, "not_connected");
+    assert.equal(result.reason, "not_connected");
+    assert.equal(result.records, undefined);
+  });
+});
+
+test("getApprovalHistory returns Firmware-owned history and keeps the session", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(store, defaultDriver());
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.getApprovalHistory({ limit: 1, beforeSeq: "42" });
+    assert.equal(result.source, "live");
+    assert.equal(result.records.length, 1);
+    assert.equal(result.records[0].decisionKind, "policy_rejected");
+    assert.equal(result.records[0].reasonCode, "default_reject");
+    assert.equal(result.hasMore, false);
+
+    const listed = await core.listDevices();
+    assert.notEqual(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("getApprovalHistory validates pagination before USB live-port probing", async () => {
+  await withStore(async (store) => {
+    let listPortsCalls = 0;
+    let requestStatusCalls = 0;
+    let historyCalls = 0;
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async listPorts() {
+          listPortsCalls += 1;
+          return [
+            {
+              path: "/dev/cu.usbmodem1",
+              vendorId: "303a",
+              productId: "1001",
+              manufacturer: "Espressif",
+            },
+          ];
+        },
+        async requestStatus() {
+          requestStatusCalls += 1;
+          return status;
+        },
+        async getApprovalHistory() {
+          historyCalls += 1;
+          return {
+            id: "req_approval_history",
+            version: 1,
+            type: "approval_history",
+            records: [],
+            hasMore: false,
+          };
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    listPortsCalls = 0;
+    requestStatusCalls = 0;
+    historyCalls = 0;
+
+    await assert.rejects(() => core.getApprovalHistory({ limit: 5 }), { code: "invalid_params" });
+    assert.equal(listPortsCalls, 0);
+    assert.equal(requestStatusCalls, 0);
+    assert.equal(historyCalls, 0);
+  });
+});
+
+test("getApprovalHistory clears the local session when Firmware reports invalid_session", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async getApprovalHistory() {
+          throw new GatewayError("invalid_session", "Session is unknown or already ended.", false);
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.getApprovalHistory({});
+    assert.equal(result.source, "session_ended");
+    assert.equal(result.reason, "invalid_session");
+    const listed = await core.listDevices();
+    assert.equal(listed.devices[0].runtimeSession, null);
+  });
+});
+
 test("callMethod without a runtime session returns not_connected before validating method params", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(store, defaultDriver());
@@ -1152,6 +1280,30 @@ test("callMethod returns Firmware's rejected method_result and keeps the session
     assert.equal(result.source, "live");
     assert.equal(result.status, "rejected");
     assert.equal(result.error.code, "unsupported_method");
+
+    const listed = await core.listDevices();
+    assert.notEqual(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("callMethod propagates history_error without clearing the session", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async callMethod() {
+          throw new GatewayError("history_error", "Could not record method decision.", false);
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    await assert.rejects(
+      () => core.callMethod({ chain: "sui", method: "sign_transaction", params: signTransactionParams }),
+      { code: "history_error" },
+    );
 
     const listed = await core.listDevices();
     assert.notEqual(listed.devices[0].runtimeSession, null);

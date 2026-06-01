@@ -7,6 +7,7 @@ import {
   DISCONNECT_ENDED_REASONS,
   DISCONNECT_REASONS,
   GET_ACCOUNTS_SESSION_ENDED_REASONS,
+  GET_APPROVAL_HISTORY_SESSION_ENDED_REASONS,
   GET_CAPABILITIES_SESSION_ENDED_REASONS,
   GET_POLICY_SESSION_ENDED_REASONS,
   GatewayCore,
@@ -17,6 +18,7 @@ import {
   type DeviceStatusToolResult,
   type DisconnectDeviceResult,
   type GetAccountsResult,
+  type GetApprovalHistoryResult,
   type GetCapabilitiesResult,
   type GetPolicyResult,
   type SetDeviceMetadataResult,
@@ -28,7 +30,12 @@ import {
   CALL_METHOD_NAME_PATTERN,
   ED25519_PUBLIC_KEY_BASE64_PATTERN,
   AGENT_Q_POLICY_SCHEMA,
+  APPROVAL_HISTORY_CONFIRMATION_KINDS,
+  APPROVAL_HISTORY_DECISION_KINDS,
+  APPROVAL_HISTORY_REASON_CODE_PATTERN,
+  APPROVAL_HISTORY_RULE_REF_PATTERN,
   MAX_ACCOUNTS_PER_RESPONSE,
+  MAX_APPROVAL_HISTORY_RECORDS,
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
   MAX_APPROVAL_TIMEOUT_MS,
@@ -37,6 +44,8 @@ import {
   POLICY_ID_PATTERN,
   SUI_ADDRESS_PATTERN,
   SUI_DERIVATION_PATH,
+  UINT_DECIMAL_STRING_PATTERN,
+  isUint64DecimalString,
   isSuiAddressForPublicKey,
 } from "./protocol.js";
 import { SerialPortUsbDriver, MAX_SCAN_TIMEOUT_MS } from "./usb.js";
@@ -381,6 +390,48 @@ const getPolicyToolOutputShape = z.discriminatedUnion("source", [
   errorToolResultShape,
 ]);
 
+const approvalHistoryRecordShape = z.object({
+  seq: z.string().regex(UINT_DECIMAL_STRING_PATTERN).refine((value) => isUint64DecimalString(value)),
+  uptimeMs: z.string().regex(UINT_DECIMAL_STRING_PATTERN).refine((value) => isUint64DecimalString(value)),
+  timeSource: z.literal("uptime"),
+  eventKind: z.literal("method_decision"),
+  decisionKind: z.enum(APPROVAL_HISTORY_DECISION_KINDS),
+  confirmationKind: z.enum(APPROVAL_HISTORY_CONFIRMATION_KINDS),
+  chain: z.string().regex(CALL_METHOD_CHAIN_PATTERN),
+  method: z.string().regex(CALL_METHOD_NAME_PATTERN),
+  reasonCode: z.string().regex(APPROVAL_HISTORY_REASON_CODE_PATTERN),
+  payloadDigest: z.string().regex(POLICY_ID_PATTERN).optional(),
+  policyHash: z.string().regex(POLICY_ID_PATTERN).optional(),
+  ruleRef: z.string().regex(APPROVAL_HISTORY_RULE_REF_PATTERN).optional(),
+});
+const liveApprovalHistoryOutputShape = z.object({
+  source: z.literal("live"),
+  deviceId: safeDeviceIdShape,
+  records: z.array(approvalHistoryRecordShape).max(MAX_APPROVAL_HISTORY_RECORDS),
+  hasMore: z.boolean(),
+});
+const notConnectedApprovalHistoryOutputShape = z.object({
+  source: z.literal("not_connected"),
+  deviceId: safeDeviceIdShape,
+  reason: z.literal("not_connected"),
+});
+const sessionEndedApprovalHistoryOutputShape = z.object({
+  source: z.literal("session_ended"),
+  deviceId: safeDeviceIdShape,
+  reason: z.enum(GET_APPROVAL_HISTORY_SESSION_ENDED_REASONS),
+});
+const getApprovalHistorySuccessOutputShape = z.discriminatedUnion("source", [
+  liveApprovalHistoryOutputShape,
+  notConnectedApprovalHistoryOutputShape,
+  sessionEndedApprovalHistoryOutputShape,
+]);
+const getApprovalHistoryToolOutputShape = z.discriminatedUnion("source", [
+  liveApprovalHistoryOutputShape,
+  notConnectedApprovalHistoryOutputShape,
+  sessionEndedApprovalHistoryOutputShape,
+  errorToolResultShape,
+]);
+
 const methodResultErrorShape = z.object({
   code: z.enum(Object.keys(METHOD_RESULT_ERROR_MESSAGES) as [keyof typeof METHOD_RESULT_ERROR_MESSAGES, ...Array<keyof typeof METHOD_RESULT_ERROR_MESSAGES>]),
   message: z.enum(Object.values(METHOD_RESULT_ERROR_MESSAGES) as [string, ...string[]]),
@@ -612,6 +663,21 @@ export const gatewayToolDefinitions = {
     outputSchema: getPolicyToolOutputShape,
     successOutputSchema: getPolicySuccessOutputShape,
   },
+  getApprovalHistory: {
+    name: "get_approval_history",
+    title: "Get approval history",
+    description:
+      "Read a bounded page of Firmware-owned approval and method-decision history over an approved session. This is not on-chain history and is read-only: no raw requests, session ids, private material, PINs, gateway names, or full policy documents are returned.",
+    inputSchema: {
+      deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
+      purpose: purposeSchema.optional(),
+      limit: z.number().int().positive().max(MAX_APPROVAL_HISTORY_RECORDS).optional(),
+      beforeSeq: z.string().regex(UINT_DECIMAL_STRING_PATTERN).refine((value) => isUint64DecimalString(value)).optional(),
+      timeoutMs: scanTimeoutSchema,
+    },
+    outputSchema: getApprovalHistoryToolOutputShape,
+    successOutputSchema: getApprovalHistorySuccessOutputShape,
+  },
   callMethod: {
     name: "call_method",
     title: "Call method",
@@ -829,6 +895,22 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
   );
 
   server.registerTool(
+    gatewayToolDefinitions.getApprovalHistory.name,
+    {
+      title: gatewayToolDefinitions.getApprovalHistory.title,
+      description: gatewayToolDefinitions.getApprovalHistory.description,
+      inputSchema: gatewayToolDefinitions.getApprovalHistory.inputSchema,
+      // Success is a discriminated union (live | not_connected | session_ended),
+      // which the SDK outputSchema model cannot represent; it is sanitized at the
+      // run() boundary below instead.
+    },
+    async ({ deviceId, purpose, limit, beforeSeq, timeoutMs }) =>
+      run(gatewayToolDefinitions.getApprovalHistory.successOutputSchema, () =>
+        core.getApprovalHistory({ deviceId, purpose, limit, beforeSeq, timeoutMs }),
+      ),
+  );
+
+  server.registerTool(
     gatewayToolDefinitions.callMethod.name,
     {
       title: gatewayToolDefinitions.callMethod.title,
@@ -933,7 +1015,9 @@ type StructuredToolResult =
   | CallMethodResult
   | DisconnectDeviceResult
   | GetAccountsResult
-  | GetCapabilitiesResult;
+  | GetApprovalHistoryResult
+  | GetCapabilitiesResult
+  | GetPolicyResult;
 
 // Must only ever receive an already-sanitized success result or a public error
 // result. Both structuredContent and the text mirror are derived from the same

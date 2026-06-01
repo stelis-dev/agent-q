@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include <memory>
 #include "agent_q_avatar_overlay_drawing.h"
+#include "agent_q_approval_history.h"
 #include "agent_q_bip39.h"
 #include "agent_q_bip39_wordlist.h"
 #include "agent_q_call_method_validation.h"
@@ -28,6 +29,7 @@
 #include "driver/usb_serial_jtag.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -76,7 +78,7 @@ constexpr uint32_t kLocalProcessingDisplayMs = 900;
 constexpr uint32_t kSettingsTouchEntryMs = 900;
 constexpr uint32_t kUsbHostLinkCheckMs = 10;
 constexpr size_t kLineBufferSize = 1024;
-constexpr size_t kResponseBufferSize = 512;
+constexpr size_t kResponseBufferSize = 4096;
 constexpr size_t kMaxRequestIdSize = 80;
 constexpr size_t kDeviceIdSize = 37;
 constexpr size_t kIdentifyCodeSize = 5;
@@ -385,9 +387,17 @@ bool is_printable_ascii_gateway_name(const char* value)
     return true;
 }
 
+void format_uint64_decimal(uint64_t value, char* output, size_t output_size)
+{
+    if (output == nullptr || output_size == 0) {
+        return;
+    }
+    snprintf(output, output_size, "%llu", static_cast<unsigned long long>(value));
+}
+
 void write_json_document(JsonDocument& response)
 {
-    char buffer[kResponseBufferSize];
+    static char buffer[kResponseBufferSize];
     size_t len = serializeJson(response, buffer, sizeof(buffer) - 2);
     buffer[len++] = '\n';
     buffer[len] = '\0';
@@ -553,6 +563,96 @@ bool write_policy_response(const char* id)
     policy_json["defaultAction"] = policy.default_action;
     policy_json["ruleCount"] = policy.rule_count;
     write_json_document(response);
+    return true;
+}
+
+bool write_approval_history_response(const char* id, uint64_t before_sequence, size_t limit)
+{
+    agent_q::AgentQApprovalHistoryPage page = {};
+    const agent_q::AgentQApprovalHistoryReadResult read_result =
+        agent_q::approval_history_read_page(before_sequence, limit, &page);
+    if (read_result != agent_q::AgentQApprovalHistoryReadResult::ok) {
+        return false;
+    }
+
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "approval_history";
+    response["hasMore"] = page.has_more;
+    JsonArray records = response["records"].to<JsonArray>();
+    for (size_t index = 0; index < page.count; ++index) {
+        const agent_q::AgentQApprovalHistoryRecord& source = page.records[index];
+        JsonObject record = records.add<JsonObject>();
+        char sequence[21] = {};
+        char uptime_ms[21] = {};
+        format_uint64_decimal(source.sequence, sequence, sizeof(sequence));
+        format_uint64_decimal(source.uptime_ms, uptime_ms, sizeof(uptime_ms));
+        record["seq"] = sequence;
+        record["uptimeMs"] = uptime_ms;
+        record["timeSource"] = "uptime";
+        record["eventKind"] = "method_decision";
+        record["decisionKind"] = agent_q::approval_history_decision_to_string(source.decision);
+        record["confirmationKind"] =
+            agent_q::approval_history_confirmation_kind_to_string(source.confirmation_kind);
+        record["chain"] = source.chain;
+        record["method"] = source.method;
+        record["reasonCode"] = source.reason_code;
+        if (source.payload_digest[0] != '\0') {
+            record["payloadDigest"] = source.payload_digest;
+        }
+        if (source.policy_hash[0] != '\0') {
+            record["policyHash"] = source.policy_hash;
+        }
+        if (source.rule_ref[0] != '\0') {
+            record["ruleRef"] = source.rule_ref;
+        }
+    }
+    write_json_document(response);
+    return true;
+}
+
+bool parse_approval_history_params(JsonDocument& request, size_t* limit, uint64_t* before_sequence)
+{
+    if (limit == nullptr || before_sequence == nullptr) {
+        return false;
+    }
+    *limit = agent_q::kAgentQApprovalHistoryPageMax;
+    *before_sequence = 0;
+
+    JsonVariant params = request["params"];
+    if (params.isNull()) {
+        return true;
+    }
+    if (!params.is<JsonObject>()) {
+        return false;
+    }
+
+    JsonObject params_object = params.as<JsonObject>();
+    for (JsonPair pair : params_object) {
+        const char* key = pair.key().c_str();
+        JsonVariant value = pair.value();
+        if (strcmp(key, "limit") == 0) {
+            if (!value.is<unsigned int>()) {
+                return false;
+            }
+            const unsigned int requested_limit = value.as<unsigned int>();
+            if (requested_limit == 0 ||
+                requested_limit > agent_q::kAgentQApprovalHistoryPageMax) {
+                return false;
+            }
+            *limit = requested_limit;
+            continue;
+        }
+        if (strcmp(key, "beforeSeq") == 0) {
+            const char* before_value = value.as<const char*>();
+            if (!agent_q::approval_history_parse_sequence(before_value, before_sequence)) {
+                return false;
+            }
+            continue;
+        }
+        return false;
+    }
     return true;
 }
 
@@ -1708,6 +1808,7 @@ void commit_local_reset_if_ready()
         case agent_q::AgentQLocalResetCommitResult::policy_wipe_error:
         case agent_q::AgentQLocalResetCommitResult::local_auth_wipe_error:
         case agent_q::AgentQLocalResetCommitResult::connect_setting_wipe_error:
+        case agent_q::AgentQLocalResetCommitResult::approval_history_wipe_error:
         case agent_q::AgentQLocalResetCommitResult::material_remaining_error:
         case agent_q::AgentQLocalResetCommitResult::state_storage_error:
             ESP_LOGE(kTag, "Local reset failed and device entered consistency error");
@@ -3338,6 +3439,40 @@ void handle_line(const char* line)
         return;
     }
 
+    if (strcmp(type, "get_approval_history") == 0) {
+        // get_approval_history is read-only and session-scoped. It returns
+        // Firmware-authored method decision metadata only; raw requests,
+        // session ids, private material, PINs, and policy documents are never
+        // stored or returned.
+        if (!provisioned_material_ready()) {
+            write_error_response(id, "invalid_state", "Approval history is available only after provisioning is complete.");
+            return;
+        }
+        if (write_busy_if_pending_or_local_flow_active(id, true)) {
+            return;
+        }
+
+        const char* session_id = request["sessionId"] | "";
+        if (!require_active_matching_session(id, session_id)) {
+            return;
+        }
+
+        size_t limit = agent_q::kAgentQApprovalHistoryPageMax;
+        uint64_t before_sequence = 0;
+        if (!parse_approval_history_params(request, &limit, &before_sequence)) {
+            write_error_response(id, "invalid_params", "Approval history params are invalid.");
+            return;
+        }
+
+        if (!write_approval_history_response(id, before_sequence, limit)) {
+            write_error_response(id, "history_error", "Approval history is unavailable.");
+            ESP_LOGW(kTag, "get_approval_history unavailable: id=%s", id);
+            return;
+        }
+        ESP_LOGI(kTag, "get_approval_history: id=%s", id);
+        return;
+    }
+
     if (strcmp(type, "call_method") == 0) {
         // Runtime skeleton only: Firmware enforces state/session gates, recognizes
         // Sui sign_transaction for rejected policy-decision smoke, and does not
@@ -3373,6 +3508,30 @@ void handle_line(const char* line)
         const char* method = request["method"] | "";
         const agent_q::AgentQMethodRuntimeResult method_result =
             agent_q::evaluate_call_method(chain, method, request["params"]);
+        if (method_result.has_approval_history) {
+            const auto& history = method_result.approval_history;
+            const agent_q::AgentQApprovalHistoryAppendInput append_input{
+                history.decision,
+                history.confirmation_kind,
+                history.chain,
+                history.method,
+                history.reason_code,
+                history.payload_digest[0] != '\0' ? history.payload_digest : nullptr,
+                history.policy_hash[0] != '\0' ? history.policy_hash : nullptr,
+                history.rule_ref[0] != '\0' ? history.rule_ref : nullptr,
+            };
+            if (!agent_q::approval_history_append(
+                    append_input,
+                    static_cast<uint64_t>(esp_timer_get_time() / 1000LL))) {
+                ESP_LOGW(kTag, "Approval history append failed: id=%s chain=%s method=%s code=%s",
+                         id,
+                         chain,
+                         method,
+                         method_result.code);
+                write_error_response(id, "history_error", "Could not record method decision.");
+                return;
+            }
+        }
         if (method_result.status == agent_q::AgentQMethodRuntimeStatus::invalid_params) {
             write_error_response(id, method_result.code, method_result.message);
             return;

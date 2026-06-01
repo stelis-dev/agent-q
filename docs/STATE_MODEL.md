@@ -79,8 +79,8 @@ local capability. The current StackChan CoreS3 source does not expose a USB
 reset or debug recovery request. Its local settings paths are device-local UX
 only: provisioned devices can enter local settings, verify the stored local PIN
 to change the local PIN verifier, or choose Reset, verify the stored local PIN,
-and then wipe root material, active policy, PIN verifier, runtime session, and
-provisioning state before returning to `unprovisioned`.
+and then wipe root material, active policy, PIN verifier, approval history,
+runtime session, and provisioning state before returning to `unprovisioned`.
 Firmware records an internal reset-pending marker before destructive wipe starts
 so an interrupted reset can resume at boot. The same destructive wipe machinery
 is also used by a device-local erase-only recovery from the `error` state.
@@ -96,7 +96,7 @@ hardware and must be documented in each target's `SPEC.md`.
 
 | Layer | Examples | Owner | May gate protocol APIs? |
 |---|---|---|---:|
-| Persistent device state | provisioning state, stored root material, policy, local PIN verifier, account availability | Firmware | Yes |
+| Persistent device state | provisioning state, stored root material, policy, local PIN verifier, approval history, account availability | Firmware | Yes |
 | Volatile sensitive scratch | generated recovery phrase, setup entropy, pending backup confirmation, typed PIN digits | Firmware | Yes |
 | Local PIN authorization state | connect/settings/reset PIN entry purpose, verification stage, timeout, RAM-only lockout | Firmware | Yes |
 | Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or connect PIN approval; timeout; requested action | Firmware | Yes |
@@ -129,6 +129,8 @@ Rejected:
   device is `provisioned`
 - `get_capabilities`
 - `get_accounts`
+- `get_policy`
+- `get_approval_history`
 - `call_method`
 - USB provisioning/reset/diagnostic requests
 - policy read/write
@@ -155,6 +157,8 @@ Rejected:
 
 - `get_capabilities`
 - `get_accounts`
+- `get_policy`
+- `get_approval_history`
 - `call_method`
 - policy read/write
 - signing
@@ -193,12 +197,13 @@ Allowed:
 - `get_capabilities` (read-only, session-scoped)
 - `get_accounts` (read-only, session-scoped)
 - `get_policy` (read-only, session-scoped)
+- `get_approval_history` (read-only, session-scoped)
 - `call_method` runtime skeleton (session-scoped; unknown methods reject, and Sui
   `sign_transaction` is recognized only for rejected policy-decision smoke)
 - device-local settings reset/material wipe after a local Settings Reset action
   and stored PIN verification; successful reset also erases the local
-  connect-approval setting so the next setup returns to the missing-key
-  secure default
+  connect-approval setting and approval history so the next setup returns to
+  the missing-key secure default without prior decision records
 - device-local settings toggle for whether USB `connect` requires local PIN;
   changing the toggle requires stored PIN verification
 - policy update only after an authorization/update surface is implemented
@@ -208,7 +213,8 @@ request signs, rejects, or asks. In the current StackChan CoreS3
 implementation, `provisioned` enables `connect`, `disconnect`, read-only
 `get_capabilities` (`methods: []`), read-only `get_accounts` (Sui Ed25519
 account 0), read-only `get_policy` for the active default-reject policy summary,
-the `call_method` runtime skeleton (unknown methods rejected with
+read-only `get_approval_history` for Firmware-owned persistent decision
+metadata, the `call_method` runtime skeleton (unknown methods rejected with
 `unsupported_method`, while Sui `sign_transaction` policy-decision smoke consumes
 the active policy and returns only rejected method results); signing remains
 unavailable.
@@ -244,7 +250,8 @@ Allowed:
   cleared, Firmware returns `invalid_session`
 - device-local erase-only recovery after destructive on-device confirmation;
   this wipes root material, active policy, PIN verifier, local connect setting,
-  runtime session, and provisioning state before returning to `unprovisioned`
+  approval history, runtime session, and provisioning state before returning to
+  `unprovisioned`
 
 Rejected:
 
@@ -252,6 +259,7 @@ Rejected:
 - `get_capabilities`
 - `get_accounts`
 - `get_policy`
+- `get_approval_history`
 - `call_method`
 - policy update
 - signing
@@ -294,6 +302,7 @@ This state is reserved until an unlock model is implemented.
 | `get_capabilities` | X | X | O | X | X | Firmware |
 | `get_accounts` | X | X | O | X | X | Firmware |
 | `get_policy` | X | X | O | X | X | Firmware |
+| `get_approval_history` | X | X | O | X | X | Firmware |
 | `call_method` | X | X | O | X | X | Firmware |
 | policy read | X | X | O | X | X | Firmware |
 | policy update | X | X | X (future: authorization required) | X | X | Firmware |

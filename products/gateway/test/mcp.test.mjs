@@ -11,6 +11,7 @@ const expectedToolNames = [
   "connect_device",
   "disconnect_device",
   "get_accounts",
+  "get_approval_history",
   "get_capabilities",
   "get_device_status",
   "get_policy",
@@ -132,6 +133,29 @@ const noOpCore = {
         defaultAction: "reject",
         ruleCount: 0,
       },
+    };
+  },
+  async getApprovalHistory() {
+    return {
+      source: "live",
+      deviceId: "device-1",
+      records: [
+        {
+          seq: "1",
+          uptimeMs: "1200",
+          timeSource: "uptime",
+          eventKind: "method_decision",
+          decisionKind: "policy_rejected",
+          confirmationKind: "policy",
+          chain: "sui",
+          method: "sign_transaction",
+          reasonCode: "default_reject",
+          payloadDigest: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+          policyHash: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+          ruleRef: "default",
+        },
+      ],
+      hasMore: false,
     };
   },
   async callMethod() {
@@ -356,6 +380,7 @@ const dispatchCases = [
   { name: "get_capabilities", arguments: {} },
   { name: "get_accounts", arguments: {} },
   { name: "get_policy", arguments: {} },
+  { name: "get_approval_history", arguments: {} },
   { name: "call_method", arguments: { chain: "sui", method: "sign_transaction", params: {} } },
 ];
 
@@ -426,6 +451,18 @@ test("get_policy dispatch returns the active policy summary without a session to
     );
     assert.equal(result.structuredContent.policy.defaultAction, "reject");
     assert.equal(result.structuredContent.policy.ruleCount, 0);
+    assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
+  });
+});
+
+test("get_approval_history dispatch returns bounded decision records without a session token", async () => {
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "get_approval_history", arguments: { limit: 1 } });
+    assert.equal(result.structuredContent.source, "live");
+    assert.equal(result.structuredContent.records.length, 1);
+    assert.equal(result.structuredContent.records[0].eventKind, "method_decision");
+    assert.equal(result.structuredContent.records[0].decisionKind, "policy_rejected");
+    assert.equal(result.structuredContent.records[0].reasonCode, "default_reject");
     assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
   });
 });
@@ -620,6 +657,31 @@ const leakyCore = {
       ...SECRET_EXTRAS,
     };
   },
+  async getApprovalHistory() {
+    return {
+      source: "live",
+      deviceId: "device-1",
+      records: [
+        {
+          seq: "1",
+          uptimeMs: "1200",
+          timeSource: "uptime",
+          eventKind: "method_decision",
+          decisionKind: "policy_rejected",
+          confirmationKind: "policy",
+          chain: "sui",
+          method: "sign_transaction",
+          reasonCode: "default_reject",
+          payloadDigest: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+          policyHash: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+          ruleRef: "default",
+          ...SECRET_EXTRAS,
+        },
+      ],
+      hasMore: false,
+      ...SECRET_EXTRAS,
+    };
+  },
   async callMethod() {
     return {
       source: "live",
@@ -708,6 +770,52 @@ test("get_policy rejects unsupported live policy shapes", async () => {
   };
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "get_policy", arguments: {} });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, "internal_output_error");
+  }, malformedCore);
+});
+
+test("get_approval_history unreachable shape (live without records) cannot leak out as a success", async () => {
+  const malformedCore = {
+    ...noOpCore,
+    async getApprovalHistory() {
+      return { source: "live", deviceId: "device-1", hasMore: false };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "get_approval_history", arguments: {} });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, "internal_output_error");
+  }, malformedCore);
+});
+
+test("get_approval_history rejects malformed records", async () => {
+  const malformedCore = {
+    ...noOpCore,
+    async getApprovalHistory() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        records: [
+          {
+            seq: "1",
+            uptimeMs: "1200",
+            timeSource: "uptime",
+            eventKind: "session_event",
+            decisionKind: "policy_rejected",
+            confirmationKind: "policy",
+            chain: "sui",
+            method: "sign_transaction",
+            reasonCode: "default_reject",
+            payloadDigest: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+          },
+        ],
+        hasMore: false,
+      };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "get_approval_history", arguments: {} });
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.error.code, "internal_output_error");
   }, malformedCore);
@@ -827,6 +935,10 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
     },
     {
+      name: "get_approval_history",
+      result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
+    },
+    {
       name: "call_method",
       result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
     },
@@ -840,6 +952,10 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
     },
     {
       name: "get_policy",
+      result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
+    },
+    {
+      name: "get_approval_history",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
     {
@@ -861,6 +977,9 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
         return testCase.result;
       },
       async getPolicy() {
+        return testCase.result;
+      },
+      async getApprovalHistory() {
         return testCase.result;
       },
       async callMethod() {

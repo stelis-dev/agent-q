@@ -88,12 +88,36 @@ extern "C" {
 namespace {
 
 int failures = 0;
+agent_q::AgentQPolicyAction g_policy_action = agent_q::AgentQPolicyAction::reject;
+agent_q::AgentQPolicyCriterion g_policy_criterion = {
+    agent_q::AgentQPolicyCriterionType::network,
+    agent_q::AgentQPolicyOperator::eq,
+    "devnet",
+    nullptr,
+    0,
+};
+agent_q::AgentQPolicyRule g_policy_rule = {
+    "test_rule",
+    "sui",
+    "sign_transaction",
+    agent_q::AgentQPolicyAction::reject,
+    &g_policy_criterion,
+    1,
+};
 
 void expect(bool condition, const char* label)
 {
     if (!condition) {
         fprintf(stderr, "FAILED: %s\n", label);
         ++failures;
+    }
+}
+
+void clobber_stack()
+{
+    volatile char buffer[4096] = {};
+    for (size_t index = 0; index < sizeof(buffer); ++index) {
+        buffer[index] = static_cast<char>(index & 0x7F);
     }
 }
 
@@ -174,11 +198,12 @@ bool load_default_policy(AgentQPolicyDocument* out, void*)
     if (out == nullptr) {
         return false;
     }
+    ::g_policy_rule.action = ::g_policy_action;
     *out = AgentQPolicyDocument{
         kAgentQPolicyV0Schema,
         AgentQPolicyAction::reject,
-        nullptr,
-        0,
+        ::g_policy_action == AgentQPolicyAction::reject ? nullptr : &::g_policy_rule,
+        ::g_policy_action == AgentQPolicyAction::reject ? 0U : 1U,
     };
     return true;
 }
@@ -203,9 +228,25 @@ AgentQPolicyProvider active_policy_provider()
     return AgentQPolicyProvider{load_default_policy, nullptr};
 }
 
-bool read_active_policy_summary(AgentQStoredPolicySummary*)
+bool read_active_policy_summary(AgentQStoredPolicySummary* out)
 {
-    return false;
+    if (out == nullptr) {
+        return false;
+    }
+    out->schema = kAgentQStoredPolicySchema;
+    memcpy(out->policy_id, "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab", kAgentQPolicyIdSize);
+    out->default_action = "reject";
+    out->rule_count = 0;
+    return true;
+}
+
+bool approval_history_digest_payload(const uint8_t*, size_t, char* output, size_t output_size)
+{
+    if (output == nullptr || output_size != kAgentQApprovalHistoryDigestSize) {
+        return false;
+    }
+    memcpy(output, "sha256:0000000000000000000000000000000000000000000000000000000000000000", kAgentQApprovalHistoryDigestSize);
+    return true;
 }
 
 }  // namespace agent_q
@@ -224,10 +265,32 @@ int main(int argc, char** argv)
 
     const agent_q::AgentQMethodRuntimeResult policy_result =
         agent_q::evaluate_call_method("sui", "sign_transaction", valid_params.as<JsonVariant>());
+    clobber_stack();
     expect(policy_result.status == agent_q::AgentQMethodRuntimeStatus::rejected,
            "valid Sui transfer returns method rejection, not protocol error");
     expect(strcmp(policy_result.code, "policy_rejected") == 0,
            "default policy rejects valid Sui transfer");
+    expect(policy_result.has_approval_history,
+           "default policy rejection is recordable in approval history");
+    expect(policy_result.approval_history.decision == agent_q::AgentQApprovalHistoryDecision::policy_rejected,
+           "default policy rejection history decision kind");
+    expect(strcmp(policy_result.approval_history.payload_digest,
+                  "sha256:0000000000000000000000000000000000000000000000000000000000000000") == 0,
+           "default policy rejection history owns payload digest after return");
+    expect(strcmp(policy_result.approval_history.policy_hash,
+                  "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab") == 0,
+           "default policy rejection history owns policy hash after return");
+
+    ::g_policy_action = agent_q::AgentQPolicyAction::sign;
+    const agent_q::AgentQMethodRuntimeResult sign_not_implemented =
+        agent_q::evaluate_call_method("sui", "sign_transaction", valid_params.as<JsonVariant>());
+    expect(sign_not_implemented.status == agent_q::AgentQMethodRuntimeStatus::rejected,
+           "unimplemented sign policy action returns method rejection");
+    expect(strcmp(sign_not_implemented.code, "policy_action_not_implemented") == 0,
+           "unimplemented sign policy action reports policy_action_not_implemented");
+    expect(!sign_not_implemented.has_approval_history,
+           "unimplemented future policy action is not persisted as approval history yet");
+    ::g_policy_action = agent_q::AgentQPolicyAction::reject;
 
     const agent_q::AgentQMethodRuntimeResult unsupported =
         agent_q::evaluate_call_method("sui", "unknown", valid_params.as<JsonVariant>());
@@ -235,6 +298,8 @@ int main(int argc, char** argv)
            "unknown method returns method rejection");
     expect(strcmp(unsupported.code, "unsupported_method") == 0,
            "unknown method reports unsupported_method");
+    expect(!unsupported.has_approval_history,
+           "unsupported method is not persisted as approval history");
 
     JsonDocument invalid_params = parse_json(
         "invalid params",
@@ -245,6 +310,8 @@ int main(int argc, char** argv)
            "invalid Sui params return protocol invalid_params");
     expect(strcmp(invalid.code, "invalid_params") == 0,
            "invalid Sui params code is invalid_params");
+    expect(!invalid.has_approval_history,
+           "invalid Sui params are not persisted as approval history");
 
     if (failures != 0) {
         fprintf(stderr, "%d method runtime test(s) failed\n", failures);

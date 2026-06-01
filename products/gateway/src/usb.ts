@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { GatewayError } from "./errors.js";
 import {
   assertAccountsResponse,
+  assertApprovalHistoryResponse,
   assertCapabilitiesResponse,
   assertMethodResultResponse,
   assertPolicyResponse,
@@ -15,6 +16,7 @@ import {
   makeDisconnectRequest,
   makeGetCapabilitiesRequest,
   makeGetAccountsRequest,
+  makeGetApprovalHistoryRequest,
   makeIdentifyDeviceRequest,
   makeGetPolicyRequest,
   makeGetStatusRequest,
@@ -23,6 +25,7 @@ import {
   ProtocolError,
   serializeRequest,
   type AccountsResponse,
+  type ApprovalHistoryResponse,
   type CapabilitiesResponse,
   type ConnectResponse,
   type DisconnectResponse,
@@ -115,6 +118,12 @@ export interface UsbSerialDriver {
     sessionId: string,
     timeoutMs: number,
   ): Promise<PolicyResponse>;
+  getApprovalHistory(
+    portPath: string,
+    sessionId: string,
+    params: { limit?: number; beforeSeq?: string },
+    timeoutMs: number,
+  ): Promise<ApprovalHistoryResponse>;
   callMethod(
     portPath: string,
     sessionId: string,
@@ -185,6 +194,15 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     timeoutMs: number,
   ): Promise<PolicyResponse> {
     return getPolicyOverSerial(portPath, sessionId, timeoutMs);
+  }
+
+  async getApprovalHistory(
+    portPath: string,
+    sessionId: string,
+    params: { limit?: number; beforeSeq?: string },
+    timeoutMs: number,
+  ): Promise<ApprovalHistoryResponse> {
+    return getApprovalHistoryOverSerial(portPath, sessionId, params, timeoutMs);
   }
 
   async callMethod(
@@ -323,6 +341,12 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         driver.getPolicy(portPath, sessionId, timeoutMs),
         timeoutMs,
         "USB get policy exceeded its timeout.",
+      ),
+    getApprovalHistory: (portPath, sessionId, params, timeoutMs) =>
+      raceDeadline(
+        driver.getApprovalHistory(portPath, sessionId, params, timeoutMs),
+        timeoutMs,
+        "USB get approval history exceeded its timeout.",
       ),
     callMethod: (portPath, sessionId, chain, method, params, timeoutMs) =>
       raceDeadline(
@@ -478,6 +502,16 @@ async function getPolicyOverSerial(
 ): Promise<PolicyResponse> {
   const request = makeGetPolicyRequest(sessionId);
   return requestOverSerial(portPath, request, timeoutMs, (response) => assertPolicyResponse(response));
+}
+
+async function getApprovalHistoryOverSerial(
+  portPath: string,
+  sessionId: string,
+  params: { limit?: number; beforeSeq?: string },
+  timeoutMs: number,
+): Promise<ApprovalHistoryResponse> {
+  const request = makeGetApprovalHistoryRequest(sessionId, params);
+  return requestOverSerial(portPath, request, timeoutMs, (response) => assertApprovalHistoryResponse(response));
 }
 
 async function callMethodOverSerial(

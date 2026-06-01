@@ -47,7 +47,7 @@ Legend:
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `connect` | O | Source accepts connection only after material-backed `provisioned` state. Default connect approval requires local PIN entry on device; local settings can switch connect approval to physical Confirm after PIN verification. The session is RAM-only and does not authorize signing. Manual hardware smoke verified local PIN approval and fresh reconnect after USB detach/replug. Rerun hardware smoke after setup, session, or material-storage changes. |
 | `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. It returns `busy` while local setup/PIN/reset or sensitive settings subflow state is active, including Change PIN, so external session teardown cannot interleave with device-local sensitive UI. Idle Settings menu does not block disconnect. Rerun hardware smoke after setup, session, or material-storage changes. |
-| Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: connect PIN toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, connect-approval setting, session, and returns to `unprovisioned`. Source also implements device-local destructive erase-only recovery from persistent-material consistency `error`, without PIN because the verifier may be unreadable, using the same reset-pending marker and wipe transaction. Host-triggered reset/debug/recovery/PIN-change protocol paths are intentionally not implemented. StackChan CoreS3 local reset was manually smoke-tested after commit `7c6e65c`; a manual session/settings smoke verified idle Settings read access, Change PIN session retention, and USB detach/replug session invalidation. Error-state erase recovery still needs hardware smoke. Rerun hardware smoke after settings or reset UI/state changes. |
+| Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: connect PIN toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, approval history, connect-approval setting, session, and returns to `unprovisioned`. Source also implements device-local destructive erase-only recovery from persistent-material consistency `error`, without PIN because the verifier may be unreadable, using the same reset-pending marker and wipe transaction. Host-triggered reset/debug/recovery/PIN-change protocol paths are intentionally not implemented. StackChan CoreS3 local reset was manually smoke-tested after commit `7c6e65c`; a manual session/settings smoke verified idle Settings read access, Change PIN session retention, and USB detach/replug session invalidation. Error-state erase recovery still needs hardware smoke. Rerun hardware smoke after settings or reset UI/state changes. |
 | Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
@@ -57,7 +57,8 @@ Legend:
 | `get_capabilities` | O | Source reports Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until concrete signing methods are implemented. Rerun hardware smoke after setup, session, or material-storage changes. |
 | `get_accounts` | O | Source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is verified against Sui SDK address vectors on host; manual hardware smoke verified this path while idle Settings is open, after Change PIN on the same session, and after reconnect. Rerun hardware smoke after setup, session, or material-storage changes. |
 | `get_policy` | △ | Source implements a session-scoped read-only summary of the active DEV_PROFILE default-reject policy (`agentq.policy.v0`, hash id, `reject`, zero rules). Corrupt/unreadable policy fails closed; missing policy is migrated only for legacy root-only DEV_PROFILE devices. Gateway/MCP parser tests, target policy-store host tests, and manual hardware smoke for idle-Settings read access cover this path. |
-| `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke. It consumes the stored active default-reject policy; corrupt/unreadable policy is a material-consistency error rather than a normal `provisioned` state, while missing policy is migrated only for legacy root-only DEV_PROFILE devices. Host tests cover the request field/type validation helper and policy store provider. Hardware smoke remains required for the stored-policy path. No approval UI, capability advertisement, or signing is connected. |
+| `get_approval_history` | △ | Source implements a session-scoped read-only view of persistent Firmware-authored method-decision metadata. Records are stored in a fixed-size binary NVS ring buffer, newest-first paginated, rate-limited to reduce flash wear, and wiped by local reset or error-state erase recovery. The current runtime records only validated `call_method` policy-rejected decisions; invalid parameter, malformed transaction, and unsupported-method errors are not persisted as approval history. User approval decisions and signing decisions do not exist yet. Gateway/MCP parser tests and target approval-history host tests cover this path. Hardware smoke remains required. |
+| `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke, and persists bounded approval-history metadata for those method decisions. If that required history write fails or is rate-limited, Firmware returns top-level `history_error` instead of the method result. It consumes the stored active default-reject policy; corrupt/unreadable policy is a material-consistency error rather than a normal `provisioned` state, while missing policy is migrated only for legacy root-only DEV_PROFILE devices. Host tests cover the request field/type validation helper and policy store provider. Hardware smoke remains required for the stored-policy path. No approval UI, capability advertisement, or signing is connected. |
 | Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation plus matching PIN repeat. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display, device-local mnemonic recovery entry, local 6-digit PIN setup, and backup-confirmed/checksum-verified root entropy storage source exists. USB/Gateway/MCP mnemonic import and USER_PROFILE secure provisioning are not implemented. |
 | Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat stores root entropy, initializes the active default-reject policy, and stores the local PIN verifier. Public account derivation is implemented via `get_accounts`; signing and USER_PROFILE secure provisioning are not implemented. |
@@ -250,6 +251,7 @@ are not migrated and fail closed until reprovisioned.
 | `agent_q` | `policy_v0` | DEV_PROFILE active default-reject policy record |
 | `agent_q` | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
 | `agent_q` | `pin_on_connect` | Optional local connect approval setting; missing means require PIN on connect; local reset erases it back to the missing-key default |
+| `agent_q` | `approval_hist` | Fixed-size 32-record binary ring buffer of Firmware-authored approval/method-decision metadata; local reset and error-state erase wipe it |
 | `agent_q` | `reset_pending` | Internal Firmware-owned marker used to resume an interrupted local reset wipe at boot; not a protocol state or host API |
 
 Agent-Q-owned modules are sources under `agent_q/` in this target tree. These
@@ -257,6 +259,36 @@ modules may share the `agent_q` namespace. New keys should be named by feature,
 such as `<feature>_<name>`, to avoid collisions. ESP-IDF NVS key names are
 limited to 15 characters, so this target uses `prov_state` rather than the
 longer protocol field name `provisioning.state`.
+
+## Approval History
+
+This target implements persistent approval history as a Firmware-owned,
+read-only decision log. It is not an on-chain transaction history and is not a
+host activity log. The current source records bounded metadata only for
+validated `call_method` policy decisions; today that means `policy_rejected`
+records from the Sui `sign_transaction` policy-decision smoke path. Invalid
+parameter, malformed transaction, and unsupported-method errors are not
+persisted as approval history. User approval records and method-error records
+are reserved until signing and approval paths are implemented.
+
+The history is a fixed-size binary NVS ring buffer under `approval_hist`, capped
+at 32 records so it fits in the current StackChan CoreS3 NVS partition alongside
+the other Agent-Q material records. Persistent writes are rate-limited by
+Firmware to reduce flash wear. If a current decision requires a history record
+and the write fails or the write budget is exhausted, `call_method` returns
+top-level `history_error` rather than claiming the decision result was delivered.
+It stores sequence, uptime in milliseconds, decision kind, confirmation kind,
+chain, method, reason code, optional payload digest, optional policy hash, and
+optional rule reference. It does not store raw `txBytes`, full decoded
+transactions, session ids, raw request ids, gateway names, mnemonic text, seed,
+private key material, PINs, or full policy documents. Local reset and
+error-state erase recovery wipe the history with the rest of the local material
+set.
+
+The `get_approval_history` protocol request is session-scoped and read-only.
+It is available only when the target is material-backed `provisioned` and the
+request has a matching active session. There is no protocol request to add,
+edit, delete, or clear history records.
 
 ## Provisioning Capability
 
@@ -358,8 +390,9 @@ After Reset PIN confirm, the target keeps the reset PIN panel active and adds a
 non-interactive processing overlay before PIN verification. Correct PIN
 verification advances to destructive wipe while keeping the processing overlay
 active, then wipes root material, active policy, PIN verifier, the local
-connect setting, runtime session, and provisioning state before reporting
-`unprovisioned`. Before destructive wipe starts, Firmware writes an internal
+connect setting, approval history, runtime session, and provisioning state
+before reporting `unprovisioned`. Before destructive wipe starts, Firmware
+writes an internal
 reset-pending marker; if power is lost
 mid-reset, boot resumes the material wipe before loading normal state. If the
 marker cannot be written, reset aborts before material is wiped. After the
@@ -433,6 +466,10 @@ Current verification expectations for this target:
   connect-approval setting's missing-key secure default, stored OFF override,
   invalid value fail-closed behavior, and reset wipe back to the missing-key
   default;
+- run `tools/firmware/stackchan-cores3/test_approval_history.sh` after ESP-IDF
+  v5.5.4 is active to check the persistent approval-history NVS ring buffer,
+  newest-first pagination, payload digest formatting, wipe behavior, and
+  corrupt-record fail-closed behavior;
 - build with `tools/firmware/stackchan-cores3/build.sh` after ESP-IDF v5.5.4 is
   active;
 - flash to a StackChan CoreS3 device when hardware is available;
@@ -468,8 +505,9 @@ Current verification expectations for this target:
   unknown or expired session id;
 - smoke-test local settings reset from `provisioned`: wrong PIN leaves
   `provisioned` material intact, cancel/timeout leaves material intact, correct
-  PIN wipes root material, active policy, PIN verifier, connect-approval
-  setting, and session, then `get_status` reports `unprovisioned`;
+  PIN wipes root material, active policy, PIN verifier, approval history,
+  connect-approval setting, and session, then `get_status` reports
+  `unprovisioned`;
 - smoke-test three minutes of inactivity turns the screen backlight off, Agent-Q
   request UI wakes it, side-button short press toggles display power, and
   side-button long press powers off;

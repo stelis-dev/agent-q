@@ -376,6 +376,7 @@ get_status
     -> get_capabilities
     -> get_accounts
     -> get_policy
+    -> get_approval_history
     -> call_method*
   -> disconnect
 ```

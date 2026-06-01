@@ -17,6 +17,7 @@ The protocol only needs enough structure for Gateway and Firmware to agree on:
 - supported chains and methods
 - addresses and public keys
 - method requests and method results
+- read-only Firmware decision history
 
 Chain-specific requests must fit into the supported method list instead of
 creating separate product-level protocols.
@@ -106,6 +107,7 @@ Protocol error codes:
 - `rejected`
 - `timeout`
 - `policy_error`
+- `history_error`
 - `rng_error`
 - `account_error`
 
@@ -124,6 +126,7 @@ get_status
     -> get_capabilities
     -> get_accounts
     -> get_policy
+    -> get_approval_history
     -> call_method*
   -> disconnect
 ```
@@ -142,8 +145,8 @@ Flow rules:
   approval. Hardware targets may implement that approval as a physical confirm
   or as local PIN verification, but PIN entry must never be a USB protocol
   request.
-- `get_capabilities`, `get_accounts`, `get_policy`, and `call_method` require
-  `sessionId`.
+- `get_capabilities`, `get_accounts`, `get_policy`, `get_approval_history`, and
+  `call_method` require `sessionId`.
 - `disconnect` ends the session.
 - Firmware should reject session-scoped requests with an unknown or expired
   `sessionId`.
@@ -154,12 +157,13 @@ Flow rules:
   from keeping a session it can no longer confirm.
 
 Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
-`get_capabilities`, `get_accounts`, `get_policy`, the `call_method` runtime
-skeleton, explicit local Gateway device selection, and local Gateway caching of
-discovered devices. The current `call_method` skeleton enforces state and
-session gates, keeps unknown methods rejected, and recognizes Sui
+`get_capabilities`, `get_accounts`, `get_policy`, `get_approval_history`, the
+`call_method` runtime skeleton, explicit local Gateway device selection, and
+local Gateway caching of discovered devices. The current `call_method` skeleton
+enforces state and session gates, keeps unknown methods rejected, recognizes Sui
 `sign_transaction` only for rejected policy-decision smoke against the active
-stored default-reject policy; it is not signing support.
+stored default-reject policy, and records bounded persistent approval-history
+metadata for those method decisions; it is not signing support.
 
 Provisioning and material reset transitions are not USB protocol requests in the
 current implementation. The StackChan CoreS3 target enters setup from its local
@@ -185,11 +189,13 @@ request that currently reports Sui account identity with `methods: []`.
 for the Sui Ed25519 account at index 0 in the `provisioned` state.
 `get_policy` is implemented as a read-only, session-scoped summary of the active
 DEV_PROFILE default-reject policy; it is metadata only and not a policy update
-surface. `call_method` exists only as a session-scoped runtime skeleton: unknown
-methods are rejected, while Sui `sign_transaction` is recognized only for
-restricted-transfer policy-decision smoke and still returns a rejected method
-result. No signing method is implemented or advertised. Hardware smoke must be
-rerun for the `get_policy` and policy-store-backed `call_method` paths.
+surface. `get_approval_history` is implemented as a read-only, session-scoped
+view of Firmware-owned persistent decision metadata. `call_method` exists only
+as a session-scoped runtime skeleton: unknown methods are rejected, while Sui
+`sign_transaction` is recognized only for restricted-transfer policy-decision
+smoke and still returns a rejected method result. No signing method is
+implemented or advertised. Hardware smoke must be rerun for the `get_policy`,
+`get_approval_history`, and policy-store-backed `call_method` paths.
 
 ## Device Discovery And Selection
 
@@ -803,6 +809,91 @@ Rules:
   unexpected `sessionId`, and does not evaluate policy.
 - The Gateway MCP `get_policy` tool never exposes the session id.
 
+## Approval History
+
+`get_approval_history` is a session-scoped read-only request that returns
+Firmware-authored decision metadata. It is not an on-chain transaction history,
+not a host activity log, and not a policy edit surface. The current StackChan
+CoreS3 implementation stores this history in a fixed-size binary NVS ring
+buffer and wipes it during local material reset or error-state erase recovery.
+
+Request:
+
+```json
+{
+  "id": "req_history",
+  "version": 1,
+  "type": "get_approval_history",
+  "sessionId": "session_001",
+  "params": {
+    "limit": 4,
+    "beforeSeq": "42"
+  }
+}
+```
+
+`params` is optional. `limit` is an integer from `1` to `4`. `beforeSeq` is a
+canonical unsigned 64-bit decimal string used for newest-first pagination; the
+single value `"0"` is allowed, but other leading-zero encodings are rejected.
+
+Response:
+
+```json
+{
+  "id": "req_history",
+  "version": 1,
+  "type": "approval_history",
+  "records": [
+    {
+      "seq": "41",
+      "uptimeMs": "183204",
+      "timeSource": "uptime",
+      "eventKind": "method_decision",
+      "decisionKind": "policy_rejected",
+      "confirmationKind": "policy",
+      "chain": "sui",
+      "method": "sign_transaction",
+      "reasonCode": "policy_rejected",
+      "payloadDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "policyHash": "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+      "ruleRef": "default"
+    }
+  ],
+  "hasMore": false
+}
+```
+
+Rules:
+
+- Firmware returns approval history only when `provisioning.state` is
+  `provisioned`, persistent material is consistent, and the request has a
+  matching active session.
+- The API is read-only. The protocol has no request to add, edit, delete, or
+  clear approval-history records.
+- Records are newest-first. `seq` and `uptimeMs` are unsigned decimal strings.
+  `timeSource: "uptime"` means the timestamp is device uptime, not wall-clock
+  time.
+- Current StackChan CoreS3 source records only validated `policy_rejected`
+  decisions from the `call_method` skeleton. Invalid parameter, malformed
+  transaction, and unsupported-method errors are not persisted as approval
+  history. Future signing work may add `policy_approved`, `method_error`,
+  `user_approved`, `user_rejected`, and `user_timeout` records only when those
+  decision paths exist.
+- Approval-history persistence is part of the terminal decision contract for
+  decisions that are recorded. If Firmware cannot persist a required history
+  record or its write budget is exhausted, `call_method` returns the top-level
+  `history_error` protocol error instead of a `method_result`.
+- Firmware rate-limits persistent history writes to reduce flash wear. The
+  limit is Firmware-owned and does not authorize Gateway to retry unbounded
+  signing or method requests.
+- History records must not store or return raw `txBytes`, full decoded
+  transactions, session ids, raw request ids, gateway names, mnemonic text,
+  seed, private key material, PINs, or complete policy documents.
+- Gateway validates the response strictly, rejects secret-like fields and any
+  unexpected `sessionId`, preserves protocol integers as strings, and does not
+  evaluate policy or signing safety.
+- The Gateway MCP `get_approval_history` tool never exposes the session id.
+
 ## Method Request
 
 Gateway calls supported methods by name through `call_method`.
@@ -826,7 +917,9 @@ Firmware decodes only the restricted SUI transfer shape documented in
 [Implementation Status](../docs/IMPLEMENTATION_STATUS.md), adapts those facts
 into the Firmware-owned policy runtime, and returns a rejected method result.
 The current active stored policy is default reject, so valid supported
-transactions return `policy_rejected`. A corrupt or unreadable active policy
+transactions return `policy_rejected` after the corresponding approval-history
+record is persisted; if that required history write fails or is rate-limited,
+Firmware returns top-level `history_error`. A corrupt or unreadable active policy
 fails closed as a persistent-material consistency error before normal
 session-scoped methods are available; missing active policy is migrated only for
 legacy root-only DEV_PROFILE devices. Malformed BCS returns

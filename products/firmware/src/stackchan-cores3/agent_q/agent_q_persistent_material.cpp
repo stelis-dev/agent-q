@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "agent_q_approval_history.h"
 #include "agent_q_connect_settings.h"
 #include "esp_log.h"
 
@@ -70,6 +71,8 @@ const char* runtime_failure_message(AgentQPersistentMaterialRuntimeFailure failu
             return "Local reset could not wipe local PIN verifier; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::local_reset_connect_setting_wipe_failed:
             return "Local reset could not wipe connect PIN setting; failing closed";
+        case AgentQPersistentMaterialRuntimeFailure::local_reset_approval_history_wipe_failed:
+            return "Local reset could not wipe approval history; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::local_reset_material_remaining:
             return "Local reset reported success but persistent material remains; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::local_reset_state_storage_failed:
@@ -369,6 +372,7 @@ AgentQPersistentMaterialWipeResult persistent_material_wipe_all()
     const bool policy_wiped = wipe_policy();
     const bool local_auth_wiped = wipe_local_auth();
     const bool connect_setting_wiped = wipe_require_pin_on_connect();
+    const bool approval_history_wiped = approval_history_wipe();
 
     if (!root_wiped) {
         return AgentQPersistentMaterialWipeResult::root_wipe_error;
@@ -381,6 +385,9 @@ AgentQPersistentMaterialWipeResult persistent_material_wipe_all()
     }
     if (!connect_setting_wiped) {
         return AgentQPersistentMaterialWipeResult::connect_setting_wipe_error;
+    }
+    if (!approval_history_wiped) {
+        return AgentQPersistentMaterialWipeResult::approval_history_wipe_error;
     }
     if (persistent_material_exists()) {
         return AgentQPersistentMaterialWipeResult::material_remaining_error;

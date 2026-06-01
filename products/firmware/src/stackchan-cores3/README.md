@@ -25,6 +25,11 @@ The current implementation includes:
   Ed25519 account identity capability over an approved session while
   `provisioned`. The current `methods` list is empty because signing methods are
   not implemented.
+- a USB JSONL `get_approval_history` request that returns bounded persistent
+  Firmware-authored method-decision metadata over an approved session. It is
+  read-only, rate-limits persistent writes to reduce flash wear, stores no raw
+  requests or secrets, and currently records only validated `call_method`
+  policy-rejected decisions.
 - a USB JSONL `call_method` runtime skeleton. It requires material-backed
   `provisioned` state plus a matching active session, keeps unknown methods
   rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only
@@ -44,10 +49,10 @@ The current implementation includes:
   current stored 6-digit PIN, accepts and repeats a new PIN, and replaces only
   the salt/PIN verifier. Reset requires the local Settings Reset action plus
   the stored PIN, wipes root material, active policy, PIN verifier,
-  connect-approval setting, runtime session, and provisioning state, and is not
-  exposed as a USB JSONL request. StackChan CoreS3 local reset was manually
-  smoke-tested after commit `7c6e65c`; rerun hardware smoke after settings or
-  reset UI/state changes.
+  approval history, connect-approval setting, runtime session, and provisioning
+  state, and is not exposed as a USB JSONL request. StackChan CoreS3 local reset
+  was manually smoke-tested after commit `7c6e65c`; rerun hardware smoke after
+  settings or reset UI/state changes.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP
@@ -76,11 +81,13 @@ identity (`get_accounts`), and links a restricted host-tested Sui transaction
 facts parser plus a common default-reject policy runtime boundary. The current
 `call_method` skeleton consumes the stored active default-reject policy decision
 only for Sui `sign_transaction` policy-decision smoke; it does not sign, update
-policy, expose MCP directly, or apply signing policy to produce signatures. The
+policy, expose MCP directly, or apply signing policy to produce signatures. It
+does persist bounded approval-history metadata for those method decisions. The
 persisted values in this target implementation are the protocol `deviceId`,
 provisioning state flag, DEV_PROFILE root entropy blob after backup
 confirmation, a DEV_PROFILE active default-reject policy record, and a
-DEV_PROFILE local PIN verifier.
+DEV_PROFILE local PIN verifier, the optional connect-PIN setting, and the
+approval-history ring buffer.
 
 Agent-Q firmware is intentionally not a general StackChan AI firmware. It does
 not include StackChan World login, Xiaozhi cloud sessions, camera upload, screen
@@ -114,6 +121,7 @@ tools/firmware/stackchan-cores3/test_local_auth.sh
 tools/firmware/stackchan-cores3/test_local_auth_worker.sh
 tools/firmware/stackchan-cores3/test_local_pin_auth.sh
 tools/firmware/stackchan-cores3/test_connect_settings.sh
+tools/firmware/stackchan-cores3/test_approval_history.sh
 tools/firmware/stackchan-cores3/test_session.sh
 tools/firmware/stackchan-cores3/test_bip39_vectors.sh
 tools/firmware/stackchan-cores3/test_sui_account_vectors.sh
@@ -154,11 +162,18 @@ host NVS stubs, then verifies default-policy storage, policy id calculation,
 summary reads, wipe behavior, active-policy availability checks, and
 missing/corrupt/failed-write fail-closed provider behavior.
 
+The StackChan approval-history test is target-specific. It compiles the tracked
+`agent_q_approval_history.cpp` store with ESP-IDF mbedTLS SHA-256 sources and
+host NVS stubs, then verifies persistent ring-buffer append, newest-first
+pagination, payload digest formatting, wipe behavior, and corrupt-record
+fail-closed behavior.
+
 The StackChan method-runtime test is target-specific. It compiles the tracked
 `agent_q_method_runtime.cpp` runtime boundary with ArduinoJson, the common Sui
 facts parser, the common policy runtime, and pinned MicroSui base64 helpers,
-then verifies unsupported method rejection, invalid Sui params, and the
-default-reject policy result for a valid restricted SUI transfer fixture.
+then verifies unsupported method rejection, invalid Sui params, approval-history
+metadata exposure, and the default-reject policy result for a valid restricted
+SUI transfer fixture.
 
 The StackChan persistent-material test is target-specific. It compiles the
 tracked `agent_q_persistent_material.cpp` coordinator with host material stubs,
@@ -242,8 +257,8 @@ In the hardware firmware tree:
 ## Persistent Storage
 
 This target stores the protocol `deviceId`, provisioning state, DEV_PROFILE root
-entropy, active default-reject policy, local PIN verifier, and the optional
-connect-PIN setting in NVS namespace `agent_q`.
+entropy, active default-reject policy, local PIN verifier, optional connect-PIN
+setting, and approval-history ring buffer in NVS namespace `agent_q`.
 When a previous DEV_PROFILE build already has `prov_state = provisioned` and
 valid root entropy but no policy record, boot initializes the default-reject
 policy before reporting `provisioned`; if that write fails, the target fails
@@ -258,6 +273,7 @@ verifier are not migrated and fail closed until reprovisioned.
 | `policy_v0` | DEV_PROFILE active default-reject policy record |
 | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
 | `pin_on_connect` | Optional local connect approval setting; missing means require PIN on connect; local reset erases it back to the missing-key default |
+| `approval_hist` | Fixed-size 32-record binary approval-history ring buffer; local reset and error-state erase wipe it |
 
 Recovery phrase setup v0 stores generated phrase text and recovered mnemonic
 word-entry scratch only in RAM. Generate displays only up-to-4-letter prefixes

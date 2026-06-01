@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   assertAccountsResponse,
+  assertApprovalHistoryResponse,
   assertCapabilitiesResponse,
   assertMethodResultResponse,
   assertPolicyResponse,
@@ -20,6 +21,7 @@ import {
   makeDisconnectRequest,
   makeGetCapabilitiesRequest,
   makeGetAccountsRequest,
+  makeGetApprovalHistoryRequest,
   makeGetPolicyRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
@@ -98,6 +100,7 @@ test("preserves Firmware protocol error codes", () => {
     "policy_error",
     "rng_error",
     "account_error",
+    "history_error",
   ]) {
     const response = parseProtocolResponse(
       JSON.stringify({
@@ -294,6 +297,36 @@ test("makeGetPolicyRequest validates sessionId", () => {
 
   assert.throws(() => makeGetPolicyRequest("not_a_session"), /Invalid sessionId/);
   assert.throws(() => makeGetPolicyRequest("session_"), /Invalid sessionId/);
+});
+
+test("makeGetApprovalHistoryRequest validates session and pagination params", () => {
+  const request = makeGetApprovalHistoryRequest(
+    "session_abcdef0123456789",
+    { limit: 2, beforeSeq: "42" },
+    "req_get_approval_history_1",
+  );
+  assert.deepEqual(request, {
+    id: "req_get_approval_history_1",
+    version: 1,
+    type: "get_approval_history",
+    sessionId: "session_abcdef0123456789",
+    params: {
+      limit: 2,
+      beforeSeq: "42",
+    },
+  });
+
+  assert.throws(() => makeGetApprovalHistoryRequest("not_a_session"), /sessionId/);
+  assert.throws(() => makeGetApprovalHistoryRequest("session_abcdef0123456789", { limit: 0 }), /limit/);
+  assert.throws(() => makeGetApprovalHistoryRequest("session_abcdef0123456789", { limit: 5 }), /limit/);
+  assert.throws(
+    () => makeGetApprovalHistoryRequest("session_abcdef0123456789", { beforeSeq: "not-number" }),
+    /beforeSeq/,
+  );
+  assert.throws(
+    () => makeGetApprovalHistoryRequest("session_abcdef0123456789", { beforeSeq: "18446744073709551616" }),
+    /beforeSeq/,
+  );
 });
 
 test("makeCallMethodRequest validates session, method identifiers, and params", () => {
@@ -635,6 +668,108 @@ test("parseProtocolResponse rejects policy summaries carrying secret material", 
   }
 });
 
+const APPROVAL_DIGEST = "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab";
+
+const approvalHistoryRecord = (overrides = {}) => ({
+  seq: "2",
+  uptimeMs: "12345",
+  timeSource: "uptime",
+  eventKind: "method_decision",
+  decisionKind: "policy_rejected",
+  confirmationKind: "policy",
+  chain: "sui",
+  method: "sign_transaction",
+  reasonCode: "default_reject",
+  payloadDigest: APPROVAL_DIGEST,
+  policyHash: APPROVAL_DIGEST,
+  ruleRef: "default",
+  ...overrides,
+});
+
+const approvalHistoryLine = (recordOverrides = {}, topLevelOverrides = {}) =>
+  JSON.stringify({
+    id: "req_approval_history",
+    version: 1,
+    type: "approval_history",
+    records: [approvalHistoryRecord(recordOverrides)],
+    hasMore: false,
+    ...topLevelOverrides,
+  });
+
+test("parseProtocolResponse accepts bounded approval history pages", () => {
+  const response = assertApprovalHistoryResponse(
+    parseProtocolResponse(approvalHistoryLine(), "req_approval_history"),
+  );
+  assert.equal(response.type, "approval_history");
+  assert.equal(response.records.length, 1);
+  assert.equal(response.hasMore, false);
+  assert.equal(response.records[0].eventKind, "method_decision");
+  assert.equal(response.records[0].decisionKind, "policy_rejected");
+  assert.equal(response.records[0].confirmationKind, "policy");
+  assert.equal(response.records[0].payloadDigest, APPROVAL_DIGEST);
+});
+
+test("parseProtocolResponse rejects approval history carrying secret material", () => {
+  for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
+    assert.throws(
+      () => parseProtocolResponse(approvalHistoryLine({ [fieldName]: "secret-like value" }), "req_approval_history"),
+      { code: "protocol_error" },
+      `secret-like approval history field ${fieldName} must be rejected`,
+    );
+    assert.throws(
+      () => parseProtocolResponse(approvalHistoryLine({}, { [fieldName]: "secret-like value" }), "req_approval_history"),
+      { code: "protocol_error" },
+      `secret-like approval history top-level field ${fieldName} must be rejected`,
+    );
+  }
+});
+
+test("parseProtocolResponse rejects malformed approval history records", () => {
+  for (const recordOverride of [
+    { seq: "01" },
+    { seq: "18446744073709551616" },
+    { uptimeMs: "not-number" },
+    { timeSource: "wall_clock" },
+    { eventKind: "session_event" },
+    { decisionKind: "connect_approved" },
+    { confirmationKind: "connect_pin" },
+    { chain: "Sui" },
+    { method: "sign transaction" },
+    { reasonCode: "DefaultReject" },
+    { payloadDigest: "not-a-digest" },
+    { policyHash: "not-a-digest" },
+    { ruleRef: "has space" },
+    { sessionId: "session_abcdef0123456789" },
+  ]) {
+    assert.throws(
+      () => parseProtocolResponse(approvalHistoryLine(recordOverride), "req_approval_history"),
+      { code: "protocol_error" },
+      `approval history override should be rejected: ${JSON.stringify(recordOverride)}`,
+    );
+  }
+});
+
+test("parseProtocolResponse rejects unsupported approval history response shape", () => {
+  const record = approvalHistoryRecord();
+  const tooMany = JSON.stringify({
+    id: "req_approval_history",
+    version: 1,
+    type: "approval_history",
+    records: [record, record, record, record, record],
+    hasMore: false,
+  });
+  assert.throws(() => parseProtocolResponse(tooMany, "req_approval_history"), { code: "protocol_error" });
+
+  assert.throws(
+    () => parseProtocolResponse(approvalHistoryLine({}, { hasMore: "false" }), "req_approval_history"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () => parseProtocolResponse(approvalHistoryLine({}, { sessionId: "session_abcdef0123456789" }), "req_approval_history"),
+    { code: "protocol_error" },
+  );
+});
+
 const methodResultLine = (overrides = {}, errorOverrides = {}) =>
   JSON.stringify({
     id: "req_call_method",
@@ -674,6 +809,24 @@ test("parseProtocolResponse accepts rejected Sui sign_transaction policy decisio
     assert.equal(response.error.code, code);
     assert.equal(response.error.message, message);
   }
+});
+
+test("parseProtocolResponse exposes call_method history write failures as top-level errors", () => {
+  const response = parseProtocolResponse(
+    JSON.stringify({
+      id: "req_call_method",
+      version: 1,
+      type: "error",
+      error: {
+        code: "history_error",
+        message: "Could not record method decision.",
+      },
+    }),
+    "req_call_method",
+  );
+  assert.equal(response.type, "error");
+  assert.equal(response.error.code, "history_error");
+  assert.throws(() => assertMethodResultResponse(response), { code: "history_error" });
 });
 
 test("parseProtocolResponse rejects unsupported method_result shapes", () => {

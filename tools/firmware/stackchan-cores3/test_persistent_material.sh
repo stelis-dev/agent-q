@@ -51,10 +51,12 @@ bool g_root_present = false;
 bool g_policy_present = false;
 bool g_auth_present = false;
 bool g_connect_setting_present = false;
+bool g_approval_history_present = false;
 bool g_root_store_fails = false;
 bool g_policy_store_fails = false;
 bool g_auth_store_fails = false;
 bool g_root_wipe_fails = false;
+bool g_approval_history_wipe_fails = false;
 bool g_persist_state_fails = false;
 agent_q::AgentQPolicyStoreStatus g_policy_status = agent_q::AgentQPolicyStoreStatus::missing;
 agent_q::AgentQLocalAuthStatus g_auth_status = agent_q::AgentQLocalAuthStatus::missing;
@@ -77,10 +79,12 @@ void reset_stubs()
     g_policy_present = false;
     g_auth_present = false;
     g_connect_setting_present = false;
+    g_approval_history_present = false;
     g_root_store_fails = false;
     g_policy_store_fails = false;
     g_auth_store_fails = false;
     g_root_wipe_fails = false;
+    g_approval_history_wipe_fails = false;
     g_persist_state_fails = false;
     g_policy_status = agent_q::AgentQPolicyStoreStatus::missing;
     g_auth_status = agent_q::AgentQLocalAuthStatus::missing;
@@ -268,6 +272,15 @@ bool wipe_require_pin_on_connect()
     return true;
 }
 
+bool approval_history_wipe()
+{
+    if (g_approval_history_wipe_fails) {
+        return false;
+    }
+    g_approval_history_present = false;
+    return true;
+}
+
 }  // namespace agent_q
 
 int main()
@@ -319,14 +332,16 @@ int main()
     g_auth_present = true;
     g_auth_status = agent_q::AgentQLocalAuthStatus::active;
     g_connect_setting_present = true;
+    g_approval_history_present = true;
     expect(agent_q::persistent_material_record_runtime_failure(
                agent_q::AgentQPersistentMaterialRuntimeFailure::local_reset_root_wipe_failed, ops()) ==
                Consistency::consistency_error,
            "local reset material failure latches consistency error before wipe");
     expect(agent_q::persistent_material_wipe_all() == Wipe::ok,
            "wipe all succeeds");
-    expect(!g_root_present && !g_policy_present && !g_auth_present && !g_connect_setting_present,
-           "wipe all removes required and reset-scoped settings material");
+    expect(!g_root_present && !g_policy_present && !g_auth_present &&
+               !g_connect_setting_present && !g_approval_history_present,
+           "wipe all removes required, reset-scoped settings, and approval-history material");
     expect(!agent_q::persistent_material_consistency_error_active(),
            "wipe all success clears consistency error latch");
 

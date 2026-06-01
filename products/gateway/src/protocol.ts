@@ -104,6 +104,17 @@ export interface GetPolicyRequest {
   sessionId: string;
 }
 
+export interface GetApprovalHistoryRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "get_approval_history";
+  sessionId: string;
+  params: {
+    limit: number;
+    beforeSeq?: string;
+  };
+}
+
 export interface CallMethodRequest {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -122,6 +133,7 @@ export type ProtocolRequest =
   | GetCapabilitiesRequest
   | GetAccountsRequest
   | GetPolicyRequest
+  | GetApprovalHistoryRequest
   | CallMethodRequest;
 
 export interface StatusResponse {
@@ -222,6 +234,39 @@ export interface PolicyResponse {
   policy: PolicySummary;
 }
 
+export type ApprovalHistoryDecisionKind =
+  | "policy_approved"
+  | "policy_rejected"
+  | "user_approved"
+  | "user_rejected"
+  | "user_timeout"
+  | "method_error";
+
+export type ApprovalHistoryConfirmationKind = "none" | "policy" | "physical_confirm";
+
+export interface ApprovalHistoryRecord {
+  seq: string;
+  uptimeMs: string;
+  timeSource: "uptime";
+  eventKind: "method_decision";
+  decisionKind: ApprovalHistoryDecisionKind;
+  confirmationKind: ApprovalHistoryConfirmationKind;
+  chain: string;
+  method: string;
+  reasonCode: string;
+  payloadDigest?: string;
+  policyHash?: string;
+  ruleRef?: string;
+}
+
+export interface ApprovalHistoryResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "approval_history";
+  records: ApprovalHistoryRecord[];
+  hasMore: boolean;
+}
+
 export interface MethodResultResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -251,6 +296,7 @@ export type ProtocolResponse =
   | CapabilitiesResponse
   | AccountsResponse
   | PolicyResponse
+  | ApprovalHistoryResponse
   | MethodResultResponse
   | ProtocolErrorResponse;
 
@@ -383,6 +429,25 @@ export function makeGetPolicyRequest(sessionId: string, id = createRequestId()):
   };
 }
 
+export function makeGetApprovalHistoryRequest(
+  sessionId: string,
+  params: { limit?: number; beforeSeq?: string } = {},
+  id = createRequestId(),
+): GetApprovalHistoryRequest {
+  validateRequestId(id);
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  const normalizedParams = validateApprovalHistoryInput(params);
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "get_approval_history",
+    sessionId,
+    params: normalizedParams,
+  };
+}
+
 export function makeCallMethodRequest(
   sessionId: string,
   chain: string,
@@ -421,6 +486,19 @@ export function validateCallMethodInput(
   if (chain === SUI_CHAIN_ID && method === SUI_SIGN_TRANSACTION_METHOD) {
     validateSuiSignTransactionParams(params);
   }
+}
+
+export function validateApprovalHistoryInput(
+  params: { limit?: number; beforeSeq?: string } = {},
+): { limit: number; beforeSeq?: string } {
+  const limit = params.limit ?? MAX_APPROVAL_HISTORY_RECORDS;
+  if (!Number.isInteger(limit) || limit <= 0 || limit > MAX_APPROVAL_HISTORY_RECORDS) {
+    throw new ProtocolError("invalid_params", "approval history limit is invalid.");
+  }
+  if (params.beforeSeq !== undefined && !isUint64DecimalString(params.beforeSeq)) {
+    throw new ProtocolError("invalid_params", "approval history beforeSeq is invalid.");
+  }
+  return params.beforeSeq === undefined ? { limit } : { limit, beforeSeq: params.beforeSeq };
 }
 
 export function serializeRequest(request: ProtocolRequest): string {
@@ -640,6 +718,31 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
+  if (value.type === "approval_history") {
+    if (typeof value.id !== "string") {
+      throw new ProtocolError("protocol_error", "Approval history response id is malformed.");
+    }
+    if (hasSecretPayloadKey(value)) {
+      throw new ProtocolError("protocol_error", "Approval history response must not include secret material.");
+    }
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "records", "hasMore"])) {
+      throw new ProtocolError("protocol_error", "Approval history response contains unsupported fields.");
+    }
+    if (!Array.isArray(value.records) || value.records.length > MAX_APPROVAL_HISTORY_RECORDS) {
+      throw new ProtocolError("protocol_error", "Approval history response records are malformed.");
+    }
+    if (typeof value.hasMore !== "boolean") {
+      throw new ProtocolError("protocol_error", "Approval history response hasMore is malformed.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "approval_history",
+      records: value.records.map((entry) => sanitizeApprovalHistoryRecord(entry)),
+      hasMore: value.hasMore,
+    };
+  }
+
   if (value.type === "method_result") {
     if (typeof value.id !== "string" || value.status !== "rejected") {
       throw new ProtocolError("protocol_error", "Method result response is malformed.");
@@ -743,6 +846,16 @@ export function assertPolicyResponse(response: ProtocolResponse): PolicyResponse
   return response;
 }
 
+export function assertApprovalHistoryResponse(response: ProtocolResponse): ApprovalHistoryResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "approval_history") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not approval_history.");
+  }
+  return response;
+}
+
 export function assertMethodResultResponse(response: ProtocolResponse): MethodResultResponse {
   if (response.type === "error") {
     throw new ProtocolError(response.error.code, response.error.message);
@@ -786,6 +899,14 @@ export function isCallMethodName(value: unknown): value is string {
   return typeof value === "string" && CALL_METHOD_NAME_PATTERN.test(value);
 }
 
+export function isUint64DecimalString(value: unknown): value is string {
+  if (typeof value !== "string" || !UINT_DECIMAL_STRING_PATTERN.test(value)) {
+    return false;
+  }
+  return value.length < UINT64_MAX_DECIMAL.length ||
+    (value.length === UINT64_MAX_DECIMAL.length && value <= UINT64_MAX_DECIMAL);
+}
+
 export const SUI_ADDRESS_PATTERN = /^0x[0-9a-f]{64}$/;
 // Raw 32-byte Ed25519 public key as base64 is exactly 43 payload chars + one "=".
 export const ED25519_PUBLIC_KEY_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
@@ -800,6 +921,24 @@ export const MAX_ACCOUNTS_PER_RESPONSE = 1;
 export const AGENT_Q_POLICY_SCHEMA = "agentq.policy.v0";
 export const POLICY_ID_PATTERN = /^sha256:[0-9a-f]{64}$/;
 export const MAX_POLICY_RULE_COUNT = 0;
+export const MAX_APPROVAL_HISTORY_RECORDS = 4;
+export const UINT_DECIMAL_STRING_PATTERN = /^(0|[1-9][0-9]{0,19})$/;
+const UINT64_MAX_DECIMAL = "18446744073709551615";
+export const APPROVAL_HISTORY_REASON_CODE_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
+export const APPROVAL_HISTORY_RULE_REF_PATTERN = /^[a-z][a-z0-9_.:/-]{0,31}$/;
+export const APPROVAL_HISTORY_DECISION_KINDS = [
+  "policy_approved",
+  "policy_rejected",
+  "user_approved",
+  "user_rejected",
+  "user_timeout",
+  "method_error",
+] as const;
+export const APPROVAL_HISTORY_CONFIRMATION_KINDS = [
+  "none",
+  "policy",
+  "physical_confirm",
+] as const;
 export const CALL_METHOD_CHAIN_PATTERN = /^[a-z][a-z0-9_.-]{0,31}$/;
 export const CALL_METHOD_NAME_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
 // The method runtime keeps request bodies bounded by the current Firmware JSONL
@@ -1099,6 +1238,80 @@ function sanitizePolicySummary(value: unknown): PolicySummary | null {
     policyId: value.policyId,
     defaultAction: value.defaultAction,
     ruleCount: value.ruleCount,
+  };
+}
+
+function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
+  if (!isRecord(value)) {
+    throw new ProtocolError("protocol_error", "Approval history record is malformed.");
+  }
+  if (hasSecretPayloadKey(value)) {
+    throw new ProtocolError("protocol_error", "Approval history record must not include secret material.");
+  }
+  const allowedKeys = [
+    "seq",
+    "uptimeMs",
+    "timeSource",
+    "eventKind",
+    "decisionKind",
+    "confirmationKind",
+    "chain",
+    "method",
+    "reasonCode",
+    "payloadDigest",
+    "policyHash",
+    "ruleRef",
+  ];
+  if (!hasOnlyObjectKeys(value, allowedKeys)) {
+    throw new ProtocolError("protocol_error", "Approval history record contains unsupported fields.");
+  }
+  if (
+    typeof value.seq !== "string" ||
+    !isUint64DecimalString(value.seq) ||
+    typeof value.uptimeMs !== "string" ||
+    !isUint64DecimalString(value.uptimeMs) ||
+    value.timeSource !== "uptime" ||
+    value.eventKind !== "method_decision" ||
+    !APPROVAL_HISTORY_DECISION_KINDS.includes(value.decisionKind as ApprovalHistoryDecisionKind) ||
+    !APPROVAL_HISTORY_CONFIRMATION_KINDS.includes(value.confirmationKind as ApprovalHistoryConfirmationKind) ||
+    !isCallMethodChain(value.chain) ||
+    !isCallMethodName(value.method) ||
+    typeof value.reasonCode !== "string" ||
+    !APPROVAL_HISTORY_REASON_CODE_PATTERN.test(value.reasonCode)
+  ) {
+    throw new ProtocolError("protocol_error", "Approval history record is malformed.");
+  }
+  if (
+    value.payloadDigest !== undefined &&
+    (typeof value.payloadDigest !== "string" || !POLICY_ID_PATTERN.test(value.payloadDigest))
+  ) {
+    throw new ProtocolError("protocol_error", "Approval history payloadDigest is malformed.");
+  }
+  if (
+    value.policyHash !== undefined &&
+    (typeof value.policyHash !== "string" || !POLICY_ID_PATTERN.test(value.policyHash))
+  ) {
+    throw new ProtocolError("protocol_error", "Approval history policyHash is malformed.");
+  }
+  if (
+    value.ruleRef !== undefined &&
+    (typeof value.ruleRef !== "string" || !APPROVAL_HISTORY_RULE_REF_PATTERN.test(value.ruleRef))
+  ) {
+    throw new ProtocolError("protocol_error", "Approval history ruleRef is malformed.");
+  }
+  return {
+    seq: value.seq,
+    uptimeMs: value.uptimeMs,
+    timeSource: "uptime",
+    eventKind: "method_decision",
+    decisionKind: value.decisionKind as ApprovalHistoryDecisionKind,
+    confirmationKind: value.confirmationKind as ApprovalHistoryConfirmationKind,
+    chain: value.chain,
+    method: value.method,
+    reasonCode: value.reasonCode,
+    ...(value.payloadDigest === undefined ? {} : { payloadDigest: value.payloadDigest }),
+    ...(value.policyHash === undefined ? {} : { policyHash: value.policyHash }),
+    ...(value.ruleRef === undefined ? {} : { ruleRef: value.ruleRef }),
   };
 }
 
