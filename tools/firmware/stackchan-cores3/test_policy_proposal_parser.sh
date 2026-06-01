@@ -185,6 +185,14 @@ int main()
     expect(record_size > agent_q::kAgentQPolicyDefaultCanonicalRecordBytes, "valid encoded record is custom");
 
     expect_status(
+        "rule id must be history-safe",
+        parse_policy(
+            "invalid-rule-id",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"1_rule","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"common.network","op":"eq","value":"mainnet"}]}]})JSON",
+            &proposal),
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
+
+    expect_status(
         "unknown top-level key rejected",
         parse_policy(
             "unknown-top-level",

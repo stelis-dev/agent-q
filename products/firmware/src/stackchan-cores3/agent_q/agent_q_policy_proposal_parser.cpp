@@ -252,7 +252,7 @@ AgentQPolicyProposalParseStatus parse_rule(
     const char* method = json_string_or_null(rule_object["method"]);
     const char* action_text = json_string_or_null(rule_object["action"]);
     AgentQPolicyAction action = AgentQPolicyAction::reject;
-    if (!agent_q_policy_is_identifier_string(id, kAgentQPolicyMaxRuleIdLength) ||
+    if (!agent_q_policy_is_rule_id_string(id) ||
         !agent_q_policy_is_identifier_string(chain, kAgentQPolicyMaxChainIdLength) ||
         !agent_q_policy_is_identifier_string(method, kAgentQPolicyMaxOperationLength) ||
         !parse_action(action_text, &action)) {

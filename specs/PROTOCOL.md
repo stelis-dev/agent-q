@@ -192,9 +192,10 @@ does not prove agent identity, and does not change Firmware policy.
 request that currently reports Sui account identity with `methods: []`.
 `get_accounts` is implemented as a read-only, session-scoped identity request
 for the Sui Ed25519 account at index 0 in the `provisioned` state.
-`get_policy` is implemented as a read-only, session-scoped summary of the active
-DEV_PROFILE default-reject policy; it is metadata only and not a policy update
-surface. `get_approval_history` is implemented as a read-only, session-scoped
+`get_policy` is implemented as a read-only, session-scoped summary of the
+committed active policy; it is metadata only and not a policy update surface.
+The normal product flow still installs the DEV_PROFILE default-reject policy.
+`get_approval_history` is implemented as a read-only, session-scoped
 view of Firmware-owned persistent decision metadata. `call_method` exists only
 as a session-scoped runtime skeleton: unknown methods are rejected, while Sui
 `sign_transaction` is recognized only for restricted-transfer policy-decision
@@ -308,8 +309,9 @@ display the value without treating it as authority.
 The current StackChan CoreS3 target persists `unprovisioned` and `provisioned`
 and may report `error` when the persisted state and material records disagree.
 It may report `provisioned` only when `prov_state`, the device-local root
-material blob, the active default-reject policy record, and the local PIN
-verifier all exist. It does not use `locked` because no unlock model is
+material blob, a committed active policy record, and the local PIN verifier all
+exist. The current product flow installs the default-reject policy. It does not
+use `locked` because no unlock model is
 implemented. Source-level DEV_PROFILE recovery phrase display, device-local
 mnemonic recovery entry, persistent root material, active policy storage, local
 PIN verifier storage, local reset, and read-only `get_accounts` Sui account
@@ -797,8 +799,8 @@ Response:
 Rules:
 
 - Firmware returns a policy summary only when `provisioning.state` is
-  `provisioned`, persistent material is consistent, the active default-reject
-  policy record exists, and the request has a matching active session.
+  `provisioned`, persistent material is consistent, a committed active policy
+  record exists, and the request has a matching active session.
 - Corrupt or unreadable active policy is a persistent-material consistency
   error. Missing active policy is migrated only for the documented DEV_PROFILE
   legacy shape where `prov_state = provisioned` and root material is valid;
@@ -808,8 +810,9 @@ Rules:
 - `policyId` is the lowercase SHA-256 identifier for the canonical stored
   policy record. It is metadata for drift detection, not an authorization token.
 - The current StackChan CoreS3 target supports only `agentq.policy.v0`,
-  `defaultAction: "reject"`, and `ruleCount: 0`. Custom policy content and
-  policy update authorization are not implemented.
+  `defaultAction: "reject"`, and a bounded `ruleCount` summary. The normal
+  product flow still installs `ruleCount: 0`; custom policy update
+  authorization and full policy content exposure are not implemented.
 - Gateway validates the response strictly, rejects secret-like fields and any
   unexpected `sessionId`, and does not evaluate policy.
 - The Gateway MCP `get_policy` tool never exposes the session id.
@@ -937,8 +940,8 @@ Firmware must not advertise `sign_transaction` in `get_capabilities` until Sui
 txBytes decoding, policy evaluation, negative parser fixtures, physical approval
 where required, and signing are all implemented and connected to the runtime
 request path. The current
-restricted Sui transaction facts parser, Sui method adapter, default-reject
-policy provider boundary, and policy evaluator are Firmware-internal source
+restricted Sui transaction facts parser, Sui method adapter, stored-policy
+provider boundary, and policy evaluator are Firmware-internal source
 foundations; they do not make `call_method` a signing API.
 
 Policy evaluation is currently a Firmware common-source foundation. It accepts
@@ -977,7 +980,7 @@ Request:
 }
 ```
 
-Current policy-decision response for the active stored default-reject policy:
+Current policy-decision response for the normal default-reject policy:
 
 ```json
 {
@@ -1101,7 +1104,10 @@ Policy document rules for the planned first version:
 - `schema` must be `agentq.policy.v0`.
 - `defaultAction` must be `reject`.
 - A policy may contain at most 16 rules.
-- A rule id is a bounded printable identifier, not an authorization token.
+- A rule id is a bounded printable identifier, not an authorization token. It
+  must use the same grammar and 32-character maximum as approval-history
+  `ruleRef`: lowercase letter first, followed by lowercase letters, digits,
+  `_`, `-`, `.`, `:`, or `/`.
 - Each rule has `chain`, `method`, `action`, and `criteria`.
 - The policy schema may define `reject`, `ask`, and `sign`, but Firmware must
   reject any proposed action it cannot enforce in the current runtime. A policy
@@ -1154,14 +1160,31 @@ Planned storage and rollback rules:
 - The active policy store uses two bounded binary slots plus small metadata
   identifying the current committed slot. NVS key names must fit the target
   NVS key limit.
-- Commit writes and validates the inactive slot first, then flips the active
+- Commit writes a pending marker for the intended inactive slot and commit
+  metadata record, writes and validates that slot, then flips the active
   metadata. The old policy remains authoritative until the metadata flip
   commits.
-- On write or validation failure before the metadata flip, Firmware keeps the
-  old policy and reports failure.
-- On ambiguous boot state, Firmware selects the newest valid committed slot. If
-  no valid active slot exists while the device otherwise claims `provisioned`,
-  Firmware reports a persistent-material consistency error.
+- The metadata flip is the commit point. After that point, Firmware must not
+  return a storage failure that implies the old policy remained active. Pending
+  marker cleanup after the flip is best-effort; a stale marker that exactly
+  matches the selected committed policy is ignored by active-policy selection.
+  Stale commit metadata is removed before its slot/metadata key is reused by a
+  later write. A write result must terminate as exactly one of: new policy
+  applied, previous policy proven unchanged, or persistent-material consistency
+  error.
+- On write, validation, or cleanup failure before the metadata flip, Firmware
+  keeps the old policy and reports failure unless the material is left in a
+  consistency-error state. The pending marker is the only reason a torn target
+  slot or target commit record may be ignored in favor of the previous committed
+  policy, and pending targets that overlap the selected active slot or commit
+  metadata without exactly matching it are treated as corruption rather than
+  erased. If a legacy `policy_v0` record is selected while pending-owned modern
+  residue exists, Firmware must clean that residue before starting a new modern
+  policy write or reject the write with the legacy policy still active.
+- On ambiguous boot state, Firmware selects the newest valid committed slot
+  unless a valid pending marker identifies an interrupted write target. Present
+  but invalid commit metadata without that pending marker is a
+  persistent-material consistency error rather than silent rollback.
 - DEV_PROFILE slot selection is not rollback protection. USER_PROFILE policy
   storage requires secure anti-rollback or monotonic commit protection before it
   can claim rollback resistance.

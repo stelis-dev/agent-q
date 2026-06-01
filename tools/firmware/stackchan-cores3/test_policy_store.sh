@@ -44,7 +44,9 @@ for required in \
   "${COMMON_ROOT}/policy/agent_q_policy_schema.h" \
   "${COMMON_ROOT}/policy/agent_q_policy_u64.h" \
   "${COMMON_ROOT}/policy/agent_q_policy_v0.cpp" \
-  "${COMMON_ROOT}/policy/agent_q_policy_runtime.cpp"; do
+  "${COMMON_ROOT}/policy/agent_q_policy_runtime.cpp" \
+  "${COMMON_ROOT}/sui/agent_q_sui_method_adapter.cpp" \
+  "${COMMON_ROOT}/sui/agent_q_sui_method_adapter.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -56,6 +58,7 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/agent_q_common" "${TMP_DIR}/stubs"
 ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/agent_q_common/sui"
 
 cat >"${TMP_DIR}/stubs/esp_err.h" <<'H'
 #pragma once
@@ -106,17 +109,29 @@ cat >"${TMP_DIR}/policy_store_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
+#include <map>
+#include <string>
 #include <vector>
 
 #include "esp_err.h"
 #include "nvs.h"
+#include "agent_q_common/policy/agent_q_policy_canonical.h"
+#include "agent_q_common/policy/agent_q_policy_schema.h"
 #include "agent_q_policy_store.h"
 
 namespace {
 
-std::vector<uint8_t> g_blob;
+std::map<std::string, std::vector<uint8_t>> g_blobs;
 bool g_open_fails = false;
 bool g_commit_fails = false;
+bool g_commit_fails_for_commit_record = false;
+std::string g_commit_fails_for_key;
+std::string g_read_size_fails_for_key;
+std::string g_read_data_fails_for_key;
+std::string g_set_fails_for_key;
+std::string g_erase_fails_for_key;
+std::string g_last_written_key;
+bool g_last_operation_was_erase = false;
 
 int failures = 0;
 
@@ -155,9 +170,151 @@ agent_q::AgentQPolicyFacts valid_facts()
     };
 }
 
+agent_q::AgentQPolicyFacts mismatched_facts()
+{
+    static const agent_q::AgentQPolicyFact entries[] = {
+        {
+            "common.chain",
+            agent_q::AgentQPolicyValueType::string,
+            "sui",
+        },
+        {
+            "common.method",
+            agent_q::AgentQPolicyValueType::string,
+            "sign_transaction",
+        },
+        {
+            "common.network",
+            agent_q::AgentQPolicyValueType::string,
+            "mainnet",
+        },
+    };
+    return agent_q::AgentQPolicyFacts{
+        entries,
+        sizeof(entries) / sizeof(entries[0]),
+        nullptr,
+        0,
+    };
+}
+
 agent_q::AgentQPolicyDecision evaluate_active_policy()
 {
     return agent_q::evaluate_agent_q_policy_runtime(agent_q::active_policy_provider(), valid_facts());
+}
+
+agent_q::AgentQPolicyDecision evaluate_active_policy_mismatch()
+{
+    return agent_q::evaluate_agent_q_policy_runtime(agent_q::active_policy_provider(), mismatched_facts());
+}
+
+bool make_default_record(std::vector<uint8_t>* output)
+{
+    uint8_t bytes[agent_q::kAgentQPolicyDefaultCanonicalRecordBytes] = {};
+    size_t size = 0;
+    if (output == nullptr ||
+        agent_q::encode_agent_q_policy_v0_default_record(bytes, sizeof(bytes), &size) !=
+            agent_q::AgentQPolicyCanonicalStatus::ok) {
+        return false;
+    }
+    output->assign(bytes, bytes + size);
+    return true;
+}
+
+bool make_action_rule_record(
+    const char* rule_id,
+    const char* network,
+    agent_q::AgentQPolicyAction action,
+    bool supports_ask,
+    bool supports_sign,
+    std::vector<uint8_t>* output)
+{
+    if (rule_id == nullptr || network == nullptr || output == nullptr) {
+        return false;
+    }
+    const agent_q::AgentQPolicyCriterion criterion = {
+        "common.network",
+        agent_q::AgentQPolicyOperator::eq,
+        network,
+        nullptr,
+        0,
+    };
+    const agent_q::AgentQPolicyRule rule = {
+        rule_id,
+        "sui",
+        "sign_transaction",
+        action,
+        &criterion,
+        1,
+    };
+    const agent_q::AgentQPolicyDocument policy = {
+        agent_q::kAgentQPolicyV0Schema,
+        agent_q::AgentQPolicyAction::reject,
+        &rule,
+        1,
+    };
+    const agent_q::AgentQPolicyMethodDescriptor method = {
+        "sui",
+        "sign_transaction",
+        nullptr,
+        0,
+        true,
+        supports_ask,
+        supports_sign,
+    };
+    agent_q::AgentQPolicyCanonicalDocument canonical = {};
+    uint8_t bytes[agent_q::kAgentQPolicyMaxCanonicalRecordBytes] = {};
+    size_t size = 0;
+    if (agent_q::canonicalize_agent_q_policy_v0(policy, &method, 1, &canonical) !=
+            agent_q::AgentQPolicyCanonicalStatus::ok ||
+        agent_q::encode_agent_q_policy_v0_canonical_record(canonical, bytes, sizeof(bytes), &size) !=
+            agent_q::AgentQPolicyCanonicalStatus::ok) {
+        return false;
+    }
+    output->assign(bytes, bytes + size);
+    return true;
+}
+
+bool make_reject_rule_record(const char* rule_id, const char* network, std::vector<uint8_t>* output)
+{
+    return make_action_rule_record(
+        rule_id,
+        network,
+        agent_q::AgentQPolicyAction::reject,
+        false,
+        false,
+        output);
+}
+
+void write_u64_be(uint64_t value, uint8_t* output)
+{
+    for (int index = 7; index >= 0; --index) {
+        output[index] = static_cast<uint8_t>(value & 0xff);
+        value >>= 8;
+    }
+}
+
+void set_pending_policy_write(uint8_t commit_index, uint8_t slot, uint64_t sequence)
+{
+    std::vector<uint8_t> pending(16, 0);
+    pending[0] = 'A';
+    pending[1] = 'Q';
+    pending[2] = 'P';
+    pending[3] = 'P';
+    pending[4] = 1;
+    pending[5] = commit_index;
+    pending[6] = slot;
+    write_u64_be(sequence, pending.data() + 8);
+    g_blobs["pol_p"] = pending;
+}
+
+agent_q::AgentQPolicyStoreWriteResult store_record(const std::vector<uint8_t>& record)
+{
+    return agent_q::store_active_policy_record(record.data(), record.size());
+}
+
+bool store_record_applied(const std::vector<uint8_t>& record)
+{
+    return store_record(record) == agent_q::AgentQPolicyStoreWriteResult::applied;
 }
 
 }  // namespace
@@ -183,50 +340,78 @@ void nvs_close(nvs_handle_t handle)
 esp_err_t nvs_get_blob(nvs_handle_t handle, const char* key, void* out_value, size_t* length)
 {
     (void)handle;
-    (void)key;
-    if (g_blob.empty()) {
+    auto found = g_blobs.find(key == nullptr ? "" : key);
+    if (found == g_blobs.end()) {
         return ESP_ERR_NVS_NOT_FOUND;
+    }
+    if (key != nullptr && g_read_size_fails_for_key == key && out_value == nullptr) {
+        return 1;
+    }
+    if (key != nullptr && g_read_data_fails_for_key == key && out_value != nullptr) {
+        return 1;
     }
     if (length == nullptr) {
         return 1;
     }
     if (out_value == nullptr) {
-        *length = g_blob.size();
+        *length = found->second.size();
         return ESP_OK;
     }
     const size_t requested = *length;
-    *length = g_blob.size();
-    if (requested < g_blob.size()) {
+    *length = found->second.size();
+    if (requested < found->second.size()) {
         return 1;
     }
-    memcpy(out_value, g_blob.data(), g_blob.size());
+    memcpy(out_value, found->second.data(), found->second.size());
     return ESP_OK;
 }
 
 esp_err_t nvs_set_blob(nvs_handle_t handle, const char* key, const void* value, size_t length)
 {
     (void)handle;
-    (void)key;
+    g_last_written_key = key == nullptr ? "" : key;
+    g_last_operation_was_erase = false;
+    if (g_set_fails_for_key == g_last_written_key) {
+        return 1;
+    }
     const uint8_t* bytes = static_cast<const uint8_t*>(value);
-    g_blob.assign(bytes, bytes + length);
+    g_blobs[g_last_written_key].assign(bytes, bytes + length);
     return ESP_OK;
 }
 
 esp_err_t nvs_erase_key(nvs_handle_t handle, const char* key)
 {
     (void)handle;
-    (void)key;
-    if (g_blob.empty()) {
+    g_last_written_key = key == nullptr ? "" : key;
+    g_last_operation_was_erase = true;
+    if (g_erase_fails_for_key == g_last_written_key) {
+        return 1;
+    }
+    auto found = g_blobs.find(key == nullptr ? "" : key);
+    if (found == g_blobs.end()) {
         return ESP_ERR_NVS_NOT_FOUND;
     }
-    g_blob.clear();
+    g_blobs.erase(found);
     return ESP_OK;
 }
 
 esp_err_t nvs_commit(nvs_handle_t handle)
 {
     (void)handle;
-    return g_commit_fails ? 1 : ESP_OK;
+    if (g_commit_fails) {
+        return 1;
+    }
+    if (g_commit_fails_for_commit_record &&
+        !g_last_operation_was_erase &&
+        g_last_written_key.rfind("pol_c", 0) == 0) {
+        return 1;
+    }
+    if (!g_last_operation_was_erase &&
+        !g_commit_fails_for_key.empty() &&
+        g_commit_fails_for_key == g_last_written_key) {
+        return 1;
+    }
+    return ESP_OK;
 }
 
 }  // extern "C"
@@ -234,12 +419,33 @@ esp_err_t nvs_commit(nvs_handle_t handle)
 int main()
 {
     agent_q::AgentQStoredPolicySummary summary = {};
+    std::vector<uint8_t> default_record;
+    std::vector<uint8_t> custom_record;
+    std::vector<uint8_t> custom_record_2;
+    std::vector<uint8_t> unsupported_ask_record;
+    expect(make_default_record(&default_record), "build default record fixture");
+    expect(make_reject_rule_record("reject-devnet", "devnet", &custom_record), "build custom policy record");
+    expect(make_reject_rule_record("reject-testnet", "testnet", &custom_record_2), "build second custom policy record");
+    expect(make_action_rule_record(
+               "ask-devnet",
+               "devnet",
+               agent_q::AgentQPolicyAction::ask,
+               true,
+               false,
+               &unsupported_ask_record),
+           "build unsupported ask record fixture");
 
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "missing policy status");
     expect(!agent_q::read_active_policy_summary(&summary), "missing policy summary fails closed");
     agent_q::AgentQPolicyDecision decision = evaluate_active_policy();
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "missing policy rejects");
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::invalid_policy, "missing policy reason is invalid_policy");
+
+    g_commit_fails_for_key = "pol_p";
+    expect(store_record(custom_record) == agent_q::AgentQPolicyStoreWriteResult::unchanged_failure, "pending marker commit failure from missing policy is cleaned");
+    g_commit_fails_for_key.clear();
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "pending marker commit failure leaves missing policy unchanged");
+    expect(g_blobs.find("pol_p") == g_blobs.end(), "pending marker commit failure does not leave pending residue");
 
     expect(agent_q::store_default_policy(), "store default policy");
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "stored policy status");
@@ -253,28 +459,200 @@ int main()
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "default policy rejects");
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "default policy reason");
 
-    g_blob[0] = 0;
+    set_pending_policy_write(0, 1, 2);
+    g_blobs["pol_c0"] = {0};
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "pending torn commit metadata preserves default policy");
+    decision = evaluate_active_policy();
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "pending torn commit metadata keeps default rule");
+    g_blobs.erase("pol_p");
+    g_blobs.erase("pol_c0");
+
+    g_blobs["pol_c0"] = {0};
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "invalid commit metadata without pending marker fails closed");
+    expect(agent_q::wipe_policy(), "wipe invalid commit metadata residue");
+    expect(agent_q::store_default_policy(), "restore default policy after invalid commit metadata");
+
+    g_erase_fails_for_key = "pol_p";
+    expect(store_record_applied(custom_record), "pending marker cleanup failure does not reverse committed policy");
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "pending marker cleanup failure leaves active committed policy readable");
+    expect(g_blobs.find("pol_p") != g_blobs.end(), "pending marker remains when cleanup erase fails");
+    g_erase_fails_for_key.clear();
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "stale matching pending marker does not block active policy");
+    expect(agent_q::wipe_policy(), "wipe after pending cleanup failure");
+    expect(agent_q::store_default_policy(), "restore default policy after pending cleanup failure");
+
+    g_commit_fails_for_key = "pol_p";
+    expect(store_record(custom_record) == agent_q::AgentQPolicyStoreWriteResult::unchanged_failure, "pending marker commit failure from active policy is cleaned");
+    g_commit_fails_for_key.clear();
+    decision = evaluate_active_policy();
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "pending marker commit failure preserves active default policy");
+    expect(g_blobs.find("pol_p") == g_blobs.end(), "active pending marker commit failure does not leave pending residue");
+
+    expect(store_record_applied(custom_record), "store custom policy before stale commit pre-erase test");
+    g_erase_fails_for_key = "pol_c1";
+    expect(store_record(custom_record_2) == agent_q::AgentQPolicyStoreWriteResult::unchanged_failure, "stale commit pre-erase failure blocks inactive slot reuse");
+    g_erase_fails_for_key.clear();
+    decision = evaluate_active_policy();
+    expect(strcmp(decision.rule_id, "reject-devnet") == 0, "stale commit pre-erase failure preserves active policy");
+    expect(agent_q::wipe_policy(), "wipe after stale commit cleanup failure");
+    expect(agent_q::store_default_policy(), "restore default policy after stale commit cleanup failure");
+
+    expect(store_record_applied(custom_record), "store custom policy record");
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "custom policy status");
+    expect(agent_q::read_active_policy_summary(&summary), "custom policy summary");
+    expect(summary.rule_count == 1, "custom policy rule count");
+    expect(strncmp(summary.policy_id, "sha256:", 7) == 0, "custom policy id prefix");
+    decision = evaluate_active_policy();
+    expect(decision.action == agent_q::AgentQPolicyAction::reject, "custom policy matching rule rejects");
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::matched_rule, "custom policy match reason");
+    expect(strcmp(decision.rule_id, "reject-devnet") == 0, "custom policy rule id");
+    decision = evaluate_active_policy_mismatch();
+    expect(decision.action == agent_q::AgentQPolicyAction::reject, "custom policy mismatch rejects");
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "custom policy mismatch default reason");
+
+    set_pending_policy_write(1, 1, 3);
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "pending marker overlapping active slot fails closed");
+    expect(g_blobs.find("pol_s1") != g_blobs.end(), "overlapping pending marker does not erase active slot");
+    g_blobs.erase("pol_p");
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "removing overlapping slot marker restores active policy");
+
+    set_pending_policy_write(0, 0, 3);
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "pending marker overlapping active commit fails closed");
+    expect(g_blobs.find("pol_c0") != g_blobs.end(), "overlapping pending marker does not erase active commit");
+    g_blobs.erase("pol_p");
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "removing overlapping commit marker restores active policy");
+
+    set_pending_policy_write(1, 0, 3);
+    g_blobs["pol_c1"] = {0};
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "pending torn next commit metadata preserves newest policy");
+    decision = evaluate_active_policy();
+    expect(strcmp(decision.rule_id, "reject-devnet") == 0, "pending torn next commit metadata keeps newest rule");
+    g_blobs.erase("pol_c1");
+    g_blobs.erase("pol_p");
+
+    const std::vector<uint8_t> committed_custom_metadata = g_blobs["pol_c0"];
+    g_blobs["pol_c0"][0] = 0;
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "corrupt newest commit metadata fails closed");
+    g_blobs["pol_c0"] = committed_custom_metadata;
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "restored newest commit metadata is active");
+
+    g_blobs["pol_p"] = {0};
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "invalid pending marker fails closed");
+    g_blobs.erase("pol_p");
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "pending marker removal restores active policy");
+
+    set_pending_policy_write(1, 0, 3);
+    g_blobs["pol_s0"] = {0};
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "pending torn next slot preserves newest policy");
+    decision = evaluate_active_policy();
+    expect(strcmp(decision.rule_id, "reject-devnet") == 0, "pending torn next slot keeps newest rule");
+    g_blobs.erase("pol_p");
+
+    expect(store_record(unsupported_ask_record) == agent_q::AgentQPolicyStoreWriteResult::invalid_record, "unsupported ask record is rejected by active store");
+    decision = evaluate_active_policy();
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::matched_rule, "unsupported ask rejection preserves active policy");
+
+    g_set_fails_for_key = "pol_c1";
+    expect(store_record(custom_record_2) == agent_q::AgentQPolicyStoreWriteResult::unchanged_failure, "commit metadata set failure preserves old policy");
+    g_set_fails_for_key.clear();
+    decision = evaluate_active_policy();
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::matched_rule, "commit metadata set failure keeps old policy");
+    expect(strcmp(decision.rule_id, "reject-devnet") == 0, "commit metadata set failure keeps old rule");
+
+    g_commit_fails_for_commit_record = true;
+    expect(store_record(custom_record_2) == agent_q::AgentQPolicyStoreWriteResult::applied, "durable commit despite commit return failure is treated as applied");
+    g_commit_fails_for_commit_record = false;
+    decision = evaluate_active_policy();
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "durable commit failure selects new policy");
+
+    expect(store_record_applied(custom_record_2), "store second custom policy record");
+    decision = evaluate_active_policy();
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "second custom policy does not match devnet");
+    decision = evaluate_active_policy_mismatch();
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "second custom policy does not match mainnet");
+
+    set_pending_policy_write(1, 0, 3);
+    g_blobs["pol_s0"][0] = 0;
+    decision = evaluate_active_policy();
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::invalid_policy, "stale pending marker does not mask corrupt committed slot");
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "corrupt committed slot status");
+    expect(agent_q::wipe_policy(), "wipe corrupt committed slot");
+    expect(store_record_applied(custom_record), "restore custom policy after corrupt committed slot");
+    expect(store_record_applied(custom_record_2), "restore second custom policy after corrupt committed slot");
+    g_read_size_fails_for_key = "pol_c0";
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::storage_error, "commit metadata read error fails closed");
+    g_read_size_fails_for_key.clear();
+    g_read_data_fails_for_key = "pol_s1";
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::storage_error, "committed slot read error fails closed");
+    g_read_data_fails_for_key.clear();
+
+    expect(agent_q::wipe_policy(), "wipe policy");
+    expect(g_blobs.empty(), "all policy slots and metadata wiped");
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "wiped policy status");
+
+    g_blobs["policy_v0"] = default_record;
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "legacy policy status");
+    expect(agent_q::read_active_policy_summary(&summary), "legacy policy summary");
+    decision = evaluate_active_policy();
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "legacy policy provider");
+    g_blobs["pol_s0"] = {0};
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "legacy fallback rejects modern slot residue without pending marker");
+    g_blobs.erase("pol_s0");
+    set_pending_policy_write(0, 0, 2);
+    g_blobs["pol_s0"] = {0};
+    g_blobs["pol_c0"] = {0};
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "legacy fallback recovers pending modern slot residue");
+    expect(g_blobs.find("pol_p") != g_blobs.end(), "legacy pending marker is not erased during read selection");
+    expect(g_blobs.find("pol_c0") != g_blobs.end(), "legacy pending target commit is not erased during read selection");
+    expect(g_blobs.find("pol_s0") != g_blobs.end(), "legacy pending target slot is not erased during read selection");
+    g_blobs["pol_s1"] = {0};
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "legacy fallback rejects modern residue outside pending target");
+    g_blobs.erase("pol_s1");
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "legacy fallback accepts only pending-owned modern residue");
+
+    g_erase_fails_for_key = "pol_s0";
+    expect(store_record(custom_record) == agent_q::AgentQPolicyStoreWriteResult::unchanged_failure, "legacy residue cleanup failure rejects write without changing active policy");
+    g_erase_fails_for_key.clear();
+    decision = evaluate_active_policy();
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "legacy residue cleanup failure preserves legacy policy");
+    expect(store_record_applied(custom_record), "legacy pending residue is cleaned before modern policy write");
+    decision = evaluate_active_policy();
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::matched_rule, "legacy residue write activates custom policy");
+    expect(strcmp(decision.rule_id, "reject-devnet") == 0, "legacy residue write records custom rule");
+    expect(g_blobs.find("pol_p") == g_blobs.end(), "legacy residue write clears pending marker");
+
+    expect(agent_q::wipe_policy(), "wipe modern policy after legacy residue write");
+    g_blobs["policy_v0"] = default_record;
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "legacy policy restored after residue write test");
+    g_blobs["policy_v0"][0] = 0;
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "corrupt legacy policy status");
+    expect(agent_q::wipe_policy(), "wipe legacy policy");
+
+    expect(agent_q::store_default_policy(), "restore default policy");
+    g_blobs["pol_s0"][0] = 0;
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "corrupt policy status");
     expect(!agent_q::read_active_policy_summary(&summary), "corrupt policy summary fails closed");
     decision = evaluate_active_policy();
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "corrupt policy rejects");
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::invalid_policy, "corrupt policy reason is invalid_policy");
 
+    expect(!agent_q::store_default_policy(), "corrupt policy cannot be overwritten without wipe");
+    expect(agent_q::wipe_policy(), "wipe corrupt policy before restore");
     expect(agent_q::store_default_policy(), "restore default policy");
-    g_blob.push_back(0);
-    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "oversized policy status");
-
+    g_blobs["pol_s1"].push_back(0);
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "inactive slot residue does not invalidate active policy");
     expect(agent_q::store_default_policy(), "restore default policy again");
     expect(agent_q::wipe_policy(), "wipe policy");
-    expect(g_blob.empty(), "policy blob wiped");
+    expect(g_blobs.empty(), "policy blob wiped");
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "wiped policy status");
     expect(!agent_q::read_active_policy_summary(&summary), "wiped policy summary fails closed");
 
     g_commit_fails = true;
     expect(!agent_q::store_default_policy(), "commit failure fails closed");
-    expect(g_blob.empty(), "commit failure wipes partial policy");
-    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "commit failure policy status");
     g_commit_fails = false;
+    const agent_q::AgentQPolicyStoreStatus failed_commit_status = agent_q::active_policy_status();
+    expect(failed_commit_status == agent_q::AgentQPolicyStoreStatus::missing, "pre-write commit failure leaves policy missing");
+    expect(agent_q::wipe_policy(), "wipe failed commit residue");
 
     g_open_fails = true;
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::storage_error, "storage error policy status");
@@ -310,6 +688,7 @@ CXX_BIN="${CXX:-c++}"
   "${COMMON_ROOT}/policy/agent_q_policy_schema.cpp" \
   "${COMMON_ROOT}/policy/agent_q_policy_v0.cpp" \
   "${COMMON_ROOT}/policy/agent_q_policy_runtime.cpp" \
+  "${COMMON_ROOT}/sui/agent_q_sui_method_adapter.cpp" \
   "${TMP_DIR}/sha256.o" \
   "${TMP_DIR}/platform_util.o" \
   -o "${TMP_DIR}/policy_store_test"

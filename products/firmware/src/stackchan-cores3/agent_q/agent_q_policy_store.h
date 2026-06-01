@@ -24,7 +24,15 @@ enum class AgentQPolicyStoreStatus {
     storage_error,
 };
 
+enum class AgentQPolicyStoreWriteResult {
+    applied,
+    unchanged_failure,
+    consistency_error,
+    invalid_record,
+};
+
 bool store_default_policy();
+AgentQPolicyStoreWriteResult store_active_policy_record(const uint8_t* record, size_t record_size);
 bool wipe_policy();
 AgentQPolicyStoreStatus active_policy_status();
 

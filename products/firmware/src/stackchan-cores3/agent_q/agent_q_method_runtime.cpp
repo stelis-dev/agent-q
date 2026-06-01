@@ -147,6 +147,12 @@ AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
             "Active policy is unavailable.");
     }
     if (decision.action == AgentQPolicyAction::reject) {
+        const char* rule_ref = "default";
+        if (decision.reason == AgentQPolicyDecisionReason::matched_rule &&
+            decision.rule_id != nullptr &&
+            decision.rule_id[0] != '\0') {
+            rule_ref = decision.rule_id;
+        }
         return rejected_with_history(
             "policy_rejected",
             "The request was rejected by device policy.",
@@ -156,7 +162,7 @@ AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
             "sign_transaction",
             digest_ready ? payload_digest : nullptr,
             policy_summary_ready ? policy_summary.policy_id : nullptr,
-            "default");
+            rule_ref);
     }
 
     return rejected(

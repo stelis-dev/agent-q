@@ -637,6 +637,12 @@ test("parseProtocolResponse accepts a valid active policy summary", () => {
   assert.match(response.policy.policyId, /^sha256:[0-9a-f]{64}$/);
 });
 
+test("parseProtocolResponse accepts a bounded custom policy summary", () => {
+  const response = assertPolicyResponse(parseProtocolResponse(policyLine({ ruleCount: 1 }), "req_policy"));
+  assert.equal(response.type, "policy");
+  assert.equal(response.policy.ruleCount, 1);
+});
+
 test("parseProtocolResponse rejects malformed policy summaries", () => {
   assert.throws(() => parseProtocolResponse(policyLine({ schema: "agentq.policy.v1" }), "req_policy"), {
     code: "protocol_error",
@@ -647,7 +653,13 @@ test("parseProtocolResponse rejects malformed policy summaries", () => {
   assert.throws(() => parseProtocolResponse(policyLine({ defaultAction: "sign" }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 1 }), "req_policy"), {
+  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 17 }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: -1 }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 1.5 }), "req_policy"), {
     code: "protocol_error",
   });
   assert.throws(() => parseProtocolResponse(policyLine({ rules: [] }), "req_policy"), {

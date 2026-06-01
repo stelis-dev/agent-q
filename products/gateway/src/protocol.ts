@@ -920,7 +920,7 @@ export const MAX_CAPABILITY_ACCOUNTS_PER_CHAIN = 1;
 export const MAX_ACCOUNTS_PER_RESPONSE = 1;
 export const AGENT_Q_POLICY_SCHEMA = "agentq.policy.v0";
 export const POLICY_ID_PATTERN = /^sha256:[0-9a-f]{64}$/;
-export const MAX_POLICY_RULE_COUNT = 0;
+export const MAX_POLICY_RULE_COUNT = 16;
 export const MAX_APPROVAL_HISTORY_RECORDS = 4;
 export const UINT_DECIMAL_STRING_PATTERN = /^(0|[1-9][0-9]{0,19})$/;
 const UINT64_MAX_DECIMAL = "18446744073709551615";
@@ -1229,7 +1229,10 @@ function sanitizePolicySummary(value: unknown): PolicySummary | null {
     typeof value.policyId !== "string" ||
     !POLICY_ID_PATTERN.test(value.policyId) ||
     value.defaultAction !== "reject" ||
-    value.ruleCount !== MAX_POLICY_RULE_COUNT
+    typeof value.ruleCount !== "number" ||
+    !Number.isInteger(value.ruleCount) ||
+    value.ruleCount < 0 ||
+    value.ruleCount > MAX_POLICY_RULE_COUNT
   ) {
     return null;
   }

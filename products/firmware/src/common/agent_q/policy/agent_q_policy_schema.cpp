@@ -85,6 +85,34 @@ bool agent_q_policy_is_identifier_string(const char* value, size_t max_length)
     return true;
 }
 
+bool agent_q_policy_is_rule_id_string(const char* value)
+{
+    if (!string_present(value)) {
+        return false;
+    }
+
+    size_t length = 0;
+    for (const char* cursor = value; *cursor != '\0'; ++cursor) {
+        const char ch = *cursor;
+        const bool valid_char =
+            (ch >= 'a' && ch <= 'z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '_' ||
+            ch == '-' ||
+            ch == '.' ||
+            ch == ':' ||
+            ch == '/';
+        if (!valid_char || (length == 0 && !(ch >= 'a' && ch <= 'z'))) {
+            return false;
+        }
+        ++length;
+        if (length > kAgentQPolicyMaxRuleIdLength) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool agent_q_policy_is_safe_field_id(const char* value)
 {
     if (!string_present(value)) {

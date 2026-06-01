@@ -65,6 +65,11 @@ bool agent_q_policy_canonical_to_runtime_view(
     const AgentQPolicyCanonicalDocument& policy,
     AgentQPolicyRuntimeView* out);
 
+AgentQPolicyCanonicalStatus validate_agent_q_policy_v0_canonical_document(
+    const AgentQPolicyCanonicalDocument& policy,
+    const AgentQPolicyMethodDescriptor* method_descriptors,
+    size_t method_descriptor_count);
+
 AgentQPolicyCanonicalStatus encode_agent_q_policy_v0_canonical_record(
     const AgentQPolicyCanonicalDocument& policy,
     uint8_t* output,
@@ -75,6 +80,11 @@ AgentQPolicyCanonicalStatus encode_agent_q_policy_v0_default_record(
     uint8_t* output,
     size_t output_capacity,
     size_t* output_size);
+
+AgentQPolicyCanonicalStatus decode_agent_q_policy_v0_canonical_record(
+    const uint8_t* record,
+    size_t record_size,
+    AgentQPolicyCanonicalDocument* out);
 
 const char* agent_q_policy_canonical_status_name(AgentQPolicyCanonicalStatus status);
 

@@ -144,6 +144,13 @@ int main()
     expect(record_size == sizeof(expected_default), "default helper keeps existing 16-byte record size");
     expect(memcmp(record, expected_default, sizeof(expected_default)) == 0, "default helper record bytes");
 
+    agent_q::AgentQPolicyCanonicalDocument decoded = {};
+    expect_status(
+        "default policy decodes",
+        agent_q::decode_agent_q_policy_v0_canonical_record(record, record_size, &decoded),
+        agent_q::AgentQPolicyCanonicalStatus::ok);
+    expect(decoded.rule_count == 0, "decoded default rule count");
+
     const char* networks[] = {"devnet", "testnet"};
     const agent_q::AgentQPolicyCriterion criteria[] = {
         {"common.network", agent_q::AgentQPolicyOperator::in, nullptr, networks, 2},
@@ -167,19 +174,85 @@ int main()
         "reject-only Sui policy canonicalizes",
         agent_q::canonicalize_agent_q_policy_v0(reject_policy, sui_methods, 1, &canonical),
         agent_q::AgentQPolicyCanonicalStatus::ok);
+
+    const agent_q::AgentQPolicyRule digit_rule_id_rule = {
+        "1_rule",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::reject,
+        criteria,
+        2,
+    };
+    const agent_q::AgentQPolicyDocument digit_rule_id_policy = {
+        agent_q::kAgentQPolicyV0Schema,
+        agent_q::AgentQPolicyAction::reject,
+        &digit_rule_id_rule,
+        1,
+    };
+    expect_status(
+        "digit-prefixed rule id is rejected",
+        agent_q::canonicalize_agent_q_policy_v0(digit_rule_id_policy, sui_methods, 1, &canonical),
+        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
+
+    expect_status(
+        "reject-only Sui policy re-canonicalizes after invalid rule id",
+        agent_q::canonicalize_agent_q_policy_v0(reject_policy, sui_methods, 1, &canonical),
+        agent_q::AgentQPolicyCanonicalStatus::ok);
     expect_status(
         "reject-only Sui policy encodes",
         agent_q::encode_agent_q_policy_v0_canonical_record(canonical, record, sizeof(record), &record_size),
         agent_q::AgentQPolicyCanonicalStatus::ok);
     expect(record_size > sizeof(expected_default), "custom policy record extends default header");
 
+    memset(&decoded, 0, sizeof(decoded));
+    expect_status(
+        "reject-only Sui policy decodes",
+        agent_q::decode_agent_q_policy_v0_canonical_record(record, record_size, &decoded),
+        agent_q::AgentQPolicyCanonicalStatus::ok);
+    expect(decoded.rule_count == 1, "decoded custom rule count");
+
+    uint8_t invalid_rule_id_record[agent_q::kAgentQPolicyMaxCanonicalRecordBytes] = {};
+    memcpy(invalid_rule_id_record, record, record_size);
+    invalid_rule_id_record[sizeof(expected_default) + 1] = 'B';
+    expect_status(
+        "decoded canonical record rejects invalid rule id",
+        agent_q::decode_agent_q_policy_v0_canonical_record(invalid_rule_id_record, record_size, &decoded),
+        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
+    expect_status(
+        "reject-only Sui policy re-decodes after invalid record test",
+        agent_q::decode_agent_q_policy_v0_canonical_record(record, record_size, &decoded),
+        agent_q::AgentQPolicyCanonicalStatus::ok);
+
     agent_q::AgentQPolicyRuntimeView view = {};
-    expect(agent_q::agent_q_policy_canonical_to_runtime_view(canonical, &view), "canonical policy creates runtime view");
+    expect(agent_q::agent_q_policy_canonical_to_runtime_view(decoded, &view), "decoded canonical policy creates runtime view");
     const agent_q::AgentQPolicyDecision decision =
         agent_q::evaluate_agent_q_policy_v0(view.document, matching_sui_facts());
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "runtime view action");
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::matched_rule, "runtime view matched rule");
     expect(decision.rule_id != nullptr && strcmp(decision.rule_id, "small-sui-reject") == 0, "runtime view rule id");
+
+    uint8_t record_with_trailer[agent_q::kAgentQPolicyMaxCanonicalRecordBytes] = {};
+    memcpy(record_with_trailer, record, record_size);
+    record_with_trailer[record_size] = 0;
+    expect_status(
+        "trailing canonical bytes are rejected",
+        agent_q::decode_agent_q_policy_v0_canonical_record(record_with_trailer, record_size + 1, &decoded),
+        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
+
+    uint8_t malformed_record[agent_q::kAgentQPolicyMaxCanonicalRecordBytes] = {};
+    memcpy(malformed_record, record, record_size);
+    malformed_record[6] = 255;
+    expect_status(
+        "invalid encoded default action is rejected",
+        agent_q::decode_agent_q_policy_v0_canonical_record(malformed_record, record_size, &decoded),
+        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
+
+    memcpy(malformed_record, record, record_size);
+    malformed_record[8] = 1;
+    expect_status(
+        "nonzero encoded reserved byte is rejected",
+        agent_q::decode_agent_q_policy_v0_canonical_record(malformed_record, record_size, &decoded),
+        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
 
     agent_q::AgentQPolicyCanonicalDocument malformed_canonical = canonical;
     malformed_canonical.rules[0].action = static_cast<agent_q::AgentQPolicyAction>(255);
@@ -193,6 +266,31 @@ int main()
     malformed_canonical.rules[0].criteria[0].op = static_cast<agent_q::AgentQPolicyOperator>(255);
     expect_status(
         "invalid canonical operator is rejected",
+        agent_q::encode_agent_q_policy_v0_canonical_record(
+            malformed_canonical, record, sizeof(record), &record_size),
+        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
+
+    malformed_canonical = canonical;
+    malformed_canonical.string_pool[malformed_canonical.rules[0].id.offset] = 'B';
+    expect_status(
+        "invalid canonical rule id is rejected",
+        agent_q::encode_agent_q_policy_v0_canonical_record(
+            malformed_canonical, record, sizeof(record), &record_size),
+        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
+
+    malformed_canonical = canonical;
+    malformed_canonical.string_pool[malformed_canonical.rules[0].criteria[0].field.offset] = 'S';
+    expect_status(
+        "invalid canonical field id is rejected",
+        agent_q::encode_agent_q_policy_v0_canonical_record(
+            malformed_canonical, record, sizeof(record), &record_size),
+        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
+
+    malformed_canonical = canonical;
+    malformed_canonical.rules[0].action = agent_q::AgentQPolicyAction::sign;
+    malformed_canonical.rules[0].criterion_count = 0;
+    expect_status(
+        "non-reject canonical rule requires criteria",
         agent_q::encode_agent_q_policy_v0_canonical_record(
             malformed_canonical, record, sizeof(record), &record_size),
         agent_q::AgentQPolicyCanonicalStatus::invalid_policy);

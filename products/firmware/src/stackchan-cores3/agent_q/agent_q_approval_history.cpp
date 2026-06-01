@@ -13,7 +13,9 @@ namespace {
 constexpr const char* kTag = "AgentQApprovalHist";
 constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kApprovalHistoryKey = "approval_hist";
-constexpr uint8_t kStoredApprovalHistoryFormatVersion = 1;
+constexpr uint8_t kStoredApprovalHistoryFormatVersion = 2;
+constexpr uint8_t kLegacyStoredApprovalHistoryFormatVersion = 1;
+constexpr size_t kLegacyApprovalHistoryRuleRefSize = 16;
 constexpr uint8_t kStoredDecisionPolicyApproved = 0;
 constexpr uint8_t kStoredDecisionPolicyRejected = 1;
 constexpr uint8_t kStoredDecisionUserApproved = 2;
@@ -56,7 +58,33 @@ struct StoredApprovalHistory {
     StoredApprovalHistoryRecord records[kAgentQApprovalHistoryCapacity];
 };
 
-static_assert(sizeof(StoredApprovalHistoryRecord) <= 192,
+struct LegacyStoredApprovalHistoryRecordV1 {
+    uint64_t sequence;
+    uint64_t uptime_ms;
+    uint8_t decision;
+    uint8_t confirmation_kind;
+    uint8_t flags;
+    uint8_t reserved[5];
+    char chain[kAgentQApprovalHistoryChainSize];
+    char method[kAgentQApprovalHistoryMethodSize];
+    char reason_code[kAgentQApprovalHistoryReasonCodeSize];
+    char rule_ref[kLegacyApprovalHistoryRuleRefSize];
+    uint8_t payload_digest[32];
+    uint8_t policy_hash[32];
+};
+
+struct LegacyStoredApprovalHistoryV1 {
+    uint8_t magic[4];
+    uint8_t format_version;
+    uint8_t reserved0;
+    uint16_t start;
+    uint16_t count;
+    uint16_t reserved1;
+    uint64_t next_sequence;
+    LegacyStoredApprovalHistoryRecordV1 records[kAgentQApprovalHistoryCapacity];
+};
+
+static_assert(sizeof(StoredApprovalHistoryRecord) <= 224,
               "Approval history record must stay bounded for NVS storage");
 static_assert(sizeof(StoredApprovalHistory) <= 8192,
               "Approval history blob must fit alongside Agent-Q material records in NVS");
@@ -85,6 +113,45 @@ bool valid_history_header(const StoredApprovalHistory& history)
            history.start < kAgentQApprovalHistoryCapacity &&
            history.count <= kAgentQApprovalHistoryCapacity &&
            history.next_sequence != 0;
+}
+
+bool valid_legacy_history_header(const LegacyStoredApprovalHistoryV1& history)
+{
+    return history.magic[0] == 'A' &&
+           history.magic[1] == 'Q' &&
+           history.magic[2] == 'A' &&
+           history.magic[3] == 'H' &&
+           history.format_version == kLegacyStoredApprovalHistoryFormatVersion &&
+           history.start < kAgentQApprovalHistoryCapacity &&
+           history.count <= kAgentQApprovalHistoryCapacity &&
+           history.next_sequence != 0;
+}
+
+void migrate_legacy_history(const LegacyStoredApprovalHistoryV1& legacy, StoredApprovalHistory* history)
+{
+    init_history(history);
+    if (history == nullptr) {
+        return;
+    }
+    history->start = legacy.start;
+    history->count = legacy.count;
+    history->next_sequence = legacy.next_sequence;
+    for (size_t index = 0; index < kAgentQApprovalHistoryCapacity; ++index) {
+        const LegacyStoredApprovalHistoryRecordV1& source = legacy.records[index];
+        StoredApprovalHistoryRecord& target = history->records[index];
+        target.sequence = source.sequence;
+        target.uptime_ms = source.uptime_ms;
+        target.decision = source.decision;
+        target.confirmation_kind = source.confirmation_kind;
+        target.flags = source.flags;
+        memcpy(target.reserved, source.reserved, sizeof(target.reserved));
+        memcpy(target.chain, source.chain, sizeof(source.chain));
+        memcpy(target.method, source.method, sizeof(source.method));
+        memcpy(target.reason_code, source.reason_code, sizeof(source.reason_code));
+        memcpy(target.rule_ref, source.rule_ref, sizeof(source.rule_ref));
+        memcpy(target.payload_digest, source.payload_digest, sizeof(source.payload_digest));
+        memcpy(target.policy_hash, source.policy_hash, sizeof(source.policy_hash));
+    }
 }
 
 void reset_write_budget()
@@ -383,11 +450,31 @@ AgentQApprovalHistoryReadResult load_history(StoredApprovalHistory* history, boo
         ESP_LOGW(kTag, "Approval history size read failed: %s", esp_err_to_name(result));
         return AgentQApprovalHistoryReadResult::storage_error;
     }
-    if (history_size != sizeof(*history)) {
+    if (history_size != sizeof(*history) &&
+        history_size != sizeof(LegacyStoredApprovalHistoryV1)) {
         nvs_close(nvs);
         ESP_LOGW(kTag, "Approval history has invalid size: %u",
                  static_cast<unsigned>(history_size));
         return AgentQApprovalHistoryReadResult::invalid;
+    }
+
+    if (history_size == sizeof(LegacyStoredApprovalHistoryV1)) {
+        LegacyStoredApprovalHistoryV1 legacy = {};
+        result = nvs_get_blob(nvs, kApprovalHistoryKey, &legacy, &history_size);
+        nvs_close(nvs);
+        if (result != ESP_OK || history_size != sizeof(legacy)) {
+            ESP_LOGW(kTag, "Legacy approval history read failed: %s size=%u",
+                     esp_err_to_name(result),
+                     static_cast<unsigned>(history_size));
+            return AgentQApprovalHistoryReadResult::storage_error;
+        }
+        if (!valid_legacy_history_header(legacy)) {
+            ESP_LOGW(kTag, "Legacy approval history validation failed");
+            return AgentQApprovalHistoryReadResult::invalid;
+        }
+        migrate_legacy_history(legacy, history);
+        memset(&legacy, 0, sizeof(legacy));
+        return AgentQApprovalHistoryReadResult::ok;
     }
 
     result = nvs_get_blob(nvs, kApprovalHistoryKey, history, &history_size);

@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "agent_q_common/policy/agent_q_policy_schema.h"
+
 namespace agent_q {
 
 constexpr size_t kAgentQApprovalHistoryCapacity = 32;
@@ -10,7 +12,7 @@ constexpr size_t kAgentQApprovalHistoryPageMax = 4;
 constexpr size_t kAgentQApprovalHistoryChainSize = 12;
 constexpr size_t kAgentQApprovalHistoryMethodSize = 32;
 constexpr size_t kAgentQApprovalHistoryReasonCodeSize = 32;
-constexpr size_t kAgentQApprovalHistoryRuleRefSize = 16;
+constexpr size_t kAgentQApprovalHistoryRuleRefSize = kAgentQPolicyMaxRuleIdLength + 1;
 constexpr size_t kAgentQApprovalHistoryDigestSize = 72;  // "sha256:" + 64 hex chars + NUL.
 constexpr uint64_t kAgentQApprovalHistoryWriteBudgetWindowMs = 60000;
 constexpr size_t kAgentQApprovalHistoryWriteBudgetMax = 12;

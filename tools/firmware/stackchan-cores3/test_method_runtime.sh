@@ -90,6 +90,7 @@ namespace {
 
 int failures = 0;
 agent_q::AgentQPolicyAction g_policy_action = agent_q::AgentQPolicyAction::reject;
+bool g_policy_has_rule = false;
 agent_q::AgentQPolicyCriterion g_policy_criterion = {
     "common.network",
     agent_q::AgentQPolicyOperator::eq,
@@ -203,8 +204,8 @@ bool load_default_policy(AgentQPolicyDocument* out, void*)
     *out = AgentQPolicyDocument{
         kAgentQPolicyV0Schema,
         AgentQPolicyAction::reject,
-        ::g_policy_action == AgentQPolicyAction::reject ? nullptr : &::g_policy_rule,
-        ::g_policy_action == AgentQPolicyAction::reject ? 0U : 1U,
+        ::g_policy_has_rule || ::g_policy_action != AgentQPolicyAction::reject ? &::g_policy_rule : nullptr,
+        ::g_policy_has_rule || ::g_policy_action != AgentQPolicyAction::reject ? 1U : 0U,
     };
     return true;
 }
@@ -281,6 +282,24 @@ int main(int argc, char** argv)
     expect(strcmp(policy_result.approval_history.policy_hash,
                   "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab") == 0,
            "default policy rejection history owns policy hash after return");
+    expect(strcmp(policy_result.approval_history.rule_ref, "default") == 0,
+           "default policy rejection history records default rule ref");
+
+    constexpr const char* kMaxRuleId = "abcdefghijklmnopqrstuvwxyzabcdef";
+    ::g_policy_has_rule = true;
+    ::g_policy_rule.id = kMaxRuleId;
+    const agent_q::AgentQMethodRuntimeResult custom_rule_result =
+        agent_q::evaluate_call_method("sui", "sign_transaction", valid_params.as<JsonVariant>());
+    expect(custom_rule_result.status == agent_q::AgentQMethodRuntimeStatus::rejected,
+           "custom matched rule returns method rejection");
+    expect(strcmp(custom_rule_result.code, "policy_rejected") == 0,
+           "custom matched rule rejects valid Sui transfer");
+    expect(custom_rule_result.has_approval_history,
+           "custom matched rule rejection is recordable in approval history");
+    expect(strcmp(custom_rule_result.approval_history.rule_ref, kMaxRuleId) == 0,
+           "custom matched rule rejection history records max-length matched rule id");
+    ::g_policy_has_rule = false;
+    ::g_policy_rule.id = "test_rule";
 
     ::g_policy_action = agent_q::AgentQPolicyAction::sign;
     const agent_q::AgentQMethodRuntimeResult sign_not_implemented =

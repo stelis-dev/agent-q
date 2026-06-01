@@ -44,7 +44,7 @@ Implemented today:
   connect approval to the physical Confirm path after PIN verification.
 - A material-backed provisioning state on the StackChan CoreS3 target. It
   reports `provisioned` only when the persisted state, valid DEV_PROFILE root
-  entropy blob, active default-reject policy record, and local PIN verifier all
+  entropy blob, committed active policy record, and local PIN verifier all
   exist. This is not signing readiness and stores no account data. The current
   build stores that DEV_PROFILE root entropy, active policy record, and PIN
   verifier in ordinary NVS; Secure Boot, Flash Encryption, and NVS Encryption
@@ -80,10 +80,13 @@ Implemented today:
   on demand and does not return mnemonic, seed, entropy, or private key
   material. Rerun hardware smoke after setup, session, or material-storage changes.
 - A common firmware policy evaluator and a StackChan CoreS3 DEV_PROFILE active
-  policy provider. The target stores only a default-reject policy record in
-  ordinary NVS, reads a public summary through `get_policy`, and consumes that
-  active policy only for Sui `sign_transaction` policy-decision smoke. It does
-  not sign, update policy, or trigger physical approval.
+  policy provider. The current product flow installs the default-reject policy,
+  while the target stores the committed active policy as a canonical binary
+  record in ordinary NVS and can load canonical custom reject-policy records
+  through its internal storage boundary. Firmware reads a public summary through
+  `get_policy` and consumes that active policy only for Sui `sign_transaction`
+  policy-decision smoke. It does not expose policy update authorization, sign,
+  or trigger physical approval for signing requests.
 - A bounded persistent approval-history read path. The current StackChan CoreS3
   target stores only Firmware-authored method-decision metadata for validated
   policy-rejected `call_method` skeleton decisions. It does not store raw
@@ -332,7 +335,20 @@ Designed policy-update contract:
   record before storage and hash calculation; raw JSON is not the active policy
   storage format.
 - The active policy store must preserve the old policy until the new policy is
-  fully written, validated, and selected as active. Ambiguous storage state is a
+  fully written, validated, and selected as active. A durable pending-write
+  marker may identify an interrupted inactive-slot write that can safely roll
+  back to the previous committed policy. The metadata flip is the commit point:
+  after that point, cleanup failure is not reported as a failed write because
+  the new policy is already authoritative. Stale pending markers that exactly
+  match the selected committed policy are ignored by active-policy selection,
+  and stale commit metadata is removed before its slot or metadata key is
+  reused. Each write must end as applied, previous policy proven unchanged, or
+  persistent-material consistency error. If a legacy `policy_v0` record is
+  selected while pending-owned modern residue exists, Firmware must clean that
+  residue before starting a new modern write or reject the write with the legacy
+  policy still active. Invalid commit metadata without a matching pending
+  marker, or pending targets that overlap but do not exactly match the selected
+  active material, is ambiguous storage state and therefore a
   persistent-material consistency error.
 - DEV_PROFILE slot selection is not rollback protection. USER_PROFILE policy
   storage requires secure anti-rollback or monotonic commit protection before it

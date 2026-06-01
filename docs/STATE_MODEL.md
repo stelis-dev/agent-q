@@ -184,14 +184,14 @@ generate-and-confirm flow.
 
 ### `provisioned`
 
-Root signing material and an active policy exist in device-local storage. In
-the current StackChan CoreS3 DEV_PROFILE implementation this means a binary
-BIP-39 entropy blob, the active default-reject policy record, and a local
+Root signing material and a committed active policy exist in device-local
+storage. In the current StackChan CoreS3 DEV_PROFILE implementation this means a
+binary BIP-39 entropy blob, a canonical active policy record, and a local
 6-digit PIN verifier record are stored in ordinary NVS and `prov_state` is
-`provisioned`; read-only Sui account derivation, read-only active policy
-summary, and source-level local reset/material wipe are implemented, while
-signing, policy update, and USER_PROFILE secure storage gates are still
-separate work.
+`provisioned`; the normal product flow installs the default-reject policy, while
+read-only Sui account derivation, read-only active policy summary, and
+source-level local reset/material wipe are implemented. Signing, policy update,
+and USER_PROFILE secure storage gates are still separate work.
 
 Allowed:
 
@@ -217,7 +217,7 @@ This state is not blanket signing approval. Policy still decides whether each
 request signs, rejects, or asks. In the current StackChan CoreS3
 implementation, `provisioned` enables `connect`, `disconnect`, read-only
 `get_capabilities` (`methods: []`), read-only `get_accounts` (Sui Ed25519
-account 0), read-only `get_policy` for the active default-reject policy summary,
+account 0), read-only `get_policy` for the committed active policy summary,
 read-only `get_approval_history` for Firmware-owned persistent decision
 metadata, the `call_method` runtime skeleton (unknown methods rejected with
 `unsupported_method`, while Sui `sign_transaction` policy-decision smoke consumes
@@ -229,9 +229,9 @@ Future signing txBytes decoding is allowed only inside a session-scoped
 condition. Current common firmware source includes a restricted host-tested SUI
 transfer facts parser, a Sui method adapter, a stored-policy provider
 boundary, and a host-tested policy evaluator. These are firmware foundations
-only: StackChan CoreS3 consumes the stored active default-reject policy decision
-for Sui `sign_transaction` policy-decision smoke, capabilities still advertise no
-signing methods, and Gateway must not evaluate policy. A corrupt or unreadable
+only: StackChan CoreS3 consumes the committed active policy for Sui
+`sign_transaction` policy-decision smoke, capabilities still advertise no signing
+methods, and Gateway must not evaluate policy. A corrupt or unreadable
 active policy is a persistent-material consistency error, not a normal
 `provisioned` state. A missing active policy is migrated only for the documented
 DEV_PROFILE legacy shape where `prov_state = provisioned` and root material is

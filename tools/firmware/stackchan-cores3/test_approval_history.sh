@@ -22,6 +22,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 TARGET_ROOT="${REPO_ROOT}/products/firmware/src/stackchan-cores3"
+COMMON_ROOT="${REPO_ROOT}/products/firmware/src/common/agent_q"
 
 if [[ -z "${IDF_PATH:-}" ]]; then
   echo "IDF_PATH is not set. Source ESP-IDF v5.5.4 export.sh before running this test." >&2
@@ -38,7 +39,8 @@ fi
 
 for required in \
   "${TARGET_ROOT}/agent_q/agent_q_approval_history.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_approval_history.h"; do
+  "${TARGET_ROOT}/agent_q/agent_q_approval_history.h" \
+  "${COMMON_ROOT}/policy/agent_q_policy_schema.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -47,6 +49,9 @@ done
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-approval-history.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
+
+mkdir -p "${TMP_DIR}/agent_q_common"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
 
 mkdir -p "${TMP_DIR}/stubs"
 
@@ -133,6 +138,54 @@ agent_q::AgentQApprovalHistoryAppendInput policy_rejected_input(const char* reas
         "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
         "default",
     };
+}
+
+struct LegacyApprovalHistoryRecordV1 {
+    uint64_t sequence;
+    uint64_t uptime_ms;
+    uint8_t decision;
+    uint8_t confirmation_kind;
+    uint8_t flags;
+    uint8_t reserved[5];
+    char chain[agent_q::kAgentQApprovalHistoryChainSize];
+    char method[agent_q::kAgentQApprovalHistoryMethodSize];
+    char reason_code[agent_q::kAgentQApprovalHistoryReasonCodeSize];
+    char rule_ref[16];
+    uint8_t payload_digest[32];
+    uint8_t policy_hash[32];
+};
+
+struct LegacyApprovalHistoryV1 {
+    uint8_t magic[4];
+    uint8_t format_version;
+    uint8_t reserved0;
+    uint16_t start;
+    uint16_t count;
+    uint16_t reserved1;
+    uint64_t next_sequence;
+    LegacyApprovalHistoryRecordV1 records[agent_q::kAgentQApprovalHistoryCapacity];
+};
+
+void write_legacy_history_blob()
+{
+    LegacyApprovalHistoryV1 legacy = {};
+    legacy.magic[0] = 'A';
+    legacy.magic[1] = 'Q';
+    legacy.magic[2] = 'A';
+    legacy.magic[3] = 'H';
+    legacy.format_version = 1;
+    legacy.count = 1;
+    legacy.next_sequence = 2;
+    legacy.records[0].sequence = 1;
+    legacy.records[0].uptime_ms = 77;
+    legacy.records[0].decision = 1;
+    legacy.records[0].confirmation_kind = 1;
+    strcpy(legacy.records[0].chain, "sui");
+    strcpy(legacy.records[0].method, "sign_transaction");
+    strcpy(legacy.records[0].reason_code, "policy_rejected");
+    strcpy(legacy.records[0].rule_ref, "legacy_rule");
+    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&legacy);
+    g_blob.assign(bytes, bytes + sizeof(legacy));
 }
 
 }  // namespace
@@ -233,6 +286,15 @@ int main()
     expect(page.records[0].confirmation_kind == agent_q::AgentQApprovalHistoryConfirmationKind::policy,
            "first record confirmation kind");
     expect(strcmp(page.records[0].chain, "sui") == 0, "first record chain");
+
+    agent_q::AgentQApprovalHistoryAppendInput max_rule_ref = policy_rejected_input();
+    max_rule_ref.rule_ref = "abcdefghijklmnopqrstuvwxyzabcdef";
+    expect(agent_q::approval_history_append(max_rule_ref, 101),
+           "max-length ruleRef matching policy rule id is accepted");
+    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+           "read max ruleRef page");
+    expect(strcmp(page.records[0].rule_ref, "abcdefghijklmnopqrstuvwxyzabcdef") == 0,
+           "max-length ruleRef is preserved");
     expect(strcmp(page.records[0].method, "sign_transaction") == 0, "first record method");
     expect(strcmp(page.records[0].payload_digest,
                   "sha256:0000000000000000000000000000000000000000000000000000000000000001") == 0,
@@ -266,7 +328,7 @@ int main()
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
            "read newest page");
     expect(page.count == 4 && page.has_more, "newest page is bounded with hasMore");
-    expect(page.records[0].sequence == agent_q::kAgentQApprovalHistoryCapacity + 4,
+    expect(page.records[0].sequence == agent_q::kAgentQApprovalHistoryCapacity + 5,
            "newest record sequence after wrap");
     const uint64_t before = page.records[3].sequence;
     expect(agent_q::approval_history_read_page(before, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
@@ -289,6 +351,21 @@ int main()
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
            "wiped approval history reads as empty");
     expect(page.count == 0, "wiped page is empty");
+
+    write_legacy_history_blob();
+    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+           "legacy approval history layout migrates for read");
+    expect(page.count == 1 && page.records[0].sequence == 1,
+           "legacy approval history record is readable");
+    expect(strcmp(page.records[0].rule_ref, "legacy_rule") == 0,
+           "legacy approval history ruleRef is preserved");
+    expect(agent_q::approval_history_append(policy_rejected_input(), 900),
+           "append migrates legacy approval history layout");
+    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+           "read migrated approval history after append");
+    expect(page.count == 2 && page.records[0].sequence == 2,
+           "migrated approval history appends after legacy sequence");
+    expect(agent_q::approval_history_wipe(), "wipe approval history after legacy migration test");
 
     for (size_t index = 0; index < agent_q::kAgentQApprovalHistoryWriteBudgetMax; ++index) {
         expect(agent_q::approval_history_append(policy_rejected_input(), 1000 + index),
@@ -333,6 +410,7 @@ CXX_BIN="${CXX:-c++}"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
+  -I"${TMP_DIR}" \
   -I"${TARGET_ROOT}/agent_q" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/approval_history_test.cpp" \

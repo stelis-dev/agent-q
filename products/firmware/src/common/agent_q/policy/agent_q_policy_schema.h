@@ -39,6 +39,7 @@ bool agent_q_policy_is_known_action(AgentQPolicyAction action);
 bool agent_q_policy_is_known_operator(AgentQPolicyOperator op);
 bool agent_q_policy_is_known_value_type(AgentQPolicyValueType type);
 bool agent_q_policy_is_identifier_string(const char* value, size_t max_length);
+bool agent_q_policy_is_rule_id_string(const char* value);
 bool agent_q_policy_is_safe_field_id(const char* value);
 bool agent_q_policy_operator_allowed(
     const AgentQPolicyFieldDescriptor& descriptor,

@@ -361,7 +361,7 @@ const policySummaryShape = z.object({
   schema: z.literal(AGENT_Q_POLICY_SCHEMA),
   policyId: z.string().regex(POLICY_ID_PATTERN),
   defaultAction: z.literal("reject"),
-  ruleCount: z.literal(MAX_POLICY_RULE_COUNT),
+  ruleCount: z.number().int().min(0).max(MAX_POLICY_RULE_COUNT),
 });
 const livePolicyOutputShape = z.object({
   source: z.literal("live"),

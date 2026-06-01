@@ -78,16 +78,23 @@ after material-backed provisioning. Sessions do not authorize signing.
 This is not the signing product yet. It reports read-only identity capability
 (`get_capabilities` with `methods: []`), derives only read-only public account
 identity (`get_accounts`), and links a restricted host-tested Sui transaction
-facts parser plus a common default-reject policy runtime boundary. The current
-`call_method` skeleton consumes the stored active default-reject policy decision
+facts parser plus a common stored-policy runtime boundary. The current
+`call_method` skeleton consumes the committed active policy decision
 only for Sui `sign_transaction` policy-decision smoke; it does not sign, update
 policy, expose MCP directly, or apply signing policy to produce signatures. It
 does persist bounded approval-history metadata for those method decisions. The
 persisted values in this target implementation are the protocol `deviceId`,
 provisioning state flag, DEV_PROFILE root entropy blob after backup
-confirmation, a DEV_PROFILE active default-reject policy record, and a
-DEV_PROFILE local PIN verifier, the optional connect-PIN setting, and the
-approval-history ring buffer.
+confirmation, canonical active policy slots plus commit metadata and a
+pending-write marker, a DEV_PROFILE local PIN verifier, the optional
+connect-PIN setting, and the approval-history ring buffer. The normal product
+flow still installs only the default-reject policy because policy update
+authorization is not implemented.
+
+The active policy store treats commit metadata write as the commit point. The
+write path classifies terminal state as applied, previous policy proven
+unchanged, or consistency error; it also cleans pending-owned legacy migration
+residue before starting a modern-slot write.
 
 Agent-Q firmware is intentionally not a general StackChan AI firmware. It does
 not include StackChan World login, Xiaozhi cloud sessions, camera upload, screen
@@ -153,21 +160,23 @@ The policy test is also a common host-side check. It compiles
 verifies deny-by-default, `sign`/`reject`/`ask` decision calculation, default
 provider behavior, missing/invalid policy provider rejection, malformed policy
 rejection, and unsupported-facts rejection. StackChan CoreS3 consumes the
-stored active default-reject decision only for Sui `sign_transaction`
+committed active policy only for Sui `sign_transaction`
 policy-decision smoke; policy is not connected to physical approval, capability
 advertisement, policy update, or signing.
 
 The StackChan policy-store test is target-specific. It compiles the tracked
 `agent_q_policy_store.cpp` provider with ESP-IDF mbedTLS SHA-256 sources and
 host NVS stubs, then verifies default-policy storage, policy id calculation,
-summary reads, wipe behavior, active-policy availability checks, and
+summary reads, wipe behavior, active-policy availability checks, pending-marker
+torn-write rollback, metadata-flip commit-point behavior, stale pending-marker
+overlap handling, stale commit pre-erase failure handling, and
 missing/corrupt/failed-write fail-closed provider behavior.
 
 The StackChan approval-history test is target-specific. It compiles the tracked
 `agent_q_approval_history.cpp` store with ESP-IDF mbedTLS SHA-256 sources and
 host NVS stubs, then verifies persistent ring-buffer append, newest-first
-pagination, payload digest formatting, wipe behavior, and corrupt-record
-fail-closed behavior.
+pagination, payload digest formatting, old binary-layout migration, wipe
+behavior, and corrupt-record fail-closed behavior.
 
 The StackChan method-runtime test is target-specific. It compiles the tracked
 `agent_q_method_runtime.cpp` runtime boundary with ArduinoJson, the common Sui
@@ -267,8 +276,9 @@ In the hardware firmware tree:
 ## Persistent Storage
 
 This target stores the protocol `deviceId`, provisioning state, DEV_PROFILE root
-entropy, active default-reject policy, local PIN verifier, optional connect-PIN
-setting, and approval-history ring buffer in NVS namespace `agent_q`.
+entropy, committed active policy records, local PIN verifier, optional
+connect-PIN setting, and approval-history ring buffer in NVS namespace
+`agent_q`.
 When a previous DEV_PROFILE build already has `prov_state = provisioned` and
 valid root entropy but no policy record, boot initializes the default-reject
 policy before reporting `provisioned`; if that write fails, the target fails
@@ -280,7 +290,10 @@ verifier are not migrated and fail closed until reprovisioned.
 | `device_id` | Gateway reconnect and device-selection identity |
 | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy, active policy, and local PIN verifier present |
 | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
-| `policy_v0` | DEV_PROFILE active default-reject policy record |
+| `policy_v0` | Legacy DEV_PROFILE default-reject policy record key, read only for migration compatibility |
+| `pol_s0`, `pol_s1` | Active policy canonical record slots |
+| `pol_c0`, `pol_c1` | Active policy commit metadata records |
+| `pol_p` | Active policy pending-write marker used to distinguish interrupted inactive-slot writes from post-commit corruption |
 | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
 | `pin_on_connect` | Optional local connect approval setting; missing means require PIN on connect; local reset erases it back to the missing-key default |
 | `approval_hist` | Fixed-size 32-record binary approval-history ring buffer; local reset and error-state erase wipe it |
