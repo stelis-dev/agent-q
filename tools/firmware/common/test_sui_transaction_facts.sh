@@ -18,10 +18,12 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-COMMON_SUI_DIR="${REPO_ROOT}/products/firmware/src/common/agent_q/sui"
+COMMON_ROOT="${REPO_ROOT}/products/firmware/src/common/agent_q"
+COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
 
 for required in \
+  "${COMMON_ROOT}/agent_q_u64_decimal.h" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
@@ -262,11 +264,11 @@ int main(int argc, char** argv)
 }
 CPP
 
-"${CXX_BIN}" -std=c++17 -I"${COMMON_SUI_DIR}" \
+"${CXX_BIN}" -std=c++17 -I"${COMMON_ROOT}" -I"${COMMON_SUI_DIR}" \
   -c "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" -o "${TMP_DIR}/agent_q_sui_bcs_reader.o"
-"${CXX_BIN}" -std=c++17 -I"${COMMON_SUI_DIR}" \
+"${CXX_BIN}" -std=c++17 -I"${COMMON_ROOT}" -I"${COMMON_SUI_DIR}" \
   -c "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" -o "${TMP_DIR}/agent_q_sui_transaction_facts.o"
-"${CXX_BIN}" -std=c++17 -I"${COMMON_SUI_DIR}" \
+"${CXX_BIN}" -std=c++17 -I"${COMMON_ROOT}" -I"${COMMON_SUI_DIR}" \
   -c "${TMP_DIR}/sui_transaction_facts_test.cpp" -o "${TMP_DIR}/sui_transaction_facts_test.o"
 
 "${CXX_BIN}" \

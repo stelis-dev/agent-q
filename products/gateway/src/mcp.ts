@@ -178,7 +178,6 @@ const errorToolResultShape = z.object({
 const runtimeSessionShape = z.object({
   sessionTtlMs: z.number().int().positive(),
   connectedAt: isoInstantShape,
-  expiresAt: isoInstantShape,
 });
 
 const deviceListEntryShape = z.object({
@@ -257,7 +256,6 @@ const connectDeviceSuccessOutputShape = z.object({
   deviceId: safeDeviceIdShape,
   sessionTtlMs: z.number().int().positive(),
   connectedAt: isoInstantShape,
-  expiresAt: isoInstantShape,
   device: deviceShape,
 });
 const connectDeviceToolOutputShape = z.discriminatedUnion("source", [

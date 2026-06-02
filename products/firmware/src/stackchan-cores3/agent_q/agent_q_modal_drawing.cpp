@@ -1460,27 +1460,10 @@ static const char* local_pin_auth_default_message(
         return "Enter local PIN to connect.";
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::policy_update) {
-        static char message[128] = {};
         const AgentQPolicyUpdateFlowSnapshot update = policy_update_flow_snapshot();
-        const char* hash = update.policy_hash != nullptr ? update.policy_hash : "";
-        char hash_short[24] = {};
-        if (strlen(hash) >= 18) {
-            memcpy(hash_short, hash, 13);
-            memcpy(hash_short + 13, "...", 3);
-            memcpy(hash_short + 16, hash + strlen(hash) - 4, 4);
-            hash_short[20] = '\0';
-        } else {
-            strlcpy(hash_short, hash, sizeof(hash_short));
-        }
-        snprintf(
-            message,
-            sizeof(message),
-            "Approve policy.\n%s rules:%u default:%s\n%s action:%s",
-            hash_short,
-            static_cast<unsigned>(update.rule_count),
-            update.default_action != nullptr ? update.default_action : "",
-            update.method_summary != nullptr ? update.method_summary : "",
-            update.highest_action != nullptr ? update.highest_action : "");
+        static char message[48] = {};
+        snprintf(message, sizeof(message), "Approve %s-only policy.",
+                 update.highest_action != nullptr ? update.highest_action : "reject");
         return message;
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {

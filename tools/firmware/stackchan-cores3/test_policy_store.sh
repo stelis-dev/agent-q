@@ -38,6 +38,7 @@ fi
 for required in \
   "${TARGET_ROOT}/agent_q/agent_q_policy_store.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_store.h" \
+  "${COMMON_ROOT}/agent_q_u64_decimal.h" \
   "${COMMON_ROOT}/policy/agent_q_policy_canonical.cpp" \
   "${COMMON_ROOT}/policy/agent_q_policy_canonical.h" \
   "${COMMON_ROOT}/policy/agent_q_policy_schema.cpp" \
@@ -643,6 +644,7 @@ CXX_BIN="${CXX:-c++}"
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
   -I"${TARGET_ROOT}/agent_q" \
+  -I"${COMMON_ROOT}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/policy_store_test.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_store.cpp" \

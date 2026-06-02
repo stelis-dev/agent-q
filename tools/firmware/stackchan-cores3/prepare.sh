@@ -228,9 +228,52 @@ def read_text_file(path: Path, label: str) -> str:
     return path.read_text()
 
 
+def patch_partition_table(text: str) -> str:
+    replacements = {
+        "nvs": ("0x9000", "0x10000"),
+        "otadata": ("0x19000", "0x2000"),
+        "phy_init": ("0x1b000", "0x1000"),
+    }
+    seen: set[str] = set()
+    output_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            output_lines.append(line)
+            continue
+
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 5:
+            parts = stripped.rstrip(",").split()
+        if len(parts) < 5 or parts[0] not in replacements:
+            output_lines.append(line)
+            continue
+
+        offset, size = replacements[parts[0]]
+        parts[3] = offset
+        parts[4] = size
+        seen.add(parts[0])
+        output_lines.append(
+            f"{parts[0] + ',':<10}{parts[1] + ',':<7}{parts[2] + ',':<10}{parts[3] + ',':<12}{parts[4]},"
+        )
+
+    missing = set(replacements) - seen
+    if missing:
+        raise SystemExit(
+            "Could not patch partitions.csv; expected partition rows missing: "
+            + ", ".join(sorted(missing))
+        )
+    return "\n".join(output_lines) + "\n"
+
+
 cmake_path = Path(sys.argv[1])
 main_path = Path(sys.argv[2])
 firmware_dir = main_path.parents[1]
+
+partitions_path = firmware_dir / "partitions.csv"
+partitions = read_text_file(partitions_path, "partitions.csv")
+partitions = patch_partition_table(partitions)
+write_text_if_changed(partitions_path, partitions)
 
 cmake = read_text_file(cmake_path, "main/CMakeLists.txt")
 cmake = insert_after_once(
@@ -305,6 +348,12 @@ cmake = insert_after_once(
     "                        mbedtls\n",
     "                        bootloader_support\n",
     "main/CMakeLists.txt early entropy dependency",
+)
+cmake = insert_after_once(
+    cmake,
+    'set(STACK_CHAN_INCLUDE_DIRS \n    "."\n',
+    '    "agent_q_common"\n',
+    "main/CMakeLists.txt Agent-Q common include dir",
 )
 write_text_if_changed(cmake_path, cmake)
 

@@ -35,6 +35,7 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${SIGNING_CORE}/byte_conversions.c" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
+  "${COMMON_ROOT}/agent_q_u64_decimal.h" \
   "${AGENT_Q_DIR}/agent_q_method_runtime.cpp" \
   "${AGENT_Q_DIR}/agent_q_call_method_validation.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
@@ -350,6 +351,7 @@ CPP
   -I"${ARDUINOJSON_ROOT}" \
   -I"${SIGNING_CORE}" \
   -I"${AGENT_Q_DIR}" \
+  -I"${COMMON_ROOT}" \
   -I"${COMMON_POLICY_DIR}" \
   -I"${COMMON_SUI_DIR}" \
   "${TMP_DIR}/method_runtime_test.cpp" \

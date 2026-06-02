@@ -6,6 +6,7 @@ import test from "node:test";
 import { ConfigStore } from "../dist/config.js";
 import { GatewayCore } from "../dist/core.js";
 import { GatewayError } from "../dist/errors.js";
+import { MAX_SESSION_TTL_MS } from "../dist/protocol.js";
 
 const device = {
   deviceId: "a508d833-5c83-4680-88bb-18aee976881e",
@@ -55,7 +56,7 @@ function approvedConnectResponse(extras = {}) {
     type: "connect_result",
     status: "approved",
     sessionId: "session_aabbccdd",
-    sessionTtlMs: 1800000,
+    sessionTtlMs: MAX_SESSION_TTL_MS,
     device,
     ...extras,
   };
@@ -515,9 +516,11 @@ test("listDevices reports purposes and runtime session state", async () => {
     const result = await core.listDevices();
     assert.equal(result.devices.length, 1);
     assert.deepEqual(result.devices[0].assignedPurposes, ["payment"]);
-    assert.equal(result.devices[0].runtimeSession?.expiresAt, new Date(now.getTime() + 1800000).toISOString());
+    assert.equal(result.devices[0].runtimeSession?.connectedAt, now.toISOString());
+    assert.equal(result.devices[0].runtimeSession?.sessionTtlMs, MAX_SESSION_TTL_MS);
     // sessionId is internal to Gateway and must not surface in list output.
     assert.equal("sessionId" in (result.devices[0].runtimeSession ?? {}), false);
+    assert.equal("expiresAt" in (result.devices[0].runtimeSession ?? {}), false);
   });
 });
 
@@ -550,16 +553,17 @@ test("connectDevice approved stores in-memory session and does not persist sessi
     assert.equal(connectCalls, 1);
     assert.equal(result.source, "connected");
     assert.equal("sessionId" in result, false, "connect result must not expose sessionId");
-    assert.equal(result.sessionTtlMs, 1800000);
+    assert.equal(result.sessionTtlMs, MAX_SESSION_TTL_MS);
 
     const raw = await readFile(join(dir, "config.json"), "utf8");
     assert.equal(raw.includes("session"), false, "config must not persist session state");
   });
 });
 
-test("connectDevice always asks Firmware for a fresh session", async () => {
+test("connectDevice reuses an active runtime session without fresh Firmware approval", async () => {
   await withStore(async (store) => {
     let connectCalls = 0;
+    let capabilitiesCalls = 0;
     const core = new GatewayCore(
       store,
       defaultDriver({
@@ -567,14 +571,21 @@ test("connectDevice always asks Firmware for a fresh session", async () => {
           connectCalls += 1;
           return approvedConnectResponse({ sessionId: `session_${connectCalls.toString(16).padStart(2, "0")}` });
         },
+        async getCapabilities(_portPath, sessionId) {
+          capabilitiesCalls += 1;
+          assert.equal(sessionId, "session_01");
+          return defaultDriver().getCapabilities();
+        },
       }),
     );
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
-    await core.connectDevice({});
-    await core.connectDevice({});
-    assert.equal(connectCalls, 2);
+    const first = await core.connectDevice({});
+    const second = await core.connectDevice({});
+    assert.equal(first.connectedAt, second.connectedAt);
+    assert.equal(connectCalls, 1);
+    assert.equal(capabilitiesCalls, 1);
   });
 });
 
@@ -621,19 +632,56 @@ test("connectDevice does not reuse a stale local session when the device disappe
   });
 });
 
-test("connectDevice clears a stale local session when fresh transport connect fails", async () => {
+test("scanDevices clears runtime sessions for devices absent from the live USB scan", async () => {
+  await withStore(async (store) => {
+    let portAvailable = true;
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async listPorts() {
+          return portAvailable
+            ? [
+                {
+                  path: "/dev/cu.usbmodem1",
+                  vendorId: "303a",
+                  productId: "1001",
+                  manufacturer: "Espressif",
+                },
+              ]
+            : [];
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+    assert.notEqual((await core.listDevices()).devices[0].runtimeSession, null);
+
+    portAvailable = false;
+    const scanAfterDisconnect = await core.scanDevices();
+    assert.equal(scanAfterDisconnect.devices.length, 0);
+
+    const listed = await core.listDevices();
+    assert.equal(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("connectDevice clears a stale local session when reuse validation loses transport", async () => {
   await withStore(async (store) => {
     let connectCalls = 0;
-    let failFreshConnect = false;
+    let failReuseValidation = false;
     const core = new GatewayCore(
       store,
       defaultDriver({
         async connectDevice() {
           connectCalls += 1;
-          if (failFreshConnect) {
+          return approvedConnectResponse();
+        },
+        async getCapabilities() {
+          if (failReuseValidation) {
             throw new GatewayError("transport_closed", "USB transport closed.", true);
           }
-          return approvedConnectResponse();
+          return defaultDriver().getCapabilities();
         },
       }),
     );
@@ -642,18 +690,49 @@ test("connectDevice clears a stale local session when fresh transport connect fa
     await core.connectDevice({});
     assert.equal(connectCalls, 1);
 
-    failFreshConnect = true;
+    failReuseValidation = true;
     await assert.rejects(() => core.connectDevice({}), { code: "transport_closed" });
-    assert.equal(connectCalls, 2);
+    assert.equal(connectCalls, 1);
 
     const listed = await core.listDevices();
     assert.equal(listed.devices[0].runtimeSession, null);
   });
 });
 
-test("connectDevice asks Firmware again after local TTL expiry", async () => {
+test("connectDevice asks Firmware again when reuse validation reports invalid_session", async () => {
   await withStore(async (store) => {
     let connectCalls = 0;
+    let invalidateExisting = false;
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async connectDevice() {
+          connectCalls += 1;
+          return approvedConnectResponse({ sessionId: `session_${connectCalls.toString(16).padStart(2, "0")}` });
+        },
+        async getCapabilities() {
+          if (invalidateExisting) {
+            throw new GatewayError("invalid_session", "Session is not active.", true);
+          }
+          return defaultDriver().getCapabilities();
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+
+    await core.connectDevice({});
+    invalidateExisting = true;
+    const result = await core.connectDevice({});
+    assert.equal(connectCalls, 2);
+    assert.equal(result.sessionTtlMs, MAX_SESSION_TTL_MS);
+  });
+});
+
+test("connectDevice does not reapprove from advertised wire ttl while the session validates", async () => {
+  await withStore(async (store) => {
+    let connectCalls = 0;
+    let capabilitiesCalls = 0;
     let now = new Date("2026-05-28T00:00:00.000Z");
     const core = new GatewayCore(
       store,
@@ -662,6 +741,10 @@ test("connectDevice asks Firmware again after local TTL expiry", async () => {
           connectCalls += 1;
           return approvedConnectResponse({ sessionId: `session_${connectCalls.toString(16).padStart(2, "0")}` });
         },
+        async getCapabilities() {
+          capabilitiesCalls += 1;
+          return defaultDriver().getCapabilities();
+        },
       }),
       () => now,
     );
@@ -669,10 +752,13 @@ test("connectDevice asks Firmware again after local TTL expiry", async () => {
     await core.selectDevice({ deviceId: device.deviceId });
 
     await core.connectDevice({});
-    // Advance past the session TTL.
+    // Advance past the advertised wire TTL. The target session is USB-link
+    // bound, so Gateway validates and reuses it instead of treating local time
+    // as session authority.
     now = new Date(now.getTime() + 1800001);
     await core.connectDevice({});
-    assert.equal(connectCalls, 2);
+    assert.equal(connectCalls, 1);
+    assert.equal(capabilitiesCalls, 1);
   });
 });
 

@@ -1,5 +1,6 @@
 #include "agent_q_sui_transaction_facts.h"
 
+#include "agent_q_u64_decimal.h"
 #include "agent_q_sui_bcs_reader.h"
 
 #include <stdio.h>
@@ -132,11 +133,7 @@ bool format_address(const uint8_t* bytes, char* out, size_t out_size)
 
 bool format_u64(uint64_t value, char* out, size_t out_size)
 {
-    if (out == nullptr || out_size < kSuiTransferU64StringBufferSize) {
-        return false;
-    }
-    const int written = snprintf(out, out_size, "%llu", static_cast<unsigned long long>(value));
-    return written > 0 && static_cast<size_t>(written) < out_size;
+    return format_u64_decimal(value, out, out_size);
 }
 
 uint64_t read_u64_from_pure(const PureInput& input)

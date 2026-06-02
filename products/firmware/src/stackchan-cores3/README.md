@@ -270,8 +270,8 @@ lifetime, panel-loss cleanup, and commit-readiness without LVGL or USB.
 
 The StackChan session test is target-specific. It compiles the tracked
 `agent_q_session.cpp` RAM session core with host stubs, then verifies session id
-generation, validation result classification, mismatch handling, expiry, and
-scheduled cleanup without USB JSON response code.
+generation, validation result classification, mismatch handling, and
+link-bound lifetime without USB JSON response code.
 
 During preparation, the tracked build tools also patch the pinned upstream host
 tree so the Agent-Q build does not start the StackChan/Xiaozhi remote AI
@@ -295,6 +295,10 @@ In the hardware firmware tree:
   before HAL initialization.
 - Add `esp_driver_usb_serial_jtag` to the main firmware component dependencies
   for the USB JSONL smoke path.
+- Patch the generated StackChan `partitions.csv` so the Agent-Q target owns a
+  64 KiB NVS partition. The upstream 16 KiB NVS layout is too small for the
+  current Agent-Q root material, two-slot active policy store, approval-history
+  ring buffer, local PIN verifier, settings, and terminal markers.
 - Call `agent_q::init_secure_random_from_early_boot_entropy()` before HAL
   initialization so recovery phrase generation never depends on late direct
   `esp_fill_random()` while RF/ADC entropy is unavailable.
@@ -316,7 +320,9 @@ In the hardware firmware tree:
 This target stores the protocol `deviceId`, provisioning state, DEV_PROFILE root
 entropy, committed active policy records, local PIN verifier, optional
 connect-PIN setting, and approval-history ring buffer in NVS namespace
-`agent_q`.
+`agent_q`. The StackChan build preparation step patches the generated firmware
+partition table to use a 64 KiB NVS partition; the upstream 16 KiB default is
+not sufficient for the current Agent-Q material set.
 If NVS has `prov_state = provisioned` and valid root entropy but no active
 canonical policy record, Firmware fails closed with a material/state consistency
 error. Unsupported current policy-history or policy-storage blobs are not

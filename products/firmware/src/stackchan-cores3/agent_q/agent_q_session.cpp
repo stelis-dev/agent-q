@@ -10,21 +10,14 @@ namespace {
 
 struct AgentQSessionState {
     char id[kAgentQSessionIdSize] = {};
-    TickType_t expiry = 0;
-    TickType_t next_expiry_check = 0;
 
     bool active() const
     {
-        return id[0] != '\0' && expiry != 0;
+        return id[0] != '\0';
     }
 };
 
 AgentQSessionState g_session;
-
-bool tick_reached(TickType_t deadline, TickType_t now)
-{
-    return deadline != 0 && static_cast<int32_t>(now - deadline) >= 0;
-}
 
 bool safe_session_id_format(const char* value)
 {
@@ -86,7 +79,6 @@ bool format_session_id(
 void session_init()
 {
     session_clear();
-    g_session.next_expiry_check = 0;
 }
 
 bool session_active()
@@ -102,11 +94,9 @@ const char* session_id()
 void session_clear()
 {
     g_session.id[0] = '\0';
-    g_session.expiry = 0;
 }
 
 AgentQSessionStartResult session_replace(
-    TickType_t now,
     AgentQSessionRandomFn random_fn,
     void* random_context)
 {
@@ -115,11 +105,10 @@ AgentQSessionStartResult session_replace(
         return AgentQSessionStartResult::rng_error;
     }
     snprintf(g_session.id, sizeof(g_session.id), "%s", next_id);
-    g_session.expiry = now + pdMS_TO_TICKS(kAgentQSessionTtlMs);
     return AgentQSessionStartResult::ok;
 }
 
-AgentQSessionValidationResult session_validate(const char* requested_session_id, TickType_t now)
+AgentQSessionValidationResult session_validate(const char* requested_session_id)
 {
     if (!safe_session_id_format(requested_session_id)) {
         return AgentQSessionValidationResult::invalid_format;
@@ -128,29 +117,10 @@ AgentQSessionValidationResult session_validate(const char* requested_session_id,
         session_clear();
         return AgentQSessionValidationResult::missing;
     }
-    if (tick_reached(g_session.expiry, now)) {
-        session_clear();
-        return AgentQSessionValidationResult::expired;
-    }
     if (strcmp(requested_session_id, g_session.id) != 0) {
         return AgentQSessionValidationResult::mismatch;
     }
     return AgentQSessionValidationResult::ok;
-}
-
-bool session_expire_if_needed(TickType_t now)
-{
-    if (g_session.next_expiry_check != 0 &&
-        !tick_reached(g_session.next_expiry_check, now)) {
-        return false;
-    }
-    g_session.next_expiry_check = now + pdMS_TO_TICKS(kAgentQSessionExpiryCheckMs);
-
-    if (!g_session.active() || !tick_reached(g_session.expiry, now)) {
-        return false;
-    }
-    session_clear();
-    return true;
 }
 
 }  // namespace agent_q

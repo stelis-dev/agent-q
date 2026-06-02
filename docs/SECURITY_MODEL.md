@@ -517,9 +517,9 @@ Minimal Device risk, stated plainly:
 - Persisting replay state has a cost: a counter write per request causes flash
   wear, and a nonce cache needs a bounded eviction policy. Size this tradeoff
   deliberately.
-- `expiresAt` is weak unless the device has trusted time. Without a trusted RTC,
-  time-based expiry is a secondary control; the monotonic counter or nonce is the
-  primary replay defense.
+- Host-supplied expiration timestamps are weak unless the device has trusted
+  time. Without a trusted RTC, time-based expiry is a secondary control; the
+  monotonic counter or nonce is the primary replay defense.
 
 ## 14. Release Signing
 

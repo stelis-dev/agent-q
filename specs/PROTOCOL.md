@@ -147,14 +147,15 @@ Flow rules:
 - Gateway may store the selected `deviceId` and transport hint locally.
 - A stored transport hint is not identity. Gateway must confirm identity with
   Firmware before treating a device as live.
-- `connect` establishes a session and requires Firmware-owned device-local
-  approval. Hardware targets may implement that approval as a physical confirm
-  or as local PIN verification, but PIN entry must never be a USB protocol
-  request.
+- `connect` establishes a session when Gateway does not already hold a valid
+  runtime session for the device. A fresh Firmware `connect` request requires
+  Firmware-owned device-local approval. Hardware targets may implement that
+  approval as a physical confirm or as local PIN verification, but PIN entry
+  must never be a USB protocol request.
 - `get_capabilities`, `get_accounts`, `get_policy`, `get_approval_history`, and
   `call_method` require `sessionId`.
 - `disconnect` ends the session.
-- Firmware should reject session-scoped requests with an unknown or expired
+- Firmware should reject session-scoped requests with an unknown or inactive
   `sessionId`.
 - When Gateway has an active runtime session and a session teardown or fresh
   connect attempt ends with `invalid_session`, `timeout`, `port_not_found`,
@@ -471,9 +472,10 @@ temporary layer.
 
 ## Connect
 
-Gateway opens a communication session by sending `connect`. Connect requires
-Firmware-owned device-local approval every time. Connect is not signing approval
-and does not authorize signing.
+When Gateway has no valid in-memory runtime session for a live device, it opens
+a communication session by sending `connect`. A Firmware `connect` request
+requires Firmware-owned device-local approval every time it is sent. Connect is
+not signing approval and does not authorize signing.
 
 Request:
 
@@ -509,7 +511,7 @@ Approved response:
   "type": "connect_result",
   "status": "approved",
   "sessionId": "session_...",
-  "sessionTtlMs": 1800000,
+  "sessionTtlMs": 4294967295,
   "device": {
     "deviceId": "uuid-string",
     "state": "idle",
@@ -549,9 +551,14 @@ Connect rules:
 - Establishing a session requires Firmware-owned device-local approval every
   time a Firmware `connect` request is sent. Firmware does not remember a
   previously approved Gateway.
-- `connect_device` must not approve from Gateway-local session memory without
-  contacting Firmware. Every `connect_device` call sends Firmware `connect`;
-  Firmware remains the only authority that can issue a fresh `sessionId`.
+- `connect_device` may reuse a Gateway RAM-held session only after contacting
+  Firmware with a session-scoped read-only request and receiving a response that
+  proves the current `sessionId` is still valid. If validation fails with
+  `invalid_session`, Gateway must clear its local session and send a fresh
+  Firmware `connect` request, which requires device-local approval.
+- Firmware remains the only authority that can issue a fresh `sessionId`. A
+  direct USB `connect` request must not return an existing session id without
+  device-local approval.
 - The current StackChan CoreS3 target stores a local `requirePinOnConnect`
   setting. Missing setting means the secure default, ON. Invalid stored values
   fail closed to ON and are logged. The setting is device-local; there is no USB,
@@ -573,28 +580,38 @@ Connect rules:
   random hex.
 - `sessionId` must be derived from device RNG. It must not be derived from MAC
   address, USB serial number, `deviceId`, account public key, or signing key.
-- `sessionTtlMs` is Firmware-owned. Firmware may end a session earlier (for
-  example on reboot) regardless of the advertised TTL. `sessionTtlMs` is a
-  uint32 millisecond value; Gateway treats a `connect_result` whose
-  `sessionTtlMs` is not a positive integer within the uint32 range
-  (`1`..`4294967295`) as a malformed response.
+- `sessionTtlMs` is Firmware-owned wire metadata. `sessionTtlMs` is a uint32
+  millisecond value; Gateway treats a `connect_result` whose `sessionTtlMs` is
+  not a positive integer within the uint32 range (`1`..`4294967295`) as a
+  malformed response. A target whose sessions are bound to the physical USB link
+  may advertise the maximum value to avoid implying a shorter time-based
+  reapproval deadline.
 - Approving a new connect replaces any previously active Firmware session.
 - A Gateway runtime session is held in memory only. Gateway must not persist
   `sessionId` to disk. `sessionId` is a Firmware-issued token kept internal to
   Gateway; Gateway must not return it to untrusted MCP clients.
+- When Gateway already has an in-memory runtime session for a live device,
+  `connect_device` must validate that session with a session-scoped read-only
+  request and return the existing connection if validation succeeds. It must not
+  send a fresh Firmware `connect` request solely because the caller invoked
+  `connect_device` again.
 - Gateway restart and explicit disconnect end Gateway's view of the session;
   Firmware reboot ends the session on the device. Gateway restart clears only
   Gateway's in-memory record. Firmware cannot observe a Gateway restart and
-  keeps its active session until its TTL, a reboot, an explicit disconnect, or
+  keeps its active session until target policy clears it, such as on USB link
+  loss, reboot, explicit disconnect, persistent-material error cleanup, or
   replacement by a new approved connect.
 - Firmware targets may clear an active session earlier when the transport link
   is lost. On StackChan CoreS3, USB connected means USB host SOF is observed by
   `usb_serial_jtag_is_connected()`. It does not prove Gateway is running or that
   the serial port is open. Cable removal, host suspend, or SOF loss can clear
   the Firmware RAM session by policy.
-- Gateway TTL checks are local guards; Firmware remains the session authority.
-  Gateway evicts an expired runtime session lazily, on the next access after
-  `connectedAt + sessionTtlMs`, not on a timer.
+- Gateway's local session cache is a RAM-only mirror, not authority. Gateway
+  must clear it when Firmware rejects the session or when the transport can no
+  longer be confirmed. A successful live USB scan that no longer observes the
+  device is enough evidence to clear Gateway's RAM mirror for that device.
+  Gateway must not use local time alone to force reapproval while the Firmware
+  session remains valid.
 - Firmware should return `busy` for UI-affecting or session-changing requests
   (including `connect` and `disconnect`) while an approval UI, device-only setup
   material display, or sensitive local PIN/reset/settings subflow is already
@@ -637,8 +654,8 @@ Disconnect rules:
   material readiness is not a prerequisite. If material inconsistency already
   cleared the session, Firmware returns `invalid_session` rather than
   `invalid_state`.
-- Firmware returns `invalid_session` when `sessionId` is missing, expired,
-  unknown, or does not match the active Firmware session.
+- Firmware returns `invalid_session` when `sessionId` is missing, unknown,
+  inactive, or does not match the active Firmware session.
 
 Response:
 
@@ -695,8 +712,7 @@ Rules:
   and persistent material, including root material, active policy, and local PIN
   verifier, is consistent. Before that it returns
   `invalid_state`.
-- A missing, expired, or mismatched session returns `invalid_session`; an
-  expired session is also cleared.
+- A missing, inactive, or mismatched session returns `invalid_session`.
 - The current StackChan CoreS3 target advertises Sui Ed25519 account identity
   only: account 0 at `m/44'/784'/0'/0'/0'`. `methods` is empty because
   no concrete `call_method` signing method, physical approval integration, or
@@ -752,8 +768,8 @@ Rules:
 - Firmware returns accounts only when `provisioning.state` is `provisioned` and
   persistent material, including root material, active policy, and local PIN
   verifier, is consistent. Before that it returns `invalid_state`.
-- The request requires `sessionId`. A missing, expired, or mismatched session
-  returns `invalid_session`; an expired session is also cleared.
+- The request requires `sessionId`. A missing, inactive, or mismatched session
+  returns `invalid_session`.
 - Account derivation runs in Firmware on demand and wipes all intermediate secret
   material. A derivation failure returns `account_error` with no partial account.
 - Gateway parses and re-validates the account shape, rejects any response that
@@ -1072,7 +1088,7 @@ The method is a proposal, not a setter. Gateway or Admin may submit a bounded
 policy document, but Firmware remains the authority that validates the document,
 shows device-local approval, commits the active policy, and reports the result.
 The pending proposal remains bound to the same active `sessionId` until the
-terminal result. If that session expires, disconnects, or no longer matches
+terminal result. If that session ends, disconnects, or no longer matches
 before commit, Firmware must cancel the pending proposal and must not change the
 active policy.
 

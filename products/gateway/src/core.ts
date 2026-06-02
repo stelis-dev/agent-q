@@ -109,13 +109,11 @@ interface RuntimeSession {
   sessionId: string;
   sessionTtlMs: number;
   connectedAt: string;
-  expiresAt: string;
 }
 
 export interface RuntimeSessionView {
   sessionTtlMs: number;
   connectedAt: string;
-  expiresAt: string;
 }
 
 export interface DeviceListEntry extends DeviceListing {
@@ -140,7 +138,6 @@ export interface ConnectDeviceResult {
   deviceId: string;
   sessionTtlMs: number;
   connectedAt: string;
-  expiresAt: string;
   device: StatusResponse["device"];
 }
 
@@ -181,6 +178,7 @@ export const CALL_METHOD_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REAS
 export type CallMethodSessionEndedReason = GetAccountsSessionEndedReason;
 export const PROPOSE_POLICY_UPDATE_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
 export type ProposePolicyUpdateSessionEndedReason = GetAccountsSessionEndedReason;
+type RuntimeSessionMirrorEndReason = GetAccountsSessionEndedReason;
 
 export type DisconnectDeviceResult =
   | { source: "disconnected"; deviceId: string; reason: DisconnectEndedReason }
@@ -292,6 +290,9 @@ export class GatewayCore {
       });
       devices.push(toLiveStatus(liveDevice));
     }
+    this.clearRuntimeSessionsAbsentFromLiveUsbScan(
+      new Set(liveDevices.map((liveDevice) => liveDevice.protocolResponse.device.deviceId)),
+    );
 
     const config = await this.configStore.load();
     return {
@@ -457,10 +458,7 @@ export class GatewayCore {
     try {
       matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
     } catch (error) {
-      const reason = localSessionClearReason(error);
-      if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
-      }
+      this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       throw error;
     }
     // Record the live device before sending connect so a rejected or timed-out
@@ -470,6 +468,29 @@ export class GatewayCore {
       matchingPort.portPath,
       { observedAt: this.clock() },
     );
+
+    const existingSession = this.peekRuntimeSession(target.deviceId);
+    if (existingSession !== null) {
+      try {
+        await this.usbDriver.getCapabilities(
+          matchingPort.portPath,
+          existingSession.sessionId,
+          scanTimeoutMs,
+        );
+        return {
+          source: "connected",
+          deviceId: target.deviceId,
+          sessionTtlMs: existingSession.sessionTtlMs,
+          connectedAt: existingSession.connectedAt,
+          device: matchingPort.protocolResponse.device,
+        };
+      } catch (error) {
+        const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
+        if (reason !== "invalid_session") {
+          throw error;
+        }
+      }
+    }
 
     const transportTimeoutMs = approvalTimeoutMs + CONNECT_TRANSPORT_MARGIN_MS;
     let response: ConnectResponse;
@@ -481,10 +502,7 @@ export class GatewayCore {
         approvalTimeoutMs,
       );
     } catch (error) {
-      const reason = localSessionClearReason(error);
-      if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
-      }
+      this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       throw error;
     }
 
@@ -514,7 +532,6 @@ export class GatewayCore {
       deviceId: target.deviceId,
       sessionTtlMs: session.sessionTtlMs,
       connectedAt: session.connectedAt,
-      expiresAt: session.expiresAt,
       device: response.device,
     };
   }
@@ -536,12 +553,11 @@ export class GatewayCore {
     try {
       matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
     } catch (error) {
-      // The device could not be located. localSessionClearReason owns the policy
+      // The device could not be located. clearRuntimeSessionMirrorIfEnded owns the policy
       // for which disconnect failures end Gateway's local session view; clearing
       // it here prevents reusing a session Gateway can no longer confirm.
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "disconnected", deviceId: target.deviceId, reason };
       }
       throw error;
@@ -550,15 +566,14 @@ export class GatewayCore {
     try {
       await this.usbDriver.disconnectDevice(matchingPort.portPath, session.sessionId, scanTimeoutMs);
     } catch (error) {
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "disconnected", deviceId: target.deviceId, reason };
       }
       throw error;
     }
 
-    this.runtimeSessions.delete(target.deviceId);
+    this.clearRuntimeSessionMirror(target.deviceId);
     return { source: "disconnected", deviceId: target.deviceId, reason: "firmware_confirmed" };
   }
 
@@ -579,9 +594,8 @@ export class GatewayCore {
     try {
       matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
     } catch (error) {
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
       throw error;
@@ -595,9 +609,8 @@ export class GatewayCore {
       );
       return { source: "live", deviceId: target.deviceId, capabilities: response.chains };
     } catch (error) {
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
       throw error;
@@ -622,12 +635,11 @@ export class GatewayCore {
       matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
     } catch (error) {
       // A transport/session failure while locating the device may end Gateway's
-      // local session view; localSessionClearReason owns that policy. get_accounts
+      // local session view; clearRuntimeSessionMirrorIfEnded owns that policy. get_accounts
       // is read-only, so a recognized clearing reason is reported as session_ended
       // (the firmware session is presumed gone) rather than throwing.
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
       throw error;
@@ -642,9 +654,8 @@ export class GatewayCore {
       // Read-only: the session is retained on success.
       return { source: "live", deviceId: target.deviceId, accounts: response.accounts };
     } catch (error) {
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
       throw error;
@@ -668,9 +679,8 @@ export class GatewayCore {
     try {
       matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
     } catch (error) {
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
       throw error;
@@ -684,9 +694,8 @@ export class GatewayCore {
       );
       return { source: "live", deviceId: target.deviceId, policy: response.policy };
     } catch (error) {
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
       throw error;
@@ -716,9 +725,8 @@ export class GatewayCore {
     try {
       matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
     } catch (error) {
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
       throw error;
@@ -738,9 +746,8 @@ export class GatewayCore {
         hasMore: response.hasMore,
       };
     } catch (error) {
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
       throw error;
@@ -770,9 +777,8 @@ export class GatewayCore {
     try {
       matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
     } catch (error) {
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
       throw error;
@@ -790,9 +796,8 @@ export class GatewayCore {
       // Method-level rejection is not a session failure. Keep the session live.
       return { source: "live", deviceId: target.deviceId, status: response.status, error: response.error };
     } catch (error) {
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
       throw error;
@@ -821,9 +826,8 @@ export class GatewayCore {
     try {
       matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
     } catch (error) {
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
       throw error;
@@ -837,7 +841,7 @@ export class GatewayCore {
         policyUpdateTimeoutMs,
       );
       if (response.status === "consistency_error") {
-        this.runtimeSessions.delete(target.deviceId);
+        this.clearRuntimeSessionMirror(target.deviceId);
       }
       return {
         source: "live",
@@ -847,9 +851,8 @@ export class GatewayCore {
         ...(response.policy === undefined ? {} : { policy: response.policy }),
       };
     } catch (error) {
-      const reason = localSessionClearReason(error);
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
-        this.runtimeSessions.delete(target.deviceId);
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
       throw error;
@@ -861,25 +864,42 @@ export class GatewayCore {
     if (session === undefined) {
       return null;
     }
-    if (this.clock().getTime() >= Date.parse(session.expiresAt)) {
-      this.runtimeSessions.delete(deviceId);
-      return null;
-    }
     return session;
   }
 
   private recordSession(deviceId: string, sessionId: string, sessionTtlMs: number): RuntimeSession {
     const connectedAt = this.clock();
-    const expiresAt = new Date(connectedAt.getTime() + sessionTtlMs);
     const session: RuntimeSession = {
       deviceId,
       sessionId,
       sessionTtlMs,
       connectedAt: connectedAt.toISOString(),
-      expiresAt: expiresAt.toISOString(),
     };
     this.runtimeSessions.set(deviceId, session);
     return session;
+  }
+
+  private clearRuntimeSessionsAbsentFromLiveUsbScan(liveDeviceIds: ReadonlySet<string>): void {
+    for (const deviceId of this.runtimeSessions.keys()) {
+      if (!liveDeviceIds.has(deviceId)) {
+        this.clearRuntimeSessionMirror(deviceId);
+      }
+    }
+  }
+
+  private clearRuntimeSessionMirror(deviceId: string): void {
+    this.runtimeSessions.delete(deviceId);
+  }
+
+  private clearRuntimeSessionMirrorIfEnded(
+    deviceId: string,
+    error: unknown,
+  ): RuntimeSessionMirrorEndReason | null {
+    const reason = runtimeSessionMirrorEndReason(error);
+    if (reason !== null) {
+      this.clearRuntimeSessionMirror(deviceId);
+    }
+    return reason;
   }
 
   private async resolveTargetDevice(input: {
@@ -1098,7 +1118,6 @@ function toRuntimeSessionView(session: RuntimeSession | null): RuntimeSessionVie
   return {
     sessionTtlMs: session.sessionTtlMs,
     connectedAt: session.connectedAt,
-    expiresAt: session.expiresAt,
   };
 }
 
@@ -1107,9 +1126,9 @@ function toRuntimeSessionView(session: RuntimeSession | null): RuntimeSessionVie
 // local view to avoid reusing a session Firmware may have already dropped. The
 // returned reason explains why; an unrecognized error returns null, so the caller
 // rethrows and keeps the session.
-function localSessionClearReason(
+function runtimeSessionMirrorEndReason(
   error: unknown,
-): "invalid_session" | "timeout" | "transport_unavailable" | null {
+): RuntimeSessionMirrorEndReason | null {
   if (!(error instanceof GatewayError)) {
     return null;
   }

@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { GatewayError } from "../dist/errors.js";
 import { createGatewayMcpServer, gatewayToolDefinitions } from "../dist/mcp.js";
-import { FORBIDDEN_SECRET_FIELD_NAMES } from "../dist/protocol.js";
+import { FORBIDDEN_SECRET_FIELD_NAMES, MAX_SESSION_TTL_MS } from "../dist/protocol.js";
 
 const expectedToolNames = [
   "call_method",
@@ -76,9 +76,8 @@ const noOpCore = {
     return {
       source: "connected",
       deviceId: "device-1",
-      sessionTtlMs: 1800000,
+      sessionTtlMs: MAX_SESSION_TTL_MS,
       connectedAt: "2026-05-28T00:00:00.000Z",
-      expiresAt: "2026-05-28T00:30:00.000Z",
       device: {
         deviceId: "device-1",
         state: "idle",
@@ -209,9 +208,8 @@ test("connect_device output omits sessionId and secret fields", () => {
   const sample = gatewayToolDefinitions.connectDevice.outputSchema.safeParse({
     source: "connected",
     deviceId: "device-1",
-    sessionTtlMs: 1800000,
+    sessionTtlMs: MAX_SESSION_TTL_MS,
     connectedAt: "2026-05-28T00:00:00.000Z",
-    expiresAt: "2026-05-28T00:30:00.000Z",
     device: {
       deviceId: "device-1",
       state: "idle",
@@ -227,9 +225,8 @@ test("connect_device output omits sessionId and secret fields", () => {
     source: "connected",
     deviceId: "device-1",
     sessionId: "session_aabbccdd",
-    sessionTtlMs: 1800000,
+    sessionTtlMs: MAX_SESSION_TTL_MS,
     connectedAt: "2026-05-28T00:00:00.000Z",
-    expiresAt: "2026-05-28T00:30:00.000Z",
     device: {
       deviceId: "device-1",
       state: "idle",
@@ -243,12 +240,19 @@ test("connect_device output omits sessionId and secret fields", () => {
   assert.equal(withSessionId.success, true);
   assert.equal("sessionId" in withSessionId.data, false);
 
+  const withExpiresAt = gatewayToolDefinitions.connectDevice.outputSchema.safeParse({
+    ...sample.data,
+    expiresAt: "2026-05-28T00:30:00.000Z",
+  });
+  assert.equal(withExpiresAt.success, true);
+  assert.equal("expiresAt" in withExpiresAt.data, false);
+
   for (const shape of [
     gatewayToolDefinitions.connectDevice.outputSchema,
     gatewayToolDefinitions.listDevices.outputSchema,
   ]) {
     const flat = JSON.stringify(shape).toLowerCase();
-    for (const forbidden of [...FORBIDDEN_SECRET_FIELD_NAMES, "sessionId"]) {
+    for (const forbidden of [...FORBIDDEN_SECRET_FIELD_NAMES, "sessionId", "expiresAt"]) {
       assert.equal(flat.includes(forbidden), false, `${forbidden} must not appear in schema`);
     }
   }
@@ -643,9 +647,8 @@ const leakyCore = {
     return {
       source: "connected",
       deviceId: "device-1",
-      sessionTtlMs: 1800000,
+      sessionTtlMs: MAX_SESSION_TTL_MS,
       connectedAt: "2026-05-28T00:00:00.000Z",
-      expiresAt: "2026-05-28T00:30:00.000Z",
       device: { deviceId: "device-1", state: "idle", firmwareName: "f", hardware: "h", firmwareVersion: "0" },
       ...SECRET_EXTRAS,
     };
@@ -1135,9 +1138,8 @@ test("MCP boundary fails closed when a success result carries unsanitized displa
       return {
         source: "connected",
         deviceId: "device-1",
-        sessionTtlMs: 1800000,
+        sessionTtlMs: MAX_SESSION_TTL_MS,
         connectedAt: "2026-05-28T00:00:00.000Z",
-        expiresAt: "2026-05-28T00:30:00.000Z",
         device: {
           deviceId: "device-1",
           state: "idle",
@@ -1202,9 +1204,8 @@ test("MCP boundary fails closed on unsafe top-level identifiers, purposes, and t
           return {
             source: "connected",
             deviceId: "device-1",
-            sessionTtlMs: 1800000,
+            sessionTtlMs: MAX_SESSION_TTL_MS,
             connectedAt: "not-a-date",
-            expiresAt: "2026-05-28T00:30:00.000Z",
             device: okDevice,
           };
         },

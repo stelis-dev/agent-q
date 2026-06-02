@@ -1148,8 +1148,7 @@ function approvedConnectLine(sessionTtlMs) {
 
 test("rejects a connect_result whose sessionTtlMs exceeds the uint32 wire range", () => {
   // A value past the protocol's uint32 ms range cannot come from a conformant
-  // device. Rejecting it here (rather than recording it) keeps Gateway's
-  // session-expiry date math from overflowing into a RangeError after approval.
+  // device, so the wire boundary rejects it as malformed.
   assert.throws(
     () => parseProtocolResponse(approvedConnectLine(MAX_SESSION_TTL_MS + 1), "req_connect_1"),
     /sessionTtlMs/,

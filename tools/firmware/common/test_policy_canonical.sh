@@ -22,6 +22,7 @@ COMMON_POLICY_DIR="${COMMON_ROOT}/policy"
 COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 
 for required in \
+  "${COMMON_ROOT}/agent_q_u64_decimal.h" \
   "${COMMON_POLICY_DIR}/agent_q_policy_canonical.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_canonical.h" \
   "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
@@ -394,6 +395,7 @@ int main()
 CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
+  -I"${COMMON_ROOT}" \
   -I"${COMMON_POLICY_DIR}" \
   -I"${COMMON_SUI_DIR}" \
   "${TMP_DIR}/policy_canonical_test.cpp" \

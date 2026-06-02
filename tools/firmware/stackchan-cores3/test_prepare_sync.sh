@@ -88,6 +88,10 @@ PY
 
 AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
 
+grep -Eq '^nvs,[[:space:]]+data,[[:space:]]+nvs,[[:space:]]+0x9000,[[:space:]]+0x10000,' "${FIRMWARE_DIR}/partitions.csv"
+grep -Eq '^otadata,[[:space:]]+data,[[:space:]]+ota,[[:space:]]+0x19000,[[:space:]]+0x2000,' "${FIRMWARE_DIR}/partitions.csv"
+grep -Eq '^phy_init,[[:space:]]+data,[[:space:]]+phy,[[:space:]]+0x1b000,[[:space:]]+0x1000,' "${FIRMWARE_DIR}/partitions.csv"
+
 SYNC_ROOT_DIR="${FIRMWARE_DIR}/components/signing_crypto"
 cp -R "${SYNC_ROOT_DIR}" "${SYNC_ROOT_BACKUP}"
 EXTERNAL_SYNC_ROOT="${TMP_DIR}/external-signing-crypto"

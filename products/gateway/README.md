@@ -35,13 +35,15 @@ as the active device for a named routing purpose.
 
 `list_devices` returns Gateway-local registry state, including labels, purpose
 assignments, and any in-memory connection session. `set_device_metadata`
-updates a device's human-readable label. `connect_device` opens a
-communication session by sending a Firmware connect request that requires
-device-local approval when the target supports sessions. The current StackChan
-CoreS3 target accepts `connect` only after persistent root material and
-material-backed `provisioned` state exist. `disconnect_device` ends the runtime
-session when one exists. `get_capabilities` and `get_accounts` are read-only
-session-scoped tools. `call_method` is the shared method path; the current
+updates a device's human-readable label. `connect_device` opens a communication
+session by sending a Firmware connect request that requires device-local
+approval when Gateway does not already hold a valid RAM session for the device.
+If Gateway already has a session, it validates that session with a
+session-scoped read-only request and reuses it when Firmware accepts it. The
+current StackChan CoreS3 target accepts `connect` only after persistent root
+material and material-backed `provisioned` state exist. `disconnect_device` ends
+the runtime session when one exists. `get_capabilities` and `get_accounts` are
+read-only session-scoped tools. `call_method` is the shared method path; the current
 runtime keeps unknown methods rejected and recognizes Sui `sign_transaction`
 only for rejected policy-decision smoke. It is not signing support.
 `get_policy` and `get_approval_history` are read-only session-scoped tools.
@@ -63,15 +65,16 @@ before committing a bounded reject-policy proposal.
   request.
 - Session ids are held in Gateway memory only and are never returned to MCP
   clients. A Gateway restart or explicit disconnect ends Gateway's view of the
-  session; a Firmware reboot ends it on the device. A Gateway restart clears
-  only the local record - Firmware cannot observe it and keeps its session
-  until its TTL, a reboot, a disconnect, or replacement by a new approved
-  connect.
-- `connect_device` does not reuse an existing Gateway-local runtime session.
-  Each call locates the live device and sends a Firmware `connect` request, so
-  Firmware remains the only authority that can issue a fresh session.
-- Gateway evicts an expired runtime session lazily, on the next access after
-  its local TTL passes, not on a timer. Firmware remains the session authority.
+  session. A live USB scan that no longer observes the device also clears
+  Gateway's RAM session mirror for that device. A Firmware reboot ends the
+  session on the device. A Gateway restart clears only the local record -
+  Firmware cannot observe it and keeps its RAM session until target policy
+  clears it, such as USB link loss, reboot, explicit disconnect, material-error
+  cleanup, or replacement by a new approved connect.
+- `connect_device` reuses an existing Gateway-local runtime session only after a
+  Firmware session-scoped read-only request confirms that the session is still
+  valid. Firmware remains the only authority that can issue a fresh session, and
+  a fresh Firmware `connect` request still requires device-local approval.
 - Not yet implemented: concrete signing methods, signing-request physical
   approval, Admin Page, and chain-specific signing transaction logic beyond the
   current Sui policy-decision smoke.

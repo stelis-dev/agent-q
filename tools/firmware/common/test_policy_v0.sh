@@ -25,6 +25,7 @@ COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
 
 for required in \
+  "${COMMON_ROOT}/agent_q_u64_decimal.h" \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.h" \
   "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
@@ -58,6 +59,7 @@ cat >"${TMP_DIR}/policy_v0_test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
+#include "agent_q_u64_decimal.h"
 #include "agent_q_policy_v0.h"
 #include "agent_q_policy_runtime.h"
 #include "agent_q_sui_method_adapter.h"
@@ -184,6 +186,18 @@ void expect_runtime_decision(
     }
 }
 
+void expect_u64_format(uint64_t value, const char* expected, int* failures)
+{
+    char buffer[agent_q::kAgentQU64DecimalBufferBytes] = {};
+    if (!agent_q::format_u64_decimal(value, buffer, sizeof(buffer)) ||
+        strcmp(buffer, expected) != 0) {
+        fprintf(stderr, "u64 format mismatch\n  expected: %s\n  actual:   %s\n",
+                expected,
+                buffer);
+        *failures += 1;
+    }
+}
+
 agent_q::AgentQPolicyDocument one_rule_policy(const agent_q::AgentQPolicyRule* rule)
 {
     return agent_q::AgentQPolicyDocument{
@@ -225,6 +239,16 @@ int main(int argc, char** argv)
 
     const std::string fixture_dir = argv[1];
     int failures = 0;
+
+    expect_u64_format(0, "0", &failures);
+    expect_u64_format(1, "1", &failures);
+    expect_u64_format(1000000, "1000000", &failures);
+    expect_u64_format(UINT64_MAX, "18446744073709551615", &failures);
+    char small_buffer[2] = {};
+    if (agent_q::format_u64_decimal(100, small_buffer, sizeof(small_buffer))) {
+        fprintf(stderr, "u64 formatter should reject undersized output buffers\n");
+        failures += 1;
+    }
 
     const std::vector<uint8_t> valid =
         read_hex_fixture((fixture_dir + "/valid_sui_transfer_tx.bcs.hex").c_str());
@@ -739,6 +763,7 @@ CPP
   -Wall \
   -Wextra \
   -Werror \
+  -I"${COMMON_ROOT}" \
   -I"${COMMON_POLICY_DIR}" \
   -I"${COMMON_SUI_DIR}" \
   "${TMP_DIR}/policy_v0_test.cpp" \

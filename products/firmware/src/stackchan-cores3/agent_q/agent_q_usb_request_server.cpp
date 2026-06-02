@@ -5,6 +5,7 @@
 
 #include <ArduinoJson.h>
 #include <memory>
+#include "agent_q_u64_decimal.h"
 #include "agent_q_avatar_overlay_drawing.h"
 #include "agent_q_approval_history.h"
 #include "agent_q_bip39.h"
@@ -29,6 +30,7 @@
 #include "agent_q_sui_account.h"
 #include "agent_q_sui_account_store.h"
 #include "driver/usb_serial_jtag.h"
+#include "driver/usb_serial_jtag_vfs.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -82,6 +84,10 @@ constexpr uint32_t kUsbHostLinkCheckMs = 10;
 constexpr size_t kMaxRawJsonObjectBytes = 4096;
 constexpr size_t kLineBufferSize = kMaxRawJsonObjectBytes + 1;
 constexpr size_t kResponseBufferSize = 4096;
+constexpr size_t kUsbSerialWriteChunkBytes = 512;
+constexpr uint32_t kUsbSerialWriteChunkTimeoutMs = 100;
+constexpr uint32_t kUsbSerialTxDoneTimeoutMs = 100;
+constexpr uint32_t kUsbRequestTaskStackBytes = 8192;
 constexpr size_t kMaxRequestIdSize = 80;
 constexpr size_t kDeviceIdSize = 37;
 constexpr size_t kIdentifyCodeSize = 5;
@@ -405,22 +411,59 @@ bool is_printable_ascii_gateway_name(const char* value)
     return true;
 }
 
-void format_uint64_decimal(uint64_t value, char* output, size_t output_size)
+bool write_usb_serial_bytes(const char* data, size_t length)
 {
-    if (output == nullptr || output_size == 0) {
-        return;
+    if (data == nullptr || length == 0) {
+        return false;
     }
-    snprintf(output, output_size, "%llu", static_cast<unsigned long long>(value));
+
+    size_t offset = 0;
+    while (offset < length) {
+        const size_t remaining = length - offset;
+        const size_t chunk =
+            remaining > kUsbSerialWriteChunkBytes ? kUsbSerialWriteChunkBytes : remaining;
+        const int written = usb_serial_jtag_write_bytes(
+            data + offset,
+            chunk,
+            pdMS_TO_TICKS(kUsbSerialWriteChunkTimeoutMs));
+        if (written <= 0 || static_cast<size_t>(written) > chunk) {
+            ESP_LOGW(kTag, "USB JSON write failed: requested=%u written=%d",
+                     static_cast<unsigned>(chunk),
+                     written);
+            return false;
+        }
+        offset += static_cast<size_t>(written);
+        if (usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(kUsbSerialTxDoneTimeoutMs)) != ESP_OK) {
+            ESP_LOGW(kTag, "USB JSON write flush timed out");
+            return false;
+        }
+    }
+    return true;
 }
 
-void write_json_document(JsonDocument& response)
+bool write_json_document(JsonDocument& response)
 {
     static char buffer[kResponseBufferSize];
+    if (response.overflowed()) {
+        ESP_LOGW(kTag, "USB JSON response document overflowed");
+        return false;
+    }
+    const size_t measured = measureJson(response);
+    if (measured == 0 || measured + 2 > sizeof(buffer)) {
+        ESP_LOGW(kTag, "USB JSON response too large: bytes=%u",
+                 static_cast<unsigned>(measured));
+        return false;
+    }
     size_t len = serializeJson(response, buffer, sizeof(buffer) - 2);
+    if (len != measured || len + 2 > sizeof(buffer)) {
+        ESP_LOGW(kTag, "USB JSON response serialization mismatch: measured=%u serialized=%u",
+                 static_cast<unsigned>(measured),
+                 static_cast<unsigned>(len));
+        return false;
+    }
     buffer[len++] = '\n';
     buffer[len] = '\0';
-    usb_serial_jtag_write_bytes(buffer, len, pdMS_TO_TICKS(20));
-    usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(50));
+    return write_usb_serial_bytes(buffer, len);
 }
 
 void write_error_response(const char* id, const char* code, const char* message)
@@ -504,7 +547,7 @@ void write_connect_approved_response(const char* id)
     response["type"] = "connect_result";
     response["status"] = "approved";
     response["sessionId"] = agent_q::session_id();
-    response["sessionTtlMs"] = agent_q::kAgentQSessionTtlMs;
+    response["sessionTtlMs"] = agent_q::kAgentQSessionAdvertisedTtlMs;
     response["device"]["deviceId"] = g_device_id;
     response["device"]["state"] = "idle";
     response["device"]["firmwareName"] = kFirmwareName;
@@ -580,8 +623,7 @@ bool write_policy_response(const char* id)
     policy_json["policyId"] = policy.policy_id;
     policy_json["defaultAction"] = policy.default_action;
     policy_json["ruleCount"] = policy.rule_count;
-    write_json_document(response);
-    return true;
+    return write_json_document(response);
 }
 
 bool write_approval_history_response(const char* id, uint64_t before_sequence, size_t limit)
@@ -602,10 +644,12 @@ bool write_approval_history_response(const char* id, uint64_t before_sequence, s
     for (size_t index = 0; index < page.count; ++index) {
         const agent_q::AgentQApprovalHistoryRecord& source = page.records[index];
         JsonObject record = records.add<JsonObject>();
-        char sequence[21] = {};
-        char uptime_ms[21] = {};
-        format_uint64_decimal(source.sequence, sequence, sizeof(sequence));
-        format_uint64_decimal(source.uptime_ms, uptime_ms, sizeof(uptime_ms));
+        char sequence[agent_q::kAgentQU64DecimalBufferBytes] = {};
+        char uptime_ms[agent_q::kAgentQU64DecimalBufferBytes] = {};
+        if (!agent_q::format_u64_decimal(source.sequence, sequence, sizeof(sequence)) ||
+            !agent_q::format_u64_decimal(source.uptime_ms, uptime_ms, sizeof(uptime_ms))) {
+            return false;
+        }
         record["seq"] = sequence;
         record["uptimeMs"] = uptime_ms;
         record["timeSource"] = "uptime";
@@ -634,8 +678,7 @@ bool write_approval_history_response(const char* id, uint64_t before_sequence, s
             }
         }
     }
-    write_json_document(response);
-    return true;
+    return write_json_document(response);
 }
 
 void write_policy_update_result_response(
@@ -790,8 +833,7 @@ bool write_accounts_response(const char* id)
     account["publicKey"] = public_key_base64;
     account["keyScheme"] = "ed25519";
     account["derivationPath"] = "m/44'/784'/0'/0'/0'";
-    write_json_document(response);
-    return true;
+    return write_json_document(response);
 }
 
 bool fill_protocol_random(void* output, size_t size, const char* purpose)
@@ -811,7 +853,7 @@ bool fill_session_random(void* output, size_t size, void*)
 
 bool replace_active_session()
 {
-    return agent_q::session_replace(xTaskGetTickCount(), fill_session_random, nullptr) ==
+    return agent_q::session_replace(fill_session_random, nullptr) ==
            agent_q::AgentQSessionStartResult::ok;
 }
 
@@ -1150,7 +1192,7 @@ bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_setti
 
 bool require_active_matching_session(const char* id, const char* session_id)
 {
-    switch (agent_q::session_validate(session_id, xTaskGetTickCount())) {
+    switch (agent_q::session_validate(session_id)) {
         case agent_q::AgentQSessionValidationResult::ok:
             return true;
         case agent_q::AgentQSessionValidationResult::invalid_format:
@@ -1158,10 +1200,6 @@ bool require_active_matching_session(const char* id, const char* session_id)
             return false;
         case agent_q::AgentQSessionValidationResult::missing:
             cancel_policy_update_after_session_loss("active session missing during request validation");
-            write_error_response(id, "invalid_session", "Session is unknown or already ended.");
-            return false;
-        case agent_q::AgentQSessionValidationResult::expired:
-            cancel_policy_update_after_session_loss("active session expired during request validation");
             write_error_response(id, "invalid_session", "Session is unknown or already ended.");
             return false;
         case agent_q::AgentQSessionValidationResult::mismatch:
@@ -1215,12 +1253,11 @@ bool require_pending_policy_update_session(const char* request_id)
         return false;
     }
 
-    switch (agent_q::session_validate(g_pending.session_id, xTaskGetTickCount())) {
+    switch (agent_q::session_validate(g_pending.session_id)) {
         case agent_q::AgentQSessionValidationResult::ok:
             return true;
         case agent_q::AgentQSessionValidationResult::invalid_format:
         case agent_q::AgentQSessionValidationResult::missing:
-        case agent_q::AgentQSessionValidationResult::expired:
         case agent_q::AgentQSessionValidationResult::mismatch:
         default:
             write_policy_update_invalid_session_and_clear(request_id, "pending policy update session invalid");
@@ -1274,36 +1311,6 @@ bool protocol_local_pin_deadline_reached(LocalPinAuthPurpose purpose, TickType_t
     }
     return g_pending.deadline != 0 &&
            static_cast<int32_t>(now - g_pending.deadline) >= 0;
-}
-
-void expire_session_and_dependent_flows_if_needed()
-{
-    if (!agent_q::session_expire_if_needed(xTaskGetTickCount())) {
-        return;
-    }
-
-    const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
-        agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
-    const bool had_policy_update_pending =
-        g_pending.active && g_pending.kind == PendingKind::policy_update_pin;
-    const bool had_policy_update_pin =
-        pin_auth.flow_active && pin_auth.purpose == LocalPinAuthPurpose::policy_update;
-    const bool had_policy_update_flow = agent_q::policy_update_flow_active();
-    if (!had_policy_update_pending && !had_policy_update_pin && !had_policy_update_flow) {
-        return;
-    }
-
-    char request_id[kMaxRequestIdSize] = {};
-    if (g_pending.kind == PendingKind::policy_update_pin) {
-        strlcpy(request_id, g_pending.id, sizeof(request_id));
-    }
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-    if (had_policy_update_pin) {
-        wipe_local_pin_auth_scratch("policy update session expired during local PIN authorization");
-    }
-    write_policy_update_invalid_session_and_clear(
-        request_id,
-        "session expired during pending policy update");
 }
 
 bool disconnect_pending_policy_update_for_session(const char* id, const char* session_id)
@@ -2230,98 +2237,117 @@ void begin_connect_pin_auth(const char* id, const char* gateway_name, uint32_t a
     }
 }
 
+void clear_policy_update_terminal_state()
+{
+    agent_q::policy_update_flow_clear();
+    clear_pending_state();
+}
+
+void finish_policy_update_result_terminal(
+    const char* request_id,
+    agent_q::AgentQPolicyUpdateFlowTerminalResult result,
+    const char* display_message,
+    AgentQMessageKind display_kind,
+    bool refresh_material_consistency = false)
+{
+    write_policy_update_result_response(
+        request_id,
+        agent_q::policy_update_flow_terminal_status(result),
+        agent_q::policy_update_flow_terminal_reason(result),
+        true);
+    clear_policy_update_terminal_state();
+    if (refresh_material_consistency) {
+        refresh_persistent_material_consistency();
+    }
+    agent_q::avatar_overlay_show_message(
+        display_message,
+        display_kind,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+}
+
+void finish_policy_update_error_terminal(
+    const char* request_id,
+    const char* error_code,
+    const char* error_message,
+    const char* display_message)
+{
+    write_error_response(request_id, error_code, error_message);
+    clear_policy_update_terminal_state();
+    agent_q::avatar_overlay_show_message(
+        display_message,
+        AgentQMessageKind::error,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+}
+
 void finish_policy_update_terminal(
     const char* request_id,
     agent_q::AgentQPolicyUpdateFlowTerminalResult result)
 {
     if (request_id == nullptr || request_id[0] == '\0') {
-        agent_q::policy_update_flow_clear();
-        clear_pending_state();
+        clear_policy_update_terminal_state();
         return;
     }
 
     switch (result) {
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::applied:
-            write_policy_update_result_response(
+            finish_policy_update_result_terminal(
                 request_id,
-                agent_q::policy_update_flow_terminal_status(result),
-                agent_q::policy_update_flow_terminal_reason(result),
-                true);
-            agent_q::policy_update_flow_clear();
-            clear_pending_state();
-            agent_q::avatar_overlay_show_message(
-                "Policy updated", AgentQMessageKind::success, AgentQUiMode::result, kAgentQResultDisplayMs);
+                result,
+                "Policy updated",
+                AgentQMessageKind::success);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::rejected:
-            write_policy_update_result_response(
+            finish_policy_update_result_terminal(
                 request_id,
-                agent_q::policy_update_flow_terminal_status(result),
-                agent_q::policy_update_flow_terminal_reason(result),
-                true);
-            agent_q::policy_update_flow_clear();
-            clear_pending_state();
-            agent_q::avatar_overlay_show_message(
-                "Policy rejected", AgentQMessageKind::rejected, AgentQUiMode::result, kAgentQResultDisplayMs);
+                result,
+                "Policy rejected",
+                AgentQMessageKind::rejected);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::timed_out:
-            write_policy_update_result_response(
+            finish_policy_update_result_terminal(
                 request_id,
-                agent_q::policy_update_flow_terminal_status(result),
-                agent_q::policy_update_flow_terminal_reason(result),
-                true);
-            agent_q::policy_update_flow_clear();
-            clear_pending_state();
-            agent_q::avatar_overlay_show_message(
-                "Policy timed out", AgentQMessageKind::timeout, AgentQUiMode::result, kAgentQResultDisplayMs);
+                result,
+                "Policy timed out",
+                AgentQMessageKind::timeout);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::ui_error:
-            write_policy_update_result_response(
+            finish_policy_update_result_terminal(
                 request_id,
-                agent_q::policy_update_flow_terminal_status(result),
-                agent_q::policy_update_flow_terminal_reason(result),
-                true);
-            agent_q::policy_update_flow_clear();
-            clear_pending_state();
-            agent_q::avatar_overlay_show_message(
-                "Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                result,
+                "Display error",
+                AgentQMessageKind::error);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::storage_error:
-            write_policy_update_result_response(
+            finish_policy_update_result_terminal(
                 request_id,
-                agent_q::policy_update_flow_terminal_status(result),
-                agent_q::policy_update_flow_terminal_reason(result),
-                true);
-            agent_q::policy_update_flow_clear();
-            clear_pending_state();
-            agent_q::avatar_overlay_show_message(
-                "Policy failed", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+                result,
+                "Policy failed",
+                AgentQMessageKind::error);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::consistency_error:
-            write_policy_update_result_response(
+            finish_policy_update_result_terminal(
                 request_id,
-                agent_q::policy_update_flow_terminal_status(result),
-                agent_q::policy_update_flow_terminal_reason(result),
+                result,
+                "Policy error",
+                AgentQMessageKind::error,
                 true);
-            agent_q::policy_update_flow_clear();
-            clear_pending_state();
-            refresh_persistent_material_consistency();
-            agent_q::avatar_overlay_show_message(
-                "Policy error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::history_error:
-            write_error_response(request_id, "history_error", "Could not record policy update.");
-            agent_q::policy_update_flow_clear();
-            clear_pending_state();
-            agent_q::avatar_overlay_show_message(
-                "History error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            finish_policy_update_error_terminal(
+                request_id,
+                "history_error",
+                "Could not record policy update.",
+                "History error");
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::invalid_state:
         default:
-            write_error_response(request_id, "invalid_state", "Policy update is unavailable.");
-            agent_q::policy_update_flow_clear();
-            clear_pending_state();
-            agent_q::avatar_overlay_show_message(
-                "Policy unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            finish_policy_update_error_terminal(
+                request_id,
+                "invalid_state",
+                "Policy update is unavailable.",
+                "Policy unavailable");
             return;
     }
 }
@@ -3836,7 +3862,7 @@ void handle_line(const char* line)
     if (strcmp(type, "disconnect") == 0) {
         const char* session_id = nullptr;
         if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid or expired session.");
+            write_error_response(id, "invalid_session", "Invalid session.");
             return;
         }
         if (!require_active_matching_session(id, session_id)) {
@@ -3867,7 +3893,7 @@ void handle_line(const char* line)
 
         const char* session_id = nullptr;
         if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid or expired session.");
+            write_error_response(id, "invalid_session", "Invalid session.");
             return;
         }
         if (!require_active_matching_session(id, session_id)) {
@@ -3893,7 +3919,7 @@ void handle_line(const char* line)
 
         const char* session_id = nullptr;
         if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid or expired session.");
+            write_error_response(id, "invalid_session", "Invalid session.");
             return;
         }
         if (!require_active_matching_session(id, session_id)) {
@@ -3923,7 +3949,7 @@ void handle_line(const char* line)
 
         const char* session_id = nullptr;
         if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid or expired session.");
+            write_error_response(id, "invalid_session", "Invalid session.");
             return;
         }
         if (!require_active_matching_session(id, session_id)) {
@@ -3955,7 +3981,7 @@ void handle_line(const char* line)
 
         const char* session_id = nullptr;
         if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid or expired session.");
+            write_error_response(id, "invalid_session", "Invalid session.");
             return;
         }
         if (!require_active_matching_session(id, session_id)) {
@@ -3992,7 +4018,7 @@ void handle_line(const char* line)
 
         const char* session_id = nullptr;
         if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid or expired session.");
+            write_error_response(id, "invalid_session", "Invalid session.");
             return;
         }
         if (!require_active_matching_session(id, session_id)) {
@@ -4184,7 +4210,6 @@ void usb_request_task(void*)
         clear_recovery_word_entry_if_needed();
         clear_pin_setup_if_needed();
         clear_local_reset_if_needed();
-        expire_session_and_dependent_flows_if_needed();
         clear_local_pin_auth_if_needed();
         drain_ui_events();
         commit_local_reset_if_ready();
@@ -4274,11 +4299,12 @@ void init_usb_request_server()
             return;
         }
     }
+    usb_serial_jtag_vfs_use_driver();
 
     g_usb_ready = true;
     if (g_usb_task == nullptr) {
         BaseType_t task_created = xTaskCreatePinnedToCore(
-            usb_request_task, "agent_q_usb", 4096, nullptr, 4, &g_usb_task, 1);
+            usb_request_task, "agent_q_usb", kUsbRequestTaskStackBytes, nullptr, 4, &g_usb_task, 1);
         if (task_created != pdPASS) {
             ESP_LOGE(kTag, "USB request task start failed");
             g_usb_ready = false;

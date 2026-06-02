@@ -25,12 +25,8 @@ export type { DeviceState, ProvisioningState };
 export const PROTOCOL_VERSION = 1;
 export const MAX_APPROVAL_TIMEOUT_MS = 60000;
 export const DEFAULT_APPROVAL_TIMEOUT_MS = 30000;
-// sessionTtlMs is a uint32 millisecond counter on the wire. A value outside
-// that range cannot come from a conformant device, so the wire boundary rejects
-// it as malformed. Bounding it here also keeps Gateway's session-expiry
-// arithmetic (connectedAt + sessionTtlMs) far inside the representable Date
-// range, so recording a session can never throw a RangeError after the connect
-// was physically approved.
+// sessionTtlMs is uint32 wire metadata. Gateway does not use it as the session
+// authority; it is bounded here only to reject malformed Firmware responses.
 export const MAX_SESSION_TTL_MS = 4_294_967_295;
 
 export interface DeviceStatus {

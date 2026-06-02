@@ -107,7 +107,7 @@ hardware and must be documented in each target's `SPEC.md`.
 | Local PIN authorization state | connect/settings/policy-update/reset PIN entry purpose, verification stage, timeout, RAM-only lockout | Firmware | Yes |
 | Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or connect PIN approval; timeout; requested action | Firmware | Yes |
 | Pending policy update state | validated policy proposal summary, policy hash, approval deadline, commit stage | Firmware | Yes |
-| Runtime session state | active protocol session id and expiry | Firmware; Gateway mirrors its own client session state | Yes |
+| Runtime session state | active protocol session id and link-bound cleanup state | Firmware; Gateway mirrors its own client session state in RAM and clears that mirror when Firmware rejects it or live USB scan no longer observes the device | Yes |
 | Target-local display state | screen on/off, brightness, screensaver replacement | Firmware target display module | No |
 | Target-local posture state | servo position, haptics, LEDs, temporary expression feedback | Firmware target UI/motion module | No |
 | UI object lifetime | speech bubble, modal, setup panel, decorator id | Firmware target UI module | No |
@@ -219,7 +219,7 @@ Allowed:
 - policy update through the Firmware-owned `propose_policy_update` proposal
   flow, which requires an active session, Firmware validation, and device-local
   approval; the pending approval remains tied to the same session and cannot
-  commit after that session expires or disconnects
+  commit after that session ends, disconnects, or no longer matches
 
 This state is not blanket signing approval. Policy still decides whether each
 request signs, rejects, or asks. In the current StackChan CoreS3

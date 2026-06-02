@@ -62,6 +62,8 @@ struct StoredApprovalHistory {
     StoredApprovalHistoryRecord records[kAgentQApprovalHistoryCapacity];
 };
 
+StoredApprovalHistory g_history_workspace;
+
 static_assert(sizeof(StoredApprovalHistoryRecord) <= 256,
               "Approval history record must stay bounded for NVS storage");
 static_assert(sizeof(StoredApprovalHistory) <= 8192,
@@ -610,7 +612,7 @@ bool approval_history_append(
     const AgentQApprovalHistoryAppendInput& input,
     uint64_t uptime_ms)
 {
-    StoredApprovalHistory history = {};
+    StoredApprovalHistory& history = g_history_workspace;
     const AgentQApprovalHistoryReadResult load_result = load_history(&history, true);
     if (load_result != AgentQApprovalHistoryReadResult::ok) {
         return false;
@@ -649,7 +651,7 @@ bool approval_history_append_required_policy_update(
     const AgentQPolicyUpdateHistoryAppendInput& input,
     uint64_t uptime_ms)
 {
-    StoredApprovalHistory history = {};
+    StoredApprovalHistory& history = g_history_workspace;
     const AgentQApprovalHistoryReadResult load_result = load_history(&history, true);
     if (load_result != AgentQApprovalHistoryReadResult::ok) {
         return false;
@@ -688,7 +690,7 @@ AgentQApprovalHistoryReadResult approval_history_read_page(
     }
     memset(output, 0, sizeof(*output));
 
-    StoredApprovalHistory history = {};
+    StoredApprovalHistory& history = g_history_workspace;
     const AgentQApprovalHistoryReadResult load_result = load_history(&history, true);
     if (load_result != AgentQApprovalHistoryReadResult::ok) {
         return load_result;

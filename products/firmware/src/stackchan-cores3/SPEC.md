@@ -59,14 +59,14 @@ Legend:
 | `get_capabilities` | O | Source reports Sui Ed25519 account identity capability for account 0 over an approved session while material-backed `provisioned`; `methods` is empty until concrete signing methods are implemented. Rerun hardware smoke after setup, session, or material-storage changes. |
 | `get_accounts` | O | Source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is verified against Sui SDK address vectors on host; manual hardware smoke verified this path while idle Settings is open, after Change PIN on the same session, and after reconnect. Rerun hardware smoke after setup, session, or material-storage changes. |
 | `get_policy` | △ | Source implements a session-scoped read-only summary of the committed active `agentq.policy.v0` policy record. The current product flow still installs only the DEV_PROFILE default-reject policy, but the target active-policy store can load canonical custom reject-policy records through its internal storage boundary. Corrupt/unreadable active policy or missing policy under `provisioned` fails closed. Gateway/MCP parser tests, target policy-store host tests, and manual hardware smoke for idle-Settings read access cover this path. |
-| `get_approval_history` | △ | Source implements a session-scoped read-only view of persistent Firmware-authored method-decision and policy-update terminal metadata. Records are stored in a fixed-size binary NVS ring buffer, newest-first paginated, and wiped by local reset or error-state erase recovery. The current method runtime records only validated `call_method` policy-rejected decisions; invalid parameter, malformed transaction, and unsupported-method errors are not persisted as approval history. The policy-update flow records `applied`, `rejected`, `timed_out`, and `storage_error` terminal records through a required-write path that is separate from method-decision write budgeting. User approval decisions for signing and signing decisions do not exist yet. Gateway/MCP parser tests and target approval-history host tests cover this path. Hardware smoke remains required. |
-| `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke, and persists bounded approval-history metadata for those method decisions. If that required history write fails or is rate-limited, Firmware returns top-level `history_error` instead of the method result. It consumes the committed active policy; corrupt/unreadable or missing policy is a material-consistency error rather than a normal `provisioned` state. Host tests cover the request field/type validation helper and policy store provider. Hardware smoke remains required for the stored-policy path. No approval UI, capability advertisement, or signing is connected. |
+| `get_approval_history` | △ | Source implements a session-scoped read-only view of persistent Firmware-authored method-decision and policy-update terminal metadata. Records are stored in a fixed-size binary NVS ring buffer, newest-first paginated, and wiped by local reset or error-state erase recovery. The current method runtime records only validated `call_method` policy-rejected decisions; invalid parameter, malformed transaction, and unsupported-method errors are not persisted as approval history. The policy-update flow records `applied`, `rejected`, `timed_out`, and `storage_error` terminal records through a required-write path that is separate from method-decision write budgeting. User approval decisions for signing and signing decisions do not exist yet. Gateway/MCP parser tests, target approval-history host tests, and the 2026-06-02 StackChan CoreS3 opt-in policy-update hardware smoke cover the policy-update terminal record path. |
+| `call_method` | △ | Runtime skeleton exists. It requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, recognizes Sui `sign_transaction` only for restricted-transfer policy-decision smoke, and persists bounded approval-history metadata for those method decisions. If that required history write fails or is rate-limited, Firmware returns top-level `history_error` instead of the method result. It consumes the committed active policy; corrupt/unreadable or missing policy is a material-consistency error rather than a normal `provisioned` state. Host tests cover the request field/type validation helper and policy store provider. The 2026-06-02 StackChan CoreS3 hardware smoke covered the stored-policy reject path. No approval UI, capability advertisement, or signing is connected. |
 | Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation plus matching PIN repeat. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Signing use, USER_PROFILE secure storage, and import are not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display, device-local mnemonic recovery entry, local 6-digit PIN setup, and backup-confirmed/checksum-verified root entropy storage source exists. USB/Gateway/MCP mnemonic import and USER_PROFILE secure provisioning are not implemented. |
 | Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat stores root entropy, initializes the active default-reject policy, and stores the local PIN verifier. Public account derivation is implemented via `get_accounts`; signing and USER_PROFILE secure provisioning are not implemented. |
 | Policy evaluator foundation | △ | Links the common host-tested policy evaluator, stored-policy provider boundary, and Sui restricted-transfer method adapter. The common evaluator matches allowlisted namespace/field facts and owns only shared `common.*` fields; chain-specific field identifiers, descriptors, and transaction semantics stay in the method adapter. Sui `sign_transaction` consumes the committed active policy only as a rejected policy-decision smoke result; it does not sign. |
 | Policy storage/read | △ | Stores the active policy as canonical `agentq.policy.v0` binary records in two bounded NVS slots plus commit metadata and a pending-write marker, exposes a read-only `get_policy` summary, preserves the old committed policy only for interrupted writes identified by that pending marker, treats metadata flip as the commit point, classifies each write as applied, unchanged failure, or consistency error, tolerates stale pending markers that exactly match the selected committed policy, removes stale commit metadata before slot reuse, and treats corrupt/unreadable committed records, invalid commit metadata without a matching pending marker, or pending targets that overlap active material without exactly matching it as a material-consistency error. The current product flow still installs only the DEV_PROFILE default-reject policy. |
-| Policy update | △ | Source implements a Firmware-owned `propose_policy_update` admin-method flow for active sessions: bounded proposal validation, device-local local-PIN approval with on-device summary, canonical active-policy commit, required terminal history recording, and no direct policy setter. The target stores only currently enforceable reject policies and rejects unsupported `ask`/`sign` proposals. The flow uses the two-slot active-policy store plus a persistent policy-update terminal marker that makes an incomplete post-commit terminal sequence a material-consistency error on reboot. Gateway/MCP request/parser surface exists, and Gateway has an opt-in mutating hardware smoke harness for a development device selected explicitly or as the only connected Agent-Q device; that smoke has not been run on hardware yet. The local Admin Page is not implemented yet. |
+| Policy update | △ | Source implements a Firmware-owned `propose_policy_update` admin-method flow for active sessions: bounded proposal validation, device-local local-PIN approval with on-device summary, canonical active-policy commit, required terminal history recording, and no direct policy setter. The target stores only currently enforceable reject policies and rejects unsupported `ask`/`sign` proposals. The flow uses the two-slot active-policy store plus a persistent policy-update terminal marker that makes an incomplete post-commit terminal sequence a material-consistency error on reboot. Gateway/MCP request/parser surface exists, and Gateway has an opt-in mutating hardware smoke harness for a development device selected explicitly or as the only connected Agent-Q device; it passed on StackChan CoreS3 on 2026-06-02 after the target was flashed with the Agent-Q 64 KiB NVS partition layout. The local Admin Page is not implemented yet. |
 | Secure user profile | X | Not implemented. |
 
 ## Chain And Method Support
@@ -80,7 +80,7 @@ parser; none of these are signing APIs.
 |---|---:|---|
 | Sui Ed25519 self-test | △ | Diagnostic only. It proves the signing dependency links and works on-device. |
 | Sui `sign_personal_message` | X | Not implemented. |
-| Sui `sign_transaction` | △ | This method is recognized inside `call_method` only for policy-decision smoke. It validates `network` and base64 `txBytes`, decodes the restricted SUI transfer shape, consumes the committed active policy runtime decision, and returns a rejected `method_result`; corrupt/unreadable or missing policy fails closed as material inconsistency before normal session-scoped methods are available. It is not advertised in `get_capabilities`, does not sign, and does not trigger approval UI. Hardware smoke remains required for the stored-policy path. |
+| Sui `sign_transaction` | △ | This method is recognized inside `call_method` only for policy-decision smoke. It validates `network` and base64 `txBytes`, decodes the restricted SUI transfer shape, consumes the committed active policy runtime decision, and returns a rejected `method_result`; corrupt/unreadable or missing policy fails closed as material inconsistency before normal session-scoped methods are available. It is not advertised in `get_capabilities`, does not sign, and does not trigger approval UI. The 2026-06-02 StackChan CoreS3 hardware smoke covered this stored-policy reject path. |
 | Sui txBytes decoding | △ | The StackChan build links the common restricted SUI transfer facts parser. Host fixtures cover valid SUI transfer facts and malformed/unsupported rejects. The runtime connects it only to Sui `sign_transaction` policy-decision smoke, not capability advertisement or signing. |
 | Sui zkLogin | X | Not implemented; requires a separate trust model. |
 | EVM signing | X | Not implemented. |
@@ -197,8 +197,13 @@ or pending approvals.
 `connect` is defined by the shared protocol and is accepted only after the
 target is material-backed `provisioned`. The session id is generated by
 Firmware and held in RAM. A new approved `connect` replaces the previous
-Firmware session. Gateway sends a Firmware `connect` request each time it asks
-to connect; Gateway-local session reuse is not used for `connect_device`.
+Firmware session. Gateway reuses its RAM-held runtime session for
+`connect_device` when a session-scoped read-only request confirms that the
+Firmware session is still valid. Gateway sends a fresh Firmware `connect`
+request only when it has no valid local session or Firmware rejects the cached
+session. Gateway's RAM session mirror is not device authority; Gateway clears it
+when Firmware rejects the session or when a live USB scan no longer observes the
+device.
 
 By default this target requires a device-local 6-digit PIN for `connect`.
 Successful PIN entry is the connect approval; there is no additional Confirm
@@ -213,8 +218,9 @@ an uncertain source state. PIN entry is never submitted over USB.
 USB link loss clears the Firmware RAM session by policy. For this target,
 USB connected means USB host SOF is observed through
 `usb_serial_jtag_is_connected()`. It does not prove Gateway is running or that
-the serial port is open, so cable removal, host sleep/suspend, or SOF loss may
-end the session before `sessionTtlMs`.
+the serial port is open, so cable removal, host sleep/suspend, or SOF loss ends
+the session. The target advertises the maximum uint32 `sessionTtlMs` because
+the session is USB-link-bound instead of time-expiring.
 
 `disconnect` clears the session only when the supplied session id matches the
 active Firmware session. It is a session-lifecycle operation, so material
@@ -260,6 +266,11 @@ verifier fail closed until reprovisioned.
 | `agent_q` | `approval_hist` | Fixed-size 32-record binary ring buffer of Firmware-authored approval/method-decision metadata; local reset and error-state erase wipe it |
 | `agent_q` | `reset_pending` | Internal Firmware-owned marker used to resume an interrupted local reset wipe at boot; not a protocol state or host API |
 
+The StackChan build preparation step patches the generated firmware
+`partitions.csv` so this target owns a 64 KiB NVS partition. The upstream
+StackChan 16 KiB NVS layout is not sufficient for the current Agent-Q material
+set.
+
 Agent-Q-owned modules are sources under `agent_q/` in this target tree. These
 modules may share the `agent_q` namespace. New keys should be named by feature,
 such as `<feature>_<name>`, to avoid collisions. ESP-IDF NVS key names are
@@ -278,10 +289,10 @@ persisted as approval history. User approval records and method-error records
 are reserved until signing and approval paths are implemented.
 
 The history is a fixed-size binary NVS ring buffer under `approval_hist`, capped
-at 32 records so it fits in the current StackChan CoreS3 NVS partition alongside
-the other Agent-Q material records. Unsupported current approval-history blobs
-are not accepted as product state; destructive local reset or error-state erase
-is the supported recovery path.
+at 32 records so it fits in the Agent-Q-patched 64 KiB StackChan CoreS3 NVS
+partition alongside the other Agent-Q material records. Unsupported current
+approval-history blobs are not accepted as product state; destructive local
+reset or error-state erase is the supported recovery path.
 Persistent method-decision writes are rate-limited by Firmware to reduce flash
 wear. Required policy-update terminal history records are not consumed from
 that method-decision spam budget; the policy-update flow has its own active
@@ -522,7 +533,7 @@ Current verification expectations for this target:
   cancel, timeout, or storage failure, and never changes root material or policy;
 - smoke-test USB host SOF loss clears the Firmware RAM session;
 - smoke-test `disconnect` clears a matching active session and rejects an
-  unknown or expired session id;
+  unknown or inactive session id;
 - smoke-test `propose_policy_update` on a development device whose active
   policy may be changed: submit a bounded reject-only policy over an approved
   session, enter the device-local PIN approval, verify `policy_update_result`

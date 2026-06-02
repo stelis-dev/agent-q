@@ -29,6 +29,7 @@ ARDUINOJSON_ROOT="${ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${COMMON_ROOT}/agent_q_u64_decimal.h" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_update_flow.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_update_flow.h" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_proposal_parser.cpp" \
@@ -340,6 +341,7 @@ CPP
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${TARGET_ROOT}/agent_q" \
+  -I"${COMMON_ROOT}" \
   -I"${COMMON_POLICY_DIR}" \
   -I"${COMMON_SUI_DIR}" \
   "${TMP_DIR}/policy_update_flow_test.cpp" \
