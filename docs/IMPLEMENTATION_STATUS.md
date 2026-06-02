@@ -161,8 +161,8 @@ session-scoped `call_method` protocol.
 - Ledger-grade or secure-element-backed physical extraction resistance.
 - Agent, prompt, or host intent detection.
 - Chain-specific top-level MCP tools such as `sign_sui_transaction`.
-- MCP-admin commands that export keys, directly set or clear policy, flash
-  firmware, read memory, or bypass Firmware policy.
+- Gateway, MCP, or Admin commands that export keys, directly set or clear
+  policy, flash firmware, read memory, or bypass Firmware policy.
 - Fiat cash-out, P&L, tax, or cost-basis features.
 - Treating Gateway labels or purpose routing as security policy.
 - Treating `connect_device` as signing approval.

@@ -165,14 +165,13 @@ Implemented:
 Not yet implemented: concrete signing outputs, per-request physical approval,
 spending and rate limits, multi-role separation, custom policy update beyond
 the current bounded reject-policy proposal flow, full Admin policy editing,
-multi-device
-approval, device revocation or transfer, a production audit layer beyond the
-current fixed-size approval-history record, and broad chain-specific transaction
-logic. Connection is not signing approval and does not authorize signing. A
-connection session does not prove agent identity. Labels and purpose names are
-local Gateway metadata and are not security boundaries. Firmware policy must not
-rely on Gateway labels, purpose names, or routing assignments as authorization
-facts.
+multi-device approval, device revocation or transfer, a production audit layer
+beyond the current fixed-size approval-history record, and broad chain-specific
+transaction logic. Connection is not signing approval and does not authorize
+signing. A connection session does not prove agent identity. Labels and purpose
+names are local Gateway metadata and are not security boundaries. Firmware
+policy must not rely on Gateway labels, purpose names, or routing assignments as
+authorization facts.
 
 ## Repository Layout
 
