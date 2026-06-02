@@ -29,6 +29,7 @@
 #include "agent_q_session.h"
 #include "agent_q_sui_account.h"
 #include "agent_q_sui_account_store.h"
+#include "agent_q_usb_response_writer.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_err.h"
@@ -83,10 +84,6 @@ constexpr uint32_t kSettingsTouchEntryMs = 900;
 constexpr uint32_t kUsbHostLinkCheckMs = 10;
 constexpr size_t kMaxRawJsonObjectBytes = 4096;
 constexpr size_t kLineBufferSize = kMaxRawJsonObjectBytes + 1;
-constexpr size_t kResponseBufferSize = 4096;
-constexpr size_t kUsbSerialWriteChunkBytes = 512;
-constexpr uint32_t kUsbSerialWriteChunkTimeoutMs = 100;
-constexpr uint32_t kUsbSerialTxDoneTimeoutMs = 100;
 constexpr uint32_t kUsbRequestTaskStackBytes = 8192;
 constexpr size_t kMaxRequestIdSize = 80;
 constexpr size_t kDeviceIdSize = 37;
@@ -411,62 +408,7 @@ bool is_printable_ascii_gateway_name(const char* value)
     return true;
 }
 
-bool write_usb_serial_bytes(const char* data, size_t length)
-{
-    if (data == nullptr || length == 0) {
-        return false;
-    }
-
-    size_t offset = 0;
-    while (offset < length) {
-        const size_t remaining = length - offset;
-        const size_t chunk =
-            remaining > kUsbSerialWriteChunkBytes ? kUsbSerialWriteChunkBytes : remaining;
-        const int written = usb_serial_jtag_write_bytes(
-            data + offset,
-            chunk,
-            pdMS_TO_TICKS(kUsbSerialWriteChunkTimeoutMs));
-        if (written <= 0 || static_cast<size_t>(written) > chunk) {
-            ESP_LOGW(kTag, "USB JSON write failed: requested=%u written=%d",
-                     static_cast<unsigned>(chunk),
-                     written);
-            return false;
-        }
-        offset += static_cast<size_t>(written);
-        if (usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(kUsbSerialTxDoneTimeoutMs)) != ESP_OK) {
-            ESP_LOGW(kTag, "USB JSON write flush timed out");
-            return false;
-        }
-    }
-    return true;
-}
-
-bool write_json_document(JsonDocument& response)
-{
-    static char buffer[kResponseBufferSize];
-    if (response.overflowed()) {
-        ESP_LOGW(kTag, "USB JSON response document overflowed");
-        return false;
-    }
-    const size_t measured = measureJson(response);
-    if (measured == 0 || measured + 2 > sizeof(buffer)) {
-        ESP_LOGW(kTag, "USB JSON response too large: bytes=%u",
-                 static_cast<unsigned>(measured));
-        return false;
-    }
-    size_t len = serializeJson(response, buffer, sizeof(buffer) - 2);
-    if (len != measured || len + 2 > sizeof(buffer)) {
-        ESP_LOGW(kTag, "USB JSON response serialization mismatch: measured=%u serialized=%u",
-                 static_cast<unsigned>(measured),
-                 static_cast<unsigned>(len));
-        return false;
-    }
-    buffer[len++] = '\n';
-    buffer[len] = '\0';
-    return write_usb_serial_bytes(buffer, len);
-}
-
-void write_error_response(const char* id, const char* code, const char* message)
+bool write_error_response(const char* id, const char* code, const char* message)
 {
     JsonDocument response;
     if (id != nullptr && id[0] != '\0') {
@@ -476,7 +418,15 @@ void write_error_response(const char* id, const char* code, const char* message)
     response["type"] = "error";
     response["error"]["code"] = code;
     response["error"]["message"] = message;
-    write_json_document(response);
+    return agent_q::usb_response_write_json(response);
+}
+
+void log_response_write_failure(const char* response_type, const char* id)
+{
+    ESP_LOGW(kTag,
+             "USB response write failed: type=%s id=%s",
+             response_type != nullptr ? response_type : "",
+             id != nullptr ? id : "");
 }
 
 const char* current_device_state()
@@ -506,7 +456,7 @@ const char* reported_provisioning_state()
     return agent_q::provisioning_runtime_state_to_string(g_provisioning_state);
 }
 
-void write_status_response(const char* id)
+bool write_status_response(const char* id)
 {
     refresh_persistent_material_consistency();
 
@@ -520,10 +470,10 @@ void write_status_response(const char* id)
     response["device"]["hardware"] = kHardwareId;
     response["device"]["firmwareVersion"] = kFirmwareVersion;
     response["provisioning"]["state"] = reported_provisioning_state();
-    write_json_document(response);
+    return agent_q::usb_response_write_json(response);
 }
 
-void write_identify_device_result(const char* id, const char* code)
+bool write_identify_device_result(const char* id, const char* code)
 {
     JsonDocument response;
     response["id"] = id;
@@ -536,10 +486,10 @@ void write_identify_device_result(const char* id, const char* code)
     response["device"]["firmwareName"] = kFirmwareName;
     response["device"]["hardware"] = kHardwareId;
     response["device"]["firmwareVersion"] = kFirmwareVersion;
-    write_json_document(response);
+    return agent_q::usb_response_write_json(response);
 }
 
-void write_connect_approved_response(const char* id)
+bool write_connect_approved_response(const char* id)
 {
     JsonDocument response;
     response["id"] = id;
@@ -553,10 +503,10 @@ void write_connect_approved_response(const char* id)
     response["device"]["firmwareName"] = kFirmwareName;
     response["device"]["hardware"] = kHardwareId;
     response["device"]["firmwareVersion"] = kFirmwareVersion;
-    write_json_document(response);
+    return agent_q::usb_response_write_json(response);
 }
 
-void write_connect_rejected_response(const char* id, const char* error_code, const char* error_message)
+bool write_connect_rejected_response(const char* id, const char* error_code, const char* error_message)
 {
     JsonDocument response;
     response["id"] = id;
@@ -565,20 +515,20 @@ void write_connect_rejected_response(const char* id, const char* error_code, con
     response["status"] = "rejected";
     response["error"]["code"] = error_code;
     response["error"]["message"] = error_message;
-    write_json_document(response);
+    return agent_q::usb_response_write_json(response);
 }
 
-void write_disconnect_result(const char* id)
+bool write_disconnect_result(const char* id)
 {
     JsonDocument response;
     response["id"] = id;
     response["version"] = kProtocolVersion;
     response["type"] = "disconnect_result";
     response["status"] = "disconnected";
-    write_json_document(response);
+    return agent_q::usb_response_write_json(response);
 }
 
-void write_rejected_method_result(const char* id, const char* code, const char* message)
+bool write_rejected_method_result(const char* id, const char* code, const char* message)
 {
     JsonDocument response;
     response["id"] = id;
@@ -587,10 +537,10 @@ void write_rejected_method_result(const char* id, const char* code, const char* 
     response["status"] = "rejected";
     response["error"]["code"] = code;
     response["error"]["message"] = message;
-    write_json_document(response);
+    return agent_q::usb_response_write_json(response);
 }
 
-void write_capabilities_response(const char* id)
+bool write_capabilities_response(const char* id)
 {
     JsonDocument response;
     response["id"] = id;
@@ -604,7 +554,7 @@ void write_capabilities_response(const char* id)
     account["keyScheme"] = "ed25519";
     account["derivationPath"] = "m/44'/784'/0'/0'/0'";
     sui["methods"].to<JsonArray>();
-    write_json_document(response);
+    return agent_q::usb_response_write_json(response);
 }
 
 bool write_policy_response(const char* id)
@@ -623,7 +573,7 @@ bool write_policy_response(const char* id)
     policy_json["policyId"] = policy.policy_id;
     policy_json["defaultAction"] = policy.default_action;
     policy_json["ruleCount"] = policy.rule_count;
-    return write_json_document(response);
+    return agent_q::usb_response_write_json(response);
 }
 
 bool write_approval_history_response(const char* id, uint64_t before_sequence, size_t limit)
@@ -678,10 +628,10 @@ bool write_approval_history_response(const char* id, uint64_t before_sequence, s
             }
         }
     }
-    return write_json_document(response);
+    return agent_q::usb_response_write_json(response);
 }
 
-void write_policy_update_result_response(
+bool write_policy_update_result_response(
     const char* id,
     const char* status,
     const char* reason_code,
@@ -701,7 +651,7 @@ void write_policy_update_result_response(
         policy["ruleCount"] = snapshot.rule_count;
         policy["highestAction"] = snapshot.highest_action;
     }
-    write_json_document(response);
+    return agent_q::usb_response_write_json(response);
 }
 
 bool parse_approval_history_params(JsonDocument& request, size_t* limit, uint64_t* before_sequence)
@@ -833,7 +783,7 @@ bool write_accounts_response(const char* id)
     account["publicKey"] = public_key_base64;
     account["keyScheme"] = "ed25519";
     account["derivationPath"] = "m/44'/784'/0'/0'/0'";
-    return write_json_document(response);
+    return agent_q::usb_response_write_json(response);
 }
 
 bool fill_protocol_random(void* output, size_t size, const char* purpose)
@@ -1340,8 +1290,11 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
     agent_q::policy_update_flow_clear();
     clear_pending_state();
     clear_active_session();
-    write_disconnect_result(id);
-    ESP_LOGI(kTag, "disconnect canceled pending policy update: id=%s", id);
+    if (write_disconnect_result(id)) {
+        ESP_LOGI(kTag, "disconnect canceled pending policy update: id=%s", id);
+    } else {
+        log_response_write_failure("disconnect_result", id);
+    }
     return true;
 }
 
@@ -2250,11 +2203,13 @@ void finish_policy_update_result_terminal(
     AgentQMessageKind display_kind,
     bool refresh_material_consistency = false)
 {
-    write_policy_update_result_response(
-        request_id,
-        agent_q::policy_update_flow_terminal_status(result),
-        agent_q::policy_update_flow_terminal_reason(result),
-        true);
+    if (!write_policy_update_result_response(
+            request_id,
+            agent_q::policy_update_flow_terminal_status(result),
+            agent_q::policy_update_flow_terminal_reason(result),
+            true)) {
+        log_response_write_failure("policy_update_result", request_id);
+    }
     clear_policy_update_terminal_state();
     if (refresh_material_consistency) {
         refresh_persistent_material_consistency();
@@ -2893,7 +2848,9 @@ void handle_local_pin_auth_verify_worker_result(
             wipe_local_pin_auth_scratch("local PIN authorization verifier unavailable");
             clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
             if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
-                write_policy_update_result_response(request_id, "consistency_error", "consistency_error", true);
+                if (!write_policy_update_result_response(request_id, "consistency_error", "consistency_error", true)) {
+                    log_response_write_failure("policy_update_result", request_id);
+                }
                 agent_q::policy_update_flow_clear();
                 clear_pending_state();
                 agent_q::avatar_overlay_show_message("Auth error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -2939,7 +2896,9 @@ void handle_local_pin_auth_verify_worker_result(
             wipe_local_pin_auth_scratch("connect PIN approved");
             clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
             if (request_id[0] != '\0') {
-                write_connect_approved_response(request_id);
+                if (!write_connect_approved_response(request_id)) {
+                    log_response_write_failure("connect_result", request_id);
+                }
             }
             clear_pending_state();
             ESP_LOGI(kTag, "connect PIN approved: id=%s", request_id);
@@ -3745,12 +3704,18 @@ void send_choice_response_if_needed()
             show_result_and_clear_pending("RNG error", AgentQMessageKind::error);
             return;
         }
-        write_connect_approved_response(g_pending.id);
-        ESP_LOGI(kTag, "connect approved: id=%s", g_pending.id);
+        if (write_connect_approved_response(g_pending.id)) {
+            ESP_LOGI(kTag, "connect approved: id=%s", g_pending.id);
+        } else {
+            log_response_write_failure("connect_result", g_pending.id);
+        }
         show_result_and_clear_pending("Connected", AgentQMessageKind::success);
     } else {
-        write_connect_rejected_response(g_pending.id, "rejected", "Connection rejected.");
-        ESP_LOGI(kTag, "connect rejected: id=%s", g_pending.id);
+        if (write_connect_rejected_response(g_pending.id, "rejected", "Connection rejected.")) {
+            ESP_LOGI(kTag, "connect rejected: id=%s", g_pending.id);
+        } else {
+            log_response_write_failure("connect_result", g_pending.id);
+        }
         show_result_and_clear_pending("Connection rejected", AgentQMessageKind::rejected);
     }
 }
@@ -3791,7 +3756,9 @@ void handle_line(const char* line)
         return;
     }
     if (strcmp(type, "get_status") == 0) {
-        write_status_response(id);
+        if (!write_status_response(id)) {
+            log_response_write_failure("status", id);
+        }
         return;
     }
 
@@ -3817,8 +3784,11 @@ void handle_line(const char* line)
         }
 
         show_identification_code(code, duration_ms);
-        write_identify_device_result(id, code);
-        ESP_LOGI(kTag, "identify_device displayed: id=%s code=%s", id, code);
+        if (write_identify_device_result(id, code)) {
+            ESP_LOGI(kTag, "identify_device displayed: id=%s code=%s", id, code);
+        } else {
+            log_response_write_failure("identify_device_result", id);
+        }
         return;
     }
 
@@ -3875,8 +3845,11 @@ void handle_line(const char* line)
             return;
         }
         clear_active_session();
-        write_disconnect_result(id);
-        ESP_LOGI(kTag, "disconnect: id=%s", id);
+        if (write_disconnect_result(id)) {
+            ESP_LOGI(kTag, "disconnect: id=%s", id);
+        } else {
+            log_response_write_failure("disconnect_result", id);
+        }
         return;
     }
 
@@ -3900,8 +3873,11 @@ void handle_line(const char* line)
             return;
         }
 
-        write_capabilities_response(id);
-        ESP_LOGI(kTag, "get_capabilities: id=%s", id);
+        if (write_capabilities_response(id)) {
+            ESP_LOGI(kTag, "get_capabilities: id=%s", id);
+        } else {
+            log_response_write_failure("capabilities", id);
+        }
         return;
     }
 
@@ -4069,11 +4045,13 @@ void handle_line(const char* line)
             const agent_q::AgentQPolicyUpdateFlowBeginResult begin_result =
                 agent_q::policy_update_flow_begin(params_object["policy"]);
             if (begin_result != agent_q::AgentQPolicyUpdateFlowBeginResult::ok) {
-                write_policy_update_result_response(
-                    id,
-                    "invalid_policy",
-                    agent_q::policy_update_flow_begin_result_reason(begin_result),
-                    false);
+                if (!write_policy_update_result_response(
+                        id,
+                        "invalid_policy",
+                        agent_q::policy_update_flow_begin_result_reason(begin_result),
+                        false)) {
+                    log_response_write_failure("policy_update_result", id);
+                }
                 return;
             }
 
@@ -4134,12 +4112,15 @@ void handle_line(const char* line)
             return;
         }
 
-        write_rejected_method_result(id, method_result.code, method_result.message);
-        ESP_LOGI(kTag, "call_method rejected: id=%s chain=%s method=%s code=%s",
-                 id,
-                 chain,
-                 method,
-                 method_result.code);
+        if (write_rejected_method_result(id, method_result.code, method_result.message)) {
+            ESP_LOGI(kTag, "call_method rejected: id=%s chain=%s method=%s code=%s",
+                     id,
+                     chain,
+                     method,
+                     method_result.code);
+        } else {
+            log_response_write_failure("method_result", id);
+        }
         return;
     }
 
