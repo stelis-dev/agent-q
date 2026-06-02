@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: tools/firmware/stackchan-cores3/test_ui_panel_cleanup.sh
+
+Compiles the StackChan CoreS3 UI panel cleanup classifier against host stubs
+and verifies panel-deletion routing between drawing-surface events and explicit
+state owners. This test uses only a host C++ compiler and does NOT require
+ESP-IDF.
+EOF
+}
+
+if [[ $# -ne 0 ]]; then
+  usage
+  exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+AGENT_Q_DIR="${REPO_ROOT}/products/firmware/src/stackchan-cores3/agent_q"
+CXX_BIN="${CXX:-c++}"
+
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-ui-panel-cleanup.XXXXXX")"
+trap 'rm -rf "${TMP_DIR}"' EXIT
+
+mkdir -p "${TMP_DIR}/stubs/freertos"
+
+cat >"${TMP_DIR}/stubs/lvgl.h" <<'H'
+#pragma once
+
+#include <stdint.h>
+
+struct _lv_obj_t;
+typedef _lv_obj_t lv_obj_t;
+
+typedef struct {
+    int32_t x1;
+    int32_t y1;
+    int32_t x2;
+    int32_t y2;
+} lv_area_t;
+H
+
+cat >"${TMP_DIR}/stubs/freertos/FreeRTOS.h" <<'H'
+#pragma once
+
+#include <stdint.h>
+
+typedef uint32_t TickType_t;
+H
+
+cat >"${TMP_DIR}/ui_panel_cleanup_test.cpp" <<'CPP'
+#include <stdio.h>
+
+#include "agent_q_ui_panel_cleanup.h"
+
+namespace {
+
+int failures = 0;
+
+void expect(bool condition, const char* label)
+{
+    if (!condition) {
+        fprintf(stderr, "FAILED: %s\n", label);
+        ++failures;
+    }
+}
+
+agent_q::AgentQUiPanelCleanupPlan plan(
+    agent_q::AgentQUiPanelKind kind,
+    agent_q::AgentQUiPanelCleanupEvent event,
+    bool reset_matches = false,
+    bool pin_matches = false)
+{
+    return agent_q::ui_panel_cleanup_plan(agent_q::AgentQUiPanelCleanupInput{
+        kind,
+        event,
+        reset_matches,
+        pin_matches,
+    });
+}
+
+}  // namespace
+
+int main()
+{
+    using Event = agent_q::AgentQUiPanelCleanupEvent;
+    using Panel = agent_q::AgentQUiPanelKind;
+    using ProvisioningPanel = agent_q::AgentQProvisioningFlowPanel;
+
+    agent_q::AgentQUiPanelCleanupPlan p =
+        plan(Panel::setup_choice, Event::external_delete);
+    expect(p.route_provisioning_panel_deleted, "setup delete routes to provisioning owner");
+    expect(p.provisioning_panel == ProvisioningPanel::setup_choice, "setup panel maps to setup choice");
+    expect(!p.wipe_setup_if_unhandled, "external setup delete does not fallback wipe");
+
+    p = plan(Panel::recovery_phrase_display, Event::external_delete);
+    expect(p.route_provisioning_panel_deleted, "phrase delete routes to provisioning owner");
+    expect(p.provisioning_panel == ProvisioningPanel::recovery_phrase_display, "phrase panel maps");
+
+    p = plan(Panel::recovery_word_entry, Event::external_delete);
+    expect(p.route_provisioning_panel_deleted, "recovery entry delete routes to provisioning owner");
+    expect(p.provisioning_panel == ProvisioningPanel::recovery_word_entry, "recovery entry maps");
+
+    p = plan(Panel::pin_entry, Event::explicit_clear);
+    expect(p.route_provisioning_panel_deleted, "explicit setup PIN clear routes to provisioning owner");
+    expect(p.provisioning_panel == ProvisioningPanel::pin_entry, "setup PIN panel maps");
+    expect(p.wipe_setup_if_unhandled, "explicit setup clear fallback wipes setup scratch");
+
+    p = plan(Panel::reset_pin_entry, Event::external_delete, true, false);
+    expect(p.wipe_local_reset, "matching reset panel delete wipes local reset owner");
+    expect(!p.route_provisioning_panel_deleted && !p.wipe_local_pin_auth,
+           "reset route does not touch other owners");
+
+    p = plan(Panel::reset_pin_entry, Event::external_delete, false, false);
+    expect(!p.wipe_local_reset && !p.route_provisioning_panel_deleted &&
+               !p.wipe_local_pin_auth,
+           "nonmatching reset panel delete is no-op");
+
+    p = plan(Panel::local_pin_auth, Event::external_delete, false, false);
+    expect(p.recover_local_pin_auth_panel, "external local PIN panel delete requests state-loop recovery");
+    expect(!p.wipe_local_pin_auth, "external local PIN panel delete does not wipe directly");
+
+    p = plan(Panel::local_pin_auth, Event::explicit_clear, false, true);
+    expect(p.wipe_local_pin_auth, "explicit local PIN clear wipes matching local PIN owner");
+    expect(!p.recover_local_pin_auth_panel, "explicit local PIN clear does not request recovery");
+
+    p = plan(Panel::local_pin_auth, Event::explicit_clear, false, false);
+    expect(!p.wipe_local_pin_auth && !p.recover_local_pin_auth_panel,
+           "explicit local PIN clear without owner match is no-op");
+
+    p = plan(Panel::settings_menu, Event::external_delete);
+    expect(!p.route_provisioning_panel_deleted && !p.wipe_setup_if_unhandled &&
+               !p.wipe_local_reset && !p.wipe_local_pin_auth &&
+               !p.recover_local_pin_auth_panel,
+           "idle settings panel delete has no state cleanup");
+
+    p = plan(Panel::decision_strip, Event::external_delete);
+    expect(!p.route_provisioning_panel_deleted && !p.wipe_local_reset &&
+               !p.wipe_local_pin_auth && !p.recover_local_pin_auth_panel,
+           "decision strip delete does not decide or cancel");
+
+    if (failures != 0) {
+        fprintf(stderr, "%d UI panel cleanup test(s) failed\n", failures);
+        return 1;
+    }
+    printf("UI panel cleanup tests passed\n");
+    return 0;
+}
+CPP
+
+"${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
+  -I"${TMP_DIR}/stubs" \
+  -I"${AGENT_Q_DIR}" \
+  "${TMP_DIR}/ui_panel_cleanup_test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_ui_panel_cleanup.cpp" \
+  -o "${TMP_DIR}/ui_panel_cleanup_test"
+
+"${TMP_DIR}/ui_panel_cleanup_test"

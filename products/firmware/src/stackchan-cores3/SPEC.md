@@ -495,6 +495,8 @@ Current verification expectations for this target:
   host SOF polling state ownership and link-edge classification;
 - run `tools/firmware/stackchan-cores3/test_usb_session_loss.sh` to check the
   session-bound volatile cleanup plan for USB host SOF loss;
+- run `tools/firmware/stackchan-cores3/test_ui_panel_cleanup.sh` to check
+  panel-deletion cleanup routing between temporary UI and state owners;
 - run `tools/firmware/stackchan-cores3/test_local_reset.sh` to check local reset
   and error-state erase recovery state transitions, reset-pending marker
   behavior, destructive wipe orchestration, and failure cleanup against host

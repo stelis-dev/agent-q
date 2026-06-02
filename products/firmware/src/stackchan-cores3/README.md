@@ -165,6 +165,7 @@ tools/firmware/stackchan-cores3/test_identification_display.sh
 tools/firmware/stackchan-cores3/test_local_settings_touch_entry.sh
 tools/firmware/stackchan-cores3/test_usb_link_state.sh
 tools/firmware/stackchan-cores3/test_usb_session_loss.sh
+tools/firmware/stackchan-cores3/test_ui_panel_cleanup.sh
 tools/firmware/stackchan-cores3/test_connect_settings.sh
 tools/firmware/stackchan-cores3/test_session.sh
 tools/firmware/stackchan-cores3/test_sui_account_vectors.sh

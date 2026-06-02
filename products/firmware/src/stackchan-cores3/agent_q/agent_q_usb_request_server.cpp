@@ -34,6 +34,7 @@
 #include "agent_q_sui_account.h"
 #include "agent_q_sui_account_store.h"
 #include "agent_q_usb_link_state.h"
+#include "agent_q_ui_panel_cleanup.h"
 #include "agent_q_usb_response_writer.h"
 #include "agent_q_usb_session_loss.h"
 #include "driver/usb_serial_jtag.h"
@@ -236,30 +237,51 @@ bool local_reset_panel_matches_stage(AgentQUiPanelKind kind)
             stage == agent_q::AgentQLocalResetStage::error_recovery_confirm);
 }
 
-bool provisioning_flow_panel_deleted(AgentQUiPanelKind kind, const char* reason)
+bool handle_provisioning_panel_deleted(ProvisioningFlowPanel panel, const char* reason)
 {
-    ProvisioningFlowPanel panel;
-    switch (kind) {
-        case AgentQUiPanelKind::setup_choice:
-            panel = ProvisioningFlowPanel::setup_choice;
-            break;
-        case AgentQUiPanelKind::recovery_phrase_display:
-            panel = ProvisioningFlowPanel::recovery_phrase_display;
-            break;
-        case AgentQUiPanelKind::recovery_word_entry:
-            panel = ProvisioningFlowPanel::recovery_word_entry;
-            break;
-        case AgentQUiPanelKind::pin_entry:
-            panel = ProvisioningFlowPanel::pin_entry;
-            break;
-        default:
-            return false;
-    }
     const bool wiped = agent_q::provisioning_flow_handle_panel_deleted(panel);
     if (wiped) {
         ESP_LOGW(kTag, "Setup scratch wiped: %s", reason != nullptr ? reason : "panel deleted");
     }
     return wiped;
+}
+
+agent_q::AgentQUiPanelCleanupPlan panel_cleanup_plan(
+    AgentQUiPanelKind panel_kind,
+    agent_q::AgentQUiPanelCleanupEvent event)
+{
+    return agent_q::ui_panel_cleanup_plan(agent_q::AgentQUiPanelCleanupInput{
+        panel_kind,
+        event,
+        local_reset_panel_matches_stage(panel_kind),
+        local_pin_auth_panel_matches_stage(panel_kind),
+    });
+}
+
+void apply_panel_cleanup_plan(
+    const agent_q::AgentQUiPanelCleanupPlan& plan,
+    const char* setup_reason,
+    const char* reset_reason,
+    const char* local_pin_reason)
+{
+    if (plan.route_provisioning_panel_deleted &&
+        !handle_provisioning_panel_deleted(plan.provisioning_panel, setup_reason) &&
+        plan.wipe_setup_if_unhandled) {
+        wipe_setup_scratch(setup_reason);
+    }
+    if (plan.wipe_local_reset) {
+        wipe_local_reset_scratch(reset_reason);
+    }
+    if (plan.wipe_local_pin_auth) {
+        wipe_local_pin_auth_scratch(local_pin_reason);
+    }
+    if (plan.recover_local_pin_auth_panel) {
+        // LVGL may delete our transient panel when the underlying app redraws.
+        // UI object lifetime is not the authority for PIN authorization state;
+        // clear_local_pin_auth_if_needed() will either restore the panel or
+        // time out the flow according to the explicit state deadline.
+        ESP_LOGW(kTag, "Local PIN authorization panel deleted; state loop will recover if active");
+    }
 }
 
 bool is_safe_id(const char* value)
@@ -1428,24 +1450,11 @@ void clear_panel_locked(SensitiveUiClearPolicy policy)
         return;
     }
 
-    const bool wipe_setup_after_delete =
-        panel_kind == AgentQUiPanelKind::setup_choice ||
-        panel_kind == AgentQUiPanelKind::recovery_phrase_display ||
-        panel_kind == AgentQUiPanelKind::recovery_word_entry ||
-        panel_kind == AgentQUiPanelKind::pin_entry;
-    const bool wipe_reset_after_delete = local_reset_panel_matches_stage(panel_kind);
-    const bool wipe_local_pin_auth_after_delete = local_pin_auth_panel_matches_stage(panel_kind);
-    if (wipe_setup_after_delete) {
-        if (!provisioning_flow_panel_deleted(panel_kind, "sensitive setup panel cleared")) {
-            wipe_setup_scratch("sensitive setup panel cleared");
-        }
-    }
-    if (wipe_reset_after_delete) {
-        wipe_local_reset_scratch("local reset panel cleared");
-    }
-    if (wipe_local_pin_auth_after_delete) {
-        wipe_local_pin_auth_scratch("local PIN authorization panel cleared");
-    }
+    apply_panel_cleanup_plan(
+        panel_cleanup_plan(panel_kind, agent_q::AgentQUiPanelCleanupEvent::explicit_clear),
+        "sensitive setup panel cleared",
+        "local reset panel cleared",
+        "local PIN authorization panel cleared");
 }
 
 bool provisioning_welcome_available()
@@ -3520,17 +3529,11 @@ void drain_ui_events()
         if (event.kind != AgentQUiEventKind::panel_deleted) {
             continue;
         }
-        if (provisioning_flow_panel_deleted(event.panel_kind, "setup panel deleted")) {
-            continue;
-        } else if (local_reset_panel_matches_stage(event.panel_kind)) {
-            wipe_local_reset_scratch("local reset panel deleted");
-        } else if (event.panel_kind == AgentQUiPanelKind::local_pin_auth) {
-            // LVGL may delete our transient panel when the underlying app redraws.
-            // UI object lifetime is not the authority for PIN authorization state;
-            // clear_local_pin_auth_if_needed() will either restore the panel or
-            // time out the flow according to the explicit state deadline.
-            ESP_LOGW(kTag, "Local PIN authorization panel deleted; state loop will recover if active");
-        }
+        apply_panel_cleanup_plan(
+            panel_cleanup_plan(event.panel_kind, agent_q::AgentQUiPanelCleanupEvent::external_delete),
+            "setup panel deleted",
+            "local reset panel deleted",
+            "local PIN authorization panel deleted");
     }
 }
 
