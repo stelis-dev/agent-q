@@ -121,14 +121,12 @@ void reset_stubs()
 
 namespace agent_q {
 
-const char* provisioning_runtime_state_to_string(AgentQProvisioningRuntimeState state)
+const char* provisioning_persisted_state_to_string(AgentQProvisioningPersistedState state)
 {
     switch (state) {
-        case AgentQProvisioningRuntimeState::provisioned:
+        case AgentQProvisioningPersistedState::provisioned:
             return "provisioned";
-        case AgentQProvisioningRuntimeState::provisioning:
-            return "provisioning";
-        case AgentQProvisioningRuntimeState::unprovisioned:
+        case AgentQProvisioningPersistedState::unprovisioned:
         default:
             return "unprovisioned";
     }
@@ -223,19 +221,19 @@ int main()
     expect(record.status == Status::unreadable, "read failure is unreadable");
 
     reset_stubs();
-    expect(agent_q::provisioning_state_store_save(agent_q::AgentQProvisioningRuntimeState::provisioned),
+    expect(agent_q::provisioning_state_store_save(agent_q::AgentQProvisioningPersistedState::provisioned),
            "save provisioned succeeds");
     expect(g_has_value && strcmp(g_value, "provisioned") == 0,
            "save writes provisioning state string");
 
     reset_stubs();
     g_set_fails = true;
-    expect(!agent_q::provisioning_state_store_save(agent_q::AgentQProvisioningRuntimeState::unprovisioned),
+    expect(!agent_q::provisioning_state_store_save(agent_q::AgentQProvisioningPersistedState::unprovisioned),
            "set failure returns false");
 
     reset_stubs();
     g_commit_fails = true;
-    expect(!agent_q::provisioning_state_store_save(agent_q::AgentQProvisioningRuntimeState::unprovisioned),
+    expect(!agent_q::provisioning_state_store_save(agent_q::AgentQProvisioningPersistedState::unprovisioned),
            "commit failure returns false");
 
     if (failures != 0) {

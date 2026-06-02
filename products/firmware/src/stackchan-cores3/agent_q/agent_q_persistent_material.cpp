@@ -23,26 +23,22 @@ void latch_consistency_error(
 
 bool persist_state(
     const AgentQPersistentMaterialOps& ops,
-    AgentQProvisioningRuntimeState state)
+    AgentQProvisioningPersistedState state)
 {
     return ops.persist_state != nullptr && ops.persist_state(state);
 }
 
-bool parse_provisioning_runtime_state(const char* value, AgentQProvisioningRuntimeState* output)
+bool parse_persisted_provisioning_state(const char* value, AgentQProvisioningPersistedState* output)
 {
     if (value == nullptr || output == nullptr) {
         return false;
     }
     if (strcmp(value, "unprovisioned") == 0) {
-        *output = AgentQProvisioningRuntimeState::unprovisioned;
-        return true;
-    }
-    if (strcmp(value, "provisioning") == 0) {
-        *output = AgentQProvisioningRuntimeState::provisioning;
+        *output = AgentQProvisioningPersistedState::unprovisioned;
         return true;
     }
     if (strcmp(value, "provisioned") == 0) {
-        *output = AgentQProvisioningRuntimeState::provisioned;
+        *output = AgentQProvisioningPersistedState::provisioned;
         return true;
     }
     return false;
@@ -92,12 +88,12 @@ const char* runtime_failure_message(AgentQPersistentMaterialRuntimeFailure failu
 }
 
 AgentQPersistentMaterialConsistencyResult validate_loaded_runtime_state(
-    AgentQProvisioningRuntimeState stored_state,
+    AgentQProvisioningPersistedState stored_state,
     AgentQProvisioningRuntimeState* effective_state,
     const AgentQPersistentMaterialOps& ops)
 {
     AgentQPersistentMaterialStatus status = persistent_material_status();
-    if (stored_state == AgentQProvisioningRuntimeState::provisioned) {
+    if (stored_state == AgentQProvisioningPersistedState::provisioned) {
         if (status.complete()) {
             *effective_state = AgentQProvisioningRuntimeState::provisioned;
             return AgentQPersistentMaterialConsistencyResult::ok;
@@ -115,17 +111,7 @@ AgentQPersistentMaterialConsistencyResult validate_loaded_runtime_state(
         return AgentQPersistentMaterialConsistencyResult::consistency_error;
     }
 
-    if (stored_state == AgentQProvisioningRuntimeState::provisioning) {
-        if (!persist_state(ops, AgentQProvisioningRuntimeState::unprovisioned)) {
-            latch_consistency_error(
-                ops,
-                "Stale provisioning state could not be reset; failing closed");
-            return AgentQPersistentMaterialConsistencyResult::state_storage_error;
-        }
-        return AgentQPersistentMaterialConsistencyResult::provisioning_state_reset;
-    }
-
-    *effective_state = stored_state;
+    *effective_state = AgentQProvisioningRuntimeState::unprovisioned;
     return AgentQPersistentMaterialConsistencyResult::ok;
 }
 
@@ -155,6 +141,17 @@ const char* provisioning_runtime_state_to_string(AgentQProvisioningRuntimeState 
         case AgentQProvisioningRuntimeState::provisioning:
             return "provisioning";
         case AgentQProvisioningRuntimeState::unprovisioned:
+        default:
+            return "unprovisioned";
+    }
+}
+
+const char* provisioning_persisted_state_to_string(AgentQProvisioningPersistedState state)
+{
+    switch (state) {
+        case AgentQProvisioningPersistedState::provisioned:
+            return "provisioned";
+        case AgentQProvisioningPersistedState::unprovisioned:
         default:
             return "unprovisioned";
     }
@@ -225,21 +222,12 @@ AgentQPersistentMaterialConsistencyResult persistent_material_validate_loaded_st
         return AgentQPersistentMaterialConsistencyResult::state_storage_error;
     }
 
-    AgentQProvisioningRuntimeState parsed_state = AgentQProvisioningRuntimeState::unprovisioned;
-    if (!parse_provisioning_runtime_state(stored_state, &parsed_state)) {
-        if (persistent_material_exists()) {
-            latch_consistency_error(
-                ops,
-                "Unknown provisioning state with persistent setup material present; failing closed");
-            return AgentQPersistentMaterialConsistencyResult::consistency_error;
-        }
-        if (!persist_state(ops, AgentQProvisioningRuntimeState::unprovisioned)) {
-            latch_consistency_error(
-                ops,
-                "Unknown provisioning state could not be reset; failing closed");
-            return AgentQPersistentMaterialConsistencyResult::state_storage_error;
-        }
-        return AgentQPersistentMaterialConsistencyResult::unknown_state_reset;
+    AgentQProvisioningPersistedState parsed_state = AgentQProvisioningPersistedState::unprovisioned;
+    if (!parse_persisted_provisioning_state(stored_state, &parsed_state)) {
+        latch_consistency_error(
+            ops,
+            "Unknown provisioning state; failing closed");
+        return AgentQPersistentMaterialConsistencyResult::consistency_error;
     }
 
     return validate_loaded_runtime_state(parsed_state, effective_state, ops);
@@ -335,7 +323,7 @@ AgentQPersistentMaterialCommitResult persistent_material_commit_setup_with_prepa
         return AgentQPersistentMaterialCommitResult::local_auth_storage_error;
     }
 
-    if (!persist_state(ops, AgentQProvisioningRuntimeState::provisioned)) {
+    if (!persist_state(ops, AgentQProvisioningPersistedState::provisioned)) {
         rollback_setup_material();
         if (persistent_material_exists()) {
             latch_consistency_error(

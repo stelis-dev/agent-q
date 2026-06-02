@@ -156,6 +156,7 @@ tools/firmware/stackchan-cores3/test_policy_update_marker.sh
 tools/firmware/stackchan-cores3/test_prepare_sync.sh
 tools/firmware/stackchan-cores3/test_persistent_material.sh
 tools/firmware/stackchan-cores3/test_provisioning_state_store.sh
+tools/firmware/stackchan-cores3/test_provisioning_runtime_state.sh
 tools/firmware/stackchan-cores3/test_local_auth.sh
 tools/firmware/stackchan-cores3/test_local_auth_worker.sh
 tools/firmware/stackchan-cores3/test_local_pin_auth.sh

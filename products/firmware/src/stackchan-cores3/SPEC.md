@@ -504,6 +504,9 @@ Current verification expectations for this target:
 - run `tools/firmware/stackchan-cores3/test_provisioning_flow.sh` to check
   Generate/Recover/setup-PIN volatile state transitions, scratch lifetime,
   panel-loss cleanup, and commit readiness against host stubs;
+- run `tools/firmware/stackchan-cores3/test_provisioning_runtime_state.sh` to
+  check persistent provisioning runtime-state load, persist, material-ready,
+  and reset-marker orchestration against host stubs;
 - run `tools/firmware/stackchan-cores3/test_connect_settings.sh` to check the
   connect-approval setting's missing-key secure default, stored OFF override,
   invalid value fail-closed behavior, and reset wipe back to the missing-key

@@ -64,8 +64,8 @@ agent_q::AgentQPolicyStoreStatus g_policy_status = agent_q::AgentQPolicyStoreSta
 agent_q::AgentQLocalAuthStatus g_auth_status = agent_q::AgentQLocalAuthStatus::missing;
 agent_q::AgentQPolicyUpdateMarkerStatus g_policy_update_marker_status =
     agent_q::AgentQPolicyUpdateMarkerStatus::clear;
-agent_q::AgentQProvisioningRuntimeState g_persisted_state =
-    agent_q::AgentQProvisioningRuntimeState::unprovisioned;
+agent_q::AgentQProvisioningPersistedState g_persisted_state =
+    agent_q::AgentQProvisioningPersistedState::unprovisioned;
 int g_consistency_error_count = 0;
 int failures = 0;
 
@@ -95,12 +95,12 @@ void reset_stubs()
     g_policy_status = agent_q::AgentQPolicyStoreStatus::missing;
     g_auth_status = agent_q::AgentQLocalAuthStatus::missing;
     g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::clear;
-    g_persisted_state = agent_q::AgentQProvisioningRuntimeState::unprovisioned;
+    g_persisted_state = agent_q::AgentQProvisioningPersistedState::unprovisioned;
     g_consistency_error_count = 0;
     agent_q::persistent_material_begin_load();
 }
 
-bool persist_state(agent_q::AgentQProvisioningRuntimeState state)
+bool persist_state(agent_q::AgentQProvisioningPersistedState state)
 {
     if (g_persist_state_fails) {
         return false;
@@ -323,6 +323,7 @@ bool policy_update_marker_clear()
 int main()
 {
     using State = agent_q::AgentQProvisioningRuntimeState;
+    using PersistedState = agent_q::AgentQProvisioningPersistedState;
     using Storage = agent_q::AgentQProvisioningStateStorageStatus;
     using Consistency = agent_q::AgentQPersistentMaterialConsistencyResult;
     using Commit = agent_q::AgentQPersistentMaterialCommitResult;
@@ -350,7 +351,7 @@ int main()
            "setup commit succeeds");
     expect(g_root_present && g_policy_present && g_auth_present,
            "setup commit stores all required material");
-    expect(g_persisted_state == State::provisioned,
+    expect(g_persisted_state == PersistedState::provisioned,
            "setup commit persists provisioned after material");
 
     reset_stubs();
@@ -444,12 +445,16 @@ int main()
            "unreadable state latches persistent material error");
 
     reset_stubs();
-    g_persisted_state = State::provisioned;
+    g_persisted_state = PersistedState::provisioned;
     expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "unknown", &effective, ops()) ==
-               Consistency::unknown_state_reset,
-           "unknown state without material resets to unprovisioned");
-    expect(g_persisted_state == State::unprovisioned,
-           "unknown state reset persists unprovisioned");
+               Consistency::consistency_error,
+           "unknown state without material fails closed");
+    expect(g_persisted_state == PersistedState::provisioned,
+           "unknown state is not normalized to unprovisioned");
+    expect(g_consistency_error_count == 1,
+           "unknown state without material reports consistency error");
+    expect(agent_q::persistent_material_consistency_error_active(),
+           "unknown state without material latches persistent material error");
 
     reset_stubs();
     g_root_present = true;
@@ -499,11 +504,14 @@ int main()
            "material outside provisioned state fails closed");
 
     reset_stubs();
+    g_persisted_state = PersistedState::provisioned;
     expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioning", &effective, ops()) ==
-               Consistency::provisioning_state_reset,
-           "stale provisioning state is reset");
-    expect(g_persisted_state == State::unprovisioned,
-           "stale provisioning reset persists unprovisioned");
+               Consistency::consistency_error,
+           "persisted provisioning state fails closed");
+    expect(g_persisted_state == PersistedState::provisioned,
+           "persisted provisioning state is not normalized to unprovisioned");
+    expect(g_consistency_error_count == 1,
+           "persisted provisioning state reports consistency error");
 
     if (failures != 0) {
         fprintf(stderr, "%d persistent material test(s) failed\n", failures);

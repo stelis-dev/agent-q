@@ -29,7 +29,7 @@
 #include "agent_q_protocol_pin_approval.h"
 #include "agent_q_policy_update_flow.h"
 #include "agent_q_provisioning_flow.h"
-#include "agent_q_provisioning_state_store.h"
+#include "agent_q_provisioning_runtime_state.h"
 #include "agent_q_session.h"
 #include "agent_q_sui_account.h"
 #include "agent_q_sui_account_store.h"
@@ -78,7 +78,6 @@ constexpr const char* kHardwareId = "stackchan-cores3";
 constexpr const char* kFirmwareVersion = "0.0.0";
 constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kDeviceIdKey = "device_id";
-constexpr const char* kProvisioningStateError = "error";
 constexpr uint32_t kIdentifyDisplayDefaultMs = 10000;
 constexpr uint32_t kIdentifyDisplayMaxMs = 30000;
 constexpr uint32_t kConnectApprovalDefaultMs = 30000;
@@ -148,7 +147,6 @@ char g_line_buffer[kLineBufferSize];
 size_t g_line_size = 0;
 bool g_discarding_invalid_line = false;
 char g_device_id[kDeviceIdSize];
-ProvisioningRuntimeState g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
 static_assert(
     kMaxRequestIdSize == agent_q::kAgentQProtocolPinRequestIdSize,
     "Protocol PIN approval request-id storage must match USB request-id storage.");
@@ -166,7 +164,6 @@ QueueHandle_t g_connect_decision_choice_queue = nullptr;
 QueueHandle_t g_ui_event_queue = nullptr;
 
 bool refresh_persistent_material_consistency();
-bool persist_provisioning_state(ProvisioningRuntimeState next_state);
 agent_q::AgentQPersistentMaterialOps persistent_material_ops();
 agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops();
 bool clear_agent_q_panel_if_kind(
@@ -376,14 +373,6 @@ const char* current_device_state()
     return "idle";
 }
 
-const char* reported_provisioning_state()
-{
-    if (agent_q::persistent_material_consistency_error_active()) {
-        return kProvisioningStateError;
-    }
-    return agent_q::provisioning_runtime_state_to_string(g_provisioning_state);
-}
-
 bool write_status_response(const char* id)
 {
     refresh_persistent_material_consistency();
@@ -397,7 +386,7 @@ bool write_status_response(const char* id)
     response["device"]["firmwareName"] = kFirmwareName;
     response["device"]["hardware"] = kHardwareId;
     response["device"]["firmwareVersion"] = kFirmwareVersion;
-    response["provisioning"]["state"] = reported_provisioning_state();
+    response["provisioning"]["state"] = agent_q::provisioning_runtime_state_reported();
     return agent_q::usb_response_write_json(response);
 }
 
@@ -635,7 +624,15 @@ void clear_active_session()
 
 bool persist_unprovisioned_state_for_local_reset()
 {
-    return persist_provisioning_state(ProvisioningRuntimeState::unprovisioned);
+    return agent_q::provisioning_runtime_state_persist(ProvisioningRuntimeState::unprovisioned);
+}
+
+bool persist_persistent_material_state(agent_q::AgentQProvisioningPersistedState state)
+{
+    if (state == agent_q::AgentQProvisioningPersistedState::provisioned) {
+        return agent_q::provisioning_runtime_state_persist(ProvisioningRuntimeState::provisioned);
+    }
+    return agent_q::provisioning_runtime_state_persist(ProvisioningRuntimeState::unprovisioned);
 }
 
 void handle_persistent_material_consistency_error(const char* message)
@@ -663,7 +660,7 @@ agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops()
 agent_q::AgentQPersistentMaterialOps persistent_material_ops()
 {
     return agent_q::AgentQPersistentMaterialOps{
-        persist_provisioning_state,
+        persist_persistent_material_state,
         handle_persistent_material_consistency_error,
     };
 }
@@ -931,66 +928,6 @@ void load_or_create_device_id()
     nvs_close(nvs);
 }
 
-void load_provisioning_state()
-{
-    g_provisioning_state = ProvisioningRuntimeState::unprovisioned;
-    agent_q::persistent_material_begin_load();
-
-    bool reset_marker_present = false;
-    const agent_q::AgentQLocalResetCommitResult reset_result =
-        agent_q::local_reset_resume_pending_if_needed(
-            local_reset_persistence_ops(),
-            &reset_marker_present);
-    if (reset_marker_present) {
-        ESP_LOGW(kTag, "Found pending local reset marker; resuming material wipe before loading state");
-        if (reset_result == agent_q::AgentQLocalResetCommitResult::ok) {
-            ESP_LOGW(kTag, "Pending local reset completed during boot");
-        } else if (!agent_q::persistent_material_consistency_error_active()) {
-            agent_q::persistent_material_record_runtime_failure(
-                agent_q::AgentQPersistentMaterialRuntimeFailure::pending_reset_resume_failed,
-                persistent_material_ops());
-        }
-        return;
-    }
-
-    agent_q::AgentQProvisioningStateStoreRecord stored_state = {};
-    if (!agent_q::provisioning_state_store_load(&stored_state)) {
-        stored_state.status = agent_q::AgentQProvisioningStateStorageStatus::unreadable;
-        stored_state.value[0] = '\0';
-    }
-
-    ProvisioningRuntimeState effective_state = ProvisioningRuntimeState::unprovisioned;
-    const agent_q::AgentQPersistentMaterialConsistencyResult consistency_result =
-        agent_q::persistent_material_validate_loaded_storage_state(
-            stored_state.status,
-            stored_state.value,
-            &effective_state,
-            persistent_material_ops());
-    if (consistency_result == agent_q::AgentQPersistentMaterialConsistencyResult::provisioning_state_reset) {
-        ESP_LOGW(kTag, "Resetting stale provisioning state for persistent root material flow");
-    } else if (consistency_result == agent_q::AgentQPersistentMaterialConsistencyResult::unknown_state_reset) {
-        ESP_LOGW(kTag, "Resetting unknown provisioning state without persistent material");
-    } else if (stored_state.status == agent_q::AgentQProvisioningStateStorageStatus::missing &&
-               consistency_result == agent_q::AgentQPersistentMaterialConsistencyResult::ok) {
-        ESP_LOGI(kTag, "Provisioning state not found in NVS; using unprovisioned");
-    }
-    g_provisioning_state = effective_state;
-    ESP_LOGI(kTag, "Loaded provisioning state from NVS: %s",
-             agent_q::provisioning_runtime_state_to_string(g_provisioning_state));
-}
-
-bool persist_provisioning_state(ProvisioningRuntimeState next_state)
-{
-    if (!agent_q::provisioning_state_store_save(next_state)) {
-        return false;
-    }
-
-    g_provisioning_state = next_state;
-    ESP_LOGI(kTag, "Stored provisioning state: %s",
-             agent_q::provisioning_runtime_state_to_string(g_provisioning_state));
-    return true;
-}
-
 bool local_setup_start_allowed()
 {
     if (!refresh_persistent_material_consistency()) {
@@ -1005,8 +942,7 @@ bool local_setup_start_allowed()
             agent_q::avatar_overlay_mode() == AgentQUiMode::identification;
     }
 
-    return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
-           !agent_q::persistent_material_consistency_error_active() &&
+    return agent_q::provisioning_runtime_state_is_unprovisioned() &&
            !agent_q::identification_display_active() &&
            !agent_q::provisioning_flow_active() &&
            !agent_q::local_pin_auth_flow_active() &&
@@ -1024,19 +960,12 @@ bool agent_q_panel_active(AgentQUiPanelKind kind)
 
 bool refresh_persistent_material_consistency()
 {
-    if (agent_q::persistent_material_consistency_error_active()) {
-        return false;
-    }
-
-    return agent_q::persistent_material_validate_runtime_state(
-        g_provisioning_state,
-        persistent_material_ops());
+    return agent_q::provisioning_runtime_state_refresh(persistent_material_ops());
 }
 
 bool provisioned_material_ready()
 {
-    return g_provisioning_state == ProvisioningRuntimeState::provisioned &&
-           refresh_persistent_material_consistency();
+    return agent_q::provisioning_runtime_state_material_ready(persistent_material_ops());
 }
 
 bool agent_q_ui_idle_for_local_settings()
@@ -1048,8 +977,7 @@ bool agent_q_ui_idle_for_local_settings()
 
 bool local_settings_touch_entry_candidate_allowed()
 {
-    return g_provisioning_state == ProvisioningRuntimeState::provisioned &&
-           !agent_q::persistent_material_consistency_error_active() &&
+    return agent_q::provisioning_runtime_state_is_provisioned() &&
            !agent_q::connect_approval_active() &&
            !agent_q::protocol_pin_approval_active() &&
            !agent_q::identification_display_active() &&
@@ -1468,8 +1396,7 @@ bool provisioning_welcome_available()
             agent_q::avatar_overlay_mode() == AgentQUiMode::none;
     }
 
-    return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
-           !agent_q::persistent_material_consistency_error_active() &&
+    return agent_q::provisioning_runtime_state_is_unprovisioned() &&
            !agent_q::connect_approval_active() &&
            !agent_q::protocol_pin_approval_active() &&
            !agent_q::identification_display_active() &&
@@ -1639,8 +1566,7 @@ bool setup_choice_action_allowed()
     if (!refresh_persistent_material_consistency()) {
         return false;
     }
-    return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
-           !agent_q::persistent_material_consistency_error_active();
+    return agent_q::provisioning_runtime_state_is_unprovisioned();
 }
 
 void clear_setup_choice_if_needed()
@@ -4105,7 +4031,9 @@ namespace agent_q {
 void init_usb_request_server()
 {
     load_or_create_device_id();
-    load_provisioning_state();
+    agent_q::provisioning_runtime_state_load(
+        local_reset_persistence_ops(),
+        persistent_material_ops());
     agent_q::session_init();
     if (!agent_q::local_auth_worker_init()) {
         ESP_LOGE(kTag, "Local auth worker init failed");

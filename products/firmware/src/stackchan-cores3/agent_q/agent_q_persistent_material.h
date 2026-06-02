@@ -16,10 +16,13 @@ enum class AgentQProvisioningRuntimeState {
     provisioned,
 };
 
+enum class AgentQProvisioningPersistedState {
+    unprovisioned,
+    provisioned,
+};
+
 enum class AgentQPersistentMaterialConsistencyResult {
     ok,
-    provisioning_state_reset,
-    unknown_state_reset,
     consistency_error,
     state_storage_error,
 };
@@ -72,7 +75,7 @@ struct AgentQPersistentMaterialStatus {
 };
 
 struct AgentQPersistentMaterialOps {
-    bool (*persist_state)(AgentQProvisioningRuntimeState state);
+    bool (*persist_state)(AgentQProvisioningPersistedState state);
     void (*on_consistency_error)(const char* message);
 };
 
@@ -83,6 +86,7 @@ enum class AgentQProvisioningStateStorageStatus {
 };
 
 const char* provisioning_runtime_state_to_string(AgentQProvisioningRuntimeState state);
+const char* provisioning_persisted_state_to_string(AgentQProvisioningPersistedState state);
 
 AgentQPersistentMaterialStatus persistent_material_status();
 bool persistent_material_exists();

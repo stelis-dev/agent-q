@@ -51,7 +51,7 @@ bool provisioning_state_store_load(AgentQProvisioningStateStoreRecord* output)
     return true;
 }
 
-bool provisioning_state_store_save(AgentQProvisioningRuntimeState state)
+bool provisioning_state_store_save(AgentQProvisioningPersistedState state)
 {
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
@@ -60,7 +60,7 @@ bool provisioning_state_store_save(AgentQProvisioningRuntimeState state)
         return false;
     }
 
-    result = nvs_set_str(nvs, kProvisioningStateKey, provisioning_runtime_state_to_string(state));
+    result = nvs_set_str(nvs, kProvisioningStateKey, provisioning_persisted_state_to_string(state));
     if (result == ESP_OK) {
         result = nvs_commit(nvs);
     }

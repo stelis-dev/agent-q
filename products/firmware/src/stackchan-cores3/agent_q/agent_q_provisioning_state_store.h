@@ -14,6 +14,6 @@ struct AgentQProvisioningStateStoreRecord {
 };
 
 bool provisioning_state_store_load(AgentQProvisioningStateStoreRecord* output);
-bool provisioning_state_store_save(AgentQProvisioningRuntimeState state);
+bool provisioning_state_store_save(AgentQProvisioningPersistedState state);
 
 }  // namespace agent_q
