@@ -491,6 +491,10 @@ Current verification expectations for this target:
   temporary identification display active/deadline state ownership;
 - run `tools/firmware/stackchan-cores3/test_local_settings_touch_entry.sh` to
   check local Settings corner-touch hold state ownership;
+- run `tools/firmware/stackchan-cores3/test_usb_link_state.sh` to check USB
+  host SOF polling state ownership and link-edge classification;
+- run `tools/firmware/stackchan-cores3/test_usb_session_loss.sh` to check the
+  session-bound volatile cleanup plan for USB host SOF loss;
 - run `tools/firmware/stackchan-cores3/test_local_reset.sh` to check local reset
   and error-state erase recovery state transitions, reset-pending marker
   behavior, destructive wipe orchestration, and failure cleanup against host

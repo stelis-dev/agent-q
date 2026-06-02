@@ -33,7 +33,9 @@
 #include "agent_q_session.h"
 #include "agent_q_sui_account.h"
 #include "agent_q_sui_account_store.h"
+#include "agent_q_usb_link_state.h"
 #include "agent_q_usb_response_writer.h"
+#include "agent_q_usb_session_loss.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_err.h"
@@ -158,9 +160,6 @@ static_assert(
 
 bool g_connect_decision_touch_armed = false;
 bool g_usb_ready = false;
-bool g_usb_host_connected_known = false;
-bool g_usb_host_connected = false;
-TickType_t g_next_usb_host_check = 0;
 TaskHandle_t g_usb_task = nullptr;
 QueueHandle_t g_connect_decision_choice_queue = nullptr;
 QueueHandle_t g_ui_event_queue = nullptr;
@@ -261,11 +260,6 @@ bool provisioning_flow_panel_deleted(AgentQUiPanelKind kind, const char* reason)
         ESP_LOGW(kTag, "Setup scratch wiped: %s", reason != nullptr ? reason : "panel deleted");
     }
     return wiped;
-}
-
-bool tick_reached(TickType_t deadline)
-{
-    return static_cast<int32_t>(xTaskGetTickCount() - deadline) >= 0;
 }
 
 bool is_safe_id(const char* value)
@@ -719,18 +713,54 @@ bool replace_active_session()
            agent_q::AgentQSessionStartResult::ok;
 }
 
-bool usb_host_loss_relevant()
+agent_q::AgentQUsbSessionLossProtocolPinPurpose protocol_pin_loss_purpose(
+    const agent_q::AgentQProtocolPinApprovalSnapshot& snapshot)
 {
-    const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
-        agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
+    if (!snapshot.active) {
+        return agent_q::AgentQUsbSessionLossProtocolPinPurpose::none;
+    }
+    switch (snapshot.purpose) {
+        case agent_q::AgentQProtocolPinApprovalPurpose::connect:
+            return agent_q::AgentQUsbSessionLossProtocolPinPurpose::connect;
+        case agent_q::AgentQProtocolPinApprovalPurpose::policy_update:
+            return agent_q::AgentQUsbSessionLossProtocolPinPurpose::policy_update;
+        case agent_q::AgentQProtocolPinApprovalPurpose::none:
+            return agent_q::AgentQUsbSessionLossProtocolPinPurpose::other;
+    }
+    return agent_q::AgentQUsbSessionLossProtocolPinPurpose::other;
+}
+
+agent_q::AgentQUsbSessionLossLocalPinPurpose local_pin_loss_purpose(
+    const agent_q::AgentQLocalPinAuthSnapshot& snapshot)
+{
+    if (!snapshot.flow_active) {
+        return agent_q::AgentQUsbSessionLossLocalPinPurpose::none;
+    }
+    switch (snapshot.purpose) {
+        case LocalPinAuthPurpose::connect:
+            return agent_q::AgentQUsbSessionLossLocalPinPurpose::connect;
+        case LocalPinAuthPurpose::policy_update:
+            return agent_q::AgentQUsbSessionLossLocalPinPurpose::policy_update;
+        case LocalPinAuthPurpose::none:
+        case LocalPinAuthPurpose::settings_connect_pin:
+        case LocalPinAuthPurpose::settings_change_pin:
+            return agent_q::AgentQUsbSessionLossLocalPinPurpose::other;
+    }
+    return agent_q::AgentQUsbSessionLossLocalPinPurpose::other;
+}
+
+agent_q::AgentQUsbSessionLossPlan current_usb_session_loss_plan(TickType_t now)
+{
     const agent_q::AgentQProtocolPinApprovalSnapshot protocol_pin =
         agent_q::protocol_pin_approval_snapshot();
-    return agent_q::session_active() ||
-           agent_q::connect_approval_active() ||
-           protocol_pin.active ||
-           (pin_auth.flow_active &&
-            (pin_auth.purpose == LocalPinAuthPurpose::connect ||
-             pin_auth.purpose == LocalPinAuthPurpose::policy_update));
+    const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
+        agent_q::local_pin_auth_snapshot(now);
+    return agent_q::usb_session_loss_plan(agent_q::AgentQUsbSessionLossInput{
+        agent_q::session_active(),
+        agent_q::connect_approval_active(),
+        protocol_pin_loss_purpose(protocol_pin),
+        local_pin_loss_purpose(pin_auth),
+    });
 }
 
 void show_usb_disconnected_message()
@@ -744,87 +774,69 @@ void show_usb_disconnected_message()
 
 void clear_usb_session_state_for_host_loss(bool notify)
 {
-    const bool had_session = agent_q::session_active();
-    const bool had_connect_decision = agent_q::connect_approval_active();
-    const agent_q::AgentQProtocolPinApprovalSnapshot protocol_pin =
-        agent_q::protocol_pin_approval_snapshot();
-    const bool had_protocol_connect_pin =
-        protocol_pin.active &&
-        protocol_pin.purpose == agent_q::AgentQProtocolPinApprovalPurpose::connect;
-    const bool had_protocol_policy_update_pin =
-        protocol_pin.active &&
-        protocol_pin.purpose == agent_q::AgentQProtocolPinApprovalPurpose::policy_update;
-    const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
-        agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
-    const bool had_connect_pin =
-        pin_auth.flow_active &&
-        pin_auth.purpose == LocalPinAuthPurpose::connect;
-    const bool had_policy_update_pin =
-        pin_auth.flow_active &&
-        pin_auth.purpose == LocalPinAuthPurpose::policy_update;
+    const agent_q::AgentQUsbSessionLossPlan plan =
+        current_usb_session_loss_plan(xTaskGetTickCount());
 
-    clear_active_session();
     g_line_size = 0;
-    if (had_connect_decision) {
+    g_discarding_invalid_line = false;
+    if (!plan.relevant) {
+        return;
+    }
+
+    if (plan.clear_session) {
+        clear_active_session();
+    }
+    if (plan.clear_connect_approval) {
         clear_connect_decision_state();
     }
-    if (had_protocol_connect_pin || had_protocol_policy_update_pin) {
+    if (plan.clear_protocol_pin) {
         agent_q::protocol_pin_approval_clear();
     }
-    if (had_connect_pin || had_policy_update_pin) {
+    if (plan.wipe_local_pin_auth) {
         wipe_local_pin_auth_scratch("USB host link lost during local PIN authorization");
     }
-    if (had_protocol_policy_update_pin || had_policy_update_pin) {
+    if (plan.clear_policy_update_flow) {
         agent_q::policy_update_flow_clear();
     }
 
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::decision_strip, SensitiveUiClearPolicy::preserve);
-    if (had_connect_pin || had_policy_update_pin) {
+    if (plan.clear_decision_panel) {
+        clear_agent_q_panel_if_kind(AgentQUiPanelKind::decision_strip, SensitiveUiClearPolicy::preserve);
+    }
+    if (plan.clear_local_pin_panel) {
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
     }
 
-    if (had_session || had_connect_decision || had_protocol_connect_pin ||
-        had_connect_pin || had_protocol_policy_update_pin || had_policy_update_pin) {
-        if (notify) {
-            show_usb_disconnected_message();
-        }
-        ESP_LOGW(kTag, "USB host SOF lost; active session and connect flow cleared");
+    if (notify) {
+        show_usb_disconnected_message();
     }
+    ESP_LOGW(kTag, "USB host SOF lost; session-bound state cleared");
 }
 
 void poll_usb_host_connection()
 {
-    if (!tick_reached(g_next_usb_host_check)) {
-        return;
+    const agent_q::AgentQUsbLinkEvent event = agent_q::usb_link_state_observe(
+        usb_serial_jtag_is_connected(),
+        xTaskGetTickCount(),
+        pdMS_TO_TICKS(kUsbHostLinkCheckMs));
+    switch (event) {
+        case agent_q::AgentQUsbLinkEvent::not_due:
+        case agent_q::AgentQUsbLinkEvent::initial_observed:
+        case agent_q::AgentQUsbLinkEvent::unchanged_connected:
+            return;
+        case agent_q::AgentQUsbLinkEvent::connected:
+            agent_q::avatar_overlay_show_message(
+                "USB connected", AgentQMessageKind::usb_connected, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
+        case agent_q::AgentQUsbLinkEvent::unchanged_disconnected:
+            if (current_usb_session_loss_plan(xTaskGetTickCount()).relevant) {
+                clear_usb_session_state_for_host_loss(true);
+            }
+            return;
+        case agent_q::AgentQUsbLinkEvent::disconnected:
+            clear_usb_session_state_for_host_loss(false);
+            show_usb_disconnected_message();
+            return;
     }
-    g_next_usb_host_check = xTaskGetTickCount() + pdMS_TO_TICKS(kUsbHostLinkCheckMs);
-
-    const bool connected = usb_serial_jtag_is_connected();
-    if (!g_usb_host_connected_known) {
-        g_usb_host_connected_known = true;
-        g_usb_host_connected = connected;
-        return;
-    }
-    if (connected == g_usb_host_connected) {
-        if (!connected && usb_host_loss_relevant()) {
-            clear_usb_session_state_for_host_loss(true);
-        }
-        return;
-    }
-
-    const bool was_connected = g_usb_host_connected;
-    g_usb_host_connected = connected;
-    if (!was_connected && connected) {
-        agent_q::avatar_overlay_show_message(
-            "USB connected", AgentQMessageKind::usb_connected, AgentQUiMode::result, kAgentQResultDisplayMs);
-        return;
-    }
-    if (!was_connected) {
-        return;
-    }
-
-    clear_usb_session_state_for_host_loss(false);
-    show_usb_disconnected_message();
 }
 
 bool format_uuid_v4(char* output, size_t output_size)
@@ -4159,6 +4171,7 @@ void init_usb_request_server()
     }
     usb_serial_jtag_vfs_use_driver();
 
+    agent_q::usb_link_state_clear();
     g_usb_ready = true;
     if (g_usb_task == nullptr) {
         BaseType_t task_created = xTaskCreatePinnedToCore(
