@@ -15,10 +15,12 @@
 #include "agent_q_connect_settings.h"
 #include "agent_q_drawing_surface.h"
 #include "agent_q_entropy.h"
+#include "agent_q_identification_display.h"
 #include "agent_q_json_input.h"
 #include "agent_q_local_auth.h"
 #include "agent_q_local_auth_worker.h"
 #include "agent_q_local_pin_auth.h"
+#include "agent_q_local_settings_touch_entry.h"
 #include "agent_q_local_reset.h"
 #include "agent_q_method_runtime.h"
 #include "agent_q_modal_drawing.h"
@@ -139,37 +141,6 @@ struct AgentQUiEvent {
     uint16_t word_index = 0;
 };
 
-struct IdentificationState {
-    char code[kIdentifyCodeSize] = {};
-    bool active = false;
-    TickType_t deadline = 0;
-
-    void clear()
-    {
-        code[0] = '\0';
-        active = false;
-        deadline = 0;
-    }
-
-    void begin(const char* value, uint32_t duration_ms)
-    {
-        strlcpy(code, value, sizeof(code));
-        active = true;
-        deadline = xTaskGetTickCount() + pdMS_TO_TICKS(duration_ms);
-    }
-};
-
-struct LocalSettingsTouchState {
-    bool active = false;
-    TickType_t started_at = 0;
-
-    void clear()
-    {
-        active = false;
-        started_at = 0;
-    }
-};
-
 char g_line_buffer[kLineBufferSize];
 size_t g_line_size = 0;
 bool g_discarding_invalid_line = false;
@@ -185,8 +156,6 @@ static_assert(
     kGatewayNameSize == agent_q::kAgentQConnectApprovalGatewayNameSize,
     "Connect approval gateway-name storage must match USB gateway-name storage.");
 
-IdentificationState g_identification;
-LocalSettingsTouchState g_settings_touch;
 bool g_connect_decision_touch_armed = false;
 bool g_usb_ready = false;
 bool g_usb_host_connected_known = false;
@@ -225,7 +194,7 @@ void wipe_local_reset_scratch(const char* reason)
     const bool had_reset_scratch =
         agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active;
     agent_q::local_reset_wipe();
-    g_settings_touch.clear();
+    agent_q::local_settings_touch_entry_clear();
     if (had_reset_scratch) {
         ESP_LOGW(kTag, "Local reset scratch wiped: %s", reason != nullptr ? reason : "unspecified");
     }
@@ -1004,7 +973,7 @@ bool local_setup_start_allowed()
 
     return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
            !agent_q::persistent_material_consistency_error_active() &&
-           !g_identification.active &&
+           !agent_q::identification_display_active() &&
            !agent_q::provisioning_flow_active() &&
            !agent_q::local_pin_auth_flow_active() &&
            !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
@@ -1049,7 +1018,7 @@ bool local_settings_touch_entry_candidate_allowed()
            !agent_q::persistent_material_consistency_error_active() &&
            !agent_q::connect_approval_active() &&
            !agent_q::protocol_pin_approval_active() &&
-           !g_identification.active &&
+           !agent_q::identification_display_active() &&
            !agent_q::provisioning_flow_active() &&
            !agent_q::local_pin_auth_flow_active() &&
            !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
@@ -1482,7 +1451,7 @@ bool provisioning_welcome_available()
            !agent_q::persistent_material_consistency_error_active() &&
            !agent_q::connect_approval_active() &&
            !agent_q::protocol_pin_approval_active() &&
-           !g_identification.active &&
+           !agent_q::identification_display_active() &&
            !agent_q::provisioning_flow_active() &&
            !agent_q::local_pin_auth_flow_active() &&
            !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
@@ -1547,7 +1516,7 @@ void clear_request_ui_for_identification()
 
 void show_decision_panel()
 {
-    g_identification.clear();
+    agent_q::identification_display_clear();
     if (!agent_q::modal_draw_decision_panel()) {
         ESP_LOGW(kTag, "connect decision panel could not be shown");
     }
@@ -1556,7 +1525,8 @@ void show_decision_panel()
 void show_identification_code(const char* code, uint32_t duration_ms)
 {
     clear_request_ui_for_identification();
-    g_identification.begin(code, duration_ms);
+    agent_q::identification_display_begin(
+        xTaskGetTickCount() + pdMS_TO_TICKS(duration_ms));
 
     char message[40];
     snprintf(message, sizeof(message), "Device code: %s", code);
@@ -1567,8 +1537,7 @@ void show_identification_code(const char* code, uint32_t duration_ms)
 
 void clear_identification_if_needed()
 {
-    if (!g_identification.active || g_identification.deadline == 0 ||
-        !tick_reached(g_identification.deadline)) {
+    if (!agent_q::identification_display_deadline_reached(xTaskGetTickCount())) {
         return;
     }
 
@@ -1578,7 +1547,7 @@ void clear_identification_if_needed()
         identification_visible =
             agent_q::avatar_overlay_mode() == AgentQUiMode::identification;
     }
-    g_identification.clear();
+    agent_q::identification_display_clear();
     if (identification_visible) {
         agent_q::avatar_overlay_clear();
         show_provisioning_welcome_if_available();
@@ -1607,7 +1576,7 @@ void clear_connect_decision_state()
 {
     agent_q::connect_approval_clear();
     g_connect_decision_touch_armed = false;
-    g_identification.clear();
+    agent_q::identification_display_clear();
 }
 
 void show_result_and_clear_connect_decision(const char* message, AgentQMessageKind kind)
@@ -1947,12 +1916,12 @@ void start_local_settings_from_touch()
     if (!provisioned_material_ready() ||
         agent_q::connect_approval_active() ||
         agent_q::protocol_pin_approval_active() ||
-        g_identification.active ||
+        agent_q::identification_display_active() ||
         agent_q::provisioning_flow_active() ||
         agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active ||
         !agent_q_ui_idle_for_local_settings()) {
         ESP_LOGW(kTag, "Local settings touch ignored because settings are unavailable");
-        g_settings_touch.clear();
+        agent_q::local_settings_touch_entry_clear();
         return;
     }
 
@@ -2002,7 +1971,7 @@ void show_persistent_error_recovery_if_needed()
     if (!agent_q::persistent_material_consistency_error_active() ||
         agent_q::connect_approval_active() ||
         agent_q::protocol_pin_approval_active() ||
-        g_identification.active ||
+        agent_q::identification_display_active() ||
         agent_q::provisioning_flow_active() ||
         agent_q::local_pin_auth_flow_active() ||
         agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active) {
@@ -2035,7 +2004,7 @@ void start_error_recovery_from_ui()
         reset.flow_active ||
         agent_q::connect_approval_active() ||
         agent_q::protocol_pin_approval_active() ||
-        g_identification.active ||
+        agent_q::identification_display_active() ||
         agent_q::provisioning_flow_active() ||
         agent_q::local_pin_auth_flow_active()) {
         ESP_LOGW(kTag, "Stale error recovery action ignored");
@@ -2107,7 +2076,7 @@ void start_reset_pin_from_settings_menu()
 
 void begin_connect_pin_auth(const char* id, const char* gateway_name, uint32_t approval_timeout_ms)
 {
-    g_identification.clear();
+    agent_q::identification_display_clear();
     const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(approval_timeout_ms);
     if (!agent_q::protocol_pin_approval_begin_connect(id, deadline)) {
         write_connect_rejected_response(id, "invalid_state", "Connect is unavailable.");
@@ -2243,7 +2212,7 @@ void finish_policy_update_terminal(
 
 void begin_policy_update_pin_auth(const char* id, const char* session_id, uint32_t approval_timeout_ms)
 {
-    g_identification.clear();
+    agent_q::identification_display_clear();
     const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(approval_timeout_ms);
     if (!agent_q::protocol_pin_approval_begin_policy_update(id, session_id, deadline)) {
         finish_policy_update_error_terminal(
@@ -3114,7 +3083,7 @@ void poll_touch_fallback()
 void poll_local_settings_touch_entry()
 {
     if (!local_settings_touch_entry_candidate_allowed()) {
-        g_settings_touch.clear();
+        agent_q::local_settings_touch_entry_clear();
         return;
     }
 
@@ -3123,24 +3092,13 @@ void poll_local_settings_touch_entry()
                                      touch.x >= kScreenWidth - kSettingsTouchEntryWidth &&
                                      touch.y >= 0 &&
                                      touch.y < kSettingsTouchEntryHeight;
-    if (!inside_entry_corner) {
-        g_settings_touch.clear();
-        return;
-    }
-
     const TickType_t now = xTaskGetTickCount();
-    if (!g_settings_touch.active) {
-        g_settings_touch.active = true;
-        g_settings_touch.started_at = now;
-        return;
+    if (agent_q::local_settings_touch_entry_update(
+            inside_entry_corner,
+            now,
+            pdMS_TO_TICKS(kSettingsTouchEntryMs))) {
+        enqueue_ui_event(AgentQUiEventKind::settings_requested);
     }
-    if (static_cast<int32_t>(now - g_settings_touch.started_at) <
-        static_cast<int32_t>(pdMS_TO_TICKS(kSettingsTouchEntryMs))) {
-        return;
-    }
-
-    g_settings_touch.clear();
-    enqueue_ui_event(AgentQUiEventKind::settings_requested);
 }
 
 void drain_connect_decision_choice_events()
@@ -4139,7 +4097,7 @@ void init_usb_request_server()
     }
     agent_q::connect_approval_clear();
     g_connect_decision_touch_armed = false;
-    g_identification.clear();
+    agent_q::identification_display_clear();
     wipe_setup_scratch("usb request server init");
     wipe_local_reset_scratch("usb request server init");
     if (g_connect_decision_choice_queue == nullptr) {

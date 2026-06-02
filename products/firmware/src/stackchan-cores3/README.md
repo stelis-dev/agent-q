@@ -161,6 +161,8 @@ tools/firmware/stackchan-cores3/test_local_auth_worker.sh
 tools/firmware/stackchan-cores3/test_local_pin_auth.sh
 tools/firmware/stackchan-cores3/test_connect_approval.sh
 tools/firmware/stackchan-cores3/test_protocol_pin_approval.sh
+tools/firmware/stackchan-cores3/test_identification_display.sh
+tools/firmware/stackchan-cores3/test_local_settings_touch_entry.sh
 tools/firmware/stackchan-cores3/test_connect_settings.sh
 tools/firmware/stackchan-cores3/test_session.sh
 tools/firmware/stackchan-cores3/test_sui_account_vectors.sh

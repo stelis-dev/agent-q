@@ -487,6 +487,10 @@ Current verification expectations for this target:
   physical connect approval request/gateway/deadline/choice state ownership;
 - run `tools/firmware/stackchan-cores3/test_protocol_pin_approval.sh` to check
   the protocol-backed local PIN approval request/session/deadline state owner;
+- run `tools/firmware/stackchan-cores3/test_identification_display.sh` to check
+  temporary identification display active/deadline state ownership;
+- run `tools/firmware/stackchan-cores3/test_local_settings_touch_entry.sh` to
+  check local Settings corner-touch hold state ownership;
 - run `tools/firmware/stackchan-cores3/test_local_reset.sh` to check local reset
   and error-state erase recovery state transitions, reset-pending marker
   behavior, destructive wipe orchestration, and failure cleanup against host
