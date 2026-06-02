@@ -122,8 +122,8 @@ and GitHub Actions use the same inputs:
 
 ```bash
 AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
-  tools/firmware/stackchan-cores3/with-idf.sh \
-  tools/firmware/stackchan-cores3/build.sh
+  firmware/tools/stackchan-cores3/with-idf.sh \
+  firmware/tools/stackchan-cores3/build.sh
 ```
 
 The `with-idf.sh` launcher activates ESP-IDF with Python 3.11 by default so the
@@ -136,39 +136,39 @@ specific command:
 
 ```bash
 AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
-  tools/firmware/stackchan-cores3/with-idf.sh \
-  tools/firmware/stackchan-cores3/test_policy_store.sh
+  firmware/tools/stackchan-cores3/with-idf.sh \
+  firmware/tools/stackchan-cores3/test_policy_store.sh
 ```
 
 Other checks can be run directly when their script header says ESP-IDF is not
 required:
 
 ```bash
-tools/firmware/common/generate_sui_transaction_fixtures.mjs
-tools/firmware/common/test_sui_transaction_facts.sh
-tools/firmware/common/test_policy_v0.sh
-tools/firmware/stackchan-cores3/test_call_method_validation.sh
-tools/firmware/stackchan-cores3/test_method_runtime.sh
-tools/firmware/stackchan-cores3/test_policy_proposal_parser.sh
-tools/firmware/stackchan-cores3/test_policy_update_flow.sh
-tools/firmware/stackchan-cores3/test_policy_update_marker.sh
-tools/firmware/stackchan-cores3/test_prepare_sync.sh
-tools/firmware/stackchan-cores3/test_persistent_material.sh
-tools/firmware/stackchan-cores3/test_provisioning_state_store.sh
-tools/firmware/stackchan-cores3/test_provisioning_runtime_state.sh
-tools/firmware/stackchan-cores3/test_local_auth.sh
-tools/firmware/stackchan-cores3/test_local_auth_worker.sh
-tools/firmware/stackchan-cores3/test_local_pin_auth.sh
-tools/firmware/stackchan-cores3/test_connect_approval.sh
-tools/firmware/stackchan-cores3/test_protocol_pin_approval.sh
-tools/firmware/stackchan-cores3/test_identification_display.sh
-tools/firmware/stackchan-cores3/test_local_settings_touch_entry.sh
-tools/firmware/stackchan-cores3/test_usb_link_state.sh
-tools/firmware/stackchan-cores3/test_usb_session_loss.sh
-tools/firmware/stackchan-cores3/test_ui_panel_cleanup.sh
-tools/firmware/stackchan-cores3/test_connect_settings.sh
-tools/firmware/stackchan-cores3/test_session.sh
-tools/firmware/stackchan-cores3/test_sui_account_vectors.sh
+firmware/tools/common/generate_sui_transaction_fixtures.mjs
+firmware/tools/common/test_sui_transaction_facts.sh
+firmware/tools/common/test_policy_v0.sh
+firmware/tools/stackchan-cores3/test_call_method_validation.sh
+firmware/tools/stackchan-cores3/test_method_runtime.sh
+firmware/tools/stackchan-cores3/test_policy_proposal_parser.sh
+firmware/tools/stackchan-cores3/test_policy_update_flow.sh
+firmware/tools/stackchan-cores3/test_policy_update_marker.sh
+firmware/tools/stackchan-cores3/test_prepare_sync.sh
+firmware/tools/stackchan-cores3/test_persistent_material.sh
+firmware/tools/stackchan-cores3/test_provisioning_state_store.sh
+firmware/tools/stackchan-cores3/test_provisioning_runtime_state.sh
+firmware/tools/stackchan-cores3/test_local_auth.sh
+firmware/tools/stackchan-cores3/test_local_auth_worker.sh
+firmware/tools/stackchan-cores3/test_local_pin_auth.sh
+firmware/tools/stackchan-cores3/test_connect_approval.sh
+firmware/tools/stackchan-cores3/test_protocol_pin_approval.sh
+firmware/tools/stackchan-cores3/test_identification_display.sh
+firmware/tools/stackchan-cores3/test_local_settings_touch_entry.sh
+firmware/tools/stackchan-cores3/test_usb_link_state.sh
+firmware/tools/stackchan-cores3/test_usb_session_loss.sh
+firmware/tools/stackchan-cores3/test_ui_panel_cleanup.sh
+firmware/tools/stackchan-cores3/test_connect_settings.sh
+firmware/tools/stackchan-cores3/test_session.sh
+firmware/tools/stackchan-cores3/test_sui_account_vectors.sh
 ```
 
 The build script downloads the pinned upstream firmware, signing-source, and

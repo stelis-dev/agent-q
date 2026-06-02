@@ -70,8 +70,8 @@ For the current StackChan CoreS3 target:
 
 ```bash
 AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
-  tools/firmware/stackchan-cores3/with-idf.sh \
-  tools/firmware/stackchan-cores3/build.sh
+  firmware/tools/stackchan-cores3/with-idf.sh \
+  firmware/tools/stackchan-cores3/build.sh
 ```
 
 Use the `with-idf.sh` launcher for local ESP-IDF commands. It activates ESP-IDF
@@ -81,9 +81,9 @@ run directly, while ESP-IDF-dependent target checks should be passed through the
 same launcher.
 
 ```bash
-tools/firmware/common/generate_sui_transaction_fixtures.mjs
-tools/firmware/common/test_sui_transaction_facts.sh
-tools/firmware/common/test_policy_v0.sh
+firmware/tools/common/generate_sui_transaction_fixtures.mjs
+firmware/tools/common/test_sui_transaction_facts.sh
+firmware/tools/common/test_policy_v0.sh
 ```
 
 The build script downloads the pinned host firmware and signing source into the

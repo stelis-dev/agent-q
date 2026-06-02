@@ -258,13 +258,13 @@ Current Gateway package commands:
 Current common firmware helper commands:
 
 - Regenerate common Sui transaction facts fixtures:
-  `tools/firmware/common/generate_sui_transaction_fixtures.mjs`
+  `firmware/tools/common/generate_sui_transaction_fixtures.mjs`
 - Test common Sui transaction facts parser fixtures (host C++ compiler only;
-  does not require ESP-IDF): `tools/firmware/common/test_sui_transaction_facts.sh`
+  does not require ESP-IDF): `firmware/tools/common/test_sui_transaction_facts.sh`
 - Test common policy v0 evaluator fixtures (host C++ compiler only; does not
-  require ESP-IDF): `tools/firmware/common/test_policy_v0.sh`
+  require ESP-IDF): `firmware/tools/common/test_policy_v0.sh`
 - Test common policy v0 canonicalization fixtures (host C++ compiler only; does
-  not require ESP-IDF): `tools/firmware/common/test_policy_canonical.sh`
+  not require ESP-IDF): `firmware/tools/common/test_policy_canonical.sh`
 
 Hardware-specific firmware commands live in the corresponding target
 documentation under `firmware/src/<hardware-id>/`. Read that target's
@@ -410,11 +410,10 @@ packages/
 firmware/
   README.md
   src/
-  build/
-
-tools/
-  firmware/
+  tools/
+    common/
     <hardware-id>/
+  build/
 ```
 
 Empty directories may not be tracked by Git until they contain files.

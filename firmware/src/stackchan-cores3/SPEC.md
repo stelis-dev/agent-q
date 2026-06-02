@@ -475,51 +475,51 @@ wordlist source is not tracked.
 
 Current verification expectations for this target:
 
-- run `tools/firmware/stackchan-cores3/test_bip39_vectors.sh` after ESP-IDF
+- run `firmware/tools/stackchan-cores3/test_bip39_vectors.sh` after ESP-IDF
   v5.5.4 is active to check known BIP-39 entropy-to-mnemonic vectors against
   the tracked encoder, ESP-IDF mbedTLS SHA-256, and generated wordlist source;
-- run `tools/firmware/stackchan-cores3/test_local_auth.sh` to check local
+- run `firmware/tools/stackchan-cores3/test_local_auth.sh` to check local
   6-digit PIN verifier storage, verification, fresh salt, wipe, and fail-closed
   behavior against host NVS/RNG stubs and pinned Monocypher;
-- run `tools/firmware/stackchan-cores3/test_local_pin_auth.sh` to check local
+- run `firmware/tools/stackchan-cores3/test_local_pin_auth.sh` to check local
   PIN authorization state transitions, including lockout release and retry
   deadline refresh;
-- run `tools/firmware/stackchan-cores3/test_connect_approval.sh` to check
+- run `firmware/tools/stackchan-cores3/test_connect_approval.sh` to check
   physical connect approval request/gateway/deadline/choice state ownership;
-- run `tools/firmware/stackchan-cores3/test_protocol_pin_approval.sh` to check
+- run `firmware/tools/stackchan-cores3/test_protocol_pin_approval.sh` to check
   the protocol-backed local PIN approval request/session/deadline state owner;
-- run `tools/firmware/stackchan-cores3/test_identification_display.sh` to check
+- run `firmware/tools/stackchan-cores3/test_identification_display.sh` to check
   temporary identification display active/deadline state ownership;
-- run `tools/firmware/stackchan-cores3/test_local_settings_touch_entry.sh` to
+- run `firmware/tools/stackchan-cores3/test_local_settings_touch_entry.sh` to
   check local Settings corner-touch hold state ownership;
-- run `tools/firmware/stackchan-cores3/test_usb_link_state.sh` to check USB
+- run `firmware/tools/stackchan-cores3/test_usb_link_state.sh` to check USB
   host SOF polling state ownership and link-edge classification;
-- run `tools/firmware/stackchan-cores3/test_usb_session_loss.sh` to check the
+- run `firmware/tools/stackchan-cores3/test_usb_session_loss.sh` to check the
   session-bound volatile cleanup plan for USB host SOF loss;
-- run `tools/firmware/stackchan-cores3/test_ui_panel_cleanup.sh` to check
+- run `firmware/tools/stackchan-cores3/test_ui_panel_cleanup.sh` to check
   panel-deletion cleanup routing between temporary UI and state owners;
-- run `tools/firmware/stackchan-cores3/test_local_reset.sh` to check local reset
+- run `firmware/tools/stackchan-cores3/test_local_reset.sh` to check local reset
   and error-state erase recovery state transitions, reset-pending marker
   behavior, destructive wipe orchestration, and failure cleanup against host
   NVS/material stubs;
-- run `tools/firmware/stackchan-cores3/test_provisioning_flow.sh` to check
+- run `firmware/tools/stackchan-cores3/test_provisioning_flow.sh` to check
   Generate/Recover/setup-PIN volatile state transitions, scratch lifetime,
   panel-loss cleanup, and commit readiness against host stubs;
-- run `tools/firmware/stackchan-cores3/test_provisioning_runtime_state.sh` to
+- run `firmware/tools/stackchan-cores3/test_provisioning_runtime_state.sh` to
   check persistent provisioning runtime-state load, persist, material-ready,
   and reset-marker orchestration against host stubs;
-- run `tools/firmware/stackchan-cores3/test_connect_settings.sh` to check the
+- run `firmware/tools/stackchan-cores3/test_connect_settings.sh` to check the
   connect-approval setting's missing-key secure default, stored OFF override,
   invalid value fail-closed behavior, and reset wipe back to the missing-key
   default;
-- run `tools/firmware/stackchan-cores3/test_approval_history.sh` after ESP-IDF
+- run `firmware/tools/stackchan-cores3/test_approval_history.sh` after ESP-IDF
   v5.5.4 is active to check the persistent approval-history NVS ring buffer,
   newest-first pagination, payload digest formatting, wipe behavior, and
   corrupt-record fail-closed behavior;
-- run `tools/firmware/stackchan-cores3/test_prepare_sync.sh` to check that
+- run `firmware/tools/stackchan-cores3/test_prepare_sync.sh` to check that
   `prepare.sh` materializes tracked overlay sources and generated wordlist
   output into the generated firmware tree and replaces stale target symlinks;
-- build with `tools/firmware/stackchan-cores3/build.sh` after ESP-IDF v5.5.4 is
+- build with `firmware/tools/stackchan-cores3/build.sh` after ESP-IDF v5.5.4 is
   active;
 - flash to a StackChan CoreS3 device when hardware is available;
 - smoke-test `get_status`;

@@ -41,4 +41,4 @@ jobs:
           esp_idf_version: ${{ steps.source.outputs.esp_idf_version }}
           target: esp32s3
           path: .
-          command: /github/workspace/tools/firmware/stackchan-cores3/build.sh
+          command: /github/workspace/firmware/tools/stackchan-cores3/build.sh

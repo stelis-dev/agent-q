@@ -191,11 +191,10 @@ packages/
 firmware/
   README.md
   src/
-  build/
-
-tools/
-  firmware/
+  tools/
+    common/
     <hardware-id>/
+  build/
 ```
 
 `.WORK/` is for local planning, scratch files, and investigation materials. It is
