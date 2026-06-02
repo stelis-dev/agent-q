@@ -66,7 +66,7 @@ Legend:
 | Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat stores root entropy, initializes the active default-reject policy, and stores the local PIN verifier. Public account derivation is implemented via `get_accounts`; signing and USER_PROFILE secure provisioning are not implemented. |
 | Policy evaluator foundation | △ | Links the common host-tested policy evaluator, stored-policy provider boundary, and Sui restricted-transfer method adapter. The common evaluator matches allowlisted namespace/field facts and owns only shared `common.*` fields; chain-specific field identifiers, descriptors, and transaction semantics stay in the method adapter. Sui `sign_transaction` consumes the committed active policy only as a rejected policy-decision smoke result; it does not sign. |
 | Policy storage/read | △ | Stores the active policy as canonical `agentq.policy.v0` binary records in two bounded NVS slots plus commit metadata and a pending-write marker, exposes a read-only `get_policy` summary, preserves the old committed policy only for interrupted writes identified by that pending marker, treats metadata flip as the commit point, classifies each write as applied, unchanged failure, or consistency error, tolerates stale pending markers that exactly match the selected committed policy, removes stale commit metadata before slot reuse, and treats corrupt/unreadable committed records, invalid commit metadata without a matching pending marker, or pending targets that overlap active material without exactly matching it as a material-consistency error. The current product flow still installs only the DEV_PROFILE default-reject policy. |
-| Policy update | △ | Source implements a Firmware-owned `propose_policy_update` admin-method flow for active sessions: bounded proposal validation, device-local local-PIN approval with on-device summary, canonical active-policy commit, required terminal history recording, and no direct policy setter. The target stores only currently enforceable reject policies and rejects unsupported `ask`/`sign` proposals. The flow uses the two-slot active-policy store plus a persistent policy-update terminal marker that makes an incomplete post-commit terminal sequence a material-consistency error on reboot. Gateway/MCP request/parser surface exists; the local Admin Page and hardware smoke for this flow are not implemented yet. |
+| Policy update | △ | Source implements a Firmware-owned `propose_policy_update` admin-method flow for active sessions: bounded proposal validation, device-local local-PIN approval with on-device summary, canonical active-policy commit, required terminal history recording, and no direct policy setter. The target stores only currently enforceable reject policies and rejects unsupported `ask`/`sign` proposals. The flow uses the two-slot active-policy store plus a persistent policy-update terminal marker that makes an incomplete post-commit terminal sequence a material-consistency error on reboot. Gateway/MCP request/parser surface exists, and Gateway has an opt-in mutating hardware smoke harness for a development device selected explicitly or as the only connected Agent-Q device; that smoke has not been run on hardware yet. The local Admin Page is not implemented yet. |
 | Secure user profile | X | Not implemented. |
 
 ## Chain And Method Support
@@ -523,6 +523,16 @@ Current verification expectations for this target:
 - smoke-test USB host SOF loss clears the Firmware RAM session;
 - smoke-test `disconnect` clears a matching active session and rejects an
   unknown or expired session id;
+- smoke-test `propose_policy_update` on a development device whose active
+  policy may be changed: submit a bounded reject-only policy over an approved
+  session, enter the device-local PIN approval, verify `policy_update_result`
+  reports `applied`, verify `get_policy` reflects the committed policy hash and
+  rule count, and verify `get_approval_history` returns a newest policy-update
+  terminal record whose sequence advanced during this smoke run;
+- track separate follow-up smoke coverage for invalid, rejected, and timed-out
+  `propose_policy_update` attempts, verifying that the previously committed
+  active policy is still reported by `get_policy`; do not count the positive
+  `applied` smoke as coverage for those terminal paths;
 - smoke-test local settings reset from `provisioned`: wrong PIN leaves
   `provisioned` material intact, cancel/timeout leaves material intact, correct
   PIN wipes root material, active policy, PIN verifier, approval history,

@@ -23,7 +23,10 @@ Device registry and connection-session tools:
 - `disconnect_device`
 - `get_capabilities`
 - `get_accounts`
+- `get_policy`
+- `get_approval_history`
 - `call_method`
+- `propose_policy_update`
 
 `scan_devices` records discovered candidates but does not save an active
 device. `identify_devices` asks candidate devices to display short codes.
@@ -41,6 +44,10 @@ session when one exists. `get_capabilities` and `get_accounts` are read-only
 session-scoped tools. `call_method` is the shared method path; the current
 runtime keeps unknown methods rejected and recognizes Sui `sign_transaction`
 only for rejected policy-decision smoke. It is not signing support.
+`get_policy` and `get_approval_history` are read-only session-scoped tools.
+`propose_policy_update` is a session-scoped proposal path: Gateway and MCP do
+not store, apply, or decide policy, and Firmware requires device-local approval
+before committing a bounded reject-policy proposal.
 
 ## Boundaries
 
@@ -65,8 +72,9 @@ only for rejected policy-decision smoke. It is not signing support.
   Firmware remains the only authority that can issue a fresh session.
 - Gateway evicts an expired runtime session lazily, on the next access after
   its local TTL passes, not on a timer. Firmware remains the session authority.
-- Not yet implemented: concrete signing methods, runtime policy evaluation,
-  Admin Page, and chain-specific transaction logic.
+- Not yet implemented: concrete signing methods, signing-request physical
+  approval, Admin Page, and chain-specific signing transaction logic beyond the
+  current Sui policy-decision smoke.
 
 ## MCP Output Boundary
 
@@ -137,8 +145,12 @@ The automated tests use mocked Gateway drivers and do not exercise the live
 `SerialPortUsbDriver` path. When hardware is available, run a manual USB smoke
 check for `scan_devices`, `get_device_status`, `identify_devices`,
 `connect_device`, `get_capabilities`, `get_accounts`, `get_policy`,
-`call_method`, and `disconnect_device` after serial
-transport changes.
+`get_approval_history`, `call_method`, and `disconnect_device` after serial
+transport changes. Policy-update smoke is intentionally separate because it
+mutates the device's active policy; run the opt-in hardware policy-update smoke
+test only on a development device whose policy can be changed. When more than
+one Agent-Q device is connected, set `AGENTQ_HW_POLICY_UPDATE_DEVICE_ID` so the
+mutating smoke cannot select a device by USB scan order.
 
 Run the stdio MCP server:
 
