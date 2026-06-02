@@ -3,7 +3,7 @@
 This document defines the target first-install flow for Agent-Q signing
 material.
 
-This document separates target design from implemented setup slices. Current
+This document separates target design from implemented setup behavior. Current
 implementation status lives in `docs/IMPLEMENTATION_STATUS.md`.
 
 ## Purpose
@@ -106,10 +106,11 @@ read-only `get_accounts` Sui account derivation are implemented. The current
 setup source also records a DEV_PROFILE local PIN verifier before reporting
 `provisioned`. Source/build tests cover the provisioned Gateway/MCP session path
 through `get_accounts` and rejected Sui `sign_transaction` policy-decision
-handling. StackChan CoreS3 local setup and PIN entry were manually smoke-tested
-after commit `2cb243b`; rerun hardware smoke after setup UI or state changes.
-Source-level local settings reset/material wipe now exists for provisioned
-StackChan CoreS3 devices and was manually smoke-tested after commit `7c6e65c`.
+handling. Hardware smoke coverage exists for StackChan CoreS3 local setup and
+PIN entry. Targeted hardware verification remains required after setup UI or
+state changes. Source-level local settings reset/material wipe now exists for
+provisioned StackChan CoreS3 devices, with hardware smoke coverage for local
+reset.
 Device-local Recover is implemented for DEV_PROFILE. USB/Gateway/MCP mnemonic
 import, host-assisted import, and signing are not implemented.
 
@@ -146,7 +147,7 @@ Target provisioning states:
 - `locked`: sensitive actions require local unlock.
 
 The current DEV_PROFILE runtime implements the StackChan CoreS3 mnemonic UI flow and
-persistent root material slice. It loads and reports `provisioning.state`, but
+persistent root material storage path. It loads and reports `provisioning.state`, but
 does not persist `provisioning` during the normal create-new-mnemonic flow.
 After physical backup confirmation, Firmware stores the binary BIP-39 root
 entropy, the active default-reject policy, and a salt + PIN verifier in
@@ -310,12 +311,10 @@ Provisioning-specific sequence:
 6. Add Sui Ed25519 account derivation and read-only `get_accounts`.
 
 Current implementation status: steps 1 through 6 are implemented for the
-StackChan CoreS3 DEV_PROFILE source path. StackChan CoreS3 local setup and PIN
-entry were manually smoke-tested after commit `2cb243b`; rerun hardware smoke
-after setup UI or state changes. Source-level local reset/material wipe exists
-and was manually smoke-tested after commit `7c6e65c`; rerun hardware smoke after
-reset UI or reset-state changes. Device-local Recover was manually smoke-tested
-on StackChan CoreS3 during the recovery-entry slice.
+StackChan CoreS3 DEV_PROFILE source path. Hardware smoke coverage exists for
+local setup, PIN entry, device-local Recover, and local reset/material wipe.
+Targeted hardware verification remains required after setup, reset UI, or
+reset-state changes.
 
 The next work after this provisioning foundation is not another provisioning
 step. The dependency order is: keep the policy facts / method adapter boundary

@@ -149,11 +149,11 @@ The automated tests use mocked Gateway drivers and do not exercise the live
 check for `scan_devices`, `get_device_status`, `identify_devices`,
 `connect_device`, `get_capabilities`, `get_accounts`, `get_policy`,
 `get_approval_history`, `call_method`, and `disconnect_device` after serial
-transport changes. Policy-update smoke is intentionally separate because it
-mutates the device's active policy; run the opt-in hardware policy-update smoke
-test only on a development device whose policy can be changed. When more than
-one Agent-Q device is connected, set `AGENTQ_HW_POLICY_UPDATE_DEVICE_ID` so the
-mutating smoke cannot select a device by USB scan order.
+transport changes. Policy-update smoke is a separate opt-in check that mutates
+the device's active policy; run it only on a development device whose policy can
+be changed. When more than one Agent-Q device is connected, set
+`AGENTQ_HW_POLICY_UPDATE_DEVICE_ID` so the mutating smoke cannot select a device
+by USB scan order.
 
 Run the stdio MCP server:
 

@@ -202,8 +202,9 @@ view of Firmware-owned persistent decision metadata. `call_method` exists only
 as a session-scoped runtime skeleton: unknown methods are rejected, while Sui
 `sign_transaction` is recognized only for restricted-transfer policy-decision
 smoke and still returns a rejected method result. No signing method is
-implemented or advertised. Hardware smoke must be rerun for the `get_policy`,
-`get_approval_history`, and policy-store-backed `call_method` paths.
+implemented or advertised. Hardware verification remains required for changes
+to the `get_policy`, `get_approval_history`, and policy-store-backed
+`call_method` paths.
 
 ## Device Discovery And Selection
 
@@ -1079,7 +1080,7 @@ Firmware must physically approve write methods before saving changes.
 ### `propose_policy_update`
 
 `propose_policy_update` is a policy-write proposal method. StackChan CoreS3
-Firmware and Gateway/MCP implement the first slice: a session-scoped proposal is
+Firmware and Gateway/MCP implement the first supported path: a session-scoped proposal is
 validated by Firmware, shown on device for local PIN approval, committed through
 the canonical active-policy store, and reported as `policy_update_result`.
 The local Admin Page is not implemented.

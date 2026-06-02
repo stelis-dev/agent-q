@@ -52,9 +52,8 @@ The current implementation includes:
   the stored PIN, wipes root material, active policy, PIN verifier,
   approval history, policy-update terminal marker, connect-approval setting,
   runtime session, and provisioning state, and is not exposed as a USB JSONL
-  request. StackChan CoreS3 local reset
-  was manually smoke-tested after commit `7c6e65c`; rerun hardware smoke after
-  settings or reset UI/state changes.
+  request. Hardware smoke coverage exists for local reset. Targeted hardware
+  verification remains required after settings or reset UI/state changes.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP

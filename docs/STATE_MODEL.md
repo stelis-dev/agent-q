@@ -70,10 +70,15 @@ policy, and stored local PIN verifier all exist. The PIN verifier is a
 DEV_PROFILE local UX gate only; it does not encrypt root material.
 `locked` remains a design target until an unlock model exists.
 
-Firmware recognizes only the current tracked active-policy storage layout as
-product state. If Firmware boots with `prov_state = provisioned` but no valid
-active policy record, the device enters persistent material consistency error
-until a device-local destructive wipe clears the material set.
+Firmware recognizes only the current tracked persistent material layout as
+product state. The current StackChan CoreS3 persisted provisioning-state schema
+accepts only `unprovisioned` and `provisioned`; transient or unsupported
+persisted values such as `provisioning` are not normalized into product state.
+If Firmware boots with an unsupported `prov_state`, or with
+`prov_state = provisioned` but no valid active policy record, the device enters
+persistent material consistency error until either a device-local destructive
+wipe or a development flash-erase workflow clears the unsupported material set.
+After that cleanup, local setup or recovery can reprovision the device.
 
 If persisted state, stored root material, and stored active policy disagree,
 or if the stored local PIN verifier is missing or invalid while `provisioned`,
@@ -179,10 +184,12 @@ RAM and tracks setup with volatile substates: `none`,
 `pin_first_entry`, `pin_repeat_entry`, and `pin_committing`. Those scratch
 substates are separate from persistent
 `provisioning.state`, pending approval state, and UI panel state.
-The current StackChan CoreS3 persistent material slice resets stale
-`provisioning` state to `unprovisioned` when no valid root material or active
-policy exists and does not enter this state for the normal
-generate-and-confirm flow.
+The current StackChan CoreS3 persistent material implementation does not persist
+`provisioning` for the normal generate-and-confirm flow and does not accept it
+as a current tracked storage value. If an unsupported persisted
+provisioning-state value is present, Firmware fails closed with persistent
+material consistency error rather than silently resetting it to
+`unprovisioned`.
 
 ### `provisioned`
 
