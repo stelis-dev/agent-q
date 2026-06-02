@@ -18,8 +18,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-TARGET_ROOT="${REPO_ROOT}/products/firmware/src/stackchan-cores3"
-COMMON_SOURCE_ENV="${REPO_ROOT}/products/firmware/source.env"
+TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
+COMMON_SOURCE_ENV="${REPO_ROOT}/firmware/source.env"
 DEFAULT_BIP39_WORDLIST_DIR="${REPO_ROOT}/.firmware-cache/bip39/bips"
 
 # shellcheck source=/dev/null

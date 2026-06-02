@@ -50,7 +50,7 @@ Firmware implementations follow the shared Agent-Q communication protocol in
 Firmware build and CI paths must start from tracked repository files, not from a
 developer's `.WORK/` checkout.
 
-Shared firmware dependency pins live in `products/firmware/source.env`.
+Shared firmware dependency pins live in `firmware/source.env`.
 Hardware-specific targets that require an upstream host firmware tree must keep
 that dependency pinned under `src/<hardware-id>/source.env`. The build flow is:
 

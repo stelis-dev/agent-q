@@ -117,7 +117,7 @@ tree. It is not a complete standalone ESP-IDF project.
 
 The pinned upstream host source and ESP-IDF version live in this directory's
 `source.env`. Shared firmware dependency pins live in
-`products/firmware/source.env`. Tracked tools use those files so local builds
+`firmware/source.env`. Tracked tools use those files so local builds
 and GitHub Actions use the same inputs:
 
 ```bash
@@ -187,12 +187,12 @@ The Sui account vector test is also host-side. It compiles the tracked
 source and checks known Sui SDK address/public-key vectors.
 
 The Sui transaction facts parser test is a common host-side check. It compiles
-`products/firmware/src/common/agent_q/sui` and verifies tracked BCS fixtures for
+`firmware/src/common/agent_q/sui` and verifies tracked BCS fixtures for
 the restricted SUI transfer parser. StackChan CoreS3 connects the parser only to
 Sui `sign_transaction` policy-decision smoke; it is not signing.
 
 The policy test is also a common host-side check. It compiles
-`products/firmware/src/common/agent_q/policy` plus the Sui method adapter and
+`firmware/src/common/agent_q/policy` plus the Sui method adapter and
 verifies deny-by-default, `sign`/`reject`/`ask` decision calculation, default
 provider behavior, missing/invalid policy provider rejection, malformed policy
 rejection, and unsupported-facts rejection. StackChan CoreS3 consumes the

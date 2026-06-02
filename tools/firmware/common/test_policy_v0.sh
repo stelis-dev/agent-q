@@ -19,7 +19,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-COMMON_ROOT="${REPO_ROOT}/products/firmware/src/common/agent_q"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
 COMMON_POLICY_DIR="${COMMON_ROOT}/policy"
 COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"

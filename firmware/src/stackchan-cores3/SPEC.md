@@ -462,8 +462,8 @@ It is not a standalone ESP-IDF project.
 
 Pins:
 
-- target host firmware pin: `products/firmware/src/stackchan-cores3/source.env`;
-- shared firmware dependency pins: `products/firmware/source.env`.
+- target host firmware pin: `firmware/src/stackchan-cores3/source.env`;
+- shared firmware dependency pins: `firmware/source.env`.
 
 Tracked helper scripts fetch pinned inputs into `.firmware-cache/`, apply the
 Agent-Q overlay, and build. The build must not depend on `.WORK/`.

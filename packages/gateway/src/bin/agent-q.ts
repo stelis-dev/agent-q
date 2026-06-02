@@ -35,12 +35,10 @@ async function startGateway(gatewayArgs: string[]): Promise<void> {
     });
   };
   try {
-    const { ConfigStore } = await import("../config.js");
-    const { GatewayCore } = await import("../core.js");
-    const { SerialPortUsbDriver } = await import("../usb.js");
+    const { createDefaultGatewayCore } = await import("../client.js");
     const { DEFAULT_ADMIN_PORT, startAdminGateway } = await import("../admin.js");
     const { startStdioGateway } = await import("../mcp.js");
-    const core = new GatewayCore(new ConfigStore(), new SerialPortUsbDriver());
+    const core = createDefaultGatewayCore();
     const port = parseAdminPort(gatewayArgs, DEFAULT_ADMIN_PORT);
     const admin = await startAdminGateway({ core, port });
     adminServer = admin.server;

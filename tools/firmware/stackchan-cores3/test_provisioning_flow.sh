@@ -19,7 +19,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/products/firmware/src/stackchan-cores3/agent_q"
+AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
 
 for required in \
   "${AGENT_Q_DIR}/agent_q_provisioning_flow.cpp" \

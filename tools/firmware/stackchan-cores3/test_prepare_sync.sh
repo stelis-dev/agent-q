@@ -18,7 +18,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-TARGET_ROOT="${REPO_ROOT}/products/firmware/src/stackchan-cores3"
+TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
 FIRMWARE_DIR="${AGENT_Q_STACKCHAN_FIRMWARE_DIR:-${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-prepare-sync.XXXXXX")"
 

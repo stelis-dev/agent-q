@@ -13,8 +13,8 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 FIRMWARE_DIR="$(cd "$1" && pwd)"
-TARGET_ROOT="${REPO_ROOT}/products/firmware/src/stackchan-cores3"
-COMMON_ROOT="${REPO_ROOT}/products/firmware/src/common/agent_q"
+TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
 
 if [[ ! -f "${FIRMWARE_DIR}/main/CMakeLists.txt" || ! -f "${FIRMWARE_DIR}/main/main.cpp" ]]; then
   echo "Expected a StackChan firmware directory with main/CMakeLists.txt and main/main.cpp: ${FIRMWARE_DIR}" >&2

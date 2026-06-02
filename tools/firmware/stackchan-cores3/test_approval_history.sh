@@ -21,8 +21,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-TARGET_ROOT="${REPO_ROOT}/products/firmware/src/stackchan-cores3"
-COMMON_ROOT="${REPO_ROOT}/products/firmware/src/common/agent_q"
+TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
 
 if [[ -z "${IDF_PATH:-}" ]]; then
   echo "IDF_PATH is not set. Source ESP-IDF v5.5.4 export.sh before running this test." >&2

@@ -12,11 +12,11 @@ contract lives in `specs/PROTOCOL.md`.
 State names are defined by:
 
 - `specs/PROTOCOL.md`
-- `products/gateway/src/safe-text.ts`
+- `packages/gateway/src/safe-text.ts`
 
 Gateway wire validation is implemented in:
 
-- `products/gateway/src/protocol.ts`
+- `packages/gateway/src/protocol.ts`
 
 Firmware owns state storage, state transitions, state gates, physical approval,
 policy evaluation, and signing decisions.
@@ -481,7 +481,7 @@ notifications, or physical approval prompts when the target has a screen.
 
 Hardware-specific timing, buttons, and power-off behavior are target-local. The
 current StackChan CoreS3 behavior is documented in
-`products/firmware/src/stackchan-cores3/SPEC.md`.
+`firmware/src/stackchan-cores3/SPEC.md`.
 
 ## Target-Local Posture State
 
@@ -496,7 +496,7 @@ posture when the display wakes, but those postures are feedback only and must
 not gate protocol behavior.
 Hardware-specific posture ownership, boot feedback, sleep feedback, and wake
 feedback are target-local. The current StackChan CoreS3 behavior is documented in
-`products/firmware/src/stackchan-cores3/SPEC.md`.
+`firmware/src/stackchan-cores3/SPEC.md`.
 
 ## Request Patterns
 

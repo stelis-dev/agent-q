@@ -241,14 +241,19 @@ specification baseline, or an affected shared invariant.
 
 Inspect `package.json` before running project commands. Do not invent scripts.
 
-Current state: this repository does not yet have a root `package.json`. Gateway
-package commands live under `products/gateway/`.
+This repository has a root `package.json` with npm workspaces. Gateway package
+commands also work from `packages/gateway/`.
+
+Current root commands:
+
+- Build Gateway: `npm run build`
+- Test Gateway: `npm test`
 
 Current Gateway package commands:
 
-- Install: `cd products/gateway && npm install`
-- Build: `cd products/gateway && npm run build`
-- Test: `cd products/gateway && npm test`
+- Install: `cd packages/gateway && npm install`
+- Build: `cd packages/gateway && npm run build`
+- Test: `cd packages/gateway && npm test`
 
 Current common firmware helper commands:
 
@@ -262,12 +267,9 @@ Current common firmware helper commands:
   not require ESP-IDF): `tools/firmware/common/test_policy_canonical.sh`
 
 Hardware-specific firmware commands live in the corresponding target
-documentation under `products/firmware/src/<hardware-id>/`. Read that target's
+documentation under `firmware/src/<hardware-id>/`. Read that target's
 README and SPEC before running target builds, target tests, flashing, or
 hardware smoke checks.
-
-If a root `package.json` is added, inspect it before running project commands
-and update this section.
 
 Never claim a test, build, lint, pack, flash, or verification step passed unless
 it was actually run and observed successfully.
@@ -397,15 +399,18 @@ get_status
 Current intended structure:
 
 ```text
+package.json
+
 specs/
   PROTOCOL.md
 
-products/
+packages/
   gateway/
-  firmware/
-    README.md
-    src/
-    build/
+
+firmware/
+  README.md
+  src/
+  build/
 
 tools/
   firmware/
@@ -440,17 +445,18 @@ Project-specific rules:
   dependencies downloaded by tracked build scripts. Do not commit files from
   `.firmware-cache/`.
 - Do not commit firmware build artifacts.
-- `products/firmware/build/` is ignored and is for build output only.
+- `firmware/build/` is ignored and is for build output only.
 - Firmware source is organized by hardware under
-  `products/firmware/src/<hardware-id>/`.
+  `firmware/src/<hardware-id>/`.
 - Treat Admin as a Gateway capability, not a separate product area.
 - Avoid hardware-specific wording in common documents.
 - Use concrete hardware names only in hardware-specific source, plans, or notes.
 
 Avoid unless explicitly requested:
 
-- `products/admin/`
-- `packages/` for internal concepts
+- separate Admin product directories
+- additional package directories for internal concepts that are not actual npm
+  packages
 - separate chain-specific protocol documents
 - broad speculative folder trees
 - production secrets or real key material

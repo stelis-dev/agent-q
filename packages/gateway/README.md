@@ -88,6 +88,18 @@ template. The Admin Page is not a policy authority: it submits bounded requests
 through Gateway core, and Firmware validates proposals, requires device-local
 approval, commits policy, and records terminal results.
 
+## Package Entrypoints
+
+The package exposes two library entrypoints:
+
+- `@stelis/agent-q` and `@stelis/agent-q/client` expose the device-facing
+  Gateway core factory. This entrypoint does not import MCP or Admin adapters.
+- `@stelis/agent-q/mcp` exposes the MCP adapter.
+
+The `agent-q` binary starts one local Gateway process that shares Gateway core
+state between stdio MCP tools and the local Admin Page. No provider package or
+provider API is implemented yet.
+
 ## Gateway Output Boundary
 
 MCP clients, agents, and Admin Page requests are untrusted request sources.

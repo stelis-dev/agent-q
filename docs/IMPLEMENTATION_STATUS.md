@@ -14,7 +14,7 @@ Legend:
 
 This document tracks implementation status only. The wire protocol is defined in
 `specs/PROTOCOL.md`. Target-specific details live under
-`products/firmware/src/<hardware-id>/`.
+`firmware/src/<hardware-id>/`.
 
 ## Common Protocol
 
@@ -106,7 +106,7 @@ Current MCP tools:
 
 Target-specific specification:
 
-- StackChan CoreS3: `products/firmware/src/stackchan-cores3/SPEC.md`
+- StackChan CoreS3: `firmware/src/stackchan-cores3/SPEC.md`
 
 ## Hardware Chain Support
 

@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
-import { ConfigStore } from "./config.js";
+import { createDefaultGatewayCore } from "./client.js";
 import {
   GatewayCore,
   MAX_IDENTIFY_DURATION_MS,
@@ -58,7 +58,7 @@ import {
   UINT_DECIMAL_STRING_PATTERN,
   isUint64DecimalString,
 } from "./protocol.js";
-import { SerialPortUsbDriver, MAX_SCAN_TIMEOUT_MS } from "./usb.js";
+import { MAX_SCAN_TIMEOUT_MS } from "./usb.js";
 import {
   DEVICE_ID_PATTERN,
   GATEWAY_NAME_PATTERN,
@@ -535,10 +535,6 @@ export async function startStdioGateway(
     transport.onclose = options.onClose;
   }
   await server.connect(transport);
-}
-
-function createDefaultGatewayCore(): GatewayCore {
-  return new GatewayCore(new ConfigStore(), new SerialPortUsbDriver());
 }
 
 // Operator-facing diagnostic on stderr (never stdout, which is the MCP JSON-RPC

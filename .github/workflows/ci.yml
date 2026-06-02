@@ -16,12 +16,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: products/gateway/package-lock.json
+          cache-dependency-path: packages/gateway/package-lock.json
       - name: Install Gateway dependencies
-        working-directory: products/gateway
+        working-directory: packages/gateway
         run: npm ci
       - name: Test Gateway
-        working-directory: products/gateway
+        working-directory: packages/gateway
         run: npm test
 
   firmware-stackchan-cores3:
@@ -33,7 +33,7 @@ jobs:
         id: source
         shell: bash
         run: |
-          source products/firmware/src/stackchan-cores3/source.env
+          source firmware/src/stackchan-cores3/source.env
           echo "esp_idf_version=${AGENT_Q_ESP_IDF_VERSION}" >> "${GITHUB_OUTPUT}"
       - name: Build firmware
         uses: espressif/esp-idf-ci-action@v1

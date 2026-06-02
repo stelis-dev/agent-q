@@ -18,7 +18,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-SOURCE_ENV="${REPO_ROOT}/products/firmware/src/stackchan-cores3/source.env"
+SOURCE_ENV="${REPO_ROOT}/firmware/src/stackchan-cores3/source.env"
 DEFAULT_CHECKOUT_DIR="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan"
 
 # shellcheck source=/dev/null

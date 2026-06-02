@@ -23,7 +23,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 DEFAULT_SIGNING_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
 SIGNING_ROOT="${AGENT_Q_SIGNING_CRYPTO_ROOT:-${DEFAULT_SIGNING_DIR}}"
 SIGNING_CORE="${SIGNING_ROOT}/src/microsui_core"
-AGENT_Q_DIR="${REPO_ROOT}/products/firmware/src/stackchan-cores3/agent_q"
+AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
 
 for required in \
   "${SIGNING_CORE}/lib/monocypher/monocypher.c" \

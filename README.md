@@ -89,11 +89,11 @@ Firmware is the authority component: it stores device-held key material and
 policies, evaluates requests locally, handles physical approval, and, where
 supported, returns signatures or rejections to Gateway.
 
-Firmware source is organized by hardware under `products/firmware/src/`.
+Firmware source is organized by hardware under `firmware/src/`.
 
 Firmware builds must not depend on `.WORK/`. Shared firmware dependency pins
-live in `products/firmware/source.env`; hardware-specific host firmware pins
-live under `products/firmware/src/<hardware-id>/source.env`. Tracked tools fetch
+live in `firmware/source.env`; hardware-specific host firmware pins
+live under `firmware/src/<hardware-id>/source.env`. Tracked tools fetch
 those pinned sources into the ignored `.firmware-cache/` directory, apply the
 tracked Agent-Q overlay, and build.
 
@@ -185,12 +185,13 @@ docs/
 specs/
   PROTOCOL.md
 
-products/
+packages/
   gateway/
-  firmware/
-    README.md
-    src/
-    build/
+
+firmware/
+  README.md
+  src/
+  build/
 
 tools/
   firmware/

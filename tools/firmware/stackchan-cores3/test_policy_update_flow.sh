@@ -20,8 +20,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-TARGET_ROOT="${REPO_ROOT}/products/firmware/src/stackchan-cores3"
-COMMON_ROOT="${REPO_ROOT}/products/firmware/src/common/agent_q"
+TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
 COMMON_POLICY_DIR="${COMMON_ROOT}/policy"
 COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"

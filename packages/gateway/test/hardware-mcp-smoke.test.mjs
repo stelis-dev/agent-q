@@ -253,7 +253,7 @@ test(
 
       const validSuiTransferHex = (
         await readFile(
-          new URL("../../firmware/src/common/agent_q/sui/testdata/sui_transaction_facts/valid_sui_transfer_tx.bcs.hex", import.meta.url),
+          new URL("../../../firmware/src/common/agent_q/sui/testdata/sui_transaction_facts/valid_sui_transfer_tx.bcs.hex", import.meta.url),
           "utf8",
         )
       ).replace(/\s+/g, "");

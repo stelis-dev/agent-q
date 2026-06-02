@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm --workspace @stelis/agent-q run build",
+    "test": "npm --workspace @stelis/agent-q test"
+  }
+}

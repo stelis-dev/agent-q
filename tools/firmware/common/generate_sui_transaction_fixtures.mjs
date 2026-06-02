@@ -17,7 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../../..');
 const outDir = resolve(
   repoRoot,
-  'products/firmware/src/common/agent_q/sui/testdata/sui_transaction_facts',
+  'firmware/src/common/agent_q/sui/testdata/sui_transaction_facts',
 );
 
 const sender = '0x' + 'aa'.repeat(32);

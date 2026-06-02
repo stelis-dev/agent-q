@@ -20,8 +20,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-COMMON_SOURCE_ENV="${REPO_ROOT}/products/firmware/source.env"
-TARGET_SOURCE_ENV="${REPO_ROOT}/products/firmware/src/stackchan-cores3/source.env"
+COMMON_SOURCE_ENV="${REPO_ROOT}/firmware/source.env"
+TARGET_SOURCE_ENV="${REPO_ROOT}/firmware/src/stackchan-cores3/source.env"
 DEFAULT_CHECKOUT_DIR="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan"
 DEFAULT_SIGNING_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
 DEFAULT_BIP39_WORDLIST_DIR="${REPO_ROOT}/.firmware-cache/bip39/bips"
