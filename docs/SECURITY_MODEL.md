@@ -88,6 +88,9 @@ Implemented today:
   policy-decision smoke, and exposes policy update authorization only through
   the Firmware-owned `propose_policy_update` proposal flow for custom reject
   policies. It does not sign or trigger physical approval for signing requests.
+- A Gateway-served local Admin Page for read-only device metadata and the
+  current reject-policy proposal template. It uses the same Gateway core
+  boundary as MCP and is not a policy authority.
 - A bounded persistent approval-history read path. The current StackChan CoreS3
   target stores Firmware-authored method-decision metadata for validated
   policy-rejected `call_method` skeleton decisions and recordable terminal
@@ -108,7 +111,7 @@ Designed but not implemented (do not treat as present):
 - Signing methods inside `call_method`. The `call_method` runtime recognizes Sui
   `sign_transaction` only for rejected policy-decision smoke; it does not sign,
   advertise the method, or trigger approval UI.
-- The Admin Page / local web UI.
+- Full Admin policy editing beyond the current reject-policy proposal template.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.
 - Secure Boot, Flash Encryption, and NVS Encryption setup flow.
 
@@ -175,8 +178,8 @@ This is the security-relevant summary; the full roles are in
 
 Gateway (host):
 
-- Local MCP server today; a local web/Admin capability is intended but not
-  implemented.
+- Local Gateway process with stdio MCP tools and a local Admin Page sharing one
+  Gateway runtime session owner.
 - Transport and local coordination surface.
 - Holds no signing keys.
 - Makes no signing or policy decision.

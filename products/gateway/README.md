@@ -76,14 +76,23 @@ before committing a bounded reject-policy proposal.
   valid. Firmware remains the only authority that can issue a fresh session, and
   a fresh Firmware `connect` request still requires device-local approval.
 - Not yet implemented: concrete signing methods, signing-request physical
-  approval, Admin Page, and chain-specific signing transaction logic beyond the
-  current Sui policy-decision smoke.
+  approval, full Admin policy editing beyond the current reject-policy proposal
+  template, and chain-specific signing transaction logic beyond the current Sui
+  policy-decision smoke.
 
-## MCP Output Boundary
+## Admin Page
 
-MCP clients and agents are untrusted request sources. Gateway limits what its
-MCP output can contain, but it does **not** judge agent or prompt intent and
-does **not** claim to detect prompt injection. Concretely:
+Gateway serves a local Admin Page for device discovery, connection, active
+policy summary, approval history, and the current reject-policy proposal
+template. The Admin Page is not a policy authority: it submits bounded requests
+through Gateway core, and Firmware validates proposals, requires device-local
+approval, commits policy, and records terminal results.
+
+## Gateway Output Boundary
+
+MCP clients, agents, and Admin Page requests are untrusted request sources.
+Gateway limits what its output can contain, but it does **not** judge agent or
+prompt intent and does **not** claim to detect prompt injection. Concretely:
 
 - Secret material (signing keys, seeds, recovery phrases, mnemonics) is never
   produced by Gateway and is never returned to MCP clients. The Firmware
@@ -112,12 +121,13 @@ does **not** claim to detect prompt injection. Concretely:
   not from core pre-sanitizing. The contract is therefore that **every output
   adapter must project errors through `public-error.ts` before returning or
   logging them**. The MCP adapter does this in one place - its `run()` wrapper
-  for results and `logToolDiagnostic` for stderr - and any future adapter (CLI,
-  Admin/web API) must do the same. Diagnostic logging goes to stderr (never
-  stdout, the MCP channel) and carries only the allowlisted `code`, its canonical
-  message, and `retryable`; raw device/OS/Firmware text is never written to a log,
-  even sanitized. Operator-controlled local config (such as the config file path)
-  is not untrusted request input and may be logged as-is.
+  for results and `logToolDiagnostic` for stderr - and the Admin HTTP API uses
+  the same public-error projection before returning JSON. Diagnostic logging
+  goes to stderr (never stdout, the MCP channel) and carries only the
+  allowlisted `code`, its canonical message, and `retryable`; raw
+  device/OS/Firmware text is never written to a log, even sanitized.
+  Operator-controlled local config (such as the config file path) is not
+  untrusted request input and may be logged as-is.
 
 This is output hygiene at an untrusted boundary, not intent detection. All
 authority over what may be signed remains with Firmware policy.
@@ -155,10 +165,19 @@ be changed. When more than one Agent-Q device is connected, set
 `AGENTQ_HW_POLICY_UPDATE_DEVICE_ID` so the mutating smoke cannot select a device
 by USB scan order.
 
-Run the stdio MCP server:
+Run the local Gateway:
 
 ```sh
 node dist/bin/agent-q.js
+```
+
+The same process exposes stdio MCP tools and the local Admin Page, so Gateway
+RAM session state is shared between MCP requests and Admin Page requests.
+
+Use a different local Admin Page port:
+
+```sh
+node dist/bin/agent-q.js --port 8788
 ```
 
 The intended published command is `npx @stelis/agent-q`, but this package is

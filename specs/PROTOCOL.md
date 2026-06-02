@@ -39,10 +39,11 @@ Agent-Q Firmware:
 - asks for physical approval when required
 - signs, rejects, or times out requests
 
-The local Admin Page served by Gateway is not implemented yet. Firmware-owned
-admin methods exist only where this protocol and a target implementation say so;
-Gateway/Admin clients submit requests, but Firmware remains the authority for
-validation, device-local approval, persistence, and failure state.
+The local Admin Page served by Gateway exists for the current reject-policy
+proposal path and read-only device metadata. Firmware-owned admin methods exist
+only where this protocol and a target implementation say so; Gateway/Admin
+clients submit requests, but Firmware remains the authority for validation,
+device-local approval, persistence, and failure state.
 
 ## Message Envelope
 
@@ -978,14 +979,14 @@ txBytes decoding, policy evaluation, negative parser fixtures, physical approval
 where required, and signing are all implemented and connected to the runtime
 request path. The current
 restricted Sui transaction facts parser, Sui method adapter, stored-policy
-provider boundary, and policy evaluator are Firmware-internal source
-foundations; they do not make `call_method` a signing API.
+provider boundary, and policy evaluator are Firmware-internal source paths; they
+do not make `call_method` a signing API.
 
-Policy evaluation is currently a Firmware common-source foundation. It accepts
-already extracted transaction facts, loads the stored active policy through a
-Firmware-owned provider boundary, applies a declarative deny-by-default
-policy model over allowlisted namespace/field facts, and returns an internal
-`sign`, `reject`, or `ask` decision. The common evaluator owns only the shared
+Policy evaluation is implemented as Firmware common source. It accepts already
+extracted transaction facts, loads the stored active policy through a
+Firmware-owned provider boundary, applies a declarative deny-by-default policy
+model over allowlisted namespace/field facts, and returns an internal `sign`,
+`reject`, or `ask` decision. The common evaluator owns only the shared
 `common.*` policy fields; chain-specific field identifiers, descriptor
 enablement, and transaction meaning stay in the corresponding method adapter.
 The common evaluator does not decode Sui, EVM, or Solana transaction semantics.
@@ -1083,7 +1084,8 @@ Firmware must physically approve write methods before saving changes.
 Firmware and Gateway/MCP implement the first supported path: a session-scoped proposal is
 validated by Firmware, shown on device for local PIN approval, committed through
 the canonical active-policy store, and reported as `policy_update_result`.
-The local Admin Page is not implemented.
+The Gateway-served local Admin Page can submit the current reject-policy
+proposal template; full policy editing is not implemented.
 
 The method is a proposal, not a setter. Gateway or Admin may submit a bounded
 policy document, but Firmware remains the authority that validates the document,

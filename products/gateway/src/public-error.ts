@@ -1,6 +1,6 @@
 // Single source of truth (SoT) for Gateway's public error policy: the canonical,
 // client-safe { code, message, retryable } shown at any untrusted output boundary
-// — the MCP adapter today, a CLI or Admin/web API later.
+// such as MCP and the Admin HTTP API.
 //
 // Contract: Gateway core (and the modules it calls) may throw a raw GatewayError
 // whose message carries OS, serial, or Firmware text that Gateway did not author.

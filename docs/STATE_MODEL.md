@@ -243,8 +243,8 @@ Future signing txBytes decoding is allowed only inside a session-scoped
 `unprovisioned`, `provisioning`, `locked`, and the internal consistency-error
 condition. Current common firmware source includes a restricted host-tested SUI
 transfer facts parser, a Sui method adapter, a stored-policy provider
-boundary, and a host-tested policy evaluator. These are firmware foundations
-only: StackChan CoreS3 consumes the committed active policy for Sui
+boundary, and a host-tested policy evaluator. These are Firmware-internal source
+paths only: StackChan CoreS3 consumes the committed active policy for Sui
 `sign_transaction` policy-decision smoke, capabilities still advertise no signing
 methods, and Gateway must not evaluate policy. A corrupt, unreadable, missing,
 or unsupported current active policy is a persistent-material consistency

@@ -316,15 +316,15 @@ local setup, PIN entry, device-local Recover, and local reset/material wipe.
 Targeted hardware verification remains required after setup, reset UI, or
 reset-state changes.
 
-The next work after this provisioning foundation is not another provisioning
-step. The dependency order is: keep the policy facts / method adapter boundary
-stable, use the Firmware-owned `propose_policy_update` flow for custom
-reject-policy updates, then connect concrete signing methods such as Sui
-`sign_transaction`. Policy update remains a proposal flow, not a direct state
-setter: Gateway/Admin may submit a bounded proposal, but Firmware validates it,
-requires device-local approval, and commits it through rollback-safe storage.
-Sui `sign_personal_message`, signing APIs, the local Admin Page, and
-USER_PROFILE secure provisioning are not implemented.
+Provisioning is not signing readiness. The current dependency order is: keep
+the policy facts / method adapter boundary stable, use the Firmware-owned
+`propose_policy_update` flow for custom reject-policy updates, then connect
+concrete signing methods such as Sui `sign_transaction`. Policy update remains a
+proposal flow, not a direct state setter: Gateway/Admin may submit a bounded
+proposal, but Firmware validates it, requires device-local approval, and commits
+it through rollback-safe storage. Sui `sign_personal_message`, signing APIs,
+full Admin policy editing beyond the current reject-policy proposal template,
+and USER_PROFILE secure provisioning are not implemented.
 
 ## Completion Criteria
 

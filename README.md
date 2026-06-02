@@ -69,14 +69,13 @@ Agent-Q has two deployable products:
 - Agent-Q Gateway
 - Agent-Q Firmware
 
-Admin features are planned as Gateway capabilities, not as a separate product.
-
 ## Agent-Q Gateway
 
 Agent-Q Gateway is distributed as an npm package.
 
-It runs locally through `npx`, exposes an MCP server for agents, and
-communicates with Agent-Q Firmware over a supported transport.
+It runs locally through `npx`, exposes stdio MCP tools for agents, serves a
+local Admin Page for humans, and communicates with Agent-Q Firmware over a
+supported transport.
 
 Gateway does not store keys and does not make signing or policy decisions. It
 may relay requests, validate protocol shapes, and display summaries, but
@@ -157,12 +156,16 @@ Implemented:
   policies. Gateway/MCP can submit proposals, but Firmware validates them,
   requires device-local approval, commits the active policy, and records the
   terminal result.
+- A local Gateway-served Admin Page for device discovery, connection, policy
+  summary, approval history, and the current reject-policy proposal template. It
+  is not a policy authority.
 - A common host-tested policy evaluator and default-reject runtime boundary that
   are not connected to runtime signing.
 
 Not yet implemented: concrete signing outputs, per-request physical approval,
 spending and rate limits, multi-role separation, custom policy update beyond
-the current bounded reject-policy proposal flow, Admin Page, multi-device
+the current bounded reject-policy proposal flow, full Admin policy editing,
+multi-device
 approval, device revocation or transfer, a production audit layer beyond the
 current fixed-size approval-history record, and broad chain-specific transaction
 logic. Connection is not signing approval and does not authorize signing. A

@@ -143,7 +143,7 @@ export interface ConnectDeviceResult {
 
 // Why a disconnect ended (or did not establish) Gateway's local session view.
 // Single-sourced so the MCP output schema enumerates exactly these values and a
-// future adapter cannot invent its own.
+// different output adapter cannot invent its own.
 export const DISCONNECT_REASONS = [
   "firmware_confirmed",
   "invalid_session",
