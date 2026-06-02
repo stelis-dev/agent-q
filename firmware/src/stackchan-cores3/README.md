@@ -149,7 +149,7 @@ firmware/tools/common/test_sui_transaction_facts.sh
 firmware/tools/common/test_policy_v0.sh
 firmware/tools/stackchan-cores3/test_call_method_validation.sh
 firmware/tools/stackchan-cores3/test_method_runtime.sh
-firmware/tools/stackchan-cores3/test_method_approval_flow.sh
+firmware/tools/stackchan-cores3/test_method_signing_request_flow.sh
 firmware/tools/stackchan-cores3/test_policy_proposal_parser.sh
 firmware/tools/stackchan-cores3/test_policy_update_flow.sh
 firmware/tools/stackchan-cores3/test_policy_update_marker.sh
@@ -239,12 +239,13 @@ then verifies unsupported method rejection, invalid Sui params, approval-history
 metadata exposure, and the default-reject policy result for a valid restricted
 SUI transfer fixture.
 
-The StackChan method-approval flow test is target-specific. It compiles the
-tracked `agent_q_method_approval_flow.cpp` RAM-only state owner, then verifies
-request id, session id, method metadata, deadline, signing critical-section,
-disconnect/session-loss cancellation, stale-event rejection, and one-shot
-terminal-result ownership. The current `call_method` runtime does not enter
-this state owner.
+The StackChan method signing request flow test is target-specific. It compiles
+the tracked `agent_q_method_signing_request_flow.cpp` RAM-only state owner, then
+verifies request id, session id, method metadata, bounded signable payload
+scratch, deadline, history-durability gating before payload copy, signing
+critical-section cleanup, disconnect/session-loss cancellation, stale-event
+rejection, payload wipe, and one-shot terminal-result ownership. The current
+`call_method` runtime does not enter this state owner.
 
 The StackChan policy-proposal parser test is target-specific. It compiles the
 tracked `agent_q_policy_proposal_parser.cpp` parser with ArduinoJson and the

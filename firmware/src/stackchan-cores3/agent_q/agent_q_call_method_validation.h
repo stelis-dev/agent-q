@@ -4,13 +4,16 @@
 
 #include <ArduinoJson.h>
 
+#include "agent_q_method_limits.h"
+
 namespace agent_q {
 
 constexpr size_t kCallMethodChainMaxLength = 32;
 constexpr size_t kCallMethodNameMaxLength = 64;
 constexpr size_t kCallMethodParamsJsonMaxBytes = 600;
-constexpr size_t kSuiSignTransactionTxBytesMaxBytes = 384;
-constexpr size_t kSuiSignTransactionTxBytesMaxBase64Size = 512;
+constexpr size_t kSuiSignTransactionTxBytesMaxBytes = kAgentQSuiSignTransactionTxBytesMaxBytes;
+constexpr size_t kSuiSignTransactionTxBytesMaxBase64Size =
+    kAgentQSuiSignTransactionTxBytesMaxBase64Size;
 
 enum class CallMethodFieldValidation {
     valid,
