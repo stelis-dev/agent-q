@@ -1,9 +1,12 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { DEFAULT_POLICY_UPDATE_TIMEOUT_MS, type GatewayCore, type DeviceListResult } from "./core.js";
-import { GatewayError, toGatewayError } from "./errors.js";
-import { gatewaySuccessOutputSchemas } from "./gateway-output-schema.js";
-import { toPublicError } from "./public-error.js";
-import { isSafeDeviceId } from "./safe-text.js";
+import { DEFAULT_POLICY_UPDATE_TIMEOUT_MS, type GatewayCore, type DeviceListResult } from "@stelis/agent-q-client/core";
+import {
+  GatewayError,
+  gatewaySuccessOutputSchemas,
+  isSafeDeviceId,
+  toGatewayError,
+  toPublicError,
+} from "@stelis/agent-q-client/adapter-internal";
 
 export const DEFAULT_ADMIN_HOST = "127.0.0.1";
 export const DEFAULT_ADMIN_PORT = 8787;

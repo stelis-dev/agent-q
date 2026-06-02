@@ -241,19 +241,29 @@ specification baseline, or an affected shared invariant.
 
 Inspect `package.json` before running project commands. Do not invent scripts.
 
-This repository has a root `package.json` with npm workspaces. Gateway package
-commands also work from `packages/gateway/`.
+This repository has a root `package.json` with npm workspaces. Package-local
+commands also work from `packages/client/`, `packages/mcp/`, and
+`packages/provider/`.
 
 Current root commands:
 
 - Build Gateway: `npm run build`
 - Test Gateway: `npm test`
 
-Current Gateway package commands:
+Current client package commands:
 
-- Install: `cd packages/gateway && npm install`
-- Build: `cd packages/gateway && npm run build`
-- Test: `cd packages/gateway && npm test`
+- Build: `cd packages/client && npm run build`
+- Test: `cd packages/client && npm test`
+
+Current MCP package commands:
+
+- Build: `cd packages/mcp && npm run build`
+- Test: `cd packages/mcp && npm test`
+
+Current provider package commands:
+
+- Build: `cd packages/provider && npm run build`
+- Test: `cd packages/provider && npm test`
 
 Current common firmware helper commands:
 
@@ -405,7 +415,9 @@ specs/
   PROTOCOL.md
 
 packages/
-  gateway/
+  client/
+  mcp/
+  provider/
 
 firmware/
   README.md

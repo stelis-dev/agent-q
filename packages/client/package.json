@@ -1,13 +1,13 @@
 {
-  "name": "@stelis/agent-q",
+  "name": "@stelis/agent-q-client",
   "version": "0.0.0",
-  "description": "Local Agent-Q Gateway MCP server for USB-connected Firmware discovery and status.",
+  "description": "Device-facing Agent-Q client for USB-connected Firmware discovery, sessions, and protocol requests.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "https://github.com/stelis-dev/agent-q.git",
-    "directory": "packages/gateway"
+    "directory": "packages/client"
   },
   "main": "./dist/client.js",
   "types": "./dist/client.d.ts",
@@ -20,14 +20,23 @@
       "types": "./dist/client.d.ts",
       "import": "./dist/client.js"
     },
-    "./mcp": {
-      "types": "./dist/mcp.d.ts",
-      "import": "./dist/mcp.js"
+    "./adapter-internal": {
+      "types": "./dist/adapter-internal.d.ts",
+      "import": "./dist/adapter-internal.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol.d.ts",
+      "import": "./dist/protocol.js"
+    },
+    "./usb": {
+      "types": "./dist/usb.d.ts",
+      "import": "./dist/usb.js"
     },
     "./package.json": "./package.json"
-  },
-  "bin": {
-    "agent-q": "./dist/bin/agent-q.js"
   },
   "files": [
     "dist",
@@ -38,7 +47,6 @@
     "test": "npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
     "serialport": "13.0.0",
     "zod": "4.4.3"
   },

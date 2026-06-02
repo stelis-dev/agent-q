@@ -12,11 +12,11 @@ contract lives in `specs/PROTOCOL.md`.
 State names are defined by:
 
 - `specs/PROTOCOL.md`
-- `packages/gateway/src/safe-text.ts`
+- `packages/client/src/safe-text.ts`
 
 Gateway wire validation is implemented in:
 
-- `packages/gateway/src/protocol.ts`
+- `packages/client/src/protocol.ts`
 
 Firmware owns state storage, state transitions, state gates, physical approval,
 policy evaluation, and signing decisions.

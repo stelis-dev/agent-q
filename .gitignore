@@ -1,5 +1,6 @@
 .WORK/
 .firmware-cache/
+node_modules/
 firmware/build/
-packages/gateway/dist/
-packages/gateway/node_modules/
+packages/*/dist/
+packages/*/node_modules/

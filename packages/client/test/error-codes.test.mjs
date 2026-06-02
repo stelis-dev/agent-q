@@ -14,7 +14,7 @@ function readSrc(rel) {
   return readFileSync(fileURLToPath(new URL(`../src/${rel}`, import.meta.url)), "utf8");
 }
 
-const SRC_FILES = ["config.ts", "core.ts", "protocol.ts", "usb.ts", "mcp.ts"];
+const SRC_FILES = ["config.ts", "core.ts", "protocol.ts", "usb.ts"];
 const LITERAL_CODE = /new (?:Gateway|Config|Protocol)Error\(\s*"([a-z_]+)"/g;
 
 const producedCodes = new Set();

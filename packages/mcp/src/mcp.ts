@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
-import { createDefaultGatewayCore } from "./client.js";
+import { createDefaultGatewayCore } from "@stelis/agent-q-client";
 import {
   GatewayCore,
   MAX_IDENTIFY_DURATION_MS,
@@ -16,9 +16,14 @@ import {
   type GetPolicyResult,
   type ProposePolicyUpdateResult,
   type SetDeviceMetadataResult,
-} from "./core.js";
-import { GatewayError, toGatewayError } from "./errors.js";
+} from "@stelis/agent-q-client/core";
 import {
+  DEVICE_ID_PATTERN,
+  GATEWAY_NAME_PATTERN,
+  GatewayError,
+  MAX_LABEL_LENGTH,
+  PUBLIC_ERROR_MESSAGES,
+  PURPOSE_PATTERN,
   callMethodSuccessOutputShape,
   callMethodToolOutputShape,
   connectDeviceSuccessOutputShape,
@@ -48,8 +53,12 @@ import {
   selectDeviceToolOutputShape,
   setDeviceMetadataSuccessOutputShape,
   setDeviceMetadataToolOutputShape,
-} from "./gateway-output-schema.js";
-import { PUBLIC_ERROR_MESSAGES, normalizeErrorCode, toPublicError } from "./public-error.js";
+  isValidLabel,
+  isValidPurpose,
+  normalizeErrorCode,
+  toGatewayError,
+  toPublicError,
+} from "@stelis/agent-q-client/adapter-internal";
 import {
   CALL_METHOD_CHAIN_PATTERN,
   CALL_METHOD_NAME_PATTERN,
@@ -57,16 +66,8 @@ import {
   MAX_APPROVAL_TIMEOUT_MS,
   UINT_DECIMAL_STRING_PATTERN,
   isUint64DecimalString,
-} from "./protocol.js";
-import { MAX_SCAN_TIMEOUT_MS } from "./usb.js";
-import {
-  DEVICE_ID_PATTERN,
-  GATEWAY_NAME_PATTERN,
-  MAX_LABEL_LENGTH,
-  PURPOSE_PATTERN,
-  isValidLabel,
-  isValidPurpose,
-} from "./safe-text.js";
+} from "@stelis/agent-q-client/protocol";
+import { MAX_SCAN_TIMEOUT_MS } from "@stelis/agent-q-client/usb";
 
 // Input purpose uses the same SoT predicate as egress, so reserved ("default")
 // and prototype-sensitive ("__proto__"/"prototype"/"constructor") names are

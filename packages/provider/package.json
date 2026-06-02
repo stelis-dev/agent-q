@@ -1,0 +1,43 @@
+{
+  "name": "@stelis/agent-q-provider",
+  "version": "0.0.0",
+  "description": "Dapp-facing Agent-Q provider adapter for current device, session, read-only, and policy proposal capabilities.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stelis-dev/agent-q.git",
+    "directory": "packages/provider"
+  },
+  "main": "./dist/provider.js",
+  "types": "./dist/provider.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/provider.d.ts",
+      "import": "./dist/provider.js"
+    },
+    "./provider": {
+      "types": "./dist/provider.d.ts",
+      "import": "./dist/provider.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@stelis/agent-q-client": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.1",
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

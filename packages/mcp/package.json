@@ -1,0 +1,52 @@
+{
+  "name": "@stelis/agent-q-mcp",
+  "version": "0.0.0",
+  "description": "Agent-Q MCP server, CLI, and local Admin Page for the Agent-Q client.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stelis-dev/agent-q.git",
+    "directory": "packages/mcp"
+  },
+  "main": "./dist/mcp.js",
+  "types": "./dist/mcp.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/mcp.d.ts",
+      "import": "./dist/mcp.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "import": "./dist/mcp.js"
+    },
+    "./admin": {
+      "types": "./dist/admin.d.ts",
+      "import": "./dist/admin.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "agent-q": "./dist/bin/agent-q.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@stelis/agent-q-client": "0.0.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.1",
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

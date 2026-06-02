@@ -71,11 +71,14 @@ Agent-Q has two deployable products:
 
 ## Agent-Q Gateway
 
-Agent-Q Gateway is distributed as an npm package.
+Agent-Q Gateway is distributed as npm packages.
 
-It runs locally through `npx`, exposes stdio MCP tools for agents, serves a
-local Admin Page for humans, and communicates with Agent-Q Firmware over a
-supported transport.
+`@stelis/agent-q-client` provides the device-facing client layer: local device
+registry, USB transport, runtime session mirror, and protocol parsing and
+building. `@stelis/agent-q-mcp` provides the stdio MCP server, CLI binary, and
+local Admin Page. `@stelis/agent-q-provider` provides an application-facing
+adapter for current device, session, read-only, and policy-proposal
+capabilities. It is not signing support.
 
 Gateway does not store keys and does not make signing or policy decisions. It
 may relay requests, validate protocol shapes, and display summaries, but
@@ -159,6 +162,10 @@ Implemented:
 - A local Gateway-served Admin Page for device discovery, connection, policy
   summary, approval history, and the current reject-policy proposal template. It
   is not a policy authority.
+- An application-facing provider package for current device discovery,
+  connection, read-only session data, approval-history, and policy-update
+  proposal capabilities. It is not a signing provider and does not expose a
+  transaction signing API.
 - A common host-tested policy evaluator and default-reject runtime boundary that
   are not connected to runtime signing.
 
@@ -186,7 +193,9 @@ specs/
   PROTOCOL.md
 
 packages/
-  gateway/
+  client/
+  mcp/
+  provider/
 
 firmware/
   README.md

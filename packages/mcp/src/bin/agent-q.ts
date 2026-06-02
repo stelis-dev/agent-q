@@ -35,7 +35,7 @@ async function startGateway(gatewayArgs: string[]): Promise<void> {
     });
   };
   try {
-    const { createDefaultGatewayCore } = await import("../client.js");
+    const { createDefaultGatewayCore } = await import("@stelis/agent-q-client");
     const { DEFAULT_ADMIN_PORT, startAdminGateway } = await import("../admin.js");
     const { startStdioGateway } = await import("../mcp.js");
     const core = createDefaultGatewayCore();

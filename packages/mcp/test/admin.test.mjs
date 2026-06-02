@@ -9,7 +9,7 @@ import {
   createAdminHttpServer,
   startAdminGateway,
 } from "../dist/admin.js";
-import { GatewayError } from "../dist/errors.js";
+import { GatewayError } from "@stelis/agent-q-client/adapter-internal";
 
 const deviceId = "a508d833-5c83-4680-88bb-18aee976881e";
 
@@ -154,7 +154,7 @@ test("Admin egress boundary uses shared Gateway output schemas without importing
   const adminPath = fileURLToPath(new URL("../dist/admin.js", import.meta.url));
   const source = await readFile(adminPath, "utf8");
   assert.doesNotMatch(source, /["']\.\/mcp\.js["']/);
-  assert.match(source, /["']\.\/gateway-output-schema\.js["']/);
+  assert.match(source, /["']@stelis\/agent-q-client\/adapter-internal["']/);
 });
 
 test("Admin gateway rejects non-loopback bind hosts", async () => {

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { GatewayError } from "../dist/errors.js";
+import { GatewayError } from "@stelis/agent-q-client/adapter-internal";
 import { createGatewayMcpServer, gatewayToolDefinitions } from "../dist/mcp.js";
-import { FORBIDDEN_SECRET_FIELD_NAMES, MAX_SESSION_TTL_MS } from "../dist/protocol.js";
+import { FORBIDDEN_SECRET_FIELD_NAMES, MAX_SESSION_TTL_MS } from "@stelis/agent-q-client/protocol";
 
 const expectedToolNames = [
   "call_method",
@@ -22,6 +24,27 @@ const expectedToolNames = [
   "select_device",
   "set_device_metadata",
 ];
+
+test("MCP package metadata exposes MCP and Admin adapter entrypoints", async () => {
+  const packagePath = fileURLToPath(new URL("../package.json", import.meta.url));
+  const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
+  assert.equal(packageJson.name, "@stelis/agent-q-mcp");
+  assert.deepEqual(Object.keys(packageJson.exports).sort(), [".", "./admin", "./mcp", "./package.json"]);
+  assert.equal(packageJson.dependencies["@stelis/agent-q-client"], "0.0.0");
+  assert.deepEqual(packageJson.bin, { "agent-q": "./dist/bin/agent-q.js" });
+});
+
+test("MCP package self-reference resolves MCP and Admin adapters only", async () => {
+  const root = await import("@stelis/agent-q-mcp");
+  const mcp = await import("@stelis/agent-q-mcp/mcp");
+  const admin = await import("@stelis/agent-q-mcp/admin");
+  assert.equal(typeof root.createGatewayMcpServer, "function");
+  assert.equal(typeof mcp.createGatewayMcpServer, "function");
+  assert.equal(typeof admin.createAdminHttpServer, "function");
+  await assert.rejects(() => import("@stelis/agent-q-mcp/provider"), {
+    code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
+  });
+});
 
 const noOpCore = {
   async scanDevices() {

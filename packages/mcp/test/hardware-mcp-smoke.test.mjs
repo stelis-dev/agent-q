@@ -34,15 +34,15 @@ import { join } from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { ConfigStore } from "../dist/config.js";
-import { GatewayCore } from "../dist/core.js";
+import { ConfigStore } from "@stelis/agent-q-client/adapter-internal";
+import { GatewayCore } from "@stelis/agent-q-client/core";
 import { createGatewayMcpServer } from "../dist/mcp.js";
 import {
   FORBIDDEN_SECRET_FIELD_NAMES,
   MAX_APPROVAL_HISTORY_RECORDS,
   MAX_POLICY_RULE_COUNT,
-} from "../dist/protocol.js";
-import { SerialPortUsbDriver } from "../dist/usb.js";
+} from "@stelis/agent-q-client/protocol";
+import { SerialPortUsbDriver } from "@stelis/agent-q-client/usb";
 
 const hardwareEnabled = process.env.AGENTQ_HW === "1";
 const policyUpdateHardwareEnabled = process.env.AGENTQ_HW_POLICY_UPDATE === "1";
