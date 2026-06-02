@@ -32,6 +32,7 @@ for required in \
   "${SIGNING_CORE}/lib/monocypher/monocypher.c" \
   "${SIGNING_CORE}/byte_conversions.c" \
   "${SIGNING_CORE}/key_management.c" \
+  "${AGENT_Q_DIR}/agent_q_sui_key_derivation.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_account.cpp"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -86,6 +87,22 @@ const Vector kVectors[] = {
 };
 
 }  // namespace
+
+namespace agent_q {
+
+void wipe_sensitive_buffer(void* data, size_t size)
+{
+    if (data == nullptr) {
+        return;
+    }
+    volatile uint8_t* cursor = static_cast<volatile uint8_t*>(data);
+    while (size > 0) {
+        *cursor++ = 0;
+        --size;
+    }
+}
+
+}  // namespace agent_q
 
 int main()
 {
@@ -158,6 +175,8 @@ CPP
   -c "${SIGNING_CORE}/key_management.c" -o "${TMP_DIR}/key_management.o"
 
 "${CXX_BIN}" -std=c++17 -I"${SIGNING_CORE}" -I"${AGENT_Q_DIR}" \
+  -c "${AGENT_Q_DIR}/agent_q_sui_key_derivation.cpp" -o "${TMP_DIR}/agent_q_sui_key_derivation.o"
+"${CXX_BIN}" -std=c++17 -I"${SIGNING_CORE}" -I"${AGENT_Q_DIR}" \
   -c "${AGENT_Q_DIR}/agent_q_sui_account.cpp" -o "${TMP_DIR}/agent_q_sui_account.o"
 "${CXX_BIN}" -std=c++17 -I"${SIGNING_CORE}" -I"${AGENT_Q_DIR}" \
   -c "${TMP_DIR}/sui_account_vector_test.cpp" -o "${TMP_DIR}/sui_account_vector_test.o"
@@ -166,6 +185,7 @@ CPP
   "${TMP_DIR}/monocypher.o" \
   "${TMP_DIR}/byte_conversions.o" \
   "${TMP_DIR}/key_management.o" \
+  "${TMP_DIR}/agent_q_sui_key_derivation.o" \
   "${TMP_DIR}/agent_q_sui_account.o" \
   "${TMP_DIR}/sui_account_vector_test.o" \
   -o "${TMP_DIR}/sui_account_vector_test"

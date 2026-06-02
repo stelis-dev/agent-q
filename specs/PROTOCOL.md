@@ -717,8 +717,8 @@ Rules:
 - A missing, inactive, or mismatched session returns `invalid_session`.
 - The current StackChan CoreS3 target advertises Sui Ed25519 account identity
   only: account 0 at `m/44'/784'/0'/0'/0'`. `methods` is empty because
-  no concrete `call_method` signing method, physical approval integration, or
-  signing implementation exists.
+  no concrete `call_method` signing method, physical approval integration,
+  method-result schema, or approval-history path is connected to signing.
 - A non-empty `methods` list is a Firmware-authored availability claim. Firmware
   must keep it empty until the advertised method has a connected runtime
   implementation, method-result schema, policy-action handling, required

@@ -168,6 +168,7 @@ firmware/tools/stackchan-cores3/test_usb_session_loss.sh
 firmware/tools/stackchan-cores3/test_ui_panel_cleanup.sh
 firmware/tools/stackchan-cores3/test_connect_settings.sh
 firmware/tools/stackchan-cores3/test_session.sh
+firmware/tools/stackchan-cores3/test_sui_signing_service.sh
 firmware/tools/stackchan-cores3/test_sui_account_vectors.sh
 ```
 
@@ -183,8 +184,15 @@ The BIP-39 vector test is a host-side check. It compiles the tracked
 generated wordlist source from the pinned BIP-39 English wordlist.
 
 The Sui account vector test is also host-side. It compiles the tracked
-`agent_q_sui_account.cpp` derivation module with the pinned MicroSui signing
-source and checks known Sui SDK address/public-key vectors.
+`agent_q_sui_key_derivation.cpp` and `agent_q_sui_account.cpp` derivation
+modules with the pinned MicroSui signing source and checks known Sui SDK
+address/public-key vectors.
+
+The Sui signing service test is host-side. It compiles the internal
+`agent_q_sui_signing_service.cpp` substrate with the pinned MicroSui signing
+source and verifies the deterministic Sui transaction signature vector,
+signature verification, invalid-input output wiping, and the stored-root
+signing boundary with host stubs. This is not a protocol signing test.
 
 The Sui transaction facts parser test is a common host-side check. It compiles
 `firmware/src/common/agent_q/sui` and verifies tracked BCS fixtures for
