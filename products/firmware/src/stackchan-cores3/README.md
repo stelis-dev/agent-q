@@ -159,6 +159,7 @@ tools/firmware/stackchan-cores3/test_provisioning_state_store.sh
 tools/firmware/stackchan-cores3/test_local_auth.sh
 tools/firmware/stackchan-cores3/test_local_auth_worker.sh
 tools/firmware/stackchan-cores3/test_local_pin_auth.sh
+tools/firmware/stackchan-cores3/test_connect_approval.sh
 tools/firmware/stackchan-cores3/test_protocol_pin_approval.sh
 tools/firmware/stackchan-cores3/test_connect_settings.sh
 tools/firmware/stackchan-cores3/test_session.sh

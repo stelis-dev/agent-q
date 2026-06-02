@@ -11,6 +11,7 @@
 #include "agent_q_bip39.h"
 #include "agent_q_bip39_wordlist.h"
 #include "agent_q_call_method_validation.h"
+#include "agent_q_connect_approval.h"
 #include "agent_q_connect_settings.h"
 #include "agent_q_drawing_surface.h"
 #include "agent_q_entropy.h"
@@ -55,6 +56,7 @@ namespace {
 using AgentQUiPanelKind = agent_q::AgentQUiPanelKind;
 using AgentQMessageKind = agent_q::AgentQMessageKind;
 using AgentQUiMode = agent_q::AgentQUiMode;
+using ConnectApprovalChoice = agent_q::AgentQConnectApprovalChoice;
 using LocalPinAuthPurpose = agent_q::AgentQLocalPinAuthPurpose;
 using LocalPinAuthStage = agent_q::AgentQLocalPinAuthStage;
 using ProvisioningFlowGenerateResult = agent_q::AgentQProvisioningFlowGenerateResult;
@@ -97,12 +99,6 @@ constexpr int kSettingsTouchEntryWidth = 64;
 constexpr int kSettingsTouchEntryHeight = 56;
 constexpr uint32_t kAgentQResultDisplayMs = 1800;
 
-enum class PendingChoice {
-    none,
-    yes,
-    no,
-};
-
 enum class AgentQUiEventKind {
     panel_deleted,
     setup_requested,
@@ -141,42 +137,6 @@ struct AgentQUiEvent {
     char letter = '\0';
     uint8_t slot = 0;
     uint16_t word_index = 0;
-};
-
-// Firmware-owned state is kept separate from StackChan-owned avatar/app state.
-// Agent-Q records protocol/UI ownership here and only stores StackChan
-// references for temporary objects it created and must remove.
-struct ConnectDecisionState {
-    char id[kMaxRequestIdSize] = {};
-    char gateway_name[kGatewayNameSize] = {};
-    bool active = false;
-    bool touch_armed = false;
-    TickType_t deadline = 0;
-    PendingChoice choice = PendingChoice::none;
-
-    bool awaiting_choice() const
-    {
-        return active && choice == PendingChoice::none;
-    }
-
-    void clear()
-    {
-        id[0] = '\0';
-        gateway_name[0] = '\0';
-        active = false;
-        touch_armed = false;
-        deadline = 0;
-        choice = PendingChoice::none;
-    }
-
-    void begin_connect(const char* request_id, const char* request_gateway_name, uint32_t timeout_ms)
-    {
-        clear();
-        strlcpy(id, request_id, sizeof(id));
-        strlcpy(gateway_name, request_gateway_name, sizeof(gateway_name));
-        active = true;
-        deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
-    }
 };
 
 struct IdentificationState {
@@ -218,10 +178,16 @@ ProvisioningRuntimeState g_provisioning_state = ProvisioningRuntimeState::unprov
 static_assert(
     kMaxRequestIdSize == agent_q::kAgentQProtocolPinRequestIdSize,
     "Protocol PIN approval request-id storage must match USB request-id storage.");
+static_assert(
+    kMaxRequestIdSize == agent_q::kAgentQConnectApprovalRequestIdSize,
+    "Connect approval request-id storage must match USB request-id storage.");
+static_assert(
+    kGatewayNameSize == agent_q::kAgentQConnectApprovalGatewayNameSize,
+    "Connect approval gateway-name storage must match USB gateway-name storage.");
 
-ConnectDecisionState g_connect_decision;
 IdentificationState g_identification;
 LocalSettingsTouchState g_settings_touch;
+bool g_connect_decision_touch_armed = false;
 bool g_usb_ready = false;
 bool g_usb_host_connected_known = false;
 bool g_usb_host_connected = false;
@@ -411,7 +377,7 @@ const char* current_device_state()
     if (agent_q::persistent_material_consistency_error_active()) {
         return "error";
     }
-    if (g_connect_decision.active || agent_q::protocol_pin_approval_active()) {
+    if (agent_q::connect_approval_active() || agent_q::protocol_pin_approval_active()) {
         return "awaiting_approval";
     }
     const agent_q::AgentQLocalResetSnapshot reset =
@@ -791,7 +757,7 @@ bool usb_host_loss_relevant()
     const agent_q::AgentQProtocolPinApprovalSnapshot protocol_pin =
         agent_q::protocol_pin_approval_snapshot();
     return agent_q::session_active() ||
-           g_connect_decision.active ||
+           agent_q::connect_approval_active() ||
            protocol_pin.active ||
            (pin_auth.flow_active &&
             (pin_auth.purpose == LocalPinAuthPurpose::connect ||
@@ -810,7 +776,7 @@ void show_usb_disconnected_message()
 void clear_usb_session_state_for_host_loss(bool notify)
 {
     const bool had_session = agent_q::session_active();
-    const bool had_connect_decision = g_connect_decision.active;
+    const bool had_connect_decision = agent_q::connect_approval_active();
     const agent_q::AgentQProtocolPinApprovalSnapshot protocol_pin =
         agent_q::protocol_pin_approval_snapshot();
     const bool had_protocol_connect_pin =
@@ -1042,7 +1008,7 @@ bool local_setup_start_allowed()
            !agent_q::provisioning_flow_active() &&
            !agent_q::local_pin_auth_flow_active() &&
            !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
-           !g_connect_decision.active &&
+           !agent_q::connect_approval_active() &&
            !agent_q::protocol_pin_approval_active() &&
            welcome_visible;
 }
@@ -1081,7 +1047,7 @@ bool local_settings_touch_entry_candidate_allowed()
 {
     return g_provisioning_state == ProvisioningRuntimeState::provisioned &&
            !agent_q::persistent_material_consistency_error_active() &&
-           !g_connect_decision.active &&
+           !agent_q::connect_approval_active() &&
            !agent_q::protocol_pin_approval_active() &&
            !g_identification.active &&
            !agent_q::provisioning_flow_active() &&
@@ -1092,7 +1058,7 @@ bool local_settings_touch_entry_candidate_allowed()
 
 bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_settings_menu = false)
 {
-    if (g_connect_decision.active) {
+    if (agent_q::connect_approval_active()) {
         write_error_response(id, "busy", "Device is awaiting local input.");
         return true;
     }
@@ -1265,9 +1231,9 @@ bool recovery_phrase_backup_confirmation_ready()
     return agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recovery_phrase_displayed);
 }
 
-void enqueue_connect_decision_choice(PendingChoice choice)
+void enqueue_connect_decision_choice(ConnectApprovalChoice choice)
 {
-    if (choice == PendingChoice::none || g_connect_decision_choice_queue == nullptr) {
+    if (choice == ConnectApprovalChoice::none || g_connect_decision_choice_queue == nullptr) {
         return;
     }
     if (xQueueSend(g_connect_decision_choice_queue, &choice, 0) != pdTRUE) {
@@ -1291,12 +1257,12 @@ void enqueue_ui_event(AgentQUiEventKind kind, AgentQUiPanelKind panel_kind = Age
 
 void on_yes_clicked(lv_event_t*)
 {
-    enqueue_connect_decision_choice(PendingChoice::yes);
+    enqueue_connect_decision_choice(ConnectApprovalChoice::approved);
 }
 
 void on_no_clicked(lv_event_t*)
 {
-    enqueue_connect_decision_choice(PendingChoice::no);
+    enqueue_connect_decision_choice(ConnectApprovalChoice::rejected);
 }
 
 void on_setup_clicked(lv_event_t*)
@@ -1514,7 +1480,7 @@ bool provisioning_welcome_available()
 
     return g_provisioning_state == ProvisioningRuntimeState::unprovisioned &&
            !agent_q::persistent_material_consistency_error_active() &&
-           !g_connect_decision.active &&
+           !agent_q::connect_approval_active() &&
            !agent_q::protocol_pin_approval_active() &&
            !g_identification.active &&
            !agent_q::provisioning_flow_active() &&
@@ -1639,7 +1605,8 @@ bool show_avatar_decision(const char* message)
 
 void clear_connect_decision_state()
 {
-    g_connect_decision.clear();
+    agent_q::connect_approval_clear();
+    g_connect_decision_touch_armed = false;
     g_identification.clear();
 }
 
@@ -1674,7 +1641,7 @@ bool setup_choice_action_allowed()
 {
     if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::setup_choice) ||
         !agent_q::provisioning_flow_setup_choice_action_allowed(xTaskGetTickCount()) ||
-        g_connect_decision.active ||
+        agent_q::connect_approval_active() ||
         agent_q::protocol_pin_approval_active() ||
         agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active) {
         return false;
@@ -1978,7 +1945,7 @@ void commit_local_reset_if_ready()
 void start_local_settings_from_touch()
 {
     if (!provisioned_material_ready() ||
-        g_connect_decision.active ||
+        agent_q::connect_approval_active() ||
         agent_q::protocol_pin_approval_active() ||
         g_identification.active ||
         agent_q::provisioning_flow_active() ||
@@ -2033,7 +2000,7 @@ void close_local_settings_from_ui()
 void show_persistent_error_recovery_if_needed()
 {
     if (!agent_q::persistent_material_consistency_error_active() ||
-        g_connect_decision.active ||
+        agent_q::connect_approval_active() ||
         agent_q::protocol_pin_approval_active() ||
         g_identification.active ||
         agent_q::provisioning_flow_active() ||
@@ -2066,7 +2033,7 @@ void start_error_recovery_from_ui()
         agent_q::local_reset_snapshot(xTaskGetTickCount());
     if (!agent_q::persistent_material_consistency_error_active() ||
         reset.flow_active ||
-        g_connect_decision.active ||
+        agent_q::connect_approval_active() ||
         agent_q::protocol_pin_approval_active() ||
         g_identification.active ||
         agent_q::provisioning_flow_active() ||
@@ -3104,16 +3071,16 @@ void clear_local_pin_auth_if_needed()
 
 void poll_touch_fallback()
 {
-    if (!g_connect_decision.awaiting_choice()) {
+    if (!agent_q::connect_approval_awaiting_choice()) {
         return;
     }
 
     const auto touch = hal_bridge::get_touch_point();
     if (touch.num == 0) {
-        g_connect_decision.touch_armed = true;
+        g_connect_decision_touch_armed = true;
         return;
     }
-    if (!g_connect_decision.touch_armed) {
+    if (!g_connect_decision_touch_armed) {
         return;
     }
 
@@ -3137,8 +3104,11 @@ void poll_touch_fallback()
         return;
     }
 
-    g_connect_decision.choice = relative_x < panel_width / 2 ? PendingChoice::no : PendingChoice::yes;
-    g_connect_decision.touch_armed = false;
+    agent_q::connect_approval_choose(
+        relative_x < panel_width / 2
+            ? ConnectApprovalChoice::rejected
+            : ConnectApprovalChoice::approved);
+    g_connect_decision_touch_armed = false;
 }
 
 void poll_local_settings_touch_entry()
@@ -3179,11 +3149,11 @@ void drain_connect_decision_choice_events()
         return;
     }
 
-    PendingChoice choice = PendingChoice::none;
+    ConnectApprovalChoice choice = ConnectApprovalChoice::none;
     while (xQueueReceive(g_connect_decision_choice_queue, &choice, 0) == pdTRUE) {
-        if (g_connect_decision.awaiting_choice()) {
-            g_connect_decision.choice = choice;
-            g_connect_decision.touch_armed = false;
+        if (agent_q::connect_approval_awaiting_choice()) {
+            agent_q::connect_approval_choose(choice);
+            g_connect_decision_touch_armed = false;
         }
     }
 }
@@ -3596,7 +3566,7 @@ void drain_ui_events()
 
 void ensure_connect_decision_ui()
 {
-    if (!g_connect_decision.awaiting_choice()) {
+    if (!agent_q::connect_approval_awaiting_choice()) {
         return;
     }
 
@@ -3610,8 +3580,10 @@ void ensure_connect_decision_ui()
         return;
     }
 
-    show_connect_decision(g_connect_decision.gateway_name);
-    ESP_LOGW(kTag, "connect decision UI recovered: id=%s", g_connect_decision.id);
+    const agent_q::AgentQConnectApprovalSnapshot approval =
+        agent_q::connect_approval_snapshot();
+    show_connect_decision(approval.gateway_name);
+    ESP_LOGW(kTag, "connect decision UI recovered: id=%s", approval.request_id);
 }
 
 void send_connect_decision_response_if_needed()
@@ -3619,38 +3591,43 @@ void send_connect_decision_response_if_needed()
     drain_connect_decision_choice_events();
     poll_touch_fallback();
 
-    if (!g_connect_decision.active || g_connect_decision.choice == PendingChoice::none) {
-        if (g_connect_decision.active && g_connect_decision.deadline != 0 &&
-            tick_reached(g_connect_decision.deadline)) {
+    agent_q::AgentQConnectApprovalSnapshot approval =
+        agent_q::connect_approval_snapshot();
+    if (!approval.active || approval.choice == ConnectApprovalChoice::none) {
+        if (agent_q::connect_approval_deadline_reached(xTaskGetTickCount())) {
+            char request_id[kMaxRequestIdSize] = {};
+            agent_q::connect_approval_request_id(request_id, sizeof(request_id));
             // Device leaves awaiting_approval before reporting the result.
-            g_connect_decision.active = false;
-            write_connect_rejected_response(g_connect_decision.id, "timeout", "Connection approval timed out.");
-            ESP_LOGI(kTag, "connect timed out: id=%s", g_connect_decision.id);
+            agent_q::connect_approval_clear();
+            write_connect_rejected_response(request_id, "timeout", "Connection approval timed out.");
+            ESP_LOGI(kTag, "connect timed out: id=%s", request_id);
             show_result_and_clear_connect_decision("Connection timed out", AgentQMessageKind::timeout);
         }
         return;
     }
 
-    const bool approved = g_connect_decision.choice == PendingChoice::yes;
-    g_connect_decision.active = false;
+    const bool approved = approval.choice == ConnectApprovalChoice::approved;
+    char request_id[kMaxRequestIdSize] = {};
+    agent_q::connect_approval_request_id(request_id, sizeof(request_id));
+    agent_q::connect_approval_clear();
     if (approved) {
         if (!replace_active_session()) {
-            write_error_response(g_connect_decision.id, "rng_error", "Could not create session id.");
-            ESP_LOGE(kTag, "connect could not create session id: id=%s", g_connect_decision.id);
+            write_error_response(request_id, "rng_error", "Could not create session id.");
+            ESP_LOGE(kTag, "connect could not create session id: id=%s", request_id);
             show_result_and_clear_connect_decision("RNG error", AgentQMessageKind::error);
             return;
         }
-        if (write_connect_approved_response(g_connect_decision.id)) {
-            ESP_LOGI(kTag, "connect approved: id=%s", g_connect_decision.id);
+        if (write_connect_approved_response(request_id)) {
+            ESP_LOGI(kTag, "connect approved: id=%s", request_id);
         } else {
-            log_response_write_failure("connect_result", g_connect_decision.id);
+            log_response_write_failure("connect_result", request_id);
         }
         show_result_and_clear_connect_decision("Connected", AgentQMessageKind::success);
     } else {
-        if (write_connect_rejected_response(g_connect_decision.id, "rejected", "Connection rejected.")) {
-            ESP_LOGI(kTag, "connect rejected: id=%s", g_connect_decision.id);
+        if (write_connect_rejected_response(request_id, "rejected", "Connection rejected.")) {
+            ESP_LOGI(kTag, "connect rejected: id=%s", request_id);
         } else {
-            log_response_write_failure("connect_result", g_connect_decision.id);
+            log_response_write_failure("connect_result", request_id);
         }
         show_result_and_clear_connect_decision("Connection rejected", AgentQMessageKind::rejected);
     }
@@ -3759,9 +3736,14 @@ void handle_line(const char* line)
             return;
         }
 
-        g_connect_decision.begin_connect(id, gateway_name, approval_timeout_ms);
-        show_connect_decision(g_connect_decision.gateway_name);
-        ESP_LOGI(kTag, "connect waiting for YES/NO: id=%s gateway=%s", id, g_connect_decision.gateway_name);
+        const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(approval_timeout_ms);
+        if (!agent_q::connect_approval_begin(id, gateway_name, deadline)) {
+            write_connect_rejected_response(id, "invalid_state", "Connect is unavailable.");
+            agent_q::avatar_overlay_show_message("Connect unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
+        }
+        show_connect_decision(gateway_name);
+        ESP_LOGI(kTag, "connect waiting for YES/NO: id=%s gateway=%s", id, gateway_name);
         return;
     }
 
@@ -4155,12 +4137,13 @@ void init_usb_request_server()
     if (!agent_q::local_auth_worker_init()) {
         ESP_LOGE(kTag, "Local auth worker init failed");
     }
-    g_connect_decision.clear();
+    agent_q::connect_approval_clear();
+    g_connect_decision_touch_armed = false;
     g_identification.clear();
     wipe_setup_scratch("usb request server init");
     wipe_local_reset_scratch("usb request server init");
     if (g_connect_decision_choice_queue == nullptr) {
-        g_connect_decision_choice_queue = xQueueCreate(4, sizeof(PendingChoice));
+        g_connect_decision_choice_queue = xQueueCreate(4, sizeof(ConnectApprovalChoice));
         if (g_connect_decision_choice_queue == nullptr) {
             ESP_LOGE(kTag, "Pending choice queue create failed");
         }
