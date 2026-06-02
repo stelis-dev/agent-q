@@ -483,6 +483,8 @@ Current verification expectations for this target:
 - run `tools/firmware/stackchan-cores3/test_local_pin_auth.sh` to check local
   PIN authorization state transitions, including lockout release and retry
   deadline refresh;
+- run `tools/firmware/stackchan-cores3/test_protocol_pin_approval.sh` to check
+  the protocol-backed local PIN approval request/session/deadline state owner;
 - run `tools/firmware/stackchan-cores3/test_local_reset.sh` to check local reset
   and error-state erase recovery state transitions, reset-pending marker
   behavior, destructive wipe orchestration, and failure cleanup against host
