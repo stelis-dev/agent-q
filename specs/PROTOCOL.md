@@ -722,7 +722,8 @@ Rules:
 - A non-empty `methods` list is a Firmware-authored availability claim. Firmware
   must keep it empty until the advertised method has a connected runtime
   implementation, method-result schema, policy-action handling, required
-  approval behavior, required history behavior, and Gateway parser support.
+  approval behavior, required history behavior, Gateway parser/output support,
+  MCP output support, and provider support for the same method boundary.
 - Gateway validates the response strictly, rejects unknown chains, unsupported
   account schemes or derivation paths, non-empty/unknown method lists,
   secret-like fields, and any unexpected `sessionId` in the response. Gateway
@@ -1057,19 +1058,84 @@ Current method result status:
 
 - `rejected`
 
-Designed future method result statuses, not accepted by the current skeleton
+Designed future Sui signing response, not accepted by the current skeleton
 parser:
 
-- `approved`
-- `requires_physical_approval`
-- `timed_out`
-- `error`
+```json
+{
+  "id": "req_006",
+  "version": 1,
+  "type": "method_result",
+  "status": "approved",
+  "chain": "sui",
+  "method": "sign_transaction",
+  "signature": "base64-sui-signature-envelope"
+}
+```
 
-Accepting any status beyond `rejected` requires updating the wire schema,
-Gateway parser and output schemas, Firmware runtime handling, approval-history
-metadata, and capability advertisement together. Gateway, MCP, Admin, and
-provider adapters must not treat parser recognition of `call_method` or account
-identity as signing readiness.
+The `signature` value is the Sui Ed25519 signature envelope as base64:
+one scheme byte, 64 signature bytes, and 32 public-key bytes. It is the only
+signing material a future approved response may return. Raw `txBytes`, decoded
+transaction internals, mnemonic text, root material, private seed, private key,
+session id, and request scratch must not appear in a method result.
+
+Physical approval is Firmware-owned pending state, not a method-result status.
+A future `ask` policy path must keep the original request pending until device
+approval, rejection, timeout, disconnect, session loss, or UI failure reaches a
+terminal result. Firmware must persist the required approval-history record
+before returning an approved signature. If that required history write fails,
+Firmware must not return the signature; it must wipe signing scratch and fail
+closed with the protocol error defined for that terminal failure.
+
+An approved signing implementation must use this terminal sequence:
+
+1. finalize the Firmware-owned policy or physical-approval decision and build
+   bounded approval-history metadata without creating a signature;
+2. persist the required approval-history record;
+3. create the signature only in volatile scratch after the history record is
+   durable;
+4. write the approved `method_result` response;
+5. wipe decoded transaction scratch, signing input, and signature scratch.
+
+If the session ends, the transport closes, or a matching `disconnect` cancels
+the request before the required history record is durable, Firmware must not
+sign and must not store a signing decision record. If the session or transport
+is lost after the required history record is durable but before or during
+response write, Firmware must wipe signing scratch, must not keep a replayable
+signature or pending request, and must treat the original request as no longer
+deliverable. The durable approval-history record remains a decision record; it
+is not proof that Gateway received a signature. Gateway must reconnect and
+submit a new signing request instead of relying on Firmware to replay a stored
+signature.
+
+Planned signing terminal outcomes must preserve this mapping before any signing
+method is advertised:
+
+| Terminal outcome | Protocol response | Approval-history record | Signature allowed? |
+|---|---|---|---:|
+| Policy rejects before signing | `method_result` with `status: "rejected"` and `error.code: "policy_rejected"` | `eventKind: "method_decision"`, `decisionKind: "policy_rejected"`, `confirmationKind: "policy"` | No |
+| Policy permits automatic signing | `method_result` with `status: "approved"` | `eventKind: "method_decision"`, `decisionKind: "policy_approved"`, `confirmationKind: "policy"` | Yes, only after the record is durable |
+| User approves a required physical prompt | `method_result` with `status: "approved"` | `eventKind: "method_decision"`, `decisionKind: "user_approved"`, `confirmationKind: "physical_confirm"` | Yes, only after the record is durable |
+| User rejects a required physical prompt | `method_result` with `status: "rejected"` and `error.code: "user_rejected"` | `eventKind: "method_decision"`, `decisionKind: "user_rejected"`, `confirmationKind: "physical_confirm"` | No |
+| Required physical prompt times out | `method_result` with `status: "rejected"` and `error.code: "user_timeout"` | `eventKind: "method_decision"`, `decisionKind: "user_timeout"`, `confirmationKind: "physical_confirm"` | No |
+| Firmware cannot complete method execution after policy allows it | `method_result` with `status: "rejected"` and `error.code: "method_error"`, unless a top-level protocol error is more specific | `eventKind: "method_decision"`, `decisionKind: "method_error"`, confirmation kind matching the last completed approval gate | No |
+| Required approval-history write fails or is rate-limited | top-level `history_error` | No new record | No |
+| Session ends, disconnects, or no longer matches before signing completes | matching lifecycle response or top-level `invalid_session` for the original request | No new signing record | No |
+
+Every signing approval-history record must include bounded terminal metadata:
+`chain`, `method`, `reasonCode`, `payloadDigest`, `policyHash`, and `ruleRef`.
+It must not include raw request bytes, decoded transaction internals, session
+ids, request ids, Gateway names, PINs, root material, private material, or full
+policy documents. If the terminal response shape, record shape, or error-code
+set is not implemented for an outcome, that outcome must remain unavailable and
+the method must not be advertised.
+
+Accepting `status: "approved"` requires updating the wire schema, Gateway
+parser and output schemas, Firmware runtime handling, approval-history metadata,
+policy `ask`/`sign` action handling, MCP output schema, provider API, and
+capability advertisement together.
+Gateway, MCP, Admin, and provider adapters must not treat parser recognition of
+`call_method` or account identity as signing readiness.
 
 ## Admin Methods
 

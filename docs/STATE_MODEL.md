@@ -112,6 +112,7 @@ hardware and must be documented in each target's `SPEC.md`.
 | Local PIN authorization state | connect/settings/policy-update/reset PIN entry purpose, verification stage, timeout, RAM-only lockout | Firmware | Yes |
 | Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or connect PIN approval; timeout; requested action | Firmware | Yes |
 | Pending policy update state | validated policy proposal summary, policy hash, approval deadline, commit stage | Firmware | Yes |
+| Planned pending method approval state | signing request id, session id, chain/method, transaction summary or digest, policy decision, approval deadline, and signing cleanup stage | Firmware | Yes |
 | Runtime session state | active protocol session id and link-bound cleanup state | Firmware; Gateway mirrors its own client session state in RAM and clears that mirror when Firmware rejects it or live USB scan no longer observes the device | Yes |
 | Target-local display state | screen on/off, brightness, screensaver replacement | Firmware target display module | No |
 | Target-local posture state | servo position, haptics, LEDs, temporary expression feedback | Firmware target UI/motion module | No |
@@ -309,6 +310,80 @@ stage, cleanup, and rollback behavior.
 Firmware must reject policy actions that the current runtime cannot enforce.
 Unsupported `ask` or `sign` rules are not stored as dormant future behavior
 unless a separate disabled-draft model is specified and approved.
+
+#### Planned Signing Method Approval
+
+The current StackChan CoreS3 source does not implement a signing approval
+pending state. Sui `sign_transaction` remains a policy-decision smoke path that
+returns only rejected method results and is not advertised in
+`get_capabilities`.
+
+Before a signing method can be advertised, Firmware must add an explicit
+method-approval pending state under `provisioned`. That state is owned by
+Firmware and is not a protocol state setter. Gateway, MCP, Admin Page, and
+provider calls may submit a bounded `call_method` request, but they cannot
+approve, reject, sign, or force a state transition.
+
+Required state ownership:
+
+- persistent state: root material, active policy, approval history, and session
+  consistency remain Firmware-owned;
+- volatile sensitive scratch: decoded transaction facts, signing input, and any
+  signature buffer remain Firmware-owned and must be wiped on every non-approved
+  terminal path;
+- pending approval state: original request id, active session id, chain/method,
+  payload digest or transaction summary, policy hash, matched rule reference,
+  policy decision, deadline, and cleanup stage remain Firmware-owned;
+- UI state: a display prompt may mirror the pending approval state, but panel or
+  modal lifetime is not the source of truth;
+- response state: the USB response writer emits only the terminal protocol
+  response selected by the Firmware-owned method approval state.
+
+Allowed while a signing approval is pending:
+
+- `get_status`;
+- matching `disconnect` as cancellation before any signing critical section
+  starts; if the signing critical section has started, Firmware may return
+  `busy` instead.
+
+Rejected while a signing approval is pending:
+
+- `identify_device`, because it would replace or obscure the required local
+  approval prompt;
+- `connect`;
+- `get_capabilities`;
+- `get_accounts`;
+- `get_policy`;
+- `get_approval_history`;
+- nested `call_method`;
+- `propose_policy_update`;
+- host-triggered reset, debug, import, or state-changing shortcuts.
+
+Terminal behavior:
+
+- policy rejection persists a method-decision history record and returns a
+  rejected `method_result`;
+- policy-approved automatic signing, if implemented, may return an approved
+  `method_result` only after the required method-decision history record is
+  durable;
+- user approval may return an approved `method_result` only after the required
+  physical-confirm history record is durable;
+- user rejection, timeout, session loss, disconnect, UI failure, method failure,
+  or history failure must not return a signature;
+- required-history failure returns the protocol history failure instead of a
+  `method_result` and wipes signing scratch;
+- session loss or disconnect before signing completes cancels the pending
+  approval and terminates the original request without signing;
+- if the required history record is durable but response delivery fails, the
+  record remains decision metadata, Firmware wipes signature scratch, and the
+  request is not replayed.
+
+Opening `get_capabilities.chains[].methods` for a signing method requires the
+Firmware runtime, method approval state owner, policy `ask`/`sign` handling,
+approved method-result schema, required approval-history records, Gateway parser
+and output schemas, MCP output, provider API, and target verification to be
+implemented for the same method boundary. Parser acceptance alone is not
+signing readiness.
 
 ### `error`
 
