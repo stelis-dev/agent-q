@@ -719,6 +719,10 @@ Rules:
   only: account 0 at `m/44'/784'/0'/0'/0'`. `methods` is empty because
   no concrete `call_method` signing method, physical approval integration, or
   signing implementation exists.
+- A non-empty `methods` list is a Firmware-authored availability claim. Firmware
+  must keep it empty until the advertised method has a connected runtime
+  implementation, method-result schema, policy-action handling, required
+  approval behavior, required history behavior, and Gateway parser support.
 - Gateway validates the response strictly, rejects unknown chains, unsupported
   account schemes or derivation paths, non-empty/unknown method lists,
   secret-like fields, and any unexpected `sessionId` in the response. Gateway
@@ -1060,6 +1064,12 @@ parser:
 - `requires_physical_approval`
 - `timed_out`
 - `error`
+
+Accepting any status beyond `rejected` requires updating the wire schema,
+Gateway parser and output schemas, Firmware runtime handling, approval-history
+metadata, and capability advertisement together. Gateway, MCP, Admin, and
+provider adapters must not treat parser recognition of `call_method` or account
+identity as signing readiness.
 
 ## Admin Methods
 

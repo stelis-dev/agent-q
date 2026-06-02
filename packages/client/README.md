@@ -32,7 +32,9 @@ and active policy commits.
 - `proposePolicyUpdate` submits a bounded proposal to Firmware. Firmware
   validates, requires device-local approval, commits policy, and records the
   terminal result.
-- Current StackChan CoreS3 capabilities do not advertise signing methods.
+- Current StackChan CoreS3 capabilities do not advertise signing methods. The
+  client parser currently accepts capability responses with an empty `methods`
+  list and `call_method` responses with rejected method results only.
 
 ## Development
 

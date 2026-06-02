@@ -34,6 +34,14 @@ device-local approval, and active policy commits.
 validates the proposal, requires device-local approval, commits the active
 policy, and records the terminal result. It is not a direct policy setter.
 
+## Signing Boundary
+
+The current provider API has no signing method. Applications must not infer
+signing availability from device discovery, connection, public accounts, or
+policy summaries. Current StackChan CoreS3 capability responses report Sui
+account identity with an empty `methods` list, and the provider does not expose
+`call_method`.
+
 ## Development
 
 From the repository root:

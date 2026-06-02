@@ -110,7 +110,11 @@ Designed but not implemented (do not treat as present):
 - USER_PROFILE policy storage and policy update authorization.
 - Signing methods inside `call_method`. The `call_method` runtime recognizes Sui
   `sign_transaction` only for rejected policy-decision smoke; it does not sign,
-  advertise the method, or trigger approval UI.
+  advertise the method, or trigger approval UI. A signing method is present only
+  when Firmware advertises it in `get_capabilities`, the runtime can produce the
+  corresponding method result, policy `ask` or `sign` actions are enforceable
+  for that method, required approval-history records are defined, and Gateway
+  parser/output schemas accept that exact shape.
 - Full Admin policy editing beyond the current reject-policy proposal template.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.
 - Secure Boot, Flash Encryption, and NVS Encryption setup flow.
@@ -480,9 +484,10 @@ Enforcement today:
 - Concrete signing methods inside `call_method` are not implemented. Sui
   `sign_transaction` currently has a rejected policy-decision smoke path only.
   Before a method ships as signing support it needs its own allowlist, capability
-  advertisement, physical-approval behavior where required, and negative tests,
-  because the top-level allowlist does not cover method names carried inside
-  `call_method`.
+  advertisement, method-result parser shape, physical-approval behavior where
+  required, approval-history contract, provider API boundary, and negative
+  tests, because the top-level allowlist does not cover method names carried
+  inside `call_method`.
 
 ## 12. Device Capability Tiers
 
