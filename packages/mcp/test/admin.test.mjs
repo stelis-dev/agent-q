@@ -48,7 +48,7 @@ function defaultCore(overrides = {}) {
       };
     },
     async scanDevices() {
-      return { source: "live", devices: [], activeDeviceId: deviceId };
+      return { source: "live", devices: [], failures: [], activeDeviceId: deviceId };
     },
     async connectDevice() {
       return {

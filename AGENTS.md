@@ -15,7 +15,11 @@ Agent-Q separates AI agent execution from signing authority.
 
 The goal is to let agents request signatures through a local Gateway while a
 separate device keeps keys and policies, evaluates each request, and decides
-whether to sign automatically, ask for physical approval, or reject the request.
+whether to reject or proceed according to the currently implemented policy and
+request type. Firmware-owned device-local approval is a separate requirement
+for implemented sensitive flows such as connection establishment and policy
+update proposals. Do not describe signing policy as requiring device-local
+approval unless the current protocol explicitly implements that model.
 
 Product context lives in `README.md`. The shared communication contract between
 Gateway and the software running on the device lives in `specs/PROTOCOL.md`.

@@ -20,7 +20,7 @@ contributor operating rules.
 
 Agent-Q isolates signing authority and policy from the agent runtime. A
 host-side Gateway relays requests; a separate device (Firmware) holds signing
-material and policy and decides whether to sign, reject, or ask.
+material and policy and decides whether to sign or reject.
 
 ```text
 Agent-Q isolates signing authority and policy from the agent runtime.
@@ -84,26 +84,20 @@ Implemented today:
   while the target stores the committed active policy as a canonical binary
   record in ordinary NVS and can load canonical custom reject-policy records
   through its internal storage boundary. Firmware reads a public summary through
-  `get_policy`, consumes that active policy for Sui `sign_transaction`
+  `get_policy`, consumes that active policy for Sui `sign_transaction` rejected
   policy evaluation, and exposes policy update authorization only through the
   Firmware-owned `propose_policy_update` proposal flow for custom reject
-  policies. Product-reachable active policies currently produce only rejected
-  method results. An internal `ask` path can use bounded clear-signing review,
-  local PIN approval, required approval-history durability, signing, approved
-  response writing, and scratch wipe, but it is not product-reachable because
-  active policy storage and the Sui descriptor reject `ask`/`sign` policy
-  records, `get_capabilities` advertises no signing methods, and public client
-  parsers reject approved method results.
+  policies. Public signing and automatic `sign` policy records are not accepted.
 - A Gateway-served local Admin Page for read-only device metadata and the
   current reject-policy proposal template. It uses the same Gateway core
   boundary as MCP and is not a policy authority.
 - A bounded persistent approval-history read path. The current StackChan CoreS3
   target stores Firmware-authored method-decision metadata for validated
-  policy-rejected `call_method` skeleton decisions and recordable terminal
-  metadata from `propose_policy_update`. It does not store raw txBytes, decoded
-  transactions, raw policy documents, full rule content, session ids, request
-  ids, gateway names, PINs, secret material, or full policy documents. Local
-  reset and error-state erase recovery wipe the history.
+  policy-rejected `call_method` decisions and recordable terminal metadata from
+  `propose_policy_update`. It does not store raw txBytes, decoded transactions,
+  raw policy documents, full rule content, session ids, request ids, gateway
+  names, PINs, secret material, or full policy documents. Local reset and
+  error-state erase recovery wipe the history.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
@@ -114,12 +108,8 @@ Designed but not implemented (do not treat as present):
 - USER_PROFILE first-install mnemonic generation or import.
 - zkLogin signing material.
 - USER_PROFILE policy storage and policy update authorization.
-- Public signing methods inside `call_method`. Sui `sign_transaction` has an
-  internal clear-signing local-PIN `ask` path, but no public signing method is
-  present until Firmware advertises it in `get_capabilities`, active policy
-  `ask` or `sign` actions are enforceable for that method, the approved
-  method-result shape is accepted by Gateway parser/output schemas, and target
-  verification covers the terminal path.
+- Public signing methods, including Sui `sign_transaction`, arbitrary Sui
+  transactions, automatic signing, and Sui personal-message signing.
 - Full Admin policy editing beyond the current reject-policy proposal template.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.
 - Secure Boot, Flash Encryption, and NVS Encryption setup flow.
@@ -198,16 +188,16 @@ Firmware (separate device):
 - The signing authority.
 - Stores signing material and policy locally.
 - Evaluates each request.
-- Signs, rejects, or asks for approval according to policy.
+- Rejects unavailable or policy-disallowed requests, and performs implemented
+  sensitive actions only after the required Firmware-owned device-local
+  approval.
 
 Agents, MCP clients, the Admin Page, and CLI input:
 
 - Request sources only. They are never authority.
 
-The device-local approval that exists today gates `connect` / session
-establishment, not individual signatures. Per-signature approval is a property
-of the device capability tier (section 12) and depends on signing, which is not
-implemented.
+Device-local approval gates `connect` / session establishment and sensitive
+policy-write proposals. A connection session alone does not authorize signing.
 
 ## 6. Device Profiles
 
@@ -343,7 +333,7 @@ Policy-update contract:
 - Firmware validates the bounded policy document, shows device-local approval,
   and commits only after approval.
 - Firmware must reject policy actions it cannot enforce in the current runtime.
-  Unsupported `ask` or `sign` rules must not be stored as dormant future
+  Unsupported policy actions must not be stored as dormant future
   behavior unless a separate disabled-draft model is specified and approved.
 - The first wire format is JSON inside the existing protocol envelope.
   Firmware must canonicalize the accepted policy into a bounded binary policy
@@ -486,13 +476,13 @@ Enforcement today:
   registered tools must equal a fixed set, both at definition and over the live
   transport. A new tool such as `export_key` cannot be added without failing
   those tests.
-- Public signing methods inside `call_method` are not implemented. Sui
-  `sign_transaction` currently has a rejected product path plus an internal
-  local-PIN `ask` foundation that remains unreachable from active policy
-  storage. Before a method ships as signing support it needs capability
-  advertisement, method-result parser shape, approval behavior, approval-history
-  contract, provider API boundary, and negative tests, because the top-level
-  allowlist does not cover method names carried inside `call_method`.
+- Public signing inside `call_method` is not implemented. The current Sui
+  `sign_transaction` path is a session-scoped validation and rejection path.
+  Arbitrary Sui transactions, automatic `sign` policies, personal-message
+  signing, and other chains are not implemented. The top-level tool allowlist
+  does not grant authority to method names carried inside `call_method`;
+  Firmware method adapters and active policy validation remain the method
+  boundary.
 
 ## 12. Device Capability Tiers
 
@@ -500,15 +490,17 @@ Hardware determines what human confirmation is possible.
 
 Minimal Device:
 
-- Sign or reject only. No ask. No per-request human circuit breaker.
+- Sign or reject only. No per-request human confirmation.
 
 Button Device:
 
-- Sign, reject, or ask, with limited confirmation.
+- Sign or reject, with limited local confirmation.
 
 Display Approval Device:
 
-- Sign, reject, or ask, and can show a request or policy summary for approval.
+- Can show a summary for flows that explicitly require local approval, such as
+  connection establishment or policy update proposals. This does not make
+  public signing or per-signature device-local approval current behavior.
 
 The current StackChan CoreS3 target has a display and touch, so it is closest to
 the Display Approval tier. "Minimal Device" describes a future or different
@@ -592,8 +584,7 @@ API boundary:
 
 - No `export_key`, `raw_sign`, `read_memory`, or `debug_command`.
 - The MCP top-level exact-allowlist test passes.
-- `call_method` allowlist and negative tests exist before any signing method
-  ships.
+- `call_method` allowlist and negative tests cover every shipped signing method.
 
 Key and policy:
 

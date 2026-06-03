@@ -16,7 +16,7 @@ function assertNoSecretFields(value) {
 function createFakeCore() {
   return {
     async scanDevices() {
-      return { source: "live", devices: [], activeDeviceId: null };
+      return { source: "live", devices: [], failures: [], activeDeviceId: null };
     },
     async identifyDevices() {
       return { source: "live", devices: [], activeDeviceId: null };
@@ -81,19 +81,6 @@ function createFakeCore() {
     async getApprovalHistory() {
       return { source: "live", deviceId: "device-1", records: [], hasMore: false };
     },
-    async proposePolicyUpdate(input) {
-      return {
-        source: "live",
-        deviceId: input.deviceId ?? "device-1",
-        status: "applied",
-        reasonCode: "device_confirmed",
-        policy: {
-          policyHash: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
-          ruleCount: 1,
-          highestAction: "reject",
-        },
-      };
-    },
   };
 }
 
@@ -128,23 +115,24 @@ test("provider does not import MCP or Admin adapters", async () => {
   assert.doesNotMatch(source, /admin/i);
 });
 
-test("provider exposes current non-signing API only", () => {
+test("provider exposes only device-facing adapter API", () => {
   const provider = createAgentQProvider({ core: createFakeCore() });
+  const methodNames = Object.getOwnPropertyNames(Object.getPrototypeOf(provider))
+    .filter((name) => name !== "constructor")
+    .sort();
   assert.equal(provider instanceof AgentQProvider, true);
-  assert.equal(typeof provider.scanDevices, "function");
-  assert.equal(typeof provider.identifyDevices, "function");
-  assert.equal(typeof provider.selectDevice, "function");
-  assert.equal(typeof provider.listDevices, "function");
-  assert.equal(typeof provider.connectDevice, "function");
-  assert.equal(typeof provider.disconnectDevice, "function");
-  assert.equal(typeof provider.getCapabilities, "function");
-  assert.equal(typeof provider.getAccounts, "function");
-  assert.equal(typeof provider.getPolicy, "function");
-  assert.equal(typeof provider.getApprovalHistory, "function");
-  assert.equal(typeof provider.requestPolicyUpdate, "function");
-  assert.equal("callMethod" in provider, false);
-  assert.equal("signTransaction" in provider, false);
-  assert.equal("signAndExecuteTransaction" in provider, false);
+  assert.deepEqual(methodNames, [
+    "connectDevice",
+    "disconnectDevice",
+    "getAccounts",
+    "getApprovalHistory",
+    "getCapabilities",
+    "getPolicy",
+    "identifyDevices",
+    "listDevices",
+    "scanDevices",
+    "selectDevice",
+  ]);
 });
 
 test("provider delegates current methods without exposing session ids or secrets", async () => {
@@ -160,14 +148,6 @@ test("provider delegates current methods without exposing session ids or secrets
     await provider.getAccounts({ deviceId: "device-1" }),
     await provider.getPolicy({ deviceId: "device-1" }),
     await provider.getApprovalHistory({ deviceId: "device-1" }),
-    await provider.requestPolicyUpdate({
-      deviceId: "device-1",
-      policy: {
-        schema: "agentq.policy.v0",
-        defaultAction: "reject",
-        rules: [],
-      },
-    }),
   ];
   for (const output of outputs) {
     assertNoSecretFields(output);

@@ -107,23 +107,12 @@ agent_q::AgentQPolicyFacts matching_sui_facts()
     };
 }
 
-agent_q::AgentQPolicyMethodDescriptor ask_enabled_sui_method()
-{
-    agent_q::AgentQPolicyMethodDescriptor method =
-        agent_q::sui_sign_transaction_policy_method_descriptor();
-    method.supports_ask = true;
-    return method;
-}
-
 }  // namespace
 
 int main()
 {
     const agent_q::AgentQPolicyMethodDescriptor sui_methods[] = {
         agent_q::sui_sign_transaction_policy_method_descriptor(),
-    };
-    const agent_q::AgentQPolicyMethodDescriptor ask_methods[] = {
-        ask_enabled_sui_method(),
     };
 
     agent_q::AgentQPolicyCanonicalDocument canonical = {};
@@ -307,96 +296,7 @@ int main()
             malformed_canonical, record, sizeof(record), &record_size),
         agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
 
-    agent_q::AgentQPolicyRule ask_rule = rule;
-    ask_rule.action = agent_q::AgentQPolicyAction::ask;
-    const agent_q::AgentQPolicyDocument ask_policy = {
-        agent_q::kAgentQPolicyV0Schema,
-        agent_q::AgentQPolicyAction::reject,
-        &ask_rule,
-        1,
-    };
-    expect_status(
-        "unsupported ask action is rejected",
-        agent_q::canonicalize_agent_q_policy_v0(ask_policy, sui_methods, 1, &canonical),
-        agent_q::AgentQPolicyCanonicalStatus::unsupported_action);
-
-    const char* ask_recipients[] = {"0xabc"};
-    const agent_q::AgentQPolicyCriterion restricted_ask_criteria[] = {
-        {"common.network", agent_q::AgentQPolicyOperator::eq, "devnet", nullptr, 0},
-        {"common.intent", agent_q::AgentQPolicyOperator::eq, "single_asset_transfer", nullptr, 0},
-        {"sui.command_shape", agent_q::AgentQPolicyOperator::eq, "restricted_transfer", nullptr, 0},
-        {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, nullptr, ask_recipients, 1},
-        {"sui.coin_type", agent_q::AgentQPolicyOperator::eq, "0x2::sui::SUI", nullptr, 0},
-        {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
-        {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "50000000", nullptr, 0},
-        {"sui.gas_price", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
-    };
-    const agent_q::AgentQPolicyRule restricted_ask_rule = {
-        "ask-sui-devnet-transfer",
-        "sui",
-        "sign_transaction",
-        agent_q::AgentQPolicyAction::ask,
-        restricted_ask_criteria,
-        sizeof(restricted_ask_criteria) / sizeof(restricted_ask_criteria[0]),
-    };
-    const agent_q::AgentQPolicyDocument restricted_ask_policy = {
-        agent_q::kAgentQPolicyV0Schema,
-        agent_q::AgentQPolicyAction::reject,
-        &restricted_ask_rule,
-        1,
-    };
-    expect_status(
-        "restricted Sui transfer ask policy canonicalizes when ask support is enabled",
-        agent_q::canonicalize_agent_q_policy_v0(restricted_ask_policy, ask_methods, 1, &canonical),
-        agent_q::AgentQPolicyCanonicalStatus::ok);
-    expect_status(
-        "restricted Sui transfer ask policy validates after canonicalization",
-        agent_q::validate_agent_q_policy_v0_canonical_document(canonical, ask_methods, 1),
-        agent_q::AgentQPolicyCanonicalStatus::ok);
-
-    const agent_q::AgentQPolicyCriterion broad_ask_criteria[] = {
-        {"common.network", agent_q::AgentQPolicyOperator::eq, "devnet", nullptr, 0},
-    };
-    agent_q::AgentQPolicyRule broad_ask_rule = restricted_ask_rule;
-    broad_ask_rule.id = "ask-broad";
-    broad_ask_rule.criteria = broad_ask_criteria;
-    broad_ask_rule.criterion_count = sizeof(broad_ask_criteria) / sizeof(broad_ask_criteria[0]);
-    const agent_q::AgentQPolicyDocument broad_ask_policy = {
-        agent_q::kAgentQPolicyV0Schema,
-        agent_q::AgentQPolicyAction::reject,
-        &broad_ask_rule,
-        1,
-    };
-    expect_status(
-        "broad ask policy is rejected by action constraints",
-        agent_q::canonicalize_agent_q_policy_v0(broad_ask_policy, ask_methods, 1, &canonical),
-        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
-
-    agent_q::AgentQPolicyCriterion ask_without_gas_price_criteria[
-        sizeof(restricted_ask_criteria) / sizeof(restricted_ask_criteria[0]) - 1] = {};
-    size_t ask_without_gas_price_count = 0;
-    for (size_t index = 0; index < sizeof(restricted_ask_criteria) / sizeof(restricted_ask_criteria[0]); ++index) {
-        if (strcmp(restricted_ask_criteria[index].field, "sui.gas_price") != 0) {
-            ask_without_gas_price_criteria[ask_without_gas_price_count++] =
-                restricted_ask_criteria[index];
-        }
-    }
-    agent_q::AgentQPolicyRule ask_without_gas_price_rule = restricted_ask_rule;
-    ask_without_gas_price_rule.id = "ask-no-gas-price";
-    ask_without_gas_price_rule.criteria = ask_without_gas_price_criteria;
-    ask_without_gas_price_rule.criterion_count = ask_without_gas_price_count;
-    const agent_q::AgentQPolicyDocument ask_without_gas_price_policy = {
-        agent_q::kAgentQPolicyV0Schema,
-        agent_q::AgentQPolicyAction::reject,
-        &ask_without_gas_price_rule,
-        1,
-    };
-    expect_status(
-        "ask without gas price limit is rejected by action constraints",
-        agent_q::canonicalize_agent_q_policy_v0(ask_without_gas_price_policy, ask_methods, 1, &canonical),
-        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
-
-    agent_q::AgentQPolicyRule unsupported_sign_rule = restricted_ask_rule;
+    agent_q::AgentQPolicyRule unsupported_sign_rule = rule;
     unsupported_sign_rule.id = "sign-sui-devnet-transfer";
     unsupported_sign_rule.action = agent_q::AgentQPolicyAction::sign;
     const agent_q::AgentQPolicyDocument unsupported_sign_policy = {
@@ -406,8 +306,8 @@ int main()
         1,
     };
     expect_status(
-        "automatic sign remains unsupported with ask descriptor",
-        agent_q::canonicalize_agent_q_policy_v0(unsupported_sign_policy, ask_methods, 1, &canonical),
+        "automatic sign remains unsupported",
+        agent_q::canonicalize_agent_q_policy_v0(unsupported_sign_policy, sui_methods, 1, &canonical),
         agent_q::AgentQPolicyCanonicalStatus::unsupported_action);
 
     agent_q::AgentQPolicyRule unknown_method = rule;
@@ -451,7 +351,6 @@ int main()
             duplicate_fields,
             sizeof(duplicate_fields) / sizeof(duplicate_fields[0]),
             true,
-            false,
             false,
             nullptr,
             0,

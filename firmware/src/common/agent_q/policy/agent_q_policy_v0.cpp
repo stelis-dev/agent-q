@@ -235,8 +235,6 @@ const char* agent_q_policy_action_name(AgentQPolicyAction action)
     switch (action) {
         case AgentQPolicyAction::reject:
             return "reject";
-        case AgentQPolicyAction::ask:
-            return "ask";
         case AgentQPolicyAction::sign:
             return "sign";
     }

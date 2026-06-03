@@ -49,6 +49,7 @@ export type UnavailableReason =
   | "timeout"
   | "port_not_found"
   | "port_in_use"
+  | "port_permission_denied"
   | "handshake_failed"
   | "incompatible_version"
   | "transport_closed";
@@ -464,6 +465,10 @@ export function mapErrorToUnavailableReason(error: unknown): UnavailableReason {
     }
     return "handshake_failed";
   }
+  const serialReason = classifySerialUnavailableReason(error);
+  if (serialReason !== null) {
+    return serialReason;
+  }
   return "handshake_failed";
 }
 
@@ -719,16 +724,31 @@ function closePort(port: SerialPort): Promise<void> {
 
 function mapSerialOpenError(error: Error): GatewayError {
   const message = error.message || "USB serial transport failed.";
-  if (/busy|access denied|resource busy|permission/i.test(message)) {
-    return new GatewayError("port_in_use", message, true);
-  }
-  if (/not found|cannot open|no such file/i.test(message)) {
-    return new GatewayError("port_not_found", message, true);
-  }
-  if (/closed|disconnect/i.test(message)) {
-    return new GatewayError("transport_closed", message, true);
+  const reason = classifySerialUnavailableReason(error);
+  if (reason !== null) {
+    return new GatewayError(reason, message, true);
   }
   return new GatewayError("handshake_failed", message, true);
+}
+
+function classifySerialUnavailableReason(error: unknown): UnavailableReason | null {
+  const message = error instanceof Error ? error.message : "";
+  const code = isRecord(error) && typeof error.code === "string" ? error.code : "";
+  const text = `${code} ${message}`;
+
+  if (/\b(?:eacces|eperm)\b|operation not permitted|permission denied|access denied/i.test(text)) {
+    return "port_permission_denied";
+  }
+  if (/busy|resource busy|in use/i.test(text)) {
+    return "port_in_use";
+  }
+  if (/not found|cannot open|no such file|\benoent\b/i.test(text)) {
+    return "port_not_found";
+  }
+  if (/closed|disconnect/i.test(text)) {
+    return "transport_closed";
+  }
+  return null;
 }
 
 function normalizeUsbId(value: string | undefined): string {
@@ -743,6 +763,7 @@ function isUnavailableReason(value: string): value is UnavailableReason {
     value === "timeout" ||
     value === "port_not_found" ||
     value === "port_in_use" ||
+    value === "port_permission_denied" ||
     value === "handshake_failed" ||
     value === "incompatible_version" ||
     value === "transport_closed"

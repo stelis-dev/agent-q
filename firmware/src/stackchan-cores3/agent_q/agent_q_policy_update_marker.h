@@ -16,7 +16,6 @@ enum class AgentQPolicyUpdateMarkerStatus {
 
 enum class AgentQPolicyUpdateHighestAction {
     reject,
-    ask,
     sign,
 };
 

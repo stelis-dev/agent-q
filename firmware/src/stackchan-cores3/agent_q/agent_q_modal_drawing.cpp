@@ -10,8 +10,6 @@
 #include "agent_q_local_auth.h"
 #include "agent_q_local_pin_auth.h"
 #include "agent_q_local_reset.h"
-#include "agent_q_method_signing_request_flow.h"
-#include "agent_q_method_signing_review_view_model.h"
 #include "agent_q_policy_update_flow.h"
 #include "agent_q_provisioning_flow.h"
 #include "hal/hal.h"
@@ -1468,9 +1466,6 @@ static const char* local_pin_auth_default_message(
                  update.highest_action != nullptr ? update.highest_action : "reject");
         return message;
     }
-    if (snapshot.purpose == AgentQLocalPinAuthPurpose::method_signing) {
-        return "Enter local PIN to sign reviewed request.";
-    }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {
             return "Enter new PIN.";
@@ -1494,9 +1489,6 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::policy_update) {
         return "Policy PIN";
     }
-    if (snapshot.purpose == AgentQLocalPinAuthPurpose::method_signing) {
-        return "Signing PIN";
-    }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {
             return "New PIN";
@@ -1507,43 +1499,6 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
         return "Change PIN";
     }
     return "Settings PIN";
-}
-
-static bool make_signing_summary_line(lv_obj_t* parent, const char* text, int y)
-{
-    lv_obj_t* label = lv_label_create(parent);
-    if (label == nullptr) {
-        return false;
-    }
-    lv_label_set_text(label, text);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_width(label, kScreenWidth - 44);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(label, lv_color_hex(0x3A2B00), 0);
-    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 16, y);
-    return true;
-}
-
-static bool make_method_signing_review_summary(lv_obj_t* panel)
-{
-    const agent_q::AgentQMethodSigningRequestSnapshot signing =
-        method_signing_request_flow_snapshot();
-    agent_q::AgentQMethodSigningReviewViewModel view_model = {};
-    if (!agent_q::method_signing_review_view_model_from_snapshot(signing, &view_model)) {
-        return false;
-    }
-
-    for (size_t index = 0; index < view_model.row_count; ++index) {
-        if (!make_signing_summary_line(
-                panel,
-                view_model.rows[index].text,
-                30 + static_cast<int>(index) * 20)) {
-            return false;
-        }
-    }
-
-    return true;
 }
 
 bool modal_draw_local_pin_auth_panel(const char* notice)
@@ -1577,78 +1532,33 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
     lv_obj_set_style_pad_all(panel, 0, 0);
 
     const bool buttons_enabled = !snapshot.processing && !snapshot.lockout_active;
-    const bool method_signing = snapshot.purpose == AgentQLocalPinAuthPurpose::method_signing;
-    const agent_q::AgentQMethodSigningRequestSnapshot signing_snapshot =
-        method_signing ? method_signing_request_flow_snapshot() : agent_q::AgentQMethodSigningRequestSnapshot{};
-    const bool method_signing_review =
-        method_signing &&
-        signing_snapshot.active &&
-        signing_snapshot.stage == agent_q::AgentQMethodSigningRequestStage::awaiting_review;
 
     lv_obj_t* title = lv_label_create(panel);
     if (title == nullptr) {
         drawing_surface_clear_panel_locked();
         return false;
     }
-    lv_label_set_text(
-        title,
-        method_signing_review ? "Review signing request" : local_pin_auth_title(snapshot));
+    lv_label_set_text(title, local_pin_auth_title(snapshot));
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, method_signing_review ? 8 : (method_signing ? 2 : 8));
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
 
-    if (method_signing_review) {
-        if (!make_method_signing_review_summary(panel)) {
-            drawing_surface_clear_panel_locked();
-            return false;
-        }
-        if (!make_setup_button(
-                panel,
-                "Cancel",
-                kRecoveryPhraseButtonLeftX,
-                kSetupActionButtonY,
-                kRecoveryPhraseButtonWidth,
-                kRecoveryPhraseButtonHeight,
-                SetupButtonKind::solid_action,
-                lv_color_hex(0x667085),
-                g_callbacks.on_pin_cancel_clicked,
-                nullptr,
-                true) ||
-            !make_setup_button(
-                panel,
-                "Enter PIN",
-                kRecoveryPhraseButtonRightX,
-                kSetupActionButtonY,
-                kRecoveryPhraseButtonWidth,
-                kRecoveryPhraseButtonHeight,
-                SetupButtonKind::solid_action,
-                lv_color_hex(0x24875A),
-                g_callbacks.on_pin_submit_clicked,
-                nullptr,
-                true)) {
-            drawing_surface_clear_panel_locked();
-            return false;
-        }
-        drawing_surface_move_panel_foreground_locked();
-        return true;
-    } else {
-        lv_obj_t* message = lv_label_create(panel);
-        if (message == nullptr) {
-            drawing_surface_clear_panel_locked();
-            return false;
-        }
-        lv_label_set_text(
-            message,
-            notice != nullptr && notice[0] != '\0'
-                ? notice
-                : local_pin_auth_default_message(snapshot));
-        lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(message, kScreenWidth - 44);
-        lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_font(message, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(message, lv_color_hex(0x3A2B00), 0);
-        lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_t* message = lv_label_create(panel);
+    if (message == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
     }
+    lv_label_set_text(
+        message,
+        notice != nullptr && notice[0] != '\0'
+            ? notice
+            : local_pin_auth_default_message(snapshot));
+    lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(message, kScreenWidth - 44);
+    lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(message, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(message, lv_color_hex(0x3A2B00), 0);
+    lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 30);
 
     char pin_mask[agent_q::kLocalPinDigits + 1] = {};
     for (size_t index = 0; index < agent_q::kLocalPinDigits; ++index) {

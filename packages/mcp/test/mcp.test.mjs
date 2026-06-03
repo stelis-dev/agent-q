@@ -48,7 +48,7 @@ test("MCP package self-reference resolves MCP and Admin adapters only", async ()
 
 const noOpCore = {
   async scanDevices() {
-    return { source: "live", devices: [], activeDeviceId: null };
+    return { source: "live", devices: [], failures: [], activeDeviceId: null };
   },
   async getDeviceStatus() {
     return {
@@ -342,6 +342,12 @@ test("get_device_status exposes timeoutMs", () => {
   assert.equal("timeoutMs" in gatewayToolDefinitions.getDeviceStatus.inputSchema, true);
 });
 
+test("call_method timeout schema allows device approval window plus transport margin", () => {
+  const inputSchema = gatewayToolDefinitions.callMethod.inputSchema.timeoutMs;
+  assert.equal(inputSchema.safeParse(61000).success, true);
+  assert.equal(inputSchema.safeParse(61001).success, false);
+});
+
 test("select_device input accepts purpose but rejects reserved 'default'", () => {
   const inputSchema = gatewayToolDefinitions.selectDevice.inputSchema.purpose;
   assert.equal(inputSchema.safeParse("payment").success, true);
@@ -530,7 +536,7 @@ test("get_capabilities dispatch returns current capabilities without a session t
   });
 });
 
-test("call_method dispatch returns a rejected skeleton result without a session token", async () => {
+test("call_method dispatch returns a rejected result without a session token", async () => {
   await withConnectedClient(async (client) => {
     const result = await client.callTool({
       name: "call_method",
@@ -631,7 +637,7 @@ const SECRET_EXTRAS = { sessionId: "SESSION_LEAK", privateKey: "PRIVATEKEY_LEAK"
 
 const leakyCore = {
   async scanDevices() {
-    return { source: "live", devices: [], activeDeviceId: null, ...SECRET_EXTRAS };
+    return { source: "live", devices: [], failures: [], activeDeviceId: null, ...SECRET_EXTRAS };
   },
   async identifyDevices() {
     return { source: "live", devices: [], activeDeviceId: null, ...SECRET_EXTRAS };
@@ -906,7 +912,7 @@ test("get_approval_history rejects malformed records", async () => {
   }, malformedCore);
 });
 
-test("call_method approved shape cannot leak before a method is implemented", async () => {
+test("call_method malformed approved shape cannot leak out as a success", async () => {
   const malformedCore = {
     ...noOpCore,
     async callMethod() {
@@ -914,9 +920,9 @@ test("call_method approved shape cannot leak before a method is implemented", as
         source: "live",
         deviceId: "device-1",
         status: "approved",
-        result: {
-          signature: "not-supported-yet",
-        },
+        chain: "sui",
+        method: "sign_transaction",
+        signature: "not-supported-yet",
       };
     },
   };
@@ -925,35 +931,6 @@ test("call_method approved shape cannot leak before a method is implemented", as
       name: "call_method",
       arguments: { chain: "sui", method: "sign_transaction", params: {} },
     });
-    assert.equal(result.isError, true);
-    assert.equal(result.structuredContent.error.code, "internal_output_error");
-  }, malformedCore);
-});
-
-test("get_capabilities unreachable shape (live with signing method) cannot leak out as a success", async () => {
-  const malformedCore = {
-    ...noOpCore,
-    async getCapabilities() {
-      return {
-        source: "live",
-        deviceId: "device-1",
-        capabilities: [
-          {
-            id: "sui",
-            accounts: [
-              {
-                keyScheme: "ed25519",
-                derivationPath: "m/44'/784'/0'/0'/0'",
-              },
-            ],
-            methods: ["sign_transaction"],
-          },
-        ],
-      };
-    },
-  };
-  await withConnectedClient(async (client) => {
-    const result = await client.callTool({ name: "get_capabilities", arguments: {} });
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.error.code, "internal_output_error");
   }, malformedCore);
@@ -1252,6 +1229,7 @@ test("MCP boundary fails closed on an unsanitized live port path", async () => {
       return {
         source: "live",
         activeDeviceId: null,
+        failures: [],
         devices: [
           {
             source: "live",
@@ -1264,6 +1242,61 @@ test("MCP boundary fails closed on an unsanitized live port path", async () => {
               device: { deviceId: "device-1", state: "idle", firmwareName: "f", hardware: "h", firmwareVersion: "0" },
               provisioning: { state: "unprovisioned" },
             },
+          },
+        ],
+      };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "scan_devices", arguments: {} });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, "internal_output_error");
+  }, core);
+});
+
+test("MCP boundary accepts sanitized scan candidate failures", async () => {
+  const core = {
+    ...noOpCore,
+    async scanDevices() {
+      return {
+        source: "live",
+        activeDeviceId: null,
+        devices: [],
+        failures: [
+          {
+            source: "error",
+            connected: false,
+            portPath: "/dev/cu.usbmodem1",
+            unavailableReason: "port_permission_denied",
+          },
+        ],
+      };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "scan_devices", arguments: {} });
+    assert.equal(result.isError, false);
+    assert.equal(result.structuredContent.failures.length, 1);
+    assert.equal(result.structuredContent.failures[0].unavailableReason, "port_permission_denied");
+    assertNoLeakMarkers(result, "scan_devices(candidate-failure)");
+  }, core);
+});
+
+test("MCP boundary rejects unsanitized scan candidate failure paths", async () => {
+  const controlChar = String.fromCharCode(7);
+  const core = {
+    ...noOpCore,
+    async scanDevices() {
+      return {
+        source: "live",
+        activeDeviceId: null,
+        devices: [],
+        failures: [
+          {
+            source: "error",
+            connected: false,
+            portPath: "/dev/cu." + controlChar + "x",
+            unavailableReason: "port_permission_denied",
           },
         ],
       };

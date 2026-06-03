@@ -10,7 +10,6 @@ namespace agent_q {
 enum class AgentQMethodRuntimeStatus {
     invalid_params,
     rejected,
-    user_approval_required,
 };
 
 struct AgentQMethodRuntimeResult {
@@ -28,21 +27,6 @@ struct AgentQMethodRuntimeResult {
         char policy_hash[kAgentQApprovalHistoryDigestSize];
         char rule_ref[kAgentQApprovalHistoryRuleRefSize];
     } approval_history;
-    struct {
-        char chain[kAgentQApprovalHistoryChainSize];
-        char method[kAgentQApprovalHistoryMethodSize];
-        uint8_t signable_payload[kAgentQSuiSignTransactionTxBytesMaxBytes];
-        size_t signable_payload_size;
-        char network[12];
-        char recipient[67];
-        char asset[32];
-        char amount[21];
-        char gas_budget[21];
-        char gas_price[21];
-        char payload_digest[kAgentQApprovalHistoryDigestSize];
-        char policy_hash[kAgentQApprovalHistoryDigestSize];
-        char rule_ref[kAgentQApprovalHistoryRuleRefSize];
-    } signing_request;
 };
 
 AgentQMethodRuntimeResult evaluate_call_method(

@@ -242,7 +242,7 @@ int main()
                digest,
                sizeof(digest),
                1,
-               agent_q::AgentQPolicyUpdateHighestAction::ask) == BeginResult::pending_after_error,
+               agent_q::AgentQPolicyUpdateHighestAction::reject) == BeginResult::pending_after_error,
            "marker begin reports durable pending marker after commit failure");
     expect(agent_q::policy_update_marker_status() == Status::pending,
            "durable marker remains pending after commit failure");

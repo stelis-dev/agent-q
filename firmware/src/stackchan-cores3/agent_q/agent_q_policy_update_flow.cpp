@@ -67,9 +67,6 @@ AgentQPolicyUpdateHighestAction highest_action_for_document(
         switch (document.rules[index].action) {
             case AgentQPolicyAction::sign:
                 return AgentQPolicyUpdateHighestAction::sign;
-            case AgentQPolicyAction::ask:
-                highest = AgentQPolicyUpdateHighestAction::ask;
-                break;
             case AgentQPolicyAction::reject:
             default:
                 break;
@@ -83,8 +80,6 @@ const char* highest_action_name(AgentQPolicyUpdateHighestAction action)
     switch (action) {
         case AgentQPolicyUpdateHighestAction::reject:
             return "reject";
-        case AgentQPolicyUpdateHighestAction::ask:
-            return "ask";
         case AgentQPolicyUpdateHighestAction::sign:
             return "sign";
         default:

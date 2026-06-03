@@ -129,7 +129,6 @@ bool validate_action_constraints(const AgentQPolicyMethodDescriptor& descriptor)
 {
     if (descriptor.action_constraint_count == 0) {
         return descriptor.action_constraints == nullptr &&
-               !descriptor.supports_ask &&
                !descriptor.supports_sign;
     }
     if (descriptor.action_constraints == nullptr ||
@@ -164,9 +163,7 @@ bool validate_action_constraints(const AgentQPolicyMethodDescriptor& descriptor)
             }
         }
     }
-    return (!descriptor.supports_ask ||
-            find_action_constraint(descriptor, AgentQPolicyAction::ask) != nullptr) &&
-           (!descriptor.supports_sign ||
+    return (!descriptor.supports_sign ||
             find_action_constraint(descriptor, AgentQPolicyAction::sign) != nullptr);
 }
 
@@ -184,7 +181,6 @@ bool agent_q_policy_is_known_action(AgentQPolicyAction action)
 {
     switch (action) {
         case AgentQPolicyAction::reject:
-        case AgentQPolicyAction::ask:
         case AgentQPolicyAction::sign:
             return true;
     }
@@ -322,8 +318,6 @@ bool agent_q_policy_method_supports_action(
     switch (action) {
         case AgentQPolicyAction::reject:
             return descriptor.supports_reject;
-        case AgentQPolicyAction::ask:
-            return descriptor.supports_ask;
         case AgentQPolicyAction::sign:
             return descriptor.supports_sign;
     }
@@ -381,7 +375,7 @@ bool agent_q_policy_validate_method_descriptor(
 {
     if (!agent_q_policy_is_identifier_string(descriptor.chain, kAgentQPolicyMaxChainIdLength) ||
         !agent_q_policy_is_identifier_string(descriptor.operation, kAgentQPolicyMaxOperationLength) ||
-        (!descriptor.supports_reject && !descriptor.supports_ask && !descriptor.supports_sign)) {
+        (!descriptor.supports_reject && !descriptor.supports_sign)) {
         return false;
     }
     return agent_q_policy_validate_adapter_field_descriptors(

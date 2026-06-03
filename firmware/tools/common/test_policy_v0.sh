@@ -336,30 +336,6 @@ int main(int argc, char** argv)
         "sign-small-sui-transfer",
         &failures);
 
-    const agent_q::AgentQPolicyRule ask_rule = {
-        "ask-small-sui-transfer",
-        "sui",
-        "sign_transaction",
-        agent_q::AgentQPolicyAction::ask,
-        allow_criteria,
-        sizeof(allow_criteria) / sizeof(allow_criteria[0]),
-    };
-    const agent_q::AgentQPolicyRule first_match_rules[] = {ask_rule, sign_rule};
-    const agent_q::AgentQPolicyDocument first_match_policy = {
-        agent_q::kAgentQPolicyV0Schema,
-        agent_q::AgentQPolicyAction::reject,
-        first_match_rules,
-        2,
-    };
-    expect_decision(
-        "first matching ask rule",
-        first_match_policy,
-        facts,
-        agent_q::AgentQPolicyAction::ask,
-        agent_q::AgentQPolicyDecisionReason::matched_rule,
-        "ask-small-sui-transfer",
-        &failures);
-
     const agent_q::AgentQPolicyRule reject_rule = {
         "reject-small-sui-transfer",
         "sui",
@@ -376,6 +352,22 @@ int main(int argc, char** argv)
         agent_q::AgentQPolicyAction::reject,
         agent_q::AgentQPolicyDecisionReason::matched_rule,
         "reject-small-sui-transfer",
+        &failures);
+
+    const agent_q::AgentQPolicyRule first_match_rules[] = {sign_rule, reject_rule};
+    const agent_q::AgentQPolicyDocument first_match_policy = {
+        agent_q::kAgentQPolicyV0Schema,
+        agent_q::AgentQPolicyAction::reject,
+        first_match_rules,
+        2,
+    };
+    expect_decision(
+        "first matching sign rule",
+        first_match_policy,
+        facts,
+        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyDecisionReason::matched_rule,
+        "sign-small-sui-transfer",
         &failures);
 
     const agent_q::AgentQPolicyCriterion wrong_recipient_criteria[] = {
@@ -440,7 +432,7 @@ int main(int argc, char** argv)
 
     const agent_q::AgentQPolicyDocument invalid_default_policy = {
         agent_q::kAgentQPolicyV0Schema,
-        agent_q::AgentQPolicyAction::ask,
+        agent_q::AgentQPolicyAction::sign,
         &sign_rule,
         1,
     };

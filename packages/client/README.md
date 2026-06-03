@@ -2,8 +2,8 @@
 
 `@stelis/agent-q-client` is the device-facing Agent-Q client package.
 
-It provides the Gateway core, USB transport, runtime session mirror, and
-protocol builders and parsers used by Agent-Q adapters.
+It provides the device client facade, USB transport, runtime session mirror,
+and protocol builders and parsers used by Agent-Q adapters.
 
 The client package is not a signing authority and is not a policy authority.
 It does not store signing keys, does not make signing decisions, and does not
@@ -12,11 +12,12 @@ and active policy commits.
 
 ## Entrypoints
 
-- `@stelis/agent-q-client` exposes the default Gateway core factory.
-- `@stelis/agent-q-client/core` exposes the core class and result types.
+- `@stelis/agent-q-client` exposes the admin-disabled device client factory and
+  device-facing result types.
+- `@stelis/agent-q-client/admin` exposes the admin-capable Gateway core for MCP
+  and the local Admin Page.
 - `@stelis/agent-q-client/protocol` exposes the shared protocol builders,
   parsers, constants, and response types.
-- `@stelis/agent-q-client/usb` exposes the USB transport boundary.
 - `@stelis/agent-q-client/adapter-internal` exposes support APIs for official
   Agent-Q adapters, including bounded output schemas, public error mapping, safe
   text validation, and the local Gateway device registry. It is not the
@@ -29,12 +30,12 @@ and active policy commits.
 - Session ids are held in Gateway memory only and are not returned to callers.
 - Labels and purpose names are local Gateway metadata. They are not Firmware
   policy and are not authorization facts.
-- `proposePolicyUpdate` submits a bounded proposal to Firmware. Firmware
-  validates, requires device-local approval, commits policy, and records the
-  terminal result.
-- Current StackChan CoreS3 capabilities do not advertise signing methods. The
-  client parser currently accepts capability responses with an empty `methods`
-  list and `call_method` responses with rejected method results only.
+- Policy update proposals are available only through the explicit admin-capable
+  entrypoint. They are not part of the provider-facing device client facade.
+- Current StackChan CoreS3 capabilities report Sui account identity and no
+  public signing methods. The client parser accepts rejected method results and
+  rejects approved signing results, raw transaction bytes, decoded internals,
+  session ids, request ids, and secret-like fields.
 
 ## Development
 

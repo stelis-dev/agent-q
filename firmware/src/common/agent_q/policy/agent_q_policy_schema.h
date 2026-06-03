@@ -44,7 +44,6 @@ struct AgentQPolicyMethodDescriptor {
     const AgentQPolicyFieldDescriptor* field_descriptors;
     size_t field_descriptor_count;
     bool supports_reject;
-    bool supports_ask;
     bool supports_sign;
     const AgentQPolicyActionConstraint* action_constraints;
     size_t action_constraint_count;

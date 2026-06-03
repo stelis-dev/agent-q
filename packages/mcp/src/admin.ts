@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { DEFAULT_POLICY_UPDATE_TIMEOUT_MS, type GatewayCore, type DeviceListResult } from "@stelis/agent-q-client/core";
+import { DEFAULT_POLICY_UPDATE_TIMEOUT_MS, type GatewayCore, type DeviceListResult } from "@stelis/agent-q-client/admin";
 import {
   GatewayError,
   gatewaySuccessOutputSchemas,

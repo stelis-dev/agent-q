@@ -1,9 +1,8 @@
-import { createDefaultGatewayCore } from "@stelis/agent-q-client";
+import { createDefaultDeviceClientCore } from "@stelis/agent-q-client";
 import type {
   ConnectDeviceResult,
   DeviceListResult,
   DisconnectDeviceResult,
-  GatewayCore,
   GetAccountsResult,
   GetApprovalHistoryResult,
   GetCapabilitiesResult,
@@ -11,13 +10,13 @@ import type {
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
-  ProposePolicyUpdateResult,
   ScanDevicesResult,
   SelectDeviceResult,
-} from "@stelis/agent-q-client/core";
+  DeviceClientCore,
+} from "@stelis/agent-q-client";
 
 export type AgentQProviderCore = Pick<
-  GatewayCore,
+  DeviceClientCore,
   | "scanDevices"
   | "identifyDevices"
   | "selectDevice"
@@ -28,7 +27,6 @@ export type AgentQProviderCore = Pick<
   | "getAccounts"
   | "getPolicy"
   | "getApprovalHistory"
-  | "proposePolicyUpdate"
 >;
 
 export interface AgentQProviderOptions {
@@ -46,7 +44,6 @@ export type {
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
-  ProposePolicyUpdateResult,
   ScanDevicesResult,
   SelectDeviceResult,
 };
@@ -55,7 +52,7 @@ export class AgentQProvider {
   private readonly core: AgentQProviderCore;
 
   constructor(options: AgentQProviderOptions = {}) {
-    this.core = options.core ?? createDefaultGatewayCore();
+    this.core = options.core ?? createDefaultDeviceClientCore();
   }
 
   scanDevices(input: { timeoutMs?: number } = {}): Promise<ScanDevicesResult> {
@@ -124,15 +121,6 @@ export class AgentQProvider {
     timeoutMs?: number;
   } = {}): Promise<GetApprovalHistoryResult> {
     return this.core.getApprovalHistory(input);
-  }
-
-  requestPolicyUpdate(input: {
-    deviceId?: string;
-    purpose?: string;
-    policy: Record<string, unknown>;
-    timeoutMs?: number;
-  }): Promise<ProposePolicyUpdateResult> {
-    return this.core.proposePolicyUpdate(input);
   }
 }
 

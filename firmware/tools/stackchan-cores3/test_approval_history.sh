@@ -286,31 +286,11 @@ int main()
            "first record confirmation kind");
     expect(strcmp(page.records[0].chain, "sui") == 0, "first record chain");
 
-    agent_q::AgentQApprovalHistoryAppendInput local_pin_approved = policy_rejected_input("user_approved");
-    local_pin_approved.decision = agent_q::AgentQApprovalHistoryDecision::user_approved;
-    local_pin_approved.confirmation_kind = agent_q::AgentQApprovalHistoryConfirmationKind::local_pin;
-    expect(agent_q::approval_history_append(local_pin_approved, 101),
-           "append local PIN approval record");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
-           "read local PIN approval page");
-    expect(page.records[0].decision == agent_q::AgentQApprovalHistoryDecision::user_approved,
-           "local PIN record decision is preserved");
-    expect(page.records[0].confirmation_kind == agent_q::AgentQApprovalHistoryConfirmationKind::local_pin,
-           "local PIN confirmation kind is preserved");
-
-    agent_q::AgentQApprovalHistoryAppendInput local_pin_method_error = policy_rejected_input("method_error");
-    local_pin_method_error.decision = agent_q::AgentQApprovalHistoryDecision::method_error;
-    local_pin_method_error.confirmation_kind = agent_q::AgentQApprovalHistoryConfirmationKind::local_pin;
-    expect(agent_q::approval_history_append(local_pin_method_error, 102),
-           "append local PIN method-error record");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
-           "read local PIN method-error page");
-    expect(page.records[0].decision == agent_q::AgentQApprovalHistoryDecision::method_error,
-           "local PIN method-error decision is preserved");
-    expect(page.records[0].confirmation_kind == agent_q::AgentQApprovalHistoryConfirmationKind::local_pin,
-           "local PIN method-error confirmation kind is preserved");
-
     const std::vector<uint8_t> valid_enum_blob = g_blob;
+    expect(mutate_first_method_record_byte(16, 0), "mutate stored decision enum to old approved value");
+    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+           "stored unsupported approved method decision enum fails closed");
+    g_blob = valid_enum_blob;
     expect(mutate_first_method_record_byte(16, 0xFF), "mutate stored decision enum");
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
            "stored unsupported decision enum fails closed");
@@ -348,6 +328,9 @@ int main()
            "corrupt stored token fails closed instead of being sanitized");
     g_blob = valid_blob;
 
+    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+           "read newest page before wrap");
+    const uint64_t sequence_before_wrap = page.count > 0 ? page.records[0].sequence : 0;
     for (uint32_t index = 0; index < agent_q::kAgentQApprovalHistoryCapacity + 3; ++index) {
         char reason[agent_q::kAgentQApprovalHistoryReasonCodeSize] = {};
         snprintf(reason, sizeof(reason), "reason_%u", static_cast<unsigned>(index));
@@ -361,7 +344,7 @@ int main()
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
            "read newest page");
     expect(page.count == 4 && page.has_more, "newest page is bounded with hasMore");
-    expect(page.records[0].sequence == agent_q::kAgentQApprovalHistoryCapacity + 7,
+    expect(page.records[0].sequence == sequence_before_wrap + agent_q::kAgentQApprovalHistoryCapacity + 3,
            "newest record sequence after wrap");
     const uint64_t before = page.records[3].sequence;
     expect(agent_q::approval_history_read_page(before, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
@@ -400,24 +383,9 @@ int main()
                policy_rejected_input(),
                1000 + agent_q::kAgentQApprovalHistoryWriteBudgetMax),
            "approval history write budget rejects excessive writes in one window");
-    expect(!agent_q::approval_history_append_required_method_terminal(
-               policy_rejected_input(),
-               1000 + agent_q::kAgentQApprovalHistoryWriteBudgetMax + 1),
-           "required method terminal path rejects budget bypass for policy-rejected records");
-    expect(agent_q::approval_history_append_required_method_terminal(
-               local_pin_method_error,
-               1000 + agent_q::kAgentQApprovalHistoryWriteBudgetMax + 2),
-           "required method-signing history bypasses method-decision write budget");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
-           "read required method-signing record after budget exhaustion");
-    expect(page.count == 4 &&
-               page.records[0].event_kind == agent_q::AgentQApprovalHistoryEventKind::method_decision &&
-               page.records[0].decision == agent_q::AgentQApprovalHistoryDecision::method_error &&
-               page.records[0].confirmation_kind == agent_q::AgentQApprovalHistoryConfirmationKind::local_pin,
-           "required method-signing record is newest approval-history event");
     expect(agent_q::approval_history_append_required_policy_update(
                policy_update_input(),
-               1000 + agent_q::kAgentQApprovalHistoryWriteBudgetMax + 3),
+               1000 + agent_q::kAgentQApprovalHistoryWriteBudgetMax + 1),
            "required policy-update history bypasses method-decision write budget");
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
            "read policy-update record after budget exhaustion");

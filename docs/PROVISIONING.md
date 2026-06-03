@@ -105,14 +105,15 @@ recovery phrase generation, backup confirmation, persistent root storage, and
 read-only `get_accounts` Sui account derivation are implemented. The current
 setup source also records a DEV_PROFILE local PIN verifier before reporting
 `provisioned`. Source/build tests cover the provisioned Gateway/MCP session path
-through `get_accounts` and rejected Sui `sign_transaction` policy-decision
-handling. Hardware smoke coverage exists for StackChan CoreS3 local setup and
-PIN entry. Targeted hardware verification remains required after setup UI or
-state changes. Source-level local settings reset/material wipe now exists for
-provisioned StackChan CoreS3 devices, with hardware smoke coverage for local
-reset.
+through `get_accounts`, policy-decision rejection, and restricted SUI transfer
+request validation through policy-gated `call_method`. Hardware smoke coverage exists for
+StackChan CoreS3 local setup and PIN entry. Targeted hardware verification
+remains required after setup UI or state changes. Source-level local settings
+reset/material wipe now exists for provisioned StackChan CoreS3 devices, with
+hardware smoke coverage for local reset.
 Device-local Recover is implemented for DEV_PROFILE. USB/Gateway/MCP mnemonic
-import, host-assisted import, and signing are not implemented.
+import, host-assisted import, arbitrary transaction signing, and automatic
+signing are not implemented.
 
 ## Chain Accounts
 
@@ -161,9 +162,10 @@ If the persisted state and required material records disagree after boot or
 during runtime checks, Firmware reports `provisioning.state = error`; it does
 not keep reporting `provisioned` while rejecting all session APIs.
 
-The current DEV_PROFILE runtime does not import, export, or sign with root signing material; read-only
-public Sui account derivation is available via `get_accounts`. Current StackChan
-CoreS3 source can generate a BIP-39 recovery
+The current DEV_PROFILE runtime does not import or export root signing material.
+Read-only public Sui account derivation is available via `get_accounts`, and
+public signing methods are not implemented. Current StackChan CoreS3 source can generate a
+BIP-39 recovery
 phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
 3-column by 4-row grid, and wipe scratch on confirm, cancel, timeout, failure,
 or display expiry. Three-letter BIP-39 words are displayed as the full word.
@@ -184,7 +186,7 @@ stateDiagram-v2
 
     Unprovisioned: no root signing material, active policy, or local PIN verifier
     Unprovisioned: optional volatile mnemonic/root/PIN setup scratch only
-    Provisioned: root material, active policy, and local PIN verifier stored; read-only get_accounts/get_policy available, signing still unavailable
+    Provisioned: root material, active policy, and local PIN verifier stored; read-only get_accounts/get_policy available; call_method returns policy-gated rejected method results
 ```
 
 The current runtime does not expose USB requests for provisioning start,
@@ -318,13 +320,14 @@ reset-state changes.
 
 Provisioning is not signing readiness. The current dependency order is: keep
 the policy facts / method adapter boundary stable, use the Firmware-owned
-`propose_policy_update` flow for custom reject-policy updates, then connect
-concrete signing methods such as Sui `sign_transaction`. Policy update remains a
-proposal flow, not a direct state setter: Gateway/Admin may submit a bounded
+`propose_policy_update` flow for supported active policy changes, and keep
+signing available only through policy-gated `call_method`. Policy update remains
+a proposal flow, not a direct state setter: Gateway/Admin may submit a bounded
 proposal, but Firmware validates it, requires device-local approval, and commits
-it through rollback-safe storage. Sui `sign_personal_message`, signing APIs,
-full Admin policy editing beyond the current reject-policy proposal template,
-and USER_PROFILE secure provisioning are not implemented.
+it through rollback-safe storage. Sui `sign_personal_message`, arbitrary Sui
+transaction signing, automatic signing, full Admin policy editing beyond the
+current reject-policy proposal template, and USER_PROFILE secure provisioning
+are not implemented.
 
 ## Completion Criteria
 

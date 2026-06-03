@@ -498,7 +498,7 @@ const capabilitiesLine = (chainOverrides = {}, accountOverrides = {}, responseOv
     ...responseOverrides,
   });
 
-test("parseProtocolResponse accepts a valid capabilities response with no signing methods", () => {
+test("parseProtocolResponse accepts a valid capabilities response without public methods", () => {
   const response = assertCapabilitiesResponse(
     parseProtocolResponse(capabilitiesLine(), "req_capabilities"),
   );
@@ -518,6 +518,10 @@ test("parseProtocolResponse rejects unsupported capabilities", () => {
   );
   assert.throws(
     () => parseProtocolResponse(capabilitiesLine({ methods: ["sign_transaction"] }), "req_capabilities"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () => parseProtocolResponse(capabilitiesLine({ methods: ["sign_transaction", "sign_personal_message"] }), "req_capabilities"),
     { code: "protocol_error" },
   );
   assert.throws(
@@ -794,14 +798,6 @@ test("parseProtocolResponse accepts bounded approval history pages", () => {
   assert.equal(response.records[0].confirmationKind, "policy");
   assert.equal(response.records[0].payloadDigest, APPROVAL_DIGEST);
 
-  const localPinResponse = assertApprovalHistoryResponse(
-    parseProtocolResponse(
-      approvalHistoryLine({ decisionKind: "user_approved", confirmationKind: "local_pin", reasonCode: "user_approved" }),
-      "req_approval_history",
-    ),
-  );
-  assert.equal(localPinResponse.records[0].decisionKind, "user_approved");
-  assert.equal(localPinResponse.records[0].confirmationKind, "local_pin");
 });
 
 test("parseProtocolResponse accepts policy update approval history records", () => {
@@ -849,6 +845,7 @@ test("parseProtocolResponse rejects malformed approval history records", () => {
     { uptimeMs: "not-number" },
     { timeSource: "wall_clock" },
     { eventKind: "session_event" },
+    { decisionKind: "approved" },
     { decisionKind: "connect_approved" },
     { confirmationKind: "connect_pin" },
     { chain: "Sui" },
@@ -1003,7 +1000,7 @@ const methodResultLine = (overrides = {}, errorOverrides = {}) =>
     ...overrides,
   });
 
-test("parseProtocolResponse accepts the current rejected method_result skeleton", () => {
+test("parseProtocolResponse accepts rejected method_result responses", () => {
   const response = assertMethodResultResponse(
     parseProtocolResponse(methodResultLine(), "req_call_method"),
   );
@@ -1019,9 +1016,6 @@ test("parseProtocolResponse accepts rejected Sui sign_transaction policy decisio
     ["unsupported_transaction", "Transaction shape is not supported."],
     ["policy_error", "Active policy is unavailable."],
     ["policy_action_not_implemented", "Policy action is not implemented."],
-    ["user_rejected", "Request approval was rejected."],
-    ["user_timeout", "Request approval timed out."],
-    ["method_error", "Method execution failed."],
   ];
   for (const [code, message] of cases) {
     const response = assertMethodResultResponse(
@@ -1054,6 +1048,49 @@ test("parseProtocolResponse exposes call_method history write failures as top-le
 test("parseProtocolResponse rejects unsupported method_result shapes", () => {
   assert.throws(
     () => parseProtocolResponse(methodResultLine({ status: "approved", result: { signature: "x" } }), "req_call_method"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        methodResultLine({
+          status: "approved",
+          chain: "sui",
+          method: "sign_transaction",
+          signature: "not-public",
+          error: undefined,
+        }),
+        "req_call_method",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        methodResultLine({
+          status: "approved",
+          chain: "sui",
+          method: "sign_personal_message",
+          signature: "not-public",
+          error: undefined,
+        }),
+        "req_call_method",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        methodResultLine({
+          status: "approved",
+          chain: "sui",
+          method: "sign_transaction",
+          signature: "not-public",
+          txBytes: CANONICAL_TX_BYTES_BASE64,
+          error: undefined,
+        }),
+        "req_call_method",
+      ),
     { code: "protocol_error" },
   );
   assert.throws(

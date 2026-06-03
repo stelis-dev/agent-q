@@ -9,7 +9,6 @@ constexpr uint32_t kAgentQPolicyV0Schema = 1;
 
 enum class AgentQPolicyAction {
     reject,
-    ask,
     sign,
 };
 

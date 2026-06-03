@@ -1,10 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
-import { createDefaultGatewayCore } from "@stelis/agent-q-client";
+import { createDefaultGatewayCore } from "@stelis/agent-q-client/admin";
 import {
+  DEFAULT_CALL_METHOD_TIMEOUT_MS,
   GatewayCore,
   MAX_IDENTIFY_DURATION_MS,
+  MAX_SCAN_TIMEOUT_MS,
   type ConnectDeviceResult,
   type CallMethodResult,
   type DeviceListResult,
@@ -16,7 +18,7 @@ import {
   type GetPolicyResult,
   type ProposePolicyUpdateResult,
   type SetDeviceMetadataResult,
-} from "@stelis/agent-q-client/core";
+} from "@stelis/agent-q-client/admin";
 import {
   DEVICE_ID_PATTERN,
   GATEWAY_NAME_PATTERN,
@@ -67,7 +69,6 @@ import {
   UINT_DECIMAL_STRING_PATTERN,
   isUint64DecimalString,
 } from "@stelis/agent-q-client/protocol";
-import { MAX_SCAN_TIMEOUT_MS } from "@stelis/agent-q-client/usb";
 
 // Input purpose uses the same SoT predicate as egress, so reserved ("default")
 // and prototype-sensitive ("__proto__"/"prototype"/"constructor") names are
@@ -90,12 +91,22 @@ const scanTimeoutSchema = z
   )
   .optional();
 
+const callMethodTimeoutSchema = z
+  .number()
+  .int()
+  .positive()
+  .max(DEFAULT_CALL_METHOD_TIMEOUT_MS)
+  .describe(
+    "Budget in ms for call_method transport and any Firmware-owned device approval after the target device is resolved.",
+  )
+  .optional();
+
 export const gatewayToolDefinitions = {
   scanDevices: {
     name: "scan_devices",
     title: "Scan devices",
     description:
-      "Find USB-connected Agent-Q Firmware devices by writing a status handshake to candidate USB serial ports.",
+      "Find USB-connected Agent-Q Firmware devices by writing a status handshake to candidate USB serial ports, and report sanitized candidate failure reasons.",
     inputSchema: {
       timeoutMs: scanTimeoutSchema,
     },
@@ -195,7 +206,7 @@ export const gatewayToolDefinitions = {
     name: "get_capabilities",
     title: "Get capabilities",
     description:
-      "Read Firmware-authored supported chains, public account schemes, and currently implemented methods over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Current StackChan CoreS3 capabilities report Sui Ed25519 account identity with no signing methods.",
+      "Read Firmware-authored supported chains, public account schemes, and currently implemented methods over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Current StackChan CoreS3 capabilities report Sui Ed25519 account identity and no public signing methods.",
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
@@ -249,14 +260,14 @@ export const gatewayToolDefinitions = {
     name: "call_method",
     title: "Call method",
     description:
-      "Send a session-scoped method request through the shared Agent-Q protocol path. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. This is not public signing support: current StackChan CoreS3 capabilities advertise no callable methods, unknown methods are rejected, and product-reachable Sui sign_transaction policies produce rejected method results.",
+      "Send a session-scoped method request through the shared Agent-Q protocol path. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Current StackChan CoreS3 public signing support is not available; unknown methods, unsupported transactions, and unsupported policy actions are rejected by Firmware.",
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
       chain: z.string().regex(CALL_METHOD_CHAIN_PATTERN),
       method: z.string().regex(CALL_METHOD_NAME_PATTERN),
       params: z.object({}).passthrough().optional(),
-      timeoutMs: scanTimeoutSchema,
+      timeoutMs: callMethodTimeoutSchema,
     },
     outputSchema: callMethodToolOutputShape,
     successOutputSchema: callMethodSuccessOutputShape,

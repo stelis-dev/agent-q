@@ -236,6 +236,29 @@ test("returns cached status for known device when live request times out", async
   });
 });
 
+test("returns cached status with a port permission failure reason", async () => {
+  await withStore(async (store) => {
+    await store.rememberUsbStatus(status, "/dev/cu.usbmodem1", {
+      observedAt: new Date("2026-05-28T00:00:00.000Z"),
+      setActive: true,
+    });
+
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async requestStatus() {
+          throw Object.assign(new Error("Operation not permitted"), { code: "EPERM" });
+        },
+      }),
+    );
+
+    const result = await core.getDeviceStatus();
+    assert.equal(result.source, "cached");
+    assert.equal(result.connected, false);
+    assert.equal(result.unavailableReason, "port_permission_denied");
+  });
+});
+
 test("core bounds a driver that ignores its handshake timeout", async () => {
   await withStore(async (store) => {
     await store.rememberUsbStatus(status, "/dev/cu.usbmodem1", {
@@ -301,6 +324,7 @@ test("scan stores live device without selecting it", async () => {
     const core = new GatewayCore(store, defaultDriver());
     const result = await core.scanDevices();
     assert.equal(result.devices.length, 1);
+    assert.deepEqual(result.failures, []);
     assert.equal(result.activeDeviceId, null);
     assert.equal((await store.load()).devices[0].deviceId, device.deviceId);
     assert.equal((await store.load()).activeDeviceId, null);
@@ -323,8 +347,42 @@ test("scan sanitizes an OS-supplied port path before returning or storing it", a
     );
     const result = await core.scanDevices();
     assert.equal(result.devices.length, 1);
+    assert.deepEqual(result.failures, []);
     assert.equal(result.devices[0].portPath, "/dev/cu.usbmodem9", "control char stripped from live port path");
     assert.equal((await store.load()).devices[0].lastPortHint, "/dev/cu.usbmodem9");
+  });
+});
+
+test("scan reports candidate access failures without raw OS error text", async () => {
+  await withStore(async (store) => {
+    const weirdPath = "/dev/cu." + String.fromCharCode(7) + "usbmodem-denied";
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async listPorts() {
+          return [
+            { path: weirdPath, vendorId: "303a", productId: "1001", manufacturer: "Espressif" },
+            { path: "/dev/cu.usbmodem1", vendorId: "303a", productId: "1001", manufacturer: "Espressif" },
+          ];
+        },
+        async requestStatus(portPath) {
+          if (portPath === weirdPath) {
+            throw Object.assign(new Error("Operation not permitted on /dev/cu.secret"), { code: "EPERM" });
+          }
+          return status;
+        },
+      }),
+    );
+
+    const result = await core.scanDevices();
+    assert.equal(result.devices.length, 1);
+    assert.equal(result.failures.length, 1);
+    assert.equal(result.failures[0].source, "error");
+    assert.equal(result.failures[0].connected, false);
+    assert.equal(result.failures[0].portPath, "/dev/cu.usbmodem-denied");
+    assert.equal(result.failures[0].unavailableReason, "port_permission_denied");
+    assert.equal("message" in result.failures[0], false);
+    assert.equal(JSON.stringify(result).includes("secret"), false);
   });
 });
 
@@ -357,6 +415,7 @@ test("scan does not select an active device when multiple devices are found", as
 
     const result = await core.scanDevices();
     assert.equal(result.devices.length, 2);
+    assert.deepEqual(result.failures, []);
     assert.equal(result.activeDeviceId, null);
     assert.equal((await store.load()).activeDeviceId, null);
   });
@@ -1107,7 +1166,7 @@ test("getCapabilities without a runtime session returns not_connected", async ()
   });
 });
 
-test("getCapabilities returns Firmware-authored methods and keeps the session", async () => {
+test("getCapabilities returns Firmware-authored account identity and keeps the session", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(store, defaultDriver());
     await core.scanDevices();
@@ -1383,6 +1442,37 @@ test("callMethod returns Firmware's rejected method_result and keeps the session
 
     const listed = await core.listDevices();
     assert.notEqual(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("callMethod uses an approval-capable transport timeout by default", async () => {
+  await withStore(async (store) => {
+    let observedTimeoutMs = 0;
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async callMethod(_portPath, _sessionId, _chain, _method, _params, timeoutMs) {
+          observedTimeoutMs = timeoutMs;
+          return {
+            id: "req_call_method",
+            version: 1,
+            type: "method_result",
+            status: "rejected",
+            error: {
+              code: "policy_rejected",
+              message: "The request was rejected by device policy.",
+            },
+          };
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.callMethod({ chain: "sui", method: "sign_transaction", params: signTransactionParams });
+    assert.equal(result.status, "rejected");
+    assert.equal(observedTimeoutMs, 61000);
   });
 });
 

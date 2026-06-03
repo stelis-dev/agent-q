@@ -51,7 +51,6 @@ AgentQMethodRuntimeResult invalid_params(const char* message)
         message,
         false,
         {},
-        {},
     };
 }
 
@@ -62,7 +61,6 @@ AgentQMethodRuntimeResult rejected(const char* code, const char* message)
         code,
         message,
         false,
-        {},
         {},
     };
 }
@@ -91,46 +89,6 @@ AgentQMethodRuntimeResult rejected_with_history(
         memset(&result.approval_history, 0, sizeof(result.approval_history));
         result.has_approval_history = true;
     }
-    return result;
-}
-
-AgentQMethodRuntimeResult approval_required(
-    const uint8_t* signable_payload,
-    size_t signable_payload_size,
-    const char* chain,
-    const char* method,
-    const char* network,
-    const SuiTransferFacts& sui_facts,
-    const char* payload_digest,
-    const char* policy_hash,
-    const char* rule_ref)
-{
-    AgentQMethodRuntimeResult result = {
-        AgentQMethodRuntimeStatus::user_approval_required,
-        "",
-        "",
-        false,
-        {},
-        {},
-    };
-    if (signable_payload == nullptr ||
-        signable_payload_size == 0 ||
-        signable_payload_size > sizeof(result.signing_request.signable_payload) ||
-        !copy_runtime_history_string(result.signing_request.chain, sizeof(result.signing_request.chain), chain, true) ||
-        !copy_runtime_history_string(result.signing_request.method, sizeof(result.signing_request.method), method, true) ||
-        !copy_runtime_history_string(result.signing_request.network, sizeof(result.signing_request.network), network, true) ||
-        !copy_runtime_history_string(result.signing_request.recipient, sizeof(result.signing_request.recipient), sui_facts.recipient, true) ||
-        !copy_runtime_history_string(result.signing_request.asset, sizeof(result.signing_request.asset), sui_facts.asset, true) ||
-        !copy_runtime_history_string(result.signing_request.amount, sizeof(result.signing_request.amount), sui_facts.amount, true) ||
-        !copy_runtime_history_string(result.signing_request.gas_budget, sizeof(result.signing_request.gas_budget), sui_facts.gas_budget, true) ||
-        !copy_runtime_history_string(result.signing_request.gas_price, sizeof(result.signing_request.gas_price), sui_facts.gas_price, true) ||
-        !copy_runtime_history_string(result.signing_request.payload_digest, sizeof(result.signing_request.payload_digest), payload_digest, true) ||
-        !copy_runtime_history_string(result.signing_request.policy_hash, sizeof(result.signing_request.policy_hash), policy_hash, true) ||
-        !copy_runtime_history_string(result.signing_request.rule_ref, sizeof(result.signing_request.rule_ref), rule_ref, true)) {
-        return rejected("method_error", "Method execution failed.");
-    }
-    memcpy(result.signing_request.signable_payload, signable_payload, signable_payload_size);
-    result.signing_request.signable_payload_size = signable_payload_size;
     return result;
 }
 
@@ -210,21 +168,6 @@ AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
             policy_summary_ready ? policy_summary.policy_id : nullptr,
             rule_ref);
     }
-    if (decision.action == AgentQPolicyAction::ask) {
-        AgentQMethodRuntimeResult result = approval_required(
-            tx_bytes,
-            decoded_tx_size,
-            "sui",
-            "sign_transaction",
-            network,
-            sui_facts,
-            digest_ready ? payload_digest : nullptr,
-            policy_summary_ready ? policy_summary.policy_id : nullptr,
-            rule_ref);
-        wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
-        return result;
-    }
-
     wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
     return rejected(
         "policy_action_not_implemented",
@@ -253,9 +196,6 @@ void clear_method_runtime_result(AgentQMethodRuntimeResult* result)
     if (result == nullptr) {
         return;
     }
-    wipe_sensitive_buffer(
-        result->signing_request.signable_payload,
-        sizeof(result->signing_request.signable_payload));
     memset(result, 0, sizeof(*result));
 }
 

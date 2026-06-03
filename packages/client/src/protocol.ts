@@ -243,15 +243,9 @@ export interface PolicyResponse {
   policy: PolicySummary;
 }
 
-export type ApprovalHistoryDecisionKind =
-  | "policy_approved"
-  | "policy_rejected"
-  | "user_approved"
-  | "user_rejected"
-  | "user_timeout"
-  | "method_error";
+export type ApprovalHistoryDecisionKind = "policy_rejected";
 
-export type ApprovalHistoryConfirmationKind = "none" | "policy" | "physical_confirm" | "local_pin";
+export type ApprovalHistoryConfirmationKind = "none" | "policy";
 
 export type ApprovalHistoryPolicyUpdateResult =
   | "applied"
@@ -259,7 +253,7 @@ export type ApprovalHistoryPolicyUpdateResult =
   | "timed_out"
   | "storage_error";
 
-export type ApprovalHistoryHighestAction = "reject" | "ask" | "sign";
+export type ApprovalHistoryHighestAction = "reject" | "sign";
 
 interface ApprovalHistoryRecordBase {
   seq: string;
@@ -324,7 +318,7 @@ export interface PolicyUpdateResultResponse {
   policy?: PolicyUpdateResultPolicySummary;
 }
 
-export interface MethodResultResponse {
+export interface MethodResultRejectedResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
   type: "method_result";
@@ -334,6 +328,8 @@ export interface MethodResultResponse {
     message: string;
   };
 }
+
+export type MethodResultResponse = MethodResultRejectedResponse;
 
 export interface ProtocolErrorResponse {
   id?: string;
@@ -889,11 +885,15 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
   }
 
   if (value.type === "method_result") {
-    if (typeof value.id !== "string" || value.status !== "rejected") {
+    if (typeof value.id !== "string" || typeof value.status !== "string") {
       throw new ProtocolError("protocol_error", "Method result response is malformed.");
     }
     if (hasSecretPayloadKey(value)) {
       throw new ProtocolError("protocol_error", "Method result response must not include secret material.");
+    }
+
+    if (value.status !== "rejected") {
+      throw new ProtocolError("protocol_error", "Method result response is malformed.");
     }
     if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "error"])) {
       throw new ProtocolError("protocol_error", "Method result response contains unsupported fields.");
@@ -1082,18 +1082,11 @@ const UINT64_MAX_DECIMAL = "18446744073709551615";
 export const APPROVAL_HISTORY_REASON_CODE_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
 export const APPROVAL_HISTORY_RULE_REF_PATTERN = /^[a-z][a-z0-9_.:/-]{0,31}$/;
 export const APPROVAL_HISTORY_DECISION_KINDS = [
-  "policy_approved",
   "policy_rejected",
-  "user_approved",
-  "user_rejected",
-  "user_timeout",
-  "method_error",
 ] as const;
 export const APPROVAL_HISTORY_CONFIRMATION_KINDS = [
   "none",
   "policy",
-  "physical_confirm",
-  "local_pin",
 ] as const;
 export const APPROVAL_HISTORY_POLICY_UPDATE_RESULTS = [
   "applied",
@@ -1101,7 +1094,7 @@ export const APPROVAL_HISTORY_POLICY_UPDATE_RESULTS = [
   "timed_out",
   "storage_error",
 ] as const;
-export const APPROVAL_HISTORY_HIGHEST_ACTIONS = ["reject", "ask", "sign"] as const;
+export const APPROVAL_HISTORY_HIGHEST_ACTIONS = ["reject", "sign"] as const;
 export const POLICY_UPDATE_RESULT_STATUSES = [
   "applied",
   "rejected",
@@ -1131,9 +1124,6 @@ export const METHOD_RESULT_ERROR_MESSAGES = {
   unsupported_transaction: "Transaction shape is not supported.",
   policy_error: "Active policy is unavailable.",
   policy_action_not_implemented: "Policy action is not implemented.",
-  user_rejected: "Request approval was rejected.",
-  user_timeout: "Request approval timed out.",
-  method_error: "Method execution failed.",
 } as const;
 export type MethodResultErrorCode = keyof typeof METHOD_RESULT_ERROR_MESSAGES;
 export const FORBIDDEN_SECRET_FIELD_NAMES = [

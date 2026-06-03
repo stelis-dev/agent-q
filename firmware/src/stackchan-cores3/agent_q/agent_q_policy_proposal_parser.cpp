@@ -86,10 +86,6 @@ bool parse_action(const char* value, AgentQPolicyAction* out)
         *out = AgentQPolicyAction::reject;
         return true;
     }
-    if (string_eq(value, "ask")) {
-        *out = AgentQPolicyAction::ask;
-        return true;
-    }
     if (string_eq(value, "sign")) {
         *out = AgentQPolicyAction::sign;
         return true;

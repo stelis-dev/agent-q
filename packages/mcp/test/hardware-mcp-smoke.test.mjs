@@ -3,7 +3,7 @@
 // Skipped by default. The regular hardware smoke runs only when AGENTQ_HW=1
 // and a real Agent-Q Firmware device is connected over USB. The mutating
 // policy-update smoke runs only when AGENTQ_HW_POLICY_UPDATE=1 and a
-// development device whose active policy may be changed is connected. Both
+// development device whose active policy may be changed is connected. These
 // paths drive the real GatewayCore + SerialPortUsbDriver through an in-process
 // MCP client and require a human to approve the device-local PIN prompts.
 //
@@ -35,14 +35,14 @@ import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ConfigStore } from "@stelis/agent-q-client/adapter-internal";
-import { GatewayCore } from "@stelis/agent-q-client/core";
+import { GatewayCore } from "@stelis/agent-q-client/admin";
 import { createGatewayMcpServer } from "../dist/mcp.js";
 import {
   FORBIDDEN_SECRET_FIELD_NAMES,
   MAX_APPROVAL_HISTORY_RECORDS,
   MAX_POLICY_RULE_COUNT,
 } from "@stelis/agent-q-client/protocol";
-import { SerialPortUsbDriver } from "@stelis/agent-q-client/usb";
+import { SerialPortUsbDriver } from "@stelis/agent-q-client/admin";
 
 const hardwareEnabled = process.env.AGENTQ_HW === "1";
 const policyUpdateHardwareEnabled = process.env.AGENTQ_HW_POLICY_UPDATE === "1";
@@ -52,14 +52,14 @@ function scanDeviceId(device) {
   return device?.protocolResponse?.device?.deviceId;
 }
 
-function selectPolicyUpdateSmokeDeviceId(devices, requestedDeviceId) {
+function selectMutatingSmokeDeviceId(devices, requestedDeviceId, envVarName, smokeName) {
   assert.ok(devices.length > 0, "expected at least one connected Agent-Q device");
 
   if (requestedDeviceId.length > 0) {
     const matchingDevice = devices.find((device) => scanDeviceId(device) === requestedDeviceId);
     assert.ok(
       matchingDevice,
-      `AGENTQ_HW_POLICY_UPDATE_DEVICE_ID=${requestedDeviceId} was not found in the USB scan results`,
+      `${envVarName}=${requestedDeviceId} was not found in the USB scan results`,
     );
     return requestedDeviceId;
   }
@@ -67,12 +67,21 @@ function selectPolicyUpdateSmokeDeviceId(devices, requestedDeviceId) {
   assert.equal(
     devices.length,
     1,
-    "AGENTQ_HW_POLICY_UPDATE mutates active policy; connect exactly one Agent-Q device or set AGENTQ_HW_POLICY_UPDATE_DEVICE_ID",
+    `${smokeName} mutates active policy; connect exactly one Agent-Q device or set ${envVarName}`,
   );
   const deviceId = scanDeviceId(devices[0]);
   assert.equal(typeof deviceId, "string", "expected scanned Agent-Q device to include a deviceId");
   assert.notEqual(deviceId.length, 0, "expected scanned Agent-Q device to include a non-empty deviceId");
   return deviceId;
+}
+
+function selectPolicyUpdateSmokeDeviceId(devices, requestedDeviceId) {
+  return selectMutatingSmokeDeviceId(
+    devices,
+    requestedDeviceId,
+    "AGENTQ_HW_POLICY_UPDATE_DEVICE_ID",
+    "AGENTQ_HW_POLICY_UPDATE",
+  );
 }
 
 function approvalHistoryTopSeq(history) {

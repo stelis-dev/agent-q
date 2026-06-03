@@ -7,8 +7,7 @@ decisions outside the agent runtime.
 
 Agents can request actions, but role authority lives on separate Agent-Q
 devices. Each device is designed to evaluate requests locally and, according to
-its implemented capabilities and policy, reject the request, ask for physical
-approval, or sign where supported.
+its implemented capabilities and policy, reject or sign where supported.
 
 The agent can request. The device decides.
 
@@ -77,8 +76,7 @@ Agent-Q Gateway is distributed as npm packages.
 registry, USB transport, runtime session mirror, and protocol parsing and
 building. `@stelis/agent-q-mcp` provides the stdio MCP server, CLI binary, and
 local Admin Page. `@stelis/agent-q-provider` provides an application-facing
-adapter for current device, session, read-only, and policy-proposal
-capabilities. It is not signing support.
+adapter for current device, session, and read-only capabilities.
 
 Gateway does not store keys and does not make signing or policy decisions. It
 may relay requests, validate protocol shapes, and display summaries, but
@@ -90,8 +88,8 @@ Agent-Q Firmware is installed on hardware.
 
 Firmware is the authority component: it stores device-held key material and
 policies, evaluates requests locally, handles physical approval, and returns
-Firmware-authored results to Gateway. Current public methods do not include
-signing support.
+Firmware-authored results to Gateway. Current public signing methods are not
+available.
 
 Firmware source is organized by hardware under `firmware/src/`.
 
@@ -153,11 +151,9 @@ Implemented:
 - Session-scoped capability, policy-summary, and approval-history reads for the
   currently implemented device metadata, method-decision records, and
   policy-update terminal records.
-- A session-scoped `call_method` runtime skeleton that keeps unknown methods
-  rejected and recognizes Sui `sign_transaction` for restricted-transfer policy
-  evaluation. Product-reachable active policies currently return rejected method
-  results. An internal `ask` path has bounded clear-signing review and local
-  PIN approval, but it is not product-reachable and is not signing support.
+- A session-scoped `call_method` path. Unknown methods reject. The current Sui
+  `sign_transaction` path validates bounded restricted-transfer inputs and
+  returns rejected method results; it does not expose public signing support.
 - A bounded policy-update proposal path for currently enforceable reject
   policies. Gateway/MCP can submit proposals, but Firmware validates them,
   requires device-local approval, commits the active policy, and records the
@@ -165,23 +161,21 @@ Implemented:
 - A local Gateway-served Admin Page for device discovery, connection, policy
   summary, approval history, and the current reject-policy proposal template. It
   is not a policy authority.
-- An application-facing provider package for current device discovery,
-  connection, read-only session data, approval-history, and policy-update
-  proposal capabilities. It is not a signing provider and does not expose a
-  transaction signing API.
-- A common host-tested policy evaluator and default-reject runtime boundary that
-  are not connected to runtime signing.
+- An application-facing provider package for device discovery, connection,
+  read-only session data, and approval-history. The provider does not store
+  keys, update policy, or decide whether signing is allowed.
+- A common host-tested policy evaluator and default-reject runtime boundary.
 
-Not yet implemented: concrete signing outputs, per-request physical approval,
-spending and rate limits, multi-role separation, custom policy update beyond
-the current bounded reject-policy proposal flow, full Admin policy editing,
-multi-device approval, device revocation or transfer, a production audit layer
-beyond the current fixed-size approval-history record, and broad chain-specific
-transaction logic. Connection is not signing approval and does not authorize
-signing. A connection session does not prove agent identity. Labels and purpose
-names are local Gateway metadata and are not security boundaries. Firmware
-policy must not rely on Gateway labels, purpose names, or routing assignments as
-authorization facts.
+Not yet implemented: public signing methods, automatic signing policies,
+arbitrary Sui transaction signing, Sui personal-message signing,
+spending and rate limits beyond the current restricted-transfer criteria,
+multi-role separation, full Admin policy editing, multi-device approval, device
+revocation or transfer, a production audit layer beyond the current fixed-size
+approval-history record, and broad chain-specific transaction logic. Connection
+is not signing approval and does not authorize signing. A connection session
+does not prove agent identity. Labels and purpose names are local Gateway
+metadata and are not security boundaries. Firmware policy must not rely on
+Gateway labels, purpose names, or routing assignments as authorization facts.
 
 ## Repository Layout
 

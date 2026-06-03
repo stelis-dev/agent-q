@@ -147,6 +147,8 @@ void expect(bool condition, const char* label)
 
 agent_q::AgentQPolicyFacts valid_facts()
 {
+    static const agent_q::AgentQPolicyMethodDescriptor method =
+        agent_q::sui_sign_transaction_policy_method_descriptor();
     static const agent_q::AgentQPolicyFact entries[] = {
         {
             "common.chain",
@@ -167,13 +169,15 @@ agent_q::AgentQPolicyFacts valid_facts()
     return agent_q::AgentQPolicyFacts{
         entries,
         sizeof(entries) / sizeof(entries[0]),
-        nullptr,
-        0,
+        method.field_descriptors,
+        method.field_descriptor_count,
     };
 }
 
 agent_q::AgentQPolicyFacts mismatched_facts()
 {
+    static const agent_q::AgentQPolicyMethodDescriptor method =
+        agent_q::sui_sign_transaction_policy_method_descriptor();
     static const agent_q::AgentQPolicyFact entries[] = {
         {
             "common.chain",
@@ -194,8 +198,8 @@ agent_q::AgentQPolicyFacts mismatched_facts()
     return agent_q::AgentQPolicyFacts{
         entries,
         sizeof(entries) / sizeof(entries[0]),
-        nullptr,
-        0,
+        method.field_descriptors,
+        method.field_descriptor_count,
     };
 }
 
@@ -226,14 +230,12 @@ bool make_action_rule_record(
     const char* rule_id,
     const char* network,
     agent_q::AgentQPolicyAction action,
-    bool supports_ask,
     bool supports_sign,
     std::vector<uint8_t>* output)
 {
     if (rule_id == nullptr || network == nullptr || output == nullptr) {
         return false;
     }
-    const char* recipients[] = {"0xabc"};
     const agent_q::AgentQPolicyCriterion reject_criteria[] = {
         {
             "common.network",
@@ -243,29 +245,13 @@ bool make_action_rule_record(
             0,
         },
     };
-    const agent_q::AgentQPolicyCriterion ask_criteria[] = {
-        {"common.network", agent_q::AgentQPolicyOperator::eq, network, nullptr, 0},
-        {"common.intent", agent_q::AgentQPolicyOperator::eq, "single_asset_transfer", nullptr, 0},
-        {"sui.command_shape", agent_q::AgentQPolicyOperator::eq, "restricted_transfer", nullptr, 0},
-        {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, nullptr, recipients, 1},
-        {"sui.coin_type", agent_q::AgentQPolicyOperator::eq, "0x2::sui::SUI", nullptr, 0},
-        {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
-        {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "50000000", nullptr, 0},
-        {"sui.gas_price", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
-    };
-    const agent_q::AgentQPolicyCriterion* criteria =
-        action == agent_q::AgentQPolicyAction::ask ? ask_criteria : reject_criteria;
-    const size_t criterion_count =
-        action == agent_q::AgentQPolicyAction::ask
-            ? sizeof(ask_criteria) / sizeof(ask_criteria[0])
-            : sizeof(reject_criteria) / sizeof(reject_criteria[0]);
     const agent_q::AgentQPolicyRule rule = {
         rule_id,
         "sui",
         "sign_transaction",
         action,
-        criteria,
-        criterion_count,
+        reject_criteria,
+        sizeof(reject_criteria) / sizeof(reject_criteria[0]),
     };
     const agent_q::AgentQPolicyDocument policy = {
         agent_q::kAgentQPolicyV0Schema,
@@ -275,7 +261,6 @@ bool make_action_rule_record(
     };
     agent_q::AgentQPolicyMethodDescriptor method =
         agent_q::sui_sign_transaction_policy_method_descriptor();
-    method.supports_ask = supports_ask;
     method.supports_sign = supports_sign;
     agent_q::AgentQPolicyCanonicalDocument canonical = {};
     uint8_t bytes[agent_q::kAgentQPolicyMaxCanonicalRecordBytes] = {};
@@ -296,7 +281,6 @@ bool make_reject_rule_record(const char* rule_id, const char* network, std::vect
         rule_id,
         network,
         agent_q::AgentQPolicyAction::reject,
-        false,
         false,
         output);
 }
@@ -438,18 +422,9 @@ int main()
     std::vector<uint8_t> default_record;
     std::vector<uint8_t> custom_record;
     std::vector<uint8_t> custom_record_2;
-    std::vector<uint8_t> unsupported_ask_record;
     expect(make_default_record(&default_record), "build default record fixture");
     expect(make_reject_rule_record("reject-devnet", "devnet", &custom_record), "build custom policy record");
     expect(make_reject_rule_record("reject-testnet", "testnet", &custom_record_2), "build second custom policy record");
-    expect(make_action_rule_record(
-               "ask-devnet",
-               "devnet",
-               agent_q::AgentQPolicyAction::ask,
-               true,
-               false,
-               &unsupported_ask_record),
-           "build unsupported ask record fixture");
 
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "missing policy status");
     expect(!agent_q::read_active_policy_summary(&summary), "missing policy summary fails closed");
@@ -563,10 +538,6 @@ int main()
     decision = evaluate_active_policy();
     expect(strcmp(decision.rule_id, "reject-devnet") == 0, "pending torn next slot keeps newest rule");
     g_blobs.erase("pol_p");
-
-    expect(store_record(unsupported_ask_record) == agent_q::AgentQPolicyStoreWriteResult::invalid_record, "unsupported ask record is rejected by active store");
-    decision = evaluate_active_policy();
-    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::matched_rule, "unsupported ask rejection preserves active policy");
 
     g_set_fails_for_key = "pol_c1";
     expect(store_record(custom_record_2) == agent_q::AgentQPolicyStoreWriteResult::unchanged_failure, "commit metadata set failure preserves old policy");

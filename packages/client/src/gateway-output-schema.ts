@@ -159,9 +159,29 @@ export const deviceListEntryShape = z.object({
   runtimeSession: runtimeSessionShape.nullable(),
 });
 
+const unavailableReasonShape = z.enum([
+  "timeout",
+  "port_not_found",
+  "port_in_use",
+  "port_permission_denied",
+  "handshake_failed",
+  "incompatible_version",
+  "transport_closed",
+]);
+const scanDeviceFailureShape = z.object({
+  source: z.literal("error"),
+  connected: z.literal(false),
+  portPath: portHintShape,
+  unavailableReason: unavailableReasonShape,
+  firmwareErrorCode: z
+    .string()
+    .refine((code) => Object.prototype.hasOwnProperty.call(PUBLIC_ERROR_MESSAGES, code))
+    .optional(),
+});
 export const scanDevicesSuccessOutputShape = z.object({
   source: z.literal("live"),
   devices: z.array(liveStatusShape),
+  failures: z.array(scanDeviceFailureShape),
   activeDeviceId: safeDeviceIdShape.nullable(),
 });
 export const scanDevicesToolOutputShape = z.discriminatedUnion("source", [
@@ -407,7 +427,7 @@ const methodResultErrorShape = z.object({
 }).refine((error) => error.message === METHOD_RESULT_ERROR_MESSAGES[error.code], {
   message: "Method result error message must match its code.",
 });
-const liveCallMethodOutputShape = z.object({
+const liveCallMethodRejectedOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
   status: z.literal("rejected"),
@@ -423,13 +443,13 @@ const sessionEndedCallMethodOutputShape = z.object({
   deviceId: safeDeviceIdShape,
   reason: z.enum(CALL_METHOD_SESSION_ENDED_REASONS),
 });
-export const callMethodSuccessOutputShape = z.discriminatedUnion("source", [
-  liveCallMethodOutputShape,
+export const callMethodSuccessOutputShape = z.union([
+  liveCallMethodRejectedOutputShape,
   notConnectedCallMethodOutputShape,
   sessionEndedCallMethodOutputShape,
 ]);
-export const callMethodToolOutputShape = z.discriminatedUnion("source", [
-  liveCallMethodOutputShape,
+export const callMethodToolOutputShape = z.union([
+  liveCallMethodRejectedOutputShape,
   notConnectedCallMethodOutputShape,
   sessionEndedCallMethodOutputShape,
   errorToolResultShape,
@@ -477,14 +497,7 @@ const cachedDeviceStatusOutputShape = z.object({
   source: z.literal("cached"),
   connected: z.literal(false),
   statusObservedAt: isoInstantShape,
-  unavailableReason: z.enum([
-    "timeout",
-    "port_not_found",
-    "port_in_use",
-    "handshake_failed",
-    "incompatible_version",
-    "transport_closed",
-  ]),
+  unavailableReason: unavailableReasonShape,
   firmwareErrorCode: z
     .string()
     .refine((code) => Object.prototype.hasOwnProperty.call(PUBLIC_ERROR_MESSAGES, code))

@@ -40,7 +40,7 @@ CallMethodNamespaceValidation classify_call_method_namespace(JsonDocument& reque
 // session, UI, policy, or signing state.
 CallMethodFieldValidation validate_call_method_request_fields(JsonDocument& request);
 
-// Validate the currently recognized Sui sign_transaction smoke params. Returns
+// Validate the currently recognized Sui sign_transaction params. Returns
 // the decoded txBytes size when the base64 is canonical and inside the runtime
 // envelope bounds.
 bool validate_sui_sign_transaction_params(JsonVariant params, size_t* decoded_tx_size);

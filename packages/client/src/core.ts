@@ -38,6 +38,7 @@ import {
   validateTimeoutMs,
   type UnavailableReason,
   type UsbSerialDriver,
+  type UsbStatusFailure,
   type UsbStatusResult,
 } from "./usb.js";
 
@@ -66,7 +67,16 @@ export type DeviceStatusToolResult = DeviceStatusResult;
 export interface ScanDevicesResult {
   source: "live";
   devices: LiveDeviceStatus[];
+  failures: ScanDeviceFailure[];
   activeDeviceId: string | null;
+}
+
+export interface ScanDeviceFailure {
+  source: "error";
+  connected: false;
+  portPath: string;
+  unavailableReason: UnavailableReason;
+  firmwareErrorCode?: string;
 }
 
 export interface IdentifiedDevice {
@@ -215,16 +225,13 @@ export type GetApprovalHistoryResult =
   | { source: "session_ended"; deviceId: string; reason: GetApprovalHistorySessionEndedReason };
 
 // call_method is the common method path. The current runtime keeps
-// sessions/state gates intact, rejects unknown methods, and recognizes Sui
-// sign_transaction for policy evaluation. Product-reachable active policies
-// currently produce rejected method results until public signing is implemented
-// and advertised.
+// sessions/state gates intact and returns method-level rejections.
 export type CallMethodResult =
   | {
       source: "live";
       deviceId: string;
-      status: MethodResultResponse["status"];
-      error: MethodResultResponse["error"];
+      status: "rejected";
+      error: Extract<MethodResultResponse, { status: "rejected" }>["error"];
     }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: CallMethodSessionEndedReason };
@@ -250,6 +257,21 @@ export const DEFAULT_GATEWAY_NAME = "Agent-Q Gateway";
 export const CONNECT_TRANSPORT_MARGIN_MS = 1000;
 export const DEFAULT_DISCONNECT_TIMEOUT_MS = DEFAULT_SCAN_TIMEOUT_MS;
 export const DEFAULT_POLICY_UPDATE_TIMEOUT_MS = MAX_APPROVAL_TIMEOUT_MS + CONNECT_TRANSPORT_MARGIN_MS;
+export const DEFAULT_CALL_METHOD_TIMEOUT_MS = MAX_APPROVAL_TIMEOUT_MS + CONNECT_TRANSPORT_MARGIN_MS;
+
+function validateCallMethodTimeoutMs(value: unknown): number {
+  if (!Number.isInteger(value) || typeof value !== "number" || value <= 0) {
+    throw new GatewayError("invalid_timeout", "timeoutMs must be a positive integer.", false);
+  }
+  if (value > DEFAULT_CALL_METHOD_TIMEOUT_MS) {
+    throw new GatewayError(
+      "invalid_timeout",
+      `timeoutMs must be <= the Firmware approval window plus transport margin (${DEFAULT_CALL_METHOD_TIMEOUT_MS}).`,
+      false,
+    );
+  }
+  return value;
+}
 
 function validatePolicyUpdateTimeoutMs(value: unknown): number {
   if (!Number.isInteger(value) || typeof value !== "number" || value <= 0) {
@@ -282,23 +304,24 @@ export class GatewayCore {
 
   async scanDevices(input: { timeoutMs?: number } = {}): Promise<ScanDevicesResult> {
     const timeoutMs = validateTimeoutMs(input.timeoutMs);
-    const liveDevices = await scanUsbDevices(this.usbDriver, timeoutMs);
+    const scanResult = await scanUsbDeviceStatuses(this.usbDriver, timeoutMs);
     const devices: LiveDeviceStatus[] = [];
 
-    for (const liveDevice of liveDevices) {
+    for (const liveDevice of scanResult.devices) {
       await this.configStore.rememberUsbStatus(liveDevice.protocolResponse, liveDevice.portPath, {
         setActive: false,
       });
       devices.push(toLiveStatus(liveDevice));
     }
     this.clearRuntimeSessionsAbsentFromLiveUsbScan(
-      new Set(liveDevices.map((liveDevice) => liveDevice.protocolResponse.device.deviceId)),
+      new Set(scanResult.devices.map((liveDevice) => liveDevice.protocolResponse.device.deviceId)),
     );
 
     const config = await this.configStore.load();
     return {
       source: "live",
       devices,
+      failures: scanResult.failures.map(toScanFailure),
       activeDeviceId: config.activeDeviceId,
     };
   }
@@ -765,7 +788,8 @@ export class GatewayCore {
   }): Promise<CallMethodResult> {
     const params = input.params ?? {};
     const target = await this.resolveTargetDevice(input);
-    const scanTimeoutMs = validateTimeoutMs(input.timeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS);
+    const methodTimeoutMs = validateCallMethodTimeoutMs(input.timeoutMs ?? DEFAULT_CALL_METHOD_TIMEOUT_MS);
+    const scanTimeoutMs = validateTimeoutMs(Math.min(methodTimeoutMs, DEFAULT_DISCONNECT_TIMEOUT_MS));
 
     const session = this.peekRuntimeSession(target.deviceId);
     if (session === null) {
@@ -792,10 +816,10 @@ export class GatewayCore {
         input.chain,
         input.method,
         params,
-        scanTimeoutMs,
+        methodTimeoutMs,
       );
-      // Method-level rejection is not a session failure. Keep the session live.
-      return { source: "live", deviceId: target.deviceId, status: response.status, error: response.error };
+      // Method-level terminal results are not session failures. Keep the session live.
+      return { source: "live", deviceId: target.deviceId, status: "rejected", error: response.error };
     } catch (error) {
       const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
@@ -1046,6 +1070,18 @@ function toCachedStatus(
   };
 }
 
+function toScanFailure(failure: UsbStatusFailure): ScanDeviceFailure {
+  return {
+    source: "error",
+    connected: false,
+    portPath: sanitizePortHint(failure.portPath),
+    unavailableReason: failure.unavailableReason,
+    ...(failure.firmwareErrorCode === undefined
+      ? {}
+      : { firmwareErrorCode: normalizeErrorCode(failure.firmwareErrorCode) }),
+  };
+}
+
 function validateIdentifyDurationMs(value: unknown): number {
   if (value === undefined) {
     return DEFAULT_IDENTIFY_DURATION_MS;
@@ -1141,6 +1177,7 @@ function runtimeSessionMirrorEndReason(
     case "port_not_found":
     case "transport_closed":
     case "port_in_use":
+    case "port_permission_denied":
       return "transport_unavailable";
     default:
       return null;

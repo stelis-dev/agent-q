@@ -10,7 +10,6 @@ namespace {
 constexpr uint8_t kStoredPolicyFormatVersion = 1;
 constexpr uint8_t kStoredPolicySchemaV0 = 1;
 constexpr uint8_t kStoredPolicyActionReject = 0;
-constexpr uint8_t kStoredPolicyActionAsk = 1;
 constexpr uint8_t kStoredPolicyActionSign = 2;
 constexpr uint8_t kStoredPolicyOperatorEq = 0;
 constexpr uint8_t kStoredPolicyOperatorIn = 1;
@@ -126,8 +125,6 @@ uint8_t encode_action(AgentQPolicyAction action)
     switch (action) {
         case AgentQPolicyAction::reject:
             return kStoredPolicyActionReject;
-        case AgentQPolicyAction::ask:
-            return kStoredPolicyActionAsk;
         case AgentQPolicyAction::sign:
             return kStoredPolicyActionSign;
     }
@@ -155,9 +152,6 @@ bool decode_action(uint8_t value, AgentQPolicyAction* output)
     switch (value) {
         case kStoredPolicyActionReject:
             *output = AgentQPolicyAction::reject;
-            return true;
-        case kStoredPolicyActionAsk:
-            *output = AgentQPolicyAction::ask;
             return true;
         case kStoredPolicyActionSign:
             *output = AgentQPolicyAction::sign;

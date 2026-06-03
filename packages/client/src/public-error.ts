@@ -53,6 +53,7 @@ export const PUBLIC_ERROR_MESSAGES: Record<string, string> = {
   handshake_failed: "The device did not respond to a status handshake.",
   port_not_found: "The device is not connected.",
   port_in_use: "The device port is in use by another process.",
+  port_permission_denied: "Gateway does not have permission to access the device port.",
   transport_closed: "The device connection was closed.",
   identification_code_exhausted: "Could not allocate a unique identification code.",
   internal_output_error: "Gateway produced an unexpected internal result.",

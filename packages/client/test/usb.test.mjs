@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   deadlineEnforcingDriver,
   isLikelyAgentQUsbPort,
+  mapErrorToUnavailableReason,
   resolveUsbCalloutPath,
   scanUsbDeviceStatuses,
   scanUsbDevices,
@@ -233,4 +234,31 @@ test("scanUsbDeviceStatuses self-enforces the scan budget on a raw driver", asyn
   assert.equal(result.devices.length, 0);
   assert.equal(result.failures.length, 1);
   assert.equal(result.failures[0].unavailableReason, "timeout");
+});
+
+test("maps serial permission failures separately from missing devices", () => {
+  const eperm = Object.assign(new Error("Operation not permitted"), { code: "EPERM" });
+  assert.equal(mapErrorToUnavailableReason(eperm), "port_permission_denied");
+
+  const eacces = Object.assign(new Error("Cannot open /dev/cu.usbmodem1: permission denied"), { code: "EACCES" });
+  assert.equal(mapErrorToUnavailableReason(eacces), "port_permission_denied");
+
+  assert.equal(mapErrorToUnavailableReason(new Error("No such file or directory")), "port_not_found");
+});
+
+test("scan records serial permission failures as candidate access failures", async () => {
+  const driver = {
+    async listPorts() {
+      return [{ path: "/dev/cu.usbmodem1", vendorId: "303a", productId: "1001", manufacturer: "Espressif" }];
+    },
+    async requestStatus() {
+      throw Object.assign(new Error("Operation not permitted"), { code: "EPERM" });
+    },
+  };
+
+  const result = await scanUsbDeviceStatuses(driver, 2000);
+  assert.equal(result.devices.length, 0);
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.failures[0].portPath, "/dev/cu.usbmodem1");
+  assert.equal(result.failures[0].unavailableReason, "port_permission_denied");
 });

@@ -45,15 +45,13 @@ agent_q::AgentQUsbSessionLossPlan plan(
     bool session_active,
     bool connect_approval_active,
     agent_q::AgentQUsbSessionLossProtocolPinPurpose protocol_pin,
-    agent_q::AgentQUsbSessionLossLocalPinPurpose local_pin,
-    bool method_signing_active = false)
+    agent_q::AgentQUsbSessionLossLocalPinPurpose local_pin)
 {
     return agent_q::usb_session_loss_plan(agent_q::AgentQUsbSessionLossInput{
         session_active,
         connect_approval_active,
         protocol_pin,
         local_pin,
-        method_signing_active,
     });
 }
 
@@ -69,15 +67,13 @@ int main()
     expect(!p.relevant, "idle state is not USB-session-loss relevant");
     expect(!p.clear_session && !p.clear_connect_approval && !p.clear_protocol_pin &&
                !p.wipe_local_pin_auth && !p.clear_policy_update_flow &&
-               !p.clear_method_signing_flow && !p.clear_decision_panel &&
-               !p.clear_local_pin_panel,
+               !p.clear_decision_panel && !p.clear_local_pin_panel,
            "idle plan has no cleanup actions");
 
     p = plan(true, false, ProtocolPurpose::none, LocalPurpose::none);
     expect(p.relevant && p.clear_session, "active session is cleared");
     expect(!p.clear_connect_approval && !p.clear_protocol_pin &&
-               !p.wipe_local_pin_auth && !p.clear_policy_update_flow &&
-               !p.clear_method_signing_flow,
+               !p.wipe_local_pin_auth && !p.clear_policy_update_flow,
            "session-only loss does not clear unrelated owners");
 
     p = plan(false, true, ProtocolPurpose::none, LocalPurpose::none);
@@ -109,25 +105,10 @@ int main()
            "local policy-update PIN wipes local PIN and policy update flow");
     expect(!p.clear_protocol_pin, "local-only policy update does not imply protocol cleanup");
 
-    p = plan(false, false, ProtocolPurpose::none, LocalPurpose::method_signing);
-    expect(p.relevant && p.wipe_local_pin_auth && p.clear_method_signing_flow &&
-               p.clear_local_pin_panel,
-           "local method-signing PIN wipes local PIN and method signing flow");
-    expect(!p.clear_policy_update_flow && !p.clear_protocol_pin,
-           "local method-signing PIN does not clear policy update flow or protocol PIN");
-
-    p = plan(false, false, ProtocolPurpose::none, LocalPurpose::none, true);
-    expect(p.relevant && p.clear_method_signing_flow,
-           "method signing flow is cleared after local PIN is gone");
-    expect(!p.wipe_local_pin_auth && !p.clear_policy_update_flow,
-           "method signing flow alone does not wipe unrelated owners");
-
     p = plan(true, true, ProtocolPurpose::policy_update, LocalPurpose::policy_update);
     expect(p.relevant && p.clear_session && p.clear_connect_approval &&
                p.clear_protocol_pin && p.wipe_local_pin_auth &&
-               p.clear_policy_update_flow && !p.clear_method_signing_flow &&
-               p.clear_decision_panel &&
-               p.clear_local_pin_panel,
+               p.clear_policy_update_flow && p.clear_decision_panel && p.clear_local_pin_panel,
            "combined session-bound state plans all relevant cleanup");
 
     p = plan(false, false, ProtocolPurpose::other, LocalPurpose::other);
