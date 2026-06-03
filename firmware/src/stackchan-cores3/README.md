@@ -38,7 +38,10 @@ The current implementation includes:
 - a source-level device-confirmed signature request state owner for future
   `request_signature` work. Split validation helpers separately check the
   future request envelope, session-id format, and params into bounded
-  value-owned fields, but they are not wired into the USB dispatcher. The state
+  value-owned fields. An unconnected ingress decision helper composes those
+  checks so future USB dispatcher work can keep material/busy/session gates
+  ahead of params validation. These helpers are not wired into the USB
+  dispatcher and do not create a protocol response contract. The state
   owner owns RAM-only pending request metadata,
   bounded signable payload scratch, a Sui transfer summary parsed from the same
   `txBytes`, Firmware-derived sender/gas-owner account binding, staged
@@ -175,6 +178,7 @@ firmware/tools/stackchan-cores3/test_persistent_material.sh
 firmware/tools/stackchan-cores3/test_provisioning_state_store.sh
 firmware/tools/stackchan-cores3/test_provisioning_runtime_state.sh
 firmware/tools/stackchan-cores3/test_signature_request_flow.sh
+firmware/tools/stackchan-cores3/test_signature_request_ingress.sh
 firmware/tools/stackchan-cores3/test_signature_request_review_view_model.sh
 firmware/tools/stackchan-cores3/test_signature_request_validation.sh
 firmware/tools/stackchan-cores3/test_local_auth.sh
