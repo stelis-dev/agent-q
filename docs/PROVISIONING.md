@@ -130,7 +130,8 @@ Rules:
 
 - Gateway must not derive private keys.
 - Firmware returns public key/address data through `get_accounts`.
-- Signing uses `call_method`.
+- Current public signing is not implemented. Current `call_method` handles
+  delegated policy request validation and rejected method results only.
 - Agent-Q must not add chain-specific top-level MCP tools.
 
 The first implementation target is Sui Ed25519.

@@ -208,11 +208,13 @@ Signing requests have two separate authority models:
   active policy. This path is for agent-delegated authority and does not imply
   per-request device-local confirmation.
 - Device-confirmed requests: Firmware requires device-local confirmation for a
-  bounded signing request through a separate shared protocol request. This
-  model is not implemented, and the confirmation does not prove the request
-  came from a trustworthy host, dapp, provider, agent, or upstream user intent.
-  Provider-facing signing must use this future model, while MCP agent-facing
-  `call_method` remains the delegated policy path.
+  bounded signing request through the future shared `request_signature`
+  protocol request. This model is not implemented, and the confirmation does
+  not prove the request came from a trustworthy host, dapp, provider, agent, or
+  upstream user intent. Provider-facing signing must use this future model,
+  while MCP agent-facing `call_method` remains the delegated policy path. The
+  first implementation must require local PIN confirmation and must not reuse
+  the connect-only PIN setting as the signing confirmation policy.
 
 Policy actions must not bridge these models. A policy document may use only
 action values accepted by the current schema. Any other action value is invalid

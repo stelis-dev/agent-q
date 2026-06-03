@@ -53,7 +53,7 @@ This document tracks implementation status only. The wire protocol is defined in
 | Admin Page | △ | Gateway-served local Admin Page supports device discovery, connection, read-only active policy and approval-history views, and the current reject-policy proposal template. It is not a separate product and is not a policy authority. Full policy editing is not implemented. |
 | Firmware update path | X | Not exposed through MCP. |
 | Policy update proposal path | △ | Gateway/MCP exposes `propose_policy_update` as a bounded proposal path over an active session. It is not a direct setter: Firmware validates the proposal, requires device-local local-PIN approval, commits through the active-policy store, and records required terminal history. The Gateway-served local Admin Page can submit the current reject-policy proposal template. |
-| Signing APIs | X | Public signing APIs are not implemented. Sui `sign_transaction` request validation exists only inside the common `call_method` rejected-path skeleton. Device-confirmed signing requests, agent-request signing output, arbitrary Sui transactions, Sui personal-message signing, and chain-specific top-level MCP signing tools are not implemented. |
+| Signing APIs | X | Public signing APIs are not implemented. Sui `sign_transaction` request validation exists only inside the common `call_method` rejected-path skeleton. The future device-confirmed `request_signature` contract is specified but not implemented. Device-confirmed signing requests, agent-request signing output, arbitrary Sui transactions, Sui personal-message signing, and chain-specific top-level MCP signing tools are not implemented. |
 
 Current MCP tools:
 

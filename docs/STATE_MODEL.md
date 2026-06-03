@@ -252,11 +252,11 @@ dapp, provider, host, or agent intent that produced the request.
 
 Device-confirmed signing is not implemented. Before any public
 device-confirmed signing request is added, it must be modeled as a separate
-shared protocol request, not as a `call_method` mode, policy action,
-request-authority flag, or compatibility fallback. The source state must be
-material-backed `provisioned` with a matching active session. The target state
-after every terminal outcome remains `provisioned`, unless the terminal outcome
-detects persistent material inconsistency.
+shared `request_signature` protocol request, not as a `call_method` mode,
+policy action, request-authority flag, or compatibility fallback. The source
+state must be material-backed `provisioned` with a matching active session. The
+target state after every terminal outcome remains `provisioned`, unless the
+terminal outcome detects persistent material inconsistency.
 
 Required owners for a future device-confirmed signing pending state:
 
@@ -291,11 +291,28 @@ Failure requirements for a future device-confirmed signing request:
 - reject, timeout, UI failure, invalid state, session loss, or disconnect before
   the signing critical section must wipe signable scratch and produce no
   signature;
-- approval-history durability must be defined before signing can occur;
+- approval-history durability must complete before signing can occur;
 - if signing or response delivery fails after a durable approval record, the
-  terminal history and user-visible result must not imply that Gateway received
-  a signature;
+  terminal history and user-visible result must distinguish signature
+  generation from Gateway receipt;
 - every terminal path must wipe signable payload and signature scratch.
+
+The first `request_signature` implementation must require local PIN
+confirmation. The connect-only `pin_on_connect` setting does not apply to
+signing. Planned terminal stages are:
+
+- `reviewing`: parsed summary is displayed; no PIN or signing is active.
+- `pin_entry`: local PIN input is active for this request.
+- `history_write`: device confirmation has completed; signing is still
+  forbidden until the required history record is durable.
+- `signing_critical_section`: history is durable and signing may execute; only
+  the owner may consume or wipe signing scratch.
+- terminal `signed`, `rejected`, `timed_out`, or `signing_failed`.
+
+Planned history records for this path use `eventKind: "signature_request"` and
+`confirmationKind: "local_pin"`. A `signed` record means Firmware generated a
+signature after device confirmation; it does not prove Gateway received that
+signature.
 
 #### Pending Policy Update
 

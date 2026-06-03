@@ -58,16 +58,13 @@ This path does not imply device-local confirmation for each method request. In
 the current implementation, Sui `sign_transaction` is recognized only for
 rejected-path policy evaluation and returns rejected method results.
 
-Device-confirmed signing requests are not implemented. If added, they must be
-modeled as a distinct authority path through a separate shared protocol request,
-not as a `call_method` mode or request-authority flag. The request's state
-gates, result schema, approval-history records, scratch ownership, and cleanup
-must be defined before implementation. A device-confirmed request means
-Firmware shows and confirms a bounded request on the device; it does not prove
-that the host, dapp, provider, agent, or upstream user intent was trustworthy.
-Provider-facing APIs may expose only this future device-confirmed path for
-application signing. MCP agent-facing `call_method` remains the delegated
-policy request path.
+Device-confirmed signing requests are not implemented. If added, they must use
+the shared `request_signature` request defined below, not a `call_method` mode
+or request-authority flag. A device-confirmed request means Firmware shows and
+confirms a bounded request on the device; it does not prove that the host, dapp,
+provider, agent, or upstream user intent was trustworthy. Provider-facing APIs
+may expose only this future device-confirmed path for application signing. MCP
+agent-facing `call_method` remains the delegated policy request path.
 
 Policy documents may use only actions accepted by the current schema and
 enforceable by the current runtime. Any other action value is invalid input and
@@ -818,8 +815,10 @@ Rules:
   are added as more `accounts[]` entries only after the protocol, capability
   response, and Gateway bounds are updated. StackChan CoreS3 hardware smoke
   verifies the current single-account response over an approved session.
-  `get_accounts` reads identity only; public signing methods are reported by
-  `get_capabilities`.
+  `get_accounts` reads identity only. Current public method availability is
+  reported by `get_capabilities.chains[].methods`; future device-confirmed
+  signing availability must use the separate `signatureRequests` capability
+  field defined below.
 
 ## Policy Summary
 
@@ -1073,6 +1072,158 @@ session gates:
 Current method result statuses:
 
 - `rejected`
+
+## Device-Confirmed Signature Request
+
+`request_signature` is the reserved shared protocol request for future
+provider-facing device-confirmed signing. It is not implemented in the current
+StackChan CoreS3 target, Gateway client, MCP server, or provider package. This
+request is specified here so future signing work does not overload
+`call_method`, policy actions, or chain-specific top-level APIs.
+
+Future request shape:
+
+```json
+{
+  "id": "req_signature_001",
+  "version": 1,
+  "type": "request_signature",
+  "sessionId": "session_001",
+  "params": {
+    "chain": "sui",
+    "method": "sign_transaction",
+    "network": "devnet",
+    "txBytes": "AA...",
+    "approvalTimeoutMs": 30000
+  }
+}
+```
+
+Rules for the first implementation:
+
+- `request_signature` is valid only in material-backed `provisioned` state with
+  a matching active session.
+- The request is a device-confirmed path. It must not evaluate or depend on an
+  active policy action, must not reuse `call_method`, and must not be exposed as
+  an MCP agent-facing signing tool.
+- The first implementation is limited to `chain: "sui"` and
+  `method: "sign_transaction"` for the same restricted SUI transfer shape
+  accepted by the current Sui transaction-facts parser.
+- `network` is required and must be one of `mainnet`, `testnet`, `devnet`, or
+  `localnet`. `txBytes` must be canonical base64 and must remain within the
+  current Sui signing request bounds unless a later spec change widens the
+  bound with matching parser, scratch, UI, and tests.
+- `approvalTimeoutMs` is optional, defaults to `30000`, and is capped at
+  `60000`.
+- Firmware must parse enough input to show a bounded clear-signing summary
+  before entering device confirmation. Unsupported or malformed transactions
+  must fail before any signing approval UI can be confirmed.
+- The first implementation must require local PIN confirmation. The
+  connect-only `pin_on_connect` setting does not control signing confirmation.
+- Firmware must not call the signing service before device confirmation and the
+  required approval-history record are both durable.
+- `get_capabilities.methods` does not advertise `request_signature`. A future
+  signing capability must use a separate top-level `signatureRequests` field,
+  absent from current capabilities until Firmware, client, provider, docs, and
+  hardware smoke have all been updated for the same request contract.
+
+Future signing capability shape:
+
+```json
+{
+  "signatureRequests": [
+    {
+      "chain": "sui",
+      "method": "sign_transaction"
+    }
+  ]
+}
+```
+
+This field is provider-facing availability metadata for device-confirmed
+signing requests. It is not an MCP agent-facing signing method list and must not
+be populated while `request_signature` is unimplemented.
+
+Future signed response:
+
+```json
+{
+  "id": "req_signature_001",
+  "version": 1,
+  "type": "signature_result",
+  "status": "signed",
+  "reasonCode": "device_confirmed",
+  "chain": "sui",
+  "method": "sign_transaction",
+  "signature": "base64-sui-ed25519-signature-envelope"
+}
+```
+
+Future rejected or timed-out response:
+
+```json
+{
+  "id": "req_signature_001",
+  "version": 1,
+  "type": "signature_result",
+  "status": "rejected",
+  "reasonCode": "device_rejected",
+  "error": {
+    "code": "device_rejected",
+    "message": "The signing request was rejected on the device."
+  }
+}
+```
+
+Future `signature_result.status` values:
+
+- `signed`: Firmware generated the signature after device confirmation and a
+  durable history record.
+- `rejected`: device-local confirmation explicitly rejected the request.
+- `timed_out`: device-local confirmation expired without approval.
+- `failed`: device confirmation succeeded, but signing failed before a
+  signature response could be produced.
+
+Future terminal reason codes:
+
+- `device_confirmed`
+- `device_rejected`
+- `device_timed_out`
+- `signing_failed`
+
+Terminal error mapping:
+
+| status | reasonCode | error.code | error.message |
+| --- | --- | --- | --- |
+| `rejected` | `device_rejected` | `device_rejected` | `The signing request was rejected on the device.` |
+| `timed_out` | `device_timed_out` | `device_timed_out` | `The signing request timed out on the device.` |
+| `failed` | `signing_failed` | `signing_failed` | `The device could not produce a signature.` |
+
+`signed` responses may contain only `reasonCode`, `chain`, `method`, and
+`signature` as method-specific output. Non-signed terminal responses may contain
+only `reasonCode` and `error` beyond the shared envelope fields. No
+`signature_result` response may contain raw `txBytes`, decoded transaction
+internals, session id, request id beyond the envelope id, account private
+material, seed, mnemonic, PIN, policy scratch, or device-local UI state.
+Client, provider, and MCP parsers must fail closed on extra or secret-like
+fields. MCP must not expose this request unless a later product decision adds a
+separate agent-facing signing capability.
+
+Future approval-history contract:
+
+- Device-confirmed signing uses a new `eventKind: "signature_request"`, not the
+  current `method_decision` event kind.
+- Recordable terminal results are `signed`, `rejected`, `timed_out`, and
+  `signing_failed`.
+- `confirmationKind` is `local_pin` for the first implementation.
+- The record stores only bounded metadata: chain, method, reason code,
+  optional payload digest, and optional terminal result. It must not store raw
+  `txBytes`, decoded transaction internals, session ids, raw request ids, PINs,
+  seed, mnemonic, private key material, or full UI text.
+- A durable `signed` history record means Firmware confirmed the request and
+  generated a signature. It does not prove Gateway received the signature.
+- If a required history write fails before signing, Firmware must return
+  top-level `history_error` and must not call the signing service.
 
 ## Admin Methods
 
