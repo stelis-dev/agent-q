@@ -18,6 +18,7 @@ enum class SuiTransactionFactsResult {
 
 struct SuiTransferFacts {
     char sender[kSuiTransferAddressBufferSize];
+    char gas_owner[kSuiTransferAddressBufferSize];
     char recipient[kSuiTransferAddressBufferSize];
     char asset[kSuiTransferAssetBufferSize];
     char amount[kSuiTransferU64StringBufferSize];

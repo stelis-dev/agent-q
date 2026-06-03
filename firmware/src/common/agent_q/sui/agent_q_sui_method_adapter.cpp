@@ -36,10 +36,12 @@ bool make_sui_sign_transaction_policy_facts(
 
     if (!string_present(network) ||
         !string_present(sui_facts.sender) ||
+        !string_present(sui_facts.gas_owner) ||
         !string_present(sui_facts.recipient) ||
         !string_present(sui_facts.amount) ||
         !string_present(sui_facts.gas_budget) ||
         !string_present(sui_facts.gas_price) ||
+        strcmp(sui_facts.gas_owner, sui_facts.sender) != 0 ||
         strcmp(sui_facts.asset, kSuiAsset) != 0 ||
         sui_facts.command_count != 2) {
         return false;

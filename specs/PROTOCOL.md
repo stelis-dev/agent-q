@@ -1117,11 +1117,25 @@ Rules for the first implementation:
   `60000`.
 - Firmware must parse enough input to show a bounded clear-signing summary
   before entering device confirmation. Unsupported or malformed transactions
-  must fail before any signing approval UI can be confirmed.
+  must fail before any signing approval UI can be confirmed. The displayed
+  request summary must be derived by Firmware from the same `txBytes` that would
+  be signed; callers must not supply independent review facts. Firmware must
+  derive the signing account from stored device material, and the parsed sender
+  and gas owner must both match that device-derived account. Sponsored gas and
+  request-supplied expected-signer bindings are unsupported in the first
+  implementation.
 - The first implementation must require local PIN confirmation. The
   connect-only `pin_on_connect` setting does not control signing confirmation.
 - Firmware must not call the signing service before device confirmation and the
-  required approval-history record are both durable.
+  required approval-history record are both durable. The state owner must
+  validate the session immediately before performing that required history
+  write and must enter the signing critical section in the same successful
+  transition. A session loss after the write succeeds must not downgrade the
+  request to pre-signing cleanup. The history write input must be value-owned
+  request metadata, not pointers into mutable pending state, and the owner must
+  verify that the same request and session are still in the history-write stage
+  after the write callback returns before entering the signing critical
+  section.
 - `get_capabilities.methods` does not advertise `request_signature`. A future
   signing capability must use a separate top-level `signatureRequests` field,
   absent from current capabilities until Firmware, client, provider, docs, and
@@ -1191,6 +1205,10 @@ Future terminal reason codes:
 - `device_timed_out`
 - `signing_failed`
 
+Pre-signing session loss, disconnect cancellation, or required-history write
+failure are cleanup failures, not signature results. They must produce no
+signature and may return a top-level error instead of `signature_result`.
+
 Terminal error mapping:
 
 | status | reasonCode | error.code | error.message |
@@ -1213,17 +1231,21 @@ Future approval-history contract:
 
 - Device-confirmed signing uses a new `eventKind: "signature_request"`, not the
   current `method_decision` event kind.
+- The required pre-signing record is a `recordKind: "confirmation"` record with
+  `confirmationKind: "local_pin"` for the first implementation. This durable
+  record authorizes entering the signing critical section; it is not a `signed`
+  terminal result.
 - Recordable terminal results are `signed`, `rejected`, `timed_out`, and
   `signing_failed`.
-- `confirmationKind` is `local_pin` for the first implementation.
-- The record stores only bounded metadata: chain, method, reason code,
-  optional payload digest, and optional terminal result. It must not store raw
-  `txBytes`, decoded transaction internals, session ids, raw request ids, PINs,
-  seed, mnemonic, private key material, or full UI text.
-- A durable `signed` history record means Firmware confirmed the request and
-  generated a signature. It does not prove Gateway received the signature.
-- If a required history write fails before signing, Firmware must return
-  top-level `history_error` and must not call the signing service.
+- Terminal records use `recordKind: "terminal"` and store only bounded metadata:
+  chain, method, reason code, optional payload digest, and optional terminal
+  result. They must not store raw `txBytes`, decoded transaction internals,
+  session ids, raw request ids, PINs, seed, mnemonic, private key material, or
+  full UI text.
+- A durable `signed` terminal record means Firmware generated a signature after
+  device confirmation. It does not prove Gateway received the signature.
+- If the required confirmation history write fails before signing, Firmware must
+  return top-level `history_error` and must not call the signing service.
 
 ## Admin Methods
 

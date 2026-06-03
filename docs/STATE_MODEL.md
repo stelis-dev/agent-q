@@ -263,8 +263,10 @@ Required owners for a future device-confirmed signing pending state:
 - persistent device state: Firmware-owned root material, local PIN verifier if
   PIN confirmation is required, and approval history. Active policy is not the
   authority for this path;
-- volatile sensitive scratch: Firmware-owned signable payload bytes, parsed
-  request summary, signature scratch, and any local PIN scratch;
+- volatile sensitive scratch: Firmware-owned signable payload bytes, a request
+  summary derived from the same signable payload bytes, the Firmware-derived
+  sender and gas-owner account binding, signature scratch, and any local PIN
+  scratch;
 - pending approval state: Firmware-owned request id, session id, chain, method,
   request digest, confirmation deadline, and terminal stage;
 - UI/display state: target-local temporary review, approval, and result layers
@@ -291,10 +293,18 @@ Failure requirements for a future device-confirmed signing request:
 - reject, timeout, UI failure, invalid state, session loss, or disconnect before
   the signing critical section must wipe signable scratch and produce no
   signature;
-- approval-history durability must complete before signing can occur;
-- if signing or response delivery fails after a durable approval record, the
-  terminal history and user-visible result must distinguish signature
-  generation from Gateway receipt;
+- approval-history durability must complete before signing can occur. This is a
+  pre-signing device-confirmation record, not a claim that a signature has
+  already been generated. The owner must validate the active session before the
+  required write and transition to the signing critical section in the same
+  successful step; a session loss after that write succeeds cannot downgrade the
+  request to pre-signing cleanup. Durable history writers must receive
+  value-owned request metadata, and the owner must reject callback reentry that
+  clears, restarts, or otherwise changes the pending request before critical
+  entry;
+- if signing or response delivery fails after a durable confirmation record, the
+  terminal history and user-visible result must distinguish signature generation
+  from Gateway receipt;
 - every terminal path must wipe signable payload and signature scratch.
 
 The first `request_signature` implementation must require local PIN
@@ -304,15 +314,22 @@ signing. Planned terminal stages are:
 - `reviewing`: parsed summary is displayed; no PIN or signing is active.
 - `pin_entry`: local PIN input is active for this request.
 - `history_write`: device confirmation has completed; signing is still
-  forbidden until the required history record is durable.
+  forbidden until the required pre-signing confirmation record is durable.
 - `signing_critical_section`: history is durable and signing may execute; only
-  the owner may consume or wipe signing scratch.
+  the owner may consume or wipe signing scratch. Session loss or disconnect in
+  this stage is `busy`; it cannot downgrade the request to pre-signing cleanup,
+  and normal cleanup helpers must not force-clear this stage.
 - terminal `signed`, `rejected`, `timed_out`, or `signing_failed`.
+  Pre-signing `canceled` and `history_error` are cleanup outcomes that wipe
+  scratch and produce no signature.
 
-Planned history records for this path use `eventKind: "signature_request"` and
-`confirmationKind: "local_pin"`. A `signed` record means Firmware generated a
-signature after device confirmation; it does not prove Gateway received that
-signature.
+Planned history records for this path use `eventKind: "signature_request"`.
+The required pre-signing record uses `recordKind: "confirmation"` and
+`confirmationKind: "local_pin"` after device confirmation succeeds. Terminal
+records use `recordKind: "terminal"` and record whether Firmware generated a
+signature, rejected the request, timed out, or failed during signing. A `signed`
+terminal record means Firmware generated a signature after device confirmation;
+it does not prove Gateway received that signature.
 
 #### Pending Policy Update
 

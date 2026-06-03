@@ -347,6 +347,7 @@ SuiTransactionFactsResult parse_sui_transfer_facts(
 
     const uint64_t amount = read_u64_from_pure(inputs[amount_input_index]);
     if (!format_address(sender, out->sender, sizeof(out->sender)) ||
+        !format_address(gas_owner, out->gas_owner, sizeof(out->gas_owner)) ||
         !format_address(inputs[recipient_input_index].bytes, out->recipient, sizeof(out->recipient)) ||
         !format_u64(amount, out->amount, sizeof(out->amount)) ||
         !format_u64(gas_budget, out->gas_budget, sizeof(out->gas_budget)) ||

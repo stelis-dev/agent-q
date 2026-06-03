@@ -303,6 +303,28 @@ int main(int argc, char** argv)
         fprintf(stderr, "Sui method adapter accepted missing network context\n");
         failures += 1;
     }
+    agent_q::SuiTransferFacts missing_gas_owner_facts = sui_facts;
+    missing_gas_owner_facts.gas_owner[0] = '\0';
+    if (agent_q::make_sui_sign_transaction_policy_facts(
+            missing_gas_owner_facts,
+            "devnet",
+            &missing_network_facts)) {
+        fprintf(stderr, "Sui method adapter accepted missing gas owner\n");
+        failures += 1;
+    }
+    agent_q::SuiTransferFacts sponsored_gas_owner_facts = sui_facts;
+    snprintf(
+        sponsored_gas_owner_facts.gas_owner,
+        sizeof(sponsored_gas_owner_facts.gas_owner),
+        "%s",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    if (agent_q::make_sui_sign_transaction_policy_facts(
+            sponsored_gas_owner_facts,
+            "devnet",
+            &missing_network_facts)) {
+        fprintf(stderr, "Sui method adapter accepted sender/gas-owner mismatch\n");
+        failures += 1;
+    }
 
     const char* allowed_recipients[] = {sui_facts.recipient};
     const char* other_recipients[] = {

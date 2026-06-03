@@ -35,6 +35,17 @@ The current implementation includes:
   `unsupported_method`, and validates Sui `sign_transaction` restricted SUI
   transfer request inputs for rejected-path policy evaluation. Public signing
   output is not implemented.
+- a source-level device-confirmed signature request state owner for future
+  `request_signature` work. It owns RAM-only pending request metadata, bounded
+  signable payload scratch, a Sui transfer summary parsed from the same
+  `txBytes`, Firmware-derived sender/gas-owner account binding, staged
+  confirmation, terminal cleanup, and one-shot payload handoff after the
+  required confirmation history write succeeds. The history write receives
+  value-owned request metadata and cannot move a cleared or different request
+  into the signing critical section. It is not
+  connected to USB protocol ingress, local PIN UI, approval-history storage,
+  signing service calls, Gateway/client/provider parsers, or capability
+  advertisement.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
   Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
   RAM, displays only the up-to-4-letter word prefixes on device in a 3-column
@@ -155,6 +166,7 @@ firmware/tools/stackchan-cores3/test_prepare_sync.sh
 firmware/tools/stackchan-cores3/test_persistent_material.sh
 firmware/tools/stackchan-cores3/test_provisioning_state_store.sh
 firmware/tools/stackchan-cores3/test_provisioning_runtime_state.sh
+firmware/tools/stackchan-cores3/test_signature_request_flow.sh
 firmware/tools/stackchan-cores3/test_local_auth.sh
 firmware/tools/stackchan-cores3/test_local_auth_worker.sh
 firmware/tools/stackchan-cores3/test_local_pin_auth.sh

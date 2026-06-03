@@ -27,6 +27,7 @@ for required in \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
+  "${FIXTURE_DIR}/sponsored_gas_owner_tx.bcs.hex" \
   "${FIXTURE_DIR}/valid_sui_transfer_facts.json"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required file: ${required}" >&2
@@ -212,6 +213,7 @@ int main(int argc, char** argv)
         failures += 1;
     } else {
         expect_equal("sender", json_string_field(expected_json, "sender").c_str(), facts.sender, &failures);
+        expect_equal("gasOwner", json_string_field(expected_json, "gasOwner").c_str(), facts.gas_owner, &failures);
         expect_equal("recipient", json_string_field(expected_json, "recipient").c_str(), facts.recipient, &failures);
         expect_equal("asset", json_string_field(expected_json, "asset").c_str(), facts.asset, &failures);
         expect_equal("amount", json_string_field(expected_json, "amount").c_str(), facts.amount, &failures);
@@ -223,6 +225,26 @@ int main(int argc, char** argv)
                     expected_command_count, facts.command_count);
             failures += 1;
         }
+    }
+
+    const std::vector<uint8_t> sponsored_gas_owner =
+        read_hex_fixture((fixture_dir + "/sponsored_gas_owner_tx.bcs.hex").c_str());
+    facts = {};
+    const agent_q::SuiTransactionFactsResult sponsored_result =
+        agent_q::parse_sui_transfer_facts(
+            sponsored_gas_owner.data(),
+            sponsored_gas_owner.size(),
+            &facts);
+    if (sponsored_result != agent_q::SuiTransactionFactsResult::ok) {
+        fprintf(stderr, "sponsored gas owner fixture returned %s\n",
+                agent_q::sui_transaction_facts_result_name(sponsored_result));
+        failures += 1;
+    } else {
+        expect_equal(
+            "sponsored gas owner",
+            "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            facts.gas_owner,
+            &failures);
     }
 
     expect_reject(

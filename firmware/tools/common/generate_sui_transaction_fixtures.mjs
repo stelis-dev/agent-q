@@ -22,6 +22,7 @@ const outDir = resolve(
 
 const sender = '0x' + 'aa'.repeat(32);
 const recipient = '0x' + 'bb'.repeat(32);
+const sponsoredGasOwner = '0x' + 'ee'.repeat(32);
 const gasObjectId = '0x' + 'cc'.repeat(32);
 const gasDigest = 'dd'.repeat(32);
 const amount = 1_000_000n;
@@ -130,8 +131,8 @@ function suiObjectRef() {
   return concat(hexToBytes(gasObjectId), u64(gasVersion), byteVector(hexToBytes(gasDigest)));
 }
 
-function gasData() {
-  return concat(vector([suiObjectRef()]), hexToBytes(sender), u64(gasPrice), u64(gasBudget));
+function gasData(owner = sender) {
+  return concat(vector([suiObjectRef()]), hexToBytes(owner), u64(gasPrice), u64(gasBudget));
 }
 
 function programmableTransaction(commands) {
@@ -147,8 +148,8 @@ function programmableTransaction(commands) {
   );
 }
 
-function transactionData(commands) {
-  return enumVariant(0, concat(programmableTransaction(commands), hexToBytes(sender), gasData(), enumVariant(0)));
+function transactionData(commands, gasOwner = sender) {
+  return enumVariant(0, concat(programmableTransaction(commands), hexToBytes(sender), gasData(gasOwner), enumVariant(0)));
 }
 
 function unsupportedMergeCoinsTx() {
@@ -215,6 +216,7 @@ async function main() {
     JSON.stringify(
       {
         sender,
+        gasOwner: sender,
         recipient,
         asset: '0x2::sui::SUI',
         amount: amount.toString(),
@@ -230,6 +232,10 @@ async function main() {
   await writeText('malformed_short_tx.bcs.hex', bytesToHex(valid.slice(0, 12)));
   await writeText('trailing_bytes_tx.bcs.hex', `${bytesToHex(valid)}00`);
   await writeText('unsupported_merge_coins_tx.bcs.hex', bytesToHex(unsupportedMergeCoinsTx()));
+  await writeText(
+    'sponsored_gas_owner_tx.bcs.hex',
+    bytesToHex(transactionData([splitCoinsCommand(), transferObjectsCommand()], sponsoredGasOwner)),
+  );
   await writeText('wrong_command_order_tx.bcs.hex', bytesToHex(wrongCommandOrderTx()));
   await writeText('too_many_commands_tx.bcs.hex', bytesToHex(tooManyCommandsTx()));
 }
