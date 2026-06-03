@@ -11,6 +11,7 @@
 #include "agent_q_local_pin_auth.h"
 #include "agent_q_local_reset.h"
 #include "agent_q_method_signing_request_flow.h"
+#include "agent_q_method_signing_review_view_model.h"
 #include "agent_q_policy_update_flow.h"
 #include "agent_q_provisioning_flow.h"
 #include "hal/hal.h"
@@ -1524,69 +1525,25 @@ static bool make_signing_summary_line(lv_obj_t* parent, const char* text, int y)
     return true;
 }
 
-static bool method_signing_summary_ready(
-    const agent_q::AgentQMethodSigningRequestSnapshot& signing)
-{
-    return signing.active &&
-           signing.chain != nullptr &&
-           signing.method != nullptr &&
-           signing.network != nullptr &&
-           signing.recipient != nullptr &&
-           signing.amount != nullptr &&
-           signing.gas_budget != nullptr &&
-           signing.gas_price != nullptr &&
-           signing.asset != nullptr &&
-           signing.chain[0] != '\0' &&
-           signing.method[0] != '\0' &&
-           signing.network[0] != '\0' &&
-           signing.recipient[0] != '\0' &&
-           signing.amount[0] != '\0' &&
-           signing.gas_budget[0] != '\0' &&
-           signing.gas_price[0] != '\0' &&
-           signing.asset[0] != '\0';
-}
-
 static bool make_method_signing_review_summary(lv_obj_t* panel)
 {
     const agent_q::AgentQMethodSigningRequestSnapshot signing =
         method_signing_request_flow_snapshot();
-    if (!method_signing_summary_ready(signing)) {
+    agent_q::AgentQMethodSigningReviewViewModel view_model = {};
+    if (!agent_q::method_signing_review_view_model_from_snapshot(signing, &view_model)) {
         return false;
     }
 
-    char method_line[80] = {};
-    char amount_line[80] = {};
-    char asset_line[80] = {};
-    char recipient_line_one[48] = {};
-    char recipient_line_two[48] = {};
-    char gas_budget_line[48] = {};
-    char gas_price_line[48] = {};
-    snprintf(method_line, sizeof(method_line), "%s/%s on %s", signing.chain, signing.method, signing.network);
-    snprintf(amount_line, sizeof(amount_line), "Amount %s", signing.amount);
-    snprintf(asset_line, sizeof(asset_line), "Asset %s", signing.asset);
-    const size_t recipient_length = strlen(signing.recipient);
-    const size_t recipient_first_length = recipient_length > 34 ? 34 : recipient_length;
-    snprintf(
-        recipient_line_one,
-        sizeof(recipient_line_one),
-        "To %.*s",
-        static_cast<int>(recipient_first_length),
-        signing.recipient);
-    snprintf(
-        recipient_line_two,
-        sizeof(recipient_line_two),
-        "%s",
-        signing.recipient + recipient_first_length);
-    snprintf(gas_budget_line, sizeof(gas_budget_line), "Gas budget %s", signing.gas_budget);
-    snprintf(gas_price_line, sizeof(gas_price_line), "Gas price %s", signing.gas_price);
+    for (size_t index = 0; index < view_model.row_count; ++index) {
+        if (!make_signing_summary_line(
+                panel,
+                view_model.rows[index].text,
+                30 + static_cast<int>(index) * 20)) {
+            return false;
+        }
+    }
 
-    return make_signing_summary_line(panel, method_line, 30) &&
-           make_signing_summary_line(panel, amount_line, 50) &&
-           make_signing_summary_line(panel, asset_line, 70) &&
-           make_signing_summary_line(panel, recipient_line_one, 90) &&
-           make_signing_summary_line(panel, recipient_line_two, 110) &&
-           make_signing_summary_line(panel, gas_budget_line, 130) &&
-           make_signing_summary_line(panel, gas_price_line, 150);
+    return true;
 }
 
 bool modal_draw_local_pin_auth_panel(const char* notice)

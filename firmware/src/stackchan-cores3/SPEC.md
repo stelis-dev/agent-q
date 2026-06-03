@@ -496,6 +496,9 @@ Current verification expectations for this target:
   the protocol-backed local PIN approval request/session/deadline state owner;
 - run `firmware/tools/stackchan-cores3/test_method_signing_request_flow.sh` to check
   method signing request/session/metadata/payload/deadline/history-gate/terminal state ownership;
+- run `firmware/tools/stackchan-cores3/test_method_signing_review_view_model.sh`
+  to check required clear-signing summary fields, full recipient retention, and
+  row-budget bounds;
 - run `firmware/tools/stackchan-cores3/test_identification_display.sh` to check
   temporary identification display active/deadline state ownership;
 - run `firmware/tools/stackchan-cores3/test_local_settings_touch_entry.sh` to

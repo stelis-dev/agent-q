@@ -160,6 +160,7 @@ firmware/tools/common/test_policy_v0.sh
 firmware/tools/stackchan-cores3/test_call_method_validation.sh
 firmware/tools/stackchan-cores3/test_method_runtime.sh
 firmware/tools/stackchan-cores3/test_method_signing_request_flow.sh
+firmware/tools/stackchan-cores3/test_method_signing_review_view_model.sh
 firmware/tools/stackchan-cores3/test_policy_proposal_parser.sh
 firmware/tools/stackchan-cores3/test_policy_update_flow.sh
 firmware/tools/stackchan-cores3/test_policy_update_marker.sh
@@ -261,6 +262,11 @@ verifies request id, session id, method metadata, bounded signable payload
 scratch, deadline, history-durability gating before payload copy, signing
 critical-section cleanup, disconnect/session-loss cancellation, stale-event
 rejection, payload wipe, and one-shot terminal-result ownership.
+
+The StackChan method signing review view model test is target-specific. It
+compiles the tracked `agent_q_method_signing_review_view_model.cpp` summary
+builder, then verifies required clear-signing fields, full recipient retention,
+row-budget bounds, and rejection of digest-only fallback summaries.
 
 The StackChan policy-proposal parser test is target-specific. It compiles the
 tracked `agent_q_policy_proposal_parser.cpp` parser with ArduinoJson and the
