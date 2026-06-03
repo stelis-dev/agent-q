@@ -313,8 +313,11 @@ signing. Planned terminal stages are:
 
 - `reviewing`: parsed summary is displayed; no PIN or signing is active.
 - `pin_entry`: local PIN input is active for this request.
-- `history_write`: device confirmation has completed; signing is still
-  forbidden until the required pre-signing confirmation record is durable.
+- `history_write`: internal callback sub-stage entered only by the
+  Firmware-owned PIN-verified transition. Device confirmation has completed;
+  signing is still forbidden until the required pre-signing confirmation record
+  is durable. Public flow callers must not be able to leave a request parked in
+  this stage without attempting the required history write.
 - `signing_critical_section`: history is durable and signing may execute; only
   the owner may consume or wipe signing scratch. Session loss or disconnect in
   this stage is `busy`; it cannot downgrade the request to pre-signing cleanup,

@@ -437,14 +437,20 @@ AgentQSignatureRequestTransitionResult signature_request_flow_accept_review(
     return AgentQSignatureRequestTransitionResult::ok;
 }
 
-AgentQSignatureRequestTransitionResult signature_request_flow_record_pin_verified(
-    TickType_t now)
+AgentQSignatureRequestTransitionResult
+signature_request_flow_record_pin_verified_and_write_confirmation_history(
+    TickType_t now,
+    AgentQSignatureRequestHistoryWriteFn write_fn,
+    void* context)
 {
     if (!g_state.active()) {
         return AgentQSignatureRequestTransitionResult::inactive;
     }
     if (g_state.stage != AgentQSignatureRequestStage::pin_entry) {
         return AgentQSignatureRequestTransitionResult::wrong_stage;
+    }
+    if (write_fn == nullptr) {
+        return AgentQSignatureRequestTransitionResult::invalid_argument;
     }
     AgentQSignatureRequestTransitionResult guard = require_active_session();
     if (guard != AgentQSignatureRequestTransitionResult::ok) {
@@ -456,23 +462,8 @@ AgentQSignatureRequestTransitionResult signature_request_flow_record_pin_verifie
     }
     g_state.stage = AgentQSignatureRequestStage::history_write;
     g_state.deadline = 0;
-    return AgentQSignatureRequestTransitionResult::ok;
-}
 
-AgentQSignatureRequestTransitionResult signature_request_flow_write_confirmation_history(
-    AgentQSignatureRequestHistoryWriteFn write_fn,
-    void* context)
-{
-    if (!g_state.active()) {
-        return AgentQSignatureRequestTransitionResult::inactive;
-    }
-    if (g_state.stage != AgentQSignatureRequestStage::history_write) {
-        return AgentQSignatureRequestTransitionResult::wrong_stage;
-    }
-    if (write_fn == nullptr) {
-        return AgentQSignatureRequestTransitionResult::invalid_argument;
-    }
-    AgentQSignatureRequestTransitionResult guard = require_active_session();
+    guard = require_active_session();
     if (guard != AgentQSignatureRequestTransitionResult::ok) {
         return guard;
     }

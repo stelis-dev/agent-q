@@ -107,9 +107,9 @@ AgentQSignatureRequestFlowBeginResult signature_request_flow_begin(
 AgentQSignatureRequestTransitionResult signature_request_flow_accept_review(
     TickType_t now,
     TickType_t pin_deadline);
-AgentQSignatureRequestTransitionResult signature_request_flow_record_pin_verified(
-    TickType_t now);
-AgentQSignatureRequestTransitionResult signature_request_flow_write_confirmation_history(
+AgentQSignatureRequestTransitionResult
+signature_request_flow_record_pin_verified_and_write_confirmation_history(
+    TickType_t now,
     AgentQSignatureRequestHistoryWriteFn write_fn,
     void* context);
 AgentQSignatureRequestTransitionResult signature_request_flow_consume_signable_payload(

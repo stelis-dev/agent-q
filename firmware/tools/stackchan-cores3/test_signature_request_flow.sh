@@ -62,6 +62,7 @@ bool g_history_write_result = true;
 bool g_history_write_clears_session = false;
 bool g_history_write_clears_flow = false;
 bool g_history_write_restarts_flow = false;
+bool g_history_write_rejects_flow = false;
 int g_history_write_calls = 0;
 
 void expect(bool condition, const char* label)
@@ -192,6 +193,7 @@ void reset_history_writer_stub()
     g_history_write_clears_session = false;
     g_history_write_clears_flow = false;
     g_history_write_restarts_flow = false;
+    g_history_write_rejects_flow = false;
     g_history_write_calls = 0;
 }
 
@@ -225,6 +227,11 @@ bool write_confirmation_history(
                        payload.size())) ==
                    agent_q::AgentQSignatureRequestFlowBeginResult::ok,
                "history writer can start a different request in misuse test");
+    }
+    if (g_history_write_rejects_flow) {
+        expect(agent_q::signature_request_flow_record_device_rejected() ==
+                   agent_q::AgentQSignatureRequestTransitionResult::wrong_stage,
+               "history writer cannot reclassify confirmed request as rejected");
     }
     return g_history_write_result;
 }
@@ -379,18 +386,22 @@ int main()
     snapshot = agent_q::signature_request_flow_snapshot();
     expect(snapshot.stage == Stage::pin_entry && snapshot.deadline == 200,
            "PIN entry stage stores new deadline");
-    expect(agent_q::signature_request_flow_record_pin_verified(199) == Transition::ok,
-           "PIN verification moves to history write");
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               199,
+               nullptr,
+               nullptr) == Transition::invalid_argument,
+           "PIN verification requires a history writer callback");
     snapshot = agent_q::signature_request_flow_snapshot();
-    expect(snapshot.stage == Stage::history_write, "history write stage reached");
-    expect(agent_q::signature_request_flow_write_confirmation_history(nullptr, nullptr) ==
-               Transition::invalid_argument,
-           "history writer callback is required");
+    expect(snapshot.stage == Stage::pin_entry,
+           "missing history writer leaves PIN entry active");
     expect(agent_q::signature_request_flow_consume_signable_payload(copied.data(), copied.size(), &copied_size) ==
                Transition::wrong_stage,
            "payload cannot be consumed before history durable transition");
-    expect(agent_q::signature_request_flow_write_confirmation_history(write_confirmation_history, nullptr) == Transition::ok,
-           "history durable transition enters critical section");
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               199,
+               write_confirmation_history,
+               nullptr) == Transition::ok,
+           "PIN verification writes durable history and enters critical section");
     expect(agent_q::signature_request_flow_in_signing_critical_section(),
            "critical section helper is true");
     expect(agent_q::signature_request_flow_clear() == Transition::busy,
@@ -462,14 +473,15 @@ int main()
     expect(begin_valid_flow("req_history_error"), "begin before history error");
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok,
            "review before history error");
-    expect(agent_q::signature_request_flow_record_pin_verified(199) == Transition::ok,
-           "PIN verified before history error");
-    expect(agent_q::signature_request_flow_record_device_rejected() == Transition::wrong_stage,
-           "device rejection cannot reclassify confirmed request during history write");
     g_history_write_result = false;
-    expect(agent_q::signature_request_flow_write_confirmation_history(write_confirmation_history, nullptr) == Transition::history_error,
+    g_history_write_rejects_flow = true;
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               199,
+               write_confirmation_history,
+               nullptr) == Transition::history_error,
            "history error terminalizes before signing");
     g_history_write_result = true;
+    g_history_write_rejects_flow = false;
     snapshot = agent_q::signature_request_flow_snapshot();
     expect(snapshot.stage == Stage::terminal &&
                snapshot.terminal_result == Terminal::history_error &&
@@ -504,8 +516,11 @@ int main()
     agent_q::signature_request_flow_clear();
     expect(begin_valid_flow("req_signing_failed"), "begin before signing failure");
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok, "review before signing failure");
-    expect(agent_q::signature_request_flow_record_pin_verified(199) == Transition::ok, "pin before signing failure");
-    expect(agent_q::signature_request_flow_write_confirmation_history(write_confirmation_history, nullptr) == Transition::ok, "history before signing failure");
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               199,
+               write_confirmation_history,
+               nullptr) == Transition::ok,
+           "pin verification writes history before signing failure");
     expect(agent_q::signature_request_flow_record_signing_failed() == Transition::ok,
            "signing failure terminalizes critical section");
     snapshot = agent_q::signature_request_flow_snapshot();
@@ -531,7 +546,10 @@ int main()
     expect(begin_valid_flow("req_expired_pin"), "begin before expired PIN");
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok,
            "review accepted before PIN expiry test");
-    expect(agent_q::signature_request_flow_record_pin_verified(200) == Transition::deadline_expired,
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               200,
+               write_confirmation_history,
+               nullptr) == Transition::deadline_expired,
            "PIN verification after PIN deadline terminalizes as timeout");
     snapshot = agent_q::signature_request_flow_snapshot();
     expect(snapshot.stage == Stage::terminal &&
@@ -580,7 +598,10 @@ int main()
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok,
            "review accepted before PIN session loss");
     agent_q::session_clear();
-    expect(agent_q::signature_request_flow_record_pin_verified(199) == Transition::invalid_session,
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               199,
+               write_confirmation_history,
+               nullptr) == Transition::invalid_session,
            "PIN verification revalidates session");
     snapshot = agent_q::signature_request_flow_snapshot();
     expect(snapshot.stage == Stage::terminal &&
@@ -595,11 +616,12 @@ int main()
     expect(begin_valid_flow("req_session_loss_history"), "begin before history session loss");
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok,
            "review accepted before history session loss");
-    expect(agent_q::signature_request_flow_record_pin_verified(199) == Transition::ok,
-           "PIN verified before history session loss");
     agent_q::session_clear();
-    expect(agent_q::signature_request_flow_write_confirmation_history(write_confirmation_history, nullptr) == Transition::invalid_session,
-           "history durable transition revalidates session");
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               199,
+               write_confirmation_history,
+               nullptr) == Transition::invalid_session,
+           "combined PIN/history transition revalidates session before history write");
     snapshot = agent_q::signature_request_flow_snapshot();
     expect(snapshot.stage == Stage::terminal &&
                snapshot.terminal_result == Terminal::canceled &&
@@ -614,10 +636,11 @@ int main()
     expect(begin_valid_flow("req_history_writer_clears_session"), "begin before writer clears session");
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok,
            "review accepted before writer clears session");
-    expect(agent_q::signature_request_flow_record_pin_verified(199) == Transition::ok,
-           "PIN verified before writer clears session");
     g_history_write_clears_session = true;
-    expect(agent_q::signature_request_flow_write_confirmation_history(write_confirmation_history, nullptr) ==
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               199,
+               write_confirmation_history,
+               nullptr) ==
                Transition::ok,
            "successful history write cannot be downgraded by post-write session loss");
     g_history_write_clears_session = false;
@@ -636,10 +659,11 @@ int main()
     expect(begin_valid_flow("req_history_writer_clears_flow"), "begin before writer clears flow");
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok,
            "review accepted before writer clears flow");
-    expect(agent_q::signature_request_flow_record_pin_verified(199) == Transition::ok,
-           "PIN verified before writer clears flow");
     g_history_write_clears_flow = true;
-    expect(agent_q::signature_request_flow_write_confirmation_history(write_confirmation_history, nullptr) ==
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               199,
+               write_confirmation_history,
+               nullptr) ==
                Transition::stale_state,
            "writer clear reentry cannot enter critical section");
     g_history_write_clears_flow = false;
@@ -655,10 +679,11 @@ int main()
     expect(begin_valid_flow("req_history_writer_restarts_flow"), "begin before writer restarts flow");
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok,
            "review accepted before writer restarts flow");
-    expect(agent_q::signature_request_flow_record_pin_verified(199) == Transition::ok,
-           "PIN verified before writer restarts flow");
     g_history_write_restarts_flow = true;
-    expect(agent_q::signature_request_flow_write_confirmation_history(write_confirmation_history, nullptr) ==
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               199,
+               write_confirmation_history,
+               nullptr) ==
                Transition::stale_state,
            "writer restart reentry cannot move a different request to critical");
     g_history_write_restarts_flow = false;
@@ -677,10 +702,11 @@ int main()
     expect(begin_valid_flow("req_critical_cancel"), "begin before critical cancel");
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok,
            "review accepted before critical cancel");
-    expect(agent_q::signature_request_flow_record_pin_verified(199) == Transition::ok,
-           "PIN verified before critical cancel");
-    expect(agent_q::signature_request_flow_write_confirmation_history(write_confirmation_history, nullptr) == Transition::ok,
-           "history durable before critical cancel");
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               199,
+               write_confirmation_history,
+               nullptr) == Transition::ok,
+           "PIN verification writes durable history before critical cancel");
     char critical_session_id[agent_q::kAgentQSessionIdSize] = {};
     strlcpy(critical_session_id, agent_q::session_id(), sizeof(critical_session_id));
     expect(agent_q::signature_request_flow_cancel_for_disconnect(critical_session_id) == Transition::busy,
@@ -701,10 +727,11 @@ int main()
     expect(begin_valid_flow("req_session_loss_consume"), "begin before consume session loss");
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok,
            "review accepted before consume session loss");
-    expect(agent_q::signature_request_flow_record_pin_verified(199) == Transition::ok,
-           "PIN verified before consume session loss");
-    expect(agent_q::signature_request_flow_write_confirmation_history(write_confirmation_history, nullptr) == Transition::ok,
-           "history durable before consume session loss");
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               199,
+               write_confirmation_history,
+               nullptr) == Transition::ok,
+           "PIN verification writes durable history before consume session loss");
     agent_q::session_clear();
     expect(agent_q::signature_request_flow_consume_signable_payload(copied.data(), copied.size(), &copied_size) ==
                Transition::ok,
@@ -723,10 +750,11 @@ int main()
     expect(begin_valid_flow("req_session_loss_complete"), "begin before complete session loss");
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok,
            "review accepted before complete session loss");
-    expect(agent_q::signature_request_flow_record_pin_verified(199) == Transition::ok,
-           "PIN verified before complete session loss");
-    expect(agent_q::signature_request_flow_write_confirmation_history(write_confirmation_history, nullptr) == Transition::ok,
-           "history durable before complete session loss");
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               199,
+               write_confirmation_history,
+               nullptr) == Transition::ok,
+           "PIN verification writes durable history before complete session loss");
     expect(agent_q::signature_request_flow_consume_signable_payload(copied.data(), copied.size(), &copied_size) ==
                Transition::ok,
            "payload consumed before complete session loss");
