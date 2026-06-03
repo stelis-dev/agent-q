@@ -985,12 +985,12 @@ returns top-level `history_error`. A corrupt, unreadable, missing, or
 unsupported current active policy fails closed as a persistent-material
 consistency error before normal session-scoped methods are available. Malformed
 BCS returns `malformed_transaction`; unsupported transaction shapes return
-`unsupported_transaction`. Internal `ask` decisions can route through local PIN
-approval, required approval-history durability, signing, approved response
-writing, and scratch wipe. That path is not product-reachable because active
-policy storage and the Sui descriptor reject `ask`/`sign` policy records,
-capabilities advertise no signing methods, and public client parsers reject
-approved method results. A `sign` policy decision still returns
+`unsupported_transaction`. Internal `ask` decisions can route through bounded
+clear-signing review, local PIN approval, required approval-history durability,
+signing, approved response writing, and scratch wipe. That path is not
+product-reachable because active policy storage and the Sui descriptor reject
+`ask`/`sign` policy records, capabilities advertise no signing methods, and
+public client parsers reject approved method results. A `sign` policy decision still returns
 `policy_action_not_implemented`.
 
 Firmware must not advertise `sign_transaction` in `get_capabilities` until Sui
@@ -1102,6 +1102,15 @@ before returning an approved signature. If that required history write fails,
 Firmware must not return the signature; it must wipe signing scratch and fail
 closed with the protocol error defined for that terminal failure.
 
+Before a signing method is advertised, device-local approval must be an informed
+approval prompt for the specific request. For the current Sui restricted
+transfer shape, the target UI must show bounded clear-signing metadata:
+chain/method, network, asset, amount, recipient, gas budget, and gas price. If
+the target display cannot show the full recipient in one view, Firmware must
+provide a device-local way to inspect or verify it before accepting approval. A
+digest-only or tail-only prompt is not sufficient for public signing, and an
+unsupported or undecodable transaction must fail before approval UI is shown.
+
 An approved signing implementation must use this terminal sequence:
 
 1. finalize the Firmware-owned policy or physical-approval decision and build
@@ -1122,6 +1131,14 @@ deliverable. The durable approval-history record remains a decision record; it
 is not proof that Gateway received a signature. Gateway must reconnect and
 submit a new signing request instead of relying on Firmware to replay a stored
 signature.
+
+Approval-history records are bounded audit events, not complete request logs and
+not delivery receipts. They intentionally omit request ids and session ids. A
+`user_approved` record means the required approval gate was persisted before
+signing input could be used; it does not prove that a signature was generated or
+delivered. A later `method_error` record can represent method execution failure
+after an approval gate. Clients must use the live `method_result` as the current
+request outcome and treat history as persistent decision metadata.
 
 Planned signing terminal outcomes must preserve this mapping before any signing
 method is advertised:
@@ -1150,8 +1167,8 @@ the method must not be advertised.
 
 Accepting `status: "approved"` requires updating the wire schema, Gateway
 parser and output schemas, Firmware runtime handling, approval-history metadata,
-policy `ask`/`sign` action handling, MCP output schema, provider API, and
-capability advertisement together.
+clear-signing UI, policy `ask`/`sign` action handling, MCP output schema,
+provider API, target verification, and capability advertisement together.
 Gateway, MCP, Admin, and provider adapters must not treat parser recognition of
 `call_method` or account identity as signing readiness.
 

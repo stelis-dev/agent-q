@@ -224,8 +224,19 @@ bool local_pin_auth_panel_matches_stage(AgentQUiPanelKind kind)
            agent_q::local_pin_auth_flow_active();
 }
 
+bool method_signing_review_pending()
+{
+    const agent_q::AgentQMethodSigningRequestSnapshot snapshot =
+        agent_q::method_signing_request_flow_snapshot();
+    return snapshot.active &&
+           snapshot.stage == agent_q::AgentQMethodSigningRequestStage::awaiting_review;
+}
+
 bool local_pin_auth_accepts_keypad_input()
 {
+    if (method_signing_review_pending()) {
+        return false;
+    }
     return agent_q::local_pin_auth_accepts_keypad_input();
 }
 
@@ -3096,6 +3107,35 @@ void handle_local_reset_auth_worker_result(const agent_q::AgentQLocalAuthWorkerR
     }
 }
 
+void handle_method_signing_summary_review_from_ui()
+{
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQMethodSigningRequestSnapshot snapshot =
+        agent_q::method_signing_request_flow_snapshot();
+    if (!snapshot.active || snapshot.session_id == nullptr || snapshot.session_id[0] == '\0') {
+        ESP_LOGW(kTag, "Stale method signing review action ignored");
+        return;
+    }
+
+    const agent_q::AgentQMethodSigningRequestTransitionResult transition =
+        agent_q::method_signing_request_flow_record_summary_reviewed(snapshot.session_id, now);
+    if (transition == agent_q::AgentQMethodSigningRequestTransitionResult::summary_reviewed) {
+        if (!agent_q::modal_draw_local_pin_auth_panel()) {
+            wipe_local_pin_auth_scratch("method signing PIN display allocation failed after review");
+            agent_q::method_signing_request_flow_record_ui_error(snapshot.session_id);
+            finish_method_signing_terminal_from_flow();
+        }
+        return;
+    }
+    if (transition == agent_q::AgentQMethodSigningRequestTransitionResult::terminal_user_timeout) {
+        clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+        wipe_local_pin_auth_scratch("method signing review timed out");
+        finish_method_signing_terminal_from_flow();
+        return;
+    }
+    ESP_LOGW(kTag, "Method signing review transition failed");
+}
+
 void handle_local_pin_auth_verify_worker_result(
     const agent_q::AgentQLocalAuthWorkerResult& worker_result)
 {
@@ -3924,6 +3964,8 @@ void drain_ui_events()
                 handle_pin_submit_from_local_ui();
             } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
                 handle_reset_pin_submit_from_local_ui();
+            } else if (method_signing_review_pending()) {
+                handle_method_signing_summary_review_from_ui();
             } else if (local_pin_auth_accepts_keypad_input()) {
                 handle_local_pin_auth_submit_from_ui();
             }
@@ -3937,7 +3979,8 @@ void drain_ui_events()
                 cancel_setup_from_local_ui();
             } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
                 cancel_local_reset_from_ui("Reset canceled");
-            } else if (local_pin_auth_accepts_keypad_input()) {
+            } else if (local_pin_auth_accepts_keypad_input() ||
+                       method_signing_review_pending()) {
                 cancel_local_pin_auth_from_ui("Settings canceled");
             }
             continue;

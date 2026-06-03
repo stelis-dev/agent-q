@@ -37,10 +37,10 @@ The current implementation includes:
   rejected with `unsupported_method`, and recognizes Sui `sign_transaction` for
   restricted-transfer policy evaluation. Product-reachable active policies
   currently produce rejected method results. The internal `ask` path can use
-  local PIN approval and signing, but it is not product-reachable while active
-  policy storage and the Sui descriptor reject `ask`/`sign` policy records,
-  capabilities advertise no signing methods, and public client parsers reject
-  approved method results.
+  bounded clear-signing review, local PIN approval, and signing, but it is not
+  product-reachable while active policy storage and the Sui descriptor reject
+  `ask`/`sign` policy records, capabilities advertise no signing methods, and
+  public client parsers reject approved method results.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
   Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
   RAM, displays only the up-to-4-letter word prefixes on device in a 3-column
@@ -85,17 +85,17 @@ This is not the signing product yet. It reports read-only identity capability
 (`get_capabilities` with `methods: []`), derives only read-only public account
 identity (`get_accounts`), and links a restricted host-tested Sui transaction
 facts parser plus a common stored-policy runtime boundary. The current
-`call_method` skeleton consumes the committed active policy decision
-for Sui `sign_transaction`. Product-reachable active policies currently produce
-only rejected method results. An internal `ask` path can use local PIN approval,
-required approval-history durability, signing, approved response writing, and
-scratch wipe, but it is not product-reachable because active policy storage and
-the Sui descriptor reject `ask`/`sign` policy records, `get_capabilities`
-advertises no signing methods, and public client parsers reject approved method
-results. It also implements the
-Firmware-owned `propose_policy_update` admin method for bounded reject-policy
-proposals over an active session, local PIN approval, canonical active-policy
-commit, and required policy-update terminal history. It does not expose MCP
+`call_method` skeleton consumes the committed active policy decision for Sui
+`sign_transaction`. Product-reachable active policies currently produce only
+rejected method results. An internal `ask` path can use bounded clear-signing
+review, local PIN approval, required approval-history durability, signing,
+approved response writing, and scratch wipe, but it is not product-reachable
+because active policy storage and the Sui descriptor reject `ask`/`sign` policy
+records, `get_capabilities` advertises no signing methods, and public client
+parsers reject approved method results. It also implements the Firmware-owned
+`propose_policy_update` admin method for bounded reject-policy proposals over
+an active session, local PIN approval, canonical active-policy commit, and
+required policy-update terminal history. It does not expose MCP
 directly; Gateway/MCP only submit requests and parse Firmware responses. It
 does persist bounded approval-history metadata for method decisions and policy
 update terminal records. The
@@ -218,11 +218,11 @@ provider behavior, missing/invalid policy provider rejection, malformed policy
 rejection, and unsupported-facts rejection. StackChan CoreS3 consumes the
 committed active policy only for Sui `sign_transaction`
 policy evaluation. Product-reachable active policies currently produce rejected
-method results. Internal `ask` decisions can route through local PIN approval
-and signing, but that path is not product-reachable while active policy storage
-and the Sui descriptor reject `ask`/`sign` policy records. Custom reject-policy
-updates enter separately through the Firmware-owned `propose_policy_update`
-proposal flow.
+method results. Internal `ask` decisions can route through bounded
+clear-signing review, local PIN approval, and signing, but that path is not
+product-reachable while active policy storage and the Sui descriptor reject
+`ask`/`sign` policy records. Custom reject-policy updates enter separately
+through the Firmware-owned `propose_policy_update` proposal flow.
 
 The StackChan policy-store test is target-specific. It compiles the tracked
 `agent_q_policy_store.cpp` provider with ESP-IDF mbedTLS SHA-256 sources and

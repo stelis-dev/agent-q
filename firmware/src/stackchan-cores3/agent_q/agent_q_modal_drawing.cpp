@@ -1468,36 +1468,7 @@ static const char* local_pin_auth_default_message(
         return message;
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::method_signing) {
-        const AgentQMethodSigningRequestSnapshot signing =
-            method_signing_request_flow_snapshot();
-        if (signing.active &&
-            signing.network != nullptr &&
-            signing.recipient != nullptr &&
-            signing.amount != nullptr &&
-            signing.gas_budget != nullptr &&
-            signing.gas_price != nullptr &&
-            signing.asset != nullptr &&
-            signing.network[0] != '\0' &&
-            signing.recipient[0] != '\0' &&
-            signing.amount[0] != '\0' &&
-            signing.gas_budget[0] != '\0' &&
-            signing.gas_price[0] != '\0' &&
-            signing.asset[0] != '\0') {
-            const size_t recipient_length = strlen(signing.recipient);
-            const char* recipient_tail = recipient_length > 10
-                ? signing.recipient + recipient_length - 10
-                : signing.recipient;
-            static char message[192] = {};
-            snprintf(message, sizeof(message), "Sign %s %s on %s. To ...%s. Gas %s@%s.",
-                     signing.amount,
-                     signing.asset,
-                     signing.network,
-                     recipient_tail,
-                     signing.gas_budget,
-                     signing.gas_price);
-            return message;
-        }
-        return "Review request, then enter local PIN to sign.";
+        return "Enter local PIN to sign reviewed request.";
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {
@@ -1537,6 +1508,87 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
     return "Settings PIN";
 }
 
+static bool make_signing_summary_line(lv_obj_t* parent, const char* text, int y)
+{
+    lv_obj_t* label = lv_label_create(parent);
+    if (label == nullptr) {
+        return false;
+    }
+    lv_label_set_text(label, text);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(label, kScreenWidth - 44);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(0x3A2B00), 0);
+    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 16, y);
+    return true;
+}
+
+static bool method_signing_summary_ready(
+    const agent_q::AgentQMethodSigningRequestSnapshot& signing)
+{
+    return signing.active &&
+           signing.chain != nullptr &&
+           signing.method != nullptr &&
+           signing.network != nullptr &&
+           signing.recipient != nullptr &&
+           signing.amount != nullptr &&
+           signing.gas_budget != nullptr &&
+           signing.gas_price != nullptr &&
+           signing.asset != nullptr &&
+           signing.chain[0] != '\0' &&
+           signing.method[0] != '\0' &&
+           signing.network[0] != '\0' &&
+           signing.recipient[0] != '\0' &&
+           signing.amount[0] != '\0' &&
+           signing.gas_budget[0] != '\0' &&
+           signing.gas_price[0] != '\0' &&
+           signing.asset[0] != '\0';
+}
+
+static bool make_method_signing_review_summary(lv_obj_t* panel)
+{
+    const agent_q::AgentQMethodSigningRequestSnapshot signing =
+        method_signing_request_flow_snapshot();
+    if (!method_signing_summary_ready(signing)) {
+        return false;
+    }
+
+    char method_line[80] = {};
+    char amount_line[80] = {};
+    char asset_line[80] = {};
+    char recipient_line_one[48] = {};
+    char recipient_line_two[48] = {};
+    char gas_budget_line[48] = {};
+    char gas_price_line[48] = {};
+    snprintf(method_line, sizeof(method_line), "%s/%s on %s", signing.chain, signing.method, signing.network);
+    snprintf(amount_line, sizeof(amount_line), "Amount %s", signing.amount);
+    snprintf(asset_line, sizeof(asset_line), "Asset %s", signing.asset);
+    const size_t recipient_length = strlen(signing.recipient);
+    const size_t recipient_first_length = recipient_length > 34 ? 34 : recipient_length;
+    snprintf(
+        recipient_line_one,
+        sizeof(recipient_line_one),
+        "To %.*s",
+        static_cast<int>(recipient_first_length),
+        signing.recipient);
+    snprintf(
+        recipient_line_two,
+        sizeof(recipient_line_two),
+        "%s",
+        signing.recipient + recipient_first_length);
+    snprintf(gas_budget_line, sizeof(gas_budget_line), "Gas budget %s", signing.gas_budget);
+    snprintf(gas_price_line, sizeof(gas_price_line), "Gas price %s", signing.gas_price);
+
+    return make_signing_summary_line(panel, method_line, 30) &&
+           make_signing_summary_line(panel, amount_line, 50) &&
+           make_signing_summary_line(panel, asset_line, 70) &&
+           make_signing_summary_line(panel, recipient_line_one, 90) &&
+           make_signing_summary_line(panel, recipient_line_two, 110) &&
+           make_signing_summary_line(panel, gas_budget_line, 130) &&
+           make_signing_summary_line(panel, gas_price_line, 150);
+}
+
 bool modal_draw_local_pin_auth_panel(const char* notice)
 {
     const TickType_t now = xTaskGetTickCount();
@@ -1568,33 +1620,78 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
     lv_obj_set_style_pad_all(panel, 0, 0);
 
     const bool buttons_enabled = !snapshot.processing && !snapshot.lockout_active;
+    const bool method_signing = snapshot.purpose == AgentQLocalPinAuthPurpose::method_signing;
+    const agent_q::AgentQMethodSigningRequestSnapshot signing_snapshot =
+        method_signing ? method_signing_request_flow_snapshot() : agent_q::AgentQMethodSigningRequestSnapshot{};
+    const bool method_signing_review =
+        method_signing &&
+        signing_snapshot.active &&
+        signing_snapshot.stage == agent_q::AgentQMethodSigningRequestStage::awaiting_review;
 
     lv_obj_t* title = lv_label_create(panel);
     if (title == nullptr) {
         drawing_surface_clear_panel_locked();
         return false;
     }
-    lv_label_set_text(title, local_pin_auth_title(snapshot));
+    lv_label_set_text(
+        title,
+        method_signing_review ? "Review signing request" : local_pin_auth_title(snapshot));
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, method_signing_review ? 8 : (method_signing ? 2 : 8));
 
-    lv_obj_t* message = lv_label_create(panel);
-    if (message == nullptr) {
-        drawing_surface_clear_panel_locked();
-        return false;
+    if (method_signing_review) {
+        if (!make_method_signing_review_summary(panel)) {
+            drawing_surface_clear_panel_locked();
+            return false;
+        }
+        if (!make_setup_button(
+                panel,
+                "Cancel",
+                kRecoveryPhraseButtonLeftX,
+                kSetupActionButtonY,
+                kRecoveryPhraseButtonWidth,
+                kRecoveryPhraseButtonHeight,
+                SetupButtonKind::solid_action,
+                lv_color_hex(0x667085),
+                g_callbacks.on_pin_cancel_clicked,
+                nullptr,
+                true) ||
+            !make_setup_button(
+                panel,
+                "Enter PIN",
+                kRecoveryPhraseButtonRightX,
+                kSetupActionButtonY,
+                kRecoveryPhraseButtonWidth,
+                kRecoveryPhraseButtonHeight,
+                SetupButtonKind::solid_action,
+                lv_color_hex(0x24875A),
+                g_callbacks.on_pin_submit_clicked,
+                nullptr,
+                true)) {
+            drawing_surface_clear_panel_locked();
+            return false;
+        }
+        drawing_surface_move_panel_foreground_locked();
+        return true;
+    } else {
+        lv_obj_t* message = lv_label_create(panel);
+        if (message == nullptr) {
+            drawing_surface_clear_panel_locked();
+            return false;
+        }
+        lv_label_set_text(
+            message,
+            notice != nullptr && notice[0] != '\0'
+                ? notice
+                : local_pin_auth_default_message(snapshot));
+        lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(message, kScreenWidth - 44);
+        lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_font(message, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(message, lv_color_hex(0x3A2B00), 0);
+        lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 30);
     }
-    lv_label_set_text(
-        message,
-        notice != nullptr && notice[0] != '\0'
-            ? notice
-            : local_pin_auth_default_message(snapshot));
-    lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(message, kScreenWidth - 44);
-    lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(message, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(message, lv_color_hex(0x3A2B00), 0);
-    lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 30);
 
     char pin_mask[agent_q::kLocalPinDigits + 1] = {};
     for (size_t index = 0; index < agent_q::kLocalPinDigits; ++index) {

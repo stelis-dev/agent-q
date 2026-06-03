@@ -88,12 +88,12 @@ Implemented today:
   policy evaluation, and exposes policy update authorization only through the
   Firmware-owned `propose_policy_update` proposal flow for custom reject
   policies. Product-reachable active policies currently produce only rejected
-  method results. An internal `ask` path can use local PIN approval, required
-  approval-history durability, signing, approved response writing, and scratch
-  wipe, but it is not product-reachable because active policy storage and the
-  Sui descriptor reject `ask`/`sign` policy records, `get_capabilities`
-  advertises no signing methods, and public client parsers reject approved
-  method results.
+  method results. An internal `ask` path can use bounded clear-signing review,
+  local PIN approval, required approval-history durability, signing, approved
+  response writing, and scratch wipe, but it is not product-reachable because
+  active policy storage and the Sui descriptor reject `ask`/`sign` policy
+  records, `get_capabilities` advertises no signing methods, and public client
+  parsers reject approved method results.
 - A Gateway-served local Admin Page for read-only device metadata and the
   current reject-policy proposal template. It uses the same Gateway core
   boundary as MCP and is not a policy authority.
@@ -115,11 +115,11 @@ Designed but not implemented (do not treat as present):
 - zkLogin signing material.
 - USER_PROFILE policy storage and policy update authorization.
 - Public signing methods inside `call_method`. Sui `sign_transaction` has an
-  internal local-PIN `ask` path, but no public signing method is present until
-  Firmware advertises it in `get_capabilities`, active policy `ask` or `sign`
-  actions are enforceable for that method, the approved method-result shape is
-  accepted by Gateway parser/output schemas, and target verification covers the
-  terminal path.
+  internal clear-signing local-PIN `ask` path, but no public signing method is
+  present until Firmware advertises it in `get_capabilities`, active policy
+  `ask` or `sign` actions are enforceable for that method, the approved
+  method-result shape is accepted by Gateway parser/output schemas, and target
+  verification covers the terminal path.
 - Full Admin policy editing beyond the current reject-policy proposal template.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.
 - Secure Boot, Flash Encryption, and NVS Encryption setup flow.

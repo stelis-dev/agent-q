@@ -91,6 +91,23 @@ void begin_valid()
            "valid method signing request begins");
 }
 
+void review_valid()
+{
+    expect(agent_q::method_signing_request_flow_record_summary_reviewed(
+               "session_abcdefghijklmnop",
+               90) == agent_q::AgentQMethodSigningRequestTransitionResult::summary_reviewed,
+           "summary review advances to PIN approval");
+}
+
+void approve_valid()
+{
+    review_valid();
+    expect(agent_q::method_signing_request_flow_record_user_approved(
+               "session_abcdefghijklmnop",
+               90) == agent_q::AgentQMethodSigningRequestTransitionResult::user_approved_waiting_history,
+           "matching approval waits for durable history");
+}
+
 void expect_payload_copy_unavailable(const char* label)
 {
     uint8_t output[sizeof(kPayload)] = {0xaa, 0xaa, 0xaa, 0xaa};
@@ -121,7 +138,7 @@ int main()
     begin_valid();
     snapshot = agent_q::method_signing_request_flow_snapshot();
     expect(snapshot.active, "snapshot is active after begin");
-    expect(snapshot.stage == Stage::awaiting_user, "begin enters awaiting user stage");
+    expect(snapshot.stage == Stage::awaiting_review, "begin enters signing review stage");
     expect(strcmp(snapshot.request_id, "method-1") == 0, "request id stored");
     expect(strcmp(snapshot.session_id, "session_abcdefghijklmnop") == 0, "session id stored");
     expect(strcmp(snapshot.chain, "sui") == 0, "chain stored");
@@ -140,7 +157,8 @@ int main()
            "deadline not reached before deadline");
     expect(agent_q::method_signing_request_flow_deadline_reached(100),
            "deadline reached at deadline");
-    expect_payload_copy_unavailable("awaiting user state does not expose payload");
+    expect_payload_copy_unavailable("review state does not expose payload");
+    agent_q::AgentQMethodSigningRequestTerminalSnapshot terminal = {};
 
     expect(agent_q::method_signing_request_flow_begin(valid_input("method-2")) ==
                Result::active,
@@ -148,10 +166,35 @@ int main()
     snapshot = agent_q::method_signing_request_flow_snapshot();
     expect(strcmp(snapshot.request_id, "method-1") == 0, "rejected duplicate leaves state intact");
     expect(agent_q::method_signing_request_flow_record_user_approved("session_wrong", 90) ==
+               Result::busy,
+           "approval before review is rejected");
+    expect(agent_q::method_signing_request_flow_record_summary_reviewed("session_wrong", 90) ==
                Result::session_mismatch,
-           "wrong session approval is ignored");
+           "wrong session review is ignored");
+    expect(agent_q::method_signing_request_flow_record_user_rejected("session_wrong", 90) ==
+               Result::session_mismatch,
+           "wrong session review rejection is ignored");
+    expect(agent_q::method_signing_request_flow_record_user_rejected(
+               "session_abcdefghijklmnop",
+               90) == Result::terminal_user_rejected,
+           "matching review rejection terminalizes before PIN entry");
     snapshot = agent_q::method_signing_request_flow_snapshot();
-    expect(snapshot.stage == Stage::awaiting_user, "wrong session leaves request awaiting");
+    expect(snapshot.signable_payload_size == 0, "review rejection wipes payload size");
+    expect_payload_copy_unavailable("review rejection terminal does not expose payload");
+    expect(agent_q::method_signing_request_flow_consume_terminal(&terminal),
+           "review rejection terminal is consumable");
+    expect(terminal.result == Terminal::user_rejected, "terminal records review rejection");
+
+    begin_valid();
+    expect(agent_q::method_signing_request_flow_record_summary_reviewed(
+               "session_abcdefghijklmnop",
+               90) == Result::summary_reviewed,
+           "matching summary review enables PIN approval");
+    snapshot = agent_q::method_signing_request_flow_snapshot();
+    expect(snapshot.stage == Stage::awaiting_user, "summary review enters awaiting user stage");
+    expect(agent_q::method_signing_request_flow_record_user_approved("session_wrong", 90) ==
+               Result::session_mismatch,
+           "wrong session approval is ignored after review");
 
     expect(agent_q::method_signing_request_flow_record_timeout(99) ==
                Result::deadline_not_reached,
@@ -165,7 +208,6 @@ int main()
     expect_payload_copy_unavailable("terminal user rejection does not expose payload");
     expect(agent_q::method_signing_request_flow_record_timeout(100) == Result::terminal_pending,
            "stale event cannot overwrite terminal result");
-    agent_q::AgentQMethodSigningRequestTerminalSnapshot terminal = {};
     expect(agent_q::method_signing_request_flow_consume_terminal(&terminal),
            "terminal result is consumable");
     expect(terminal.result == Terminal::user_rejected, "terminal records user rejection");
@@ -218,10 +260,7 @@ int main()
     expect(terminal.result == Terminal::ui_error, "terminal records UI error");
 
     begin_valid();
-    expect(agent_q::method_signing_request_flow_record_user_approved(
-               "session_abcdefghijklmnop",
-               90) == Result::user_approved_waiting_history,
-           "user approval waits for history before disconnect test");
+    approve_valid();
     snapshot = agent_q::method_signing_request_flow_snapshot();
     expect(snapshot.stage == Stage::awaiting_history,
            "approved request waits for history before disconnect test");
@@ -238,10 +277,7 @@ int main()
            "terminal records history-pending disconnect cancellation");
 
     begin_valid();
-    expect(agent_q::method_signing_request_flow_record_user_approved(
-               "session_abcdefghijklmnop",
-               90) == Result::user_approved_waiting_history,
-           "user approval waits for history before history-error test");
+    approve_valid();
     expect(agent_q::method_signing_request_flow_record_history_error("session_wrong") ==
                Result::session_mismatch,
            "wrong session cannot record history error");
@@ -256,20 +292,17 @@ int main()
     expect(terminal.result == Terminal::history_error, "terminal records history error");
 
     begin_valid();
-    expect(agent_q::method_signing_request_flow_record_user_approved(
+    expect(agent_q::method_signing_request_flow_record_summary_reviewed(
                "session_abcdefghijklmnop",
                100) == Result::terminal_user_timeout,
-           "approval at deadline records timeout instead of signing");
-    expect_payload_copy_unavailable("deadline approval timeout does not expose payload");
+           "review at deadline records timeout instead of signing");
+    expect_payload_copy_unavailable("deadline review timeout does not expose payload");
     expect(agent_q::method_signing_request_flow_consume_terminal(&terminal),
-           "deadline approval terminal is consumable");
-    expect(terminal.result == Terminal::user_timeout, "deadline approval records timeout");
+           "deadline review terminal is consumable");
+    expect(terminal.result == Terminal::user_timeout, "deadline review records timeout");
 
     begin_valid();
-    expect(agent_q::method_signing_request_flow_record_user_approved(
-               "session_abcdefghijklmnop",
-               90) == Result::user_approved_waiting_history,
-           "matching approval waits for durable history");
+    approve_valid();
     snapshot = agent_q::method_signing_request_flow_snapshot();
     expect(snapshot.stage == Stage::awaiting_history,
            "approval enters history durability stage");
@@ -312,10 +345,7 @@ int main()
     expect(terminal.result == Terminal::canceled, "terminal records critical cancellation");
 
     begin_valid();
-    expect(agent_q::method_signing_request_flow_record_user_approved(
-               "session_abcdefghijklmnop",
-               90) == Result::user_approved_waiting_history,
-           "approval waits for durable history before method error");
+    approve_valid();
     expect(agent_q::method_signing_request_flow_record_history_durable(
                "session_abcdefghijklmnop") == Result::history_durable,
            "history durable enters critical before method error");
@@ -330,10 +360,7 @@ int main()
     expect(terminal.result == Terminal::method_error, "terminal records method error");
 
     begin_valid();
-    expect(agent_q::method_signing_request_flow_record_user_approved(
-               "session_abcdefghijklmnop",
-               90) == Result::user_approved_waiting_history,
-           "approval waits for durable history before session-loss test");
+    approve_valid();
     expect(agent_q::method_signing_request_flow_record_history_durable(
                "session_abcdefghijklmnop") == Result::history_durable,
            "history durable enters critical before session-loss test");
@@ -348,10 +375,7 @@ int main()
     expect(terminal.result == Terminal::session_lost, "terminal records critical session loss");
 
     begin_valid();
-    expect(agent_q::method_signing_request_flow_record_user_approved(
-               "session_abcdefghijklmnop",
-               90) == Result::user_approved_waiting_history,
-           "approval waits for durable history before approved completion");
+    approve_valid();
     expect(agent_q::method_signing_request_flow_record_history_durable(
                "session_abcdefghijklmnop") == Result::history_durable,
            "history durable enters critical before approved completion");
@@ -396,6 +420,31 @@ int main()
                    sizeof(oversized_payload))) == Result::invalid_argument,
            "oversized payload is rejected");
     expect(!agent_q::method_signing_request_flow_active(), "invalid begin leaves state inactive");
+
+    agent_q::AgentQMethodSigningRequestBeginInput missing_recipient =
+        valid_input("method-missing-recipient");
+    missing_recipient.recipient = "";
+    expect(agent_q::method_signing_request_flow_begin(missing_recipient) ==
+               Result::invalid_argument,
+           "empty recipient summary is rejected");
+
+    agent_q::AgentQMethodSigningRequestBeginInput missing_gas =
+        valid_input("method-missing-gas");
+    missing_gas.gas_budget = "";
+    expect(agent_q::method_signing_request_flow_begin(missing_gas) ==
+               Result::invalid_argument,
+           "empty gas budget summary is rejected");
+
+    char overlong_recipient[agent_q::kAgentQMethodSigningRequestRecipientSize + 4] = {};
+    memset(overlong_recipient, 'b', sizeof(overlong_recipient) - 1);
+    agent_q::AgentQMethodSigningRequestBeginInput overlong_summary =
+        valid_input("method-overlong-recipient");
+    overlong_summary.recipient = overlong_recipient;
+    expect(agent_q::method_signing_request_flow_begin(overlong_summary) ==
+               Result::invalid_argument,
+           "overlong recipient summary is rejected");
+    expect(!agent_q::method_signing_request_flow_active(),
+           "invalid summary begin leaves state inactive");
 
     if (failures != 0) {
         fprintf(stderr, "%d method signing request flow test(s) failed\n", failures);

@@ -361,6 +361,18 @@ Rejected while a signing approval is pending:
 - `propose_policy_update`;
 - host-triggered reset, debug, import, or state-changing shortcuts.
 
+Clear-signing UI requirement:
+
+- before a signing method is advertised, the approval UI must show bounded
+  request-specific metadata rather than only a generic sign prompt or digest
+  tail;
+- for the current Sui restricted transfer shape, the required summary is
+  chain/method, network, asset, amount, recipient, gas budget, and gas price;
+- if the target display cannot show the full recipient in one view, Firmware
+  must provide a device-local way to inspect or verify it before accepting
+  approval;
+- unsupported or undecodable transactions must fail before approval UI is shown.
+
 Terminal behavior:
 
 - policy rejection persists a method-decision history record and returns a
@@ -384,12 +396,19 @@ Terminal behavior:
   record remains decision metadata, Firmware wipes signature scratch, and the
   request is not replayed.
 
+Approval-history records are persistent decision metadata, not delivery
+receipts or complete request logs. A `user_approved` record proves the approval
+gate was persisted before signing input could be used; it does not prove that a
+signature was generated or delivered. A later `method_error` record may represent
+method execution failure after that approval gate. Request ids and session ids
+remain absent from history.
+
 Opening `get_capabilities.chains[].methods` for a signing method requires the
 Firmware runtime, method signing request state owner, policy `ask`/`sign` handling,
-approved method-result schema, required approval-history records, Gateway parser
-and output schemas, MCP output, provider API, and target verification to be
-implemented for the same method boundary. Parser acceptance alone is not
-signing readiness.
+approved method-result schema, required approval-history records, clear-signing
+UI, Gateway parser and output schemas, MCP output, provider API, and target
+verification to be implemented for the same method boundary. Parser acceptance
+alone is not signing readiness.
 
 ### `error`
 

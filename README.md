@@ -89,8 +89,9 @@ Firmware owns the device-authorized policy boundary.
 Agent-Q Firmware is installed on hardware.
 
 Firmware is the authority component: it stores device-held key material and
-policies, evaluates requests locally, handles physical approval, and, where
-supported, returns signatures or rejections to Gateway.
+policies, evaluates requests locally, handles physical approval, and returns
+Firmware-authored results to Gateway. Current public methods do not include
+signing support.
 
 Firmware source is organized by hardware under `firmware/src/`.
 
@@ -155,8 +156,8 @@ Implemented:
 - A session-scoped `call_method` runtime skeleton that keeps unknown methods
   rejected and recognizes Sui `sign_transaction` for restricted-transfer policy
   evaluation. Product-reachable active policies currently return rejected method
-  results. An internal `ask` path exists, but it is not product-reachable and is
-  not signing support.
+  results. An internal `ask` path has bounded clear-signing review and local
+  PIN approval, but it is not product-reachable and is not signing support.
 - A bounded policy-update proposal path for currently enforceable reject
   policies. Gateway/MCP can submit proposals, but Firmware validates them,
   requires device-local approval, commits the active policy, and records the

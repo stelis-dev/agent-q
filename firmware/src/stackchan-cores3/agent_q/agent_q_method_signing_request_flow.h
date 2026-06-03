@@ -24,6 +24,7 @@ enum class AgentQMethodSigningRequestPolicyDecision {
 
 enum class AgentQMethodSigningRequestStage {
     inactive,
+    awaiting_review,
     awaiting_user,
     awaiting_history,
     signing_critical_section,
@@ -44,6 +45,7 @@ enum class AgentQMethodSigningRequestTerminalResult {
 
 enum class AgentQMethodSigningRequestTransitionResult {
     began,
+    summary_reviewed,
     user_approved_waiting_history,
     history_durable,
     terminal_user_approved,
@@ -123,6 +125,9 @@ AgentQMethodSigningRequestSnapshot method_signing_request_flow_snapshot();
 AgentQMethodSigningRequestTransitionResult method_signing_request_flow_begin(
     const AgentQMethodSigningRequestBeginInput& input);
 bool method_signing_request_flow_deadline_reached(TickType_t now);
+AgentQMethodSigningRequestTransitionResult method_signing_request_flow_record_summary_reviewed(
+    const char* session_id,
+    TickType_t now);
 AgentQMethodSigningRequestTransitionResult method_signing_request_flow_record_user_approved(
     const char* session_id,
     TickType_t now);

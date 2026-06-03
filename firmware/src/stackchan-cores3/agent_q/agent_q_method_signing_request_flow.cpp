@@ -162,7 +162,8 @@ AgentQMethodSigningRequestTransitionResult record_awaiting_terminal_for_session(
     if (has_terminal()) {
         return AgentQMethodSigningRequestTransitionResult::terminal_pending;
     }
-    if (g_state.stage != AgentQMethodSigningRequestStage::awaiting_user) {
+    if (g_state.stage != AgentQMethodSigningRequestStage::awaiting_review &&
+        g_state.stage != AgentQMethodSigningRequestStage::awaiting_user) {
         return AgentQMethodSigningRequestTransitionResult::busy;
     }
     if (!session_matches(session_id)) {
@@ -256,7 +257,7 @@ AgentQMethodSigningRequestTransitionResult method_signing_request_flow_begin(
     }
     memcpy(next.signable_payload, input.signable_payload, input.signable_payload_size);
     next.signable_payload_size = input.signable_payload_size;
-    next.stage = AgentQMethodSigningRequestStage::awaiting_user;
+    next.stage = AgentQMethodSigningRequestStage::awaiting_review;
     next.policy_decision = input.policy_decision;
     next.deadline = input.deadline;
     g_state = next;
@@ -266,8 +267,32 @@ AgentQMethodSigningRequestTransitionResult method_signing_request_flow_begin(
 
 bool method_signing_request_flow_deadline_reached(TickType_t now)
 {
-    return g_state.stage == AgentQMethodSigningRequestStage::awaiting_user &&
+    return (g_state.stage == AgentQMethodSigningRequestStage::awaiting_review ||
+            g_state.stage == AgentQMethodSigningRequestStage::awaiting_user) &&
            tick_reached(now, g_state.deadline);
+}
+
+AgentQMethodSigningRequestTransitionResult method_signing_request_flow_record_summary_reviewed(
+    const char* session_id,
+    TickType_t now)
+{
+    if (g_state.stage == AgentQMethodSigningRequestStage::inactive) {
+        return AgentQMethodSigningRequestTransitionResult::inactive;
+    }
+    if (has_terminal()) {
+        return AgentQMethodSigningRequestTransitionResult::terminal_pending;
+    }
+    if (g_state.stage != AgentQMethodSigningRequestStage::awaiting_review) {
+        return AgentQMethodSigningRequestTransitionResult::busy;
+    }
+    if (!session_matches(session_id)) {
+        return AgentQMethodSigningRequestTransitionResult::session_mismatch;
+    }
+    if (tick_reached(now, g_state.deadline)) {
+        return record_terminal(AgentQMethodSigningRequestTerminalResult::user_timeout);
+    }
+    g_state.stage = AgentQMethodSigningRequestStage::awaiting_user;
+    return AgentQMethodSigningRequestTransitionResult::summary_reviewed;
 }
 
 AgentQMethodSigningRequestTransitionResult method_signing_request_flow_record_user_approved(
@@ -349,7 +374,8 @@ AgentQMethodSigningRequestTransitionResult method_signing_request_flow_record_ti
     if (has_terminal()) {
         return AgentQMethodSigningRequestTransitionResult::terminal_pending;
     }
-    if (g_state.stage != AgentQMethodSigningRequestStage::awaiting_user) {
+    if (g_state.stage != AgentQMethodSigningRequestStage::awaiting_review &&
+        g_state.stage != AgentQMethodSigningRequestStage::awaiting_user) {
         return AgentQMethodSigningRequestTransitionResult::busy;
     }
     if (!tick_reached(now, g_state.deadline)) {
