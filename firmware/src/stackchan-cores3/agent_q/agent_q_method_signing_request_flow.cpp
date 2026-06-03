@@ -18,6 +18,12 @@ struct MethodSigningRequestFlowState {
     char method[kAgentQApprovalHistoryMethodSize] = {};
     uint8_t signable_payload[kAgentQMethodSigningRequestPayloadMaxBytes] = {};
     size_t signable_payload_size = 0;
+    char network[kAgentQMethodSigningRequestNetworkSize] = {};
+    char recipient[kAgentQMethodSigningRequestRecipientSize] = {};
+    char asset[kAgentQMethodSigningRequestAssetSize] = {};
+    char amount[kAgentQMethodSigningRequestU64Size] = {};
+    char gas_budget[kAgentQMethodSigningRequestU64Size] = {};
+    char gas_price[kAgentQMethodSigningRequestU64Size] = {};
     char payload_digest[kAgentQApprovalHistoryDigestSize] = {};
     char policy_hash[kAgentQApprovalHistoryDigestSize] = {};
     char rule_ref[kAgentQApprovalHistoryRuleRefSize] = {};
@@ -204,6 +210,12 @@ AgentQMethodSigningRequestSnapshot method_signing_request_flow_snapshot()
         g_state.chain,
         g_state.method,
         g_state.signable_payload_size,
+        g_state.network,
+        g_state.recipient,
+        g_state.asset,
+        g_state.amount,
+        g_state.gas_budget,
+        g_state.gas_price,
         g_state.payload_digest,
         g_state.policy_hash,
         g_state.rule_ref,
@@ -231,6 +243,12 @@ AgentQMethodSigningRequestTransitionResult method_signing_request_flow_begin(
         !copy_nonempty_c_string(input.session_id, next.session_id, sizeof(next.session_id)) ||
         !copy_nonempty_c_string(input.chain, next.chain, sizeof(next.chain)) ||
         !copy_nonempty_c_string(input.method, next.method, sizeof(next.method)) ||
+        !copy_nonempty_c_string(input.network, next.network, sizeof(next.network)) ||
+        !copy_nonempty_c_string(input.recipient, next.recipient, sizeof(next.recipient)) ||
+        !copy_nonempty_c_string(input.asset, next.asset, sizeof(next.asset)) ||
+        !copy_nonempty_c_string(input.amount, next.amount, sizeof(next.amount)) ||
+        !copy_nonempty_c_string(input.gas_budget, next.gas_budget, sizeof(next.gas_budget)) ||
+        !copy_nonempty_c_string(input.gas_price, next.gas_price, sizeof(next.gas_price)) ||
         !copy_nonempty_c_string(input.payload_digest, next.payload_digest, sizeof(next.payload_digest)) ||
         !copy_nonempty_c_string(input.policy_hash, next.policy_hash, sizeof(next.policy_hash)) ||
         !copy_nonempty_c_string(input.rule_ref, next.rule_ref, sizeof(next.rule_ref))) {

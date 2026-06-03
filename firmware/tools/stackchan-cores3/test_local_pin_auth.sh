@@ -423,6 +423,24 @@ int main()
 
     {
         agent_q::test_set_tick(400);
+        agent_q::local_pin_auth_begin_method_signing(460);
+        enter_pin("123456", 460);
+        expect(agent_q::local_pin_auth_submit(401, 0, 460, 430) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "method signing starts current-PIN verification");
+        agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
+        expect(agent_q::local_pin_auth_complete_verify_job(verify_result, 460, 0, 0) ==
+                   agent_q::AgentQLocalPinAuthVerifyResult::verified_method_signing,
+               "verified method signing returns method-signing result");
+        expect_stage(
+            agent_q::AgentQLocalPinAuthPurpose::method_signing,
+            agent_q::AgentQLocalPinAuthStage::pin_verifying,
+            "method signing waits for caller-owned terminal handling");
+        agent_q::local_pin_auth_clear_flow();
+    }
+
+    {
+        agent_q::test_set_tick(400);
         agent_q::local_pin_auth_begin_change_pin(460);
         enter_pin("123456", 460);
         expect(agent_q::local_pin_auth_submit(401, 0, 460, 430) ==

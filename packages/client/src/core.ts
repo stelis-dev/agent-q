@@ -216,8 +216,9 @@ export type GetApprovalHistoryResult =
 
 // call_method is the common method path. The current runtime keeps
 // sessions/state gates intact, rejects unknown methods, and recognizes Sui
-// sign_transaction only for rejected policy-decision smoke until signing is
-// implemented and advertised.
+// sign_transaction for policy evaluation. Product-reachable active policies
+// currently produce rejected method results until public signing is implemented
+// and advertised.
 export type CallMethodResult =
   | {
       source: "live";

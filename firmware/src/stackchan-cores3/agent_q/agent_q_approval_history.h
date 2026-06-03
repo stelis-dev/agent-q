@@ -32,6 +32,7 @@ enum class AgentQApprovalHistoryConfirmationKind {
     none,
     policy,
     physical_confirm,
+    local_pin,
 };
 
 enum class AgentQApprovalHistoryReadResult {
@@ -94,6 +95,9 @@ bool approval_history_digest_payload(
     size_t output_size);
 bool approval_history_parse_sequence(const char* value, uint64_t* output);
 bool approval_history_append(
+    const AgentQApprovalHistoryAppendInput& input,
+    uint64_t uptime_ms);
+bool approval_history_append_required_method_terminal(
     const AgentQApprovalHistoryAppendInput& input,
     uint64_t uptime_ms);
 bool approval_history_append_required_policy_update(

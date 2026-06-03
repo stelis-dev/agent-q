@@ -14,6 +14,7 @@ enum class AgentQLocalPinAuthPurpose {
     settings_connect_pin,
     settings_change_pin,
     policy_update,
+    method_signing,
 };
 
 enum class AgentQLocalPinAuthStage {
@@ -49,6 +50,7 @@ enum class AgentQLocalPinAuthVerifyResult {
     not_ready,
     verified_connect,
     verified_policy_update,
+    verified_method_signing,
     started_setting_commit,
     advanced_to_change_pin,
     wrong_pin,
@@ -88,6 +90,7 @@ void local_pin_auth_begin_connect(TickType_t deadline);
 void local_pin_auth_begin_connect_setting(bool target_require_pin_on_connect, TickType_t deadline);
 void local_pin_auth_begin_change_pin(TickType_t deadline);
 void local_pin_auth_begin_policy_update(TickType_t deadline);
+void local_pin_auth_begin_method_signing(TickType_t deadline);
 
 AgentQLocalPinAuthInputResult local_pin_auth_add_digit(char digit, TickType_t deadline);
 bool local_pin_auth_clear_pin(TickType_t deadline);

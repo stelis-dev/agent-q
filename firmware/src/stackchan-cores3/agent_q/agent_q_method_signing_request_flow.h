@@ -13,6 +13,10 @@ namespace agent_q {
 constexpr size_t kAgentQMethodSigningRequestIdSize = 80;
 constexpr size_t kAgentQMethodSigningRequestPayloadMaxBytes =
     kAgentQSuiSignTransactionTxBytesMaxBytes;
+constexpr size_t kAgentQMethodSigningRequestNetworkSize = 12;
+constexpr size_t kAgentQMethodSigningRequestRecipientSize = 67;
+constexpr size_t kAgentQMethodSigningRequestAssetSize = 32;
+constexpr size_t kAgentQMethodSigningRequestU64Size = 21;
 
 enum class AgentQMethodSigningRequestPolicyDecision {
     ask,
@@ -66,6 +70,12 @@ struct AgentQMethodSigningRequestBeginInput {
     const char* method;
     const uint8_t* signable_payload;
     size_t signable_payload_size;
+    const char* network;
+    const char* recipient;
+    const char* asset;
+    const char* amount;
+    const char* gas_budget;
+    const char* gas_price;
     const char* payload_digest;
     const char* policy_hash;
     const char* rule_ref;
@@ -83,6 +93,12 @@ struct AgentQMethodSigningRequestSnapshot {
     const char* chain;
     const char* method;
     size_t signable_payload_size;
+    const char* network;
+    const char* recipient;
+    const char* asset;
+    const char* amount;
+    const char* gas_budget;
+    const char* gas_price;
     const char* payload_digest;
     const char* policy_hash;
     const char* rule_ref;

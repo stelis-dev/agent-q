@@ -793,6 +793,15 @@ test("parseProtocolResponse accepts bounded approval history pages", () => {
   assert.equal(response.records[0].decisionKind, "policy_rejected");
   assert.equal(response.records[0].confirmationKind, "policy");
   assert.equal(response.records[0].payloadDigest, APPROVAL_DIGEST);
+
+  const localPinResponse = assertApprovalHistoryResponse(
+    parseProtocolResponse(
+      approvalHistoryLine({ decisionKind: "user_approved", confirmationKind: "local_pin", reasonCode: "user_approved" }),
+      "req_approval_history",
+    ),
+  );
+  assert.equal(localPinResponse.records[0].decisionKind, "user_approved");
+  assert.equal(localPinResponse.records[0].confirmationKind, "local_pin");
 });
 
 test("parseProtocolResponse accepts policy update approval history records", () => {
@@ -1010,6 +1019,9 @@ test("parseProtocolResponse accepts rejected Sui sign_transaction policy decisio
     ["unsupported_transaction", "Transaction shape is not supported."],
     ["policy_error", "Active policy is unavailable."],
     ["policy_action_not_implemented", "Policy action is not implemented."],
+    ["user_rejected", "Request approval was rejected."],
+    ["user_timeout", "Request approval timed out."],
+    ["method_error", "Method execution failed."],
   ];
   for (const [code, message] of cases) {
     const response = assertMethodResultResponse(

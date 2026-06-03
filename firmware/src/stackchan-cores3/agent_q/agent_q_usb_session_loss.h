@@ -13,6 +13,7 @@ enum class AgentQUsbSessionLossLocalPinPurpose {
     none,
     connect,
     policy_update,
+    method_signing,
     other,
 };
 
@@ -21,6 +22,7 @@ struct AgentQUsbSessionLossInput {
     bool connect_approval_active;
     AgentQUsbSessionLossProtocolPinPurpose protocol_pin;
     AgentQUsbSessionLossLocalPinPurpose local_pin;
+    bool method_signing_active;
 };
 
 struct AgentQUsbSessionLossPlan {
@@ -30,6 +32,7 @@ struct AgentQUsbSessionLossPlan {
     bool clear_protocol_pin;
     bool wipe_local_pin_auth;
     bool clear_policy_update_flow;
+    bool clear_method_signing_flow;
     bool clear_decision_panel;
     bool clear_local_pin_panel;
 };

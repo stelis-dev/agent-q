@@ -10,6 +10,7 @@
 #include "agent_q_local_auth.h"
 #include "agent_q_local_pin_auth.h"
 #include "agent_q_local_reset.h"
+#include "agent_q_method_signing_request_flow.h"
 #include "agent_q_policy_update_flow.h"
 #include "agent_q_provisioning_flow.h"
 #include "hal/hal.h"
@@ -1466,6 +1467,38 @@ static const char* local_pin_auth_default_message(
                  update.highest_action != nullptr ? update.highest_action : "reject");
         return message;
     }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::method_signing) {
+        const AgentQMethodSigningRequestSnapshot signing =
+            method_signing_request_flow_snapshot();
+        if (signing.active &&
+            signing.network != nullptr &&
+            signing.recipient != nullptr &&
+            signing.amount != nullptr &&
+            signing.gas_budget != nullptr &&
+            signing.gas_price != nullptr &&
+            signing.asset != nullptr &&
+            signing.network[0] != '\0' &&
+            signing.recipient[0] != '\0' &&
+            signing.amount[0] != '\0' &&
+            signing.gas_budget[0] != '\0' &&
+            signing.gas_price[0] != '\0' &&
+            signing.asset[0] != '\0') {
+            const size_t recipient_length = strlen(signing.recipient);
+            const char* recipient_tail = recipient_length > 10
+                ? signing.recipient + recipient_length - 10
+                : signing.recipient;
+            static char message[192] = {};
+            snprintf(message, sizeof(message), "Sign %s %s on %s. To ...%s. Gas %s@%s.",
+                     signing.amount,
+                     signing.asset,
+                     signing.network,
+                     recipient_tail,
+                     signing.gas_budget,
+                     signing.gas_price);
+            return message;
+        }
+        return "Review request, then enter local PIN to sign.";
+    }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {
             return "Enter new PIN.";
@@ -1488,6 +1521,9 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::policy_update) {
         return "Policy PIN";
+    }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::method_signing) {
+        return "Signing PIN";
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {

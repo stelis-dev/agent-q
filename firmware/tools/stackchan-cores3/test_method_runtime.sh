@@ -311,6 +311,42 @@ int main(int argc, char** argv)
            "unimplemented sign policy action reports policy_action_not_implemented");
     expect(!sign_not_implemented.has_approval_history,
            "unimplemented future policy action is not persisted as approval history yet");
+
+    ::g_policy_action = agent_q::AgentQPolicyAction::ask;
+    agent_q::AgentQMethodRuntimeResult ask_required =
+        agent_q::evaluate_call_method("sui", "sign_transaction", valid_params.as<JsonVariant>());
+    expect(ask_required.status == agent_q::AgentQMethodRuntimeStatus::user_approval_required,
+           "ask policy action enters user approval state");
+    expect(strcmp(ask_required.signing_request.chain, "sui") == 0,
+           "ask policy signing request records chain");
+    expect(strcmp(ask_required.signing_request.method, "sign_transaction") == 0,
+           "ask policy signing request records method");
+    expect(ask_required.signing_request.signable_payload_size > 0,
+           "ask policy signing request owns signable payload");
+    expect(strcmp(ask_required.signing_request.network, "devnet") == 0,
+           "ask policy signing request records network");
+    expect(strcmp(ask_required.signing_request.recipient,
+                  "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == 0,
+           "ask policy signing request records recipient");
+    expect(strcmp(ask_required.signing_request.asset, "0x2::sui::SUI") == 0,
+           "ask policy signing request records asset");
+    expect(strcmp(ask_required.signing_request.amount, "1000000") == 0,
+           "ask policy signing request records amount");
+    expect(strcmp(ask_required.signing_request.gas_budget, "50000000") == 0,
+           "ask policy signing request records gas budget");
+    expect(strcmp(ask_required.signing_request.gas_price, "1000") == 0,
+           "ask policy signing request records gas price");
+    expect(strcmp(ask_required.signing_request.payload_digest,
+                  "sha256:0000000000000000000000000000000000000000000000000000000000000000") == 0,
+           "ask policy signing request owns payload digest");
+    expect(strcmp(ask_required.signing_request.policy_hash,
+                  "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab") == 0,
+           "ask policy signing request owns policy hash");
+    expect(strcmp(ask_required.signing_request.rule_ref, "test_rule") == 0,
+           "ask policy signing request owns rule ref");
+    agent_q::clear_method_runtime_result(&ask_required);
+    expect(ask_required.signing_request.signable_payload_size == 0,
+           "clearing method runtime result wipes signable payload size");
     ::g_policy_action = agent_q::AgentQPolicyAction::reject;
 
     const agent_q::AgentQMethodRuntimeResult unsupported =

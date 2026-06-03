@@ -249,7 +249,7 @@ export const gatewayToolDefinitions = {
     name: "call_method",
     title: "Call method",
     description:
-      "Send a session-scoped method request through the shared Agent-Q protocol path. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. This is not signing support: current StackChan CoreS3 capabilities advertise no callable methods, unknown methods are rejected, and Sui sign_transaction is recognized only for rejected policy-decision smoke.",
+      "Send a session-scoped method request through the shared Agent-Q protocol path. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. This is not public signing support: current StackChan CoreS3 capabilities advertise no callable methods, unknown methods are rejected, and product-reachable Sui sign_transaction policies produce rejected method results.",
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),

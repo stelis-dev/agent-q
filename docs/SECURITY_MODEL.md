@@ -85,9 +85,15 @@ Implemented today:
   record in ordinary NVS and can load canonical custom reject-policy records
   through its internal storage boundary. Firmware reads a public summary through
   `get_policy`, consumes that active policy for Sui `sign_transaction`
-  policy-decision smoke, and exposes policy update authorization only through
-  the Firmware-owned `propose_policy_update` proposal flow for custom reject
-  policies. It does not sign or trigger physical approval for signing requests.
+  policy evaluation, and exposes policy update authorization only through the
+  Firmware-owned `propose_policy_update` proposal flow for custom reject
+  policies. Product-reachable active policies currently produce only rejected
+  method results. An internal `ask` path can use local PIN approval, required
+  approval-history durability, signing, approved response writing, and scratch
+  wipe, but it is not product-reachable because active policy storage and the
+  Sui descriptor reject `ask`/`sign` policy records, `get_capabilities`
+  advertises no signing methods, and public client parsers reject approved
+  method results.
 - A Gateway-served local Admin Page for read-only device metadata and the
   current reject-policy proposal template. It uses the same Gateway core
   boundary as MCP and is not a policy authority.
@@ -108,13 +114,12 @@ Designed but not implemented (do not treat as present):
 - USER_PROFILE first-install mnemonic generation or import.
 - zkLogin signing material.
 - USER_PROFILE policy storage and policy update authorization.
-- Signing methods inside `call_method`. The `call_method` runtime recognizes Sui
-  `sign_transaction` only for rejected policy-decision smoke; it does not sign,
-  advertise the method, or trigger approval UI. A signing method is present only
-  when Firmware advertises it in `get_capabilities`, the runtime can produce the
-  corresponding method result, policy `ask` or `sign` actions are enforceable
-  for that method, required approval-history records are defined, and Gateway
-  parser/output schemas accept that exact shape.
+- Public signing methods inside `call_method`. Sui `sign_transaction` has an
+  internal local-PIN `ask` path, but no public signing method is present until
+  Firmware advertises it in `get_capabilities`, active policy `ask` or `sign`
+  actions are enforceable for that method, the approved method-result shape is
+  accepted by Gateway parser/output schemas, and target verification covers the
+  terminal path.
 - Full Admin policy editing beyond the current reject-policy proposal template.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.
 - Secure Boot, Flash Encryption, and NVS Encryption setup flow.
@@ -481,13 +486,13 @@ Enforcement today:
   registered tools must equal a fixed set, both at definition and over the live
   transport. A new tool such as `export_key` cannot be added without failing
   those tests.
-- Concrete signing methods inside `call_method` are not implemented. Sui
-  `sign_transaction` currently has a rejected policy-decision smoke path only.
-  Before a method ships as signing support it needs its own allowlist, capability
-  advertisement, method-result parser shape, physical-approval behavior where
-  required, approval-history contract, provider API boundary, and negative
-  tests, because the top-level allowlist does not cover method names carried
-  inside `call_method`.
+- Public signing methods inside `call_method` are not implemented. Sui
+  `sign_transaction` currently has a rejected product path plus an internal
+  local-PIN `ask` foundation that remains unreachable from active policy
+  storage. Before a method ships as signing support it needs capability
+  advertisement, method-result parser shape, approval behavior, approval-history
+  contract, provider API boundary, and negative tests, because the top-level
+  allowlist does not cover method names carried inside `call_method`.
 
 ## 12. Device Capability Tiers
 

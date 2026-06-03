@@ -70,6 +70,12 @@ agent_q::AgentQMethodSigningRequestBeginInput valid_input(
         "sign_transaction",
         payload,
         payload_size,
+        "devnet",
+        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "0x2::sui::SUI",
+        "1000000",
+        "50000000",
+        "1000",
         "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "sha256:2222222222222222222222222222222222222222222222222222222222222222",
         "ask_rule",
@@ -120,6 +126,14 @@ int main()
     expect(strcmp(snapshot.session_id, "session_abcdefghijklmnop") == 0, "session id stored");
     expect(strcmp(snapshot.chain, "sui") == 0, "chain stored");
     expect(strcmp(snapshot.method, "sign_transaction") == 0, "method stored");
+    expect(strcmp(snapshot.network, "devnet") == 0, "network stored");
+    expect(strcmp(snapshot.recipient,
+                  "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == 0,
+           "recipient stored");
+    expect(strcmp(snapshot.asset, "0x2::sui::SUI") == 0, "asset stored");
+    expect(strcmp(snapshot.amount, "1000000") == 0, "amount stored");
+    expect(strcmp(snapshot.gas_budget, "50000000") == 0, "gas budget stored");
+    expect(strcmp(snapshot.gas_price, "1000") == 0, "gas price stored");
     expect(strcmp(snapshot.rule_ref, "ask_rule") == 0, "rule ref stored");
     expect(snapshot.signable_payload_size == sizeof(kPayload), "payload size stored");
     expect(!agent_q::method_signing_request_flow_deadline_reached(99),

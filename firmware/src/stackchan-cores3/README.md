@@ -23,19 +23,24 @@ The current implementation includes:
   verification. Firmware sessions are RAM-only and do not authorize signing.
 - a USB JSONL `get_capabilities` request that returns Firmware-authored Sui
   Ed25519 account identity capability over an approved session while
-  `provisioned`. The current `methods` list is empty because signing methods are
-  not implemented.
+  `provisioned`. The current `methods` list is empty because no public signing
+  method is implemented.
 - a USB JSONL `get_approval_history` request that returns bounded persistent
   Firmware-authored method-decision and policy-update terminal metadata over an
   approved session. It is read-only, rate-limits method-decision persistent
   writes to reduce flash wear, stores no raw requests or secrets, and currently
-  records validated `call_method` policy-rejected decisions plus recordable
-  `propose_policy_update` terminal results.
+  records validated `call_method` policy-rejected decisions, required internal
+  method-signing terminal records for unreachable `ask` decisions, and
+  recordable `propose_policy_update` terminal results.
 - a USB JSONL `call_method` runtime skeleton. It requires material-backed
   `provisioned` state plus a matching active session, keeps unknown methods
-  rejected with `unsupported_method`, and recognizes Sui `sign_transaction` only
-  for restricted-transfer policy-decision smoke. It does not ask for signing
-  approval or sign.
+  rejected with `unsupported_method`, and recognizes Sui `sign_transaction` for
+  restricted-transfer policy evaluation. Product-reachable active policies
+  currently produce rejected method results. The internal `ask` path can use
+  local PIN approval and signing, but it is not product-reachable while active
+  policy storage and the Sui descriptor reject `ask`/`sign` policy records,
+  capabilities advertise no signing methods, and public client parsers reject
+  approved method results.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
   Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
   RAM, displays only the up-to-4-letter word prefixes on device in a 3-column
@@ -81,8 +86,13 @@ This is not the signing product yet. It reports read-only identity capability
 identity (`get_accounts`), and links a restricted host-tested Sui transaction
 facts parser plus a common stored-policy runtime boundary. The current
 `call_method` skeleton consumes the committed active policy decision
-only for Sui `sign_transaction` policy-decision smoke; it does not sign or
-apply signing policy to produce signatures. It also implements the
+for Sui `sign_transaction`. Product-reachable active policies currently produce
+only rejected method results. An internal `ask` path can use local PIN approval,
+required approval-history durability, signing, approved response writing, and
+scratch wipe, but it is not product-reachable because active policy storage and
+the Sui descriptor reject `ask`/`sign` policy records, `get_capabilities`
+advertises no signing methods, and public client parsers reject approved method
+results. It also implements the
 Firmware-owned `propose_policy_update` admin method for bounded reject-policy
 proposals over an active session, local PIN approval, canonical active-policy
 commit, and required policy-update terminal history. It does not expose MCP
@@ -197,8 +207,9 @@ signing boundary with host stubs. This is not a protocol signing test.
 
 The Sui transaction facts parser test is a common host-side check. It compiles
 `firmware/src/common/agent_q/sui` and verifies tracked BCS fixtures for
-the restricted SUI transfer parser. StackChan CoreS3 connects the parser only to
-Sui `sign_transaction` policy-decision smoke; it is not signing.
+the restricted SUI transfer parser. StackChan CoreS3 connects the parser to Sui
+`sign_transaction` policy evaluation; product-reachable active policies
+currently produce rejected method results.
 
 The policy test is also a common host-side check. It compiles
 `firmware/src/common/agent_q/policy` plus the Sui method adapter and
@@ -206,9 +217,12 @@ verifies deny-by-default, `sign`/`reject`/`ask` decision calculation, default
 provider behavior, missing/invalid policy provider rejection, malformed policy
 rejection, and unsupported-facts rejection. StackChan CoreS3 consumes the
 committed active policy only for Sui `sign_transaction`
-policy-decision smoke; policy is not connected to signing or signing-request
-physical approval. Custom reject-policy updates enter separately through the
-Firmware-owned `propose_policy_update` proposal flow.
+policy evaluation. Product-reachable active policies currently produce rejected
+method results. Internal `ask` decisions can route through local PIN approval
+and signing, but that path is not product-reachable while active policy storage
+and the Sui descriptor reject `ask`/`sign` policy records. Custom reject-policy
+updates enter separately through the Firmware-owned `propose_policy_update`
+proposal flow.
 
 The StackChan policy-store test is target-specific. It compiles the tracked
 `agent_q_policy_store.cpp` provider with ESP-IDF mbedTLS SHA-256 sources and
@@ -237,15 +251,16 @@ The StackChan method-runtime test is target-specific. It compiles the tracked
 facts parser, the common policy runtime, and pinned MicroSui base64 helpers,
 then verifies unsupported method rejection, invalid Sui params, approval-history
 metadata exposure, and the default-reject policy result for a valid restricted
-SUI transfer fixture.
+SUI transfer fixture. It also verifies the internal `ask` handoff metadata used
+by the RAM-only method signing request path; the public product surface still
+does not advertise signing methods or accept approved method results.
 
 The StackChan method signing request flow test is target-specific. It compiles
 the tracked `agent_q_method_signing_request_flow.cpp` RAM-only state owner, then
 verifies request id, session id, method metadata, bounded signable payload
 scratch, deadline, history-durability gating before payload copy, signing
 critical-section cleanup, disconnect/session-loss cancellation, stale-event
-rejection, payload wipe, and one-shot terminal-result ownership. The current
-`call_method` runtime does not enter this state owner.
+rejection, payload wipe, and one-shot terminal-result ownership.
 
 The StackChan policy-proposal parser test is target-specific. It compiles the
 tracked `agent_q_policy_proposal_parser.cpp` parser with ArduinoJson and the

@@ -23,6 +23,7 @@ constexpr uint8_t kStoredDecisionMethodError = 5;
 constexpr uint8_t kStoredConfirmationNone = 0;
 constexpr uint8_t kStoredConfirmationPolicy = 1;
 constexpr uint8_t kStoredConfirmationPhysicalConfirm = 2;
+constexpr uint8_t kStoredConfirmationLocalPin = 3;
 constexpr uint8_t kStoredDigestPayload = 1 << 0;
 constexpr uint8_t kStoredDigestPolicy = 1 << 1;
 constexpr uint8_t kStoredEventMethodDecision = 0;
@@ -89,6 +90,24 @@ bool stored_event_kind_valid(uint8_t value)
            value == kStoredEventPolicyUpdate;
 }
 
+bool stored_decision_valid(uint8_t value)
+{
+    return value == kStoredDecisionPolicyApproved ||
+           value == kStoredDecisionPolicyRejected ||
+           value == kStoredDecisionUserApproved ||
+           value == kStoredDecisionUserRejected ||
+           value == kStoredDecisionUserTimeout ||
+           value == kStoredDecisionMethodError;
+}
+
+bool stored_confirmation_valid(uint8_t value)
+{
+    return value == kStoredConfirmationNone ||
+           value == kStoredConfirmationPolicy ||
+           value == kStoredConfirmationPhysicalConfirm ||
+           value == kStoredConfirmationLocalPin;
+}
+
 bool valid_history_header(const StoredApprovalHistory& history)
 {
     if (history.magic[0] != 'A' ||
@@ -103,6 +122,8 @@ bool valid_history_header(const StoredApprovalHistory& history)
     }
     for (size_t index = 0; index < kAgentQApprovalHistoryCapacity; ++index) {
         if (!stored_event_kind_valid(history.records[index].event_kind) ||
+            !stored_decision_valid(history.records[index].decision) ||
+            !stored_confirmation_valid(history.records[index].confirmation_kind) ||
             history.records[index].rule_count > kAgentQPolicyMaxRules) {
             return false;
         }
@@ -388,6 +409,8 @@ uint8_t stored_confirmation(AgentQApprovalHistoryConfirmationKind value)
             return kStoredConfirmationPolicy;
         case AgentQApprovalHistoryConfirmationKind::physical_confirm:
             return kStoredConfirmationPhysicalConfirm;
+        case AgentQApprovalHistoryConfirmationKind::local_pin:
+            return kStoredConfirmationLocalPin;
         case AgentQApprovalHistoryConfirmationKind::none:
         default:
             return kStoredConfirmationNone;
@@ -401,6 +424,8 @@ AgentQApprovalHistoryConfirmationKind public_confirmation(uint8_t value)
             return AgentQApprovalHistoryConfirmationKind::policy;
         case kStoredConfirmationPhysicalConfirm:
             return AgentQApprovalHistoryConfirmationKind::physical_confirm;
+        case kStoredConfirmationLocalPin:
+            return AgentQApprovalHistoryConfirmationKind::local_pin;
         case kStoredConfirmationNone:
         default:
             return AgentQApprovalHistoryConfirmationKind::none;
@@ -608,9 +633,10 @@ bool approval_history_parse_sequence(const char* value, uint64_t* output)
     return true;
 }
 
-bool approval_history_append(
+bool append_method_decision_history(
     const AgentQApprovalHistoryAppendInput& input,
-    uint64_t uptime_ms)
+    uint64_t uptime_ms,
+    bool enforce_write_budget)
 {
     StoredApprovalHistory& history = g_history_workspace;
     const AgentQApprovalHistoryReadResult load_result = load_history(&history, true);
@@ -640,11 +666,49 @@ bool approval_history_append(
         record->flags |= kStoredDigestPolicy;
     }
 
-    if (!consume_write_budget(uptime_ms)) {
+    if (enforce_write_budget && !consume_write_budget(uptime_ms)) {
         return false;
     }
 
     return store_history(history);
+}
+
+static bool method_terminal_history_supported(const AgentQApprovalHistoryAppendInput& input)
+{
+    switch (input.decision) {
+        case AgentQApprovalHistoryDecision::policy_approved:
+            return input.confirmation_kind == AgentQApprovalHistoryConfirmationKind::policy;
+        case AgentQApprovalHistoryDecision::user_approved:
+        case AgentQApprovalHistoryDecision::user_rejected:
+        case AgentQApprovalHistoryDecision::user_timeout:
+            return input.confirmation_kind == AgentQApprovalHistoryConfirmationKind::local_pin ||
+                   input.confirmation_kind == AgentQApprovalHistoryConfirmationKind::physical_confirm;
+        case AgentQApprovalHistoryDecision::method_error:
+            return input.confirmation_kind == AgentQApprovalHistoryConfirmationKind::policy ||
+                   input.confirmation_kind == AgentQApprovalHistoryConfirmationKind::local_pin ||
+                   input.confirmation_kind == AgentQApprovalHistoryConfirmationKind::physical_confirm;
+        case AgentQApprovalHistoryDecision::policy_rejected:
+        default:
+            return false;
+    }
+}
+
+bool approval_history_append(
+    const AgentQApprovalHistoryAppendInput& input,
+    uint64_t uptime_ms)
+{
+    return append_method_decision_history(input, uptime_ms, true);
+}
+
+bool approval_history_append_required_method_terminal(
+    const AgentQApprovalHistoryAppendInput& input,
+    uint64_t uptime_ms)
+{
+    if (!method_terminal_history_supported(input)) {
+        ESP_LOGW(kTag, "Refusing unsupported required method terminal history record");
+        return false;
+    }
+    return append_method_decision_history(input, uptime_ms, false);
 }
 
 bool approval_history_append_required_policy_update(
@@ -772,6 +836,8 @@ const char* approval_history_confirmation_kind_to_string(AgentQApprovalHistoryCo
             return "policy";
         case AgentQApprovalHistoryConfirmationKind::physical_confirm:
             return "physical_confirm";
+        case AgentQApprovalHistoryConfirmationKind::local_pin:
+            return "local_pin";
         case AgentQApprovalHistoryConfirmationKind::none:
         default:
             return "none";

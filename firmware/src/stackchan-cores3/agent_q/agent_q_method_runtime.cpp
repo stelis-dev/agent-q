@@ -51,6 +51,7 @@ AgentQMethodRuntimeResult invalid_params(const char* message)
         message,
         false,
         {},
+        {},
     };
 }
 
@@ -61,6 +62,7 @@ AgentQMethodRuntimeResult rejected(const char* code, const char* message)
         code,
         message,
         false,
+        {},
         {},
     };
 }
@@ -92,6 +94,46 @@ AgentQMethodRuntimeResult rejected_with_history(
     return result;
 }
 
+AgentQMethodRuntimeResult approval_required(
+    const uint8_t* signable_payload,
+    size_t signable_payload_size,
+    const char* chain,
+    const char* method,
+    const char* network,
+    const SuiTransferFacts& sui_facts,
+    const char* payload_digest,
+    const char* policy_hash,
+    const char* rule_ref)
+{
+    AgentQMethodRuntimeResult result = {
+        AgentQMethodRuntimeStatus::user_approval_required,
+        "",
+        "",
+        false,
+        {},
+        {},
+    };
+    if (signable_payload == nullptr ||
+        signable_payload_size == 0 ||
+        signable_payload_size > sizeof(result.signing_request.signable_payload) ||
+        !copy_runtime_history_string(result.signing_request.chain, sizeof(result.signing_request.chain), chain, true) ||
+        !copy_runtime_history_string(result.signing_request.method, sizeof(result.signing_request.method), method, true) ||
+        !copy_runtime_history_string(result.signing_request.network, sizeof(result.signing_request.network), network, true) ||
+        !copy_runtime_history_string(result.signing_request.recipient, sizeof(result.signing_request.recipient), sui_facts.recipient, true) ||
+        !copy_runtime_history_string(result.signing_request.asset, sizeof(result.signing_request.asset), sui_facts.asset, true) ||
+        !copy_runtime_history_string(result.signing_request.amount, sizeof(result.signing_request.amount), sui_facts.amount, true) ||
+        !copy_runtime_history_string(result.signing_request.gas_budget, sizeof(result.signing_request.gas_budget), sui_facts.gas_budget, true) ||
+        !copy_runtime_history_string(result.signing_request.gas_price, sizeof(result.signing_request.gas_price), sui_facts.gas_price, true) ||
+        !copy_runtime_history_string(result.signing_request.payload_digest, sizeof(result.signing_request.payload_digest), payload_digest, true) ||
+        !copy_runtime_history_string(result.signing_request.policy_hash, sizeof(result.signing_request.policy_hash), policy_hash, true) ||
+        !copy_runtime_history_string(result.signing_request.rule_ref, sizeof(result.signing_request.rule_ref), rule_ref, true)) {
+        return rejected("method_error", "Method execution failed.");
+    }
+    memcpy(result.signing_request.signable_payload, signable_payload, signable_payload_size);
+    result.signing_request.signable_payload_size = signable_payload_size;
+    return result;
+}
+
 AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
 {
     size_t decoded_tx_size = 0;
@@ -117,14 +159,15 @@ AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
     SuiTransferFacts sui_facts = {};
     const SuiTransactionFactsResult parse_result =
         parse_sui_transfer_facts(tx_bytes, decoded_tx_size, &sui_facts);
-    wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
 
     if (parse_result == SuiTransactionFactsResult::malformed) {
+        wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
         return rejected(
             "malformed_transaction",
             "Transaction bytes are malformed.");
     }
     if (parse_result != SuiTransactionFactsResult::ok) {
+        wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
         return rejected(
             "unsupported_transaction",
             "Transaction shape is not supported.");
@@ -132,6 +175,7 @@ AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
 
     AgentQSuiSignTransactionPolicyFacts policy_facts = {};
     if (!make_sui_sign_transaction_policy_facts(sui_facts, network, &policy_facts)) {
+        wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
         return rejected(
             "unsupported_transaction",
             "Transaction shape is not supported.");
@@ -142,17 +186,19 @@ AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
     const AgentQPolicyDecision decision =
         evaluate_agent_q_policy_runtime(active_policy_provider(), policy_facts.facts);
     if (decision.reason == AgentQPolicyDecisionReason::invalid_policy) {
+        wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
         return rejected(
             "policy_error",
             "Active policy is unavailable.");
     }
+    const char* rule_ref = "default";
+    if (decision.reason == AgentQPolicyDecisionReason::matched_rule &&
+        decision.rule_id != nullptr &&
+        decision.rule_id[0] != '\0') {
+        rule_ref = decision.rule_id;
+    }
     if (decision.action == AgentQPolicyAction::reject) {
-        const char* rule_ref = "default";
-        if (decision.reason == AgentQPolicyDecisionReason::matched_rule &&
-            decision.rule_id != nullptr &&
-            decision.rule_id[0] != '\0') {
-            rule_ref = decision.rule_id;
-        }
+        wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
         return rejected_with_history(
             "policy_rejected",
             "The request was rejected by device policy.",
@@ -164,7 +210,22 @@ AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
             policy_summary_ready ? policy_summary.policy_id : nullptr,
             rule_ref);
     }
+    if (decision.action == AgentQPolicyAction::ask) {
+        AgentQMethodRuntimeResult result = approval_required(
+            tx_bytes,
+            decoded_tx_size,
+            "sui",
+            "sign_transaction",
+            network,
+            sui_facts,
+            digest_ready ? payload_digest : nullptr,
+            policy_summary_ready ? policy_summary.policy_id : nullptr,
+            rule_ref);
+        wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
+        return result;
+    }
 
+    wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
     return rejected(
         "policy_action_not_implemented",
         "Policy action is not implemented.");
@@ -185,6 +246,17 @@ AgentQMethodRuntimeResult evaluate_call_method(
     return rejected(
         "unsupported_method",
         "Method is not supported.");
+}
+
+void clear_method_runtime_result(AgentQMethodRuntimeResult* result)
+{
+    if (result == nullptr) {
+        return;
+    }
+    wipe_sensitive_buffer(
+        result->signing_request.signable_payload,
+        sizeof(result->signing_request.signable_payload));
+    memset(result, 0, sizeof(*result));
 }
 
 }  // namespace agent_q

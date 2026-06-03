@@ -153,8 +153,10 @@ Implemented:
   currently implemented device metadata, method-decision records, and
   policy-update terminal records.
 - A session-scoped `call_method` runtime skeleton that keeps unknown methods
-  rejected and recognizes Sui `sign_transaction` only for rejected
-  policy-decision smoke. It is not signing support.
+  rejected and recognizes Sui `sign_transaction` for restricted-transfer policy
+  evaluation. Product-reachable active policies currently return rejected method
+  results. An internal `ask` path exists, but it is not product-reachable and is
+  not signing support.
 - A bounded policy-update proposal path for currently enforceable reject
   policies. Gateway/MCP can submit proposals, but Firmware validates them,
   requires device-local approval, commits the active policy, and records the

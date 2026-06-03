@@ -251,7 +251,7 @@ export type ApprovalHistoryDecisionKind =
   | "user_timeout"
   | "method_error";
 
-export type ApprovalHistoryConfirmationKind = "none" | "policy" | "physical_confirm";
+export type ApprovalHistoryConfirmationKind = "none" | "policy" | "physical_confirm" | "local_pin";
 
 export type ApprovalHistoryPolicyUpdateResult =
   | "applied"
@@ -1093,6 +1093,7 @@ export const APPROVAL_HISTORY_CONFIRMATION_KINDS = [
   "none",
   "policy",
   "physical_confirm",
+  "local_pin",
 ] as const;
 export const APPROVAL_HISTORY_POLICY_UPDATE_RESULTS = [
   "applied",
@@ -1130,6 +1131,9 @@ export const METHOD_RESULT_ERROR_MESSAGES = {
   unsupported_transaction: "Transaction shape is not supported.",
   policy_error: "Active policy is unavailable.",
   policy_action_not_implemented: "Policy action is not implemented.",
+  user_rejected: "Request approval was rejected.",
+  user_timeout: "Request approval timed out.",
+  method_error: "Method execution failed.",
 } as const;
 export type MethodResultErrorCode = keyof typeof METHOD_RESULT_ERROR_MESSAGES;
 export const FORBIDDEN_SECRET_FIELD_NAMES = [
