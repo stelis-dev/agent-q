@@ -19,32 +19,6 @@ struct AgentQSessionState {
 
 AgentQSessionState g_session;
 
-bool safe_session_id_format(const char* value)
-{
-    if (value == nullptr) {
-        return false;
-    }
-    constexpr const char* kExpectedPrefix = "session_";
-    constexpr size_t kPrefixLength = 8;
-    for (size_t index = 0; index < kPrefixLength; ++index) {
-        if (value[index] != kExpectedPrefix[index]) {
-            return false;
-        }
-    }
-    size_t length = kPrefixLength;
-    for (const char* cursor = value + kPrefixLength; *cursor != '\0'; ++cursor) {
-        if (++length >= kAgentQSessionIdSize) {
-            return false;
-        }
-        const char c = *cursor;
-        const bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-        if (!ok) {
-            return false;
-        }
-    }
-    return length > kPrefixLength;
-}
-
 bool format_session_id(
     AgentQSessionRandomFn random_fn,
     void* random_context,
@@ -108,9 +82,35 @@ AgentQSessionStartResult session_replace(
     return AgentQSessionStartResult::ok;
 }
 
+bool session_id_format_valid(const char* value)
+{
+    if (value == nullptr) {
+        return false;
+    }
+    constexpr const char* kExpectedPrefix = "session_";
+    constexpr size_t kPrefixLength = 8;
+    for (size_t index = 0; index < kPrefixLength; ++index) {
+        if (value[index] != kExpectedPrefix[index]) {
+            return false;
+        }
+    }
+    size_t length = kPrefixLength;
+    for (const char* cursor = value + kPrefixLength; *cursor != '\0'; ++cursor) {
+        if (++length >= kAgentQSessionIdSize) {
+            return false;
+        }
+        const char c = *cursor;
+        const bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+        if (!ok) {
+            return false;
+        }
+    }
+    return length > kPrefixLength;
+}
+
 AgentQSessionValidationResult session_validate(const char* requested_session_id)
 {
-    if (!safe_session_id_format(requested_session_id)) {
+    if (!session_id_format_valid(requested_session_id)) {
         return AgentQSessionValidationResult::invalid_format;
     }
     if (!g_session.active()) {

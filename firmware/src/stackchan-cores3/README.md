@@ -36,8 +36,11 @@ The current implementation includes:
   transfer request inputs for rejected-path policy evaluation. Public signing
   output is not implemented.
 - a source-level device-confirmed signature request state owner for future
-  `request_signature` work. It owns RAM-only pending request metadata, bounded
-  signable payload scratch, a Sui transfer summary parsed from the same
+  `request_signature` work. Split validation helpers separately check the
+  future request envelope, session-id format, and params into bounded
+  value-owned fields, but they are not wired into the USB dispatcher. The state
+  owner owns RAM-only pending request metadata,
+  bounded signable payload scratch, a Sui transfer summary parsed from the same
   `txBytes`, Firmware-derived sender/gas-owner account binding, staged
   confirmation, terminal cleanup, and one-shot payload handoff after the
   required confirmation history write succeeds. The history write receives
@@ -48,8 +51,8 @@ The current implementation includes:
   object lifetime as state. The approval-history store and parser can
   represent bounded future signature-request confirmation and terminal records,
   using the current approval-history storage layout only. The state owner is not
-  connected to USB protocol ingress, LVGL review drawing, local PIN UI, signing service calls,
-  Gateway/client/provider signing parsers, or capability
+  connected to USB protocol ingress, LVGL review drawing, local PIN UI, signing
+  service calls, Gateway/client/provider signing parsers, or capability
   advertisement.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
   Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
@@ -173,6 +176,7 @@ firmware/tools/stackchan-cores3/test_provisioning_state_store.sh
 firmware/tools/stackchan-cores3/test_provisioning_runtime_state.sh
 firmware/tools/stackchan-cores3/test_signature_request_flow.sh
 firmware/tools/stackchan-cores3/test_signature_request_review_view_model.sh
+firmware/tools/stackchan-cores3/test_signature_request_validation.sh
 firmware/tools/stackchan-cores3/test_local_auth.sh
 firmware/tools/stackchan-cores3/test_local_auth_worker.sh
 firmware/tools/stackchan-cores3/test_local_pin_auth.sh

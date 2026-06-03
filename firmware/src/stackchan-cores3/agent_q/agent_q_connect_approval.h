@@ -2,11 +2,12 @@
 
 #include <stddef.h>
 
+#include "agent_q_request_id.h"
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
 
-constexpr size_t kAgentQConnectApprovalRequestIdSize = 80;
+constexpr size_t kAgentQConnectApprovalRequestIdSize = kAgentQRequestIdSize;
 constexpr size_t kAgentQConnectApprovalGatewayNameSize = 65;
 
 enum class AgentQConnectApprovalChoice {

@@ -29,6 +29,7 @@ void session_clear();
 AgentQSessionStartResult session_replace(
     AgentQSessionRandomFn random_fn,
     void* random_context);
+bool session_id_format_valid(const char* session_id);
 AgentQSessionValidationResult session_validate(const char* session_id);
 
 }  // namespace agent_q

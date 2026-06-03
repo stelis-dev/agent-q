@@ -86,6 +86,17 @@ int main()
     snprintf(id, sizeof(id), "%s", agent_q::session_id());
     expect(strcmp(id, "session_0102030405060708") == 0,
            "session id is generated from random bytes");
+    expect(agent_q::session_id_format_valid(id),
+           "generated session id satisfies public format helper");
+    expect(!agent_q::session_id_format_valid("x"),
+           "format helper rejects wrong prefix");
+    expect(!agent_q::session_id_format_valid("session_AAAAAAAAAAAAAAAA"),
+           "format helper rejects uppercase hex");
+    expect(!agent_q::session_id_format_valid("session_"),
+           "format helper rejects empty suffix");
+    expect(!agent_q::session_id_format_valid(
+               "session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+           "format helper rejects overlong ids");
     expect(agent_q::session_validate(id) == Result::ok,
            "matching session validates");
     expect(agent_q::session_validate("not-a-session") == Result::invalid_format,

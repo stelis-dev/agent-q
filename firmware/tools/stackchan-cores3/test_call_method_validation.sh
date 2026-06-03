@@ -26,6 +26,8 @@ ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${AGENT_Q_DIR}/agent_q_base64.cpp" \
+  "${AGENT_Q_DIR}/agent_q_base64.h" \
   "${AGENT_Q_DIR}/agent_q_call_method_validation.cpp" \
   "${AGENT_Q_DIR}/agent_q_call_method_validation.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -306,6 +308,7 @@ CPP
   -I"${ARDUINOJSON_ROOT}" \
   -I"${AGENT_Q_DIR}" \
   "${TMP_DIR}/call_method_validation_test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_base64.cpp" \
   "${AGENT_Q_DIR}/agent_q_call_method_validation.cpp" \
   -o "${TMP_DIR}/call_method_validation_test"
 

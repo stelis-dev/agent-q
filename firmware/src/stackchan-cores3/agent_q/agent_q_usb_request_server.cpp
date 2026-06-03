@@ -30,6 +30,7 @@
 #include "agent_q_policy_update_flow.h"
 #include "agent_q_provisioning_flow.h"
 #include "agent_q_provisioning_runtime_state.h"
+#include "agent_q_request_id.h"
 #include "agent_q_session.h"
 #include "agent_q_sui_account.h"
 #include "agent_q_sui_account_store.h"
@@ -92,7 +93,7 @@ constexpr uint32_t kUsbHostLinkCheckMs = 10;
 constexpr size_t kMaxRawJsonObjectBytes = 4096;
 constexpr size_t kLineBufferSize = kMaxRawJsonObjectBytes + 1;
 constexpr uint32_t kUsbRequestTaskStackBytes = 8192;
-constexpr size_t kMaxRequestIdSize = 80;
+constexpr size_t kMaxRequestIdSize = agent_q::kAgentQRequestIdSize;
 constexpr size_t kDeviceIdSize = 37;
 constexpr size_t kIdentifyCodeSize = 5;
 constexpr size_t kGatewayNameSize = 65;
@@ -283,27 +284,6 @@ void apply_panel_cleanup_plan(
         // time out the flow according to the explicit state deadline.
         ESP_LOGW(kTag, "Local PIN authorization panel deleted; state loop will recover if active");
     }
-}
-
-bool is_safe_id(const char* value)
-{
-    if (value == nullptr || value[0] == '\0') {
-        return false;
-    }
-
-    size_t length = 0;
-    for (const char* cursor = value; *cursor != '\0'; ++cursor) {
-        if (++length >= kMaxRequestIdSize) {
-            return false;
-        }
-        const char c = *cursor;
-        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                        (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.';
-        if (!ok) {
-            return false;
-        }
-    }
-    return true;
 }
 
 bool is_safe_identification_code(const char* value)
@@ -3572,7 +3552,7 @@ void handle_line(const char* line)
         write_error_response(nullptr, "invalid_id", "Invalid request id.");
         return;
     }
-    if (!is_safe_id(id)) {
+    if (!agent_q::request_id_format_valid(id)) {
         write_error_response(nullptr, "invalid_id", "Invalid request id.");
         return;
     }

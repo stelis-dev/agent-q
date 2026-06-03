@@ -3,12 +3,13 @@
 #include <stddef.h>
 
 #include "agent_q_local_pin_auth.h"
+#include "agent_q_request_id.h"
 #include "agent_q_session.h"
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
 
-constexpr size_t kAgentQProtocolPinRequestIdSize = 80;
+constexpr size_t kAgentQProtocolPinRequestIdSize = kAgentQRequestIdSize;
 
 enum class AgentQProtocolPinApprovalPurpose {
     none,

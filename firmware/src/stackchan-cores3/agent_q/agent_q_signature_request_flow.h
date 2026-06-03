@@ -6,15 +6,11 @@
 #include "agent_q_approval_history.h"
 #include "agent_q_method_limits.h"
 #include "agent_q_session.h"
+#include "agent_q_signature_request_limits.h"
 #include "agent_q_common/sui/agent_q_sui_transaction_facts.h"
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
-
-constexpr size_t kAgentQSignatureRequestIdSize = 80;
-constexpr size_t kAgentQSignatureRequestChainSize = 33;
-constexpr size_t kAgentQSignatureRequestMethodSize = 65;
-constexpr size_t kAgentQSignatureRequestNetworkSize = 9;
 
 enum class AgentQSignatureRequestFlowBeginResult {
     ok,
