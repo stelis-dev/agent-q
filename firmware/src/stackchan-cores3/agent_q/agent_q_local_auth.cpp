@@ -408,7 +408,9 @@ bool wipe_local_auth()
 AgentQLocalAuthStatus local_auth_status()
 {
     StoredLocalAuthRecord record = {};
-    return read_local_auth_record(&record, false);
+    const AgentQLocalAuthStatus status = read_local_auth_record(&record, false);
+    wipe_sensitive_buffer(&record, sizeof(record));
+    return status;
 }
 
 }  // namespace agent_q

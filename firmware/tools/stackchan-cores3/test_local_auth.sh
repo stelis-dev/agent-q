@@ -95,8 +95,13 @@ cat >"${TMP_DIR}/stubs/agent_q_bip39.cpp" <<'CPP'
 
 namespace agent_q {
 
+size_t g_test_wipe_calls = 0;
+size_t g_test_last_wipe_size = 0;
+
 void wipe_sensitive_buffer(void* data, size_t size)
 {
+    ++g_test_wipe_calls;
+    g_test_last_wipe_size = size;
     volatile uint8_t* cursor = static_cast<volatile uint8_t*>(data);
     while (cursor != nullptr && size > 0) {
         *cursor++ = 0;
@@ -164,6 +169,8 @@ cat >"${TMP_DIR}/local_auth_test.cpp" <<'CPP'
 
 namespace agent_q {
 void test_set_rng_fails(bool value);
+extern size_t g_test_wipe_calls;
+extern size_t g_test_last_wipe_size;
 }
 
 namespace {
@@ -300,7 +307,12 @@ int main()
     expect(!verified, "missing local auth leaves verified false");
 
     expect(agent_q::store_local_pin_verifier("123456"), "store local PIN verifier");
+    agent_q::g_test_wipe_calls = 0;
+    agent_q::g_test_last_wipe_size = 0;
     expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::active, "stored local auth active");
+    expect(agent_q::g_test_wipe_calls > 0, "status check wipes local auth record copy");
+    expect(agent_q::g_test_last_wipe_size == agent_q::kLocalAuthPreparedRecordBytes,
+           "status check wipes full local auth record copy");
     verified = false;
     expect(agent_q::verify_local_pin("123456", &verified), "verify correct PIN call succeeds");
     expect(verified, "correct PIN verifies");

@@ -262,7 +262,8 @@ bool provisioning_flow_handle_panel_deleted(AgentQProvisioningFlowPanel panel)
          g_state.stage == AgentQProvisioningFlowStage::recovery_phrase_displayed) ||
         (panel == AgentQProvisioningFlowPanel::recovery_word_entry &&
          g_state.stage == AgentQProvisioningFlowStage::recover_word_entry) ||
-        (panel == AgentQProvisioningFlowPanel::pin_entry && pin_setup_stage());
+        (panel == AgentQProvisioningFlowPanel::pin_entry &&
+         (pin_setup_stage() || g_state.stage == AgentQProvisioningFlowStage::pin_committing));
     if (!matches) {
         return false;
     }

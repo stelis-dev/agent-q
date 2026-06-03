@@ -277,6 +277,31 @@ int main()
     expect(prepared != nullptr, "prepared auth input shape");
     agent_q::provisioning_flow_wipe();
 
+    expect(agent_q::provisioning_flow_begin_generate(600) == GenerateResult::ok,
+           "generate before commit panel loss");
+    expect(agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(610),
+           "confirm before commit panel loss");
+    enter_pin("123456", 620);
+    expect(agent_q::provisioning_flow_submit_pin(630, 640, 690) == PinSubmitResult::advanced_to_repeat,
+           "first PIN accepted before commit panel loss");
+    enter_pin("123456", 650);
+    expect(agent_q::provisioning_flow_submit_pin(660, 670, 690) == PinSubmitResult::commit_started,
+           "matching repeat starts commit before panel loss");
+    expect(agent_q::provisioning_flow_stage_is(Stage::pin_committing),
+           "panel loss scenario reaches commit stage");
+    expect(agent_q::provisioning_flow_handle_panel_deleted(Panel::pin_entry),
+           "panel delete wipes setup PIN commit");
+    expect(agent_q::g_last_cancelled_worker_job_id == agent_q::g_last_worker_job_id,
+           "PIN commit panel delete cancels worker job");
+    expect(!agent_q::provisioning_flow_active(),
+           "PIN commit panel delete clears provisioning flow");
+    expect(!agent_q::provisioning_flow_commit_worker_result(
+               worker_result,
+               &root,
+               &root_size,
+               &prepared),
+           "stale PIN commit worker result ignored after panel delete");
+
     expect(agent_q::provisioning_flow_begin_generate(700) == GenerateResult::ok,
            "generate before commit timeout");
     expect(agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(710),
