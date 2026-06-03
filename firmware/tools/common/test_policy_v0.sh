@@ -318,25 +318,7 @@ int main(int argc, char** argv)
         {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "50000000", nullptr, 0},
         {"sui.gas_price", agent_q::AgentQPolicyOperator::lte, sui_facts.gas_price, nullptr, 0},
     };
-    const agent_q::AgentQPolicyRule sign_rule = {
-        "sign-small-sui-transfer",
-        "sui",
-        "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
-        allow_criteria,
-        sizeof(allow_criteria) / sizeof(allow_criteria[0]),
-    };
-    const agent_q::AgentQPolicyDocument sign_policy = one_rule_policy(&sign_rule);
-    expect_decision(
-        "matching sign rule",
-        sign_policy,
-        facts,
-        agent_q::AgentQPolicyAction::sign,
-        agent_q::AgentQPolicyDecisionReason::matched_rule,
-        "sign-small-sui-transfer",
-        &failures);
-
-    const agent_q::AgentQPolicyRule reject_rule = {
+    const agent_q::AgentQPolicyRule matching_rule = {
         "reject-small-sui-transfer",
         "sui",
         "sign_transaction",
@@ -344,17 +326,25 @@ int main(int argc, char** argv)
         allow_criteria,
         sizeof(allow_criteria) / sizeof(allow_criteria[0]),
     };
-    const agent_q::AgentQPolicyDocument reject_policy = one_rule_policy(&reject_rule);
+    const agent_q::AgentQPolicyDocument matching_policy = one_rule_policy(&matching_rule);
     expect_decision(
         "matching reject rule",
-        reject_policy,
+        matching_policy,
         facts,
         agent_q::AgentQPolicyAction::reject,
         agent_q::AgentQPolicyDecisionReason::matched_rule,
         "reject-small-sui-transfer",
         &failures);
 
-    const agent_q::AgentQPolicyRule first_match_rules[] = {sign_rule, reject_rule};
+    const agent_q::AgentQPolicyRule later_match_rule = {
+        "later-reject-small-sui-transfer",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::reject,
+        allow_criteria,
+        sizeof(allow_criteria) / sizeof(allow_criteria[0]),
+    };
+    const agent_q::AgentQPolicyRule first_match_rules[] = {matching_rule, later_match_rule};
     const agent_q::AgentQPolicyDocument first_match_policy = {
         agent_q::kAgentQPolicyV0Schema,
         agent_q::AgentQPolicyAction::reject,
@@ -362,12 +352,12 @@ int main(int argc, char** argv)
         2,
     };
     expect_decision(
-        "first matching sign rule",
+        "first matching reject rule",
         first_match_policy,
         facts,
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         agent_q::AgentQPolicyDecisionReason::matched_rule,
-        "sign-small-sui-transfer",
+        "reject-small-sui-transfer",
         &failures);
 
     const agent_q::AgentQPolicyCriterion wrong_recipient_criteria[] = {
@@ -377,7 +367,7 @@ int main(int argc, char** argv)
         "wrong-recipient",
         "sui",
         "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         wrong_recipient_criteria,
         1,
     };
@@ -397,7 +387,7 @@ int main(int argc, char** argv)
         "amount-limit",
         "sui",
         "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         amount_limit_criteria,
         1,
     };
@@ -417,7 +407,7 @@ int main(int argc, char** argv)
         "gas-limit",
         "sui",
         "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         gas_limit_criteria,
         1,
     };
@@ -432,8 +422,8 @@ int main(int argc, char** argv)
 
     const agent_q::AgentQPolicyDocument invalid_default_policy = {
         agent_q::kAgentQPolicyV0Schema,
-        agent_q::AgentQPolicyAction::sign,
-        &sign_rule,
+        static_cast<agent_q::AgentQPolicyAction>(255),
+        &matching_rule,
         1,
     };
     expect_decision(
@@ -459,23 +449,6 @@ int main(int argc, char** argv)
         nullptr,
         &failures);
 
-    const agent_q::AgentQPolicyRule broad_sign_rule = {
-        "broad-sign",
-        "sui",
-        "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
-        nullptr,
-        0,
-    };
-    expect_decision(
-        "broad sign without criteria",
-        one_rule_policy(&broad_sign_rule),
-        facts,
-        agent_q::AgentQPolicyAction::reject,
-        agent_q::AgentQPolicyDecisionReason::invalid_policy,
-        nullptr,
-        &failures);
-
     const agent_q::AgentQPolicyCriterion unknown_criterion[] = {
         {"common.unknown", agent_q::AgentQPolicyOperator::eq, "devnet", nullptr, 0},
     };
@@ -483,7 +456,7 @@ int main(int argc, char** argv)
         "unknown-criterion",
         "sui",
         "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         unknown_criterion,
         1,
     };
@@ -503,7 +476,7 @@ int main(int argc, char** argv)
         "unsupported-op",
         "sui",
         "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         unsupported_op,
         1,
     };
@@ -523,7 +496,7 @@ int main(int argc, char** argv)
         "malformed-amount",
         "sui",
         "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         malformed_amount,
         1,
     };
@@ -543,7 +516,7 @@ int main(int argc, char** argv)
         "overflow-amount",
         "sui",
         "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         overflow_amount,
         1,
     };
@@ -563,7 +536,7 @@ int main(int argc, char** argv)
         "eq-with-list",
         "sui",
         "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         eq_with_list,
         1,
     };
@@ -583,7 +556,7 @@ int main(int argc, char** argv)
         "lte-with-list",
         "sui",
         "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         lte_with_list,
         1,
     };
@@ -603,7 +576,7 @@ int main(int argc, char** argv)
         "in-with-scalar",
         "sui",
         "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         in_with_scalar,
         1,
     };
@@ -638,7 +611,7 @@ int main(int argc, char** argv)
         "numeric-in",
         "sui",
         "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         numeric_in_criteria,
         1,
     };
@@ -646,7 +619,7 @@ int main(int argc, char** argv)
         "numeric in criterion match",
         one_rule_policy(&numeric_in_rule),
         numeric_in_facts,
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         agent_q::AgentQPolicyDecisionReason::matched_rule,
         "numeric-in",
         &failures);
@@ -659,7 +632,7 @@ int main(int argc, char** argv)
         "malformed-numeric-in",
         "sui",
         "sign_transaction",
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         malformed_numeric_in_criteria,
         1,
     };
@@ -680,7 +653,7 @@ int main(int argc, char** argv)
     };
     expect_decision(
         "descriptor envelope is validated before policy criteria",
-        sign_policy,
+        matching_policy,
         malformed_descriptor_facts,
         agent_q::AgentQPolicyAction::reject,
         agent_q::AgentQPolicyDecisionReason::unsupported_facts,
@@ -702,29 +675,29 @@ int main(int argc, char** argv)
     };
     expect_decision(
         "malformed unsupported facts",
-        sign_policy,
+        matching_policy,
         unsupported_facts,
         agent_q::AgentQPolicyAction::reject,
         agent_q::AgentQPolicyDecisionReason::unsupported_facts,
         nullptr,
         &failures);
 
-    FixedPolicyProviderContext sign_policy_context = {sign_policy};
-    const agent_q::AgentQPolicyProvider sign_policy_provider = {
+    FixedPolicyProviderContext matching_policy_context = {matching_policy};
+    const agent_q::AgentQPolicyProvider matching_policy_provider = {
         load_fixed_policy,
-        &sign_policy_context,
+        &matching_policy_context,
     };
     expect_runtime_decision(
-        "runtime matching sign rule",
-        sign_policy_provider,
+        "runtime matching reject rule",
+        matching_policy_provider,
         facts,
-        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyAction::reject,
         agent_q::AgentQPolicyDecisionReason::matched_rule,
-        "sign-small-sui-transfer",
+        "reject-small-sui-transfer",
         &failures);
     expect_runtime_decision(
         "runtime unsupported facts",
-        sign_policy_provider,
+        matching_policy_provider,
         unsupported_facts,
         agent_q::AgentQPolicyAction::reject,
         agent_q::AgentQPolicyDecisionReason::unsupported_facts,

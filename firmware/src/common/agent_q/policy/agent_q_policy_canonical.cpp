@@ -10,7 +10,6 @@ namespace {
 constexpr uint8_t kStoredPolicyFormatVersion = 1;
 constexpr uint8_t kStoredPolicySchemaV0 = 1;
 constexpr uint8_t kStoredPolicyActionReject = 0;
-constexpr uint8_t kStoredPolicyActionSign = 2;
 constexpr uint8_t kStoredPolicyOperatorEq = 0;
 constexpr uint8_t kStoredPolicyOperatorIn = 1;
 constexpr uint8_t kStoredPolicyOperatorLte = 2;
@@ -125,8 +124,6 @@ uint8_t encode_action(AgentQPolicyAction action)
     switch (action) {
         case AgentQPolicyAction::reject:
             return kStoredPolicyActionReject;
-        case AgentQPolicyAction::sign:
-            return kStoredPolicyActionSign;
     }
     return 0xFF;
 }
@@ -152,9 +149,6 @@ bool decode_action(uint8_t value, AgentQPolicyAction* output)
     switch (value) {
         case kStoredPolicyActionReject:
             *output = AgentQPolicyAction::reject;
-            return true;
-        case kStoredPolicyActionSign:
-            *output = AgentQPolicyAction::sign;
             return true;
         default:
             return false;
@@ -414,17 +408,13 @@ AgentQPolicyCanonicalStatus copy_rule(
         (input.criterion_count != 0 && input.criteria == nullptr)) {
         return AgentQPolicyCanonicalStatus::invalid_policy;
     }
-    if (input.action != AgentQPolicyAction::reject && input.criterion_count == 0) {
-        return AgentQPolicyCanonicalStatus::invalid_policy;
-    }
-
     const AgentQPolicyMethodDescriptor* method =
         find_method_descriptor(method_descriptors, method_descriptor_count, input.chain, input.operation);
     if (method == nullptr) {
         return AgentQPolicyCanonicalStatus::unsupported_method;
     }
-    if (!agent_q_policy_method_supports_action(*method, input.action)) {
-        return AgentQPolicyCanonicalStatus::unsupported_action;
+    if (input.action != AgentQPolicyAction::reject || !method->supports_reject) {
+        return AgentQPolicyCanonicalStatus::invalid_policy;
     }
 
     if (!add_string(policy, input.id, kAgentQPolicyMaxRuleIdLength, &output->id) ||
@@ -441,9 +431,6 @@ AgentQPolicyCanonicalStatus copy_rule(
         if (status != AgentQPolicyCanonicalStatus::ok) {
             return status;
         }
-    }
-    if (!agent_q_policy_rule_satisfies_action_constraints(*method, input)) {
-        return AgentQPolicyCanonicalStatus::invalid_policy;
     }
     return AgentQPolicyCanonicalStatus::ok;
 }
@@ -558,12 +545,10 @@ AgentQPolicyCanonicalStatus validate_agent_q_policy_v0_canonical_document(
         if (method == nullptr) {
             return AgentQPolicyCanonicalStatus::unsupported_method;
         }
-        if (!agent_q_policy_method_supports_action(*method, rule.action)) {
-            return AgentQPolicyCanonicalStatus::unsupported_action;
+        if (rule.action != AgentQPolicyAction::reject || !method->supports_reject) {
+            return AgentQPolicyCanonicalStatus::invalid_policy;
         }
 
-        AgentQPolicyCriterion runtime_criteria[kAgentQPolicyMaxRuleCriteria] = {};
-        const char* runtime_values[kAgentQPolicyMaxRuleCriteria][kAgentQPolicyMaxCriterionValues] = {};
         for (size_t criterion_index = 0; criterion_index < rule.criterion_count; ++criterion_index) {
             const AgentQPolicyCanonicalCriterion& criterion = rule.criteria[criterion_index];
             const char* field = get_string(policy, criterion.field);
@@ -573,50 +558,21 @@ AgentQPolicyCanonicalStatus validate_agent_q_policy_v0_canonical_document(
                 return AgentQPolicyCanonicalStatus::unsupported_field;
             }
 
-            runtime_criteria[criterion_index].field = field;
-            runtime_criteria[criterion_index].op = criterion.op;
             if (descriptor->type != AgentQPolicyValueType::u64_decimal) {
-                if (criterion.op == AgentQPolicyOperator::in) {
-                    for (size_t value_index = 0; value_index < criterion.value_count; ++value_index) {
-                        runtime_values[criterion_index][value_index] =
-                            get_string(policy, criterion.values[value_index]);
-                    }
-                    runtime_criteria[criterion_index].values = runtime_values[criterion_index];
-                    runtime_criteria[criterion_index].value_count = criterion.value_count;
-                } else {
-                    runtime_criteria[criterion_index].value = get_string(policy, criterion.value);
-                }
                 continue;
             }
             if (criterion.op == AgentQPolicyOperator::in) {
                 for (size_t value_index = 0; value_index < criterion.value_count; ++value_index) {
-                    runtime_values[criterion_index][value_index] =
-                        get_string(policy, criterion.values[value_index]);
+                    const char* value = get_string(policy, criterion.values[value_index]);
                     if (!agent_q_policy_is_canonical_decimal_u64_string(
-                            runtime_values[criterion_index][value_index])) {
+                            value)) {
                         return AgentQPolicyCanonicalStatus::invalid_policy;
                     }
                 }
-                runtime_criteria[criterion_index].values = runtime_values[criterion_index];
-                runtime_criteria[criterion_index].value_count = criterion.value_count;
             } else if (!agent_q_policy_is_canonical_decimal_u64_string(
                            get_string(policy, criterion.value))) {
                 return AgentQPolicyCanonicalStatus::invalid_policy;
-            } else {
-                runtime_criteria[criterion_index].value = get_string(policy, criterion.value);
             }
-        }
-
-        AgentQPolicyRule runtime_rule = {
-            get_string(policy, rule.id),
-            chain,
-            operation,
-            rule.action,
-            rule.criterion_count == 0 ? nullptr : runtime_criteria,
-            rule.criterion_count,
-        };
-        if (!agent_q_policy_rule_satisfies_action_constraints(*method, runtime_rule)) {
-            return AgentQPolicyCanonicalStatus::invalid_policy;
         }
     }
 
@@ -837,8 +793,6 @@ const char* agent_q_policy_canonical_status_name(AgentQPolicyCanonicalStatus sta
             return "invalid_policy";
         case AgentQPolicyCanonicalStatus::unsupported_method:
             return "unsupported_method";
-        case AgentQPolicyCanonicalStatus::unsupported_action:
-            return "unsupported_action";
         case AgentQPolicyCanonicalStatus::unsupported_field:
             return "unsupported_field";
         case AgentQPolicyCanonicalStatus::output_too_small:

@@ -48,8 +48,8 @@ Non-negotiable boundaries:
 - Admin is a Gateway capability, not a separate product area.
 - Agent-Q Firmware is the signing authority.
 - Agent-Q Firmware stores keys and policies locally.
-- First connection and sensitive write actions must be physically approved
-  according to Firmware policy.
+- First connection and sensitive write actions must pass Firmware-owned
+  device-local approval state gates.
 - Firmware request UI must preserve the device's current mode or screen whenever
   possible. Use temporary identification, approval, and result layers instead of
   forcing a dedicated Agent-Q mode for normal requests.
@@ -60,8 +60,18 @@ Non-negotiable boundaries:
 - Agent-Q must not claim to detect user intent, prompt injection, compromised
   agent behavior, or any other upstream cause of a signing request.
 - Treat all external requests as untrusted inputs. Firmware policy must evaluate
-  request contents and constrain risk through explicit rules such as allowlists,
-  spending limits, rate limits, required physical approval, and rejection.
+  request contents and constrain risk through explicit automatic rules such as
+  allowlists, spending limits, rate limits, and rejection. Device-local approval
+  is a separate request/state gate, not a policy action or policy escalation
+  path.
+- Future signing work must keep delegated policy requests and device-confirmed
+  requests separate. A device-confirmed request means Firmware requires
+  device-local confirmation for a bounded request; it does not prove the host,
+  dapp, provider, agent, or user intent that produced the request.
+- Current policy documents may contain only current-schema action values. Any
+  other action value is invalid input and must fail closed without named
+  compatibility branches, reserved paths, or hidden conversion into another
+  request type.
 - Do not present planned signing, policy, chain, transport, hardware, or Admin
   behavior as implemented behavior.
 - Do not create separate chain-specific product APIs. Chains must be exposed as

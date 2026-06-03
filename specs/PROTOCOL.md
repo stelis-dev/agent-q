@@ -45,6 +45,36 @@ only where this protocol and a target implementation say so; Gateway/Admin
 clients submit requests, but Firmware remains the authority for validation,
 device-local approval, persistence, and failure state.
 
+## Request Authority Model
+
+Protocol requests are not authority. Gateway, MCP, Admin Page, provider, dapp,
+and CLI callers can submit bounded input only. Firmware owns the state gates,
+policy evaluation, device-local approval, signing execution, persistence, and
+failure cleanup.
+
+Current `call_method` requests are delegated policy requests. Firmware evaluates
+the request against its active policy and returns the Firmware-authored result.
+This path does not imply device-local confirmation for each method request. In
+the current implementation, Sui `sign_transaction` is recognized only for
+rejected-path policy evaluation and returns rejected method results.
+
+Device-confirmed signing requests are not implemented. If added, they must be
+modeled as a distinct authority path through a separate shared protocol request,
+not as a `call_method` mode or request-authority flag. The request's state
+gates, result schema, approval-history records, scratch ownership, and cleanup
+must be defined before implementation. A device-confirmed request means
+Firmware shows and confirms a bounded request on the device; it does not prove
+that the host, dapp, provider, agent, or upstream user intent was trustworthy.
+Provider-facing APIs may expose only this future device-confirmed path for
+application signing. MCP agent-facing `call_method` remains the delegated
+policy request path.
+
+Policy documents may use only actions accepted by the current schema and
+enforceable by the current runtime. Any other action value is invalid input and
+is rejected during validation. Firmware must not add named compatibility
+branches, reserved paths, migrations, or hidden conversion into another request
+type for action values outside the current schema.
+
 ## Message Envelope
 
 All request and response messages use JSON Lines. Each JSON value is one
@@ -788,7 +818,7 @@ Rules:
   are added as more `accounts[]` entries only after the protocol, capability
   response, and Gateway bounds are updated. StackChan CoreS3 hardware smoke
   verifies the current single-account response over an approved session.
-  `get_accounts` reads identity only; supported signing methods are reported by
+  `get_accounts` reads identity only; public signing methods are reported by
   `get_capabilities`.
 
 ## Policy Summary
@@ -967,16 +997,15 @@ into the Firmware-owned policy runtime. Valid policy-rejected transactions
 return `policy_rejected` after the corresponding approval-history record is
 persisted; if that required history write fails or is rate-limited, Firmware
 returns top-level `history_error`. A corrupt, unreadable, missing, or
-unsupported current active policy fails closed as a persistent-material
+invalid current active policy fails closed as a persistent-material
 consistency error before normal session-scoped methods are available. Malformed
 BCS returns `malformed_transaction`; unsupported transaction shapes return
-`unsupported_transaction`. A `sign` policy decision still returns
-`policy_action_not_implemented`.
+`unsupported_transaction`.
 
 Policy evaluation is implemented as Firmware common source. It accepts already
 extracted transaction facts, loads the stored active policy through a
 Firmware-owned provider boundary, applies a declarative deny-by-default policy
-model over allowlisted namespace/field facts, and returns an internal `sign` or
+model over allowlisted namespace/field facts, and returns the current-schema
 `reject` decision. The common evaluator owns only the shared
 `common.*` policy fields; chain-specific field identifiers, descriptor
 enablement, and transaction meaning stay in the corresponding method adapter.
@@ -989,9 +1018,9 @@ Missing or invalid active policy providers fail closed; in normal boot-time
 state handling that condition is a persistent-material consistency error, and
 any late provider failure is mapped to `policy_error`. Sui txBytes do not carry
 network identity; runtime integration supplies network context outside the
-txBytes before evaluating network criteria. In the current schema, `sign` rules
-with no criteria are invalid; broad allow behavior must be modeled explicitly
-in a later policy version if it is ever supported.
+txBytes before evaluating network criteria. Policy-authorized signing output
+requires a later policy/schema contract; it is not represented as a dormant
+action value in the current policy document.
 
 Request:
 
@@ -1139,13 +1168,11 @@ Policy document rules for the first version:
   `ruleRef`: lowercase letter first, followed by lowercase letters, digits,
   `_`, `-`, `.`, `:`, or `/`.
 - Each rule has `chain`, `method`, `action`, and `criteria`.
-- The current policy schema accepts `reject`; `sign` is reserved by the common
-  evaluator but unsupported by the current active-policy storage boundary.
-  Firmware must reject any proposed action it cannot enforce in the current
-  runtime. A policy update must not store unsupported rules for future
-  activation. Disabled policy drafts are out of scope for this version.
-- A `reject` rule may have zero criteria. `sign` rules require at least one
-  criterion if a future runtime explicitly enables them.
+- The current policy schema accepts only `reject`.
+- Action values outside the current schema are invalid policy input. A policy
+  update must not store dormant future behavior. Disabled policy drafts are out
+  of scope for this version.
+- A `reject` rule may have zero criteria.
 - A rule may contain at most 8 criteria.
 - Criterion `field` is a bounded namespace/field id such as `common.network` or
   `sui.amount_raw`. Common fields are owned by the common policy evaluator;
@@ -1174,7 +1201,7 @@ State and authorization rules:
 - Device-local approval is required before commit. For the current display
   target, the approval model is local PIN verification plus an on-device summary
   showing policy id/hash, rule count, default action, affected chains/methods,
-  and highest-risk action (`sign` or `reject`). A future
+  and the current-schema action summary. A future
   display-confirmed diff may strengthen this, but this implementation does not
   rely on host-only confirmation.
 - During pending approval, read-only session methods may remain available only

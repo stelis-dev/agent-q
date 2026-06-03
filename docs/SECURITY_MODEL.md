@@ -87,7 +87,7 @@ Implemented today:
   `get_policy`, consumes that active policy for Sui `sign_transaction` rejected
   policy evaluation, and exposes policy update authorization only through the
   Firmware-owned `propose_policy_update` proposal flow for custom reject
-  policies. Public signing and automatic `sign` policy records are not accepted.
+  policies. Public signing output is not implemented.
 - A Gateway-served local Admin Page for read-only device metadata and the
   current reject-policy proposal template. It uses the same Gateway core
   boundary as MCP and is not a policy authority.
@@ -109,7 +109,10 @@ Designed but not implemented (do not treat as present):
 - zkLogin signing material.
 - USER_PROFILE policy storage and policy update authorization.
 - Public signing methods, including Sui `sign_transaction`, arbitrary Sui
-  transactions, automatic signing, and Sui personal-message signing.
+  transactions, agent-request signing output, and Sui personal-message
+  signing.
+- Device-confirmed signing requests. These must be separate from delegated
+  policy requests and must not be implemented as a policy action.
 - Full Admin policy editing beyond the current reject-policy proposal template.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.
 - Secure Boot, Flash Encryption, and NVS Encryption setup flow.
@@ -198,6 +201,23 @@ Agents, MCP clients, the Admin Page, and CLI input:
 
 Device-local approval gates `connect` / session establishment and sensitive
 policy-write proposals. A connection session alone does not authorize signing.
+
+Signing requests have two separate authority models:
+
+- Delegated policy requests: Firmware evaluates bounded request facts against
+  active policy. This path is for agent-delegated authority and does not imply
+  per-request device-local confirmation.
+- Device-confirmed requests: Firmware requires device-local confirmation for a
+  bounded signing request through a separate shared protocol request. This
+  model is not implemented, and the confirmation does not prove the request
+  came from a trustworthy host, dapp, provider, agent, or upstream user intent.
+  Provider-facing signing must use this future model, while MCP agent-facing
+  `call_method` remains the delegated policy path.
+
+Policy actions must not bridge these models. A policy document may use only
+action values accepted by the current schema. Any other action value is invalid
+input and is rejected during validation without named compatibility branches,
+reserved paths, migrations, or hidden conversion into another request type.
 
 ## 6. Device Profiles
 
@@ -318,7 +338,7 @@ Button-confirmed:
 Display-confirmed:
 
 - Shows a policy diff/summary on the device; the user approves or rejects
-  locally. Strongest user-confirmed model; can avoid a host-held password.
+  locally. Strongest device-confirmed model; can avoid a host-held password.
 
 A setup password is not required when the device has trusted local input and can
 present the change for local approval. A device without trusted local input must
@@ -332,9 +352,9 @@ Policy-update contract:
   proposal but do not authorize or apply it.
 - Firmware validates the bounded policy document, shows device-local approval,
   and commits only after approval.
-- Firmware must reject policy actions it cannot enforce in the current runtime.
-  Unsupported policy actions must not be stored as dormant future
-  behavior unless a separate disabled-draft model is specified and approved.
+- Firmware must accept only policy actions that the current schema allows and
+  the current runtime can enforce. Other action values are invalid input and
+  must not be stored as dormant future behavior.
 - The first wire format is JSON inside the existing protocol envelope.
   Firmware must canonicalize the accepted policy into a bounded binary policy
   record before storage and hash calculation; raw JSON is not the active policy
@@ -478,8 +498,8 @@ Enforcement today:
   those tests.
 - Public signing inside `call_method` is not implemented. The current Sui
   `sign_transaction` path is a session-scoped validation and rejection path.
-  Arbitrary Sui transactions, automatic `sign` policies, personal-message
-  signing, and other chains are not implemented. The top-level tool allowlist
+  Arbitrary Sui transactions, agent-request signing output,
+  personal-message signing, and other chains are not implemented. The top-level tool allowlist
   does not grant authority to method names carried inside `call_method`;
   Firmware method adapters and active policy validation remain the method
   boundary.
@@ -509,9 +529,9 @@ hardware target, not the current one.
 Minimal Device risk, stated plainly:
 
 - With no per-request approval, a compromised host or agent can obtain any
-  signature that Firmware policy already allows, with no human in the loop. On
-  such a device, the only limit on a compromised host is the Firmware policy
-  itself.
+  future agent-request signature that Firmware active policy allows, with no
+  human in the loop. On such a device, the only limit on a compromised host is
+  the Firmware policy itself.
 
 ## 13. Replay And Expiry
 

@@ -62,17 +62,8 @@ bool digest_record(
 AgentQPolicyUpdateHighestAction highest_action_for_document(
     const AgentQPolicyDocument& document)
 {
-    AgentQPolicyUpdateHighestAction highest = AgentQPolicyUpdateHighestAction::reject;
-    for (size_t index = 0; index < document.rule_count; ++index) {
-        switch (document.rules[index].action) {
-            case AgentQPolicyAction::sign:
-                return AgentQPolicyUpdateHighestAction::sign;
-            case AgentQPolicyAction::reject:
-            default:
-                break;
-        }
-    }
-    return highest;
+    (void)document;
+    return AgentQPolicyUpdateHighestAction::reject;
 }
 
 const char* highest_action_name(AgentQPolicyUpdateHighestAction action)
@@ -80,11 +71,8 @@ const char* highest_action_name(AgentQPolicyUpdateHighestAction action)
     switch (action) {
         case AgentQPolicyUpdateHighestAction::reject:
             return "reject";
-        case AgentQPolicyUpdateHighestAction::sign:
-            return "sign";
-        default:
-            return "";
     }
+    return "";
 }
 
 bool append_policy_update_history(const char* result, const char* reason_code, uint64_t uptime_ms)
@@ -185,8 +173,6 @@ AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(JsonVariantConst poli
                 return AgentQPolicyUpdateFlowBeginResult::too_large;
             case AgentQPolicyProposalParseStatus::unsupported_method:
                 return AgentQPolicyUpdateFlowBeginResult::unsupported_method;
-            case AgentQPolicyProposalParseStatus::unsupported_action:
-                return AgentQPolicyUpdateFlowBeginResult::unsupported_action;
             case AgentQPolicyProposalParseStatus::unsupported_field:
                 return AgentQPolicyUpdateFlowBeginResult::unsupported_field;
             case AgentQPolicyProposalParseStatus::invalid_policy:
@@ -312,8 +298,6 @@ const char* policy_update_flow_begin_result_reason(AgentQPolicyUpdateFlowBeginRe
             return "too_large";
         case AgentQPolicyUpdateFlowBeginResult::unsupported_method:
             return "unsupported_method";
-        case AgentQPolicyUpdateFlowBeginResult::unsupported_action:
-            return "unsupported_action";
         case AgentQPolicyUpdateFlowBeginResult::unsupported_field:
             return "unsupported_field";
         case AgentQPolicyUpdateFlowBeginResult::encode_error:

@@ -705,7 +705,7 @@ test("parseProtocolResponse rejects malformed policy summaries", () => {
   assert.throws(() => parseProtocolResponse(policyLine({ policyId: "not-a-hash" }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLine({ defaultAction: "sign" }), "req_policy"), {
+  assert.throws(() => parseProtocolResponse(policyLine({ defaultAction: "approve" }), "req_policy"), {
     code: "protocol_error",
   });
   assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 17 }), "req_policy"), {
@@ -1015,7 +1015,6 @@ test("parseProtocolResponse accepts rejected Sui sign_transaction policy decisio
     ["malformed_transaction", "Transaction bytes are malformed."],
     ["unsupported_transaction", "Transaction shape is not supported."],
     ["policy_error", "Active policy is unavailable."],
-    ["policy_action_not_implemented", "Policy action is not implemented."],
   ];
   for (const [code, message] of cases) {
     const response = assertMethodResultResponse(

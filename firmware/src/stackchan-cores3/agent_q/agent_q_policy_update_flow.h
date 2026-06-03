@@ -15,7 +15,6 @@ enum class AgentQPolicyUpdateFlowBeginResult {
     too_large,
     invalid_policy,
     unsupported_method,
-    unsupported_action,
     unsupported_field,
     encode_error,
 };

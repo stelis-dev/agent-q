@@ -86,10 +86,6 @@ bool parse_action(const char* value, AgentQPolicyAction* out)
         *out = AgentQPolicyAction::reject;
         return true;
     }
-    if (string_eq(value, "sign")) {
-        *out = AgentQPolicyAction::sign;
-        return true;
-    }
     return false;
 }
 
@@ -260,8 +256,8 @@ AgentQPolicyProposalParseStatus parse_rule(
     if (method_descriptor == nullptr) {
         return AgentQPolicyProposalParseStatus::unsupported_method;
     }
-    if (!agent_q_policy_method_supports_action(*method_descriptor, action)) {
-        return AgentQPolicyProposalParseStatus::unsupported_action;
+    if (action != AgentQPolicyAction::reject || !method_descriptor->supports_reject) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
     }
 
     if (!rule_object["criteria"].is<JsonArrayConst>()) {
@@ -269,8 +265,7 @@ AgentQPolicyProposalParseStatus parse_rule(
     }
     JsonArrayConst criteria = rule_object["criteria"].as<JsonArrayConst>();
     const size_t criterion_count = criteria.size();
-    if (criterion_count > kAgentQPolicyMaxRuleCriteria ||
-        (action != AgentQPolicyAction::reject && criterion_count == 0)) {
+    if (criterion_count > kAgentQPolicyMaxRuleCriteria) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
 
@@ -292,9 +287,6 @@ AgentQPolicyProposalParseStatus parse_rule(
         if (status != AgentQPolicyProposalParseStatus::ok) {
             return status;
         }
-    }
-    if (!agent_q_policy_rule_satisfies_action_constraints(*method_descriptor, output)) {
-        return AgentQPolicyProposalParseStatus::invalid_policy;
     }
     return AgentQPolicyProposalParseStatus::ok;
 }
@@ -369,8 +361,6 @@ const char* agent_q_policy_proposal_parse_status_name(
             return "invalid_policy";
         case AgentQPolicyProposalParseStatus::unsupported_method:
             return "unsupported_method";
-        case AgentQPolicyProposalParseStatus::unsupported_action:
-            return "unsupported_action";
         case AgentQPolicyProposalParseStatus::unsupported_field:
             return "unsupported_field";
     }

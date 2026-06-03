@@ -228,8 +228,7 @@ Allowed:
   approval; the pending approval remains tied to the same session and cannot
   commit after that session ends, disconnects, or no longer matches
 
-This state is not signing approval. Policy still decides whether each
-request signs or rejects. In the current StackChan CoreS3
+This state is not signing approval. In the current StackChan CoreS3
 implementation, `provisioned` enables `connect`, `disconnect`, read-only
 `get_capabilities` for Sui account identity with no public methods, read-only
 `get_accounts` (Sui Ed25519 account 0),
@@ -239,10 +238,64 @@ session-scoped `call_method` rejected-path method runtime. Sui txBytes decoding
 is allowed only inside a session-scoped `call_method` request after
 `provisioned`; public signing remains unavailable.
 Gateway must not evaluate policy. A corrupt, unreadable, missing,
-or unsupported current active policy is a persistent-material consistency
+or invalid current active policy is a persistent-material consistency
 error, not a normal `provisioned` state. Provisioned DEV_PROFILE devices that
 lack the current local PIN verifier or active canonical policy fail closed until
 erased and reprovisioned through a local UX or development reflash workflow.
+
+#### Request Authority Paths
+
+The current `call_method` path is a delegated policy request path. It evaluates
+bounded request facts against Firmware-owned active policy. It does not perform
+per-request device-local confirmation and does not prove the upstream user,
+dapp, provider, host, or agent intent that produced the request.
+
+Device-confirmed signing is not implemented. Before any public
+device-confirmed signing request is added, it must be modeled as a separate
+shared protocol request, not as a `call_method` mode, policy action,
+request-authority flag, or compatibility fallback. The source state must be
+material-backed `provisioned` with a matching active session. The target state
+after every terminal outcome remains `provisioned`, unless the terminal outcome
+detects persistent material inconsistency.
+
+Required owners for a future device-confirmed signing pending state:
+
+- persistent device state: Firmware-owned root material, local PIN verifier if
+  PIN confirmation is required, and approval history. Active policy is not the
+  authority for this path;
+- volatile sensitive scratch: Firmware-owned signable payload bytes, parsed
+  request summary, signature scratch, and any local PIN scratch;
+- pending approval state: Firmware-owned request id, session id, chain, method,
+  request digest, confirmation deadline, and terminal stage;
+- UI/display state: target-local temporary review, approval, and result layers
+  only. UI object lifetime must not decide whether signing is allowed.
+
+Allowed while a future device-confirmed signing request is pending:
+
+- `get_status`;
+- `disconnect` only as cleanup before a signing critical section, or `busy`
+  during a defined critical section;
+- read-only session APIs only if they cannot mutate, dismiss, overwrite, or
+  leak the pending request.
+
+Rejected while a future device-confirmed signing request is pending:
+
+- nested signing requests;
+- policy update proposals;
+- `call_method` delegated policy requests;
+- host-triggered reset, debug, setup, recovery, PIN entry, or confirmation
+  shortcuts.
+
+Failure requirements for a future device-confirmed signing request:
+
+- reject, timeout, UI failure, invalid state, session loss, or disconnect before
+  the signing critical section must wipe signable scratch and produce no
+  signature;
+- approval-history durability must be defined before signing can occur;
+- if signing or response delivery fails after a durable approval record, the
+  terminal history and user-visible result must not imply that Gateway received
+  a signature;
+- every terminal path must wipe signable payload and signature scratch.
 
 #### Pending Policy Update
 
@@ -298,9 +351,9 @@ The pending state may be displayed by UI, but UI object lifetime is not the
 source of truth. Firmware owns the proposal summary, approval deadline, commit
 stage, cleanup, and rollback behavior.
 
-Firmware must reject policy actions that the current runtime cannot enforce.
-Unsupported policy actions are not stored as dormant future behavior unless a
-separate disabled-draft model is specified and approved.
+Firmware must accept only policy actions that the current schema allows and the
+current runtime can enforce. Other action values are invalid input and are not
+stored as dormant future behavior.
 
 ### `error`
 

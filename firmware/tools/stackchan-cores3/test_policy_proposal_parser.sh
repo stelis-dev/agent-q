@@ -217,12 +217,12 @@ int main()
         agent_q::AgentQPolicyProposalParseStatus::unsupported_method);
 
     expect_status(
-        "automatic sign rejected",
+        "schema-external action rejected",
         parse_policy(
-            "sign-unsupported",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"sign-sui-devnet-transfer","chain":"sui","method":"sign_transaction","action":"sign","criteria":[{"field":"common.network","op":"eq","value":"devnet"}]}]})JSON",
+            "invalid-action",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"invalid-action","chain":"sui","method":"sign_transaction","action":"approve","criteria":[{"field":"common.network","op":"eq","value":"devnet"}]}]})JSON",
             &proposal),
-        agent_q::AgentQPolicyProposalParseStatus::unsupported_action);
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
 
     expect_status(
         "unknown field rejected",

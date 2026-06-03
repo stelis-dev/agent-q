@@ -287,29 +287,6 @@ int main()
             malformed_canonical, record, sizeof(record), &record_size),
         agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
 
-    malformed_canonical = canonical;
-    malformed_canonical.rules[0].action = agent_q::AgentQPolicyAction::sign;
-    malformed_canonical.rules[0].criterion_count = 0;
-    expect_status(
-        "non-reject canonical rule requires criteria",
-        agent_q::encode_agent_q_policy_v0_canonical_record(
-            malformed_canonical, record, sizeof(record), &record_size),
-        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
-
-    agent_q::AgentQPolicyRule unsupported_sign_rule = rule;
-    unsupported_sign_rule.id = "sign-sui-devnet-transfer";
-    unsupported_sign_rule.action = agent_q::AgentQPolicyAction::sign;
-    const agent_q::AgentQPolicyDocument unsupported_sign_policy = {
-        agent_q::kAgentQPolicyV0Schema,
-        agent_q::AgentQPolicyAction::reject,
-        &unsupported_sign_rule,
-        1,
-    };
-    expect_status(
-        "automatic sign remains unsupported",
-        agent_q::canonicalize_agent_q_policy_v0(unsupported_sign_policy, sui_methods, 1, &canonical),
-        agent_q::AgentQPolicyCanonicalStatus::unsupported_action);
-
     agent_q::AgentQPolicyRule unknown_method = rule;
     unknown_method.operation = "sign_personal_message";
     const agent_q::AgentQPolicyDocument unknown_method_policy = {
@@ -351,9 +328,6 @@ int main()
             duplicate_fields,
             sizeof(duplicate_fields) / sizeof(duplicate_fields[0]),
             true,
-            false,
-            nullptr,
-            0,
         },
     };
     expect_status(

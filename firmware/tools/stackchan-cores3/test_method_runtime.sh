@@ -302,21 +302,10 @@ int main(int argc, char** argv)
     ::g_policy_has_rule = false;
     ::g_policy_rule.id = "test_rule";
 
-    ::g_policy_action = agent_q::AgentQPolicyAction::sign;
-    const agent_q::AgentQMethodRuntimeResult sign_not_implemented =
-        agent_q::evaluate_call_method("sui", "sign_transaction", valid_params.as<JsonVariant>());
-    expect(sign_not_implemented.status == agent_q::AgentQMethodRuntimeStatus::rejected,
-           "unimplemented sign policy action returns method rejection");
-    expect(strcmp(sign_not_implemented.code, "policy_action_not_implemented") == 0,
-           "unimplemented sign policy action reports policy_action_not_implemented");
-    expect(!sign_not_implemented.has_approval_history,
-           "unimplemented future policy action is not persisted as approval history yet");
-
-    agent_q::AgentQMethodRuntimeResult cleared = sign_not_implemented;
+    agent_q::AgentQMethodRuntimeResult cleared = custom_rule_result;
     agent_q::clear_method_runtime_result(&cleared);
     expect(cleared.code == nullptr && !cleared.has_approval_history,
            "clearing method runtime result wipes public metadata");
-    ::g_policy_action = agent_q::AgentQPolicyAction::reject;
 
     const agent_q::AgentQMethodRuntimeResult unsupported =
         agent_q::evaluate_call_method("sui", "unknown", valid_params.as<JsonVariant>());

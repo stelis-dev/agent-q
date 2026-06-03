@@ -16,7 +16,6 @@ enum class AgentQPolicyProposalParseStatus {
     too_large,
     invalid_policy,
     unsupported_method,
-    unsupported_action,
     unsupported_field,
 };
 

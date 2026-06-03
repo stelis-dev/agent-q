@@ -33,8 +33,8 @@ The current implementation includes:
 - a USB JSONL `call_method` path. It requires material-backed `provisioned`
   state plus a matching active session, keeps unknown methods rejected with
   `unsupported_method`, and validates Sui `sign_transaction` restricted SUI
-  transfer request inputs for rejected-path policy evaluation. Automatic `sign`
-  policy records and public signing are not implemented.
+  transfer request inputs for rejected-path policy evaluation. Public signing
+  output is not implemented.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
   Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
   RAM, displays only the up-to-4-letter word prefixes on device in a 3-column
@@ -200,9 +200,9 @@ the restricted SUI transfer parser. StackChan CoreS3 connects the parser to Sui
 
 The policy test is also a common host-side check. It compiles
 `firmware/src/common/agent_q/policy` plus the Sui method adapter and
-verifies deny-by-default, `sign`/`reject` decision calculation, default
-provider behavior, missing/invalid policy provider rejection, malformed policy
-rejection, and unsupported-facts rejection. StackChan CoreS3 consumes the
+verifies deny-by-default reject decisions, default provider behavior,
+missing/invalid policy provider rejection, malformed policy rejection, and
+unsupported-facts rejection. StackChan CoreS3 consumes the
 committed active policy for restricted Sui `sign_transaction` policy evaluation
 and rejected method results. Custom policy updates enter separately through the
 Firmware-owned `propose_policy_update` proposal flow.

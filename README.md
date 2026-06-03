@@ -7,7 +7,8 @@ decisions outside the agent runtime.
 
 Agents can request actions, but role authority lives on separate Agent-Q
 devices. Each device is designed to evaluate requests locally and, according to
-its implemented capabilities and policy, reject or sign where supported.
+its implemented capabilities and policy, reject unsafe requests or execute
+explicitly implemented signing paths.
 
 The agent can request. The device decides.
 
@@ -58,8 +59,14 @@ host environment before a signing request was created.
 Agent-Q does not determine whether a request reflects the user's original
 intent, prompt injection, compromised agent behavior, or another upstream cause.
 All external requests are treated as untrusted inputs. Firmware evaluates the
-request contents against local policy and limits risk through rules such as
-allowlists, spending limits, rate limits, physical approval, and rejection.
+request contents against local policy and limits risk through automatic rules
+such as allowlists, spending limits, rate limits, and rejection. Device-local
+approval is a separate request/state gate, not a policy action or policy
+escalation path.
+Future signing work must distinguish delegated policy requests from
+device-confirmed signing requests. Device confirmation is a Firmware-owned
+approval step for a bounded request; it does not prove that the host, dapp,
+provider, agent, or upstream user intent was trustworthy.
 
 ## Products
 
@@ -87,9 +94,9 @@ Firmware owns the device-authorized policy boundary.
 Agent-Q Firmware is installed on hardware.
 
 Firmware is the authority component: it stores device-held key material and
-policies, evaluates requests locally, handles physical approval, and returns
-Firmware-authored results to Gateway. Current public signing methods are not
-available.
+policies, evaluates requests locally, handles device-local approval for
+implemented sensitive flows, and returns Firmware-authored results to Gateway.
+Current public signing methods are not available.
 
 Firmware source is organized by hardware under `firmware/src/`.
 
@@ -166,16 +173,17 @@ Implemented:
   keys, update policy, or decide whether signing is allowed.
 - A common host-tested policy evaluator and default-reject runtime boundary.
 
-Not yet implemented: public signing methods, automatic signing policies,
-arbitrary Sui transaction signing, Sui personal-message signing,
-spending and rate limits beyond the current restricted-transfer criteria,
-multi-role separation, full Admin policy editing, multi-device approval, device
-revocation or transfer, a production audit layer beyond the current fixed-size
-approval-history record, and broad chain-specific transaction logic. Connection
-is not signing approval and does not authorize signing. A connection session
-does not prove agent identity. Labels and purpose names are local Gateway
-metadata and are not security boundaries. Firmware policy must not rely on
-Gateway labels, purpose names, or routing assignments as authorization facts.
+Not yet implemented: public signing methods, device-confirmed signing requests,
+agent-request signing output, arbitrary Sui transaction signing, Sui
+personal-message signing, spending and rate limits beyond the current
+restricted-transfer criteria, multi-role separation, full Admin policy editing,
+multi-device approval, device revocation or transfer, a production audit layer
+beyond the current fixed-size approval-history record, and broad chain-specific
+transaction logic. Connection is not signing approval and does not authorize
+signing. A connection session does not prove agent identity. Labels and purpose
+names are local Gateway metadata and are not security boundaries. Firmware
+policy must not rely on Gateway labels, purpose names, or routing assignments as
+authorization facts.
 
 ## Repository Layout
 

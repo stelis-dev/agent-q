@@ -155,23 +155,17 @@ AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
         decision.rule_id[0] != '\0') {
         rule_ref = decision.rule_id;
     }
-    if (decision.action == AgentQPolicyAction::reject) {
-        wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
-        return rejected_with_history(
-            "policy_rejected",
-            "The request was rejected by device policy.",
-            AgentQApprovalHistoryDecision::policy_rejected,
-            AgentQApprovalHistoryConfirmationKind::policy,
-            "sui",
-            "sign_transaction",
-            digest_ready ? payload_digest : nullptr,
-            policy_summary_ready ? policy_summary.policy_id : nullptr,
-            rule_ref);
-    }
     wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
-    return rejected(
-        "policy_action_not_implemented",
-        "Policy action is not implemented.");
+    return rejected_with_history(
+        "policy_rejected",
+        "The request was rejected by device policy.",
+        AgentQApprovalHistoryDecision::policy_rejected,
+        AgentQApprovalHistoryConfirmationKind::policy,
+        "sui",
+        "sign_transaction",
+        digest_ready ? payload_digest : nullptr,
+        policy_summary_ready ? policy_summary.policy_id : nullptr,
+        rule_ref);
 }
 
 }  // namespace

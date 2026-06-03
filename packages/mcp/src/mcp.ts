@@ -260,7 +260,7 @@ export const gatewayToolDefinitions = {
     name: "call_method",
     title: "Call method",
     description:
-      "Send a session-scoped method request through the shared Agent-Q protocol path. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Current StackChan CoreS3 public signing support is not available; unknown methods, unsupported transactions, and unsupported policy actions are rejected by Firmware.",
+      "Send a session-scoped method request through the shared Agent-Q protocol path. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Current StackChan CoreS3 public signing output is not available; unknown methods and unsupported transactions are rejected by Firmware.",
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),

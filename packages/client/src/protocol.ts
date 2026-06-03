@@ -253,7 +253,7 @@ export type ApprovalHistoryPolicyUpdateResult =
   | "timed_out"
   | "storage_error";
 
-export type ApprovalHistoryHighestAction = "reject" | "sign";
+export type ApprovalHistoryHighestAction = "reject";
 
 interface ApprovalHistoryRecordBase {
   seq: string;
@@ -1094,7 +1094,7 @@ export const APPROVAL_HISTORY_POLICY_UPDATE_RESULTS = [
   "timed_out",
   "storage_error",
 ] as const;
-export const APPROVAL_HISTORY_HIGHEST_ACTIONS = ["reject", "sign"] as const;
+export const APPROVAL_HISTORY_HIGHEST_ACTIONS = ["reject"] as const;
 export const POLICY_UPDATE_RESULT_STATUSES = [
   "applied",
   "rejected",
@@ -1123,7 +1123,6 @@ export const METHOD_RESULT_ERROR_MESSAGES = {
   malformed_transaction: "Transaction bytes are malformed.",
   unsupported_transaction: "Transaction shape is not supported.",
   policy_error: "Active policy is unavailable.",
-  policy_action_not_implemented: "Policy action is not implemented.",
 } as const;
 export type MethodResultErrorCode = keyof typeof METHOD_RESULT_ERROR_MESSAGES;
 export const FORBIDDEN_SECRET_FIELD_NAMES = [

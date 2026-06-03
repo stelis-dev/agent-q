@@ -320,14 +320,15 @@ reset-state changes.
 
 Provisioning is not signing readiness. The current dependency order is: keep
 the policy facts / method adapter boundary stable, use the Firmware-owned
-`propose_policy_update` flow for supported active policy changes, and keep
-signing available only through policy-gated `call_method`. Policy update remains
-a proposal flow, not a direct state setter: Gateway/Admin may submit a bounded
-proposal, but Firmware validates it, requires device-local approval, and commits
-it through rollback-safe storage. Sui `sign_personal_message`, arbitrary Sui
-transaction signing, automatic signing, full Admin policy editing beyond the
-current reject-policy proposal template, and USER_PROFILE secure provisioning
-are not implemented.
+`propose_policy_update` flow for current-schema active policy changes, and keep
+public signing unavailable. Current `call_method` remains a policy-gated
+rejected-result path for supported validation. Policy update remains a proposal
+flow, not a direct state setter: Gateway/Admin may submit a bounded proposal,
+but Firmware validates it, requires device-local approval, and commits it
+through rollback-safe storage. Sui `sign_personal_message`, arbitrary Sui
+transaction signing, agent-request signing output, full Admin policy
+editing beyond the current reject-policy proposal template, and USER_PROFILE
+secure provisioning are not implemented.
 
 ## Completion Criteria
 

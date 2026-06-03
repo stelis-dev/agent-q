@@ -100,9 +100,6 @@ bool validate_rule(
         (rule.criterion_count != 0 && rule.criteria == nullptr)) {
         return false;
     }
-    if (rule.action != AgentQPolicyAction::reject && rule.criterion_count == 0) {
-        return false;
-    }
     for (size_t index = 0; index < rule.criterion_count; ++index) {
         if (!validate_criterion(rule.criteria[index], facts)) {
             return false;
@@ -235,8 +232,6 @@ const char* agent_q_policy_action_name(AgentQPolicyAction action)
     switch (action) {
         case AgentQPolicyAction::reject:
             return "reject";
-        case AgentQPolicyAction::sign:
-            return "sign";
     }
     return "unknown";
 }

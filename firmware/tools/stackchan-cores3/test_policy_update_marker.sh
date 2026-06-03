@@ -218,7 +218,7 @@ int main()
                digest,
                sizeof(digest),
                agent_q::kAgentQPolicyMaxRules,
-               agent_q::AgentQPolicyUpdateHighestAction::sign) == BeginResult::written,
+               agent_q::AgentQPolicyUpdateHighestAction::reject) == BeginResult::written,
            "max rule count marker succeeds");
     g_blob[0] = 'X';
     expect(agent_q::policy_update_marker_status() == Status::invalid,

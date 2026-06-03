@@ -12,7 +12,6 @@ enum class AgentQPolicyCanonicalStatus {
     invalid_argument,
     invalid_policy,
     unsupported_method,
-    unsupported_action,
     unsupported_field,
     output_too_small,
 };

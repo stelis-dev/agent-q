@@ -119,9 +119,6 @@ AgentQPolicyMethodDescriptor sui_sign_transaction_policy_method_descriptor()
         kSuiSignTransactionPolicyFields,
         sizeof(kSuiSignTransactionPolicyFields) / sizeof(kSuiSignTransactionPolicyFields[0]),
         true,
-        false,
-        nullptr,
-        0,
     };
 }
 

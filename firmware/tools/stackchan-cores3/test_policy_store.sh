@@ -226,11 +226,9 @@ bool make_default_record(std::vector<uint8_t>* output)
     return true;
 }
 
-bool make_action_rule_record(
+bool make_reject_rule_record(
     const char* rule_id,
     const char* network,
-    agent_q::AgentQPolicyAction action,
-    bool supports_sign,
     std::vector<uint8_t>* output)
 {
     if (rule_id == nullptr || network == nullptr || output == nullptr) {
@@ -249,7 +247,7 @@ bool make_action_rule_record(
         rule_id,
         "sui",
         "sign_transaction",
-        action,
+        agent_q::AgentQPolicyAction::reject,
         reject_criteria,
         sizeof(reject_criteria) / sizeof(reject_criteria[0]),
     };
@@ -259,9 +257,8 @@ bool make_action_rule_record(
         &rule,
         1,
     };
-    agent_q::AgentQPolicyMethodDescriptor method =
+    const agent_q::AgentQPolicyMethodDescriptor method =
         agent_q::sui_sign_transaction_policy_method_descriptor();
-    method.supports_sign = supports_sign;
     agent_q::AgentQPolicyCanonicalDocument canonical = {};
     uint8_t bytes[agent_q::kAgentQPolicyMaxCanonicalRecordBytes] = {};
     size_t size = 0;
@@ -273,16 +270,6 @@ bool make_action_rule_record(
     }
     output->assign(bytes, bytes + size);
     return true;
-}
-
-bool make_reject_rule_record(const char* rule_id, const char* network, std::vector<uint8_t>* output)
-{
-    return make_action_rule_record(
-        rule_id,
-        network,
-        agent_q::AgentQPolicyAction::reject,
-        false,
-        output);
 }
 
 void write_u64_be(uint64_t value, uint8_t* output)

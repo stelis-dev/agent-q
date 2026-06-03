@@ -218,8 +218,7 @@ bool policy_update_result_supported(const char* value)
 bool highest_action_supported(const char* value)
 {
     return value != nullptr &&
-           (strcmp(value, "reject") == 0 ||
-            strcmp(value, "sign") == 0);
+           strcmp(value, "reject") == 0;
 }
 
 bool store_history_token(
