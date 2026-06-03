@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "agent_q_policy_u64.h"
+
 namespace agent_q {
 namespace {
 
@@ -13,6 +15,159 @@ bool string_present(const char* value)
 bool string_eq(const char* left, const char* right)
 {
     return left != nullptr && right != nullptr && strcmp(left, right) == 0;
+}
+
+const AgentQPolicyFieldDescriptor* find_adapter_field_descriptor(
+    const AgentQPolicyMethodDescriptor& descriptor,
+    const char* field)
+{
+    if (descriptor.field_descriptors == nullptr) {
+        return nullptr;
+    }
+    for (size_t index = 0; index < descriptor.field_descriptor_count; ++index) {
+        if (string_eq(descriptor.field_descriptors[index].field, field)) {
+            return &descriptor.field_descriptors[index];
+        }
+    }
+    return nullptr;
+}
+
+const AgentQPolicyFieldDescriptor* find_method_field_descriptor(
+    const AgentQPolicyMethodDescriptor& descriptor,
+    const char* field)
+{
+    const AgentQPolicyFieldDescriptor* common =
+        agent_q_policy_find_common_field_descriptor(field);
+    if (common != nullptr) {
+        return common;
+    }
+    return find_adapter_field_descriptor(descriptor, field);
+}
+
+const AgentQPolicyActionConstraint* find_action_constraint(
+    const AgentQPolicyMethodDescriptor& descriptor,
+    AgentQPolicyAction action)
+{
+    if (descriptor.action_constraints == nullptr) {
+        return nullptr;
+    }
+    for (size_t index = 0; index < descriptor.action_constraint_count; ++index) {
+        if (descriptor.action_constraints[index].action == action) {
+            return &descriptor.action_constraints[index];
+        }
+    }
+    return nullptr;
+}
+
+bool scalar_or_list_contains_value(
+    const AgentQPolicyCriterion& criterion,
+    const char* value)
+{
+    if (value == nullptr) {
+        return true;
+    }
+    if (criterion.op == AgentQPolicyOperator::in) {
+        if (criterion.values == nullptr) {
+            return false;
+        }
+        for (size_t index = 0; index < criterion.value_count; ++index) {
+            if (string_eq(criterion.values[index], value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    return string_eq(criterion.value, value);
+}
+
+bool criterion_satisfies_requirement(
+    const AgentQPolicyCriterion& criterion,
+    const AgentQPolicyRequiredCriterion& requirement)
+{
+    return string_eq(criterion.field, requirement.field) &&
+           criterion.op == requirement.op &&
+           scalar_or_list_contains_value(criterion, requirement.value);
+}
+
+bool rule_contains_required_criterion(
+    const AgentQPolicyRule& rule,
+    const AgentQPolicyRequiredCriterion& requirement)
+{
+    if (rule.criteria == nullptr) {
+        return false;
+    }
+    for (size_t index = 0; index < rule.criterion_count; ++index) {
+        if (criterion_satisfies_requirement(rule.criteria[index], requirement)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool validate_required_criterion(
+    const AgentQPolicyMethodDescriptor& descriptor,
+    const AgentQPolicyRequiredCriterion& requirement)
+{
+    const AgentQPolicyFieldDescriptor* field_descriptor =
+        find_method_field_descriptor(descriptor, requirement.field);
+    if (field_descriptor == nullptr ||
+        !agent_q_policy_is_known_operator(requirement.op) ||
+        !agent_q_policy_operator_allowed(*field_descriptor, requirement.op)) {
+        return false;
+    }
+    if (requirement.value == nullptr) {
+        return true;
+    }
+    if (!string_present(requirement.value)) {
+        return false;
+    }
+    return field_descriptor->type != AgentQPolicyValueType::u64_decimal ||
+           agent_q_policy_is_decimal_u64_string(requirement.value);
+}
+
+bool validate_action_constraints(const AgentQPolicyMethodDescriptor& descriptor)
+{
+    if (descriptor.action_constraint_count == 0) {
+        return descriptor.action_constraints == nullptr &&
+               !descriptor.supports_ask &&
+               !descriptor.supports_sign;
+    }
+    if (descriptor.action_constraints == nullptr ||
+        descriptor.action_constraint_count > kAgentQPolicyMaxActionConstraints) {
+        return false;
+    }
+    for (size_t index = 0; index < descriptor.action_constraint_count; ++index) {
+        const AgentQPolicyActionConstraint& constraint = descriptor.action_constraints[index];
+        if (!agent_q_policy_is_known_action(constraint.action) ||
+            constraint.required_criteria == nullptr ||
+            constraint.required_criterion_count == 0 ||
+            constraint.required_criterion_count > kAgentQPolicyMaxRuleCriteria) {
+            return false;
+        }
+        for (size_t other = index + 1; other < descriptor.action_constraint_count; ++other) {
+            if (descriptor.action_constraints[other].action == constraint.action) {
+                return false;
+            }
+        }
+        for (size_t required_index = 0; required_index < constraint.required_criterion_count; ++required_index) {
+            const AgentQPolicyRequiredCriterion& requirement =
+                constraint.required_criteria[required_index];
+            if (!validate_required_criterion(descriptor, requirement)) {
+                return false;
+            }
+            for (size_t other = required_index + 1; other < constraint.required_criterion_count; ++other) {
+                const AgentQPolicyRequiredCriterion& other_requirement =
+                    constraint.required_criteria[other];
+                if (string_eq(requirement.field, other_requirement.field)) {
+                    return false;
+                }
+            }
+        }
+    }
+    return (!descriptor.supports_ask ||
+            find_action_constraint(descriptor, AgentQPolicyAction::ask) != nullptr) &&
+           (!descriptor.supports_sign ||
+            find_action_constraint(descriptor, AgentQPolicyAction::sign) != nullptr);
 }
 
 }  // namespace
@@ -230,8 +385,9 @@ bool agent_q_policy_validate_method_descriptor(
         return false;
     }
     return agent_q_policy_validate_adapter_field_descriptors(
-        descriptor.field_descriptors,
-        descriptor.field_descriptor_count);
+               descriptor.field_descriptors,
+               descriptor.field_descriptor_count) &&
+           validate_action_constraints(descriptor);
 }
 
 bool agent_q_policy_validate_method_descriptors(
@@ -253,6 +409,23 @@ bool agent_q_policy_validate_method_descriptors(
                 string_eq(descriptors[index].operation, descriptors[other].operation)) {
                 return false;
             }
+        }
+    }
+    return true;
+}
+
+bool agent_q_policy_rule_satisfies_action_constraints(
+    const AgentQPolicyMethodDescriptor& descriptor,
+    const AgentQPolicyRule& rule)
+{
+    const AgentQPolicyActionConstraint* constraint =
+        find_action_constraint(descriptor, rule.action);
+    if (constraint == nullptr) {
+        return rule.action == AgentQPolicyAction::reject;
+    }
+    for (size_t index = 0; index < constraint->required_criterion_count; ++index) {
+        if (!rule_contains_required_criterion(rule, constraint->required_criteria[index])) {
+            return false;
         }
     }
     return true;

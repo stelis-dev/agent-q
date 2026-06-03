@@ -17,6 +17,26 @@ constexpr AgentQPolicyFieldDescriptor kSuiSignTransactionPolicyFields[] = {
     {"sui.gas_price", AgentQPolicyValueType::u64_decimal, true, false, true},
 };
 
+constexpr AgentQPolicyRequiredCriterion kSuiSignTransactionAskRequiredCriteria[] = {
+    {"common.network", AgentQPolicyOperator::eq, nullptr},
+    {"common.intent", AgentQPolicyOperator::eq, kAgentQPolicyIntentSingleAssetTransfer},
+    {"sui.command_shape", AgentQPolicyOperator::eq, kAgentQSuiPolicyCommandShapeRestrictedTransfer},
+    {"sui.recipient_address", AgentQPolicyOperator::in, nullptr},
+    {"sui.coin_type", AgentQPolicyOperator::eq, kSuiAsset},
+    {"sui.amount_raw", AgentQPolicyOperator::lte, nullptr},
+    {"sui.gas_budget", AgentQPolicyOperator::lte, nullptr},
+    {"sui.gas_price", AgentQPolicyOperator::lte, nullptr},
+};
+
+constexpr AgentQPolicyActionConstraint kSuiSignTransactionActionConstraints[] = {
+    {
+        AgentQPolicyAction::ask,
+        kSuiSignTransactionAskRequiredCriteria,
+        sizeof(kSuiSignTransactionAskRequiredCriteria) /
+            sizeof(kSuiSignTransactionAskRequiredCriteria[0]),
+    },
+};
+
 bool string_present(const char* value)
 {
     return value != nullptr && value[0] != '\0';
@@ -121,6 +141,9 @@ AgentQPolicyMethodDescriptor sui_sign_transaction_policy_method_descriptor()
         true,
         false,
         false,
+        kSuiSignTransactionActionConstraints,
+        sizeof(kSuiSignTransactionActionConstraints) /
+            sizeof(kSuiSignTransactionActionConstraints[0]),
     };
 }
 

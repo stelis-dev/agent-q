@@ -297,6 +297,9 @@ AgentQPolicyProposalParseStatus parse_rule(
             return status;
         }
     }
+    if (!agent_q_policy_rule_satisfies_action_constraints(*method_descriptor, output)) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
     return AgentQPolicyProposalParseStatus::ok;
 }
 

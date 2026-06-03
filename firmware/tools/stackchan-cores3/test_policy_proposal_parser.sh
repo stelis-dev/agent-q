@@ -117,6 +117,14 @@ const agent_q::AgentQPolicyMethodDescriptor kMethods[] = {
     agent_q::sui_sign_transaction_policy_method_descriptor(),
 };
 
+agent_q::AgentQPolicyMethodDescriptor ask_enabled_sui_method()
+{
+    agent_q::AgentQPolicyMethodDescriptor method =
+        agent_q::sui_sign_transaction_policy_method_descriptor();
+    method.supports_ask = true;
+    return method;
+}
+
 agent_q::AgentQPolicyProposalParseStatus parse_policy(
     const char* label,
     const char* json,
@@ -127,6 +135,21 @@ agent_q::AgentQPolicyProposalParseStatus parse_policy(
         document.as<JsonVariantConst>(),
         kMethods,
         sizeof(kMethods) / sizeof(kMethods[0]),
+        out);
+}
+
+agent_q::AgentQPolicyProposalParseStatus parse_policy_with_methods(
+    const char* label,
+    const char* json,
+    const agent_q::AgentQPolicyMethodDescriptor* methods,
+    size_t method_count,
+    agent_q::AgentQParsedPolicyProposal* out)
+{
+    JsonDocument document = parse_json(label, json);
+    return agent_q::parse_agent_q_policy_proposal(
+        document.as<JsonVariantConst>(),
+        methods,
+        method_count,
         out);
 }
 
@@ -221,6 +244,108 @@ int main()
         parse_policy(
             "unsupported-action",
             R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"ask","criteria":[{"field":"common.network","op":"eq","value":"mainnet"}]}]})JSON",
+            &proposal),
+        agent_q::AgentQPolicyProposalParseStatus::unsupported_action);
+
+    const agent_q::AgentQPolicyMethodDescriptor ask_methods[] = {
+        ask_enabled_sui_method(),
+    };
+    expect_status(
+        "restricted Sui transfer ask policy parses when ask support is enabled",
+        parse_policy_with_methods(
+            "valid-ask",
+            R"JSON({
+              "schema":"agentq.policy.v0",
+              "defaultAction":"reject",
+              "rules":[{
+                "id":"ask-sui-devnet-transfer",
+                "chain":"sui",
+                "method":"sign_transaction",
+                "action":"ask",
+                "criteria":[
+                  {"field":"common.network","op":"eq","value":"devnet"},
+                  {"field":"common.intent","op":"eq","value":"single_asset_transfer"},
+                  {"field":"sui.command_shape","op":"eq","value":"restricted_transfer"},
+                  {"field":"sui.recipient_address","op":"in","values":["0xabc"]},
+                  {"field":"sui.coin_type","op":"eq","value":"0x2::sui::SUI"},
+                  {"field":"sui.amount_raw","op":"lte","value":"1000"},
+                  {"field":"sui.gas_budget","op":"lte","value":"50000000"},
+                  {"field":"sui.gas_price","op":"lte","value":"1000"}
+                ]
+              }]
+            })JSON",
+            ask_methods,
+            1,
+            &proposal),
+        agent_q::AgentQPolicyProposalParseStatus::ok);
+    expect(proposal.document.rule_count == 1, "valid ask policy rule count");
+    expect(proposal.rules[0].action == agent_q::AgentQPolicyAction::ask, "valid ask policy action");
+    expect_canonical_status(
+        "valid ask parsed policy canonicalizes with ask descriptor",
+        agent_q::canonicalize_agent_q_policy_v0(proposal.document, ask_methods, 1, &canonical),
+        agent_q::AgentQPolicyCanonicalStatus::ok);
+
+    expect_status(
+        "broad ask missing restricted-transfer criteria rejected",
+        parse_policy_with_methods(
+            "broad-ask",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"ask-broad","chain":"sui","method":"sign_transaction","action":"ask","criteria":[{"field":"common.network","op":"eq","value":"devnet"}]}]})JSON",
+            ask_methods,
+            1,
+            &proposal),
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
+    expect_status(
+        "ask without recipient restriction rejected",
+        parse_policy_with_methods(
+            "ask-no-recipient",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"ask-no-recipient","chain":"sui","method":"sign_transaction","action":"ask","criteria":[{"field":"common.network","op":"eq","value":"devnet"},{"field":"common.intent","op":"eq","value":"single_asset_transfer"},{"field":"sui.command_shape","op":"eq","value":"restricted_transfer"},{"field":"sui.coin_type","op":"eq","value":"0x2::sui::SUI"},{"field":"sui.amount_raw","op":"lte","value":"1000"},{"field":"sui.gas_budget","op":"lte","value":"50000000"},{"field":"sui.gas_price","op":"lte","value":"1000"}]}]})JSON",
+            ask_methods,
+            1,
+            &proposal),
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
+    expect_status(
+        "ask without amount limit rejected",
+        parse_policy_with_methods(
+            "ask-no-amount",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"ask-no-amount","chain":"sui","method":"sign_transaction","action":"ask","criteria":[{"field":"common.network","op":"eq","value":"devnet"},{"field":"common.intent","op":"eq","value":"single_asset_transfer"},{"field":"sui.command_shape","op":"eq","value":"restricted_transfer"},{"field":"sui.recipient_address","op":"in","values":["0xabc"]},{"field":"sui.coin_type","op":"eq","value":"0x2::sui::SUI"},{"field":"sui.gas_budget","op":"lte","value":"50000000"},{"field":"sui.gas_price","op":"lte","value":"1000"}]}]})JSON",
+            ask_methods,
+            1,
+            &proposal),
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
+    expect_status(
+        "ask without gas budget limit rejected",
+        parse_policy_with_methods(
+            "ask-no-gas-budget",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"ask-no-gas-budget","chain":"sui","method":"sign_transaction","action":"ask","criteria":[{"field":"common.network","op":"eq","value":"devnet"},{"field":"common.intent","op":"eq","value":"single_asset_transfer"},{"field":"sui.command_shape","op":"eq","value":"restricted_transfer"},{"field":"sui.recipient_address","op":"in","values":["0xabc"]},{"field":"sui.coin_type","op":"eq","value":"0x2::sui::SUI"},{"field":"sui.amount_raw","op":"lte","value":"1000"},{"field":"sui.gas_price","op":"lte","value":"1000"}]}]})JSON",
+            ask_methods,
+            1,
+            &proposal),
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
+    expect_status(
+        "ask without gas price limit rejected",
+        parse_policy_with_methods(
+            "ask-no-gas-price",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"ask-no-gas-price","chain":"sui","method":"sign_transaction","action":"ask","criteria":[{"field":"common.network","op":"eq","value":"devnet"},{"field":"common.intent","op":"eq","value":"single_asset_transfer"},{"field":"sui.command_shape","op":"eq","value":"restricted_transfer"},{"field":"sui.recipient_address","op":"in","values":["0xabc"]},{"field":"sui.coin_type","op":"eq","value":"0x2::sui::SUI"},{"field":"sui.amount_raw","op":"lte","value":"1000"},{"field":"sui.gas_budget","op":"lte","value":"50000000"}]}]})JSON",
+            ask_methods,
+            1,
+            &proposal),
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
+    expect_status(
+        "ask without command shape rejected",
+        parse_policy_with_methods(
+            "ask-no-shape",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"ask-no-shape","chain":"sui","method":"sign_transaction","action":"ask","criteria":[{"field":"common.network","op":"eq","value":"devnet"},{"field":"common.intent","op":"eq","value":"single_asset_transfer"},{"field":"sui.recipient_address","op":"in","values":["0xabc"]},{"field":"sui.coin_type","op":"eq","value":"0x2::sui::SUI"},{"field":"sui.amount_raw","op":"lte","value":"1000"},{"field":"sui.gas_budget","op":"lte","value":"50000000"},{"field":"sui.gas_price","op":"lte","value":"1000"}]}]})JSON",
+            ask_methods,
+            1,
+            &proposal),
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
+    expect_status(
+        "ask with automatic sign still rejected",
+        parse_policy_with_methods(
+            "sign-unsupported",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"sign-sui-devnet-transfer","chain":"sui","method":"sign_transaction","action":"sign","criteria":[{"field":"common.network","op":"eq","value":"devnet"}]}]})JSON",
+            ask_methods,
+            1,
             &proposal),
         agent_q::AgentQPolicyProposalParseStatus::unsupported_action);
 

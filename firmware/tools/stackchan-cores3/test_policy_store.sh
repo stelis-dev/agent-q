@@ -118,6 +118,7 @@ cat >"${TMP_DIR}/policy_store_test.cpp" <<'CPP'
 #include "nvs.h"
 #include "agent_q_common/policy/agent_q_policy_canonical.h"
 #include "agent_q_common/policy/agent_q_policy_schema.h"
+#include "agent_q_common/sui/agent_q_sui_method_adapter.h"
 #include "agent_q_policy_store.h"
 
 namespace {
@@ -232,20 +233,39 @@ bool make_action_rule_record(
     if (rule_id == nullptr || network == nullptr || output == nullptr) {
         return false;
     }
-    const agent_q::AgentQPolicyCriterion criterion = {
-        "common.network",
-        agent_q::AgentQPolicyOperator::eq,
-        network,
-        nullptr,
-        0,
+    const char* recipients[] = {"0xabc"};
+    const agent_q::AgentQPolicyCriterion reject_criteria[] = {
+        {
+            "common.network",
+            agent_q::AgentQPolicyOperator::eq,
+            network,
+            nullptr,
+            0,
+        },
     };
+    const agent_q::AgentQPolicyCriterion ask_criteria[] = {
+        {"common.network", agent_q::AgentQPolicyOperator::eq, network, nullptr, 0},
+        {"common.intent", agent_q::AgentQPolicyOperator::eq, "single_asset_transfer", nullptr, 0},
+        {"sui.command_shape", agent_q::AgentQPolicyOperator::eq, "restricted_transfer", nullptr, 0},
+        {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, nullptr, recipients, 1},
+        {"sui.coin_type", agent_q::AgentQPolicyOperator::eq, "0x2::sui::SUI", nullptr, 0},
+        {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
+        {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "50000000", nullptr, 0},
+        {"sui.gas_price", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyCriterion* criteria =
+        action == agent_q::AgentQPolicyAction::ask ? ask_criteria : reject_criteria;
+    const size_t criterion_count =
+        action == agent_q::AgentQPolicyAction::ask
+            ? sizeof(ask_criteria) / sizeof(ask_criteria[0])
+            : sizeof(reject_criteria) / sizeof(reject_criteria[0]);
     const agent_q::AgentQPolicyRule rule = {
         rule_id,
         "sui",
         "sign_transaction",
         action,
-        &criterion,
-        1,
+        criteria,
+        criterion_count,
     };
     const agent_q::AgentQPolicyDocument policy = {
         agent_q::kAgentQPolicyV0Schema,
@@ -253,15 +273,10 @@ bool make_action_rule_record(
         &rule,
         1,
     };
-    const agent_q::AgentQPolicyMethodDescriptor method = {
-        "sui",
-        "sign_transaction",
-        nullptr,
-        0,
-        true,
-        supports_ask,
-        supports_sign,
-    };
+    agent_q::AgentQPolicyMethodDescriptor method =
+        agent_q::sui_sign_transaction_policy_method_descriptor();
+    method.supports_ask = supports_ask;
+    method.supports_sign = supports_sign;
     agent_q::AgentQPolicyCanonicalDocument canonical = {};
     uint8_t bytes[agent_q::kAgentQPolicyMaxCanonicalRecordBytes] = {};
     size_t size = 0;
