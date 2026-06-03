@@ -802,6 +802,33 @@ int main()
     expect(agent_q::signature_request_flow_begin(invalid_network) == Begin::invalid_network,
            "unsupported network rejected");
 
+    char unterminated_chain[agent_q::kAgentQSignatureRequestChainSize] = {};
+    memset(unterminated_chain, 's', sizeof(unterminated_chain));
+    agent_q::AgentQSignatureRequestBeginInput unterminated_chain_input =
+        make_valid_input("req_unterminated_chain", agent_q::session_id(), payload.data(), payload.size());
+    unterminated_chain_input.chain = unterminated_chain;
+    expect(agent_q::signature_request_flow_begin(unterminated_chain_input) == Begin::invalid_argument,
+           "unterminated chain is rejected before method validation");
+    expect(!agent_q::signature_request_flow_active(), "unterminated chain leaves flow inactive");
+
+    char unterminated_method[agent_q::kAgentQSignatureRequestMethodSize] = {};
+    memset(unterminated_method, 'm', sizeof(unterminated_method));
+    agent_q::AgentQSignatureRequestBeginInput unterminated_method_input =
+        make_valid_input("req_unterminated_method", agent_q::session_id(), payload.data(), payload.size());
+    unterminated_method_input.method = unterminated_method;
+    expect(agent_q::signature_request_flow_begin(unterminated_method_input) == Begin::invalid_argument,
+           "unterminated method is rejected before method validation");
+    expect(!agent_q::signature_request_flow_active(), "unterminated method leaves flow inactive");
+
+    char unterminated_network[agent_q::kAgentQSignatureRequestNetworkSize] = {};
+    memset(unterminated_network, 'd', sizeof(unterminated_network));
+    agent_q::AgentQSignatureRequestBeginInput unterminated_network_input =
+        make_valid_input("req_unterminated_network", agent_q::session_id(), payload.data(), payload.size());
+    unterminated_network_input.network = unterminated_network;
+    expect(agent_q::signature_request_flow_begin(unterminated_network_input) == Begin::invalid_argument,
+           "unterminated network is rejected before network validation");
+    expect(!agent_q::signature_request_flow_active(), "unterminated network leaves flow inactive");
+
     agent_q::AgentQSignatureRequestBeginInput unsupported_method =
         make_valid_input("req_bad_method", agent_q::session_id(), payload.data(), payload.size());
     unsupported_method.method = "sign_personal_message";

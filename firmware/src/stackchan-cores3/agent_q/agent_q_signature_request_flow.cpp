@@ -341,14 +341,26 @@ AgentQSignatureRequestFlowBeginResult signature_request_flow_begin(
     if (input.deadline == 0) {
         return AgentQSignatureRequestFlowBeginResult::invalid_deadline;
     }
-    if (session_validate(input.session_id) != AgentQSessionValidationResult::ok) {
+    char request_id[kAgentQSignatureRequestIdSize] = {};
+    char session_id[kAgentQSessionIdSize] = {};
+    char chain[kAgentQSignatureRequestChainSize] = {};
+    char method[kAgentQSignatureRequestMethodSize] = {};
+    char network[kAgentQSignatureRequestNetworkSize] = {};
+    if (!copy_nonempty_c_string(input.request_id, request_id, sizeof(request_id)) ||
+        !copy_nonempty_c_string(input.session_id, session_id, sizeof(session_id)) ||
+        !copy_nonempty_c_string(input.chain, chain, sizeof(chain)) ||
+        !copy_nonempty_c_string(input.method, method, sizeof(method)) ||
+        !copy_nonempty_c_string(input.network, network, sizeof(network))) {
+        return AgentQSignatureRequestFlowBeginResult::invalid_argument;
+    }
+    if (session_validate(session_id) != AgentQSessionValidationResult::ok) {
         return AgentQSignatureRequestFlowBeginResult::invalid_session;
     }
-    if (strcmp(input.chain, "sui") != 0 ||
-        strcmp(input.method, "sign_transaction") != 0) {
+    if (strcmp(chain, "sui") != 0 ||
+        strcmp(method, "sign_transaction") != 0) {
         return AgentQSignatureRequestFlowBeginResult::unsupported_method;
     }
-    if (!supported_network(input.network)) {
+    if (!supported_network(network)) {
         return AgentQSignatureRequestFlowBeginResult::invalid_network;
     }
     if (input.tx_bytes_size == 0 ||
@@ -373,14 +385,11 @@ AgentQSignatureRequestFlowBeginResult signature_request_flow_begin(
     }
 
     g_state.clear();
-    if (!copy_nonempty_c_string(input.request_id, g_state.request_id, sizeof(g_state.request_id)) ||
-        !copy_nonempty_c_string(input.session_id, g_state.session_id, sizeof(g_state.session_id)) ||
-        !copy_nonempty_c_string(input.chain, g_state.chain, sizeof(g_state.chain)) ||
-        !copy_nonempty_c_string(input.method, g_state.method, sizeof(g_state.method)) ||
-        !copy_nonempty_c_string(input.network, g_state.network, sizeof(g_state.network))) {
-        g_state.clear();
-        return AgentQSignatureRequestFlowBeginResult::invalid_argument;
-    }
+    memcpy(g_state.request_id, request_id, sizeof(g_state.request_id));
+    memcpy(g_state.session_id, session_id, sizeof(g_state.session_id));
+    memcpy(g_state.chain, chain, sizeof(g_state.chain));
+    memcpy(g_state.method, method, sizeof(g_state.method));
+    memcpy(g_state.network, network, sizeof(g_state.network));
     if (!approval_history_digest_payload(
             input.tx_bytes,
             input.tx_bytes_size,
