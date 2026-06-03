@@ -13,7 +13,7 @@ constexpr const char* kTag = "AgentQPolicyUpdate";
 constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kPolicyUpdateMarkerKey = "pol_um";
 constexpr uint8_t kPolicyUpdateMarkerMagic[4] = {'A', 'Q', 'P', 'U'};
-constexpr uint8_t kPolicyUpdateMarkerVersion = 1;
+constexpr uint8_t kPolicyUpdateMarkerVersion = 0;
 
 struct StoredPolicyUpdateMarker {
     uint8_t magic[4];

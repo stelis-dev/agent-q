@@ -245,7 +245,15 @@ export interface PolicyResponse {
 
 export type ApprovalHistoryDecisionKind = "policy_rejected";
 
-export type ApprovalHistoryConfirmationKind = "none" | "policy";
+export type ApprovalHistoryConfirmationKind = "none" | "policy" | "local_pin";
+
+export type SignatureRequestHistoryRecordKind = "confirmation" | "terminal";
+
+export type SignatureRequestHistoryTerminalResult =
+  | "signed"
+  | "rejected"
+  | "timed_out"
+  | "signing_failed";
 
 export type ApprovalHistoryPolicyUpdateResult =
   | "applied"
@@ -259,7 +267,7 @@ interface ApprovalHistoryRecordBase {
   seq: string;
   uptimeMs: string;
   timeSource: "uptime";
-  eventKind: "method_decision" | "policy_update";
+  eventKind: "method_decision" | "policy_update" | "signature_request";
   reasonCode: string;
 }
 
@@ -282,9 +290,20 @@ export interface PolicyUpdateApprovalHistoryRecord extends ApprovalHistoryRecord
   highestAction: ApprovalHistoryHighestAction;
 }
 
+export interface SignatureRequestApprovalHistoryRecord extends ApprovalHistoryRecordBase {
+  eventKind: "signature_request";
+  recordKind: SignatureRequestHistoryRecordKind;
+  chain: string;
+  method: string;
+  payloadDigest: string;
+  confirmationKind?: "local_pin";
+  terminalResult?: SignatureRequestHistoryTerminalResult;
+}
+
 export type ApprovalHistoryRecord =
   | MethodDecisionApprovalHistoryRecord
-  | PolicyUpdateApprovalHistoryRecord;
+  | PolicyUpdateApprovalHistoryRecord
+  | SignatureRequestApprovalHistoryRecord;
 
 export interface ApprovalHistoryResponse {
   id: string;
@@ -1087,6 +1106,17 @@ export const APPROVAL_HISTORY_DECISION_KINDS = [
 export const APPROVAL_HISTORY_CONFIRMATION_KINDS = [
   "none",
   "policy",
+  "local_pin",
+] as const;
+export const SIGNATURE_REQUEST_HISTORY_RECORD_KINDS = [
+  "confirmation",
+  "terminal",
+] as const;
+export const SIGNATURE_REQUEST_HISTORY_TERMINAL_RESULTS = [
+  "signed",
+  "rejected",
+  "timed_out",
+  "signing_failed",
 ] as const;
 export const APPROVAL_HISTORY_POLICY_UPDATE_RESULTS = [
   "applied",
@@ -1463,6 +1493,8 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
     "result",
     "ruleCount",
     "highestAction",
+    "recordKind",
+    "terminalResult",
   ];
   if (!hasOnlyObjectKeys(value, allowedKeys)) {
     throw new ProtocolError("protocol_error", "Approval history record contains unsupported fields.");
@@ -1487,6 +1519,8 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
       value.method !== undefined ||
       value.payloadDigest !== undefined ||
       value.ruleRef !== undefined ||
+      value.recordKind !== undefined ||
+      value.terminalResult !== undefined ||
       !APPROVAL_HISTORY_POLICY_UPDATE_RESULTS.includes(value.result as ApprovalHistoryPolicyUpdateResult) ||
       typeof value.policyHash !== "string" ||
       !POLICY_ID_PATTERN.test(value.policyHash) ||
@@ -1511,13 +1545,73 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
     };
   }
 
+  if (value.eventKind === "signature_request") {
+    if (
+      value.decisionKind !== undefined ||
+      value.result !== undefined ||
+      value.ruleCount !== undefined ||
+      value.highestAction !== undefined ||
+      value.policyHash !== undefined ||
+      value.ruleRef !== undefined ||
+      !SIGNATURE_REQUEST_HISTORY_RECORD_KINDS.includes(value.recordKind as SignatureRequestHistoryRecordKind) ||
+      !isCallMethodChain(value.chain) ||
+      !isCallMethodName(value.method) ||
+      typeof value.payloadDigest !== "string" ||
+      !POLICY_ID_PATTERN.test(value.payloadDigest)
+    ) {
+      throw new ProtocolError("protocol_error", "Approval history signature request record is malformed.");
+    }
+    if (value.recordKind === "confirmation") {
+      if (
+        value.confirmationKind !== "local_pin" ||
+        value.terminalResult !== undefined
+      ) {
+        throw new ProtocolError("protocol_error", "Approval history signature request record is malformed.");
+      }
+      return {
+        seq: value.seq,
+        uptimeMs: value.uptimeMs,
+        timeSource: "uptime",
+        eventKind: "signature_request",
+        reasonCode: value.reasonCode,
+        recordKind: "confirmation",
+        confirmationKind: "local_pin",
+        chain: value.chain,
+        method: value.method,
+        payloadDigest: value.payloadDigest,
+      };
+    }
+    if (
+      value.confirmationKind !== undefined ||
+      !SIGNATURE_REQUEST_HISTORY_TERMINAL_RESULTS.includes(
+        value.terminalResult as SignatureRequestHistoryTerminalResult,
+      )
+    ) {
+      throw new ProtocolError("protocol_error", "Approval history signature request record is malformed.");
+    }
+    return {
+      seq: value.seq,
+      uptimeMs: value.uptimeMs,
+      timeSource: "uptime",
+      eventKind: "signature_request",
+      reasonCode: value.reasonCode,
+      recordKind: "terminal",
+      terminalResult: value.terminalResult as SignatureRequestHistoryTerminalResult,
+      chain: value.chain,
+      method: value.method,
+      payloadDigest: value.payloadDigest,
+    };
+  }
+
   if (
     value.eventKind !== "method_decision" ||
     value.result !== undefined ||
     value.ruleCount !== undefined ||
     value.highestAction !== undefined ||
+    value.recordKind !== undefined ||
+    value.terminalResult !== undefined ||
     !APPROVAL_HISTORY_DECISION_KINDS.includes(value.decisionKind as ApprovalHistoryDecisionKind) ||
-    !APPROVAL_HISTORY_CONFIRMATION_KINDS.includes(value.confirmationKind as ApprovalHistoryConfirmationKind) ||
+    value.confirmationKind !== "policy" ||
     !isCallMethodChain(value.chain) ||
     !isCallMethodName(value.method)
   ) {

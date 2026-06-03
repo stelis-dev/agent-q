@@ -29,6 +29,7 @@ import {
   METHOD_RESULT_ERROR_MESSAGES,
   POLICY_ID_PATTERN,
   POLICY_UPDATE_RESULT_STATUSES,
+  SIGNATURE_REQUEST_HISTORY_TERMINAL_RESULTS,
   SUI_ADDRESS_PATTERN,
   SUI_DERIVATION_PATH,
   UINT_DECIMAL_STRING_PATTERN,
@@ -389,9 +390,27 @@ const policyUpdateApprovalHistoryRecordShape = approvalHistoryRecordShape.extend
   ruleCount: z.number().int().min(0).max(MAX_POLICY_RULE_COUNT),
   highestAction: z.enum(APPROVAL_HISTORY_HIGHEST_ACTIONS),
 });
-const approvalHistoryRecordOutputShape = z.discriminatedUnion("eventKind", [
+const signatureRequestConfirmationApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
+  eventKind: z.literal("signature_request"),
+  recordKind: z.literal("confirmation"),
+  confirmationKind: z.literal("local_pin"),
+  chain: z.string().regex(CALL_METHOD_CHAIN_PATTERN),
+  method: z.string().regex(CALL_METHOD_NAME_PATTERN),
+  payloadDigest: z.string().regex(POLICY_ID_PATTERN),
+});
+const signatureRequestTerminalApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
+  eventKind: z.literal("signature_request"),
+  recordKind: z.literal("terminal"),
+  terminalResult: z.enum(SIGNATURE_REQUEST_HISTORY_TERMINAL_RESULTS),
+  chain: z.string().regex(CALL_METHOD_CHAIN_PATTERN),
+  method: z.string().regex(CALL_METHOD_NAME_PATTERN),
+  payloadDigest: z.string().regex(POLICY_ID_PATTERN),
+});
+const approvalHistoryRecordOutputShape = z.union([
   methodDecisionApprovalHistoryRecordShape,
   policyUpdateApprovalHistoryRecordShape,
+  signatureRequestConfirmationApprovalHistoryRecordShape,
+  signatureRequestTerminalApprovalHistoryRecordShape,
 ]);
 const liveApprovalHistoryOutputShape = z.object({
   source: z.literal("live"),

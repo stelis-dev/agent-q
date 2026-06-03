@@ -49,6 +49,7 @@ test("uses XDG config path with home fallback", () => {
 });
 
 test("loads defaults at current schema and remembers usb status", async () => {
+  assert.equal(CONFIG_SCHEMA_VERSION, 0, "pre-release config schema marker stays at current-layout zero");
   const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
@@ -132,7 +133,7 @@ test("falls back to default current schema for unsupported schema version", asyn
     await writeFile(
       path,
       JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 1,
         activeDeviceId: sampleDevice.deviceId,
         activeDeviceIdsByPurpose: {},
         devices: [

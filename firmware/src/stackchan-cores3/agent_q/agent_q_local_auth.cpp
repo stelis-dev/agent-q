@@ -18,7 +18,7 @@ namespace {
 constexpr const char* kTag = "AgentQLocalAuth";
 constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kLocalAuthKey = "pin_auth";
-constexpr uint8_t kRecordFormatVersion = 1;
+constexpr uint8_t kRecordFormatVersion = 0;
 constexpr uint8_t kKdfPbkdf2HmacSha512 = 1;
 constexpr uint32_t kPbkdf2Iterations = 20000;
 constexpr size_t kSaltBytes = 16;

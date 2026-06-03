@@ -130,7 +130,7 @@ int main()
         agent_q::AgentQPolicyCanonicalStatus::ok);
     const uint8_t expected_default[] = {
         'A', 'Q', 'P', '0',
-        1, 1, 0, 0,
+        0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0,
     };
     expect(record_size == sizeof(expected_default), "default policy keeps existing 16-byte record size");
@@ -151,6 +151,26 @@ int main()
         agent_q::decode_agent_q_policy_v0_canonical_record(record, record_size, &decoded),
         agent_q::AgentQPolicyCanonicalStatus::ok);
     expect(decoded.rule_count == 0, "decoded default rule count");
+
+    uint8_t stale_default_record[sizeof(expected_default)] = {};
+    memcpy(stale_default_record, expected_default, sizeof(expected_default));
+    stale_default_record[4] = 1;
+    expect_status(
+        "nonzero policy format marker fails closed",
+        agent_q::decode_agent_q_policy_v0_canonical_record(
+            stale_default_record,
+            sizeof(stale_default_record),
+            &decoded),
+        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
+    memcpy(stale_default_record, expected_default, sizeof(expected_default));
+    stale_default_record[5] = 1;
+    expect_status(
+        "nonzero policy schema marker fails closed",
+        agent_q::decode_agent_q_policy_v0_canonical_record(
+            stale_default_record,
+            sizeof(stale_default_record),
+            &decoded),
+        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
 
     const char* networks[] = {"devnet", "testnet"};
     const agent_q::AgentQPolicyCriterion criteria[] = {

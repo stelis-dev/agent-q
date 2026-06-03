@@ -313,6 +313,16 @@ int main()
     expect(agent_q::g_test_wipe_calls > 0, "status check wipes local auth record copy");
     expect(agent_q::g_test_last_wipe_size == agent_q::kLocalAuthPreparedRecordBytes,
            "status check wipes full local auth record copy");
+    expect(g_blob.size() > 4 && g_blob[4] == 0, "local auth current format marker is zero");
+    {
+        const std::vector<uint8_t> current_auth_blob = g_blob;
+        g_blob[4] = 1;
+        expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::invalid,
+               "nonzero local auth format marker fails closed");
+        g_blob = current_auth_blob;
+        expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::active,
+               "restored current local auth format marker is active");
+    }
     verified = false;
     expect(agent_q::verify_local_pin("123456", &verified), "verify correct PIN call succeeds");
     expect(verified, "correct PIN verifies");

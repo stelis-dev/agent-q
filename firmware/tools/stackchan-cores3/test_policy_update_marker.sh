@@ -185,6 +185,17 @@ int main()
            "valid marker begin succeeds");
     expect(agent_q::policy_update_marker_status() == Status::pending,
            "valid marker reads as pending");
+    expect(g_blob.size() > 4 && g_blob[4] == 0,
+           "policy update marker current version is zero");
+    {
+        const std::vector<uint8_t> current_marker = g_blob;
+        g_blob[4] = 1;
+        expect(agent_q::policy_update_marker_status() == Status::invalid,
+               "nonzero policy update marker version fails closed");
+        g_blob = current_marker;
+        expect(agent_q::policy_update_marker_status() == Status::pending,
+               "restored current policy update marker reads as pending");
+    }
     expect(agent_q::policy_update_marker_clear(), "marker clear succeeds");
     expect(agent_q::policy_update_marker_status() == Status::clear,
            "cleared marker reads as clear");

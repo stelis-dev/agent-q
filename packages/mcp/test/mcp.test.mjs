@@ -152,7 +152,7 @@ const noOpCore = {
       deviceId: "device-1",
       policy: {
         schema: "agentq.policy.v0",
-        policyId: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+        policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
         defaultAction: "reject",
         ruleCount: 0,
       },
@@ -173,8 +173,8 @@ const noOpCore = {
           chain: "sui",
           method: "sign_transaction",
           reasonCode: "default_reject",
-          payloadDigest: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
-          policyHash: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+          payloadDigest: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+          policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
           ruleRef: "default",
         },
       ],
@@ -199,7 +199,7 @@ const noOpCore = {
       status: "applied",
       reasonCode: "device_confirmed",
       policy: {
-        policyHash: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+        policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
         ruleCount: 1,
         highestAction: "reject",
       },
@@ -504,7 +504,7 @@ test("get_policy dispatch returns the active policy summary without a session to
     assert.equal(result.structuredContent.policy.schema, "agentq.policy.v0");
     assert.equal(
       result.structuredContent.policy.policyId,
-      "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+      "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
     );
     assert.equal(result.structuredContent.policy.defaultAction, "reject");
     assert.equal(result.structuredContent.policy.ruleCount, 0);
@@ -726,7 +726,7 @@ const leakyCore = {
       deviceId: "device-1",
       policy: {
         schema: "agentq.policy.v0",
-        policyId: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+        policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
         defaultAction: "reject",
         ruleCount: 0,
       },
@@ -748,8 +748,8 @@ const leakyCore = {
           chain: "sui",
           method: "sign_transaction",
           reasonCode: "default_reject",
-          payloadDigest: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
-          policyHash: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+          payloadDigest: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+          policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
           ruleRef: "default",
           ...SECRET_EXTRAS,
         },
@@ -777,7 +777,7 @@ const leakyCore = {
       status: "applied",
       reasonCode: "device_confirmed",
       policy: {
-        policyHash: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+        policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
         ruleCount: 1,
         highestAction: "reject",
         ...SECRET_EXTRAS,
@@ -852,7 +852,7 @@ test("get_policy rejects unsupported live policy shapes", async () => {
         deviceId: "device-1",
         policy: {
           schema: "agentq.policy.v0",
-          policyId: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+          policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
           defaultAction: "approve",
           ruleCount: 0,
         },
@@ -898,7 +898,7 @@ test("get_approval_history rejects malformed records", async () => {
             chain: "sui",
             method: "sign_transaction",
             reasonCode: "default_reject",
-            payloadDigest: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+            payloadDigest: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
           },
         ],
         hasMore: false,

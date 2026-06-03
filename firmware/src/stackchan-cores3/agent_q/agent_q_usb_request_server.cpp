@@ -532,6 +532,23 @@ bool write_approval_history_response(const char* id, uint64_t before_sequence, s
             record["policyHash"] = source.policy_hash;
             record["ruleCount"] = source.rule_count;
             record["highestAction"] = source.highest_action;
+        } else if (source.event_kind == agent_q::AgentQApprovalHistoryEventKind::signature_request) {
+            record["eventKind"] = "signature_request";
+            record["recordKind"] =
+                agent_q::approval_history_signature_record_kind_to_string(source.signature_record_kind);
+            record["chain"] = source.chain;
+            record["method"] = source.method;
+            if (source.confirmation_kind != agent_q::AgentQApprovalHistoryConfirmationKind::none) {
+                record["confirmationKind"] =
+                    agent_q::approval_history_confirmation_kind_to_string(source.confirmation_kind);
+            }
+            if (source.signature_terminal_result != agent_q::AgentQSignatureRequestHistoryTerminalResult::none) {
+                record["terminalResult"] =
+                    agent_q::approval_history_signature_terminal_result_to_string(source.signature_terminal_result);
+            }
+            if (source.payload_digest[0] != '\0') {
+                record["payloadDigest"] = source.payload_digest;
+            }
         } else {
             record["eventKind"] = "method_decision";
             record["decisionKind"] = agent_q::approval_history_decision_to_string(source.decision);

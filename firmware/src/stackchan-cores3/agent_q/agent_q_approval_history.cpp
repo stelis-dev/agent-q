@@ -13,15 +13,25 @@ namespace {
 constexpr const char* kTag = "AgentQApprovalHist";
 constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kApprovalHistoryKey = "approval_hist";
-constexpr uint8_t kStoredApprovalHistoryFormatVersion = 3;
+constexpr uint8_t kStoredApprovalHistoryFormatVersion = 0;
 constexpr uint8_t kStoredDecisionPolicyUpdatePlaceholder = 0;
 constexpr uint8_t kStoredDecisionPolicyRejected = 1;
 constexpr uint8_t kStoredConfirmationNone = 0;
 constexpr uint8_t kStoredConfirmationPolicy = 1;
+constexpr uint8_t kStoredConfirmationLocalPin = 2;
 constexpr uint8_t kStoredDigestPayload = 1 << 0;
 constexpr uint8_t kStoredDigestPolicy = 1 << 1;
 constexpr uint8_t kStoredEventMethodDecision = 0;
 constexpr uint8_t kStoredEventPolicyUpdate = 1;
+constexpr uint8_t kStoredEventSignatureRequest = 2;
+constexpr uint8_t kStoredSignatureRecordNone = 0;
+constexpr uint8_t kStoredSignatureRecordConfirmation = 1;
+constexpr uint8_t kStoredSignatureRecordTerminal = 2;
+constexpr uint8_t kStoredSignatureTerminalNone = 0;
+constexpr uint8_t kStoredSignatureTerminalSigned = 1;
+constexpr uint8_t kStoredSignatureTerminalRejected = 2;
+constexpr uint8_t kStoredSignatureTerminalTimedOut = 3;
+constexpr uint8_t kStoredSignatureTerminalSigningFailed = 4;
 
 bool g_write_budget_active = false;
 uint64_t g_write_budget_window_start_ms = 0;
@@ -35,7 +45,8 @@ struct StoredApprovalHistoryRecord {
     uint8_t flags;
     uint8_t event_kind;
     uint16_t rule_count;
-    uint8_t reserved[2];
+    uint8_t signature_record_kind;
+    uint8_t signature_terminal_result;
     char chain[kAgentQApprovalHistoryChainSize];
     char method[kAgentQApprovalHistoryMethodSize];
     char reason_code[kAgentQApprovalHistoryReasonCodeSize];
@@ -81,7 +92,22 @@ void init_history(StoredApprovalHistory* history)
 bool stored_event_kind_valid(uint8_t value)
 {
     return value == kStoredEventMethodDecision ||
-           value == kStoredEventPolicyUpdate;
+           value == kStoredEventPolicyUpdate ||
+           value == kStoredEventSignatureRequest;
+}
+
+bool stored_signature_record_kind_valid(uint8_t value)
+{
+    return value == kStoredSignatureRecordConfirmation ||
+           value == kStoredSignatureRecordTerminal;
+}
+
+bool stored_signature_terminal_result_valid(uint8_t value)
+{
+    return value == kStoredSignatureTerminalSigned ||
+           value == kStoredSignatureTerminalRejected ||
+           value == kStoredSignatureTerminalTimedOut ||
+           value == kStoredSignatureTerminalSigningFailed;
 }
 
 bool stored_record_metadata_valid(const StoredApprovalHistoryRecord& record)
@@ -92,10 +118,26 @@ bool stored_record_metadata_valid(const StoredApprovalHistoryRecord& record)
     }
     if (record.event_kind == kStoredEventMethodDecision) {
         return record.decision == kStoredDecisionPolicyRejected &&
-               record.confirmation_kind == kStoredConfirmationPolicy;
+               record.confirmation_kind == kStoredConfirmationPolicy &&
+               record.signature_record_kind == kStoredSignatureRecordNone &&
+               record.signature_terminal_result == kStoredSignatureTerminalNone;
     }
-    return record.decision == kStoredDecisionPolicyUpdatePlaceholder &&
-           record.confirmation_kind == kStoredConfirmationPolicy;
+    if (record.event_kind == kStoredEventPolicyUpdate) {
+        return record.decision == kStoredDecisionPolicyUpdatePlaceholder &&
+               record.confirmation_kind == kStoredConfirmationPolicy &&
+               record.signature_record_kind == kStoredSignatureRecordNone &&
+               record.signature_terminal_result == kStoredSignatureTerminalNone;
+    }
+    if (record.decision != kStoredDecisionPolicyUpdatePlaceholder ||
+        !stored_signature_record_kind_valid(record.signature_record_kind)) {
+        return false;
+    }
+    if (record.signature_record_kind == kStoredSignatureRecordConfirmation) {
+        return record.confirmation_kind == kStoredConfirmationLocalPin &&
+               record.signature_terminal_result == kStoredSignatureTerminalNone;
+    }
+    return record.confirmation_kind == kStoredConfirmationNone &&
+           stored_signature_terminal_result_valid(record.signature_terminal_result);
 }
 
 bool valid_history_header(const StoredApprovalHistory& history)
@@ -121,9 +163,13 @@ bool valid_history_header(const StoredApprovalHistory& history)
 
 AgentQApprovalHistoryEventKind public_event_kind(uint8_t value)
 {
-    return value == kStoredEventPolicyUpdate
-               ? AgentQApprovalHistoryEventKind::policy_update
-               : AgentQApprovalHistoryEventKind::method_decision;
+    if (value == kStoredEventPolicyUpdate) {
+        return AgentQApprovalHistoryEventKind::policy_update;
+    }
+    if (value == kStoredEventSignatureRequest) {
+        return AgentQApprovalHistoryEventKind::signature_request;
+    }
+    return AgentQApprovalHistoryEventKind::method_decision;
 }
 
 void reset_write_budget()
@@ -367,6 +413,8 @@ uint8_t stored_confirmation(AgentQApprovalHistoryConfirmationKind value)
     switch (value) {
         case AgentQApprovalHistoryConfirmationKind::policy:
             return kStoredConfirmationPolicy;
+        case AgentQApprovalHistoryConfirmationKind::local_pin:
+            return kStoredConfirmationLocalPin;
         case AgentQApprovalHistoryConfirmationKind::none:
         default:
             return kStoredConfirmationNone;
@@ -378,9 +426,71 @@ AgentQApprovalHistoryConfirmationKind public_confirmation(uint8_t value)
     switch (value) {
         case kStoredConfirmationPolicy:
             return AgentQApprovalHistoryConfirmationKind::policy;
+        case kStoredConfirmationLocalPin:
+            return AgentQApprovalHistoryConfirmationKind::local_pin;
         case kStoredConfirmationNone:
         default:
             return AgentQApprovalHistoryConfirmationKind::none;
+    }
+}
+
+uint8_t stored_signature_record_kind(AgentQSignatureRequestHistoryRecordKind value)
+{
+    switch (value) {
+        case AgentQSignatureRequestHistoryRecordKind::confirmation:
+            return kStoredSignatureRecordConfirmation;
+        case AgentQSignatureRequestHistoryRecordKind::terminal:
+            return kStoredSignatureRecordTerminal;
+        case AgentQSignatureRequestHistoryRecordKind::none:
+        default:
+            return kStoredSignatureRecordNone;
+    }
+}
+
+AgentQSignatureRequestHistoryRecordKind public_signature_record_kind(uint8_t value)
+{
+    switch (value) {
+        case kStoredSignatureRecordConfirmation:
+            return AgentQSignatureRequestHistoryRecordKind::confirmation;
+        case kStoredSignatureRecordTerminal:
+            return AgentQSignatureRequestHistoryRecordKind::terminal;
+        case kStoredSignatureRecordNone:
+        default:
+            return AgentQSignatureRequestHistoryRecordKind::none;
+    }
+}
+
+uint8_t stored_signature_terminal_result(AgentQSignatureRequestHistoryTerminalResult value)
+{
+    switch (value) {
+        case AgentQSignatureRequestHistoryTerminalResult::signed_success:
+            return kStoredSignatureTerminalSigned;
+        case AgentQSignatureRequestHistoryTerminalResult::rejected:
+            return kStoredSignatureTerminalRejected;
+        case AgentQSignatureRequestHistoryTerminalResult::timed_out:
+            return kStoredSignatureTerminalTimedOut;
+        case AgentQSignatureRequestHistoryTerminalResult::signing_failed:
+            return kStoredSignatureTerminalSigningFailed;
+        case AgentQSignatureRequestHistoryTerminalResult::none:
+        default:
+            return kStoredSignatureTerminalNone;
+    }
+}
+
+AgentQSignatureRequestHistoryTerminalResult public_signature_terminal_result(uint8_t value)
+{
+    switch (value) {
+        case kStoredSignatureTerminalSigned:
+            return AgentQSignatureRequestHistoryTerminalResult::signed_success;
+        case kStoredSignatureTerminalRejected:
+            return AgentQSignatureRequestHistoryTerminalResult::rejected;
+        case kStoredSignatureTerminalTimedOut:
+            return AgentQSignatureRequestHistoryTerminalResult::timed_out;
+        case kStoredSignatureTerminalSigningFailed:
+            return AgentQSignatureRequestHistoryTerminalResult::signing_failed;
+        case kStoredSignatureTerminalNone:
+        default:
+            return AgentQSignatureRequestHistoryTerminalResult::none;
     }
 }
 
@@ -479,13 +589,22 @@ bool materialize_record(const StoredApprovalHistoryRecord& stored, AgentQApprova
     output->event_kind = public_event_kind(stored.event_kind);
     output->decision = public_decision(stored.decision);
     output->confirmation_kind = public_confirmation(stored.confirmation_kind);
+    output->signature_record_kind =
+        public_signature_record_kind(stored.signature_record_kind);
+    output->signature_terminal_result =
+        public_signature_terminal_result(stored.signature_terminal_result);
     if (!copy_stored_history_token(output->reason_code, sizeof(output->reason_code), stored.reason_code, sizeof(stored.reason_code), true, history_reason_char)) {
         memset(output, 0, sizeof(*output));
         return false;
     }
-    if (output->event_kind == AgentQApprovalHistoryEventKind::method_decision) {
+    if (output->event_kind == AgentQApprovalHistoryEventKind::method_decision ||
+        output->event_kind == AgentQApprovalHistoryEventKind::signature_request) {
         if (!copy_stored_history_token(output->chain, sizeof(output->chain), stored.chain, sizeof(stored.chain), true, history_chain_or_method_char) ||
-            !copy_stored_history_token(output->method, sizeof(output->method), stored.method, sizeof(stored.method), true, history_chain_or_method_char) ||
+            !copy_stored_history_token(output->method, sizeof(output->method), stored.method, sizeof(stored.method), true, history_chain_or_method_char)) {
+            memset(output, 0, sizeof(*output));
+            return false;
+        }
+        if (output->event_kind == AgentQApprovalHistoryEventKind::method_decision &&
             !copy_stored_history_token(output->rule_ref, sizeof(output->rule_ref), stored.rule_ref, sizeof(stored.rule_ref), false, history_rule_ref_char)) {
             memset(output, 0, sizeof(*output));
             return false;
@@ -495,6 +614,11 @@ bool materialize_record(const StoredApprovalHistoryRecord& stored, AgentQApprova
         }
         if ((stored.flags & kStoredDigestPolicy) != 0) {
             digest_to_string(stored.policy_hash, output->policy_hash, sizeof(output->policy_hash));
+        }
+        if (output->event_kind == AgentQApprovalHistoryEventKind::signature_request &&
+            (stored.flags & kStoredDigestPayload) == 0) {
+            memset(output, 0, sizeof(*output));
+            return false;
         }
         return true;
     }
@@ -671,6 +795,51 @@ bool approval_history_append_required_policy_update(
     return store_history(history);
 }
 
+bool approval_history_append_required_signature_request(
+    const AgentQSignatureRequestHistoryAppendInput& input,
+    uint64_t uptime_ms)
+{
+    const bool confirmation_record =
+        input.record_kind == AgentQSignatureRequestHistoryRecordKind::confirmation &&
+        input.confirmation_kind == AgentQApprovalHistoryConfirmationKind::local_pin &&
+        input.terminal_result == AgentQSignatureRequestHistoryTerminalResult::none;
+    const bool terminal_record =
+        input.record_kind == AgentQSignatureRequestHistoryRecordKind::terminal &&
+        input.confirmation_kind == AgentQApprovalHistoryConfirmationKind::none &&
+        input.terminal_result != AgentQSignatureRequestHistoryTerminalResult::none;
+    if (!confirmation_record && !terminal_record) {
+        ESP_LOGW(kTag, "Refusing signature request history record with invalid kind");
+        return false;
+    }
+
+    StoredApprovalHistory& history = g_history_workspace;
+    const AgentQApprovalHistoryReadResult load_result = load_history(&history, true);
+    if (load_result != AgentQApprovalHistoryReadResult::ok) {
+        return false;
+    }
+
+    StoredApprovalHistoryRecord* record = nullptr;
+    if (!append_record(&history, &record)) {
+        return false;
+    }
+    record->uptime_ms = uptime_ms;
+    record->event_kind = kStoredEventSignatureRequest;
+    record->decision = kStoredDecisionPolicyUpdatePlaceholder;
+    record->confirmation_kind = stored_confirmation(input.confirmation_kind);
+    record->signature_record_kind = stored_signature_record_kind(input.record_kind);
+    record->signature_terminal_result =
+        stored_signature_terminal_result(input.terminal_result);
+    if (!store_history_token(record->chain, sizeof(record->chain), input.chain, true, history_chain_or_method_char) ||
+        !store_history_token(record->method, sizeof(record->method), input.method, true, history_chain_or_method_char) ||
+        !store_history_token(record->reason_code, sizeof(record->reason_code), input.reason_code, true, history_reason_char) ||
+        !digest_from_string(input.payload_digest, record->payload_digest)) {
+        ESP_LOGW(kTag, "Refusing signature request history record with invalid metadata");
+        return false;
+    }
+    record->flags |= kStoredDigestPayload;
+    return store_history(history);
+}
+
 AgentQApprovalHistoryReadResult approval_history_read_page(
     uint64_t before_sequence,
     size_t limit,
@@ -751,7 +920,41 @@ const char* approval_history_confirmation_kind_to_string(AgentQApprovalHistoryCo
     switch (value) {
         case AgentQApprovalHistoryConfirmationKind::policy:
             return "policy";
+        case AgentQApprovalHistoryConfirmationKind::local_pin:
+            return "local_pin";
         case AgentQApprovalHistoryConfirmationKind::none:
+        default:
+            return "none";
+    }
+}
+
+const char* approval_history_signature_record_kind_to_string(
+    AgentQSignatureRequestHistoryRecordKind value)
+{
+    switch (value) {
+        case AgentQSignatureRequestHistoryRecordKind::confirmation:
+            return "confirmation";
+        case AgentQSignatureRequestHistoryRecordKind::terminal:
+            return "terminal";
+        case AgentQSignatureRequestHistoryRecordKind::none:
+        default:
+            return "none";
+    }
+}
+
+const char* approval_history_signature_terminal_result_to_string(
+    AgentQSignatureRequestHistoryTerminalResult value)
+{
+    switch (value) {
+        case AgentQSignatureRequestHistoryTerminalResult::signed_success:
+            return "signed";
+        case AgentQSignatureRequestHistoryTerminalResult::rejected:
+            return "rejected";
+        case AgentQSignatureRequestHistoryTerminalResult::timed_out:
+            return "timed_out";
+        case AgentQSignatureRequestHistoryTerminalResult::signing_failed:
+            return "signing_failed";
+        case AgentQSignatureRequestHistoryTerminalResult::none:
         default:
             return "none";
     }

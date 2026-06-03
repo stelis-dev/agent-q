@@ -26,6 +26,7 @@ enum class AgentQApprovalHistoryDecision {
 enum class AgentQApprovalHistoryConfirmationKind {
     none,
     policy,
+    local_pin,
 };
 
 enum class AgentQApprovalHistoryReadResult {
@@ -37,6 +38,21 @@ enum class AgentQApprovalHistoryReadResult {
 enum class AgentQApprovalHistoryEventKind {
     method_decision,
     policy_update,
+    signature_request,
+};
+
+enum class AgentQSignatureRequestHistoryRecordKind {
+    none,
+    confirmation,
+    terminal,
+};
+
+enum class AgentQSignatureRequestHistoryTerminalResult {
+    none,
+    signed_success,
+    rejected,
+    timed_out,
+    signing_failed,
 };
 
 struct AgentQApprovalHistoryAppendInput {
@@ -58,12 +74,24 @@ struct AgentQPolicyUpdateHistoryAppendInput {
     const char* highest_action;
 };
 
+struct AgentQSignatureRequestHistoryAppendInput {
+    AgentQSignatureRequestHistoryRecordKind record_kind;
+    AgentQApprovalHistoryConfirmationKind confirmation_kind;
+    AgentQSignatureRequestHistoryTerminalResult terminal_result;
+    const char* chain;
+    const char* method;
+    const char* reason_code;
+    const char* payload_digest;
+};
+
 struct AgentQApprovalHistoryRecord {
     uint64_t sequence;
     uint64_t uptime_ms;
     AgentQApprovalHistoryEventKind event_kind;
     AgentQApprovalHistoryDecision decision;
     AgentQApprovalHistoryConfirmationKind confirmation_kind;
+    AgentQSignatureRequestHistoryRecordKind signature_record_kind;
+    AgentQSignatureRequestHistoryTerminalResult signature_terminal_result;
     char chain[kAgentQApprovalHistoryChainSize];
     char method[kAgentQApprovalHistoryMethodSize];
     char reason_code[kAgentQApprovalHistoryReasonCodeSize];
@@ -93,6 +121,9 @@ bool approval_history_append(
 bool approval_history_append_required_policy_update(
     const AgentQPolicyUpdateHistoryAppendInput& input,
     uint64_t uptime_ms);
+bool approval_history_append_required_signature_request(
+    const AgentQSignatureRequestHistoryAppendInput& input,
+    uint64_t uptime_ms);
 AgentQApprovalHistoryReadResult approval_history_read_page(
     uint64_t before_sequence,
     size_t limit,
@@ -101,5 +132,9 @@ bool approval_history_wipe();
 
 const char* approval_history_decision_to_string(AgentQApprovalHistoryDecision value);
 const char* approval_history_confirmation_kind_to_string(AgentQApprovalHistoryConfirmationKind value);
+const char* approval_history_signature_record_kind_to_string(
+    AgentQSignatureRequestHistoryRecordKind value);
+const char* approval_history_signature_terminal_result_to_string(
+    AgentQSignatureRequestHistoryTerminalResult value);
 
 }  // namespace agent_q

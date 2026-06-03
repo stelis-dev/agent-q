@@ -74,7 +74,7 @@ function defaultCore(overrides = {}) {
         deviceId,
         policy: {
           schema: "agentq.policy.v0",
-          policyId: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+          policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
           defaultAction: "reject",
           ruleCount: 0,
         },
@@ -90,7 +90,7 @@ function defaultCore(overrides = {}) {
         status: "applied",
         reasonCode: "device_confirmed",
         policy: {
-          policyHash: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+          policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
           ruleCount: 1,
           highestAction: "reject",
         },
@@ -284,7 +284,7 @@ test("Admin propose path forwards a server-built proposal through Gateway core",
           status: "applied",
           reasonCode: "device_confirmed",
           policy: {
-            policyHash: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+            policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
             ruleCount: 1,
             highestAction: "reject",
           },

@@ -846,7 +846,7 @@ Response:
   "type": "policy",
   "policy": {
     "schema": "agentq.policy.v0",
-    "policyId": "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+    "policyId": "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
     "defaultAction": "reject",
     "ruleCount": 0
   }
@@ -919,7 +919,7 @@ Response:
       "method": "sign_transaction",
       "reasonCode": "policy_rejected",
       "payloadDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      "policyHash": "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+      "policyHash": "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
       "ruleRef": "default"
     },
     {
@@ -929,7 +929,7 @@ Response:
       "eventKind": "policy_update",
       "result": "applied",
       "reasonCode": "device_confirmed",
-      "policyHash": "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+      "policyHash": "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
       "ruleCount": 1,
       "highestAction": "reject"
     }
@@ -1437,7 +1437,7 @@ When Firmware has a canonical policy proposal, `policy` is required:
   "status": "applied",
   "reasonCode": "device_confirmed",
   "policy": {
-    "policyHash": "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+    "policyHash": "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
     "ruleCount": 1,
     "highestAction": "reject"
   }

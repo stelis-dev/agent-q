@@ -17,7 +17,7 @@ import {
   sanitizePortHint,
 } from "./safe-text.js";
 
-export const CONFIG_SCHEMA_VERSION = 3;
+export const CONFIG_SCHEMA_VERSION = 0;
 
 // The label/purpose policy is defined once in safe-text.ts (the single source of
 // truth) and re-exported here so existing importers and tests continue to

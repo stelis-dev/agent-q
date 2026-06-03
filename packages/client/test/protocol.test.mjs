@@ -675,7 +675,7 @@ const policyLine = (policyOverrides = {}, topLevelOverrides = {}) =>
     type: "policy",
     policy: {
       schema: "agentq.policy.v0",
-      policyId: "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab",
+      policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
       defaultAction: "reject",
       ruleCount: 0,
       ...policyOverrides,
@@ -735,7 +735,7 @@ test("parseProtocolResponse rejects policy summaries carrying secret material", 
   }
 });
 
-const APPROVAL_DIGEST = "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab";
+const APPROVAL_DIGEST = "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3";
 
 const approvalHistoryRecord = (overrides = {}) => ({
   seq: "2",
@@ -786,6 +786,48 @@ const approvalHistoryPolicyUpdateLine = (recordOverrides = {}, topLevelOverrides
     ...topLevelOverrides,
   });
 
+const approvalHistorySignatureRequestConfirmationRecord = (overrides = {}) => ({
+  seq: "4",
+  uptimeMs: "12347",
+  timeSource: "uptime",
+  eventKind: "signature_request",
+  reasonCode: "device_confirmed",
+  recordKind: "confirmation",
+  confirmationKind: "local_pin",
+  chain: "sui",
+  method: "sign_transaction",
+  payloadDigest: APPROVAL_DIGEST,
+  ...overrides,
+});
+
+const approvalHistorySignatureRequestTerminalRecord = (overrides = {}) => ({
+  seq: "5",
+  uptimeMs: "12348",
+  timeSource: "uptime",
+  eventKind: "signature_request",
+  reasonCode: "device_confirmed",
+  recordKind: "terminal",
+  terminalResult: "signed",
+  chain: "sui",
+  method: "sign_transaction",
+  payloadDigest: APPROVAL_DIGEST,
+  ...overrides,
+});
+
+const approvalHistorySignatureRequestLine = (recordOverrides = {}, topLevelOverrides = {}, terminal = false) =>
+  JSON.stringify({
+    id: "req_approval_history",
+    version: 1,
+    type: "approval_history",
+    records: [
+      terminal
+        ? approvalHistorySignatureRequestTerminalRecord(recordOverrides)
+        : approvalHistorySignatureRequestConfirmationRecord(recordOverrides),
+    ],
+    hasMore: false,
+    ...topLevelOverrides,
+  });
+
 test("parseProtocolResponse accepts bounded approval history pages", () => {
   const response = assertApprovalHistoryResponse(
     parseProtocolResponse(approvalHistoryLine(), "req_approval_history"),
@@ -811,6 +853,27 @@ test("parseProtocolResponse accepts policy update approval history records", () 
   assert.equal(response.records[0].policyHash, APPROVAL_DIGEST);
   assert.equal(response.records[0].ruleCount, 1);
   assert.equal(response.records[0].highestAction, "reject");
+});
+
+test("parseProtocolResponse accepts signature request approval history records", () => {
+  const confirmation = assertApprovalHistoryResponse(
+    parseProtocolResponse(approvalHistorySignatureRequestLine(), "req_approval_history"),
+  );
+  assert.equal(confirmation.records[0].eventKind, "signature_request");
+  assert.equal(confirmation.records[0].recordKind, "confirmation");
+  assert.equal(confirmation.records[0].confirmationKind, "local_pin");
+  assert.equal(confirmation.records[0].payloadDigest, APPROVAL_DIGEST);
+
+  const terminal = assertApprovalHistoryResponse(
+    parseProtocolResponse(
+      approvalHistorySignatureRequestLine({}, {}, true),
+      "req_approval_history",
+    ),
+  );
+  assert.equal(terminal.records[0].eventKind, "signature_request");
+  assert.equal(terminal.records[0].recordKind, "terminal");
+  assert.equal(terminal.records[0].terminalResult, "signed");
+  assert.equal(terminal.records[0].payloadDigest, APPROVAL_DIGEST);
 });
 
 test("parseProtocolResponse rejects non-recordable policy update results", () => {
@@ -888,6 +951,29 @@ test("parseProtocolResponse rejects malformed policy update approval history rec
       () => parseProtocolResponse(approvalHistoryPolicyUpdateLine(recordOverride), "req_approval_history"),
       { code: "protocol_error" },
       `policy update approval history override should be rejected: ${JSON.stringify(recordOverride)}`,
+    );
+  }
+});
+
+test("parseProtocolResponse rejects malformed signature request approval history records", () => {
+  for (const recordOverride of [
+    { recordKind: "approved" },
+    { recordKind: "confirmation", confirmationKind: "policy" },
+    { recordKind: "confirmation", terminalResult: "signed" },
+    { recordKind: "terminal", confirmationKind: "local_pin" },
+    { recordKind: "terminal", terminalResult: "history_error" },
+    { recordKind: "terminal", terminalResult: null },
+    { payloadDigest: "not-a-digest" },
+    { policyHash: APPROVAL_DIGEST },
+    { decisionKind: "policy_rejected" },
+    { result: "signed" },
+    { ruleRef: "default" },
+    { sessionId: "session_abcdef0123456789" },
+  ]) {
+    assert.throws(
+      () => parseProtocolResponse(approvalHistorySignatureRequestLine(recordOverride), "req_approval_history"),
+      { code: "protocol_error" },
+      `signature request approval history override should be rejected: ${JSON.stringify(recordOverride)}`,
     );
   }
 });

@@ -7,8 +7,8 @@
 namespace agent_q {
 namespace {
 
-constexpr uint8_t kStoredPolicyFormatVersion = 1;
-constexpr uint8_t kStoredPolicySchemaV0 = 1;
+constexpr uint8_t kStoredPolicyFormatVersion = 0;
+constexpr uint8_t kStoredPolicySchemaV0 = 0;
 constexpr uint8_t kStoredPolicyActionReject = 0;
 constexpr uint8_t kStoredPolicyOperatorEq = 0;
 constexpr uint8_t kStoredPolicyOperatorIn = 1;

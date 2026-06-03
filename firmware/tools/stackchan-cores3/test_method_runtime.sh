@@ -237,7 +237,7 @@ bool read_active_policy_summary(AgentQStoredPolicySummary* out)
         return false;
     }
     out->schema = kAgentQStoredPolicySchema;
-    memcpy(out->policy_id, "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab", kAgentQPolicyIdSize);
+    memcpy(out->policy_id, "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3", kAgentQPolicyIdSize);
     out->default_action = "reject";
     out->rule_count = 0;
     return true;
@@ -281,7 +281,7 @@ int main(int argc, char** argv)
                   "sha256:0000000000000000000000000000000000000000000000000000000000000000") == 0,
            "default policy rejection history owns payload digest after return");
     expect(strcmp(policy_result.approval_history.policy_hash,
-                  "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab") == 0,
+                  "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3") == 0,
            "default policy rejection history owns policy hash after return");
     expect(strcmp(policy_result.approval_history.rule_ref, "default") == 0,
            "default policy rejection history records default rule ref");

@@ -287,11 +287,29 @@ void set_pending_policy_write(uint8_t commit_index, uint8_t slot, uint64_t seque
     pending[1] = 'Q';
     pending[2] = 'P';
     pending[3] = 'P';
-    pending[4] = 1;
+    pending[4] = 0;
     pending[5] = commit_index;
     pending[6] = slot;
     write_u64_be(sequence, pending.data() + 8);
     g_blobs["pol_p"] = pending;
+}
+
+bool first_commit_blob(std::string* key, std::vector<uint8_t>* blob)
+{
+    const char* keys[] = {"pol_c0", "pol_c1"};
+    for (const char* candidate : keys) {
+        auto found = g_blobs.find(candidate);
+        if (found != g_blobs.end()) {
+            if (key != nullptr) {
+                *key = candidate;
+            }
+            if (blob != nullptr) {
+                *blob = found->second;
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 agent_q::AgentQPolicyStoreWriteResult store_record(const std::vector<uint8_t>& record)
@@ -431,13 +449,29 @@ int main()
     expect(strcmp(summary.schema, "agentq.policy.v0") == 0, "policy schema");
     expect(strcmp(summary.default_action, "reject") == 0, "policy default action");
     expect(summary.rule_count == 0, "policy rule count");
-    expect(strcmp(summary.policy_id, "sha256:4d180eb74c192a7952def9d3932128bd91dac4ebbe9fe96e21eeb32671f441ab") == 0, "policy id");
+    expect(strcmp(summary.policy_id, "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3") == 0, "policy id");
+
+    std::string active_commit_key;
+    std::vector<uint8_t> active_commit_blob;
+    expect(first_commit_blob(&active_commit_key, &active_commit_blob), "stored policy has commit metadata");
+    expect(active_commit_blob.size() > 4 && active_commit_blob[4] == 0, "policy commit marker current version is zero");
+    g_blobs[active_commit_key][4] = 1;
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid,
+           "nonzero policy commit marker version fails closed");
+    g_blobs[active_commit_key] = active_commit_blob;
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active,
+           "restored current policy commit marker is active");
 
     decision = evaluate_active_policy();
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "default policy rejects");
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "default policy reason");
 
     set_pending_policy_write(0, 1, 2);
+    expect(g_blobs["pol_p"][4] == 0, "policy pending marker current version is zero");
+    g_blobs["pol_p"][4] = 1;
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid,
+           "nonzero policy pending marker version fails closed");
+    g_blobs["pol_p"][4] = 0;
     g_blobs["pol_c0"] = {0};
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "pending torn commit metadata preserves default policy");
     decision = evaluate_active_policy();

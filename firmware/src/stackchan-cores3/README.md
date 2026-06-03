@@ -42,9 +42,11 @@ The current implementation includes:
   confirmation, terminal cleanup, and one-shot payload handoff after the
   required confirmation history write succeeds. The history write receives
   value-owned request metadata and cannot move a cleared or different request
-  into the signing critical section. It is not
-  connected to USB protocol ingress, local PIN UI, approval-history storage,
-  signing service calls, Gateway/client/provider parsers, or capability
+  into the signing critical section. The approval-history store and parser can
+  represent bounded future signature-request confirmation and terminal records,
+  using the current approval-history storage layout only. The state owner is not
+  connected to USB protocol ingress, local PIN UI, signing service calls,
+  Gateway/client/provider signing parsers, or capability
   advertisement.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
   Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
@@ -253,7 +255,7 @@ tracked `agent_q_policy_proposal_parser.cpp` parser with ArduinoJson and the
 common policy canonicalizer, then verifies bounded serialized proposal-object parsing,
 reject-only action enforcement, method/field/operator validation, embedded-NUL
 string rejection, canonical unsigned integer policy values, serialized
-policy-object bounds, and canonical record compatibility. The parser does not
+policy-object bounds, and current canonical record validation. The parser does not
 implement raw protocol envelope handling, policy storage, pending update state,
 or approval UI by itself.
 
