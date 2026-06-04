@@ -415,14 +415,17 @@ get_status
     -> get_policy
     -> get_approval_history
     -> call_method*
+    -> request_signature*
   -> disconnect
 ```
 
 `call_method*` means zero or more method calls during an active session.
-
-Do not add provider-facing device-confirmed signing to this root current-flow
-baseline or describe it as product-complete until tracked implementation status
-and target hardware-smoke evidence for the current tree both say it is verified.
+`request_signature*` means zero or more provider-facing device-confirmed signing
+requests during an active session. It is not an MCP signing tool and must not
+make `call_method` return signatures. Do not describe provider-facing
+device-confirmed signing as product-complete until tracked implementation
+status and target hardware-smoke evidence for the current tree both say it is
+verified.
 
 Current intended structure:
 

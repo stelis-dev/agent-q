@@ -12,22 +12,29 @@ AgentQUsbSessionLossPlan usb_session_loss_plan(const AgentQUsbSessionLossInput& 
         input.local_pin == AgentQUsbSessionLossLocalPinPurpose::connect;
     const bool local_policy_update =
         input.local_pin == AgentQUsbSessionLossLocalPinPurpose::policy_update;
+    const bool local_signature_request =
+        input.local_pin == AgentQUsbSessionLossLocalPinPurpose::signature_request;
     const bool local_session_bound =
-        local_connect || local_policy_update;
+        local_connect || local_policy_update || local_signature_request;
     const bool protocol_session_bound = protocol_connect || protocol_policy_update;
+    const bool cancel_signature_request =
+        input.signature_request_active && !input.signature_request_critical;
 
     return AgentQUsbSessionLossPlan{
         input.session_active ||
             input.connect_approval_active ||
             protocol_session_bound ||
-            local_session_bound,
+            local_session_bound ||
+            input.signature_request_active,
         input.session_active,
         input.connect_approval_active,
         protocol_session_bound,
         local_session_bound,
         protocol_policy_update || local_policy_update,
+        cancel_signature_request,
         input.connect_approval_active,
         local_session_bound,
+        cancel_signature_request,
     };
 }
 

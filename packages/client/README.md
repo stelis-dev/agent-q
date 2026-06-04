@@ -34,10 +34,11 @@ and active policy commits.
   entrypoint. They are not part of the provider-facing device client facade.
 - Current StackChan CoreS3 capabilities report Sui account identity and no
   delegated signing methods in `chains[].methods`. Provider-facing
-  device-confirmed signing availability is not advertised, and the device
-  client facade does not expose `requestSignature`. The client parser accepts
-  rejected `call_method` results and rejects `call_method` approved signing
-  results, provider-facing `signatureRequests`, `signature_result` responses,
+  device-confirmed signing availability is advertised through top-level
+  `signatureRequests`, and the device client facade exposes `requestSignature`
+  for the provider-facing path. The client parser accepts rejected
+  `call_method` results and rejects `call_method` approved signing results. It
+  accepts `signature_result` only for `requestSignature` responses and rejects
   raw transaction bytes in results, decoded internals, session ids, request ids,
   and secret-like fields.
 - External client inputs do not accept caller-controlled timing fields. Gateway

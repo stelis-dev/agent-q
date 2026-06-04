@@ -94,24 +94,24 @@ Implemented today:
   boundary as MCP and is not a policy authority.
 - A bounded persistent approval-history read path. The current StackChan CoreS3
   target stores Firmware-authored method-decision metadata for validated
-  policy-rejected `call_method` decisions and recordable terminal metadata from
-  `propose_policy_update`. Signature-request confirmation and terminal metadata
-  remains schema-supported for the public-inactive internal partial runtime
-  modules, but current USB runtime does not create public signing records.
-  History does not store raw txBytes,
+  policy-rejected `call_method` decisions, recordable terminal metadata from
+  `propose_policy_update`, and confirmation/terminal metadata from the
+  `provider-exposed-not-product-active` `request_signature` path. History does
+  not store raw txBytes,
   decoded transactions, raw policy documents, full rule content, session ids,
   request ids, gateway names, PINs, secret material, or full policy documents.
   Local reset and error-state erase recovery wipe the history.
-- Public-inactive internal provider-facing device-confirmed signing modules for
-  bounded Sui `sign_transaction` through future `request_signature` activation.
-  Firmware standalone modules derive the review summary and account binding from
-  `txBytes` and stored material, model local PIN confirmation, required history
-  before signing, terminal metadata, and cleanup helpers. These modules are not
-  wired into the current USB request-server runtime. The current public USB
-  dispatcher, client/provider parser/API, `signature_result` writer, and
-  capability advertisement are inactive. MCP has no signing tool. Future public
-  activation must include current-tree hardware smoke before product-complete
-  status.
+- Provider-facing device-confirmed signing has
+  `provider-exposed-not-product-active` status for bounded Sui
+  `sign_transaction` through the shared `request_signature` path. Firmware
+  derives the review summary and account binding from `txBytes` and stored
+  material, models local PIN confirmation, requires history before signing,
+  emits terminal metadata, and owns cleanup. The current public USB dispatcher,
+  client/provider parser/API, `signature_result` writer, and provider-facing
+  `signatureRequests` capability are wired in source. MCP has no signing tool
+  and fails closed on provider-facing signing metadata. Current-tree
+  positive/reject/timeout/session-loss hardware smoke is recorded; product-active
+  status still requires LVGL visual evidence.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
@@ -219,14 +219,15 @@ Signing requests have two separate authority models:
 - Delegated policy requests: Firmware evaluates bounded request facts against
   active policy. This path is for agent-delegated authority and does not imply
   per-request device-local confirmation.
-- Device-confirmed requests: future provider-facing signing activation must
-  require Firmware-owned device-local confirmation for a bounded signing request
-  through the shared `request_signature` protocol request. The confirmation does
-  not prove the request came from a trustworthy host, dapp, provider, agent, or
-  upstream user intent. Provider-facing signing must use this model, while MCP
-  agent-facing `call_method` remains the delegated policy path and exposes no
-  signing tool. The internal partial runtime models local PIN confirmation and does
-  not reuse the connect-only PIN setting as the signing confirmation policy.
+- Device-confirmed requests: provider-facing signing uses the shared
+  `request_signature` protocol request and must require Firmware-owned
+  device-local confirmation for a bounded signing request. The confirmation
+  does not prove the request came from a trustworthy host, dapp, provider,
+  agent, or upstream user intent. Provider-facing signing must use this model,
+  while MCP agent-facing `call_method` remains the delegated policy path and
+  exposes no signing tool. The `provider-exposed-not-product-active` runtime
+  models local PIN confirmation and does not reuse the connect-only PIN setting
+  as the signing confirmation policy.
 
 Policy actions must not bridge these models. A policy document may use only
 action values accepted by the current schema. Any other action value is invalid
@@ -512,9 +513,9 @@ Enforcement today:
   those tests.
 - Public signing inside `call_method` is not implemented. The current Sui
   `sign_transaction` `call_method` path is a session-scoped validation and
-  rejection path. Provider-facing device-confirmed signing is not currently
-  exposed; future activation must use a separate `request_signature` path for
-  the bounded restricted transfer shape.
+  rejection path. Provider-facing device-confirmed signing is exposed only
+  through the separate `request_signature` path for the bounded restricted
+  transfer shape; it is not an MCP signing tool.
   Arbitrary Sui transactions, agent-request signing output,
   personal-message signing, and other chains are not implemented. The top-level
   tool allowlist does not grant authority to method names carried inside
@@ -536,8 +537,8 @@ Button Device:
 Display Approval Device:
 
 - Can show a summary for flows that explicitly require local approval, such as
-  connection establishment, policy update proposals, or future provider-facing
-  `request_signature` signing activation.
+  connection establishment, policy update proposals, or provider-facing
+  `request_signature` signing.
 
 The current StackChan CoreS3 target has a display and touch, so it is closest to
 the Display Approval tier. "Minimal Device" describes a future or different

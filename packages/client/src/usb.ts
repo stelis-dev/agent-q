@@ -8,6 +8,7 @@ import {
   assertMethodResultResponse,
   assertPolicyUpdateResultResponse,
   assertPolicyResponse,
+  assertSignatureResultResponse,
   assertConnectResponse,
   assertDisconnectResponse,
   assertIdentifyDeviceResponse,
@@ -19,6 +20,7 @@ import {
   makeGetAccountsRequest,
   makeGetApprovalHistoryRequest,
   makeProposePolicyUpdateRequest,
+  makeRequestSignatureRequest,
   makeIdentifyDeviceRequest,
   makeGetPolicyRequest,
   makeGetStatusRequest,
@@ -37,6 +39,8 @@ import {
   type PolicyResponse,
   type ProtocolRequest,
   type ProtocolResponse,
+  type RequestSignatureParams,
+  type SignatureResultResponse,
   type StatusResponse,
 } from "./protocol.js";
 
@@ -138,6 +142,12 @@ export interface UsbSerialDriver {
     policy: Record<string, unknown>,
     deadlineMs: number,
   ): Promise<PolicyUpdateResultResponse>;
+  requestSignature(
+    portPath: string,
+    sessionId: string,
+    params: RequestSignatureParams,
+    deadlineMs: number,
+  ): Promise<SignatureResultResponse>;
 }
 
 export class SerialPortUsbDriver implements UsbSerialDriver {
@@ -227,6 +237,15 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     deadlineMs: number,
   ): Promise<PolicyUpdateResultResponse> {
     return proposePolicyUpdateOverSerial(portPath, sessionId, policy, deadlineMs);
+  }
+
+  async requestSignature(
+    portPath: string,
+    sessionId: string,
+    params: RequestSignatureParams,
+    deadlineMs: number,
+  ): Promise<SignatureResultResponse> {
+    return requestSignatureOverSerial(portPath, sessionId, params, deadlineMs);
   }
 }
 
@@ -372,6 +391,12 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         driver.proposePolicyUpdate(portPath, sessionId, policy, deadlineMs),
         deadlineMs,
         "USB policy update proposal exceeded its timeout.",
+      ),
+    requestSignature: (portPath, sessionId, params, deadlineMs) =>
+      raceDeadline(
+        driver.requestSignature(portPath, sessionId, params, deadlineMs),
+        deadlineMs,
+        "USB request_signature exceeded its timeout.",
       ),
   };
 }
@@ -555,6 +580,16 @@ async function proposePolicyUpdateOverSerial(
 ): Promise<PolicyUpdateResultResponse> {
   const request = makeProposePolicyUpdateRequest(sessionId, policy);
   return requestOverSerial(portPath, request, deadlineMs, (response) => assertPolicyUpdateResultResponse(response));
+}
+
+async function requestSignatureOverSerial(
+  portPath: string,
+  sessionId: string,
+  params: RequestSignatureParams,
+  deadlineMs: number,
+): Promise<SignatureResultResponse> {
+  const request = makeRequestSignatureRequest(sessionId, params);
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertSignatureResultResponse(response));
 }
 
 async function requestOverSerial<TResponse extends ProtocolResponse>(

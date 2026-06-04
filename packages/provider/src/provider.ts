@@ -10,6 +10,7 @@ import type {
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
+  RequestSignatureResult,
   ScanDevicesResult,
   SelectDeviceResult,
   DeviceClientCore,
@@ -27,6 +28,7 @@ export type AgentQProviderCore = Pick<
   | "getAccounts"
   | "getPolicy"
   | "getApprovalHistory"
+  | "requestSignature"
 >;
 
 export interface AgentQProviderOptions {
@@ -44,6 +46,7 @@ export type {
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
+  RequestSignatureResult,
   ScanDevicesResult,
   SelectDeviceResult,
 };
@@ -114,6 +117,17 @@ export class AgentQProvider {
     beforeSeq?: string;
   } = {}): Promise<GetApprovalHistoryResult> {
     return this.core.getApprovalHistory(input);
+  }
+
+  requestSignature(input: {
+    deviceId?: string;
+    purpose?: string;
+    chain: "sui";
+    method: "sign_transaction";
+    network: "mainnet" | "testnet" | "devnet" | "localnet";
+    txBytes: string;
+  }): Promise<RequestSignatureResult> {
+    return this.core.requestSignature(input);
   }
 }
 

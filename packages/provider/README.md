@@ -3,8 +3,8 @@
 `@stelis/agent-q-provider` is the application-facing Agent-Q adapter package.
 
 It exposes the current device discovery, device selection, connection,
-read-only session data, and approval-history capabilities through a small
-provider object.
+read-only session data, approval-history, and provider-facing
+device-confirmed signing transport through a small provider object.
 
 The provider does not store signing keys and does not make policy decisions.
 Agent-Q Firmware remains the authority for keys, policy evaluation,
@@ -27,11 +27,13 @@ device-local approval, signing, and active policy commits.
 - `getAccounts`
 - `getPolicy`
 - `getApprovalHistory`
+- `requestSignature`
 
-Policy update proposals and provider-facing signing are not exposed by this
-provider. Future signing activation must add a separate device-confirmed API
-only after the Firmware USB dispatcher, client/provider parser/API, capability
-advertisement, and current-tree hardware smoke are all complete.
+Policy update proposals and raw delegated `callMethod` access are not exposed by
+this provider. Provider-facing signing uses only `requestSignature`, which
+passes a bounded request to Firmware for device-local review, local PIN
+confirmation, required history, and signing. The provider does not decide
+whether signing is allowed.
 
 Provider requests do not accept caller-controlled timing fields. Firmware-owned
 device-local approval windows remain 30 seconds; Gateway uses fixed internal
@@ -47,5 +49,17 @@ npm --workspace @stelis/agent-q-provider run build
 npm --workspace @stelis/agent-q-provider test
 ```
 
-No provider hardware signing smoke test is tracked while public provider
-signing is inactive.
+The current source tree tracks an opt-in hardware smoke test for
+`provider-exposed-not-product-active` provider signing:
+
+```sh
+AGENTQ_HW_PROVIDER_SIGNATURE=1 \
+AGENTQ_HW_PROVIDER_SIGNATURE_SCENARIO=positive \
+AGENTQ_HW_PROVIDER_SIGNATURE_TX_BYTES=<base64> \
+node --test test/hardware-provider-signature-smoke.test.mjs
+```
+
+Supported scenarios are `positive`, `reject`, `timeout`, and `disconnect`.
+The `disconnect` scenario verifies transport session end, post-reconnect idle
+status, fresh connection, capability recovery, and absence of new signature
+confirmation or terminal history.

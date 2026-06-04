@@ -45,13 +45,17 @@ agent_q::AgentQUsbSessionLossPlan plan(
     bool session_active,
     bool connect_approval_active,
     agent_q::AgentQUsbSessionLossProtocolPinPurpose protocol_pin,
-    agent_q::AgentQUsbSessionLossLocalPinPurpose local_pin)
+    agent_q::AgentQUsbSessionLossLocalPinPurpose local_pin,
+    bool signature_request_active = false,
+    bool signature_request_critical = false)
 {
     return agent_q::usb_session_loss_plan(agent_q::AgentQUsbSessionLossInput{
         session_active,
         connect_approval_active,
         protocol_pin,
         local_pin,
+        signature_request_active,
+        signature_request_critical,
     });
 }
 
@@ -67,7 +71,8 @@ int main()
     expect(!p.relevant, "idle state is not USB-session-loss relevant");
     expect(!p.clear_session && !p.clear_connect_approval && !p.clear_protocol_pin &&
                !p.wipe_local_pin_auth && !p.clear_policy_update_flow &&
-               !p.clear_decision_panel && !p.clear_local_pin_panel,
+               !p.cancel_signature_request && !p.clear_decision_panel &&
+               !p.clear_local_pin_panel && !p.clear_signature_review_panel,
            "idle plan has no cleanup actions");
 
     p = plan(true, false, ProtocolPurpose::none, LocalPurpose::none);
@@ -104,6 +109,22 @@ int main()
                p.clear_local_pin_panel,
            "local policy-update PIN wipes local PIN and policy update flow");
     expect(!p.clear_protocol_pin, "local-only policy update does not imply protocol cleanup");
+
+    p = plan(false, false, ProtocolPurpose::none, LocalPurpose::none, true, false);
+    expect(p.relevant && p.cancel_signature_request && p.clear_signature_review_panel,
+           "pre-critical signature request is canceled with signature review cleanup");
+    expect(!p.wipe_local_pin_auth && !p.clear_policy_update_flow,
+           "signature review cleanup does not imply unrelated PIN or policy cleanup");
+
+    p = plan(false, false, ProtocolPurpose::none, LocalPurpose::signature_request, true, false);
+    expect(p.relevant && p.wipe_local_pin_auth && p.cancel_signature_request &&
+               p.clear_local_pin_panel && p.clear_signature_review_panel,
+           "signature PIN cleanup wipes local PIN and cancels pre-critical signature request");
+
+    p = plan(false, false, ProtocolPurpose::none, LocalPurpose::none, true, true);
+    expect(p.relevant && !p.wipe_local_pin_auth && !p.cancel_signature_request &&
+               !p.clear_local_pin_panel && !p.clear_signature_review_panel,
+           "signature critical section is not cancelable by USB session-loss cleanup");
 
     p = plan(true, true, ProtocolPurpose::policy_update, LocalPurpose::policy_update);
     expect(p.relevant && p.clear_session && p.clear_connect_approval &&

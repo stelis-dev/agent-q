@@ -21,11 +21,15 @@ import {
   type PolicyUpdateResultResponse,
   type PolicySummary,
   ProtocolError,
+  type RequestSignatureParams,
+  type SignatureRequestCapability,
+  type SignatureResultResponse,
   type StatusResponse,
   validateApprovalHistoryInput,
   validateCallMethodInput,
   validatePolicyUpdateProposalInput,
   validateProposePolicyUpdateRequestInput,
+  validateRequestSignatureInput,
 } from "./protocol.js";
 import {
   INTERNAL_USB_DEADLINE_MS,
@@ -185,6 +189,8 @@ export const CALL_METHOD_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REAS
 export type CallMethodSessionEndedReason = GetAccountsSessionEndedReason;
 export const PROPOSE_POLICY_UPDATE_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
 export type ProposePolicyUpdateSessionEndedReason = GetAccountsSessionEndedReason;
+export const REQUEST_SIGNATURE_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
+export type RequestSignatureSessionEndedReason = GetAccountsSessionEndedReason;
 type RuntimeSessionMirrorEndReason = GetAccountsSessionEndedReason;
 
 export type DisconnectDeviceResult =
@@ -198,6 +204,7 @@ export type GetCapabilitiesResult =
       source: "live";
       deviceId: string;
       capabilities: CapabilityChain[];
+      signatureRequests?: SignatureRequestCapability[];
     }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: GetCapabilitiesSessionEndedReason };
@@ -248,6 +255,30 @@ export type ProposePolicyUpdateResult =
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: ProposePolicyUpdateSessionEndedReason };
 
+type RequestSignatureTerminalResponse = Extract<
+  SignatureResultResponse,
+  { status: "rejected" | "timed_out" | "failed" }
+>;
+export type RequestSignatureResult =
+  | {
+      source: "live";
+      deviceId: string;
+      status: "signed";
+      reasonCode: Extract<SignatureResultResponse, { status: "signed" }>["reasonCode"];
+      chain: Extract<SignatureResultResponse, { status: "signed" }>["chain"];
+      method: Extract<SignatureResultResponse, { status: "signed" }>["method"];
+      signature: string;
+    }
+  | {
+      source: "live";
+      deviceId: string;
+      status: RequestSignatureTerminalResponse["status"];
+      reasonCode: RequestSignatureTerminalResponse["reasonCode"];
+      error: RequestSignatureTerminalResponse["error"];
+    }
+  | { source: "not_connected"; deviceId: string; reason: "not_connected" }
+  | { source: "session_ended"; deviceId: string; reason: RequestSignatureSessionEndedReason };
+
 export const DEFAULT_GATEWAY_NAME = "Agent-Q Gateway";
 const INTERNAL_DEVICE_APPROVAL_WINDOW_MS = 30000;
 const INTERNAL_TRANSPORT_MARGIN_MS = 5000;
@@ -256,6 +287,7 @@ const INTERNAL_APPROVAL_TRANSPORT_DEADLINE_MS =
   INTERNAL_DEVICE_APPROVAL_WINDOW_MS + INTERNAL_TRANSPORT_MARGIN_MS;
 const INTERNAL_DISCONNECT_DEADLINE_MS = INTERNAL_REQUEST_WINDOW_MS;
 const INTERNAL_POLICY_UPDATE_DEADLINE_MS = INTERNAL_APPROVAL_TRANSPORT_DEADLINE_MS;
+const INTERNAL_REQUEST_SIGNATURE_DEADLINE_MS = INTERNAL_APPROVAL_TRANSPORT_DEADLINE_MS;
 const INTERNAL_CALL_METHOD_DEADLINE_MS = INTERNAL_REQUEST_WINDOW_MS;
 const INTERNAL_CONNECT_DEADLINE_MS = INTERNAL_APPROVAL_TRANSPORT_DEADLINE_MS;
 
@@ -602,6 +634,7 @@ export class GatewayCore {
         source: "live",
         deviceId: target.deviceId,
         capabilities: response.chains,
+        ...(response.signatureRequests === undefined ? {} : { signatureRequests: response.signatureRequests }),
       };
     } catch (error) {
       const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
@@ -855,6 +888,76 @@ export class GatewayCore {
     }
   }
 
+  async requestSignature(input: {
+    deviceId?: string;
+    purpose?: string;
+    chain: RequestSignatureParams["chain"];
+    method: RequestSignatureParams["method"];
+    network: RequestSignatureParams["network"];
+    txBytes: string;
+  }): Promise<RequestSignatureResult> {
+    const target = await this.resolveTargetDevice(input);
+    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
+    const requestSignatureDeadlineMs = INTERNAL_REQUEST_SIGNATURE_DEADLINE_MS;
+
+    const session = this.peekRuntimeSession(target.deviceId);
+    if (session === null) {
+      return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
+    }
+
+    rejectUnsupportedInputFields(input, REQUEST_SIGNATURE_INPUT_KEYS, "requestSignature");
+    const params = validateRequestSignatureGatewayInput({
+      chain: input.chain,
+      method: input.method,
+      network: input.network,
+      txBytes: input.txBytes,
+    });
+
+    let matchingPort: UsbStatusResult | undefined;
+    try {
+      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
+    } catch (error) {
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
+      if (reason !== null) {
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+
+    try {
+      const response = await this.usbDriver.requestSignature(
+        matchingPort.portPath,
+        session.sessionId,
+        params,
+        requestSignatureDeadlineMs,
+      );
+      if (response.status === "signed") {
+        return {
+          source: "live",
+          deviceId: target.deviceId,
+          status: "signed",
+          reasonCode: response.reasonCode,
+          chain: response.chain,
+          method: response.method,
+          signature: response.signature,
+        };
+      }
+      return {
+        source: "live",
+        deviceId: target.deviceId,
+        status: response.status,
+        reasonCode: response.reasonCode,
+        error: response.error,
+      };
+    } catch (error) {
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
+      if (reason !== null) {
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+  }
+
   private peekRuntimeSession(deviceId: string): RuntimeSession | null {
     const session = this.runtimeSessions.get(deviceId);
     if (session === undefined) {
@@ -1079,6 +1182,17 @@ function validateCallMethodGatewayInput(chain: unknown, method: unknown, params:
   }
 }
 
+function validateRequestSignatureGatewayInput(input: unknown): RequestSignatureParams {
+  try {
+    return validateRequestSignatureInput(input);
+  } catch (error) {
+    if (error instanceof ProtocolError) {
+      throw new GatewayError(error.code, error.message, false);
+    }
+    throw error;
+  }
+}
+
 const NO_INPUT_KEYS = new Set<string>();
 const DEVICE_SCOPED_INPUT_KEYS = new Set(["deviceId", "purpose"]);
 const CONNECT_DEVICE_INPUT_KEYS = new Set(["deviceId", "purpose", "gatewayName"]);
@@ -1086,6 +1200,7 @@ const SET_DEVICE_METADATA_INPUT_KEYS = new Set(["deviceId", "label"]);
 const GET_APPROVAL_HISTORY_INPUT_KEYS = new Set(["deviceId", "purpose", "limit", "beforeSeq"]);
 const CALL_METHOD_INPUT_KEYS = new Set(["deviceId", "purpose", "chain", "method", "params"]);
 const PROPOSE_POLICY_UPDATE_INPUT_KEYS = new Set(["deviceId", "purpose", "policy"]);
+const REQUEST_SIGNATURE_INPUT_KEYS = new Set(["deviceId", "purpose", "chain", "method", "network", "txBytes"]);
 
 function rejectUnsupportedInputFields(
   input: unknown,

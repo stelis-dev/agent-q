@@ -96,10 +96,11 @@ Agent-Q Firmware is installed on hardware.
 Firmware is the authority component: it stores device-held key material and
 policies, evaluates requests locally, handles device-local approval for
 implemented sensitive flows, and returns Firmware-authored results to Gateway.
-Public-inactive internal partial runtime modules exist for future
-provider-facing device-confirmed signing of the current bounded Sui
-`sign_transaction` transfer shape, but the public USB dispatcher,
-client/provider API, and capability advertisement are inactive. MCP signing
+Provider-facing device-confirmed signing for the current bounded Sui
+`sign_transaction` transfer shape has `provider-exposed-not-product-active`
+status through `request_signature`.
+Current-tree provider positive/reject/timeout/session-loss smoke is recorded;
+LVGL visual evidence is still pending before product-active status. MCP signing
 tools and `call_method` signing output are not available.
 
 Firmware source is organized by hardware under `firmware/src/`.
@@ -115,7 +116,7 @@ tracked Agent-Q overlay, and build.
 Gateway and Firmware communicate through the shared protocol in
 `specs/PROTOCOL.md`.
 
-The protocol has a clear session flow:
+The delegated MCP-facing baseline has a clear session flow:
 
 ```text
 get_status
@@ -130,10 +131,14 @@ get_status
 ```
 
 Provider-facing device-confirmed signing must use a separate
-`request_signature` path only after implementation status and target hardware
-evidence mark the current source tree verified. The current public Gateway,
-provider, MCP, and Firmware USB capability surfaces do not expose signing. It is
-not an MCP signing tool and does not make `call_method` return signatures.
+`request_signature` path. In the current source tree this path is wired for the
+bounded Sui `sign_transaction` shape through provider, Gateway/client, and
+StackChan CoreS3 Firmware, but product-active status still requires current-tree
+firmware build, flash, target hardware smoke, and visual review evidence. The
+current tree has provider positive/reject/timeout/session-loss smoke recorded;
+LVGL visual evidence is still pending. The provider-facing source flow adds
+`request_signature*` during an approved session. It is not an MCP signing tool
+and does not make `call_method` return signatures.
 
 Chains, transports, and hardware targets must fit this protocol instead of
 creating separate product-level APIs.
@@ -179,24 +184,23 @@ Implemented:
   summary, approval history, and the current reject-policy proposal template. It
   is not a policy authority.
 - An application-facing provider package for device discovery, connection,
-  read-only session data, and approval-history. The provider does not store
-  keys, update policy, or decide whether signing is allowed.
+  read-only session data, approval-history, and provider-facing
+  `requestSignature` transport. The provider does not store keys, update
+  policy, or decide whether signing is allowed.
 - A common host-tested policy evaluator and default-reject runtime boundary.
 
 Under current-source verification:
 
-- Public-inactive internal Firmware partial runtime modules for a future
-  provider-facing device-confirmed `request_signature` path exist for the
-  bounded Sui `sign_transaction` transfer shape. They include standalone bounded
-  validation, state-first ingress decisions, RAM-only request flow,
-  clear-signing review model, confirmation, signing handoff, terminal-metadata,
-  and cleanup helpers for future
-  activation. Those helpers are not wired into the StackChan CoreS3 USB server
-  runtime: the public USB dispatcher, `signature_result` writer, provider
-  `requestSignature` API, client request/response parser, and
-  `signatureRequests` capability are not active. Current-tree hardware smoke is
-  required before any future public activation can be treated as
-  product-complete.
+- Provider-facing device-confirmed `request_signature` has
+  `provider-exposed-not-product-active` status for the bounded Sui
+  `sign_transaction` transfer shape. The current source includes
+  validation, state-first ingress, RAM-only request flow, clear-signing review,
+  local PIN confirmation, required pre-signing history, signing-critical
+  handoff, terminal history, `signature_result`, provider `requestSignature`,
+  client parser/builder, and provider-facing `signatureRequests` capability.
+  Current-tree provider positive/reject/timeout/session-loss smoke has been
+  recorded; LVGL visual evidence is still required before this can be treated
+  as product-active.
 
 Not yet implemented: MCP signing tools, `call_method` signing output,
 arbitrary Sui transaction signing, sponsored Sui transaction signing, Sui

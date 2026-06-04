@@ -7,6 +7,7 @@ import {
   assertMethodResultResponse,
   assertPolicyResponse,
   assertPolicyUpdateResultResponse,
+  assertSignatureResultResponse,
   assertConnectResponse,
   assertDisconnectResponse,
   assertStatusResponse,
@@ -27,6 +28,7 @@ import {
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
   makeProposePolicyUpdateRequest,
+  makeRequestSignatureRequest,
   MAX_SESSION_TTL_MS,
   parseProtocolResponse,
   sanitizeDisplayText,
@@ -409,6 +411,49 @@ test("makeCallMethodRequest validates Sui sign_transaction params", () => {
   );
 });
 
+test("makeRequestSignatureRequest builds bounded device-confirmed signing requests", () => {
+  const params = {
+    chain: "sui",
+    method: "sign_transaction",
+    network: "devnet",
+    txBytes: CANONICAL_TX_BYTES_BASE64,
+  };
+  const request = makeRequestSignatureRequest(
+    "session_abcdef0123456789",
+    params,
+    "req_signature_1",
+  );
+  assert.deepEqual(request, {
+    id: "req_signature_1",
+    version: 1,
+    type: "request_signature",
+    sessionId: "session_abcdef0123456789",
+    params,
+  });
+
+  assert.throws(() => makeRequestSignatureRequest("not_a_session", params), /sessionId/);
+  assert.throws(
+    () => makeRequestSignatureRequest("session_abcdef0123456789", { ...params, method: "sign_personal_message" }),
+    /unsupported/,
+  );
+  assert.throws(
+    () => makeRequestSignatureRequest("session_abcdef0123456789", { ...params, timeoutMs: 30000 }),
+    /unsupported fields/,
+  );
+  assert.throws(
+    () => makeRequestSignatureRequest("session_abcdef0123456789", { ...params, approvalTimeoutMs: 30000 }),
+    /unsupported fields/,
+  );
+  assert.throws(
+    () => makeRequestSignatureRequest("session_abcdef0123456789", { ...params, durationMs: 30000 }),
+    /unsupported fields/,
+  );
+  assert.throws(
+    () => makeRequestSignatureRequest("session_abcdef0123456789", { ...params, privateKey: "must-not-forward" }),
+    /secret material/,
+  );
+});
+
 test("makeProposePolicyUpdateRequest builds admin proposal requests without chain authority", () => {
   const policy = {
     schema: "agentq.policy.v0",
@@ -493,9 +538,12 @@ const capabilitiesLine = (chainOverrides = {}, accountOverrides = {}, responseOv
     ...responseOverrides,
   });
 
-test("parseProtocolResponse accepts a valid capabilities response without public methods", () => {
+test("parseProtocolResponse accepts a valid capabilities response with provider signing metadata", () => {
   const response = assertCapabilitiesResponse(
-    parseProtocolResponse(capabilitiesLine(), "req_capabilities"),
+    parseProtocolResponse(
+      capabilitiesLine({}, {}, { signatureRequests: [{ chain: "sui", method: "sign_transaction" }] }),
+      "req_capabilities",
+    ),
   );
   assert.equal(response.type, "capabilities");
   assert.equal(response.chains.length, 1);
@@ -504,7 +552,7 @@ test("parseProtocolResponse accepts a valid capabilities response without public
   assert.equal(response.chains[0].accounts[0].keyScheme, "ed25519");
   assert.equal(response.chains[0].accounts[0].derivationPath, "m/44'/784'/0'/0'/0'");
   assert.deepEqual(response.chains[0].methods, []);
-  assert.equal("signatureRequests" in response, false);
+  assert.deepEqual(response.signatureRequests, [{ chain: "sui", method: "sign_transaction" }]);
 });
 
 test("parseProtocolResponse rejects unsupported capabilities", () => {
@@ -537,9 +585,21 @@ test("parseProtocolResponse rejects unsupported capabilities", () => {
     { code: "protocol_error" },
   );
   assert.throws(
+    () => parseProtocolResponse(capabilitiesLine({}, {}, { signatureRequests: [] }), "req_capabilities"),
+    { code: "protocol_error" },
+  );
+  assert.throws(
     () =>
       parseProtocolResponse(
-        capabilitiesLine({}, {}, { signatureRequests: [{ chain: "sui", method: "sign_transaction" }] }),
+        capabilitiesLine({}, {}, { signatureRequests: [{ chain: "sui", method: "sign_personal_message" }] }),
+        "req_capabilities",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        capabilitiesLine({}, {}, { signatureRequests: [{ chain: "sui", method: "sign_transaction", txBytes: "AQID" }] }),
         "req_capabilities",
       ),
     { code: "protocol_error" },
@@ -1199,7 +1259,85 @@ test("parseProtocolResponse rejects unsupported method_result shapes", () => {
   }
 });
 
-test("parseProtocolResponse does not expose signature_result responses before product activation", () => {
+test("parseProtocolResponse accepts bounded signature_result product outcomes", () => {
+  const signed = assertSignatureResultResponse(
+    parseProtocolResponse(
+      JSON.stringify({
+        id: "req_signature",
+        version: 1,
+        type: "signature_result",
+        status: "signed",
+        reasonCode: "device_confirmed",
+        chain: "sui",
+        method: "sign_transaction",
+        signature: Buffer.alloc(97, 1).toString("base64"),
+      }),
+      "req_signature",
+    ),
+  );
+  assert.equal(signed.status, "signed");
+  assert.equal(signed.reasonCode, "device_confirmed");
+  assert.equal(signed.signature, Buffer.alloc(97, 1).toString("base64"));
+
+  for (const terminal of [
+    {
+      status: "rejected",
+      reasonCode: "device_rejected",
+      message: "The signing request was rejected on the device.",
+    },
+    {
+      status: "timed_out",
+      reasonCode: "device_timed_out",
+      message: "The signing request timed out on the device.",
+    },
+    {
+      status: "failed",
+      reasonCode: "signing_failed",
+      message: "The device could not produce a signature.",
+    },
+  ]) {
+    const response = assertSignatureResultResponse(
+      parseProtocolResponse(
+        JSON.stringify({
+          id: "req_signature",
+          version: 1,
+          type: "signature_result",
+          status: terminal.status,
+          reasonCode: terminal.reasonCode,
+          error: {
+            code: terminal.reasonCode,
+            message: terminal.message,
+          },
+        }),
+        "req_signature",
+      ),
+    );
+    assert.equal(response.status, terminal.status);
+    assert.equal(response.reasonCode, terminal.reasonCode);
+    if (response.status !== "signed") {
+      assert.equal(response.error.code, terminal.reasonCode);
+    }
+  }
+});
+
+test("parseProtocolResponse rejects signature_result leaks and inconsistent terminal errors", () => {
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        JSON.stringify({
+          id: "req_signature",
+          version: 1,
+          type: "signature_result",
+          status: "signed",
+          reasonCode: "device_confirmed",
+          chain: "sui",
+          method: "sign_transaction",
+          signature: Buffer.alloc(96, 1).toString("base64"),
+        }),
+        "req_signature",
+      ),
+    { code: "protocol_error" },
+  );
   assert.throws(
     () =>
       parseProtocolResponse(
@@ -1212,6 +1350,44 @@ test("parseProtocolResponse does not expose signature_result responses before pr
           chain: "sui",
           method: "sign_transaction",
           signature: Buffer.alloc(97, 1).toString("base64"),
+          txBytes: CANONICAL_TX_BYTES_BASE64,
+        }),
+        "req_signature",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        JSON.stringify({
+          id: "req_signature",
+          version: 1,
+          type: "signature_result",
+          status: "rejected",
+          reasonCode: "device_rejected",
+          error: {
+            code: "device_timed_out",
+            message: "The signing request timed out on the device.",
+          },
+        }),
+        "req_signature",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        JSON.stringify({
+          id: "req_signature",
+          version: 1,
+          type: "signature_result",
+          status: "rejected",
+          reasonCode: "device_rejected",
+          sessionId: "session_abcdef0123456789",
+          error: {
+            code: "device_rejected",
+            message: "The signing request was rejected on the device.",
+          },
         }),
         "req_signature",
       ),

@@ -231,13 +231,16 @@ Allowed:
 This state is not signing approval. In the current StackChan CoreS3
 implementation, `provisioned` enables `connect`, `disconnect`, read-only
 `get_capabilities` for Sui account identity with no delegated public methods
-and no provider-facing `signatureRequests`, read-only `get_accounts` (Sui
-Ed25519 account 0),
+and provider-facing `signatureRequests`, read-only `get_accounts` (Sui Ed25519
+account 0),
 read-only `get_policy` for the committed active policy summary, read-only
 `get_approval_history` for Firmware-owned persistent decision metadata, and the
 session-scoped `call_method` rejected-path method runtime. The separate
-provider-facing `request_signature` path has public-inactive internal partial
-runtime modules but is not currently public or allowed as a protocol entrypoint.
+provider-facing `request_signature` path has
+`provider-exposed-not-product-active` status for the bounded Sui
+`sign_transaction` shape. Current-tree provider positive/reject/timeout/session-loss
+hardware smoke is recorded, but product-active status still requires LVGL visual
+evidence.
 Gateway must not evaluate policy. A corrupt, unreadable, missing,
 or invalid current active policy is a persistent-material consistency
 error, not a normal `provisioned` state. Provisioned DEV_PROFILE devices that
@@ -251,13 +254,12 @@ bounded request facts against Firmware-owned active policy. It does not perform
 per-request device-local confirmation and does not prove the upstream user,
 dapp, provider, host, or agent intent that produced the request.
 
-Future device-confirmed signing activation must use the separate shared
-`request_signature` protocol request, not a `call_method` mode, policy action,
-request-authority flag, or compatibility fallback. The current public protocol
-entrypoint is inactive. The internal partial runtime modules assume source
-state must be material-backed `provisioned` with a matching active session. The
-target state after every terminal outcome remains `provisioned`, unless the
-terminal outcome detects persistent material inconsistency.
+Device-confirmed signing must use the separate shared `request_signature`
+protocol request, not a `call_method` mode, policy action, request-authority
+flag, or compatibility fallback. The source state must be material-backed
+`provisioned` with a matching active session. The target state after every
+terminal outcome remains `provisioned`, unless the terminal outcome detects
+persistent material inconsistency.
 
 Required owners for the device-confirmed signing pending state:
 
@@ -309,10 +311,9 @@ Failure requirements for a device-confirmed signing request:
   distinguish signature generation, signed terminal proof, and Gateway receipt;
 - every terminal path must wipe signable payload and signature scratch.
 
-The public-inactive internal `request_signature` partial runtime models local
-PIN confirmation.
+The `provider-exposed-not-product-active` `request_signature` runtime models local PIN confirmation.
 The connect-only `pin_on_connect` setting does not apply to signing. Terminal
-stages for future activation are:
+stages for provider-facing activation are:
 
 - `reviewing`: parsed summary is displayed; no PIN or signing is active.
 - `pin_entry`: local PIN input is active for this request.
@@ -470,7 +471,7 @@ This state is reserved until an unlock model is implemented.
 | `get_policy` | X | X | O | X | X | Firmware |
 | `get_approval_history` | X | X | O | X | X | Firmware |
 | `call_method` | X | X | O | X | X | Firmware |
-| `request_signature` | X | X | X (public entrypoint inactive; internal partial runtime only) | X | X | Firmware |
+| `request_signature` | X | X | O (provider-exposed-not-product-active; product-active pending LVGL visual evidence) | X | X | Firmware |
 | policy read | X | X | O | X | X | Firmware |
 | policy update | X | X | O (validated proposal + device-local approval) | X | X | Firmware |
 

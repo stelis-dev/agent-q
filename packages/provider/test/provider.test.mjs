@@ -87,6 +87,18 @@ function createFakeCore() {
     async getApprovalHistory() {
       return { source: "live", deviceId: "device-1", records: [], hasMore: false };
     },
+    async requestSignature() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        status: "rejected",
+        reasonCode: "device_rejected",
+        error: {
+          code: "device_rejected",
+          message: "The signing request was rejected on the device.",
+        },
+      };
+    },
   };
 }
 
@@ -121,7 +133,7 @@ test("provider does not import MCP or Admin adapters", async () => {
   assert.doesNotMatch(source, /admin/i);
 });
 
-test("provider exposes only device-facing adapter API", () => {
+test("provider exposes device-facing adapter API including requestSignature", () => {
   const provider = createAgentQProvider({ core: createFakeCore() });
   const methodNames = Object.getOwnPropertyNames(Object.getPrototypeOf(provider))
     .filter((name) => name !== "constructor")
@@ -136,15 +148,16 @@ test("provider exposes only device-facing adapter API", () => {
     "getPolicy",
     "identifyDevices",
     "listDevices",
+    "requestSignature",
     "scanDevices",
     "selectDevice",
   ]);
-  assert.equal(provider.requestSignature, undefined);
+  assert.equal(typeof provider.requestSignature, "function");
   assert.equal(provider.callMethod, undefined);
   assert.equal(provider.proposePolicyUpdate, undefined);
 });
 
-test("provider delegates current methods without exposing session ids or secrets", async () => {
+test("provider delegates current methods and requestSignature without exposing session ids or secrets", async () => {
   const provider = createAgentQProvider({ core: createFakeCore() });
   const outputs = [
     await provider.scanDevices(),
@@ -157,6 +170,13 @@ test("provider delegates current methods without exposing session ids or secrets
     await provider.getAccounts({ deviceId: "device-1" }),
     await provider.getPolicy({ deviceId: "device-1" }),
     await provider.getApprovalHistory({ deviceId: "device-1" }),
+    await provider.requestSignature({
+      deviceId: "device-1",
+      chain: "sui",
+      method: "sign_transaction",
+      network: "devnet",
+      txBytes: "AQID",
+    }),
   ];
   for (const output of outputs) {
     assertNoSecretFields(output);
@@ -167,5 +187,5 @@ test("provider does not expose raw method or Admin policy update entrypoints", (
   const provider = createAgentQProvider({ core: createFakeCore() });
   assert.equal(provider.callMethod, undefined);
   assert.equal(provider.proposePolicyUpdate, undefined);
-  assert.equal(provider.requestSignature, undefined);
+  assert.equal(typeof provider.requestSignature, "function");
 });

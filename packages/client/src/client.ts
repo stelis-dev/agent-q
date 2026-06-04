@@ -13,6 +13,7 @@ import type {
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
+  RequestSignatureResult,
   ScanDevicesResult,
   SelectDeviceResult,
 } from "./core.js";
@@ -29,6 +30,7 @@ export type {
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
+  RequestSignatureResult,
   ScanDevicesResult,
   SelectDeviceResult,
 } from "./core.js";
@@ -72,6 +74,14 @@ export interface DeviceClientCore {
     method: string;
     params?: Record<string, unknown>;
   }): Promise<CallMethodResult>;
+  requestSignature(input: {
+    deviceId?: string;
+    purpose?: string;
+    chain: "sui";
+    method: "sign_transaction";
+    network: "mainnet" | "testnet" | "devnet" | "localnet";
+    txBytes: string;
+  }): Promise<RequestSignatureResult>;
 }
 
 function deviceClientFromCore(core: GatewayCore): DeviceClientCore {
@@ -87,6 +97,7 @@ function deviceClientFromCore(core: GatewayCore): DeviceClientCore {
     getPolicy: (input = {}) => core.getPolicy(input),
     getApprovalHistory: (input = {}) => core.getApprovalHistory(input),
     callMethod: (input) => core.callMethod(input),
+    requestSignature: (input) => core.requestSignature(input),
   };
 }
 

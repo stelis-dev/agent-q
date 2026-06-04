@@ -130,12 +130,13 @@ Rules:
 
 - Gateway must not derive private keys.
 - Firmware returns public key/address data through `get_accounts`.
-- Public provider-facing signing is not active. Public-inactive internal
-  Firmware partial runtime modules for a future `request_signature` path support
-  only the bounded Sui `sign_transaction` transfer shape. Current `call_method`
-  handles delegated
-  policy request validation and rejected method results only; it does not return
-  signatures.
+- Provider-facing signing has `provider-exposed-not-product-active` status
+  through the shared `request_signature` path for only the bounded Sui
+  `sign_transaction` transfer shape. Current-tree
+  positive/reject/timeout/session-loss hardware smoke is recorded, but
+  product-active status still requires LVGL visual evidence.
+  Current `call_method` handles delegated policy request validation and
+  rejected method results only; it does not return signatures.
 - Agent-Q must not add chain-specific top-level MCP tools.
 
 The first implementation target is Sui Ed25519.
@@ -326,16 +327,17 @@ reset-state changes.
 Provisioning is not signing readiness. The current dependency order is: keep
 the policy facts / method adapter boundary stable, use the Firmware-owned
 `propose_policy_update` flow for current-schema active policy changes, keep
-`call_method` signing output unavailable, and keep provider-facing signing
-inactive until the future `request_signature` activation gate is complete. Current
-`call_method` remains a policy-gated rejected-result path for supported
-validation. Policy update remains a proposal flow, not a direct state setter:
-Gateway/Admin may submit a bounded proposal, but Firmware validates it, requires
-device-local approval, and commits it through rollback-safe storage. Sui
-`sign_personal_message`, arbitrary Sui transaction signing, agent-request
-signing output, full Admin policy
-editing beyond the current reject-policy proposal template, and USER_PROFILE
-secure provisioning are not implemented.
+`call_method` signing output unavailable, and keep provider-facing signing on
+the separate `request_signature` path. Current `call_method` remains a
+policy-gated rejected-result path for supported validation. Policy update
+remains a proposal flow, not a direct state setter: Gateway/Admin may submit a
+bounded proposal, but Firmware validates it, requires device-local approval,
+and commits it through rollback-safe storage. Sui `sign_personal_message`,
+arbitrary Sui transaction signing, agent-request signing output through MCP,
+full Admin policy editing beyond the current reject-policy proposal template,
+and USER_PROFILE secure provisioning are not implemented. Provider-facing
+`request_signature` product-active status still requires LVGL visual evidence
+for the current source tree.
 
 ## Completion Criteria
 

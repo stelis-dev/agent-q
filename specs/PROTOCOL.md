@@ -59,14 +59,13 @@ This path does not imply device-local confirmation for each method request. In
 the current implementation, Sui `sign_transaction` is recognized only for
 rejected-path policy evaluation and returns rejected method results.
 
-When provider-facing device-confirmed signing is activated, it must use the
-shared `request_signature` request defined below, not a `call_method` mode or
-request-authority flag. A device-confirmed request means Firmware shows and
-confirms a bounded request on the device; it does not prove that the host, dapp,
-provider, agent, or upstream user intent was trustworthy. Provider-facing APIs
-may expose only this device-confirmed path for application signing. MCP
-agent-facing `call_method` remains the delegated policy request path and does
-not expose signing output.
+Provider-facing device-confirmed signing uses the shared `request_signature`
+request defined below, not a `call_method` mode or request-authority flag. A
+device-confirmed request means Firmware shows and confirms a bounded request on
+the device; it does not prove that the host, dapp, provider, agent, or upstream
+user intent was trustworthy. Provider-facing APIs may expose only this
+device-confirmed path for application signing. MCP agent-facing `call_method`
+remains the delegated policy request path and does not expose signing output.
 
 Policy documents may use only actions accepted by the current schema and
 enforceable by the current runtime. Any other action value is invalid input and
@@ -165,12 +164,14 @@ get_status
   -> disconnect
 ```
 
-Provider-facing device-confirmed signing must use a separate session-scoped
-`request_signature` request when it is activated. In the current public
-Gateway/provider/MCP/client/Firmware USB surface it is not active, is not
-advertised, and is not parsed as a public result. Its product-complete status
-depends on target implementation-status and current-tree hardware evidence; do
-not infer that status from this protocol shape alone.
+Provider-facing device-confirmed signing uses a separate session-scoped
+`request_signature` request. In the current source tree the provider/client and
+StackChan CoreS3 USB surfaces are wired for this path, and provider-facing
+availability is advertised through `signatureRequests`. MCP still has no
+signing tool and must fail closed if provider-facing signing metadata reaches
+its output boundary. Product-active status depends on target implementation
+status and current-tree hardware evidence; do not infer that status from this
+protocol shape alone.
 
 Flow rules:
 
@@ -188,8 +189,7 @@ Flow rules:
   approval as a physical confirm or as local PIN verification, but PIN entry
   must never be a USB protocol request.
 - `get_capabilities`, `get_accounts`, `get_policy`, `get_approval_history`,
-  and `call_method` require `sessionId`. Future `request_signature` activation
-  must also require `sessionId`.
+  `call_method`, and `request_signature` require `sessionId`.
 - `disconnect` ends the session.
 - Firmware should reject session-scoped requests with an unknown or inactive
   `sessionId`.
@@ -207,11 +207,11 @@ device selection, and local Gateway caching of discovered devices. The current
 rejected, recognizes bounded restricted SUI transfer request inputs for Sui
 `sign_transaction`, consumes the committed active policy, records required
 policy-rejected approval-history metadata, and returns rejected method results.
-Public-inactive internal Firmware partial runtime modules exist for future
-provider-facing device-confirmed signing for the same bounded Sui
-`sign_transaction` shape, but the current public USB dispatcher, Gateway
-client/parser/provider API, and capability advertisement are inactive. MCP
-agent-facing signing output remains unavailable.
+Provider-facing `request_signature` has
+`provider-exposed-not-product-active` status for the same bounded Sui
+`sign_transaction` shape through Firmware USB runtime, Gateway client/parser,
+provider API, `signature_result`, and provider-facing `signatureRequests`.
+MCP agent-facing signing output remains unavailable.
 
 Provisioning and material reset transitions are not USB protocol requests in the
 current implementation. The StackChan CoreS3 target enters setup from its local
@@ -232,9 +232,10 @@ between Gateway and Firmware. A connection session does not authorize signing,
 does not prove agent identity, and does not change Firmware policy.
 
 `get_capabilities` is implemented as a read-only, session-scoped capability
-request that reports Sui account identity and no delegated public methods.
-Provider-facing `signatureRequests` signing availability is not part of the
-current public capability response.
+request that reports Sui account identity, no delegated public methods, and
+provider-facing `signatureRequests` signing availability. MCP rejects that
+provider-facing metadata instead of exposing it as an agent-facing signing
+capability.
 `get_accounts` is implemented as a read-only, session-scoped identity request
 for the Sui Ed25519 account at index 0 in the `provisioned` state.
 `get_policy` is implemented as a read-only, session-scoped summary of the
@@ -839,9 +840,11 @@ Rules:
   are added as more `accounts[]` entries only after the protocol, capability
   response, and Gateway bounds are updated. StackChan CoreS3 hardware smoke
   verifies the current single-account response over an approved session.
-  `get_accounts` reads identity only. Current public method availability is
-  reported by `get_capabilities.chains[].methods`. Device-confirmed signing
-  availability is not advertised in the current public capability response.
+  `get_accounts` reads identity only. Current delegated public method
+  availability is reported by `get_capabilities.chains[].methods`.
+  Provider-facing device-confirmed signing availability is reported separately
+  through top-level `signatureRequests` and is not an MCP agent-facing method
+  list.
 
 ## Policy Summary
 
@@ -1098,16 +1101,15 @@ Current method result statuses:
 
 ## Device-Confirmed Signature Request
 
-`request_signature` is the reserved shared protocol request for future
-provider-facing device-confirmed signing. It is separate from `call_method`,
-policy actions, and chain-specific top-level APIs. The current public
-Gateway/client/provider/MCP and StackChan CoreS3 USB dispatcher do not expose
-this request, do not advertise `signatureRequests`, and do not parse
-`signature_result` as a public response. Public-inactive internal Firmware
-partial runtime modules for the bounded Sui `sign_transaction` shape are tracked in
-`docs/IMPLEMENTATION_STATUS.md`; future public activation must re-open
-dispatcher, client/provider parser/API, capability advertisement, and
-current-tree hardware smoke together.
+`request_signature` is the shared protocol request for provider-facing
+device-confirmed signing. It is separate from `call_method`, policy actions,
+and chain-specific top-level APIs. In the current source tree it is wired for
+the bounded Sui `sign_transaction` shape through the StackChan CoreS3 USB
+dispatcher, Gateway/client parser and request builder, provider API,
+`signature_result`, and provider-facing `signatureRequests` capability. MCP
+does not expose it as an agent-facing signing tool. Product-active status still
+requires current-tree target hardware smoke as tracked in
+`docs/IMPLEMENTATION_STATUS.md`.
 
 Request shape:
 
@@ -1128,8 +1130,8 @@ Request shape:
 
 Rules for the first implementation:
 
-- Future `request_signature` activation is valid only in material-backed
-  `provisioned` state with a matching active session.
+- `request_signature` is valid only in material-backed `provisioned` state with
+  a matching active session.
 - The request is a device-confirmed path. It must not evaluate or depend on an
   active policy action, must not reuse `call_method`, and must not be exposed as
   an MCP agent-facing signing tool.
@@ -1181,11 +1183,10 @@ Rules for the first implementation:
   verify that the same request and session are still in the history-write stage
   after the write callback returns before entering the signing critical
   section.
-- `get_capabilities.methods` does not advertise `request_signature`. The
-  current public capability response also does not include `signatureRequests`.
-  A future provider-facing activation may use a separate top-level
-  `signatureRequests` field only after the implementation and current-tree
-  hardware evidence are complete. MCP must not turn provider-facing metadata
+- `get_capabilities.methods` does not advertise `request_signature`.
+  Provider-facing signing availability is advertised only through the separate
+  top-level `signatureRequests` field. MCP must fail closed if that
+  provider-facing metadata reaches the MCP output boundary; it must not turn it
   into an agent-facing signing tool.
 
 Signing capability shape:
@@ -1201,9 +1202,8 @@ Signing capability shape:
 }
 ```
 
-This future field would be provider-facing availability metadata for
-device-confirmed signing requests. It is not part of the current public
-capability response and is not an MCP agent-facing signing method list.
+This field is provider-facing availability metadata for device-confirmed
+signing requests. It is not an MCP agent-facing signing method list.
 
 Signed response:
 
@@ -1296,13 +1296,13 @@ Response delivery and provider boundary:
   not be reported as `rejected`, `timed_out`, or `failed`, and it must not
   claim that Firmware did not generate a signature. A later
   `get_approval_history` read may show the durable `signed` terminal record.
-- A future provider `requestSignature` API must return a discriminated result
-  for Firmware-authored terminal `signature_result` statuses: `signed`,
-  `rejected`, `timed_out`, and `failed`. Device rejection, device timeout, and
-  signing failure are product outcomes, not provider exceptions. Provider
-  promise rejection is reserved for local adapter/programmer errors; Gateway or
-  transport failures should use the same structured public-error style as the
-  current provider methods.
+- The provider `requestSignature` API returns a discriminated result for
+  Firmware-authored terminal `signature_result` statuses: `signed`, `rejected`,
+  `timed_out`, and `failed`. Device rejection, device timeout, and signing
+  failure are product outcomes, not provider exceptions. Provider promise
+  rejection is reserved for local adapter/programmer errors; Gateway or
+  transport failures use the same structured public-error style as the current
+  provider methods.
 - The provider must not expose Admin or policy-update methods through
   `requestSignature`, and MCP must not gain a chain-specific or top-level
   signing tool as a side effect of provider signing support.

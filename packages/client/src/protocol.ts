@@ -129,6 +129,21 @@ export interface ProposePolicyUpdateRequest {
   };
 }
 
+export interface RequestSignatureParams {
+  chain: typeof SUI_CHAIN_ID;
+  method: typeof SUI_SIGN_TRANSACTION_METHOD;
+  network: SuiSignTransactionNetwork;
+  txBytes: string;
+}
+
+export interface RequestSignatureRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "request_signature";
+  sessionId: string;
+  params: RequestSignatureParams;
+}
+
 export type ProtocolRequest =
   | GetStatusRequest
   | IdentifyDeviceRequest
@@ -139,7 +154,8 @@ export type ProtocolRequest =
   | GetPolicyRequest
   | GetApprovalHistoryRequest
   | CallMethodRequest
-  | ProposePolicyUpdateRequest;
+  | ProposePolicyUpdateRequest
+  | RequestSignatureRequest;
 
 export interface StatusResponse {
   id: string;
@@ -199,11 +215,17 @@ export interface CapabilityChain {
   methods: string[];
 }
 
+export interface SignatureRequestCapability {
+  chain: typeof SUI_CHAIN_ID;
+  method: typeof SUI_SIGN_TRANSACTION_METHOD;
+}
+
 export interface CapabilitiesResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
   type: "capabilities";
   chains: CapabilityChain[];
+  signatureRequests?: SignatureRequestCapability[];
 }
 
 // Public account identity only. Never carries mnemonic, seed, entropy, or any
@@ -346,6 +368,40 @@ export interface MethodResultRejectedResponse {
 
 export type MethodResultResponse = MethodResultRejectedResponse;
 
+export type SignatureResultStatus = "signed" | "rejected" | "timed_out" | "failed";
+export type SignatureResultReasonCode =
+  | "device_confirmed"
+  | "device_rejected"
+  | "device_timed_out"
+  | "signing_failed";
+
+export interface SignatureResultSignedResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "signature_result";
+  status: "signed";
+  reasonCode: "device_confirmed";
+  chain: typeof SUI_CHAIN_ID;
+  method: typeof SUI_SIGN_TRANSACTION_METHOD;
+  signature: string;
+}
+
+export interface SignatureResultTerminalResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "signature_result";
+  status: Exclude<SignatureResultStatus, "signed">;
+  reasonCode: Exclude<SignatureResultReasonCode, "device_confirmed">;
+  error: {
+    code: Exclude<SignatureResultReasonCode, "device_confirmed">;
+    message: string;
+  };
+}
+
+export type SignatureResultResponse =
+  | SignatureResultSignedResponse
+  | SignatureResultTerminalResponse;
+
 export interface ProtocolErrorResponse {
   id?: string;
   version: typeof PROTOCOL_VERSION;
@@ -367,6 +423,7 @@ export type ProtocolResponse =
   | ApprovalHistoryResponse
   | PolicyUpdateResultResponse
   | MethodResultResponse
+  | SignatureResultResponse
   | ProtocolErrorResponse;
 
 export class ProtocolError extends Error {
@@ -556,11 +613,55 @@ export function makeProposePolicyUpdateRequest(
   return request;
 }
 
+export function makeRequestSignatureRequest(
+  sessionId: string,
+  params: unknown,
+  id = createRequestId(),
+): RequestSignatureRequest {
+  validateRequestId(id);
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  const normalizedParams = validateRequestSignatureInput(params);
+  const request: RequestSignatureRequest = {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "request_signature",
+    sessionId,
+    params: normalizedParams,
+  };
+  if (Buffer.byteLength(JSON.stringify(request), "utf8") > MAX_RAW_PROTOCOL_JSON_BYTES) {
+    throw new ProtocolError("invalid_params", "request_signature request is too large for the runtime.");
+  }
+  return request;
+}
+
 export function validateProposePolicyUpdateRequestInput(
   sessionId: string,
   policy: Record<string, unknown>,
 ): void {
   makeProposePolicyUpdateRequest(sessionId, policy, "req_000000000000000000000000");
+}
+
+export function validateRequestSignatureInput(params: unknown): RequestSignatureParams {
+  if (!isRecord(params) || Array.isArray(params)) {
+    throw new ProtocolError("invalid_params", "request_signature params must be an object.");
+  }
+  if (hasSecretPayloadKey(params)) {
+    throw new ProtocolError("invalid_params", "request_signature params must not include secret material.");
+  }
+  if (!hasOnlyObjectKeys(params, ["chain", "method", "network", "txBytes"])) {
+    throw new ProtocolError("invalid_params", "request_signature params contain unsupported fields.");
+  }
+  if (params.chain !== SUI_CHAIN_ID || params.method !== SUI_SIGN_TRANSACTION_METHOD) {
+    throw new ProtocolError("invalid_method", "request_signature method is unsupported.");
+  }
+  return {
+    chain: SUI_CHAIN_ID,
+    method: SUI_SIGN_TRANSACTION_METHOD,
+    network: validateSuiSignTransactionNetwork(params.network),
+    txBytes: validateSuiSignTransactionTxBytes(params.txBytes),
+  };
 }
 
 export function validateCallMethodInput(
@@ -765,7 +866,7 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     if (hasSecretPayloadKey(value)) {
       throw new ProtocolError("protocol_error", "Capabilities response must not include secret material.");
     }
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "chains"])) {
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "chains", "signatureRequests"])) {
       throw new ProtocolError("protocol_error", "Capabilities response contains unsupported fields.");
     }
     if (!Array.isArray(value.chains)) {
@@ -774,11 +875,13 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     if (value.chains.length !== MAX_CAPABILITY_CHAINS) {
       throw new ProtocolError("protocol_error", "Capabilities response has an unsupported chain count.");
     }
+    const signatureRequests = sanitizeSignatureRequestCapabilities(value.signatureRequests);
     return {
       id: value.id,
       version: PROTOCOL_VERSION,
       type: "capabilities",
       chains: value.chains.map((entry) => sanitizeCapabilityChain(entry)),
+      ...(signatureRequests === undefined ? {} : { signatureRequests }),
     };
   }
 
@@ -922,6 +1025,10 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
+  if (value.type === "signature_result") {
+    return sanitizeSignatureResultResponse(value);
+  }
+
   throw new ProtocolError("protocol_error", "Protocol response type is unsupported.");
 }
 
@@ -1025,6 +1132,16 @@ export function assertMethodResultResponse(response: ProtocolResponse): MethodRe
   return response;
 }
 
+export function assertSignatureResultResponse(response: ProtocolResponse): SignatureResultResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "signature_result") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not signature_result.");
+  }
+  return response;
+}
+
 // Reduce an untrusted wire or stored device object to a safe DeviceStatus, or
 // null when its identity fields are unusable. deviceId and state are REJECTED
 // when malformed (returns null); the display strings are sanitized to bounded
@@ -1069,9 +1186,12 @@ export function isUint64DecimalString(value: unknown): value is string {
 export const SUI_ADDRESS_PATTERN = /^0x[0-9a-f]{64}$/;
 // Raw 32-byte Ed25519 public key as base64 is exactly 43 payload chars + one "=".
 export const ED25519_PUBLIC_KEY_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
+// Sui Ed25519 signatures are scheme flag + 64-byte signature + 32-byte public key.
+export const SUI_ED25519_SIGNATURE_BASE64_PATTERN = /^[A-Za-z0-9+/]{130}==$/;
 export const SUI_DERIVATION_PATH = "m/44'/784'/0'/0'/0'";
 export const MAX_CAPABILITY_CHAINS = 1;
 export const MAX_CAPABILITY_ACCOUNTS_PER_CHAIN = 1;
+export const MAX_SIGNATURE_REQUEST_CAPABILITIES = 1;
 // The current target implements exactly one account (Sui Ed25519 account 0). Bound
 // the accounts array so a buggy or spoofed device cannot inflate the MCP result or
 // imply multi-account support that does not exist. Raise this as more accounts or
@@ -1124,6 +1244,7 @@ export const CALL_METHOD_NAME_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
 // The method runtime keeps request bodies bounded by the current Firmware JSONL
 // input buffer. Specific methods can add stricter semantic limits inside this cap.
 export const MAX_CALL_METHOD_PARAMS_JSON_BYTES = 600;
+export const MAX_RAW_PROTOCOL_JSON_BYTES = 4096;
 export const MAX_POLICY_UPDATE_REQUEST_JSON_BYTES = 4096;
 export const SUI_CHAIN_ID = "sui";
 export const SUI_SIGN_TRANSACTION_METHOD = "sign_transaction";
@@ -1141,6 +1262,12 @@ export const METHOD_RESULT_ERROR_MESSAGES = {
   policy_error: "Active policy is unavailable.",
 } as const;
 export type MethodResultErrorCode = keyof typeof METHOD_RESULT_ERROR_MESSAGES;
+export const SIGNATURE_RESULT_ERROR_MESSAGES = {
+  device_rejected: "The signing request was rejected on the device.",
+  device_timed_out: "The signing request timed out on the device.",
+  signing_failed: "The device could not produce a signature.",
+} as const;
+export type SignatureResultErrorCode = keyof typeof SIGNATURE_RESULT_ERROR_MESSAGES;
 export const FORBIDDEN_SECRET_FIELD_NAMES = [
   "entropy",
   "mnemonic",
@@ -1352,6 +1479,36 @@ function sanitizeCapabilityChain(value: unknown): CapabilityChain {
     accounts: value.accounts.map((entry) => sanitizeCapabilityAccount(entry)),
     methods: [],
   };
+}
+
+function sanitizeSignatureRequestCapabilities(value: unknown): SignatureRequestCapability[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new ProtocolError("protocol_error", "Signature request capabilities must be an array.");
+  }
+  if (value.length !== MAX_SIGNATURE_REQUEST_CAPABILITIES) {
+    throw new ProtocolError("protocol_error", "Signature request capability count is unsupported.");
+  }
+  return value.map((entry) => {
+    if (!isRecord(entry)) {
+      throw new ProtocolError("protocol_error", "Signature request capability entry is malformed.");
+    }
+    if (hasSecretPayloadKey(entry)) {
+      throw new ProtocolError("protocol_error", "Signature request capability entry must not include secret material.");
+    }
+    if (!hasOnlyObjectKeys(entry, ["chain", "method"])) {
+      throw new ProtocolError("protocol_error", "Signature request capability entry contains unsupported fields.");
+    }
+    if (entry.chain !== SUI_CHAIN_ID || entry.method !== SUI_SIGN_TRANSACTION_METHOD) {
+      throw new ProtocolError("protocol_error", "Signature request capability is unsupported.");
+    }
+    return {
+      chain: SUI_CHAIN_ID,
+      method: SUI_SIGN_TRANSACTION_METHOD,
+    };
+  });
 }
 
 // Reduce an untrusted account entry to a safe Account or throw. Enforces the Sui
@@ -1697,6 +1854,84 @@ function methodResultErrorMessage(code: unknown): string | undefined {
     return undefined;
   }
   return METHOD_RESULT_ERROR_MESSAGES[code as MethodResultErrorCode];
+}
+
+function signatureResultErrorMessage(code: unknown): string | undefined {
+  if (typeof code !== "string" || !(code in SIGNATURE_RESULT_ERROR_MESSAGES)) {
+    return undefined;
+  }
+  return SIGNATURE_RESULT_ERROR_MESSAGES[code as SignatureResultErrorCode];
+}
+
+function sanitizeSignatureResultResponse(value: Record<string, unknown>): SignatureResultResponse {
+  if (typeof value.id !== "string" || typeof value.status !== "string") {
+    throw new ProtocolError("protocol_error", "Signature result response is malformed.");
+  }
+  if (hasSecretPayloadKey(value)) {
+    throw new ProtocolError("protocol_error", "Signature result response must not include secret material.");
+  }
+
+  if (value.status === "signed") {
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "reasonCode", "chain", "method", "signature"])) {
+      throw new ProtocolError("protocol_error", "Signature result response contains unsupported fields.");
+    }
+    if (
+      value.reasonCode !== "device_confirmed" ||
+      value.chain !== SUI_CHAIN_ID ||
+      value.method !== SUI_SIGN_TRANSACTION_METHOD ||
+      typeof value.signature !== "string" ||
+      !SUI_ED25519_SIGNATURE_BASE64_PATTERN.test(value.signature)
+    ) {
+      throw new ProtocolError("protocol_error", "Signature result response is malformed.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "signature_result",
+      status: "signed",
+      reasonCode: "device_confirmed",
+      chain: SUI_CHAIN_ID,
+      method: SUI_SIGN_TRANSACTION_METHOD,
+      signature: value.signature,
+    };
+  }
+
+  if (value.status === "rejected" || value.status === "timed_out" || value.status === "failed") {
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "reasonCode", "error"])) {
+      throw new ProtocolError("protocol_error", "Signature result response contains unsupported fields.");
+    }
+    const error = value.error;
+    if (!isRecord(error) || !hasOnlyObjectKeys(error, ["code", "message"])) {
+      throw new ProtocolError("protocol_error", "Signature result error is malformed.");
+    }
+    const expectedReason: SignatureResultErrorCode =
+      value.status === "rejected"
+        ? "device_rejected"
+        : value.status === "timed_out"
+          ? "device_timed_out"
+          : "signing_failed";
+    const expectedMessage = SIGNATURE_RESULT_ERROR_MESSAGES[expectedReason];
+    if (
+      value.reasonCode !== expectedReason ||
+      error.code !== expectedReason ||
+      error.message !== expectedMessage
+    ) {
+      throw new ProtocolError("protocol_error", "Signature result error is malformed.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "signature_result",
+      status: value.status,
+      reasonCode: expectedReason,
+      error: {
+        code: expectedReason,
+        message: expectedMessage,
+      },
+    };
+  }
+
+  throw new ProtocolError("protocol_error", "Signature result status is unsupported.");
 }
 
 export function sanitizeDeviceStatusSnapshot(value: unknown): DeviceStatusSnapshot | null {
