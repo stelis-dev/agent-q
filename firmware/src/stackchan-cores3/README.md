@@ -57,11 +57,16 @@ The current implementation includes:
   host-tested review view model turns a reviewing
   snapshot into bounded clear-signing rows that include the full recipient,
   amount, asset, network, gas budget, and gas price without using UI object
-  lifetime as state. The approval-history store and parser can represent
+  lifetime as state. An unconnected internal signing handoff helper consumes
+  the signable payload only inside the signing critical section, calls the Sui
+  signing substrate, copies a successful signature only into a caller-owned
+  bounded output after internal signed-terminal recording succeeds, and wipes
+  local payload/signature scratch plus caller output on failure. It does not
+  create a protocol response. The approval-history store and parser can represent
   bounded future signature-request confirmation and terminal records, using the
-  current approval-history storage layout only. The state owner and coordinator
-  are not connected to USB protocol ingress, LVGL review drawing, signing
-  service calls, Gateway/client/provider signing parsers, or capability
+  current approval-history storage layout only. The state owner, coordinator,
+  and signing handoff helper are not connected to USB protocol ingress, LVGL
+  review drawing, Gateway/client/provider signing parsers, or capability
   advertisement.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
   Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
@@ -187,6 +192,7 @@ firmware/tools/stackchan-cores3/test_signature_request_confirmation.sh
 firmware/tools/stackchan-cores3/test_signature_request_flow.sh
 firmware/tools/stackchan-cores3/test_signature_request_ingress.sh
 firmware/tools/stackchan-cores3/test_signature_request_review_view_model.sh
+firmware/tools/stackchan-cores3/test_signature_request_signing.sh
 firmware/tools/stackchan-cores3/test_signature_request_validation.sh
 firmware/tools/stackchan-cores3/test_local_auth.sh
 firmware/tools/stackchan-cores3/test_local_auth_worker.sh
