@@ -181,7 +181,7 @@ test("Admin API rejects cross-origin or non-JSON POST before core dispatch", asy
         baseUrl,
         "/api/propose_reject_policy",
         { "Content-Type": "text/plain" },
-        JSON.stringify({ network: "devnet" }),
+        JSON.stringify({}),
       );
       assert.equal(textPlain.status, 400);
       assert.equal(textPlain.body.ok, false);
@@ -195,7 +195,7 @@ test("Admin API rejects cross-origin or non-JSON POST before core dispatch", asy
           Origin: "https://example.invalid",
           "Sec-Fetch-Site": "cross-site",
         },
-        JSON.stringify({ network: "devnet" }),
+        JSON.stringify({}),
       );
       assert.equal(crossOrigin.status, 400);
       assert.equal(crossOrigin.body.ok, false);
@@ -215,11 +215,11 @@ test("Admin API accepts same-origin JSON requests", async () => {
         Origin: baseUrl,
         "Sec-Fetch-Site": "same-origin",
       },
-      JSON.stringify({ network: "devnet" }),
+      JSON.stringify({}),
     );
     assert.equal(response.status, 200);
     assert.equal(response.body.ok, true);
-    assert.deepEqual(response.body.result.policy, buildRejectOnlySuiPolicy("devnet"));
+    assert.deepEqual(response.body.result.policy, buildRejectOnlySuiPolicy());
   });
 });
 
@@ -265,10 +265,10 @@ test("Admin API fails closed when a core success result is malformed", async () 
 
 test("Admin policy preview builds only the supported reject-only Sui proposal", async () => {
   await withAdminServer(defaultCore(), async (baseUrl) => {
-    const response = await postJson(baseUrl, "/api/policy_preview", { network: "mainnet" });
+    const response = await postJson(baseUrl, "/api/policy_preview");
     assert.equal(response.status, 200);
     assert.equal(response.body.ok, true);
-    assert.deepEqual(response.body.result.policy, buildRejectOnlySuiPolicy("mainnet"));
+    assert.deepEqual(response.body.result.policy, buildRejectOnlySuiPolicy());
   });
 });
 
@@ -294,11 +294,10 @@ test("Admin propose path forwards a server-built proposal through Gateway core",
     async (baseUrl) => {
       const response = await postJson(baseUrl, "/api/propose_reject_policy", {
         deviceId,
-        network: "devnet",
       });
       assert.equal(response.status, 200);
       assert.equal(response.body.ok, true);
-      assert.deepEqual(submitted.policy, buildRejectOnlySuiPolicy("devnet"));
+      assert.deepEqual(submitted.policy, buildRejectOnlySuiPolicy());
       assert.equal(submitted.deviceId, deviceId);
       assert.equal(response.body.result.status, "applied");
     },
@@ -370,7 +369,6 @@ async function waitForExit(child) {
 test("Admin API rejects unsupported fields instead of silently ignoring them", async () => {
   await withAdminServer(defaultCore(), async (baseUrl) => {
     const response = await postJson(baseUrl, "/api/propose_reject_policy", {
-      network: "devnet",
       privateKey: "must-not-forward",
     });
     assert.equal(response.status, 400);

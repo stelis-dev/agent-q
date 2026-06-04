@@ -1,4 +1,4 @@
-#include "agent_q_signature_request_review_view_model.h"
+#include "agent_q_sign_by_user_review_view_model.h"
 
 #include <string.h>
 
@@ -48,15 +48,15 @@ bool copy_exact_c_string(const char* input, char* output, size_t output_size)
 }
 
 bool add_row(
-    AgentQSignatureRequestReviewViewModel* output,
+    AgentQSignByUserReviewViewModel* output,
     const char* label,
     const char* value)
 {
     if (output == nullptr ||
-        output->row_count >= kAgentQSignatureRequestReviewMaxRows) {
+        output->row_count >= kAgentQSignByUserReviewMaxRows) {
         return false;
     }
-    AgentQSignatureRequestReviewRow& row = output->rows[output->row_count];
+    AgentQSignByUserReviewRow& row = output->rows[output->row_count];
     if (!copy_exact_c_string(label, row.label, sizeof(row.label)) ||
         !copy_exact_c_string(value, row.value, sizeof(row.value))) {
         return false;
@@ -65,7 +65,7 @@ bool add_row(
     return true;
 }
 
-bool summary_fields_valid(const AgentQSignatureRequestFlowSnapshot& snapshot)
+bool summary_fields_valid(const AgentQSignByUserFlowSnapshot& snapshot)
 {
     const SuiTransferFacts& facts = snapshot.sui_transfer;
     return snapshot.signable_payload_available &&
@@ -85,26 +85,26 @@ bool summary_fields_valid(const AgentQSignatureRequestFlowSnapshot& snapshot)
 
 }  // namespace
 
-AgentQSignatureRequestReviewBuildResult signature_request_review_view_model_build(
-    const AgentQSignatureRequestFlowSnapshot& snapshot,
-    AgentQSignatureRequestReviewViewModel* output)
+AgentQSignByUserReviewBuildResult sign_by_user_review_view_model_build(
+    const AgentQSignByUserFlowSnapshot& snapshot,
+    AgentQSignByUserReviewViewModel* output)
 {
     if (output == nullptr) {
-        return AgentQSignatureRequestReviewBuildResult::invalid_argument;
+        return AgentQSignByUserReviewBuildResult::invalid_argument;
     }
     memset(output, 0, sizeof(*output));
 
     if (!snapshot.active) {
-        return AgentQSignatureRequestReviewBuildResult::inactive;
+        return AgentQSignByUserReviewBuildResult::inactive;
     }
-    if (snapshot.stage != AgentQSignatureRequestStage::reviewing) {
-        return AgentQSignatureRequestReviewBuildResult::wrong_stage;
+    if (snapshot.stage != AgentQSignByUserStage::reviewing) {
+        return AgentQSignByUserReviewBuildResult::wrong_stage;
     }
     if (!summary_fields_valid(snapshot)) {
-        return AgentQSignatureRequestReviewBuildResult::invalid_summary;
+        return AgentQSignByUserReviewBuildResult::invalid_summary;
     }
     if (!copy_exact_c_string(kReviewTitle, output->title, sizeof(output->title))) {
-        return AgentQSignatureRequestReviewBuildResult::output_too_small;
+        return AgentQSignByUserReviewBuildResult::output_too_small;
     }
 
     if (!add_row(output, "Chain", snapshot.chain) ||
@@ -115,27 +115,27 @@ AgentQSignatureRequestReviewBuildResult signature_request_review_view_model_buil
         !add_row(output, "Gas budget", snapshot.sui_transfer.gas_budget) ||
         !add_row(output, "Gas price", snapshot.sui_transfer.gas_price)) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignatureRequestReviewBuildResult::output_too_small;
+        return AgentQSignByUserReviewBuildResult::output_too_small;
     }
 
-    return AgentQSignatureRequestReviewBuildResult::ok;
+    return AgentQSignByUserReviewBuildResult::ok;
 }
 
-const char* signature_request_review_view_model_build_result_name(
-    AgentQSignatureRequestReviewBuildResult result)
+const char* sign_by_user_review_view_model_build_result_name(
+    AgentQSignByUserReviewBuildResult result)
 {
     switch (result) {
-        case AgentQSignatureRequestReviewBuildResult::ok:
+        case AgentQSignByUserReviewBuildResult::ok:
             return "ok";
-        case AgentQSignatureRequestReviewBuildResult::invalid_argument:
+        case AgentQSignByUserReviewBuildResult::invalid_argument:
             return "invalid_argument";
-        case AgentQSignatureRequestReviewBuildResult::inactive:
+        case AgentQSignByUserReviewBuildResult::inactive:
             return "inactive";
-        case AgentQSignatureRequestReviewBuildResult::wrong_stage:
+        case AgentQSignByUserReviewBuildResult::wrong_stage:
             return "wrong_stage";
-        case AgentQSignatureRequestReviewBuildResult::invalid_summary:
+        case AgentQSignByUserReviewBuildResult::invalid_summary:
             return "invalid_summary";
-        case AgentQSignatureRequestReviewBuildResult::output_too_small:
+        case AgentQSignByUserReviewBuildResult::output_too_small:
             return "output_too_small";
     }
     return "unknown";

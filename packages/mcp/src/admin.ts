@@ -13,9 +13,6 @@ export const DEFAULT_ADMIN_PORT = 8787;
 const MAX_ADMIN_JSON_BYTES = 16384;
 const ADMIN_LOOPBACK_HOSTS = new Set([DEFAULT_ADMIN_HOST, "localhost", "::1"]);
 
-const SUI_NETWORKS = ["devnet", "testnet", "mainnet"] as const;
-type SuiNetwork = (typeof SUI_NETWORKS)[number];
-
 export type AdminGatewayCore = Pick<
   GatewayCore,
   | "listDevices"
@@ -77,28 +74,11 @@ function formatAdminHostForUrl(host: string): string {
   return host.includes(":") ? `[${host}]` : host;
 }
 
-export function buildRejectOnlySuiPolicy(network: unknown): Record<string, unknown> {
-  if (!isSuiNetwork(network)) {
-    throw new GatewayError("invalid_params", "policy template network is invalid.", false);
-  }
+export function buildRejectOnlySuiPolicy(): Record<string, unknown> {
   return {
     schema: "agentq.policy.v0",
     defaultAction: "reject",
-    rules: [
-      {
-        id: `reject-sui-${network}`,
-        chain: "sui",
-        method: "sign_transaction",
-        action: "reject",
-        criteria: [
-          {
-            field: "common.network",
-            op: "eq",
-            value: network,
-          },
-        ],
-      },
-    ],
+    rules: [],
   };
 }
 
@@ -173,12 +153,12 @@ async function handleAdminRequest(
         );
         return;
       case "/api/policy_preview":
-        expectKeys(body, ["network"]);
-        sendJson(response, 200, { ok: true, result: { policy: buildRejectOnlySuiPolicy(body.network) } });
+        expectKeys(body, []);
+        sendJson(response, 200, { ok: true, result: { policy: buildRejectOnlySuiPolicy() } });
         return;
       case "/api/propose_reject_policy": {
-        expectKeys(body, ["deviceId", "network"]);
-        const policy = buildRejectOnlySuiPolicy(body.network);
+        expectKeys(body, ["deviceId"]);
+        const policy = buildRejectOnlySuiPolicy();
         sendSanitizedSuccess(
           response,
           gatewaySuccessOutputSchemas.proposePolicyUpdate,
@@ -288,10 +268,6 @@ function expectKeys(body: RequestBody, allowedKeys: string[]): void {
   }
 }
 
-function isSuiNetwork(value: unknown): value is SuiNetwork {
-  return typeof value === "string" && SUI_NETWORKS.includes(value as SuiNetwork);
-}
-
 function isRecord(value: unknown): value is RequestBody {
   return typeof value === "object" && value !== null;
 }
@@ -372,16 +348,6 @@ const ADMIN_HTML = `<!doctype html>
       <div class="sectionHeader">
         <h2>Reject Policy Proposal</h2>
         <button id="proposalButton" type="button">Submit Proposal</button>
-      </div>
-      <div class="formGrid">
-        <label class="field">
-          <span>Sui network</span>
-          <select id="networkSelect">
-            <option value="devnet">devnet</option>
-            <option value="testnet">testnet</option>
-            <option value="mainnet">mainnet</option>
-          </select>
-        </label>
       </div>
       <pre id="proposalOutput" class="output"></pre>
     </section>
@@ -559,7 +525,6 @@ const el = {
   proposalButton: document.getElementById("proposalButton"),
   historyButton: document.getElementById("historyButton"),
   deviceSelect: document.getElementById("deviceSelect"),
-  networkSelect: document.getElementById("networkSelect"),
   deviceOutput: document.getElementById("deviceOutput"),
   policyOutput: document.getElementById("policyOutput"),
   proposalOutput: document.getElementById("proposalOutput"),
@@ -670,7 +635,7 @@ async function run(path, target, body = selectedDeviceInput()) {
 
 async function refreshProposalPreview() {
   try {
-    const result = await api("/api/policy_preview", { network: el.networkSelect.value });
+    const result = await api("/api/policy_preview");
     show(el.proposalOutput, result.policy);
   } catch (error) {
     showError(el.proposalOutput, error);
@@ -683,7 +648,6 @@ async function submitProposal() {
   try {
     const result = await api("/api/propose_reject_policy", {
       ...selectedDeviceInput(),
-      network: el.networkSelect.value,
     });
     show(el.resultOutput, result);
     show(el.policyOutput, await api("/api/get_policy", selectedDeviceInput()));
@@ -702,7 +666,6 @@ el.disconnectButton.addEventListener("click", () => run("/api/disconnect", el.re
 el.policyButton.addEventListener("click", () => run("/api/get_policy", el.policyOutput));
 el.historyButton.addEventListener("click", () => run("/api/get_approval_history", el.historyOutput));
 el.proposalButton.addEventListener("click", submitProposal);
-el.networkSelect.addEventListener("change", refreshProposalPreview);
 el.deviceSelect.addEventListener("change", () => {
   state.selectedDeviceId = el.deviceSelect.value;
 });

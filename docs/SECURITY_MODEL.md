@@ -82,36 +82,36 @@ Implemented today:
 - A common firmware policy evaluator and a StackChan CoreS3 DEV_PROFILE active
   policy provider. The current product flow installs the default-reject policy,
   while the target stores the committed active policy as a canonical binary
-  record in ordinary NVS and can load canonical custom reject-policy records
+  record in ordinary NVS and can load canonical current-schema policy records
   through its internal storage boundary. Firmware reads a public summary through
-  `get_policy`, consumes that active policy for Sui `sign_transaction` rejected
-  policy evaluation, and exposes policy update authorization only through the
-  Firmware-owned `propose_policy_update` proposal flow for custom reject
-  policies. Policy actions do not authorize the separate device-confirmed
-  signing path.
+  `get_policy`, consumes that active policy for Sui `sign_transaction`
+  policy-authorized signing, rejects broad, multi-rule, and multi-recipient sign
+  policies that the current device-local policy review cannot show clearly, and
+  exposes policy update authorization only through the Firmware-owned
+  `propose_policy_update` proposal flow. Policy actions do not authorize the
+  separate device-confirmed signing path.
 - A Gateway-served local Admin Page for read-only device metadata and the
-  current reject-policy proposal template. It uses the same Gateway core
+  current policy proposal template. It uses the same Gateway core
   boundary as MCP and is not a policy authority.
 - A bounded persistent approval-history read path. The current StackChan CoreS3
-  target stores Firmware-authored method-decision metadata for validated
-  policy-rejected `call_method` decisions, recordable terminal metadata from
-  `propose_policy_update`, and confirmation/terminal metadata from the
-  `provider-exposed-not-product-active` `request_signature` path. History does
-  not store raw txBytes,
+  target stores Firmware-authored signing confirmation/terminal metadata for
+  `sign_by_policy` and `sign_by_user`, plus recordable terminal metadata from
+  `propose_policy_update`. History does not store raw txBytes,
   decoded transactions, raw policy documents, full rule content, session ids,
   request ids, gateway names, PINs, secret material, or full policy documents.
   Local reset and error-state erase recovery wipe the history.
 - Provider-facing device-confirmed signing has
   `provider-exposed-not-product-active` status for bounded Sui
-  `sign_transaction` through the shared `request_signature` path. Firmware
+  `sign_transaction` through the shared `sign_by_user` path. Firmware
   derives the review summary and account binding from `txBytes` and stored
   material, models local PIN confirmation, requires history before signing,
   emits terminal metadata, and owns cleanup. The current public USB dispatcher,
-  client/provider parser/API, `signature_result` writer, and provider-facing
-  `signatureRequests` capability are wired in source. MCP has no signing tool
-  and fails closed on provider-facing signing metadata. Current-tree
-  positive/reject/timeout/session-loss hardware smoke is recorded; product-active
-  status still requires LVGL visual evidence.
+  client/provider parser/API, `sign_result` writer, and provider-facing
+  `signing` capability are wired in source. MCP exposes only
+  policy-authorized `sign_by_policy` and fails closed on provider-facing
+  user-confirmed signing metadata. Current-tree
+  positive/reject/timeout/session-loss hardware smoke for the new Sign API wire
+  names remains pending; product-active status is not claimed.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
@@ -122,10 +122,8 @@ Designed but not implemented (do not treat as present):
 - USER_PROFILE first-install mnemonic generation or import.
 - zkLogin signing material.
 - USER_PROFILE policy storage and policy update authorization.
-- Arbitrary Sui transactions, agent-request signing output through MCP,
-  `call_method` approved signing, Sui personal-message signing, and other
-  chains.
-- Full Admin policy editing beyond the current reject-policy proposal template.
+- Arbitrary Sui transactions, Sui personal-message signing, and other chains.
+- Full Admin policy editing beyond the current policy proposal template.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.
 - Secure Boot, Flash Encryption, and NVS Encryption setup flow.
 
@@ -220,12 +218,12 @@ Signing requests have two separate authority models:
   active policy. This path is for agent-delegated authority and does not imply
   per-request device-local confirmation.
 - Device-confirmed requests: provider-facing signing uses the shared
-  `request_signature` protocol request and must require Firmware-owned
+  `sign_by_user` protocol request and must require Firmware-owned
   device-local confirmation for a bounded signing request. The confirmation
   does not prove the request came from a trustworthy host, dapp, provider,
   agent, or upstream user intent. Provider-facing signing must use this model,
-  while MCP agent-facing `call_method` remains the delegated policy path and
-  exposes no signing tool. The `provider-exposed-not-product-active` runtime
+  while MCP agent-facing signing is limited to the delegated `sign_by_policy`
+  path. The `provider-exposed-not-product-active` runtime
   models local PIN confirmation and does not reuse the connect-only PIN setting
   as the signing confirmation policy.
 
@@ -247,8 +245,8 @@ DEV_PROFILE - the default development path:
   NVS unless the platform build is separately configured for encrypted storage.
 - The current StackChan CoreS3 local PIN verifier is also stored in ordinary
   NVS. It is a local UX gate for connect approval when enabled, settings
-  changes, local reset, the current policy-update proposal flow, and future
-  sensitive writes, not root material encryption or physical extraction defense.
+  changes, local reset, the current policy-update proposal flow, and sensitive
+  local writes, not root material encryption or physical extraction defense.
 - Makes no security claim. Tools and docs must show a "do not use with real
   assets" warning.
 
@@ -268,8 +266,8 @@ OWNER_PROFILE - a user-controlled trust root:
 - The owner controls the firmware signing key and registers its public
   key/digest at provisioning.
 - Only owner-signed firmware runs.
-- Losing the owner key can permanently brick the device: no future signed
-  updates are possible.
+- Losing the owner key can permanently brick the device: signed updates are no
+  longer possible.
 - Security reduces to the owner's key hygiene.
 
 Provisioning into USER_PROFILE or OWNER_PROFILE is explicit, shows
@@ -297,7 +295,7 @@ Device-generated key (preferred):
   active.
 - The private key never existed outside the device.
 - The first target chain signs with Ed25519 (Sui); the protocol stays
-  chain-agnostic through `call_method`.
+  chain-agnostic through `sign_by_policy`.
 
 Imported key (weaker):
 
@@ -369,7 +367,7 @@ Policy-update contract:
   and commits only after approval.
 - Firmware must accept only policy actions that the current schema allows and
   the current runtime can enforce. Other action values are invalid input and
-  must not be stored as dormant future behavior.
+  must not be stored as dormant behavior.
 - The first wire format is JSON inside the existing protocol envelope.
   Firmware must canonicalize the accepted policy into a bounded binary policy
   record before storage and hash calculation; raw JSON is not the active policy
@@ -511,15 +509,14 @@ Enforcement today:
   registered tools must equal a fixed set, both at definition and over the live
   transport. A new tool such as `export_key` cannot be added without failing
   those tests.
-- Public signing inside `call_method` is not implemented. The current Sui
-  `sign_transaction` `call_method` path is a session-scoped validation and
-  rejection path. Provider-facing device-confirmed signing is exposed only
-  through the separate `request_signature` path for the bounded restricted
-  transfer shape; it is not an MCP signing tool.
-  Arbitrary Sui transactions, agent-request signing output,
+- MCP policy-authorized signing is exposed only through `sign_by_policy` and
+  remains bounded by Firmware state gates, the Sui restricted-transfer adapter,
+  and the active policy. Provider-facing device-confirmed signing is exposed
+  only through the separate `sign_by_user` path for the bounded restricted
+  transfer shape; it is not an MCP signing tool. Arbitrary Sui transactions,
   personal-message signing, and other chains are not implemented. The top-level
   tool allowlist does not grant authority to method names carried inside
-  `call_method`; Firmware method adapters and active policy validation remain
+  `sign_by_policy`; Firmware method adapters and active policy validation remain
   the method boundary for delegated policy requests.
 
 ## 12. Device Capability Tiers
@@ -538,16 +535,16 @@ Display Approval Device:
 
 - Can show a summary for flows that explicitly require local approval, such as
   connection establishment, policy update proposals, or provider-facing
-  `request_signature` signing.
+  `sign_by_user` signing.
 
 The current StackChan CoreS3 target has a display and touch, so it is closest to
-the Display Approval tier. "Minimal Device" describes a future or different
-hardware target, not the current one.
+the Display Approval tier. "Minimal Device" describes a non-current hardware
+target, not the current one.
 
 Minimal Device risk, stated plainly:
 
 - With no per-request approval, a compromised host or agent can obtain any
-  future agent-request signature that Firmware active policy allows, with no
+  agent-request signature that Firmware active policy allows, with no
   human in the loop. On such a device, the only limit on a compromised host is
   the Firmware policy itself.
 
@@ -622,7 +619,7 @@ API boundary:
 
 - No `export_key`, `raw_sign`, `read_memory`, or `debug_command`.
 - The MCP top-level exact-allowlist test passes.
-- `call_method` allowlist and negative tests cover every shipped signing method.
+- `sign_by_policy` allowlist and negative tests cover every shipped signing method.
 
 Key and policy:
 

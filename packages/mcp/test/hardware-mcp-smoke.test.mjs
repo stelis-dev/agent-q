@@ -23,9 +23,9 @@
 //   scan_devices -> identify_devices -> select_device -> connect_device
 //   (device-local approval)
 //   -> get_capabilities -> get_accounts -> get_policy
-//   -> call_method (policy reject) -> disconnect_device
+//   -> sign_by_policy (policy reject) -> disconnect_device
 //
-// The device must already be provisioned for connect_device/get_capabilities/get_accounts/get_policy/call_method.
+// The device must already be provisioned for connect_device/get_capabilities/get_accounts/get_policy/sign_by_policy.
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -182,7 +182,7 @@ test("hardware policy-update history proof requires the newest record from this 
 });
 
 test(
-  "hardware: scan -> identify -> select -> connect -> get_capabilities -> get_accounts -> get_policy -> call_method -> disconnect over MCP",
+  "hardware: scan -> identify -> select -> connect -> get_capabilities -> get_accounts -> get_policy -> sign_by_policy -> disconnect over MCP",
   { skip: hardwareEnabled ? false : "set AGENTQ_HW=1 with a device connected" },
   async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-q-hw-smoke-"));
@@ -268,18 +268,20 @@ test(
       ).replace(/\s+/g, "");
       const validSuiTransferTxBytes = Buffer.from(validSuiTransferHex, "hex").toString("base64");
 
-      console.log("[hw-smoke] calling Sui sign_transaction policy-decision path...");
+      console.log("[hw-smoke] calling Sui sign_transaction policy-authorized signing path...");
       const method = await client.callTool({
-        name: "call_method",
+        name: "sign_by_policy",
         arguments: {
           deviceId,
           chain: "sui",
           method: "sign_transaction",
-          params: { network: "devnet", txBytes: validSuiTransferTxBytes },
+          network: "devnet",
+          txBytes: validSuiTransferTxBytes,
         },
       });
-      assert.equal(method.structuredContent.source, "live", "call_method requires a provisioned session");
-      assert.equal(method.structuredContent.status, "rejected");
+      assert.equal(method.structuredContent.source, "live", "sign_by_policy requires a provisioned session");
+      assert.equal(method.structuredContent.status, "policy_rejected");
+      assert.equal(method.structuredContent.authorization, "policy");
       assert.equal(method.structuredContent.error.code, "policy_rejected");
       assert.equal("sessionId" in method.structuredContent, false, "sessionId must not reach the client");
       const methodJson = JSON.stringify(method.structuredContent).toLowerCase();
@@ -351,7 +353,7 @@ test(
             chain: "sui",
             method: "sign_transaction",
             action: "reject",
-            criteria: [{ field: "common.network", op: "eq", value: "devnet" }],
+            criteria: [{ field: "common.intent", op: "eq", value: "single_asset_transfer" }],
           },
         ],
       };

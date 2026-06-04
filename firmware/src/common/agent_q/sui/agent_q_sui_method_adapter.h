@@ -11,7 +11,7 @@ constexpr const char* kAgentQSuiPolicyChain = "sui";
 constexpr const char* kAgentQSuiPolicyOperationSignTransaction = "sign_transaction";
 constexpr const char* kAgentQPolicyIntentSingleAssetTransfer = "single_asset_transfer";
 constexpr const char* kAgentQSuiPolicyCommandShapeRestrictedTransfer = "restricted_transfer";
-constexpr size_t kAgentQSuiTransferPolicyFactCount = 11;
+constexpr size_t kAgentQSuiTransferPolicyFactCount = 10;
 
 struct AgentQSuiSignTransactionPolicyFacts {
     AgentQPolicyFact entries[kAgentQSuiTransferPolicyFactCount];
@@ -20,7 +20,6 @@ struct AgentQSuiSignTransactionPolicyFacts {
 
 bool make_sui_sign_transaction_policy_facts(
     const SuiTransferFacts& sui_facts,
-    const char* network,
     AgentQSuiSignTransactionPolicyFacts* out);
 
 AgentQPolicyMethodDescriptor sui_sign_transaction_policy_method_descriptor();

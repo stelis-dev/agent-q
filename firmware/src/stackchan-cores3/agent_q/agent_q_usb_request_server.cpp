@@ -10,7 +10,6 @@
 #include "agent_q_approval_history.h"
 #include "agent_q_bip39.h"
 #include "agent_q_bip39_wordlist.h"
-#include "agent_q_call_method_validation.h"
 #include "agent_q_connect_approval.h"
 #include "agent_q_connect_settings.h"
 #include "agent_q_drawing_surface.h"
@@ -32,13 +31,14 @@
 #include "agent_q_provisioning_runtime_state.h"
 #include "agent_q_request_id.h"
 #include "agent_q_session.h"
-#include "agent_q_signature_request_confirmation.h"
-#include "agent_q_signature_request_flow.h"
-#include "agent_q_signature_request_ingress.h"
-#include "agent_q_signature_request_review_view_model.h"
-#include "agent_q_signature_request_signing.h"
+#include "agent_q_sign_by_user_confirmation.h"
+#include "agent_q_sign_by_user_flow.h"
+#include "agent_q_sign_by_user_ingress.h"
+#include "agent_q_sign_by_user_review_view_model.h"
+#include "agent_q_sign_by_user_signing.h"
 #include "agent_q_sui_account.h"
 #include "agent_q_sui_account_store.h"
+#include "agent_q_sui_signing_service.h"
 #include "agent_q_usb_link_state.h"
 #include "agent_q_ui_panel_cleanup.h"
 #include "agent_q_usb_response_writer.h"
@@ -137,8 +137,8 @@ enum class AgentQUiEventKind {
     recover_previous_requested,
     recover_next_requested,
     recover_cancel_requested,
-    signature_review_accept_requested,
-    signature_review_reject_requested,
+    sign_by_user_review_accept_requested,
+    sign_by_user_review_reject_requested,
 };
 
 struct AgentQUiEvent {
@@ -182,17 +182,17 @@ bool clear_agent_q_panel_if_local_pin_auth_stage(
     SensitiveUiClearPolicy policy = SensitiveUiClearPolicy::wipe);
 void clear_connect_decision_state();
 void cancel_policy_update_after_session_loss(const char* log_reason);
-void cancel_signature_request_after_session_loss(const char* log_reason);
+void cancel_sign_by_user_after_session_loss(const char* log_reason);
 bool pending_request_id_for_local_pin_purpose(
     LocalPinAuthPurpose purpose,
     char* output,
     size_t output_size);
 void handle_local_pin_auth_display_failure(const char* reason, bool clear_panel = false);
 void show_persistent_error_recovery_if_needed();
-void finish_signature_request_terminal(
+void finish_sign_by_user_terminal(
     const char* request_id,
-    const agent_q::AgentQSignatureRequestSigningOutput* signing_output = nullptr);
-void finish_signature_request_error_terminal(
+    const agent_q::AgentQSignByUserSigningOutput* signing_output = nullptr);
+void finish_sign_by_user_error_terminal(
     const char* request_id,
     const char* error_code,
     const char* error_message,
@@ -238,13 +238,13 @@ bool local_pin_auth_panel_matches_stage(AgentQUiPanelKind kind)
            agent_q::local_pin_auth_flow_active();
 }
 
-bool signature_request_review_panel_matches_stage(AgentQUiPanelKind kind)
+bool sign_by_user_review_panel_matches_stage(AgentQUiPanelKind kind)
 {
-    const agent_q::AgentQSignatureRequestFlowSnapshot snapshot =
-        agent_q::signature_request_flow_snapshot();
-    return kind == AgentQUiPanelKind::signature_review &&
+    const agent_q::AgentQSignByUserFlowSnapshot snapshot =
+        agent_q::sign_by_user_flow_snapshot();
+    return kind == AgentQUiPanelKind::sign_by_user_review &&
            snapshot.active &&
-           snapshot.stage == agent_q::AgentQSignatureRequestStage::reviewing;
+           snapshot.stage == agent_q::AgentQSignByUserStage::reviewing;
 }
 
 bool local_pin_auth_accepts_keypad_input()
@@ -282,7 +282,7 @@ agent_q::AgentQUiPanelCleanupPlan panel_cleanup_plan(
         event,
         local_reset_panel_matches_stage(panel_kind),
         local_pin_auth_panel_matches_stage(panel_kind),
-        signature_request_review_panel_matches_stage(panel_kind),
+        sign_by_user_review_panel_matches_stage(panel_kind),
     });
 }
 
@@ -310,10 +310,10 @@ void apply_panel_cleanup_plan(
         // time out the flow according to the explicit state deadline.
         ESP_LOGW(kTag, "Local PIN authorization panel deleted; state loop will recover if active");
     }
-    if (plan.wipe_signature_request) {
-        agent_q::signature_request_confirmation_cancel_for_pin_loss();
+    if (plan.wipe_sign_by_user) {
+        agent_q::sign_by_user_confirmation_cancel_for_pin_loss();
     }
-    if (plan.recover_signature_review_panel) {
+    if (plan.recover_sign_by_user_review_panel) {
         ESP_LOGW(kTag, "Signature review panel deleted; state loop will recover if active");
     }
 }
@@ -375,13 +375,13 @@ const char* current_device_state()
     if (agent_q::persistent_material_consistency_error_active()) {
         return "error";
     }
-    const agent_q::AgentQSignatureRequestFlowSnapshot signature_request =
-        agent_q::signature_request_flow_snapshot();
+    const agent_q::AgentQSignByUserFlowSnapshot sign_by_user =
+        agent_q::sign_by_user_flow_snapshot();
     if (agent_q::connect_approval_active() ||
         agent_q::protocol_pin_approval_active() ||
-        (signature_request.active &&
-         (signature_request.stage == agent_q::AgentQSignatureRequestStage::reviewing ||
-          signature_request.stage == agent_q::AgentQSignatureRequestStage::pin_entry))) {
+        (sign_by_user.active &&
+         (sign_by_user.stage == agent_q::AgentQSignByUserStage::reviewing ||
+          sign_by_user.stage == agent_q::AgentQSignByUserStage::pin_entry))) {
         return "awaiting_approval";
     }
     const agent_q::AgentQLocalResetSnapshot reset =
@@ -390,7 +390,7 @@ const char* current_device_state()
         (reset.flow_active &&
          reset.stage != agent_q::AgentQLocalResetStage::settings_menu) ||
         agent_q::local_pin_auth_flow_active() ||
-        signature_request.active) {
+        sign_by_user.active) {
         return "busy";
     }
     return "idle";
@@ -468,49 +468,45 @@ bool write_disconnect_result(const char* id)
     return agent_q::usb_response_write_json(response);
 }
 
-bool write_rejected_method_result(const char* id, const char* code, const char* message)
-{
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "method_result";
-    response["status"] = "rejected";
-    response["error"]["code"] = code;
-    response["error"]["message"] = message;
-    return agent_q::usb_response_write_json(response);
-}
-
-const char* signature_result_error_message(
-    agent_q::AgentQSignatureRequestTerminalResult result)
+const char* sign_result_user_error_message(
+    agent_q::AgentQSignByUserTerminalResult result)
 {
     switch (result) {
-        case agent_q::AgentQSignatureRequestTerminalResult::rejected:
+        case agent_q::AgentQSignByUserTerminalResult::rejected:
             return "The signing request was rejected on the device.";
-        case agent_q::AgentQSignatureRequestTerminalResult::timed_out:
+        case agent_q::AgentQSignByUserTerminalResult::timed_out:
             return "The signing request timed out on the device.";
-        case agent_q::AgentQSignatureRequestTerminalResult::signing_failed:
+        case agent_q::AgentQSignByUserTerminalResult::signing_failed:
             return "The device could not produce a signature.";
-        case agent_q::AgentQSignatureRequestTerminalResult::signed_success:
-        case agent_q::AgentQSignatureRequestTerminalResult::canceled:
-        case agent_q::AgentQSignatureRequestTerminalResult::history_error:
-        case agent_q::AgentQSignatureRequestTerminalResult::none:
+        case agent_q::AgentQSignByUserTerminalResult::signed_success:
+        case agent_q::AgentQSignByUserTerminalResult::canceled:
+        case agent_q::AgentQSignByUserTerminalResult::history_error:
+        case agent_q::AgentQSignByUserTerminalResult::none:
         default:
             return "";
     }
 }
 
-bool write_signature_result_signed(
+bool write_sign_result_signed_fields(
     const char* id,
-    const agent_q::AgentQSignatureRequestFlowSnapshot& snapshot,
-    const agent_q::AgentQSignatureRequestSigningOutput& signing_output)
+    const char* authorization,
+    const char* chain,
+    const char* method,
+    const uint8_t* signature,
+    size_t signature_size)
 {
-    if (signing_output.signature_size != agent_q::kSuiEd25519SignatureBytes) {
+    if (authorization == nullptr ||
+        (strcmp(authorization, "user") != 0 && strcmp(authorization, "policy") != 0) ||
+        chain == nullptr || chain[0] == '\0' ||
+        method == nullptr || method[0] == '\0' ||
+        signature == nullptr ||
+        signature_size != agent_q::kSuiEd25519SignatureBytes) {
         return false;
     }
     char signature_base64[agent_q::kSuiEd25519SignatureBase64Chars + 1] = {};
     if (bytes_to_base64(
-            signing_output.signature,
-            signing_output.signature_size,
+            signature,
+            signature_size,
             signature_base64,
             sizeof(signature_base64)) != 0) {
         return false;
@@ -519,24 +515,37 @@ bool write_signature_result_signed(
     JsonDocument response;
     response["id"] = id;
     response["version"] = kProtocolVersion;
-    response["type"] = "signature_result";
+    response["type"] = "sign_result";
+    response["authorization"] = authorization;
     response["status"] = "signed";
-    response["reasonCode"] =
-        agent_q::signature_request_flow_terminal_reason(
-            agent_q::AgentQSignatureRequestTerminalResult::signed_success);
-    response["chain"] = snapshot.chain;
-    response["method"] = snapshot.method;
+    response["chain"] = chain;
+    response["method"] = method;
     response["signature"] = signature_base64;
     return agent_q::usb_response_write_json(response);
 }
 
-bool write_signature_result_terminal(
+bool write_sign_result_signed(
     const char* id,
-    agent_q::AgentQSignatureRequestTerminalResult result)
+    const char* authorization,
+    const agent_q::AgentQSignByUserFlowSnapshot& snapshot,
+    const agent_q::AgentQSignByUserSigningOutput& signing_output)
 {
-    const char* status = agent_q::signature_request_flow_terminal_status(result);
-    const char* reason = agent_q::signature_request_flow_terminal_reason(result);
-    const char* message = signature_result_error_message(result);
+    return write_sign_result_signed_fields(
+        id,
+        authorization,
+        snapshot.chain,
+        snapshot.method,
+        signing_output.signature,
+        signing_output.signature_size);
+}
+
+bool write_sign_result_user_terminal(
+    const char* id,
+    agent_q::AgentQSignByUserTerminalResult result)
+{
+    const char* status = agent_q::sign_by_user_flow_terminal_status(result);
+    const char* reason = agent_q::sign_by_user_flow_terminal_reason(result);
+    const char* message = sign_result_user_error_message(result);
     if (status == nullptr || status[0] == '\0' ||
         reason == nullptr || reason[0] == '\0' ||
         message == nullptr || message[0] == '\0') {
@@ -546,11 +555,52 @@ bool write_signature_result_terminal(
     JsonDocument response;
     response["id"] = id;
     response["version"] = kProtocolVersion;
-    response["type"] = "signature_result";
+    response["type"] = "sign_result";
+    response["authorization"] = "user";
     response["status"] = status;
-    response["reasonCode"] = reason;
     response["error"]["code"] = reason;
     response["error"]["message"] = message;
+    return agent_q::usb_response_write_json(response);
+}
+
+bool write_sign_result_policy_rejected(
+    const char* id,
+    const char* policy_hash,
+    const char* rule_ref)
+{
+    if (policy_hash == nullptr || policy_hash[0] == '\0' ||
+        rule_ref == nullptr || rule_ref[0] == '\0') {
+        return false;
+    }
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "sign_result";
+    response["authorization"] = "policy";
+    response["status"] = "policy_rejected";
+    response["policyHash"] = policy_hash;
+    response["ruleRef"] = rule_ref;
+    response["error"]["code"] = "policy_rejected";
+    response["error"]["message"] = "The signing request was rejected by device policy.";
+    return agent_q::usb_response_write_json(response);
+}
+
+bool write_sign_result_signing_failed(
+    const char* id,
+    const char* authorization)
+{
+    if (authorization == nullptr ||
+        (strcmp(authorization, "user") != 0 && strcmp(authorization, "policy") != 0)) {
+        return false;
+    }
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["type"] = "sign_result";
+    response["authorization"] = authorization;
+    response["status"] = "signing_failed";
+    response["error"]["code"] = "signing_failed";
+    response["error"]["message"] = "The device could not produce a signature.";
     return agent_q::usb_response_write_json(response);
 }
 
@@ -568,10 +618,15 @@ bool write_capabilities_response(const char* id)
     account["keyScheme"] = "ed25519";
     account["derivationPath"] = "m/44'/784'/0'/0'/0'";
     sui["methods"].to<JsonArray>();
-    JsonArray signature_requests = response["signatureRequests"].to<JsonArray>();
-    JsonObject signature_request = signature_requests.add<JsonObject>();
-    signature_request["chain"] = "sui";
-    signature_request["method"] = "sign_transaction";
+    JsonObject signing = response["signing"].to<JsonObject>();
+    JsonArray user_signing = signing["user"].to<JsonArray>();
+    JsonObject user_signing_entry = user_signing.add<JsonObject>();
+    user_signing_entry["chain"] = "sui";
+    user_signing_entry["method"] = "sign_transaction";
+    JsonArray policy_signing = signing["policy"].to<JsonArray>();
+    JsonObject policy_signing_entry = policy_signing.add<JsonObject>();
+    policy_signing_entry["chain"] = "sui";
+    policy_signing_entry["method"] = "sign_transaction";
     return agent_q::usb_response_write_json(response);
 }
 
@@ -628,30 +683,25 @@ bool write_approval_history_response(const char* id, uint64_t before_sequence, s
             record["policyHash"] = source.policy_hash;
             record["ruleCount"] = source.rule_count;
             record["highestAction"] = source.highest_action;
-        } else if (source.event_kind == agent_q::AgentQApprovalHistoryEventKind::signature_request) {
-            record["eventKind"] = "signature_request";
+        } else if (source.event_kind == agent_q::AgentQApprovalHistoryEventKind::signing) {
+            record["eventKind"] = "signing";
             record["recordKind"] =
-                agent_q::approval_history_signature_record_kind_to_string(source.signature_record_kind);
+                agent_q::approval_history_signing_record_kind_to_string(source.signing_record_kind);
+            record["authorization"] =
+                source.confirmation_kind == agent_q::AgentQApprovalHistoryConfirmationKind::policy
+                    ? "policy"
+                    : "user";
             record["chain"] = source.chain;
             record["method"] = source.method;
-            if (source.confirmation_kind != agent_q::AgentQApprovalHistoryConfirmationKind::none) {
+            if (source.signing_record_kind == agent_q::AgentQSigningHistoryRecordKind::confirmation &&
+                source.confirmation_kind != agent_q::AgentQApprovalHistoryConfirmationKind::none) {
                 record["confirmationKind"] =
                     agent_q::approval_history_confirmation_kind_to_string(source.confirmation_kind);
             }
-            if (source.signature_terminal_result != agent_q::AgentQSignatureRequestHistoryTerminalResult::none) {
+            if (source.signing_terminal_result != agent_q::AgentQSigningHistoryTerminalResult::none) {
                 record["terminalResult"] =
-                    agent_q::approval_history_signature_terminal_result_to_string(source.signature_terminal_result);
+                    agent_q::approval_history_signing_terminal_result_to_string(source.signing_terminal_result);
             }
-            if (source.payload_digest[0] != '\0') {
-                record["payloadDigest"] = source.payload_digest;
-            }
-        } else {
-            record["eventKind"] = "method_decision";
-            record["decisionKind"] = agent_q::approval_history_decision_to_string(source.decision);
-            record["confirmationKind"] =
-                agent_q::approval_history_confirmation_kind_to_string(source.confirmation_kind);
-            record["chain"] = source.chain;
-            record["method"] = source.method;
             if (source.payload_digest[0] != '\0') {
                 record["payloadDigest"] = source.payload_digest;
             }
@@ -853,79 +903,141 @@ bool write_accounts_response(const char* id)
     return agent_q::usb_response_write_json(response);
 }
 
-agent_q::AgentQSignatureRequestHistoryTerminalResult signature_history_terminal_result(
-    agent_q::AgentQSignatureRequestTerminalResult result)
+agent_q::AgentQSigningHistoryTerminalResult signing_history_terminal_result(
+    agent_q::AgentQSignByUserTerminalResult result)
 {
     switch (result) {
-        case agent_q::AgentQSignatureRequestTerminalResult::signed_success:
-            return agent_q::AgentQSignatureRequestHistoryTerminalResult::signed_success;
-        case agent_q::AgentQSignatureRequestTerminalResult::rejected:
-            return agent_q::AgentQSignatureRequestHistoryTerminalResult::rejected;
-        case agent_q::AgentQSignatureRequestTerminalResult::timed_out:
-            return agent_q::AgentQSignatureRequestHistoryTerminalResult::timed_out;
-        case agent_q::AgentQSignatureRequestTerminalResult::signing_failed:
-            return agent_q::AgentQSignatureRequestHistoryTerminalResult::signing_failed;
-        case agent_q::AgentQSignatureRequestTerminalResult::canceled:
-        case agent_q::AgentQSignatureRequestTerminalResult::history_error:
-        case agent_q::AgentQSignatureRequestTerminalResult::none:
+        case agent_q::AgentQSignByUserTerminalResult::signed_success:
+            return agent_q::AgentQSigningHistoryTerminalResult::signed_success;
+        case agent_q::AgentQSignByUserTerminalResult::rejected:
+            return agent_q::AgentQSigningHistoryTerminalResult::user_rejected;
+        case agent_q::AgentQSignByUserTerminalResult::timed_out:
+            return agent_q::AgentQSigningHistoryTerminalResult::user_timed_out;
+        case agent_q::AgentQSignByUserTerminalResult::signing_failed:
+            return agent_q::AgentQSigningHistoryTerminalResult::signing_failed;
+        case agent_q::AgentQSignByUserTerminalResult::canceled:
+        case agent_q::AgentQSignByUserTerminalResult::history_error:
+        case agent_q::AgentQSignByUserTerminalResult::none:
         default:
-            return agent_q::AgentQSignatureRequestHistoryTerminalResult::none;
+            return agent_q::AgentQSigningHistoryTerminalResult::none;
     }
 }
 
-bool write_signature_request_confirmation_history(
-    const agent_q::AgentQSignatureRequestFlowSnapshot& snapshot,
+bool write_sign_by_user_confirmation_history(
+    const agent_q::AgentQSignByUserFlowSnapshot& snapshot,
     void*)
 {
-    const agent_q::AgentQSignatureRequestHistoryAppendInput input{
-        agent_q::AgentQSignatureRequestHistoryRecordKind::confirmation,
+    const agent_q::AgentQSigningHistoryAppendInput input{
+        agent_q::AgentQSigningHistoryRecordKind::confirmation,
         agent_q::AgentQApprovalHistoryConfirmationKind::local_pin,
-        agent_q::AgentQSignatureRequestHistoryTerminalResult::none,
+        agent_q::AgentQSigningHistoryTerminalResult::none,
         snapshot.chain,
         snapshot.method,
         "device_confirmed",
         snapshot.payload_digest,
+        nullptr,
+        nullptr,
     };
-    return agent_q::approval_history_append_required_signature_request(
+    return agent_q::approval_history_append_required_signing(
         input,
         static_cast<uint64_t>(esp_timer_get_time() / 1000LL));
 }
 
-bool write_signature_request_terminal_history(
-    const agent_q::AgentQSignatureRequestFlowSnapshot& snapshot,
-    agent_q::AgentQSignatureRequestTerminalResult result)
+bool write_sign_by_user_terminal_history(
+    const agent_q::AgentQSignByUserFlowSnapshot& snapshot,
+    agent_q::AgentQSignByUserTerminalResult result)
 {
-    const agent_q::AgentQSignatureRequestHistoryTerminalResult history_result =
-        signature_history_terminal_result(result);
-    if (history_result == agent_q::AgentQSignatureRequestHistoryTerminalResult::none) {
+    const agent_q::AgentQSigningHistoryTerminalResult history_result =
+        signing_history_terminal_result(result);
+    if (history_result == agent_q::AgentQSigningHistoryTerminalResult::none) {
         return true;
     }
-    const char* reason = agent_q::signature_request_flow_terminal_reason(result);
+    const char* reason = agent_q::sign_by_user_flow_terminal_reason(result);
     if (reason == nullptr || reason[0] == '\0') {
         return false;
     }
-    const agent_q::AgentQSignatureRequestHistoryAppendInput input{
-        agent_q::AgentQSignatureRequestHistoryRecordKind::terminal,
+    const agent_q::AgentQSigningHistoryAppendInput input{
+        agent_q::AgentQSigningHistoryRecordKind::terminal,
         agent_q::AgentQApprovalHistoryConfirmationKind::none,
         history_result,
         snapshot.chain,
         snapshot.method,
         reason,
         snapshot.payload_digest,
+        nullptr,
+        nullptr,
     };
-    return agent_q::approval_history_append_required_signature_request(
+    return agent_q::approval_history_append_required_signing(
         input,
         static_cast<uint64_t>(esp_timer_get_time() / 1000LL));
 }
 
-void consume_signature_request_terminal_if_pending()
+bool write_policy_signing_history(
+    const agent_q::AgentQSignByPolicyRuntimeResult& result,
+    agent_q::AgentQSigningHistoryRecordKind record_kind,
+    agent_q::AgentQSigningHistoryTerminalResult terminal_result,
+    const char* reason_code,
+    bool enforce_write_budget)
 {
-    agent_q::AgentQSignatureRequestTerminalResult ignored =
-        agent_q::AgentQSignatureRequestTerminalResult::none;
-    agent_q::signature_request_flow_consume_terminal_result(&ignored);
+    if (result.chain[0] == '\0' ||
+        result.method[0] == '\0' ||
+        result.payload_digest[0] == '\0' ||
+        result.policy_hash[0] == '\0' ||
+        result.rule_ref[0] == '\0' ||
+        reason_code == nullptr ||
+        reason_code[0] == '\0') {
+        return false;
+    }
+    const agent_q::AgentQSigningHistoryAppendInput input{
+        record_kind,
+        agent_q::AgentQApprovalHistoryConfirmationKind::policy,
+        terminal_result,
+        result.chain,
+        result.method,
+        reason_code,
+        result.payload_digest,
+        result.policy_hash,
+        result.rule_ref,
+    };
+    const uint64_t uptime_ms = static_cast<uint64_t>(esp_timer_get_time() / 1000LL);
+    return enforce_write_budget
+               ? agent_q::approval_history_append_budgeted_signing(input, uptime_ms)
+               : agent_q::approval_history_append_required_signing(input, uptime_ms);
 }
 
-void finish_signature_request_error_terminal(
+bool write_policy_signing_confirmation_history(
+    const agent_q::AgentQSignByPolicyRuntimeResult& result)
+{
+    return write_policy_signing_history(
+        result,
+        agent_q::AgentQSigningHistoryRecordKind::confirmation,
+        agent_q::AgentQSigningHistoryTerminalResult::none,
+        "policy_authorized",
+        false);
+}
+
+bool write_policy_signing_terminal_history(
+    const agent_q::AgentQSignByPolicyRuntimeResult& result,
+    agent_q::AgentQSigningHistoryTerminalResult terminal_result,
+    const char* reason_code,
+    bool enforce_write_budget)
+{
+    return write_policy_signing_history(
+        result,
+        agent_q::AgentQSigningHistoryRecordKind::terminal,
+        terminal_result,
+        reason_code,
+        enforce_write_budget);
+}
+
+void consume_sign_by_user_terminal_if_pending()
+{
+    agent_q::AgentQSignByUserTerminalResult ignored =
+        agent_q::AgentQSignByUserTerminalResult::none;
+    agent_q::sign_by_user_flow_consume_terminal_result(&ignored);
+}
+
+void finish_sign_by_user_error_terminal(
     const char* request_id,
     const char* error_code,
     const char* error_message,
@@ -934,8 +1046,8 @@ void finish_signature_request_error_terminal(
     if (request_id != nullptr && request_id[0] != '\0') {
         write_error_response(request_id, error_code, error_message);
     }
-    consume_signature_request_terminal_if_pending();
-    agent_q::signature_request_flow_clear();
+    consume_sign_by_user_terminal_if_pending();
+    agent_q::sign_by_user_flow_clear();
     agent_q::avatar_overlay_show_message(
         display_message != nullptr && display_message[0] != '\0' ? display_message : "Signing failed",
         AgentQMessageKind::error,
@@ -943,17 +1055,17 @@ void finish_signature_request_error_terminal(
         kAgentQResultDisplayMs);
 }
 
-void finish_signature_request_terminal(
+void finish_sign_by_user_terminal(
     const char* request_id,
-    const agent_q::AgentQSignatureRequestSigningOutput* signing_output)
+    const agent_q::AgentQSignByUserSigningOutput* signing_output)
 {
-    const agent_q::AgentQSignatureRequestFlowSnapshot snapshot =
-        agent_q::signature_request_flow_snapshot();
-    const agent_q::AgentQSignatureRequestTerminalResult result =
+    const agent_q::AgentQSignByUserFlowSnapshot snapshot =
+        agent_q::sign_by_user_flow_snapshot();
+    const agent_q::AgentQSignByUserTerminalResult result =
         snapshot.terminal_result;
     if (!snapshot.active ||
-        snapshot.stage != agent_q::AgentQSignatureRequestStage::terminal ||
-        result == agent_q::AgentQSignatureRequestTerminalResult::none) {
+        snapshot.stage != agent_q::AgentQSignByUserStage::terminal ||
+        result == agent_q::AgentQSignByUserTerminalResult::none) {
         if (request_id != nullptr && request_id[0] != '\0') {
             write_error_response(request_id, "invalid_state", "Signing request is unavailable.");
         }
@@ -965,14 +1077,14 @@ void finish_signature_request_terminal(
         return;
     }
 
-    if (!write_signature_request_terminal_history(snapshot, result)) {
+    if (!write_sign_by_user_terminal_history(snapshot, result)) {
         if (request_id != nullptr && request_id[0] != '\0') {
             write_error_response(request_id, "history_error", "Could not record signing terminal result.");
         }
-        consume_signature_request_terminal_if_pending();
-        ESP_LOGW(kTag, "Signature request terminal history write failed: id=%s", request_id);
+        consume_sign_by_user_terminal_if_pending();
+        ESP_LOGW(kTag, "sign_by_user terminal history write failed: id=%s", request_id);
         agent_q::avatar_overlay_show_message(
-            result == agent_q::AgentQSignatureRequestTerminalResult::signed_success
+            result == agent_q::AgentQSignByUserTerminalResult::signed_success
                 ? "Signed; history failed"
                 : "History error",
             AgentQMessageKind::error,
@@ -982,28 +1094,28 @@ void finish_signature_request_terminal(
     }
 
     bool wrote_response = false;
-    const char* response_type = "signature_result";
+    const char* response_type = "sign_result";
     const char* display_message = "Signing failed";
     AgentQMessageKind display_kind = AgentQMessageKind::error;
     const char* delivery_failed_message = "Signing failed; USB failed";
-    if (result == agent_q::AgentQSignatureRequestTerminalResult::signed_success) {
+    if (result == agent_q::AgentQSignByUserTerminalResult::signed_success) {
         wrote_response = signing_output != nullptr &&
-            write_signature_result_signed(request_id, snapshot, *signing_output);
+            write_sign_result_signed(request_id, "user", snapshot, *signing_output);
         display_message = wrote_response ? "Signed" : "Signed; USB failed";
         delivery_failed_message = "Signed; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::success : AgentQMessageKind::error;
-    } else if (result == agent_q::AgentQSignatureRequestTerminalResult::rejected) {
-        wrote_response = write_signature_result_terminal(request_id, result);
+    } else if (result == agent_q::AgentQSignByUserTerminalResult::rejected) {
+        wrote_response = write_sign_result_user_terminal(request_id, result);
         display_message = wrote_response ? "Signing rejected" : "Rejected; USB failed";
         delivery_failed_message = "Rejected; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::rejected : AgentQMessageKind::error;
-    } else if (result == agent_q::AgentQSignatureRequestTerminalResult::timed_out) {
-        wrote_response = write_signature_result_terminal(request_id, result);
+    } else if (result == agent_q::AgentQSignByUserTerminalResult::timed_out) {
+        wrote_response = write_sign_result_user_terminal(request_id, result);
         display_message = wrote_response ? "Signing timed out" : "Timeout; USB failed";
         delivery_failed_message = "Timeout; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::timeout : AgentQMessageKind::error;
-    } else if (result == agent_q::AgentQSignatureRequestTerminalResult::signing_failed) {
-        wrote_response = write_signature_result_terminal(request_id, result);
+    } else if (result == agent_q::AgentQSignByUserTerminalResult::signing_failed) {
+        wrote_response = write_sign_result_user_terminal(request_id, result);
         display_message = wrote_response ? "Signing failed" : "Failure; USB failed";
         delivery_failed_message = "Failure; USB failed";
     } else if (request_id != nullptr && request_id[0] != '\0') {
@@ -1017,7 +1129,7 @@ void finish_signature_request_terminal(
         log_response_write_failure(response_type, request_id);
         display_message = delivery_failed_message;
     }
-    consume_signature_request_terminal_if_pending();
+    consume_sign_by_user_terminal_if_pending();
     agent_q::avatar_overlay_show_message(
         display_message,
         display_kind,
@@ -1074,8 +1186,8 @@ agent_q::AgentQUsbSessionLossLocalPinPurpose local_pin_loss_purpose(
             return agent_q::AgentQUsbSessionLossLocalPinPurpose::connect;
         case LocalPinAuthPurpose::policy_update:
             return agent_q::AgentQUsbSessionLossLocalPinPurpose::policy_update;
-        case LocalPinAuthPurpose::signature_request:
-            return agent_q::AgentQUsbSessionLossLocalPinPurpose::signature_request;
+        case LocalPinAuthPurpose::sign_by_user:
+            return agent_q::AgentQUsbSessionLossLocalPinPurpose::sign_by_user;
         case LocalPinAuthPurpose::none:
         case LocalPinAuthPurpose::settings_connect_pin:
         case LocalPinAuthPurpose::settings_change_pin:
@@ -1090,15 +1202,15 @@ agent_q::AgentQUsbSessionLossPlan current_usb_session_loss_plan(TickType_t now)
         agent_q::protocol_pin_approval_snapshot();
     const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
         agent_q::local_pin_auth_snapshot(now);
-    const agent_q::AgentQSignatureRequestFlowSnapshot signature_request =
-        agent_q::signature_request_flow_snapshot();
+    const agent_q::AgentQSignByUserFlowSnapshot sign_by_user =
+        agent_q::sign_by_user_flow_snapshot();
     return agent_q::usb_session_loss_plan(agent_q::AgentQUsbSessionLossInput{
         agent_q::session_active(),
         agent_q::connect_approval_active(),
         protocol_pin_loss_purpose(protocol_pin),
         local_pin_loss_purpose(pin_auth),
-        signature_request.active,
-        signature_request.stage == agent_q::AgentQSignatureRequestStage::signing_critical_section,
+        sign_by_user.active,
+        sign_by_user.stage == agent_q::AgentQSignByUserStage::signing_critical_section,
     });
 }
 
@@ -1137,8 +1249,8 @@ void clear_usb_session_state_for_host_loss(bool notify)
     if (plan.clear_policy_update_flow) {
         agent_q::policy_update_flow_clear();
     }
-    if (plan.cancel_signature_request) {
-        cancel_signature_request_after_session_loss("USB host link lost during signature request");
+    if (plan.cancel_sign_by_user) {
+        cancel_sign_by_user_after_session_loss("USB host link lost during sign_by_user");
     }
     if (plan.clear_decision_panel) {
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::decision_strip, SensitiveUiClearPolicy::preserve);
@@ -1146,8 +1258,8 @@ void clear_usb_session_state_for_host_loss(bool notify)
     if (plan.clear_local_pin_panel) {
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
     }
-    if (plan.clear_signature_review_panel) {
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::signature_review, SensitiveUiClearPolicy::preserve);
+    if (plan.clear_sign_by_user_review_panel) {
+        clear_agent_q_panel_if_kind(AgentQUiPanelKind::sign_by_user_review, SensitiveUiClearPolicy::preserve);
     }
     if (notify) {
         show_usb_disconnected_message();
@@ -1270,7 +1382,7 @@ bool local_setup_start_allowed()
            !agent_q::identification_display_active() &&
            !agent_q::provisioning_flow_active() &&
            !agent_q::local_pin_auth_flow_active() &&
-           !agent_q::signature_request_flow_active() &&
+           !agent_q::sign_by_user_flow_active() &&
            !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
            !agent_q::connect_approval_active() &&
            !agent_q::protocol_pin_approval_active() &&
@@ -1293,14 +1405,14 @@ bool provisioned_material_ready()
     return agent_q::provisioning_runtime_state_material_ready(persistent_material_ops());
 }
 
-agent_q::AgentQSessionValidationResult validate_session_for_signature_request(
+agent_q::AgentQSessionValidationResult validate_session_for_sign_by_user(
     const char* session_id,
     void*)
 {
     return agent_q::session_validate(session_id);
 }
 
-bool signature_request_ingress_busy()
+bool sign_by_user_ingress_busy()
 {
     const agent_q::AgentQLocalResetSnapshot reset =
         agent_q::local_reset_snapshot(xTaskGetTickCount());
@@ -1310,138 +1422,138 @@ bool signature_request_ingress_busy()
            agent_q::provisioning_flow_active() ||
            reset.flow_active ||
            agent_q::local_pin_auth_flow_active() ||
-           agent_q::signature_request_flow_active();
+           agent_q::sign_by_user_flow_active();
 }
 
 const char* signature_ingress_error_code(
-    agent_q::AgentQSignatureRequestIngressResult result)
+    agent_q::AgentQSignByUserIngressResult result)
 {
     switch (result) {
-        case agent_q::AgentQSignatureRequestIngressResult::invalid_request_shape:
+        case agent_q::AgentQSignByUserIngressResult::invalid_request_shape:
             return "invalid_id";
-        case agent_q::AgentQSignatureRequestIngressResult::unsupported_version:
+        case agent_q::AgentQSignByUserIngressResult::unsupported_version:
             return "unsupported_version";
-        case agent_q::AgentQSignatureRequestIngressResult::unsupported_type:
+        case agent_q::AgentQSignByUserIngressResult::unsupported_type:
             return "unsupported_type";
-        case agent_q::AgentQSignatureRequestIngressResult::invalid_state:
+        case agent_q::AgentQSignByUserIngressResult::invalid_state:
             return "invalid_state";
-        case agent_q::AgentQSignatureRequestIngressResult::busy:
+        case agent_q::AgentQSignByUserIngressResult::busy:
             return "busy";
-        case agent_q::AgentQSignatureRequestIngressResult::invalid_session:
+        case agent_q::AgentQSignByUserIngressResult::invalid_session:
             return "invalid_session";
-        case agent_q::AgentQSignatureRequestIngressResult::unsupported_method:
+        case agent_q::AgentQSignByUserIngressResult::unsupported_method:
             return "unsupported_method";
-        case agent_q::AgentQSignatureRequestIngressResult::invalid_params_shape:
-        case agent_q::AgentQSignatureRequestIngressResult::unsupported_field:
-        case agent_q::AgentQSignatureRequestIngressResult::invalid_network:
-        case agent_q::AgentQSignatureRequestIngressResult::invalid_tx_bytes:
+        case agent_q::AgentQSignByUserIngressResult::invalid_params_shape:
+        case agent_q::AgentQSignByUserIngressResult::unsupported_field:
+        case agent_q::AgentQSignByUserIngressResult::invalid_network:
+        case agent_q::AgentQSignByUserIngressResult::invalid_tx_bytes:
             return "invalid_params";
-        case agent_q::AgentQSignatureRequestIngressResult::ok:
+        case agent_q::AgentQSignByUserIngressResult::ok:
         default:
             return "protocol_error";
     }
 }
 
 const char* signature_ingress_error_message(
-    agent_q::AgentQSignatureRequestIngressResult result)
+    agent_q::AgentQSignByUserIngressResult result)
 {
     switch (result) {
-        case agent_q::AgentQSignatureRequestIngressResult::invalid_state:
-            return "request_signature is available only after provisioning is complete.";
-        case agent_q::AgentQSignatureRequestIngressResult::busy:
+        case agent_q::AgentQSignByUserIngressResult::invalid_state:
+            return "sign_by_user is available only after provisioning is complete.";
+        case agent_q::AgentQSignByUserIngressResult::busy:
             return "Device is busy with another request.";
-        case agent_q::AgentQSignatureRequestIngressResult::invalid_session:
+        case agent_q::AgentQSignByUserIngressResult::invalid_session:
             return "Session is unknown or already ended.";
-        case agent_q::AgentQSignatureRequestIngressResult::unsupported_method:
+        case agent_q::AgentQSignByUserIngressResult::unsupported_method:
             return "Signing method is not supported.";
-        case agent_q::AgentQSignatureRequestIngressResult::invalid_network:
+        case agent_q::AgentQSignByUserIngressResult::invalid_network:
             return "Signing network is unsupported.";
-        case agent_q::AgentQSignatureRequestIngressResult::invalid_tx_bytes:
+        case agent_q::AgentQSignByUserIngressResult::invalid_tx_bytes:
             return "Signing txBytes are invalid.";
-        case agent_q::AgentQSignatureRequestIngressResult::unsupported_field:
+        case agent_q::AgentQSignByUserIngressResult::unsupported_field:
             return "Signing request contains unsupported fields.";
-        case agent_q::AgentQSignatureRequestIngressResult::invalid_params_shape:
+        case agent_q::AgentQSignByUserIngressResult::invalid_params_shape:
             return "Signing request params are invalid.";
-        case agent_q::AgentQSignatureRequestIngressResult::unsupported_version:
+        case agent_q::AgentQSignByUserIngressResult::unsupported_version:
             return "Unsupported protocol version.";
-        case agent_q::AgentQSignatureRequestIngressResult::unsupported_type:
+        case agent_q::AgentQSignByUserIngressResult::unsupported_type:
             return "Unsupported request type.";
-        case agent_q::AgentQSignatureRequestIngressResult::invalid_request_shape:
+        case agent_q::AgentQSignByUserIngressResult::invalid_request_shape:
             return "Signing request envelope is invalid.";
-        case agent_q::AgentQSignatureRequestIngressResult::ok:
+        case agent_q::AgentQSignByUserIngressResult::ok:
         default:
             return "Signing request is invalid.";
     }
 }
 
 const char* signature_begin_error_code(
-    agent_q::AgentQSignatureRequestFlowBeginResult result)
+    agent_q::AgentQSignByUserFlowBeginResult result)
 {
     switch (result) {
-        case agent_q::AgentQSignatureRequestFlowBeginResult::active:
+        case agent_q::AgentQSignByUserFlowBeginResult::active:
             return "busy";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_session:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_session:
             return "invalid_session";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::unsupported_method:
+        case agent_q::AgentQSignByUserFlowBeginResult::unsupported_method:
             return "unsupported_method";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_transaction:
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_summary:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_transaction:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_summary:
             return "unsupported_transaction";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::account_unavailable:
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_account:
+        case agent_q::AgentQSignByUserFlowBeginResult::account_unavailable:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_account:
             return "account_error";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::digest_error:
+        case agent_q::AgentQSignByUserFlowBeginResult::digest_error:
             return "history_error";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_network:
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_payload:
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_argument:
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_deadline:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_network:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_payload:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_argument:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_deadline:
             return "invalid_params";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::ok:
+        case agent_q::AgentQSignByUserFlowBeginResult::ok:
         default:
             return "invalid_state";
     }
 }
 
 const char* signature_begin_error_message(
-    agent_q::AgentQSignatureRequestFlowBeginResult result)
+    agent_q::AgentQSignByUserFlowBeginResult result)
 {
     switch (result) {
-        case agent_q::AgentQSignatureRequestFlowBeginResult::active:
+        case agent_q::AgentQSignByUserFlowBeginResult::active:
             return "Device has a pending signing request.";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_session:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_session:
             return "Session is unknown or already ended.";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::unsupported_method:
+        case agent_q::AgentQSignByUserFlowBeginResult::unsupported_method:
             return "Signing method is not supported.";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_transaction:
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_summary:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_transaction:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_summary:
             return "Transaction shape is not supported.";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::account_unavailable:
+        case agent_q::AgentQSignByUserFlowBeginResult::account_unavailable:
             return "Signing account is unavailable.";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_account:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_account:
             return "Transaction sender does not match the device account.";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::digest_error:
+        case agent_q::AgentQSignByUserFlowBeginResult::digest_error:
             return "Could not digest signing request.";
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_network:
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_payload:
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_argument:
-        case agent_q::AgentQSignatureRequestFlowBeginResult::invalid_deadline:
-        case agent_q::AgentQSignatureRequestFlowBeginResult::ok:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_network:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_payload:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_argument:
+        case agent_q::AgentQSignByUserFlowBeginResult::invalid_deadline:
+        case agent_q::AgentQSignByUserFlowBeginResult::ok:
         default:
             return "Signing request params are invalid.";
     }
 }
 
-bool show_signature_request_review()
+bool show_sign_by_user_review()
 {
-    const agent_q::AgentQSignatureRequestFlowSnapshot snapshot =
-        agent_q::signature_request_flow_snapshot();
-    agent_q::AgentQSignatureRequestReviewViewModel model = {};
-    if (agent_q::signature_request_review_view_model_build(snapshot, &model) !=
-        agent_q::AgentQSignatureRequestReviewBuildResult::ok) {
+    const agent_q::AgentQSignByUserFlowSnapshot snapshot =
+        agent_q::sign_by_user_flow_snapshot();
+    agent_q::AgentQSignByUserReviewViewModel model = {};
+    if (agent_q::sign_by_user_review_view_model_build(snapshot, &model) !=
+        agent_q::AgentQSignByUserReviewBuildResult::ok) {
         return false;
     }
-    return agent_q::modal_draw_signature_request_review_panel(model);
+    return agent_q::modal_draw_sign_by_user_review_panel(model);
 }
 
 bool agent_q_ui_idle_for_local_settings()
@@ -1459,7 +1571,7 @@ bool local_settings_touch_entry_candidate_allowed()
            !agent_q::identification_display_active() &&
            !agent_q::provisioning_flow_active() &&
            !agent_q::local_pin_auth_flow_active() &&
-           !agent_q::signature_request_flow_active() &&
+           !agent_q::sign_by_user_flow_active() &&
            !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
            agent_q_ui_idle_for_local_settings();
 }
@@ -1501,7 +1613,7 @@ bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_setti
         write_error_response(id, "busy", "Device is showing local PIN UI.");
         return true;
     }
-    if (agent_q::signature_request_flow_active()) {
+    if (agent_q::sign_by_user_flow_active()) {
         write_error_response(id, "busy", "Device has a pending signing request.");
         return true;
     }
@@ -1518,7 +1630,7 @@ bool require_active_matching_session(const char* id, const char* session_id)
             return false;
         case agent_q::AgentQSessionValidationResult::missing:
             cancel_policy_update_after_session_loss("active session missing during request validation");
-            cancel_signature_request_after_session_loss("active session missing during request validation");
+            cancel_sign_by_user_after_session_loss("active session missing during request validation");
             write_error_response(id, "invalid_session", "Session is unknown or already ended.");
             return false;
         case agent_q::AgentQSessionValidationResult::mismatch:
@@ -1563,24 +1675,24 @@ void cancel_policy_update_after_session_loss(const char* log_reason)
     }
 }
 
-void cancel_signature_request_after_session_loss(const char* log_reason)
+void cancel_sign_by_user_after_session_loss(const char* log_reason)
 {
-    const agent_q::AgentQSignatureRequestFlowSnapshot snapshot =
-        agent_q::signature_request_flow_snapshot();
+    const agent_q::AgentQSignByUserFlowSnapshot snapshot =
+        agent_q::sign_by_user_flow_snapshot();
     if (!snapshot.active) {
         return;
     }
-    const agent_q::AgentQSignatureRequestConfirmationResult result =
-        agent_q::signature_request_confirmation_cancel_for_session_loss();
-    if (result == agent_q::AgentQSignatureRequestConfirmationResult::busy) {
-        ESP_LOGW(kTag, "Signature request stayed active during critical section: %s",
+    const agent_q::AgentQSignByUserConfirmationResult result =
+        agent_q::sign_by_user_confirmation_cancel_for_session_loss();
+    if (result == agent_q::AgentQSignByUserConfirmationResult::busy) {
+        ESP_LOGW(kTag, "sign_by_user stayed active during critical section: %s",
                  log_reason != nullptr ? log_reason : "session loss");
         return;
     }
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::signature_review, SensitiveUiClearPolicy::preserve);
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::sign_by_user_review, SensitiveUiClearPolicy::preserve);
     clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-    consume_signature_request_terminal_if_pending();
-    ESP_LOGW(kTag, "Signature request canceled: %s",
+    consume_sign_by_user_terminal_if_pending();
+    ESP_LOGW(kTag, "sign_by_user canceled: %s",
              log_reason != nullptr ? log_reason : "session loss");
     agent_q::avatar_overlay_show_message(
         "Session ended",
@@ -1608,13 +1720,13 @@ bool pending_request_id_for_local_pin_purpose(
     char* output,
     size_t output_size)
 {
-    if (purpose == LocalPinAuthPurpose::signature_request) {
+    if (purpose == LocalPinAuthPurpose::sign_by_user) {
         if (output == nullptr || output_size == 0) {
             return false;
         }
         output[0] = '\0';
-        const agent_q::AgentQSignatureRequestFlowSnapshot snapshot =
-            agent_q::signature_request_flow_snapshot();
+        const agent_q::AgentQSignByUserFlowSnapshot snapshot =
+            agent_q::sign_by_user_flow_snapshot();
         if (!snapshot.active || snapshot.request_id[0] == '\0') {
             return false;
         }
@@ -1631,36 +1743,29 @@ bool pending_request_id_for_local_pin_purpose(
 }
 
 TickType_t local_pin_auth_retry_deadline(
-    LocalPinAuthPurpose purpose,
     TickType_t now)
 {
-    const TickType_t fallback = now + pdMS_TO_TICKS(kLocalPinInputWindowMs);
-    if (purpose == LocalPinAuthPurpose::signature_request) {
-        return agent_q::signature_request_flow_retry_deadline(fallback);
-    }
-    return agent_q::protocol_pin_approval_retry_deadline_for_local_pin_purpose(
-        purpose,
-        fallback);
+    return now + pdMS_TO_TICKS(kLocalPinInputWindowMs);
 }
 
-bool refresh_local_pin_auth_request_deadline(
+bool refresh_request_backed_pin_input_deadline(
     LocalPinAuthPurpose purpose,
     TickType_t deadline)
 {
-    if (purpose == LocalPinAuthPurpose::signature_request) {
-        return agent_q::signature_request_flow_refresh_pin_deadline(deadline) ==
-               agent_q::AgentQSignatureRequestTransitionResult::ok;
+    if (purpose == LocalPinAuthPurpose::sign_by_user) {
+        return agent_q::sign_by_user_flow_refresh_pin_deadline(deadline) ==
+               agent_q::AgentQSignByUserTransitionResult::ok;
     }
     return agent_q::protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
         purpose,
         deadline);
 }
 
-bool pause_local_pin_auth_request_deadline(LocalPinAuthPurpose purpose)
+bool pause_request_backed_pin_input_deadline(LocalPinAuthPurpose purpose)
 {
-    if (purpose == LocalPinAuthPurpose::signature_request) {
-        return agent_q::signature_request_confirmation_mark_pin_verification_started() ==
-               agent_q::AgentQSignatureRequestConfirmationResult::ok;
+    if (purpose == LocalPinAuthPurpose::sign_by_user) {
+        return agent_q::sign_by_user_confirmation_mark_pin_verification_started() ==
+               agent_q::AgentQSignByUserConfirmationResult::ok;
     }
     return agent_q::protocol_pin_approval_pause_deadline_for_local_pin_purpose(
         purpose);
@@ -1668,8 +1773,8 @@ bool pause_local_pin_auth_request_deadline(LocalPinAuthPurpose purpose)
 
 bool protocol_local_pin_deadline_reached(LocalPinAuthPurpose purpose, TickType_t now)
 {
-    if (purpose == LocalPinAuthPurpose::signature_request) {
-        return agent_q::signature_request_flow_deadline_reached(now);
+    if (purpose == LocalPinAuthPurpose::sign_by_user) {
+        return agent_q::sign_by_user_flow_deadline_reached(now);
     }
     return agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
         purpose,
@@ -1716,23 +1821,23 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
     return true;
 }
 
-bool disconnect_pending_signature_request_for_session(const char* id, const char* session_id)
+bool disconnect_pending_sign_by_user_for_session(const char* id, const char* session_id)
 {
-    const agent_q::AgentQSignatureRequestFlowSnapshot snapshot =
-        agent_q::signature_request_flow_snapshot();
+    const agent_q::AgentQSignByUserFlowSnapshot snapshot =
+        agent_q::sign_by_user_flow_snapshot();
     if (!snapshot.active ||
-        !agent_q::signature_request_flow_session_matches(session_id)) {
+        !agent_q::sign_by_user_flow_session_matches(session_id)) {
         return false;
     }
 
-    const agent_q::AgentQSignatureRequestConfirmationResult result =
-        agent_q::signature_request_confirmation_cancel_for_disconnect(session_id);
-    if (result == agent_q::AgentQSignatureRequestConfirmationResult::busy) {
+    const agent_q::AgentQSignByUserConfirmationResult result =
+        agent_q::sign_by_user_confirmation_cancel_for_disconnect(session_id);
+    if (result == agent_q::AgentQSignByUserConfirmationResult::busy) {
         write_error_response(id, "busy", "Device is signing a request.");
         return true;
     }
 
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::signature_review, SensitiveUiClearPolicy::preserve);
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::sign_by_user_review, SensitiveUiClearPolicy::preserve);
     clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
     if (snapshot.request_id[0] != '\0' &&
         (id == nullptr || strcmp(snapshot.request_id, id) != 0)) {
@@ -1741,10 +1846,10 @@ bool disconnect_pending_signature_request_for_session(const char* id, const char
             "invalid_session",
             "Signing request session is unknown or already ended.");
     }
-    consume_signature_request_terminal_if_pending();
+    consume_sign_by_user_terminal_if_pending();
     clear_active_session();
     if (write_disconnect_result(id)) {
-        ESP_LOGI(kTag, "disconnect canceled pending signature request: id=%s", id);
+        ESP_LOGI(kTag, "disconnect canceled pending sign_by_user: id=%s", id);
     } else {
         log_response_write_failure("disconnect_result", id);
     }
@@ -1795,14 +1900,14 @@ void on_no_clicked(lv_event_t*)
     enqueue_connect_decision_choice(ConnectApprovalChoice::rejected);
 }
 
-void on_signature_review_accept_clicked(lv_event_t*)
+void on_sign_by_user_review_accept_clicked(lv_event_t*)
 {
-    enqueue_ui_event(AgentQUiEventKind::signature_review_accept_requested);
+    enqueue_ui_event(AgentQUiEventKind::sign_by_user_review_accept_requested);
 }
 
-void on_signature_review_reject_clicked(lv_event_t*)
+void on_sign_by_user_review_reject_clicked(lv_event_t*)
 {
-    enqueue_ui_event(AgentQUiEventKind::signature_review_reject_requested);
+    enqueue_ui_event(AgentQUiEventKind::sign_by_user_review_reject_requested);
 }
 
 void on_setup_clicked(lv_event_t*)
@@ -2486,7 +2591,7 @@ void start_local_settings_from_touch()
         agent_q::protocol_pin_approval_active() ||
         agent_q::identification_display_active() ||
         agent_q::provisioning_flow_active() ||
-        agent_q::signature_request_flow_active() ||
+        agent_q::sign_by_user_flow_active() ||
         agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active ||
         !agent_q_ui_idle_for_local_settings()) {
         ESP_LOGW(kTag, "Local settings touch ignored because settings are unavailable");
@@ -2543,7 +2648,7 @@ void show_persistent_error_recovery_if_needed()
         agent_q::identification_display_active() ||
         agent_q::provisioning_flow_active() ||
         agent_q::local_pin_auth_flow_active() ||
-        agent_q::signature_request_flow_active() ||
+        agent_q::sign_by_user_flow_active() ||
         agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active) {
         return;
     }
@@ -2576,7 +2681,7 @@ void start_error_recovery_from_ui()
         agent_q::protocol_pin_approval_active() ||
         agent_q::identification_display_active() ||
         agent_q::provisioning_flow_active() ||
-        agent_q::signature_request_flow_active() ||
+        agent_q::sign_by_user_flow_active() ||
         agent_q::local_pin_auth_flow_active()) {
         ESP_LOGW(kTag, "Stale error recovery action ignored");
         return;
@@ -2803,30 +2908,29 @@ void begin_policy_update_pin_auth(const char* id, const char* session_id)
     }
 }
 
-void handle_signature_review_accept_from_ui()
+void handle_sign_by_user_review_accept_from_ui()
 {
-    const agent_q::AgentQSignatureRequestFlowSnapshot snapshot =
-        agent_q::signature_request_flow_snapshot();
+    const agent_q::AgentQSignByUserFlowSnapshot snapshot =
+        agent_q::sign_by_user_flow_snapshot();
     if (!snapshot.active ||
-        snapshot.stage != agent_q::AgentQSignatureRequestStage::reviewing) {
-        ESP_LOGW(kTag, "Stale signature review accept ignored");
+        snapshot.stage != agent_q::AgentQSignByUserStage::reviewing) {
+        ESP_LOGW(kTag, "Stale sign_by_user review accept ignored");
         return;
     }
 
     const TickType_t now = xTaskGetTickCount();
-    const agent_q::AgentQSignatureRequestConfirmationResult result =
-        agent_q::signature_request_confirmation_accept_review_and_begin_pin(
+    const agent_q::AgentQSignByUserConfirmationResult result =
+        agent_q::sign_by_user_confirmation_accept_review_and_begin_pin(
             now,
-            agent_q::signature_request_flow_retry_deadline(
-                now + pdMS_TO_TICKS(kLocalPinInputWindowMs)));
-    if (result != agent_q::AgentQSignatureRequestConfirmationResult::ok) {
-        if (agent_q::signature_request_flow_terminal_pending()) {
-            finish_signature_request_terminal(snapshot.request_id);
+            now + pdMS_TO_TICKS(kLocalPinInputWindowMs));
+    if (result != agent_q::AgentQSignByUserConfirmationResult::ok) {
+        if (agent_q::sign_by_user_flow_terminal_pending()) {
+            finish_sign_by_user_terminal(snapshot.request_id);
             return;
         }
-        finish_signature_request_error_terminal(
+        finish_sign_by_user_error_terminal(
             snapshot.request_id,
-            result == agent_q::AgentQSignatureRequestConfirmationResult::local_pin_busy
+            result == agent_q::AgentQSignByUserConfirmationResult::local_pin_busy
                 ? "busy"
                 : "invalid_state",
             "Signing request is unavailable.",
@@ -2834,11 +2938,11 @@ void handle_signature_review_accept_from_ui()
         return;
     }
 
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::signature_review, SensitiveUiClearPolicy::preserve);
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::sign_by_user_review, SensitiveUiClearPolicy::preserve);
     if (!agent_q::modal_draw_local_pin_auth_panel()) {
-        agent_q::signature_request_confirmation_cancel_for_pin_loss();
+        agent_q::sign_by_user_confirmation_cancel_for_pin_loss();
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-        finish_signature_request_error_terminal(
+        finish_sign_by_user_error_terminal(
             snapshot.request_id,
             "ui_error",
             "Could not show signing PIN UI.",
@@ -2846,28 +2950,28 @@ void handle_signature_review_accept_from_ui()
     }
 }
 
-void handle_signature_review_reject_from_ui()
+void handle_sign_by_user_review_reject_from_ui()
 {
-    const agent_q::AgentQSignatureRequestFlowSnapshot snapshot =
-        agent_q::signature_request_flow_snapshot();
+    const agent_q::AgentQSignByUserFlowSnapshot snapshot =
+        agent_q::sign_by_user_flow_snapshot();
     if (!snapshot.active ||
-        snapshot.stage != agent_q::AgentQSignatureRequestStage::reviewing) {
-        ESP_LOGW(kTag, "Stale signature review reject ignored");
+        snapshot.stage != agent_q::AgentQSignByUserStage::reviewing) {
+        ESP_LOGW(kTag, "Stale sign_by_user review reject ignored");
         return;
     }
 
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::signature_review, SensitiveUiClearPolicy::preserve);
-    const agent_q::AgentQSignatureRequestConfirmationResult result =
-        agent_q::signature_request_confirmation_record_device_rejected();
-    if (result != agent_q::AgentQSignatureRequestConfirmationResult::ok) {
-        finish_signature_request_error_terminal(
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::sign_by_user_review, SensitiveUiClearPolicy::preserve);
+    const agent_q::AgentQSignByUserConfirmationResult result =
+        agent_q::sign_by_user_confirmation_record_device_rejected();
+    if (result != agent_q::AgentQSignByUserConfirmationResult::ok) {
+        finish_sign_by_user_error_terminal(
             snapshot.request_id,
             "invalid_state",
             "Signing request is unavailable.",
             "Signing unavailable");
         return;
     }
-    finish_signature_request_terminal(snapshot.request_id);
+    finish_sign_by_user_terminal(snapshot.request_id);
 }
 
 void handle_local_pin_auth_display_failure(const char* reason, bool clear_panel)
@@ -2889,17 +2993,17 @@ void handle_local_pin_auth_display_failure(const char* reason, bool clear_panel)
             agent_q::policy_update_flow_record_ui_error());
         return;
     }
-    if (snapshot.purpose == LocalPinAuthPurpose::signature_request &&
+    if (snapshot.purpose == LocalPinAuthPurpose::sign_by_user &&
         pending_request_id_for_local_pin_purpose(
-            LocalPinAuthPurpose::signature_request,
+            LocalPinAuthPurpose::sign_by_user,
             request_id,
             sizeof(request_id))) {
-        agent_q::signature_request_confirmation_cancel_for_pin_loss();
+        agent_q::sign_by_user_confirmation_cancel_for_pin_loss();
         wipe_local_pin_auth_scratch(reason);
         if (clear_panel) {
             clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
         }
-        finish_signature_request_error_terminal(
+        finish_sign_by_user_error_terminal(
             request_id,
             "ui_error",
             "Could not show signing PIN UI.",
@@ -3017,13 +3121,13 @@ void cancel_local_pin_auth_from_ui(const char* message)
         agent_q::avatar_overlay_show_message("Connection rejected", AgentQMessageKind::rejected, AgentQUiMode::result, kAgentQResultDisplayMs);
         return;
     }
-    if (purpose == LocalPinAuthPurpose::signature_request && request_id[0] != '\0') {
-        const agent_q::AgentQSignatureRequestConfirmationResult result =
-            agent_q::signature_request_confirmation_record_device_rejected();
-        if (result == agent_q::AgentQSignatureRequestConfirmationResult::ok) {
-            finish_signature_request_terminal(request_id);
+    if (purpose == LocalPinAuthPurpose::sign_by_user && request_id[0] != '\0') {
+        const agent_q::AgentQSignByUserConfirmationResult result =
+            agent_q::sign_by_user_confirmation_record_device_rejected();
+        if (result == agent_q::AgentQSignByUserConfirmationResult::ok) {
+            finish_sign_by_user_terminal(request_id);
         } else {
-            finish_signature_request_error_terminal(
+            finish_sign_by_user_error_terminal(
                 request_id,
                 "invalid_state",
                 "Signing request is unavailable.",
@@ -3052,10 +3156,8 @@ void cancel_local_pin_auth_from_ui(const char* message)
 void handle_local_pin_auth_digit_from_ui(char digit)
 {
     const TickType_t now = xTaskGetTickCount();
-    const agent_q::AgentQLocalPinAuthSnapshot snapshot =
-        agent_q::local_pin_auth_snapshot(now);
     const TickType_t retry_deadline =
-        local_pin_auth_retry_deadline(snapshot.purpose, now);
+        local_pin_auth_retry_deadline(now);
     const agent_q::AgentQLocalPinAuthInputResult result =
         agent_q::local_pin_auth_add_digit(
             digit,
@@ -3065,7 +3167,6 @@ void handle_local_pin_auth_digit_from_ui(char digit)
         result == agent_q::AgentQLocalPinAuthInputResult::invalid_digit) {
         return;
     }
-    refresh_local_pin_auth_request_deadline(snapshot.purpose, retry_deadline);
     if (!agent_q::modal_draw_local_pin_auth_panel()) {
         handle_local_pin_auth_display_failure("local PIN authorization display allocation failed");
     }
@@ -3074,14 +3175,11 @@ void handle_local_pin_auth_digit_from_ui(char digit)
 void handle_local_pin_auth_clear_from_ui()
 {
     const TickType_t now = xTaskGetTickCount();
-    const agent_q::AgentQLocalPinAuthSnapshot snapshot =
-        agent_q::local_pin_auth_snapshot(now);
     const TickType_t retry_deadline =
-        local_pin_auth_retry_deadline(snapshot.purpose, now);
+        local_pin_auth_retry_deadline(now);
     if (!agent_q::local_pin_auth_clear_pin(retry_deadline)) {
         return;
     }
-    refresh_local_pin_auth_request_deadline(snapshot.purpose, retry_deadline);
     if (!agent_q::modal_draw_local_pin_auth_panel()) {
         handle_local_pin_auth_display_failure("local PIN authorization display allocation failed");
     }
@@ -3090,14 +3188,11 @@ void handle_local_pin_auth_clear_from_ui()
 void handle_local_pin_auth_backspace_from_ui()
 {
     const TickType_t now = xTaskGetTickCount();
-    const agent_q::AgentQLocalPinAuthSnapshot snapshot =
-        agent_q::local_pin_auth_snapshot(now);
     const TickType_t retry_deadline =
-        local_pin_auth_retry_deadline(snapshot.purpose, now);
+        local_pin_auth_retry_deadline(now);
     if (!agent_q::local_pin_auth_backspace_pin(retry_deadline)) {
         return;
     }
-    refresh_local_pin_auth_request_deadline(snapshot.purpose, retry_deadline);
     if (!agent_q::modal_draw_local_pin_auth_panel()) {
         handle_local_pin_auth_display_failure("local PIN authorization display allocation failed");
     }
@@ -3109,7 +3204,7 @@ void handle_local_pin_auth_submit_from_ui()
     const agent_q::AgentQLocalPinAuthSnapshot snapshot =
         agent_q::local_pin_auth_snapshot(now);
     const TickType_t retry_deadline =
-        local_pin_auth_retry_deadline(snapshot.purpose, now);
+        local_pin_auth_retry_deadline(now);
     const agent_q::AgentQLocalPinAuthSubmitResult result =
         agent_q::local_pin_auth_submit(
             now + pdMS_TO_TICKS(kLocalProcessingRenderDelayMs),
@@ -3123,7 +3218,6 @@ void handle_local_pin_auth_submit_from_ui()
         case agent_q::AgentQLocalPinAuthSubmitResult::locked:
             return;
         case agent_q::AgentQLocalPinAuthSubmitResult::worker_unavailable:
-            refresh_local_pin_auth_request_deadline(snapshot.purpose, retry_deadline);
             if (!agent_q::modal_draw_local_pin_auth_panel("Auth worker busy. Try again.")) {
                 handle_local_pin_auth_display_failure(
                     "local PIN worker unavailable display allocation failed",
@@ -3131,7 +3225,6 @@ void handle_local_pin_auth_submit_from_ui()
             }
             return;
         case agent_q::AgentQLocalPinAuthSubmitResult::invalid_pin:
-            refresh_local_pin_auth_request_deadline(snapshot.purpose, retry_deadline);
             if (!agent_q::modal_draw_local_pin_auth_panel("Enter exactly 6 digits.")) {
                 handle_local_pin_auth_display_failure("local PIN authorization display allocation failed");
             }
@@ -3155,9 +3248,9 @@ void handle_local_pin_auth_submit_from_ui()
             }
             return;
         case agent_q::AgentQLocalPinAuthSubmitResult::started_verification:
-            if (!pause_local_pin_auth_request_deadline(snapshot.purpose) &&
+            if (!pause_request_backed_pin_input_deadline(snapshot.purpose) &&
                 (snapshot.purpose == LocalPinAuthPurpose::policy_update ||
-                 snapshot.purpose == LocalPinAuthPurpose::signature_request)) {
+                 snapshot.purpose == LocalPinAuthPurpose::sign_by_user)) {
                 handle_local_pin_auth_display_failure(
                     "local PIN authorization deadline pause failed",
                     true);
@@ -3175,9 +3268,7 @@ void handle_local_pin_auth_submit_from_ui()
 
 void handle_reset_pin_digit_from_local_ui(char digit)
 {
-    if (!agent_q::local_reset_add_pin_digit(
-            digit,
-            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs))) {
+    if (!agent_q::local_reset_add_pin_digit(digit)) {
         return;
     }
 
@@ -3189,8 +3280,7 @@ void handle_reset_pin_digit_from_local_ui(char digit)
 
 void handle_reset_pin_clear_from_local_ui()
 {
-    if (!agent_q::local_reset_clear_pin(
-            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs))) {
+    if (!agent_q::local_reset_clear_pin()) {
         return;
     }
     if (!agent_q::modal_draw_reset_pin_panel()) {
@@ -3201,8 +3291,7 @@ void handle_reset_pin_clear_from_local_ui()
 
 void handle_reset_pin_backspace_from_local_ui()
 {
-    if (!agent_q::local_reset_backspace_pin(
-            xTaskGetTickCount() + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs))) {
+    if (!agent_q::local_reset_backspace_pin()) {
         return;
     }
     if (!agent_q::modal_draw_reset_pin_panel()) {
@@ -3423,14 +3512,14 @@ void handle_local_pin_auth_verify_worker_result(
     }
 
     const LocalPinAuthPurpose purpose = snapshot.purpose;
-    if (purpose == LocalPinAuthPurpose::signature_request) {
+    if (purpose == LocalPinAuthPurpose::sign_by_user) {
         char request_id[kMaxRequestIdSize] = {};
         pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
         if (!provisioned_material_ready()) {
-            agent_q::signature_request_confirmation_cancel_for_pin_loss();
-            wipe_local_pin_auth_scratch("signature request material state unavailable");
+            agent_q::sign_by_user_confirmation_cancel_for_pin_loss();
+            wipe_local_pin_auth_scratch("sign_by_user material state unavailable");
             clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-            finish_signature_request_error_terminal(
+            finish_sign_by_user_error_terminal(
                 request_id,
                 "invalid_state",
                 "Signing request is unavailable.",
@@ -3438,70 +3527,70 @@ void handle_local_pin_auth_verify_worker_result(
             return;
         }
 
-        const agent_q::AgentQSignatureRequestConfirmationResult confirmation_result =
-            agent_q::signature_request_confirmation_complete_pin_verify_job_and_write_history(
+        const agent_q::AgentQSignByUserConfirmationResult confirmation_result =
+            agent_q::sign_by_user_confirmation_complete_pin_verify_job_and_write_history(
                 worker_result,
                 now,
-                local_pin_auth_retry_deadline(purpose, now),
+                local_pin_auth_retry_deadline(now),
                 now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetPinLockoutMs),
-                write_signature_request_confirmation_history,
+                write_sign_by_user_confirmation_history,
                 nullptr);
         switch (confirmation_result) {
-            case agent_q::AgentQSignatureRequestConfirmationResult::not_ready:
+            case agent_q::AgentQSignByUserConfirmationResult::not_ready:
                 return;
-            case agent_q::AgentQSignatureRequestConfirmationResult::wrong_pin:
+            case agent_q::AgentQSignByUserConfirmationResult::wrong_pin:
                 if (!agent_q::modal_draw_local_pin_auth_panel("Wrong PIN.")) {
                     handle_local_pin_auth_display_failure(
-                        "signature PIN display allocation failed after wrong PIN");
+                        "sign_by_user PIN display allocation failed after wrong PIN");
                 }
                 return;
-            case agent_q::AgentQSignatureRequestConfirmationResult::locked:
+            case agent_q::AgentQSignByUserConfirmationResult::locked:
                 if (!agent_q::modal_draw_local_pin_auth_panel("Too many wrong PINs. Wait 30s.")) {
                     handle_local_pin_auth_display_failure(
-                        "signature PIN lockout display allocation failed");
+                        "sign_by_user PIN lockout display allocation failed");
                 }
                 return;
-            case agent_q::AgentQSignatureRequestConfirmationResult::auth_unavailable:
+            case agent_q::AgentQSignByUserConfirmationResult::auth_unavailable:
                 agent_q::persistent_material_record_runtime_failure(
                     agent_q::AgentQPersistentMaterialRuntimeFailure::local_pin_auth_unavailable,
                     persistent_material_ops());
                 clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-                finish_signature_request_error_terminal(
+                finish_sign_by_user_error_terminal(
                     request_id,
                     "auth_unavailable",
                     "Local PIN verifier unavailable.",
                     "Auth error");
                 return;
-            case agent_q::AgentQSignatureRequestConfirmationResult::history_error:
+            case agent_q::AgentQSignByUserConfirmationResult::history_error:
                 clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-                finish_signature_request_error_terminal(
+                finish_sign_by_user_error_terminal(
                     request_id,
                     "history_error",
                     "Could not record signing confirmation.",
                     "History error");
                 return;
-            case agent_q::AgentQSignatureRequestConfirmationResult::ok:
+            case agent_q::AgentQSignByUserConfirmationResult::ok:
                 break;
-            case agent_q::AgentQSignatureRequestConfirmationResult::deadline_expired:
-            case agent_q::AgentQSignatureRequestConfirmationResult::deadline_not_reached:
-            case agent_q::AgentQSignatureRequestConfirmationResult::invalid_session:
-            case agent_q::AgentQSignatureRequestConfirmationResult::inactive:
-            case agent_q::AgentQSignatureRequestConfirmationResult::wrong_stage:
-            case agent_q::AgentQSignatureRequestConfirmationResult::invalid_argument:
-            case agent_q::AgentQSignatureRequestConfirmationResult::invalid_deadline:
-            case agent_q::AgentQSignatureRequestConfirmationResult::session_still_active:
-            case agent_q::AgentQSignatureRequestConfirmationResult::local_pin_busy:
-            case agent_q::AgentQSignatureRequestConfirmationResult::local_pin_unavailable:
-            case agent_q::AgentQSignatureRequestConfirmationResult::stale_state:
-            case agent_q::AgentQSignatureRequestConfirmationResult::busy:
+            case agent_q::AgentQSignByUserConfirmationResult::deadline_expired:
+            case agent_q::AgentQSignByUserConfirmationResult::deadline_not_reached:
+            case agent_q::AgentQSignByUserConfirmationResult::invalid_session:
+            case agent_q::AgentQSignByUserConfirmationResult::inactive:
+            case agent_q::AgentQSignByUserConfirmationResult::wrong_stage:
+            case agent_q::AgentQSignByUserConfirmationResult::invalid_argument:
+            case agent_q::AgentQSignByUserConfirmationResult::invalid_deadline:
+            case agent_q::AgentQSignByUserConfirmationResult::session_still_active:
+            case agent_q::AgentQSignByUserConfirmationResult::local_pin_busy:
+            case agent_q::AgentQSignByUserConfirmationResult::local_pin_unavailable:
+            case agent_q::AgentQSignByUserConfirmationResult::stale_state:
+            case agent_q::AgentQSignByUserConfirmationResult::busy:
                 clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-                if (agent_q::signature_request_flow_terminal_pending()) {
-                    finish_signature_request_terminal(request_id);
+                if (agent_q::sign_by_user_flow_terminal_pending()) {
+                    finish_sign_by_user_terminal(request_id);
                     return;
                 }
-                finish_signature_request_error_terminal(
+                finish_sign_by_user_error_terminal(
                     request_id,
-                    confirmation_result == agent_q::AgentQSignatureRequestConfirmationResult::invalid_session
+                    confirmation_result == agent_q::AgentQSignByUserConfirmationResult::invalid_session
                         ? "invalid_session"
                         : "invalid_state",
                     "Signing request is unavailable.",
@@ -3510,21 +3599,21 @@ void handle_local_pin_auth_verify_worker_result(
         }
 
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-        agent_q::AgentQSignatureRequestSigningOutput signing_output = {};
-        const agent_q::AgentQSignatureRequestSigningHandoffReport signing_report =
-            agent_q::signature_request_signing_execute_critical_section(&signing_output);
-        if (signing_report.result != agent_q::AgentQSignatureRequestSigningHandoffResult::ok) {
+        agent_q::AgentQSignByUserSigningOutput signing_output = {};
+        const agent_q::AgentQSignByUserSigningHandoffReport signing_report =
+            agent_q::sign_by_user_signing_execute_critical_section(&signing_output);
+        if (signing_report.result != agent_q::AgentQSignByUserSigningHandoffResult::ok) {
             ESP_LOGW(kTag,
-                     "Signature request signing failed: id=%s handoff=%s signing=%s",
+                     "sign_by_user signing failed: id=%s handoff=%s signing=%s",
                      request_id,
-                     agent_q::signature_request_signing_handoff_result_name(signing_report.result),
+                     agent_q::sign_by_user_signing_handoff_result_name(signing_report.result),
                      agent_q::sui_transaction_signing_result_to_string(signing_report.signing_result));
-            finish_signature_request_terminal(request_id);
-            agent_q::signature_request_signing_output_wipe(&signing_output);
+            finish_sign_by_user_terminal(request_id);
+            agent_q::sign_by_user_signing_output_wipe(&signing_output);
             return;
         }
-        finish_signature_request_terminal(request_id, &signing_output);
-        agent_q::signature_request_signing_output_wipe(&signing_output);
+        finish_sign_by_user_terminal(request_id, &signing_output);
+        agent_q::sign_by_user_signing_output_wipe(&signing_output);
         return;
     }
     if (!provisioned_material_ready()) {
@@ -3549,7 +3638,7 @@ void handle_local_pin_auth_verify_worker_result(
         return;
     }
 
-    const TickType_t retry_deadline = local_pin_auth_retry_deadline(purpose, now);
+    const TickType_t retry_deadline = local_pin_auth_retry_deadline(now);
     const agent_q::AgentQLocalPinAuthVerifyResult result =
         agent_q::local_pin_auth_complete_verify_job(
             worker_result,
@@ -3613,13 +3702,13 @@ void handle_local_pin_auth_verify_worker_result(
             return;
         }
         case agent_q::AgentQLocalPinAuthVerifyResult::locked:
-            refresh_local_pin_auth_request_deadline(purpose, retry_deadline);
+            refresh_request_backed_pin_input_deadline(purpose, retry_deadline);
             if (!agent_q::modal_draw_local_pin_auth_panel("Too many wrong PINs. Wait 30s.")) {
                 handle_local_pin_auth_display_failure("local PIN authorization display allocation failed after wrong PIN");
             }
             return;
         case agent_q::AgentQLocalPinAuthVerifyResult::wrong_pin:
-            refresh_local_pin_auth_request_deadline(purpose, retry_deadline);
+            refresh_request_backed_pin_input_deadline(purpose, retry_deadline);
             if (!agent_q::modal_draw_local_pin_auth_panel("Wrong PIN.")) {
                 handle_local_pin_auth_display_failure("local PIN authorization display allocation failed after wrong PIN");
             }
@@ -3753,19 +3842,19 @@ void clear_local_pin_auth_if_needed()
         return;
     }
     if (snapshot.processing) {
-        if (snapshot.purpose == LocalPinAuthPurpose::signature_request) {
+        if (snapshot.purpose == LocalPinAuthPurpose::sign_by_user) {
             char request_id[kMaxRequestIdSize] = {};
             pending_request_id_for_local_pin_purpose(snapshot.purpose, request_id, sizeof(request_id));
             if (request_backed_local_pin_deadline_reached(snapshot.purpose, now)) {
                 clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-                wipe_local_pin_auth_scratch("signature request local PIN authorization timed out");
-                const agent_q::AgentQSignatureRequestConfirmationResult result =
-                    agent_q::signature_request_confirmation_record_timeout(now);
-                if (result == agent_q::AgentQSignatureRequestConfirmationResult::ok ||
-                    agent_q::signature_request_flow_terminal_pending()) {
-                    finish_signature_request_terminal(request_id);
+                wipe_local_pin_auth_scratch("sign_by_user local PIN authorization timed out");
+                const agent_q::AgentQSignByUserConfirmationResult result =
+                    agent_q::sign_by_user_confirmation_record_timeout(now);
+                if (result == agent_q::AgentQSignByUserConfirmationResult::ok ||
+                    agent_q::sign_by_user_flow_terminal_pending()) {
+                    finish_sign_by_user_terminal(request_id);
                 } else {
-                    finish_signature_request_error_terminal(
+                    finish_sign_by_user_error_terminal(
                         request_id,
                         "invalid_state",
                         "Signing request is unavailable.",
@@ -3774,13 +3863,13 @@ void clear_local_pin_auth_if_needed()
                 return;
             }
             if (agent_q::local_pin_auth_processing_deadline_expired(now)) {
-                agent_q::signature_request_confirmation_cancel_for_pin_loss();
-                wipe_local_pin_auth_scratch("signature request local PIN verifier timed out");
+                agent_q::sign_by_user_confirmation_cancel_for_pin_loss();
+                wipe_local_pin_auth_scratch("sign_by_user local PIN verifier timed out");
                 clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
                 agent_q::persistent_material_record_runtime_failure(
                     agent_q::AgentQPersistentMaterialRuntimeFailure::local_pin_auth_unavailable,
                     persistent_material_ops());
-                finish_signature_request_error_terminal(
+                finish_sign_by_user_error_terminal(
                     request_id,
                     "auth_unavailable",
                     "Local PIN verifier unavailable.",
@@ -3790,7 +3879,7 @@ void clear_local_pin_auth_if_needed()
             if (!agent_q_panel_active(AgentQUiPanelKind::local_pin_auth) &&
                 !agent_q::modal_draw_local_pin_auth_panel()) {
                 handle_local_pin_auth_display_failure(
-                    "signature PIN authorization processing UI recovery failed",
+                    "sign_by_user PIN authorization processing UI recovery failed",
                     true);
             }
             return;
@@ -3878,18 +3967,18 @@ void clear_local_pin_auth_if_needed()
     const LocalPinAuthPurpose purpose = snapshot.purpose;
     char request_id[kMaxRequestIdSize] = {};
     pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
-    if (purpose == LocalPinAuthPurpose::signature_request && request_id[0] != '\0') {
+    if (purpose == LocalPinAuthPurpose::sign_by_user && request_id[0] != '\0') {
         if (request_backed_local_pin_deadline_reached(purpose, now) ||
             agent_q::local_pin_auth_deadline_expired(now)) {
             clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-            wipe_local_pin_auth_scratch("signature request local PIN authorization timed out");
-            const agent_q::AgentQSignatureRequestConfirmationResult result =
-                agent_q::signature_request_confirmation_record_timeout(now);
-            if (result == agent_q::AgentQSignatureRequestConfirmationResult::ok ||
-                agent_q::signature_request_flow_terminal_pending()) {
-                finish_signature_request_terminal(request_id);
+            wipe_local_pin_auth_scratch("sign_by_user local PIN authorization timed out");
+            const agent_q::AgentQSignByUserConfirmationResult result =
+                agent_q::sign_by_user_confirmation_record_timeout(now);
+            if (result == agent_q::AgentQSignByUserConfirmationResult::ok ||
+                agent_q::sign_by_user_flow_terminal_pending()) {
+                finish_sign_by_user_terminal(request_id);
             } else {
-                finish_signature_request_error_terminal(
+                finish_sign_by_user_error_terminal(
                     request_id,
                     "invalid_state",
                     "Signing request is unavailable.",
@@ -3898,12 +3987,12 @@ void clear_local_pin_auth_if_needed()
             return;
         }
 
-        const TickType_t retry_deadline = local_pin_auth_retry_deadline(purpose, now);
+        const TickType_t retry_deadline = local_pin_auth_retry_deadline(now);
         if (agent_q::local_pin_auth_release_lockout_if_elapsed(now, retry_deadline)) {
-            refresh_local_pin_auth_request_deadline(purpose, retry_deadline);
+            refresh_request_backed_pin_input_deadline(purpose, retry_deadline);
             if (!agent_q::modal_draw_local_pin_auth_panel("Try again.")) {
                 handle_local_pin_auth_display_failure(
-                    "signature PIN authorization lockout display allocation failed");
+                    "sign_by_user PIN authorization lockout display allocation failed");
             }
             return;
         }
@@ -3921,8 +4010,8 @@ void clear_local_pin_auth_if_needed()
         if (agent_q::modal_draw_local_pin_auth_panel()) {
             return;
         }
-        agent_q::signature_request_confirmation_cancel_for_pin_loss();
-        finish_signature_request_error_terminal(
+        agent_q::sign_by_user_confirmation_cancel_for_pin_loss();
+        finish_sign_by_user_error_terminal(
             request_id,
             "ui_error",
             "Could not restore signing PIN UI.",
@@ -3949,9 +4038,9 @@ void clear_local_pin_auth_if_needed()
         return;
     }
 
-    const TickType_t retry_deadline = local_pin_auth_retry_deadline(purpose, now);
+    const TickType_t retry_deadline = local_pin_auth_retry_deadline(now);
     if (agent_q::local_pin_auth_release_lockout_if_elapsed(now, retry_deadline)) {
-        refresh_local_pin_auth_request_deadline(purpose, retry_deadline);
+        refresh_request_backed_pin_input_deadline(purpose, retry_deadline);
         if (!agent_q::modal_draw_local_pin_auth_panel("Try again.")) {
             handle_local_pin_auth_display_failure("local PIN authorization lockout display allocation failed");
         }
@@ -4022,25 +4111,25 @@ void clear_local_pin_auth_if_needed()
     }
 }
 
-void clear_signature_request_review_if_needed()
+void clear_sign_by_user_review_if_needed()
 {
     const TickType_t now = xTaskGetTickCount();
-    const agent_q::AgentQSignatureRequestFlowSnapshot snapshot =
-        agent_q::signature_request_flow_snapshot();
+    const agent_q::AgentQSignByUserFlowSnapshot snapshot =
+        agent_q::sign_by_user_flow_snapshot();
     if (!snapshot.active ||
-        snapshot.stage != agent_q::AgentQSignatureRequestStage::reviewing) {
+        snapshot.stage != agent_q::AgentQSignByUserStage::reviewing) {
         return;
     }
 
-    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::signature_review);
-    const agent_q::AgentQSignatureRequestTransitionResult timeout_result =
-        agent_q::signature_request_flow_record_timeout(now);
-    if (timeout_result == agent_q::AgentQSignatureRequestTransitionResult::deadline_not_reached) {
+    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::sign_by_user_review);
+    const agent_q::AgentQSignByUserTransitionResult timeout_result =
+        agent_q::sign_by_user_flow_record_timeout(now);
+    if (timeout_result == agent_q::AgentQSignByUserTransitionResult::deadline_not_reached) {
         if (panel_active) {
             return;
         }
-        if (!show_signature_request_review()) {
-            agent_q::signature_request_flow_clear();
+        if (!show_sign_by_user_review()) {
+            agent_q::sign_by_user_flow_clear();
             write_error_response(
                 snapshot.request_id,
                 "ui_error",
@@ -4053,10 +4142,10 @@ void clear_signature_request_review_if_needed()
         }
         return;
     }
-    if (timeout_result == agent_q::AgentQSignatureRequestTransitionResult::ok ||
-        agent_q::signature_request_flow_terminal_pending()) {
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::signature_review, SensitiveUiClearPolicy::preserve);
-        finish_signature_request_terminal(snapshot.request_id);
+    if (timeout_result == agent_q::AgentQSignByUserTransitionResult::ok ||
+        agent_q::sign_by_user_flow_terminal_pending()) {
+        clear_agent_q_panel_if_kind(AgentQUiPanelKind::sign_by_user_review, SensitiveUiClearPolicy::preserve);
+        finish_sign_by_user_terminal(snapshot.request_id);
         return;
     }
 
@@ -4467,13 +4556,13 @@ void drain_ui_events()
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::signature_review_accept_requested) {
-            handle_signature_review_accept_from_ui();
+        if (event.kind == AgentQUiEventKind::sign_by_user_review_accept_requested) {
+            handle_sign_by_user_review_accept_from_ui();
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::signature_review_reject_requested) {
-            handle_signature_review_reject_from_ui();
+        if (event.kind == AgentQUiEventKind::sign_by_user_review_reject_requested) {
+            handle_sign_by_user_review_reject_from_ui();
             continue;
         }
 
@@ -4734,19 +4823,19 @@ void handle_line(const char* line)
         return;
     }
 
-    if (strcmp(type, "request_signature") == 0) {
-        agent_q::AgentQSignatureRequestIngressOutput ingress = {};
-        const agent_q::AgentQSignatureRequestIngressResult ingress_result =
-            agent_q::evaluate_signature_request_ingress(
+    if (strcmp(type, "sign_by_user") == 0) {
+        agent_q::AgentQSignByUserIngressOutput ingress = {};
+        const agent_q::AgentQSignByUserIngressResult ingress_result =
+            agent_q::evaluate_sign_by_user_ingress(
                 request,
-                agent_q::AgentQSignatureRequestIngressState{
+                agent_q::AgentQSignByUserIngressState{
                     provisioned_material_ready(),
-                    signature_request_ingress_busy(),
-                    validate_session_for_signature_request,
+                    sign_by_user_ingress_busy(),
+                    validate_session_for_sign_by_user,
                     nullptr,
                 },
                 &ingress);
-        if (ingress_result != agent_q::AgentQSignatureRequestIngressResult::ok) {
+        if (ingress_result != agent_q::AgentQSignByUserIngressResult::ok) {
             write_error_response(
                 id,
                 signature_ingress_error_code(ingress_result),
@@ -4765,9 +4854,9 @@ void handle_line(const char* line)
             return;
         }
 
-        const agent_q::AgentQSignatureRequestFlowBeginResult begin_result =
-            agent_q::signature_request_flow_begin(
-                agent_q::AgentQSignatureRequestBeginInput{
+        const agent_q::AgentQSignByUserFlowBeginResult begin_result =
+            agent_q::sign_by_user_flow_begin(
+                agent_q::AgentQSignByUserBeginInput{
                     ingress.envelope.request_id,
                     ingress.session.session_id,
                     ingress.params.chain,
@@ -4776,11 +4865,11 @@ void handle_line(const char* line)
                     tx_bytes,
                     ingress.params.tx_bytes_decoded_size,
                     xTaskGetTickCount() +
-                        pdMS_TO_TICKS(agent_q::kAgentQSignatureRequestApprovalWindowMs),
+                        pdMS_TO_TICKS(agent_q::kAgentQSignByUserApprovalWindowMs),
                 });
         agent_q::wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
-        if (begin_result != agent_q::AgentQSignatureRequestFlowBeginResult::ok) {
-            if (begin_result == agent_q::AgentQSignatureRequestFlowBeginResult::account_unavailable) {
+        if (begin_result != agent_q::AgentQSignByUserFlowBeginResult::ok) {
+            if (begin_result == agent_q::AgentQSignByUserFlowBeginResult::account_unavailable) {
                 agent_q::persistent_material_record_runtime_failure(
                     agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
                     persistent_material_ops());
@@ -4792,8 +4881,8 @@ void handle_line(const char* line)
             return;
         }
 
-        if (!show_signature_request_review()) {
-            agent_q::signature_request_flow_clear();
+        if (!show_sign_by_user_review()) {
+            agent_q::sign_by_user_flow_clear();
             write_error_response(id, "ui_error", "Could not show signing review UI.");
             agent_q::avatar_overlay_show_message(
                 "Display error",
@@ -4802,7 +4891,7 @@ void handle_line(const char* line)
                 kAgentQResultDisplayMs);
             return;
         }
-        ESP_LOGI(kTag, "request_signature waiting for device review: id=%s", id);
+        ESP_LOGI(kTag, "sign_by_user waiting for device review: id=%s", id);
         return;
     }
 
@@ -4818,7 +4907,7 @@ void handle_line(const char* line)
         if (disconnect_pending_policy_update_for_session(id, session_id)) {
             return;
         }
-        if (disconnect_pending_signature_request_for_session(id, session_id)) {
+        if (disconnect_pending_sign_by_user_for_session(id, session_id)) {
             return;
         }
         if (write_busy_if_pending_or_local_flow_active(id, true)) {
@@ -4913,6 +5002,9 @@ void handle_line(const char* line)
         }
 
         if (!write_policy_response(id)) {
+            agent_q::persistent_material_record_runtime_failure(
+                agent_q::AgentQPersistentMaterialRuntimeFailure::active_policy_unavailable,
+                persistent_material_ops());
             write_error_response(id, "policy_error", "Active policy is unavailable.");
             ESP_LOGW(kTag, "get_policy active policy unavailable: id=%s", id);
             return;
@@ -4923,10 +5015,9 @@ void handle_line(const char* line)
 
     if (strcmp(type, "get_approval_history") == 0) {
         // get_approval_history is read-only and session-scoped. It returns
-        // Firmware-authored approval-history metadata such as method decisions
-        // and future policy-update terminal records; raw requests, session ids,
-        // private material, PINs, and policy documents are never stored or
-        // returned.
+        // Firmware-authored signing and policy-update metadata; raw requests,
+        // session ids, private material, PINs, and policy documents are never
+        // stored or returned.
         if (!provisioned_material_ready()) {
             write_error_response(id, "invalid_state", "Approval history is available only after provisioning is complete.");
             return;
@@ -4960,14 +5051,12 @@ void handle_line(const char* line)
         return;
     }
 
-    if (strcmp(type, "call_method") == 0) {
-        // Firmware enforces state/session gates before method-specific
-        // validation and policy evaluation.
+    if (strcmp(type, "propose_policy_update") == 0) {
         if (!provisioned_material_ready()) {
-            write_error_response(id, "invalid_state", "call_method is available only after provisioning is complete.");
+            write_error_response(id, "invalid_state", "Policy update is available only after provisioning is complete.");
             return;
         }
-        if (write_busy_if_pending_or_local_flow_active(id, true)) {
+        if (write_busy_if_pending_or_local_flow_active(id)) {
             return;
         }
 
@@ -4980,129 +5069,209 @@ void handle_line(const char* line)
             return;
         }
 
-        const agent_q::CallMethodNamespaceValidation namespace_validation =
-            agent_q::classify_call_method_namespace(request);
-        if (namespace_validation == agent_q::CallMethodNamespaceValidation::invalid_namespace) {
-            write_error_response(id, "invalid_method", "Invalid call_method namespace fields.");
+        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "params"};
+        if (!json_object_fields_supported(request.as<JsonVariantConst>(), allowed_request_fields, 5)) {
+            write_error_response(id, "invalid_params", "Policy update request contains unsupported fields.");
             return;
         }
 
-        if (namespace_validation == agent_q::CallMethodNamespaceValidation::admin_scoped) {
-            const char* method_namespace = nullptr;
-            const char* method = nullptr;
-            if (!agent_q::agent_q_json_value_c_string(request["methodNamespace"], &method_namespace) ||
-                strcmp(method_namespace, "admin") != 0 ||
-                !agent_q::agent_q_json_value_c_string(request["method"], &method) ||
-                strcmp(method, "propose_policy_update") != 0) {
-                write_error_response(id, "invalid_method", "Invalid admin method request.");
-                return;
-            }
-            if (write_busy_if_pending_or_local_flow_active(id)) {
-                return;
-            }
-
-            JsonVariant params = request["params"];
-            if (!params.is<JsonObject>()) {
-                write_error_response(id, "invalid_params", "Policy update params must be an object.");
-                return;
-            }
-            JsonObject params_object = params.as<JsonObject>();
-            bool saw_policy = false;
-            for (JsonPair pair : params_object) {
-                if (agent_q::agent_q_json_string_equals(pair.key(), "policy")) {
-                    saw_policy = true;
-                    continue;
-                }
-                write_error_response(id, "invalid_params", "Policy update params contain unsupported fields.");
-                return;
-            }
-            if (!saw_policy) {
-                write_error_response(id, "invalid_params", "Policy update params require policy.");
-                return;
-            }
-
-            const agent_q::AgentQPolicyUpdateFlowBeginResult begin_result =
-                agent_q::policy_update_flow_begin(params_object["policy"]);
-            if (begin_result != agent_q::AgentQPolicyUpdateFlowBeginResult::ok) {
-                if (!write_policy_update_result_response(
-                        id,
-                        "invalid_policy",
-                        agent_q::policy_update_flow_begin_result_reason(begin_result),
-                        false)) {
-                    log_response_write_failure("policy_update_result", id);
-                }
-                return;
-            }
-
-            begin_policy_update_pin_auth(id, session_id);
-            ESP_LOGI(kTag, "policy update waiting for local PIN: id=%s", id);
+        JsonVariant params = request["params"];
+        if (!params.is<JsonObject>()) {
+            write_error_response(id, "invalid_params", "Policy update params must be an object.");
+            return;
+        }
+        JsonObject params_object = params.as<JsonObject>();
+        const char* const allowed_policy_params[] = {"policy"};
+        if (!json_object_fields_supported(params, allowed_policy_params, 1) ||
+            params_object["policy"].isNull()) {
+            write_error_response(id, "invalid_params", "Policy update params require policy.");
             return;
         }
 
-        switch (agent_q::validate_call_method_request_fields(request)) {
-            case agent_q::CallMethodFieldValidation::valid:
-                break;
-            case agent_q::CallMethodFieldValidation::invalid_method:
-                write_error_response(id, "invalid_method", "Invalid call_method chain or method.");
-                return;
-            case agent_q::CallMethodFieldValidation::invalid_params_shape:
-                write_error_response(id, "invalid_params", "call_method params must be an object.");
-                return;
-            case agent_q::CallMethodFieldValidation::invalid_params_size:
-                write_error_response(id, "invalid_params", "call_method params are too large for the runtime.");
-                return;
+        const agent_q::AgentQPolicyUpdateFlowBeginResult begin_result =
+            agent_q::policy_update_flow_begin(params_object["policy"]);
+        if (begin_result != agent_q::AgentQPolicyUpdateFlowBeginResult::ok) {
+            if (!write_policy_update_result_response(
+                    id,
+                    "invalid_policy",
+                    agent_q::policy_update_flow_begin_result_reason(begin_result),
+                    false)) {
+                log_response_write_failure("policy_update_result", id);
+            }
+            return;
+        }
+
+        begin_policy_update_pin_auth(id, session_id);
+        ESP_LOGI(kTag, "policy update waiting for local PIN: id=%s", id);
+        return;
+    }
+
+    if (strcmp(type, "sign_by_policy") == 0) {
+        if (!provisioned_material_ready()) {
+            write_error_response(id, "invalid_state", "sign_by_policy is available only after provisioning is complete.");
+            return;
+        }
+        if (write_busy_if_pending_or_local_flow_active(id)) {
+            return;
+        }
+
+        const char* session_id = nullptr;
+        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
+            write_error_response(id, "invalid_session", "Invalid session.");
+            return;
+        }
+        if (!require_active_matching_session(id, session_id)) {
+            return;
+        }
+
+        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "chain", "method", "params"};
+        if (!json_object_fields_supported(request.as<JsonVariantConst>(), allowed_request_fields, 7)) {
+            write_error_response(id, "invalid_params", "sign_by_policy request contains unsupported fields.");
+            return;
         }
 
         const char* chain = nullptr;
         const char* method = nullptr;
         if (!agent_q::agent_q_json_value_c_string(request["chain"], &chain) ||
             !agent_q::agent_q_json_value_c_string(request["method"], &method)) {
-            write_error_response(id, "invalid_method", "Invalid call_method chain or method.");
-            return;
-        }
-        agent_q::AgentQMethodRuntimeResult method_result =
-            agent_q::evaluate_call_method(chain, method, request["params"]);
-        if (method_result.has_approval_history) {
-            const auto& history = method_result.approval_history;
-            const agent_q::AgentQApprovalHistoryAppendInput append_input{
-                history.decision,
-                history.confirmation_kind,
-                history.chain,
-                history.method,
-                history.reason_code,
-                history.payload_digest[0] != '\0' ? history.payload_digest : nullptr,
-                history.policy_hash[0] != '\0' ? history.policy_hash : nullptr,
-                history.rule_ref[0] != '\0' ? history.rule_ref : nullptr,
-            };
-            if (!agent_q::approval_history_append(
-                    append_input,
-                    static_cast<uint64_t>(esp_timer_get_time() / 1000LL))) {
-                ESP_LOGW(kTag, "Approval history append failed: id=%s chain=%s method=%s code=%s",
-                         id,
-                         chain,
-                         method,
-                         method_result.code);
-                write_error_response(id, "history_error", "Could not record method decision.");
-                agent_q::clear_method_runtime_result(&method_result);
-                return;
-            }
-        }
-        if (method_result.status == agent_q::AgentQMethodRuntimeStatus::invalid_params) {
-            write_error_response(id, method_result.code, method_result.message);
-            agent_q::clear_method_runtime_result(&method_result);
+            write_error_response(id, "unsupported_method", "Signing method is not supported.");
             return;
         }
 
-        if (write_rejected_method_result(id, method_result.code, method_result.message)) {
-            ESP_LOGI(kTag, "call_method rejected: id=%s chain=%s method=%s code=%s",
-                     id,
-                     chain,
-                     method,
-                     method_result.code);
-        } else {
-            log_response_write_failure("method_result", id);
+        agent_q::AgentQSignByPolicyRuntimeResult sign_result =
+            agent_q::evaluate_sign_by_policy(chain, method, request["params"]);
+        if (sign_result.status == agent_q::AgentQSignByPolicyRuntimeStatus::invalid_params ||
+            sign_result.status == agent_q::AgentQSignByPolicyRuntimeStatus::unsupported_transaction ||
+            sign_result.status == agent_q::AgentQSignByPolicyRuntimeStatus::account_mismatch ||
+            sign_result.status == agent_q::AgentQSignByPolicyRuntimeStatus::policy_error) {
+            if (sign_result.status == agent_q::AgentQSignByPolicyRuntimeStatus::policy_error) {
+                agent_q::persistent_material_record_runtime_failure(
+                    agent_q::AgentQPersistentMaterialRuntimeFailure::active_policy_unavailable,
+                    persistent_material_ops());
+            }
+            write_error_response(id, sign_result.code, sign_result.message);
+            agent_q::clear_sign_by_policy_runtime_result(&sign_result);
+            return;
         }
-        agent_q::clear_method_runtime_result(&method_result);
+        if (sign_result.status == agent_q::AgentQSignByPolicyRuntimeStatus::account_unavailable) {
+            agent_q::persistent_material_record_runtime_failure(
+                agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
+                persistent_material_ops());
+            write_error_response(id, "account_error", "Stored signing account is unavailable.");
+            agent_q::clear_sign_by_policy_runtime_result(&sign_result);
+            return;
+        }
+
+        if (sign_result.status == agent_q::AgentQSignByPolicyRuntimeStatus::policy_rejected) {
+            if (!write_policy_signing_terminal_history(
+                    sign_result,
+                    agent_q::AgentQSigningHistoryTerminalResult::policy_rejected,
+                    "policy_rejected",
+                    true)) {
+                write_error_response(id, "history_error", "Could not record policy signing terminal result.");
+                agent_q::clear_sign_by_policy_runtime_result(&sign_result);
+                return;
+            }
+            if (write_sign_result_policy_rejected(id, sign_result.policy_hash, sign_result.rule_ref)) {
+                ESP_LOGI(kTag, "sign_by_policy rejected: id=%s chain=%s method=%s rule=%s",
+                         id,
+                         sign_result.chain,
+                         sign_result.method,
+                         sign_result.rule_ref);
+            } else {
+                log_response_write_failure("sign_result", id);
+            }
+            agent_q::clear_sign_by_policy_runtime_result(&sign_result);
+            return;
+        }
+
+        if (sign_result.status != agent_q::AgentQSignByPolicyRuntimeStatus::policy_authorized) {
+            write_error_response(id, "protocol_error", "Signing request is invalid.");
+            agent_q::clear_sign_by_policy_runtime_result(&sign_result);
+            return;
+        }
+
+        if (!write_policy_signing_confirmation_history(sign_result)) {
+            write_error_response(id, "history_error", "Could not record policy signing approval.");
+            agent_q::clear_sign_by_policy_runtime_result(&sign_result);
+            return;
+        }
+
+        uint8_t signature[agent_q::kSuiEd25519SignatureBytes] = {};
+        const agent_q::SuiTransactionSigningResult signing_result =
+            agent_q::sign_sui_ed25519_transaction_from_stored_root(
+                sign_result.tx_bytes,
+                sign_result.tx_bytes_size,
+                signature);
+        if (signing_result != agent_q::SuiTransactionSigningResult::ok) {
+            agent_q::wipe_sensitive_buffer(signature, sizeof(signature));
+            if (signing_result == agent_q::SuiTransactionSigningResult::root_material_unavailable) {
+                const bool terminal_recorded = write_policy_signing_terminal_history(
+                    sign_result,
+                    agent_q::AgentQSigningHistoryTerminalResult::signing_failed,
+                    "root_material_unreadable",
+                    false);
+                agent_q::persistent_material_record_runtime_failure(
+                    agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
+                    persistent_material_ops());
+                if (!terminal_recorded) {
+                    write_error_response(id, "history_error", "Could not record policy signing terminal result.");
+                    agent_q::clear_sign_by_policy_runtime_result(&sign_result);
+                    return;
+                }
+                write_error_response(id, "account_error", "Stored signing account is unavailable.");
+                agent_q::clear_sign_by_policy_runtime_result(&sign_result);
+                return;
+            }
+            if (!write_policy_signing_terminal_history(
+                    sign_result,
+                    agent_q::AgentQSigningHistoryTerminalResult::signing_failed,
+                    "signing_failed",
+                    false)) {
+                write_error_response(id, "history_error", "Could not record policy signing terminal result.");
+                agent_q::clear_sign_by_policy_runtime_result(&sign_result);
+                return;
+            }
+            if (write_sign_result_signing_failed(id, "policy")) {
+                ESP_LOGW(kTag, "sign_by_policy signing failed: id=%s chain=%s method=%s",
+                         id,
+                         sign_result.chain,
+                         sign_result.method);
+            } else {
+                log_response_write_failure("sign_result", id);
+            }
+            agent_q::clear_sign_by_policy_runtime_result(&sign_result);
+            return;
+        }
+
+        if (!write_policy_signing_terminal_history(
+                sign_result,
+                agent_q::AgentQSigningHistoryTerminalResult::signed_success,
+                "policy_signed",
+                false)) {
+            agent_q::wipe_sensitive_buffer(signature, sizeof(signature));
+            write_error_response(id, "history_error", "Could not record policy signing terminal result.");
+            agent_q::clear_sign_by_policy_runtime_result(&sign_result);
+            return;
+        }
+
+        if (write_sign_result_signed_fields(
+                id,
+                "policy",
+                sign_result.chain,
+                sign_result.method,
+                signature,
+                sizeof(signature))) {
+            ESP_LOGI(kTag, "sign_by_policy signed: id=%s chain=%s method=%s rule=%s",
+                     id,
+                     sign_result.chain,
+                     sign_result.method,
+                     sign_result.rule_ref);
+        } else {
+            log_response_write_failure("sign_result", id);
+        }
+        agent_q::wipe_sensitive_buffer(signature, sizeof(signature));
+        agent_q::clear_sign_by_policy_runtime_result(&sign_result);
         return;
     }
 
@@ -5174,7 +5343,7 @@ void usb_request_task(void*)
         clear_pin_setup_if_needed();
         clear_local_reset_if_needed();
         clear_local_pin_auth_if_needed();
-        clear_signature_request_review_if_needed();
+        clear_sign_by_user_review_if_needed();
         drain_ui_events();
         commit_local_reset_if_ready();
         commit_local_pin_setting_if_ready();
@@ -5253,8 +5422,8 @@ void init_usb_request_server()
     modal_callbacks.on_recover_previous_clicked = on_recover_previous_clicked;
     modal_callbacks.on_recover_next_clicked = on_recover_next_clicked;
     modal_callbacks.on_recover_cancel_clicked = on_recover_cancel_clicked;
-    modal_callbacks.on_signature_review_accept_clicked = on_signature_review_accept_clicked;
-    modal_callbacks.on_signature_review_reject_clicked = on_signature_review_reject_clicked;
+    modal_callbacks.on_sign_by_user_review_accept_clicked = on_sign_by_user_review_accept_clicked;
+    modal_callbacks.on_sign_by_user_review_reject_clicked = on_sign_by_user_review_reject_clicked;
     agent_q::modal_drawing_set_callbacks(modal_callbacks);
     agent_q::avatar_overlay_clear();
 

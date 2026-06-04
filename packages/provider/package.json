@@ -1,7 +1,7 @@
 {
   "name": "@stelis/agent-q-provider",
   "version": "0.0.0",
-  "description": "Dapp-facing Agent-Q provider adapter for device, session, and read-only capabilities.",
+  "description": "Dapp-facing Agent-Q provider adapter for device, session, read-only capabilities, and user-confirmed signing.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {

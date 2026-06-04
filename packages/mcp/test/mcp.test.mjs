@@ -9,7 +9,6 @@ import { createGatewayMcpServer, gatewayToolDefinitions } from "../dist/mcp.js";
 import { FORBIDDEN_SECRET_FIELD_NAMES, MAX_SESSION_TTL_MS } from "@stelis/agent-q-client/protocol";
 
 const expectedToolNames = [
-  "call_method",
   "connect_device",
   "disconnect_device",
   "get_accounts",
@@ -23,6 +22,7 @@ const expectedToolNames = [
   "scan_devices",
   "select_device",
   "set_device_metadata",
+  "sign_by_policy",
 ];
 
 test("MCP package metadata exposes MCP and Admin adapter entrypoints", async () => {
@@ -167,9 +167,10 @@ const noOpCore = {
           seq: "1",
           uptimeMs: "1200",
           timeSource: "uptime",
-          eventKind: "method_decision",
-          decisionKind: "policy_rejected",
-          confirmationKind: "policy",
+          eventKind: "signing",
+          recordKind: "terminal",
+          authorization: "policy",
+          terminalResult: "policy_rejected",
           chain: "sui",
           method: "sign_transaction",
           reasonCode: "default_reject",
@@ -181,14 +182,17 @@ const noOpCore = {
       hasMore: false,
     };
   },
-  async callMethod() {
+  async signByPolicy() {
     return {
       source: "live",
       deviceId: "device-1",
-      status: "rejected",
+      status: "policy_rejected",
+      authorization: "policy",
+      policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+      ruleRef: "default",
       error: {
-        code: "unsupported_method",
-        message: "Method is not supported.",
+        code: "policy_rejected",
+        message: "The signing request was rejected by device policy.",
       },
     };
   },
@@ -346,12 +350,13 @@ test("tool input schemas expose only current request fields", () => {
     "gatewayName",
     "purpose",
   ]);
-  assert.deepEqual(Object.keys(gatewayToolDefinitions.callMethod.inputSchema).sort(), [
+  assert.deepEqual(Object.keys(gatewayToolDefinitions.signByPolicy.inputSchema).sort(), [
     "chain",
     "deviceId",
     "method",
-    "params",
+    "network",
     "purpose",
+    "txBytes",
   ]);
   assert.deepEqual(Object.keys(gatewayToolDefinitions.proposePolicyUpdate.inputSchema).sort(), [
     "deviceId",
@@ -440,7 +445,7 @@ const dispatchCases = [
   { name: "get_accounts", arguments: {} },
   { name: "get_policy", arguments: {} },
   { name: "get_approval_history", arguments: {} },
-  { name: "call_method", arguments: { chain: "sui", method: "sign_transaction", params: {} } },
+  { name: "sign_by_policy", arguments: { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" } },
   {
     name: "propose_policy_update",
     arguments: {
@@ -524,13 +529,14 @@ test("get_policy dispatch returns the active policy summary without a session to
   });
 });
 
-test("get_approval_history dispatch returns bounded decision records without a session token", async () => {
+test("get_approval_history dispatch returns bounded signing records without a session token", async () => {
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "get_approval_history", arguments: { limit: 1 } });
     assert.equal(result.structuredContent.source, "live");
     assert.equal(result.structuredContent.records.length, 1);
-    assert.equal(result.structuredContent.records[0].eventKind, "method_decision");
-    assert.equal(result.structuredContent.records[0].decisionKind, "policy_rejected");
+    assert.equal(result.structuredContent.records[0].eventKind, "signing");
+    assert.equal(result.structuredContent.records[0].authorization, "policy");
+    assert.equal(result.structuredContent.records[0].terminalResult, "policy_rejected");
     assert.equal(result.structuredContent.records[0].reasonCode, "default_reject");
     assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
   });
@@ -548,7 +554,7 @@ test("get_capabilities dispatch returns current capabilities without a session t
   });
 });
 
-test("get_capabilities dispatch fails closed on provider-facing signature request capability", async () => {
+test("get_capabilities dispatch projects raw Firmware signing capability to MCP policy capability", async () => {
   const core = {
     ...noOpCore,
     async getCapabilities() {
@@ -567,21 +573,25 @@ test("get_capabilities dispatch fails closed on provider-facing signature reques
             methods: [],
           },
         ],
-        signatureRequests: [{ chain: "sui", method: "sign_transaction" }],
+        signing: {
+          user: [{ chain: "sui", method: "sign_transaction" }],
+          policy: [{ chain: "sui", method: "sign_transaction" }],
+        },
       };
     },
   };
 
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "get_capabilities", arguments: {} });
-    assert.equal(result.isError, true);
-    assert.equal(result.structuredContent.source, "error");
-    assert.equal(result.structuredContent.error.code, "internal_output_error");
-    assert.equal(JSON.stringify(result).includes("signatureRequests"), false);
+    assert.equal(result.structuredContent.source, "live");
+    assert.deepEqual(result.structuredContent.signing, {
+      policy: [{ chain: "sui", method: "sign_transaction" }],
+    });
+    assert.equal(JSON.stringify(result).includes('"user"'), false);
   }, core);
 });
 
-test("get_capabilities output schema rejects provider-facing signature request capability", () => {
+test("get_capabilities MCP output schema rejects user-confirmed signing capability", () => {
   const parsed = gatewayToolDefinitions.getCapabilities.outputSchema.safeParse({
     source: "live",
     deviceId: "device-1",
@@ -597,21 +607,25 @@ test("get_capabilities output schema rejects provider-facing signature request c
         methods: [],
       },
     ],
-    signatureRequests: [{ chain: "sui", method: "sign_transaction" }],
+    signing: {
+      user: [{ chain: "sui", method: "sign_transaction" }],
+      policy: [{ chain: "sui", method: "sign_transaction" }],
+    },
   });
 
   assert.equal(parsed.success, false);
 });
 
-test("call_method dispatch returns a rejected result without a session token", async () => {
+test("sign_by_policy dispatch returns a policy result without a session token", async () => {
   await withConnectedClient(async (client) => {
     const result = await client.callTool({
-      name: "call_method",
-      arguments: { chain: "sui", method: "sign_transaction", params: {} },
+      name: "sign_by_policy",
+      arguments: { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" },
     });
     assert.equal(result.structuredContent.source, "live");
-    assert.equal(result.structuredContent.status, "rejected");
-    assert.equal(result.structuredContent.error.code, "unsupported_method");
+    assert.equal(result.structuredContent.status, "policy_rejected");
+    assert.equal(result.structuredContent.authorization, "policy");
+    assert.equal(result.structuredContent.error.code, "policy_rejected");
     assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
   });
 });
@@ -636,54 +650,55 @@ test("propose_policy_update dispatch returns Firmware-authored terminal metadata
   });
 });
 
-test("call_method dispatch accepts rejected policy-decision results without a session token", async () => {
+test("sign_by_policy dispatch accepts signed policy results without a session token", async () => {
   const core = {
     ...noOpCore,
-    async callMethod() {
+    async signByPolicy() {
       return {
         source: "live",
         deviceId: "device-1",
-        status: "rejected",
-        error: {
-          code: "policy_rejected",
-          message: "The request was rejected by device policy.",
-        },
+        status: "signed",
+        authorization: "policy",
+        chain: "sui",
+        method: "sign_transaction",
+        signature: Buffer.alloc(97, 1).toString("base64"),
       };
     },
   };
   await withConnectedClient(async (client) => {
     const result = await client.callTool({
-      name: "call_method",
-      arguments: { chain: "sui", method: "sign_transaction", params: {} },
+      name: "sign_by_policy",
+      arguments: { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" },
     });
     assert.equal(result.structuredContent.source, "live");
-    assert.equal(result.structuredContent.status, "rejected");
-    assert.equal(result.structuredContent.error.code, "policy_rejected");
+    assert.equal(result.structuredContent.status, "signed");
+    assert.equal(result.structuredContent.authorization, "policy");
     assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
   }, core);
 });
 
-test("call_method dispatch lets core own state-first validation", async () => {
-  let callMethodCalls = 0;
+test("sign_by_policy dispatch lets core own state-first validation", async () => {
+  let signByPolicyCalls = 0;
   const core = {
     ...noOpCore,
-    async callMethod() {
-      callMethodCalls += 1;
+    async signByPolicy() {
+      signByPolicyCalls += 1;
       return { source: "not_connected", deviceId: "device-1", reason: "not_connected" };
     },
   };
   await withConnectedClient(async (client) => {
     const result = await client.callTool({
-      name: "call_method",
+      name: "sign_by_policy",
       arguments: {
         chain: "sui",
         method: "sign_transaction",
-        params: { seed: "must-not-forward" },
+        network: "devnet",
+        txBytes: "AQID",
       },
     });
     assert.equal(result.isError, false);
     assert.equal(result.structuredContent.source, "not_connected");
-    assert.equal(callMethodCalls, 1);
+    assert.equal(signByPolicyCalls, 1);
   }, core);
 });
 
@@ -809,9 +824,10 @@ const leakyCore = {
           seq: "1",
           uptimeMs: "1200",
           timeSource: "uptime",
-          eventKind: "method_decision",
-          decisionKind: "policy_rejected",
-          confirmationKind: "policy",
+          eventKind: "signing",
+          recordKind: "terminal",
+          authorization: "policy",
+          terminalResult: "policy_rejected",
           chain: "sui",
           method: "sign_transaction",
           reasonCode: "default_reject",
@@ -825,14 +841,17 @@ const leakyCore = {
       ...SECRET_EXTRAS,
     };
   },
-  async callMethod() {
+  async signByPolicy() {
     return {
       source: "live",
       deviceId: "device-1",
-      status: "rejected",
+      status: "policy_rejected",
+      authorization: "policy",
+      policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+      ruleRef: "default",
       error: {
-        code: "unsupported_method",
-        message: "Method is not supported.",
+        code: "policy_rejected",
+        message: "The signing request was rejected by device policy.",
       },
       ...SECRET_EXTRAS,
     };
@@ -854,10 +873,15 @@ const leakyCore = {
   },
 };
 
-test("MCP boundary strips secret-like extra fields from every success result", async () => {
+test("MCP boundary prevents secret-like extra fields from leaking out", async () => {
   await withConnectedClient(async (client) => {
     for (const dispatchCase of dispatchCases) {
       const result = await client.callTool(dispatchCase);
+      if (dispatchCase.name === "get_capabilities") {
+        assert.equal(result.isError, true, "capability drift must fail closed instead of being silently stripped");
+        assert.equal(result.structuredContent.error.code, "internal_output_error");
+        continue;
+      }
       assert.equal(result.isError ?? false, false, `${dispatchCase.name}: leaky-but-valid success must dispatch ok`);
       assertNoLeakMarkers(result, dispatchCase.name);
     }
@@ -960,8 +984,9 @@ test("get_approval_history rejects malformed records", async () => {
             uptimeMs: "1200",
             timeSource: "uptime",
             eventKind: "session_event",
-            decisionKind: "policy_rejected",
-            confirmationKind: "policy",
+            authorization: "policy",
+            recordKind: "terminal",
+            terminalResult: "policy_rejected",
             chain: "sui",
             method: "sign_transaction",
             reasonCode: "default_reject",
@@ -979,24 +1004,25 @@ test("get_approval_history rejects malformed records", async () => {
   }, malformedCore);
 });
 
-test("call_method malformed approved shape cannot leak out as a success", async () => {
+test("sign_by_policy malformed user-authorized shape cannot leak out as a success", async () => {
   const malformedCore = {
     ...noOpCore,
-    async callMethod() {
+    async signByPolicy() {
       return {
         source: "live",
         deviceId: "device-1",
-        status: "approved",
+        status: "signed",
+        authorization: "user",
         chain: "sui",
         method: "sign_transaction",
-        signature: "not-supported-yet",
+        signature: Buffer.alloc(97, 1).toString("base64"),
       };
     },
   };
   await withConnectedClient(async (client) => {
     const result = await client.callTool({
-      name: "call_method",
-      arguments: { chain: "sui", method: "sign_transaction", params: {} },
+      name: "sign_by_policy",
+      arguments: { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" },
     });
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.error.code, "internal_output_error");
@@ -1068,7 +1094,7 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
     },
     {
-      name: "call_method",
+      name: "sign_by_policy",
       result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
     },
     {
@@ -1088,7 +1114,7 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
     {
-      name: "call_method",
+      name: "sign_by_policy",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
     {
@@ -1115,7 +1141,7 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       async getApprovalHistory() {
         return testCase.result;
       },
-      async callMethod() {
+      async signByPolicy() {
         return testCase.result;
       },
       async proposePolicyUpdate() {
@@ -1123,8 +1149,8 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       },
     };
     await withConnectedClient(async (client) => {
-      const args = testCase.name === "call_method"
-        ? { chain: "sui", method: "sign_transaction", params: {} }
+      const args = testCase.name === "sign_by_policy"
+        ? { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" }
         : testCase.name === "propose_policy_update"
           ? { policy: { schema: "agentq.policy.v0", defaultAction: "reject", rules: [] } }
           : {};

@@ -199,7 +199,7 @@ void local_pin_auth_begin_policy_update(TickType_t deadline)
     g_state.deadline = deadline;
 }
 
-bool local_pin_auth_begin_signature_request(
+bool local_pin_auth_begin_sign_by_user(
     const AgentQLocalPinAuthSignatureBinding& binding,
     TickType_t deadline)
 {
@@ -208,27 +208,30 @@ bool local_pin_auth_begin_signature_request(
         binding.token == 0) {
         return false;
     }
-    g_state.purpose = AgentQLocalPinAuthPurpose::signature_request;
+    g_state.purpose = AgentQLocalPinAuthPurpose::sign_by_user;
     g_state.stage = AgentQLocalPinAuthStage::pin_entry;
     g_state.deadline = deadline;
     g_state.signature_binding = binding;
     return true;
 }
 
-bool local_pin_auth_signature_request_matches(
+bool local_pin_auth_sign_by_user_matches(
     const AgentQLocalPinAuthSignatureBinding& binding)
 {
     return g_state.flow_active() &&
-           g_state.purpose == AgentQLocalPinAuthPurpose::signature_request &&
+           g_state.purpose == AgentQLocalPinAuthPurpose::sign_by_user &&
            binding.token != 0 &&
            g_state.signature_binding.token == binding.token;
 }
 
-AgentQLocalPinAuthInputResult local_pin_auth_add_digit(char digit, TickType_t deadline)
+AgentQLocalPinAuthInputResult local_pin_auth_add_digit(char digit, TickType_t retry_deadline)
 {
     const TickType_t now = xTaskGetTickCount();
-    release_lockout_if_elapsed(now, deadline);
+    release_lockout_if_elapsed(now, retry_deadline);
     if (!local_pin_auth_accepts_keypad_input()) {
+        return AgentQLocalPinAuthInputResult::inactive;
+    }
+    if (tick_reached(g_state.deadline, now)) {
         return AgentQLocalPinAuthInputResult::inactive;
     }
     if (pin_attempt_locked_at(now)) {
@@ -238,41 +241,39 @@ AgentQLocalPinAuthInputResult local_pin_auth_add_digit(char digit, TickType_t de
         return AgentQLocalPinAuthInputResult::invalid_digit;
     }
     if (g_state.pin_entry_length >= kLocalPinDigits) {
-        g_state.deadline = deadline;
         return AgentQLocalPinAuthInputResult::full;
     }
 
     g_state.pin_entry[g_state.pin_entry_length++] = digit;
     g_state.pin_entry[g_state.pin_entry_length] = '\0';
-    g_state.deadline = deadline;
     return AgentQLocalPinAuthInputResult::accepted;
 }
 
-bool local_pin_auth_clear_pin(TickType_t deadline)
+bool local_pin_auth_clear_pin(TickType_t retry_deadline)
 {
     const TickType_t now = xTaskGetTickCount();
-    release_lockout_if_elapsed(now, deadline);
+    release_lockout_if_elapsed(now, retry_deadline);
     if (!local_pin_auth_accepts_keypad_input() ||
+        tick_reached(g_state.deadline, now) ||
         pin_attempt_locked_at(now)) {
         return false;
     }
     g_state.clear_pin_only();
-    g_state.deadline = deadline;
     return true;
 }
 
-bool local_pin_auth_backspace_pin(TickType_t deadline)
+bool local_pin_auth_backspace_pin(TickType_t retry_deadline)
 {
     const TickType_t now = xTaskGetTickCount();
-    release_lockout_if_elapsed(now, deadline);
+    release_lockout_if_elapsed(now, retry_deadline);
     if (!local_pin_auth_accepts_keypad_input() ||
+        tick_reached(g_state.deadline, now) ||
         pin_attempt_locked_at(now)) {
         return false;
     }
     if (g_state.pin_entry_length > 0) {
         g_state.pin_entry[--g_state.pin_entry_length] = '\0';
     }
-    g_state.deadline = deadline;
     return true;
 }
 
@@ -287,12 +288,14 @@ AgentQLocalPinAuthSubmitResult local_pin_auth_submit(
     if (!local_pin_auth_accepts_keypad_input()) {
         return AgentQLocalPinAuthSubmitResult::unavailable_stage;
     }
+    if (tick_reached(g_state.deadline, now)) {
+        return AgentQLocalPinAuthSubmitResult::unavailable_stage;
+    }
     if (pin_attempt_locked_at(now)) {
         return AgentQLocalPinAuthSubmitResult::locked;
     }
     if (g_state.pin_entry_length != kLocalPinDigits ||
         !is_valid_local_pin(g_state.pin_entry)) {
-        g_state.deadline = retry_deadline;
         return AgentQLocalPinAuthSubmitResult::invalid_pin;
     }
 
@@ -320,7 +323,7 @@ AgentQLocalPinAuthSubmitResult local_pin_auth_submit(
         if (!local_auth_worker_submit_prepare_verifier(
                 AgentQLocalAuthWorkerOwner::local_pin_auth,
                 g_state.new_pin,
-                &job_id)) {
+        &job_id)) {
             g_state.clear_new_pin();
             g_state.clear_pin_only();
             g_state.stage = AgentQLocalPinAuthStage::new_pin_entry;
@@ -342,7 +345,6 @@ AgentQLocalPinAuthSubmitResult local_pin_auth_submit(
             AgentQLocalAuthWorkerOwner::local_pin_auth,
             g_state.pin_entry,
             &job_id)) {
-        g_state.deadline = retry_deadline;
         return AgentQLocalPinAuthSubmitResult::worker_unavailable;
     }
     g_state.clear_pin_only();
@@ -368,7 +370,7 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
         result.operation != AgentQLocalAuthWorkerOperation::verify_pin) {
         return AgentQLocalPinAuthVerifyResult::not_ready;
     }
-    if (g_state.purpose == AgentQLocalPinAuthPurpose::signature_request) {
+    if (g_state.purpose == AgentQLocalPinAuthPurpose::sign_by_user) {
         return AgentQLocalPinAuthVerifyResult::not_ready;
     }
     if (local_pin_auth_processing_deadline_expired(xTaskGetTickCount())) {
@@ -416,13 +418,13 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
     return AgentQLocalPinAuthVerifyResult::verified_connect;
 }
 
-AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_signature_request_verify_job(
+AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_sign_by_user_verify_job(
     const AgentQLocalAuthWorkerResult& result,
     TickType_t retry_deadline,
     TickType_t lockout_until)
 {
     if (!g_state.flow_active() ||
-        g_state.purpose != AgentQLocalPinAuthPurpose::signature_request ||
+        g_state.purpose != AgentQLocalPinAuthPurpose::sign_by_user ||
         g_state.stage != AgentQLocalPinAuthStage::pin_verifying ||
         g_state.auth_job_id == 0 ||
         result.job_id != g_state.auth_job_id ||

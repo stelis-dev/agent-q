@@ -114,11 +114,6 @@ int main()
                sizeof(request_id)),
            "inactive state has no connect request id");
     expect(request_id[0] == '\0', "inactive request id output is cleared");
-    expect(agent_q::protocol_pin_approval_retry_deadline_for_local_pin_purpose(
-               LocalPurpose::connect,
-               77) == 77,
-           "inactive state returns fallback deadline");
-
     expect(agent_q::protocol_pin_approval_begin_connect("connect-1", 100),
            "connect protocol PIN approval begins");
     agent_q::AgentQProtocolPinApprovalSnapshot snapshot =
@@ -127,8 +122,8 @@ int main()
     expect(snapshot.purpose == Purpose::connect, "connect snapshot purpose");
     expect(strcmp(snapshot.request_id, "connect-1") == 0, "connect request id stored");
     expect(snapshot.session_id[0] == '\0', "connect stores no session id");
-    expect(snapshot.deadline == 100, "connect deadline stored");
-    expect(snapshot.approval_deadline == 100, "connect fixed approval deadline stored");
+    expect(snapshot.request_deadline == 100, "connect request deadline stored");
+    expect(snapshot.pin_input_deadline == 100, "connect PIN input deadline stored");
     expect(agent_q::protocol_pin_approval_request_id_for_local_pin_purpose(
                LocalPurpose::connect,
                request_id,
@@ -153,22 +148,22 @@ int main()
                130),
            "connect local PIN retry refresh is accepted");
     snapshot = agent_q::protocol_pin_approval_snapshot();
-    expect(snapshot.deadline == 100, "connect retry deadline is capped by fixed approval deadline");
-    expect(snapshot.approval_deadline == 100, "connect fixed approval deadline is unchanged");
+    expect(snapshot.request_deadline == 100, "connect request deadline is immutable");
+    expect(snapshot.pin_input_deadline == 100, "connect retry is capped by request deadline");
     expect(agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
                LocalPurpose::connect,
                100),
-           "capped retry deadline is reached at fixed approval deadline");
+           "capped retry cannot extend connect request deadline");
     expect(agent_q::protocol_pin_approval_pause_deadline_for_local_pin_purpose(
                LocalPurpose::connect),
-           "connect local PIN verification pauses protocol deadline");
+           "connect local PIN verification pauses only PIN input deadline");
     snapshot = agent_q::protocol_pin_approval_snapshot();
-    expect(snapshot.deadline == 0, "connect paused deadline stored");
-    expect(snapshot.approval_deadline == 100, "paused connect keeps fixed approval deadline");
+    expect(snapshot.request_deadline == 100, "connect request deadline remains while PIN verifies");
+    expect(snapshot.pin_input_deadline == 0, "connect paused PIN input deadline stored");
     expect(agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
                LocalPurpose::connect,
                1000),
-           "fixed approval deadline still expires while PIN verification runs");
+           "paused connect PIN input deadline does not pause request deadline");
 
     char too_long[agent_q::kAgentQProtocolPinRequestIdSize + 4] = {};
     memset(too_long, 'a', sizeof(too_long) - 1);
@@ -202,8 +197,10 @@ int main()
     expect(snapshot.purpose == Purpose::policy_update, "policy update snapshot purpose");
     expect(strcmp(snapshot.request_id, "policy-1") == 0, "policy update request id stored");
     expect(strcmp(snapshot.session_id, session_id) == 0, "policy update session id stored");
-    expect(snapshot.deadline == 250 && snapshot.approval_deadline == 250,
-           "policy update stores both local and fixed deadlines");
+    expect(snapshot.request_deadline == 250,
+           "policy update stores request deadline");
+    expect(snapshot.pin_input_deadline == 250,
+           "policy update stores PIN input deadline");
     expect(agent_q::protocol_pin_approval_policy_update_session_matches(session_id),
            "matching policy update session recognized");
     expect(!agent_q::protocol_pin_approval_policy_update_session_matches(

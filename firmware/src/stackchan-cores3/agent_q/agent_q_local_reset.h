@@ -79,9 +79,9 @@ void local_reset_begin_settings(TickType_t deadline);
 void local_reset_begin_error_recovery_confirm(TickType_t deadline);
 bool local_reset_begin_pin_entry(TickType_t deadline);
 bool local_reset_begin_error_recovery_wipe(TickType_t wipe_ready_at);
-bool local_reset_add_pin_digit(char digit, TickType_t deadline);
-bool local_reset_clear_pin(TickType_t deadline);
-bool local_reset_backspace_pin(TickType_t deadline);
+bool local_reset_add_pin_digit(char digit);
+bool local_reset_clear_pin();
+bool local_reset_backspace_pin();
 AgentQLocalResetPinSubmitResult local_reset_submit_pin_for_verification(
     TickType_t verify_ready_at,
     TickType_t invalid_deadline,

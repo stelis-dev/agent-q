@@ -67,10 +67,26 @@ function createFakeCore() {
             methods: [],
           },
         ],
+        signing: {
+          user: [{ chain: "sui", method: "sign_transaction" }],
+          policy: [{ chain: "sui", method: "sign_transaction" }],
+        },
       };
     },
     async getAccounts() {
-      return { source: "live", deviceId: "device-1", accounts: [] };
+      return {
+        source: "live",
+        deviceId: "device-1",
+        accounts: [
+          {
+            chain: "sui",
+            address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+            publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=",
+            keyScheme: "ed25519",
+            derivationPath: SUI_DERIVATION_PATH,
+          },
+        ],
+      };
     },
     async getPolicy() {
       return {
@@ -87,14 +103,14 @@ function createFakeCore() {
     async getApprovalHistory() {
       return { source: "live", deviceId: "device-1", records: [], hasMore: false };
     },
-    async requestSignature() {
+    async signByUser() {
       return {
         source: "live",
         deviceId: "device-1",
-        status: "rejected",
-        reasonCode: "device_rejected",
+        status: "user_rejected",
+        authorization: "user",
         error: {
-          code: "device_rejected",
+          code: "user_rejected",
           message: "The signing request was rejected on the device.",
         },
       };
@@ -133,7 +149,7 @@ test("provider does not import MCP or Admin adapters", async () => {
   assert.doesNotMatch(source, /admin/i);
 });
 
-test("provider exposes device-facing adapter API including requestSignature", () => {
+test("provider exposes device-facing adapter API including signByUser", () => {
   const provider = createAgentQProvider({ core: createFakeCore() });
   const methodNames = Object.getOwnPropertyNames(Object.getPrototypeOf(provider))
     .filter((name) => name !== "constructor")
@@ -148,16 +164,16 @@ test("provider exposes device-facing adapter API including requestSignature", ()
     "getPolicy",
     "identifyDevices",
     "listDevices",
-    "requestSignature",
     "scanDevices",
     "selectDevice",
+    "signByUser",
   ]);
-  assert.equal(typeof provider.requestSignature, "function");
-  assert.equal(provider.callMethod, undefined);
+  assert.equal(typeof provider.signByUser, "function");
+  assert.equal(provider.signByPolicy, undefined);
   assert.equal(provider.proposePolicyUpdate, undefined);
 });
 
-test("provider delegates current methods and requestSignature without exposing session ids or secrets", async () => {
+test("provider delegates current methods and signByUser without exposing session ids or secrets", async () => {
   const provider = createAgentQProvider({ core: createFakeCore() });
   const outputs = [
     await provider.scanDevices(),
@@ -170,7 +186,7 @@ test("provider delegates current methods and requestSignature without exposing s
     await provider.getAccounts({ deviceId: "device-1" }),
     await provider.getPolicy({ deviceId: "device-1" }),
     await provider.getApprovalHistory({ deviceId: "device-1" }),
-    await provider.requestSignature({
+    await provider.signByUser({
       deviceId: "device-1",
       chain: "sui",
       method: "sign_transaction",
@@ -181,11 +197,110 @@ test("provider delegates current methods and requestSignature without exposing s
   for (const output of outputs) {
     assertNoSecretFields(output);
   }
+  const capabilities = outputs[6];
+  assert.deepEqual(capabilities.signing, {
+    user: [{ chain: "sui", method: "sign_transaction" }],
+  });
+  assert.equal(JSON.stringify(capabilities).includes('"policy"'), false);
+});
+
+test("provider getCapabilities applies the provider capability schema after projection", async () => {
+  const core = {
+    ...createFakeCore(),
+    async getCapabilities() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        capabilities: [
+          {
+            id: "sui",
+            accounts: [{ keyScheme: "ed25519", derivationPath: SUI_DERIVATION_PATH }],
+            methods: [],
+          },
+        ],
+        signing: {
+          user: [{ chain: "sui", method: "sign_personal_message" }],
+          policy: [{ chain: "sui", method: "sign_transaction" }],
+        },
+      };
+    },
+  };
+  const provider = createAgentQProvider({ core });
+  await assert.rejects(
+    () => provider.getCapabilities({ deviceId: "device-1" }),
+  );
+});
+
+test("provider applies output boundary to every custom core method", async () => {
+  const calls = [
+    ["scanDevices", (provider) => provider.scanDevices()],
+    ["identifyDevices", (provider) => provider.identifyDevices()],
+    ["selectDevice", (provider) => provider.selectDevice({ deviceId: "device-1" })],
+    ["listDevices", (provider) => provider.listDevices()],
+    ["connectDevice", (provider) => provider.connectDevice({ deviceId: "device-1" })],
+    ["disconnectDevice", (provider) => provider.disconnectDevice({ deviceId: "device-1" })],
+    ["getCapabilities", (provider) => provider.getCapabilities({ deviceId: "device-1" })],
+    ["getAccounts", (provider) => provider.getAccounts({ deviceId: "device-1" })],
+    ["getPolicy", (provider) => provider.getPolicy({ deviceId: "device-1" })],
+    ["getApprovalHistory", (provider) => provider.getApprovalHistory({ deviceId: "device-1" })],
+    ["signByUser", (provider) => provider.signByUser({
+      deviceId: "device-1",
+      chain: "sui",
+      method: "sign_transaction",
+      network: "devnet",
+      txBytes: "AQID",
+    })],
+  ];
+
+  for (const [methodName, callProvider] of calls) {
+    const baseCore = createFakeCore();
+    const original = baseCore[methodName].bind(baseCore);
+    const core = {
+      ...baseCore,
+      async [methodName](...args) {
+        return { ...(await original(...args)), sessionId: "session_should_not_leak" };
+      },
+    };
+    const provider = createAgentQProvider({ core });
+    await assert.rejects(
+      () => callProvider(provider),
+      /forbidden output field/,
+      `${methodName} must reject forbidden custom-core output fields`,
+    );
+  }
+});
+
+test("provider signByUser rejects non-user signing results from custom cores", async () => {
+  const core = {
+    ...createFakeCore(),
+    async signByUser() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        status: "policy_rejected",
+        authorization: "policy",
+        policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+        ruleRef: "default",
+        error: {
+          code: "policy_rejected",
+          message: "The signing request was rejected by device policy.",
+        },
+      };
+    },
+  };
+  const provider = createAgentQProvider({ core });
+  await assert.rejects(() => provider.signByUser({
+    deviceId: "device-1",
+    chain: "sui",
+    method: "sign_transaction",
+    network: "devnet",
+    txBytes: "AQID",
+  }));
 });
 
 test("provider does not expose raw method or Admin policy update entrypoints", () => {
   const provider = createAgentQProvider({ core: createFakeCore() });
-  assert.equal(provider.callMethod, undefined);
+  assert.equal(provider.signByPolicy, undefined);
   assert.equal(provider.proposePolicyUpdate, undefined);
-  assert.equal(typeof provider.requestSignature, "function");
+  assert.equal(typeof provider.signByUser, "function");
 });

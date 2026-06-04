@@ -261,7 +261,7 @@ int main(int argc, char** argv)
     }
 
     agent_q::AgentQSuiSignTransactionPolicyFacts policy_facts = {};
-    if (!agent_q::make_sui_sign_transaction_policy_facts(sui_facts, "devnet", &policy_facts)) {
+    if (!agent_q::make_sui_sign_transaction_policy_facts(sui_facts, &policy_facts)) {
         fprintf(stderr, "Sui method adapter rejected valid transfer facts\n");
         return 1;
     }
@@ -298,17 +298,12 @@ int main(int argc, char** argv)
         nullptr,
         &failures);
 
-    agent_q::AgentQSuiSignTransactionPolicyFacts missing_network_facts = {};
-    if (agent_q::make_sui_sign_transaction_policy_facts(sui_facts, "", &missing_network_facts)) {
-        fprintf(stderr, "Sui method adapter accepted missing network context\n");
-        failures += 1;
-    }
     agent_q::SuiTransferFacts missing_gas_owner_facts = sui_facts;
     missing_gas_owner_facts.gas_owner[0] = '\0';
+    agent_q::AgentQSuiSignTransactionPolicyFacts invalid_owner_facts = {};
     if (agent_q::make_sui_sign_transaction_policy_facts(
             missing_gas_owner_facts,
-            "devnet",
-            &missing_network_facts)) {
+            &invalid_owner_facts)) {
         fprintf(stderr, "Sui method adapter accepted missing gas owner\n");
         failures += 1;
     }
@@ -320,8 +315,7 @@ int main(int argc, char** argv)
         "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
     if (agent_q::make_sui_sign_transaction_policy_facts(
             sponsored_gas_owner_facts,
-            "devnet",
-            &missing_network_facts)) {
+            &invalid_owner_facts)) {
         fprintf(stderr, "Sui method adapter accepted sender/gas-owner mismatch\n");
         failures += 1;
     }
@@ -332,7 +326,6 @@ int main(int argc, char** argv)
     };
 
     const agent_q::AgentQPolicyCriterion allow_criteria[] = {
-        {"common.network", agent_q::AgentQPolicyOperator::eq, "devnet", nullptr, 0},
         {"common.intent", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQPolicyIntentSingleAssetTransfer, nullptr, 0},
         {"sui.sender_address", agent_q::AgentQPolicyOperator::eq, sui_facts.sender, nullptr, 0},
         {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, nullptr, allowed_recipients, 1},
@@ -356,6 +349,86 @@ int main(int argc, char** argv)
         agent_q::AgentQPolicyAction::reject,
         agent_q::AgentQPolicyDecisionReason::matched_rule,
         "reject-small-sui-transfer",
+        &failures);
+
+    const agent_q::AgentQPolicyCriterion sign_criteria[] = {
+        {"common.intent", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQPolicyIntentSingleAssetTransfer, nullptr, 0},
+        {"sui.command_shape", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQSuiPolicyCommandShapeRestrictedTransfer, nullptr, 0},
+        {"sui.coin_type", agent_q::AgentQPolicyOperator::eq, "0x2::sui::SUI", nullptr, 0},
+        {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, nullptr, allowed_recipients, 1},
+        {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},
+        {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "50000000", nullptr, 0},
+        {"sui.gas_price", agent_q::AgentQPolicyOperator::lte, sui_facts.gas_price, nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule sign_rule = {
+        "sign-small-sui-transfer",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        sign_criteria,
+        sizeof(sign_criteria) / sizeof(sign_criteria[0]),
+    };
+    expect_decision(
+        "bounded sign rule",
+        one_rule_policy(&sign_rule),
+        facts,
+        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyDecisionReason::matched_rule,
+        "sign-small-sui-transfer",
+        &failures);
+
+    const char* multiple_recipients[] = {
+        sui_facts.recipient,
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+    };
+    const agent_q::AgentQPolicyCriterion multi_recipient_sign_criteria[] = {
+        {"common.intent", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQPolicyIntentSingleAssetTransfer, nullptr, 0},
+        {"sui.command_shape", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQSuiPolicyCommandShapeRestrictedTransfer, nullptr, 0},
+        {"sui.coin_type", agent_q::AgentQPolicyOperator::eq, "0x2::sui::SUI", nullptr, 0},
+        {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, nullptr, multiple_recipients, 2},
+        {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},
+        {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "50000000", nullptr, 0},
+        {"sui.gas_price", agent_q::AgentQPolicyOperator::lte, sui_facts.gas_price, nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule multi_recipient_sign_rule = {
+        "sign-multi-recipient",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        multi_recipient_sign_criteria,
+        sizeof(multi_recipient_sign_criteria) / sizeof(multi_recipient_sign_criteria[0]),
+    };
+    expect_decision(
+        "multi-recipient sign rule is not device-reviewable",
+        one_rule_policy(&multi_recipient_sign_rule),
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::invalid_policy,
+        nullptr,
+        &failures);
+
+    const agent_q::AgentQPolicyRule second_sign_rule = {
+        "sign-second-sui-transfer",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        sign_criteria,
+        sizeof(sign_criteria) / sizeof(sign_criteria[0]),
+    };
+    const agent_q::AgentQPolicyRule two_sign_rules[] = {sign_rule, second_sign_rule};
+    const agent_q::AgentQPolicyDocument two_sign_rule_policy = {
+        agent_q::kAgentQPolicyV0Schema,
+        agent_q::AgentQPolicyAction::reject,
+        two_sign_rules,
+        sizeof(two_sign_rules) / sizeof(two_sign_rules[0]),
+    };
+    expect_decision(
+        "more than one sign rule is rejected by current schema",
+        two_sign_rule_policy,
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::invalid_policy,
+        nullptr,
         &failures);
 
     const agent_q::AgentQPolicyRule later_match_rule = {
@@ -492,7 +565,7 @@ int main(int argc, char** argv)
         &failures);
 
     const agent_q::AgentQPolicyCriterion unsupported_op[] = {
-        {"common.network", static_cast<agent_q::AgentQPolicyOperator>(99), "devnet", nullptr, 0},
+        {"common.intent", static_cast<agent_q::AgentQPolicyOperator>(99), agent_q::kAgentQPolicyIntentSingleAssetTransfer, nullptr, 0},
     };
     const agent_q::AgentQPolicyRule unsupported_op_rule = {
         "unsupported-op",
@@ -552,7 +625,7 @@ int main(int argc, char** argv)
         &failures);
 
     const agent_q::AgentQPolicyCriterion eq_with_list[] = {
-        {"common.network", agent_q::AgentQPolicyOperator::eq, "devnet", allowed_recipients, 1},
+        {"common.intent", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQPolicyIntentSingleAssetTransfer, allowed_recipients, 1},
     };
     const agent_q::AgentQPolicyRule eq_with_list_rule = {
         "eq-with-list",

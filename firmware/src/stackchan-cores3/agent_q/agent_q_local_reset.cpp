@@ -261,47 +261,46 @@ bool local_reset_begin_error_recovery_wipe(TickType_t wipe_ready_at)
     return true;
 }
 
-bool local_reset_add_pin_digit(char digit, TickType_t deadline)
+bool local_reset_add_pin_digit(char digit)
 {
     if (g_local_reset.stage != AgentQLocalResetStage::pin_entry ||
+        tick_reached(g_local_reset.deadline, xTaskGetTickCount()) ||
         local_reset_pin_locked_at(xTaskGetTickCount()) ||
         digit < '0' || digit > '9') {
         return false;
     }
     if (g_local_reset.pin_entry_length >= kLocalPinDigits) {
-        g_local_reset.deadline = deadline;
         return false;
     }
 
     g_local_reset.pin_entry[g_local_reset.pin_entry_length++] = digit;
     g_local_reset.pin_entry[g_local_reset.pin_entry_length] = '\0';
-    g_local_reset.deadline = deadline;
     return true;
 }
 
-bool local_reset_clear_pin(TickType_t deadline)
+bool local_reset_clear_pin()
 {
     if (g_local_reset.stage != AgentQLocalResetStage::pin_entry ||
+        tick_reached(g_local_reset.deadline, xTaskGetTickCount()) ||
         local_reset_pin_locked_at(xTaskGetTickCount())) {
         return false;
     }
 
     wipe_sensitive_buffer(g_local_reset.pin_entry, sizeof(g_local_reset.pin_entry));
     g_local_reset.pin_entry_length = 0;
-    g_local_reset.deadline = deadline;
     return true;
 }
 
-bool local_reset_backspace_pin(TickType_t deadline)
+bool local_reset_backspace_pin()
 {
     if (g_local_reset.stage != AgentQLocalResetStage::pin_entry ||
+        tick_reached(g_local_reset.deadline, xTaskGetTickCount()) ||
         local_reset_pin_locked_at(xTaskGetTickCount())) {
         return false;
     }
     if (g_local_reset.pin_entry_length > 0) {
         g_local_reset.pin_entry[--g_local_reset.pin_entry_length] = '\0';
     }
-    g_local_reset.deadline = deadline;
     return true;
 }
 
@@ -313,12 +312,15 @@ AgentQLocalResetPinSubmitResult local_reset_submit_pin_for_verification(
     if (g_local_reset.stage != AgentQLocalResetStage::pin_entry) {
         return AgentQLocalResetPinSubmitResult::unavailable_stage;
     }
+    if (tick_reached(g_local_reset.deadline, xTaskGetTickCount())) {
+        return AgentQLocalResetPinSubmitResult::unavailable_stage;
+    }
     if (local_reset_pin_locked_at(xTaskGetTickCount())) {
         return AgentQLocalResetPinSubmitResult::locked;
     }
     if (g_local_reset.pin_entry_length != kLocalPinDigits ||
         !is_valid_local_pin(g_local_reset.pin_entry)) {
-        g_local_reset.deadline = invalid_deadline;
+        (void)invalid_deadline;
         return AgentQLocalResetPinSubmitResult::invalid_pin;
     }
 
@@ -327,7 +329,7 @@ AgentQLocalResetPinSubmitResult local_reset_submit_pin_for_verification(
             AgentQLocalAuthWorkerOwner::local_reset,
             g_local_reset.pin_entry,
             &job_id)) {
-        g_local_reset.deadline = invalid_deadline;
+        (void)invalid_deadline;
         return AgentQLocalResetPinSubmitResult::worker_unavailable;
     }
 

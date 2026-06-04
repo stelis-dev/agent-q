@@ -707,7 +707,7 @@ test("load drops a stored record whose provisioning status is missing", async ()
 test("load does not warn for an already-clean stored config", async () => {
   // The contrapositive of the report contract: when nothing is transformed, the
   // report is empty and no normalization warning is emitted. This guards against
-  // a future change that silently rewrites a clean value without recording it.
+  // silently rewriting a clean value without recording it.
   const { warnings } = await captureNormalizeWarnings(() =>
     loadStored(
       storedConfig([storedRecord()], {

@@ -3,9 +3,9 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: firmware/tools/stackchan-cores3/test_signature_request_validation.sh
+Usage: firmware/tools/stackchan-cores3/test_sign_by_user_validation.sh
 
-Compiles the StackChan CoreS3 request_signature split validation helpers
+Compiles the StackChan CoreS3 sign_by_user split validation helpers
 against ArduinoJson with a host C++ compiler and checks protocol shape
 boundaries. This test does not require ESP-IDF, but it uses the pinned
 StackChan ArduinoJson component checkout prepared by fetch.sh/build.sh. Set
@@ -32,8 +32,8 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_request_id.h" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.h" \
-  "${AGENT_Q_DIR}/agent_q_signature_request_validation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signature_request_validation.h"; do
+  "${AGENT_Q_DIR}/agent_q_sign_by_user_validation.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_by_user_validation.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first, or set AGENT_Q_ARDUINOJSON_ROOT." >&2
@@ -45,7 +45,7 @@ CXX_BIN="${CXX:-c++}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-signature-request-validation.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-cat >"${TMP_DIR}/signature_request_validation_test.cpp" <<'CPP'
+cat >"${TMP_DIR}/sign_by_user_validation_test.cpp" <<'CPP'
 #include <ArduinoJson.h>
 
 #include <stdio.h>
@@ -55,7 +55,7 @@ cat >"${TMP_DIR}/signature_request_validation_test.cpp" <<'CPP'
 #include <string>
 
 #include "agent_q_base64.h"
-#include "agent_q_signature_request_validation.h"
+#include "agent_q_sign_by_user_validation.h"
 
 namespace {
 
@@ -78,8 +78,22 @@ JsonDocument parse_json(const char* label, const std::string& json)
 
 std::string valid_request_with_params(const std::string& params)
 {
-    return "{\"id\":\"req_signature_1\",\"version\":1,\"type\":\"request_signature\","
-           "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":" + params + "}";
+    return "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+           "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\","
+           "\"chain\":\"sui\",\"method\":\"sign_transaction\","
+           "\"params\":" + params + "}";
+}
+
+std::string request_with_shape(
+    const char* chain_fragment,
+    const char* method_fragment,
+    const std::string& params)
+{
+    return "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+           "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\"," +
+           std::string(chain_fragment == nullptr ? "" : chain_fragment) +
+           std::string(method_fragment == nullptr ? "" : method_fragment) +
+           "\"params\":" + params + "}";
 }
 
 void expect_base64(const char* label, const char* value, size_t max_size, bool expected)
@@ -100,25 +114,25 @@ void expect_base64(const char* label, const char* value, size_t max_size, bool e
 void expect_envelope(
     const char* label,
     const std::string& json,
-    agent_q::AgentQSignatureRequestValidationResult expected,
+    agent_q::AgentQSignByUserValidationResult expected,
     const char* expected_request_id = nullptr)
 {
     JsonDocument document = parse_json(label, json);
-    agent_q::AgentQSignatureRequestEnvelope output = {};
+    agent_q::AgentQSignByUserEnvelope output = {};
     memset(&output, 0xA5, sizeof(output));
-    const agent_q::AgentQSignatureRequestValidationResult actual =
-        agent_q::validate_signature_request_envelope(document, &output);
+    const agent_q::AgentQSignByUserValidationResult actual =
+        agent_q::validate_sign_by_user_envelope(document, &output);
     if (actual != expected) {
         fprintf(stderr, "%s: expected envelope result %d, got %d\n",
                 label, static_cast<int>(expected), static_cast<int>(actual));
         ++failures;
     }
-    if (actual != agent_q::AgentQSignatureRequestValidationResult::ok &&
+    if (actual != agent_q::AgentQSignByUserValidationResult::ok &&
         output.request_id[0] != '\0') {
         fprintf(stderr, "%s: envelope failure did not clear output\n", label);
         ++failures;
     }
-    if (actual == agent_q::AgentQSignatureRequestValidationResult::ok &&
+    if (actual == agent_q::AgentQSignByUserValidationResult::ok &&
         expected_request_id != nullptr &&
         strcmp(output.request_id, expected_request_id) != 0) {
         fprintf(stderr, "%s: envelope request id did not match\n", label);
@@ -129,25 +143,25 @@ void expect_envelope(
 void expect_session(
     const char* label,
     const std::string& json,
-    agent_q::AgentQSignatureRequestValidationResult expected,
+    agent_q::AgentQSignByUserValidationResult expected,
     const char* expected_session_id = nullptr)
 {
     JsonDocument document = parse_json(label, json);
-    agent_q::AgentQSignatureRequestSessionRef output = {};
+    agent_q::AgentQSignByUserSessionRef output = {};
     memset(&output, 0xA5, sizeof(output));
-    const agent_q::AgentQSignatureRequestValidationResult actual =
-        agent_q::validate_signature_request_session_format(document, &output);
+    const agent_q::AgentQSignByUserValidationResult actual =
+        agent_q::validate_sign_by_user_session_format(document, &output);
     if (actual != expected) {
         fprintf(stderr, "%s: expected session result %d, got %d\n",
                 label, static_cast<int>(expected), static_cast<int>(actual));
         ++failures;
     }
-    if (actual != agent_q::AgentQSignatureRequestValidationResult::ok &&
+    if (actual != agent_q::AgentQSignByUserValidationResult::ok &&
         output.session_id[0] != '\0') {
         fprintf(stderr, "%s: session failure did not clear output\n", label);
         ++failures;
     }
-    if (actual == agent_q::AgentQSignatureRequestValidationResult::ok &&
+    if (actual == agent_q::AgentQSignByUserValidationResult::ok &&
         expected_session_id != nullptr &&
         strcmp(output.session_id, expected_session_id) != 0) {
         fprintf(stderr, "%s: session id did not match\n", label);
@@ -158,22 +172,22 @@ void expect_session(
 void expect_params(
     const char* label,
     const std::string& json,
-    agent_q::AgentQSignatureRequestValidationResult expected,
+    agent_q::AgentQSignByUserValidationResult expected,
     size_t expected_decoded_size = 0,
     const char* expected_network = nullptr)
 {
     JsonDocument document = parse_json(label, json);
-    agent_q::AgentQSignatureRequestParams output = {};
+    agent_q::AgentQSignByUserParams output = {};
     memset(&output, 0xA5, sizeof(output));
-    const agent_q::AgentQSignatureRequestValidationResult actual =
-        agent_q::validate_signature_request_params(document, &output);
+    const agent_q::AgentQSignByUserValidationResult actual =
+        agent_q::validate_sign_by_user_params(document, &output);
     if (actual != expected) {
         fprintf(stderr, "%s: expected params result %d, got %d\n",
                 label, static_cast<int>(expected), static_cast<int>(actual));
         ++failures;
         return;
     }
-    if (actual != agent_q::AgentQSignatureRequestValidationResult::ok &&
+    if (actual != agent_q::AgentQSignByUserValidationResult::ok &&
         (output.chain[0] != '\0' ||
          output.method[0] != '\0' ||
          output.network[0] != '\0' ||
@@ -182,12 +196,12 @@ void expect_params(
         fprintf(stderr, "%s: params failure did not clear output\n", label);
         ++failures;
     }
-    if (actual == agent_q::AgentQSignatureRequestValidationResult::ok &&
+    if (actual == agent_q::AgentQSignByUserValidationResult::ok &&
         expected_network == nullptr) {
         fprintf(stderr, "%s: params test did not provide expected output fields\n", label);
         ++failures;
     }
-    if (actual == agent_q::AgentQSignatureRequestValidationResult::ok &&
+    if (actual == agent_q::AgentQSignByUserValidationResult::ok &&
         expected_network != nullptr &&
         (strcmp(output.chain, "sui") != 0 ||
          strcmp(output.method, "sign_transaction") != 0 ||
@@ -216,17 +230,17 @@ void wipe_sensitive_buffer(void* data, size_t size)
 
 int main()
 {
-    using Result = agent_q::AgentQSignatureRequestValidationResult;
+    using Result = agent_q::AgentQSignByUserValidationResult;
 
     const std::string malformed_params_request =
-        "{\"id\":\"req_signature_1\",\"version\":1,\"type\":\"request_signature\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":[]}";
 
     expect_envelope(
         "valid envelope ignores malformed params",
         malformed_params_request,
         Result::ok,
-        "req_signature_1");
+        "req_sign_1");
     expect_session(
         "valid session ignores malformed params",
         malformed_params_request,
@@ -235,8 +249,7 @@ int main()
 
     expect_params(
         "valid params",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                  "\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
+        valid_request_with_params("{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
         Result::ok,
         3,
         "devnet");
@@ -244,120 +257,116 @@ int main()
         const std::string label = std::string("valid network ") + network;
         expect_params(
             label.c_str(),
-            valid_request_with_params(std::string("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                                  "\"network\":\"") + network + "\",\"txBytes\":\"AAAA\"}"),
+            valid_request_with_params(std::string("{\"network\":\"") + network + "\",\"txBytes\":\"AAAA\"}"),
             Result::ok,
             3,
             network);
     }
     expect_params(
         "unsupported extra params field",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                  "\"network\":\"devnet\",\"txBytes\":\"AAAA\","
+        valid_request_with_params("{\"network\":\"devnet\",\"txBytes\":\"AAAA\","
                                   "\"extra\":true}"),
         Result::unsupported_field);
 
     expect_envelope(
         "missing id",
-        "{\"version\":1,\"type\":\"request_signature\","
+        "{\"version\":1,\"type\":\"sign_by_user\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
-        "\"chain\":\"sui\",\"method\":\"sign_transaction\",\"network\":\"devnet\","
+        "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "embedded nul id",
-        "{\"id\":\"req_signature_1\\u0000x\",\"version\":1,\"type\":\"request_signature\","
+        "{\"id\":\"req_sign_1\\u0000x\",\"version\":1,\"type\":\"sign_by_user\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
-        "\"chain\":\"sui\",\"method\":\"sign_transaction\",\"network\":\"devnet\","
+        "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "unsafe id with slash",
-        "{\"id\":\"req/signature/1\",\"version\":1,\"type\":\"request_signature\","
+        "{\"id\":\"req/signature/1\",\"version\":1,\"type\":\"sign_by_user\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
-        "\"chain\":\"sui\",\"method\":\"sign_transaction\",\"network\":\"devnet\","
+        "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "unsafe id with space",
-        "{\"id\":\"req signature 1\",\"version\":1,\"type\":\"request_signature\","
+        "{\"id\":\"req signature 1\",\"version\":1,\"type\":\"sign_by_user\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
-        "\"chain\":\"sui\",\"method\":\"sign_transaction\",\"network\":\"devnet\","
+        "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "overlong id",
         "{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
-        "\"version\":1,\"type\":\"request_signature\","
+        "\"version\":1,\"type\":\"sign_by_user\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
-        "\"chain\":\"sui\",\"method\":\"sign_transaction\",\"network\":\"devnet\","
+        "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "unsupported version",
-        "{\"id\":\"req_signature_1\",\"version\":2,\"type\":\"request_signature\","
+        "{\"id\":\"req_sign_1\",\"version\":2,\"type\":\"sign_by_user\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
-        "\"chain\":\"sui\",\"method\":\"sign_transaction\",\"network\":\"devnet\","
+        "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::unsupported_version);
     expect_envelope(
         "missing type",
-        "{\"id\":\"req_signature_1\",\"version\":1,"
+        "{\"id\":\"req_sign_1\",\"version\":1,"
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
-        "\"chain\":\"sui\",\"method\":\"sign_transaction\",\"network\":\"devnet\","
+        "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::unsupported_type);
     expect_envelope(
         "wrong type",
-        "{\"id\":\"req_signature_1\",\"version\":1,\"type\":\"call_method\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_policy\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
-        "\"chain\":\"sui\",\"method\":\"sign_transaction\",\"network\":\"devnet\","
+        "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::unsupported_type);
     expect_envelope(
         "top level unsupported field",
-        "{\"id\":\"req_signature_1\",\"version\":1,\"type\":\"request_signature\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"extra\":true,\"params\":{"
-        "\"chain\":\"sui\",\"method\":\"sign_transaction\",\"network\":\"devnet\","
+        "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::unsupported_field);
     expect_session(
         "missing session",
-        "{\"id\":\"req_signature_1\",\"version\":1,\"type\":\"request_signature\","
-        "\"params\":{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-        "\"network\":\"devnet\",\"txBytes\":\"AAAA\"}}",
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+        "\"params\":{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_session(
         "bad session prefix",
-        "{\"id\":\"req_signature_1\",\"version\":1,\"type\":\"request_signature\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
         "\"sessionId\":\"not_session_aaaaaaaaaaaaaaaa\",\"params\":{"
-        "\"chain\":\"sui\",\"method\":\"sign_transaction\",\"network\":\"devnet\","
+        "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_session(
         "uppercase session hex",
-        "{\"id\":\"req_signature_1\",\"version\":1,\"type\":\"request_signature\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
         "\"sessionId\":\"session_AAAAAAAAAAAAAAAA\",\"params\":{"
-        "\"chain\":\"sui\",\"method\":\"sign_transaction\",\"network\":\"devnet\","
+        "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_session(
         "embedded nul session",
-        "{\"id\":\"req_signature_1\",\"version\":1,\"type\":\"request_signature\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
         "\"sessionId\":\"session_aaaaaaaa\\u0000x\",\"params\":{"
-        "\"chain\":\"sui\",\"method\":\"sign_transaction\",\"network\":\"devnet\","
+        "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_session(
         "overlong session",
-        "{\"id\":\"req_signature_1\",\"version\":1,\"type\":\"request_signature\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
-        "\"params\":{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-        "\"network\":\"devnet\",\"txBytes\":\"AAAA\"}}",
+        "\"params\":{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_params(
         "params missing",
-        "{\"id\":\"req_signature_1\",\"version\":1,\"type\":\"request_signature\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\"}",
         Result::invalid_params_shape);
     expect_params(
@@ -366,71 +375,68 @@ int main()
         Result::invalid_params_shape);
     expect_params(
         "params unsupported field",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                  "\"network\":\"devnet\",\"txBytes\":\"AAAA\","
+        valid_request_with_params("{\"network\":\"devnet\",\"txBytes\":\"AAAA\","
                                   "\"requestAuthority\":\"user_confirmed\"}"),
         Result::unsupported_field);
     expect_params(
         "missing chain",
-        valid_request_with_params("{\"method\":\"sign_transaction\","
-                                  "\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
+        request_with_shape(
+            nullptr,
+            "\"method\":\"sign_transaction\",",
+            "{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
         Result::unsupported_method);
     expect_params(
         "wrong chain",
-        valid_request_with_params("{\"chain\":\"evm\",\"method\":\"sign_transaction\","
-                                  "\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
+        request_with_shape(
+            "\"chain\":\"evm\",",
+            "\"method\":\"sign_transaction\",",
+            "{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
         Result::unsupported_method);
     expect_params(
         "wrong method",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_personal_message\","
-                                  "\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
+        request_with_shape(
+            "\"chain\":\"sui\",",
+            "\"method\":\"sign_personal_message\",",
+            "{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
         Result::unsupported_method);
     expect_params(
         "network missing",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                  "\"txBytes\":\"AAAA\"}"),
+        valid_request_with_params("{\"txBytes\":\"AAAA\"}"),
         Result::invalid_network);
     expect_params(
         "network unsupported",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                  "\"network\":\"staging\",\"txBytes\":\"AAAA\"}"),
+        valid_request_with_params("{\"network\":\"staging\",\"txBytes\":\"AAAA\"}"),
         Result::invalid_network);
     expect_params(
         "network embedded nul",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                  "\"network\":\"devnet\\u0000x\",\"txBytes\":\"AAAA\"}"),
+        valid_request_with_params("{\"network\":\"devnet\\u0000x\",\"txBytes\":\"AAAA\"}"),
         Result::invalid_network);
     expect_params(
         "txBytes missing",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                  "\"network\":\"devnet\"}"),
+        valid_request_with_params("{\"network\":\"devnet\"}"),
         Result::invalid_tx_bytes);
     expect_params(
         "txBytes invalid base64",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                  "\"network\":\"devnet\",\"txBytes\":\"AA!A\"}"),
+        valid_request_with_params("{\"network\":\"devnet\",\"txBytes\":\"AA!A\"}"),
         Result::invalid_tx_bytes);
     expect_params(
         "txBytes noncanonical padding",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                  "\"network\":\"devnet\",\"txBytes\":\"AAB=\"}"),
+        valid_request_with_params("{\"network\":\"devnet\",\"txBytes\":\"AAB=\"}"),
         Result::invalid_tx_bytes);
     expect_params(
         "txBytes embedded nul",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                  "\"network\":\"devnet\",\"txBytes\":\"AAAA\\u0000x\"}"),
+        valid_request_with_params("{\"network\":\"devnet\",\"txBytes\":\"AAAA\\u0000x\"}"),
         Result::invalid_tx_bytes);
     expect_params(
         "txBytes too large",
-        valid_request_with_params(std::string("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                             "\"network\":\"devnet\",\"txBytes\":\"") +
+        valid_request_with_params(std::string("{\"network\":\"devnet\",\"txBytes\":\"") +
                                   std::string(agent_q::kAgentQSuiSignTransactionTxBytesMaxBase64Size + 4, 'A') +
                                   "\"}"),
         Result::invalid_tx_bytes);
-    if (strcmp(agent_q::signature_request_validation_result_name(Result::ok), "ok") != 0 ||
-        strcmp(agent_q::signature_request_validation_result_name(Result::unsupported_type),
+    if (strcmp(agent_q::sign_by_user_validation_result_name(Result::ok), "ok") != 0 ||
+        strcmp(agent_q::sign_by_user_validation_result_name(Result::unsupported_type),
                "unsupported_type") != 0 ||
-        strcmp(agent_q::signature_request_validation_result_name(Result::invalid_tx_bytes),
+        strcmp(agent_q::sign_by_user_validation_result_name(Result::invalid_tx_bytes),
                "invalid_tx_bytes") != 0) {
         fprintf(stderr, "result names did not match\n");
         ++failures;
@@ -441,7 +447,7 @@ int main()
     expect_base64("base64 unterminated within max", unterminated, 3, false);
 
     if (failures != 0) {
-        fprintf(stderr, "%d signature request validation checks failed\n", failures);
+        fprintf(stderr, "%d sign_by_user validation checks failed\n", failures);
         return 1;
     }
     return 0;
@@ -453,11 +459,11 @@ CPP
   -I"${ARDUINOJSON_ROOT}" \
   -I"${AGENT_Q_DIR}" \
   -I"${REPO_ROOT}/firmware/src/common" \
-  "${TMP_DIR}/signature_request_validation_test.cpp" \
+  "${TMP_DIR}/sign_by_user_validation_test.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signature_request_validation.cpp" \
-  -o "${TMP_DIR}/signature_request_validation_test"
+  "${AGENT_Q_DIR}/agent_q_sign_by_user_validation.cpp" \
+  -o "${TMP_DIR}/sign_by_user_validation_test"
 
-"${TMP_DIR}/signature_request_validation_test"
+"${TMP_DIR}/sign_by_user_validation_test"

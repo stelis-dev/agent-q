@@ -4,35 +4,38 @@
 
 #include "agent_q_approval_history.h"
 #include "agent_q_method_limits.h"
+#include "agent_q_sign_by_user_limits.h"
 
 namespace agent_q {
 
-enum class AgentQMethodRuntimeStatus {
+enum class AgentQSignByPolicyRuntimeStatus {
     invalid_params,
-    rejected,
+    unsupported_transaction,
+    account_unavailable,
+    account_mismatch,
+    policy_error,
+    policy_rejected,
+    policy_authorized,
 };
 
-struct AgentQMethodRuntimeResult {
-    AgentQMethodRuntimeStatus status;
+struct AgentQSignByPolicyRuntimeResult {
+    AgentQSignByPolicyRuntimeStatus status;
     const char* code;
     const char* message;
-    bool has_approval_history;
-    struct {
-        AgentQApprovalHistoryDecision decision;
-        AgentQApprovalHistoryConfirmationKind confirmation_kind;
-        char chain[kAgentQApprovalHistoryChainSize];
-        char method[kAgentQApprovalHistoryMethodSize];
-        char reason_code[kAgentQApprovalHistoryReasonCodeSize];
-        char payload_digest[kAgentQApprovalHistoryDigestSize];
-        char policy_hash[kAgentQApprovalHistoryDigestSize];
-        char rule_ref[kAgentQApprovalHistoryRuleRefSize];
-    } approval_history;
+    char chain[kAgentQApprovalHistoryChainSize];
+    char method[kAgentQApprovalHistoryMethodSize];
+    char reason_code[kAgentQApprovalHistoryReasonCodeSize];
+    char payload_digest[kAgentQApprovalHistoryDigestSize];
+    char policy_hash[kAgentQApprovalHistoryDigestSize];
+    char rule_ref[kAgentQApprovalHistoryRuleRefSize];
+    uint8_t tx_bytes[kAgentQSuiSignTransactionTxBytesMaxBytes];
+    size_t tx_bytes_size;
 };
 
-AgentQMethodRuntimeResult evaluate_call_method(
+AgentQSignByPolicyRuntimeResult evaluate_sign_by_policy(
     const char* chain,
     const char* method,
     JsonVariant params);
-void clear_method_runtime_result(AgentQMethodRuntimeResult* result);
+void clear_sign_by_policy_runtime_result(AgentQSignByPolicyRuntimeResult* result);
 
 }  // namespace agent_q

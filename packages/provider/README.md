@@ -27,18 +27,18 @@ device-local approval, signing, and active policy commits.
 - `getAccounts`
 - `getPolicy`
 - `getApprovalHistory`
-- `requestSignature`
+- `signByUser`
 
-Policy update proposals and raw delegated `callMethod` access are not exposed by
-this provider. Provider-facing signing uses only `requestSignature`, which
+Policy update proposals and raw delegated `signByPolicy` access are not exposed by
+this provider. Provider-facing signing uses only `signByUser`, which
 passes a bounded request to Firmware for device-local review, local PIN
 confirmation, required history, and signing. The provider does not decide
 whether signing is allowed.
 
 Provider requests do not accept caller-controlled timing fields. Firmware-owned
-device-local approval windows remain 30 seconds; Gateway uses fixed internal
-transport budgets with a non-configurable margin so a valid terminal device
-result can still be received at the end of that window.
+device-local physical-input windows remain 30 seconds; Gateway uses fixed
+internal transport budgets for PIN retry/lockout handling plus a
+non-configurable margin.
 
 ## Development
 

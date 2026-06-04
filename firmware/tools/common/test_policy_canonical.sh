@@ -92,7 +92,6 @@ agent_q::AgentQPolicyFacts matching_sui_facts()
     static const agent_q::AgentQPolicyFact entries[] = {
         {"common.chain", agent_q::AgentQPolicyValueType::string, "sui"},
         {"common.method", agent_q::AgentQPolicyValueType::string, "sign_transaction"},
-        {"common.network", agent_q::AgentQPolicyValueType::string, "devnet"},
         {"common.intent", agent_q::AgentQPolicyValueType::string, "single_asset_transfer"},
         {"sui.amount_raw", agent_q::AgentQPolicyValueType::u64_decimal, "1000"},
         {"sui.recipient_address", agent_q::AgentQPolicyValueType::string, "0xabc"},
@@ -172,9 +171,9 @@ int main()
             &decoded),
         agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
 
-    const char* networks[] = {"devnet", "testnet"};
+    const char* intents[] = {"single_asset_transfer"};
     const agent_q::AgentQPolicyCriterion criteria[] = {
-        {"common.network", agent_q::AgentQPolicyOperator::in, nullptr, networks, 2},
+        {"common.intent", agent_q::AgentQPolicyOperator::in, nullptr, intents, 1},
         {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "2000", nullptr, 0},
     };
     const agent_q::AgentQPolicyRule rule = {
@@ -195,6 +194,44 @@ int main()
         "reject-only Sui policy canonicalizes",
         agent_q::canonicalize_agent_q_policy_v0(reject_policy, sui_methods, 1, &canonical),
         agent_q::AgentQPolicyCanonicalStatus::ok);
+
+    const char* sign_recipients[] = {"0xabc"};
+    const agent_q::AgentQPolicyCriterion sign_criteria[] = {
+        {"common.intent", agent_q::AgentQPolicyOperator::eq, "single_asset_transfer", nullptr, 0},
+        {"sui.command_shape", agent_q::AgentQPolicyOperator::eq, "restricted_transfer", nullptr, 0},
+        {"sui.coin_type", agent_q::AgentQPolicyOperator::eq, "0x2::sui::SUI", nullptr, 0},
+        {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, nullptr, sign_recipients, 1},
+        {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
+        {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
+        {"sui.gas_price", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule sign_rule_one = {
+        "sign-one",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        sign_criteria,
+        sizeof(sign_criteria) / sizeof(sign_criteria[0]),
+    };
+    const agent_q::AgentQPolicyRule sign_rule_two = {
+        "sign-two",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        sign_criteria,
+        sizeof(sign_criteria) / sizeof(sign_criteria[0]),
+    };
+    const agent_q::AgentQPolicyRule two_sign_rules[] = {sign_rule_one, sign_rule_two};
+    const agent_q::AgentQPolicyDocument two_sign_rule_policy = {
+        agent_q::kAgentQPolicyV0Schema,
+        agent_q::AgentQPolicyAction::reject,
+        two_sign_rules,
+        sizeof(two_sign_rules) / sizeof(two_sign_rules[0]),
+    };
+    expect_status(
+        "more than one sign rule is rejected before canonical storage",
+        agent_q::canonicalize_agent_q_policy_v0(two_sign_rule_policy, sui_methods, 1, &canonical),
+        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
 
     const agent_q::AgentQPolicyRule digit_rule_id_rule = {
         "1_rule",
@@ -347,6 +384,7 @@ int main()
             "sign_transaction",
             duplicate_fields,
             sizeof(duplicate_fields) / sizeof(duplicate_fields[0]),
+            true,
             true,
         },
     };

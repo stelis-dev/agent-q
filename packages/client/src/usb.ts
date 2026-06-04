@@ -5,22 +5,21 @@ import {
   assertAccountsResponse,
   assertApprovalHistoryResponse,
   assertCapabilitiesResponse,
-  assertMethodResultResponse,
   assertPolicyUpdateResultResponse,
   assertPolicyResponse,
-  assertSignatureResultResponse,
+  assertSignResultResponse,
   assertConnectResponse,
   assertDisconnectResponse,
   assertIdentifyDeviceResponse,
   assertStatusResponse,
-  makeCallMethodRequest,
   makeConnectRequest,
   makeDisconnectRequest,
   makeGetCapabilitiesRequest,
   makeGetAccountsRequest,
   makeGetApprovalHistoryRequest,
   makeProposePolicyUpdateRequest,
-  makeRequestSignatureRequest,
+  makeSignByPolicyRequest,
+  makeSignByUserRequest,
   makeIdentifyDeviceRequest,
   makeGetPolicyRequest,
   makeGetStatusRequest,
@@ -34,13 +33,12 @@ import {
   type ConnectResponse,
   type DisconnectResponse,
   type IdentifyDeviceResponse,
-  type MethodResultResponse,
   type PolicyUpdateResultResponse,
   type PolicyResponse,
   type ProtocolRequest,
   type ProtocolResponse,
-  type RequestSignatureParams,
-  type SignatureResultResponse,
+  type SignResultResponse,
+  type SignTransactionParams,
   type StatusResponse,
 } from "./protocol.js";
 
@@ -128,26 +126,28 @@ export interface UsbSerialDriver {
     params: { limit?: number; beforeSeq?: string },
     deadlineMs: number,
   ): Promise<ApprovalHistoryResponse>;
-  callMethod(
-    portPath: string,
-    sessionId: string,
-    chain: string,
-    method: string,
-    params: Record<string, unknown>,
-    deadlineMs: number,
-  ): Promise<MethodResultResponse>;
   proposePolicyUpdate(
     portPath: string,
     sessionId: string,
     policy: Record<string, unknown>,
     deadlineMs: number,
   ): Promise<PolicyUpdateResultResponse>;
-  requestSignature(
+  signByUser(
     portPath: string,
     sessionId: string,
-    params: RequestSignatureParams,
+    chain: "sui",
+    method: "sign_transaction",
+    params: SignTransactionParams,
     deadlineMs: number,
-  ): Promise<SignatureResultResponse>;
+  ): Promise<SignResultResponse>;
+  signByPolicy(
+    portPath: string,
+    sessionId: string,
+    chain: "sui",
+    method: "sign_transaction",
+    params: SignTransactionParams,
+    deadlineMs: number,
+  ): Promise<SignResultResponse>;
 }
 
 export class SerialPortUsbDriver implements UsbSerialDriver {
@@ -219,17 +219,6 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     return getApprovalHistoryOverSerial(portPath, sessionId, params, deadlineMs);
   }
 
-  async callMethod(
-    portPath: string,
-    sessionId: string,
-    chain: string,
-    method: string,
-    params: Record<string, unknown>,
-    deadlineMs: number,
-  ): Promise<MethodResultResponse> {
-    return callMethodOverSerial(portPath, sessionId, chain, method, params, deadlineMs);
-  }
-
   async proposePolicyUpdate(
     portPath: string,
     sessionId: string,
@@ -239,13 +228,26 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     return proposePolicyUpdateOverSerial(portPath, sessionId, policy, deadlineMs);
   }
 
-  async requestSignature(
+  async signByUser(
     portPath: string,
     sessionId: string,
-    params: RequestSignatureParams,
+    chain: "sui",
+    method: "sign_transaction",
+    params: SignTransactionParams,
     deadlineMs: number,
-  ): Promise<SignatureResultResponse> {
-    return requestSignatureOverSerial(portPath, sessionId, params, deadlineMs);
+  ): Promise<SignResultResponse> {
+    return signByUserOverSerial(portPath, sessionId, chain, method, params, deadlineMs);
+  }
+
+  async signByPolicy(
+    portPath: string,
+    sessionId: string,
+    chain: "sui",
+    method: "sign_transaction",
+    params: SignTransactionParams,
+    deadlineMs: number,
+  ): Promise<SignResultResponse> {
+    return signByPolicyOverSerial(portPath, sessionId, chain, method, params, deadlineMs);
   }
 }
 
@@ -325,8 +327,8 @@ function raceDeadline<T>(work: Promise<T>, remainingMs: number, timeoutMessage: 
 // Single enforcement boundary for the transport deadline contract. Wrapping a
 // driver here races every deadline-bearing call against its own deadline argument,
 // so a driver that ignores the argument still cannot exceed the budget. Applied
-// once in GatewayCore, this bounds every present and future deadline-bearing call
-// in one place instead of relying on each call site to remember to race.
+// once in GatewayCore, this bounds deadline-bearing calls in one place instead
+// of relying on each call site to remember to race.
 // listPorts has no deadline argument and is bounded by the shared scan deadline in
 // scanUsbDeviceStatuses.
 export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDriver {
@@ -380,23 +382,23 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         deadlineMs,
         "USB get approval history exceeded its timeout.",
       ),
-    callMethod: (portPath, sessionId, chain, method, params, deadlineMs) =>
-      raceDeadline(
-        driver.callMethod(portPath, sessionId, chain, method, params, deadlineMs),
-        deadlineMs,
-        "USB call_method exceeded its timeout.",
-      ),
     proposePolicyUpdate: (portPath, sessionId, policy, deadlineMs) =>
       raceDeadline(
         driver.proposePolicyUpdate(portPath, sessionId, policy, deadlineMs),
         deadlineMs,
         "USB policy update proposal exceeded its timeout.",
       ),
-    requestSignature: (portPath, sessionId, params, deadlineMs) =>
+    signByUser: (portPath, sessionId, chain, method, params, deadlineMs) =>
       raceDeadline(
-        driver.requestSignature(portPath, sessionId, params, deadlineMs),
+        driver.signByUser(portPath, sessionId, chain, method, params, deadlineMs),
         deadlineMs,
-        "USB request_signature exceeded its timeout.",
+        "USB sign_by_user exceeded its timeout.",
+      ),
+    signByPolicy: (portPath, sessionId, chain, method, params, deadlineMs) =>
+      raceDeadline(
+        driver.signByPolicy(portPath, sessionId, chain, method, params, deadlineMs),
+        deadlineMs,
+        "USB sign_by_policy exceeded its timeout.",
       ),
   };
 }
@@ -560,18 +562,6 @@ async function getApprovalHistoryOverSerial(
   return requestOverSerial(portPath, request, deadlineMs, (response) => assertApprovalHistoryResponse(response));
 }
 
-async function callMethodOverSerial(
-  portPath: string,
-  sessionId: string,
-  chain: string,
-  method: string,
-  params: Record<string, unknown>,
-  deadlineMs: number,
-): Promise<MethodResultResponse> {
-  const request = makeCallMethodRequest(sessionId, chain, method, params);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertMethodResultResponse(response));
-}
-
 async function proposePolicyUpdateOverSerial(
   portPath: string,
   sessionId: string,
@@ -582,14 +572,28 @@ async function proposePolicyUpdateOverSerial(
   return requestOverSerial(portPath, request, deadlineMs, (response) => assertPolicyUpdateResultResponse(response));
 }
 
-async function requestSignatureOverSerial(
+async function signByUserOverSerial(
   portPath: string,
   sessionId: string,
-  params: RequestSignatureParams,
+  chain: "sui",
+  method: "sign_transaction",
+  params: SignTransactionParams,
   deadlineMs: number,
-): Promise<SignatureResultResponse> {
-  const request = makeRequestSignatureRequest(sessionId, params);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertSignatureResultResponse(response));
+): Promise<SignResultResponse> {
+  const request = makeSignByUserRequest(sessionId, chain, method, params);
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertSignResultResponse(response));
+}
+
+async function signByPolicyOverSerial(
+  portPath: string,
+  sessionId: string,
+  chain: "sui",
+  method: "sign_transaction",
+  params: SignTransactionParams,
+  deadlineMs: number,
+): Promise<SignResultResponse> {
+  const request = makeSignByPolicyRequest(sessionId, chain, method, params);
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertSignResultResponse(response));
 }
 
 async function requestOverSerial<TResponse extends ProtocolResponse>(
@@ -799,7 +803,7 @@ function isUnavailableReason(value: string): value is UnavailableReason {
 
 function isRetryableIdlessFirmwareError(code: string): boolean {
   // Current Firmware does not emit id-less transient errors. Keep this narrow
-  // for future transient codes that cannot be correlated to a request id.
+  // because these errors cannot be correlated to a request id.
   return code === "busy" || code === "timeout";
 }
 

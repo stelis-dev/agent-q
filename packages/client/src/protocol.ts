@@ -107,41 +107,39 @@ export interface GetApprovalHistoryRequest {
   };
 }
 
-export interface CallMethodRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "call_method";
-  sessionId: string;
-  chain: string;
-  method: string;
-  params: Record<string, unknown>;
-}
-
 export interface ProposePolicyUpdateRequest {
   id: string;
   version: typeof PROTOCOL_VERSION;
-  type: "call_method";
+  type: "propose_policy_update";
   sessionId: string;
-  methodNamespace: "admin";
-  method: "propose_policy_update";
   params: {
     policy: Record<string, unknown>;
   };
 }
 
-export interface RequestSignatureParams {
-  chain: typeof SUI_CHAIN_ID;
-  method: typeof SUI_SIGN_TRANSACTION_METHOD;
+export interface SignTransactionParams {
   network: SuiSignTransactionNetwork;
   txBytes: string;
 }
 
-export interface RequestSignatureRequest {
+export interface SignByUserRequest {
   id: string;
   version: typeof PROTOCOL_VERSION;
-  type: "request_signature";
+  type: "sign_by_user";
   sessionId: string;
-  params: RequestSignatureParams;
+  chain: typeof SUI_CHAIN_ID;
+  method: typeof SUI_SIGN_TRANSACTION_METHOD;
+  params: SignTransactionParams;
+}
+
+export interface SignByPolicyRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "sign_by_policy";
+  sessionId: string;
+  chain: typeof SUI_CHAIN_ID;
+  method: typeof SUI_SIGN_TRANSACTION_METHOD;
+  params: SignTransactionParams;
 }
 
 export type ProtocolRequest =
@@ -153,9 +151,9 @@ export type ProtocolRequest =
   | GetAccountsRequest
   | GetPolicyRequest
   | GetApprovalHistoryRequest
-  | CallMethodRequest
   | ProposePolicyUpdateRequest
-  | RequestSignatureRequest;
+  | SignByUserRequest
+  | SignByPolicyRequest;
 
 export interface StatusResponse {
   id: string;
@@ -215,9 +213,14 @@ export interface CapabilityChain {
   methods: string[];
 }
 
-export interface SignatureRequestCapability {
+export interface SigningCapabilityEntry {
   chain: typeof SUI_CHAIN_ID;
   method: typeof SUI_SIGN_TRANSACTION_METHOD;
+}
+
+export interface SigningCapabilities {
+  user: SigningCapabilityEntry[];
+  policy: SigningCapabilityEntry[];
 }
 
 export interface CapabilitiesResponse {
@@ -225,13 +228,13 @@ export interface CapabilitiesResponse {
   version: typeof PROTOCOL_VERSION;
   type: "capabilities";
   chains: CapabilityChain[];
-  signatureRequests?: SignatureRequestCapability[];
+  signing?: SigningCapabilities;
 }
 
 // Public account identity only. Never carries mnemonic, seed, entropy, or any
 // private/signing key material. publicKey is the raw 32-byte Ed25519 key as
 // base64; the scheme is reported separately as keyScheme. The shape is
-// chain-agnostic so future chains are added as additional accounts[] entries.
+// chain-agnostic so additional chains use additional accounts[] entries.
 export interface Account {
   chain: string;
   address: string;
@@ -250,7 +253,7 @@ export interface AccountsResponse {
 export interface PolicySummary {
   schema: string;
   policyId: string;
-  defaultAction: "reject";
+  defaultAction: PolicyAction;
   ruleCount: number;
 }
 
@@ -261,16 +264,15 @@ export interface PolicyResponse {
   policy: PolicySummary;
 }
 
-export type ApprovalHistoryDecisionKind = "policy_rejected";
+export type PolicyAction = "reject" | "sign";
 
-export type ApprovalHistoryConfirmationKind = "none" | "policy" | "local_pin";
+export type SigningHistoryRecordKind = "confirmation" | "terminal";
 
-export type SignatureRequestHistoryRecordKind = "confirmation" | "terminal";
-
-export type SignatureRequestHistoryTerminalResult =
+export type SigningHistoryTerminalResult =
   | "signed"
-  | "rejected"
-  | "timed_out"
+  | "user_rejected"
+  | "user_timed_out"
+  | "policy_rejected"
   | "signing_failed";
 
 export type ApprovalHistoryPolicyUpdateResult =
@@ -279,25 +281,14 @@ export type ApprovalHistoryPolicyUpdateResult =
   | "timed_out"
   | "storage_error";
 
-export type ApprovalHistoryHighestAction = "reject";
+export type ApprovalHistoryHighestAction = PolicyAction;
 
 interface ApprovalHistoryRecordBase {
   seq: string;
   uptimeMs: string;
   timeSource: "uptime";
-  eventKind: "method_decision" | "policy_update" | "signature_request";
+  eventKind: "policy_update" | "signing";
   reasonCode: string;
-}
-
-export interface MethodDecisionApprovalHistoryRecord extends ApprovalHistoryRecordBase {
-  eventKind: "method_decision";
-  decisionKind: ApprovalHistoryDecisionKind;
-  confirmationKind: ApprovalHistoryConfirmationKind;
-  chain: string;
-  method: string;
-  payloadDigest?: string;
-  policyHash?: string;
-  ruleRef?: string;
 }
 
 export interface PolicyUpdateApprovalHistoryRecord extends ApprovalHistoryRecordBase {
@@ -308,20 +299,22 @@ export interface PolicyUpdateApprovalHistoryRecord extends ApprovalHistoryRecord
   highestAction: ApprovalHistoryHighestAction;
 }
 
-export interface SignatureRequestApprovalHistoryRecord extends ApprovalHistoryRecordBase {
-  eventKind: "signature_request";
-  recordKind: SignatureRequestHistoryRecordKind;
+export interface SigningApprovalHistoryRecord extends ApprovalHistoryRecordBase {
+  eventKind: "signing";
+  recordKind: SigningHistoryRecordKind;
+  authorization: "user" | "policy";
   chain: string;
   method: string;
   payloadDigest: string;
-  confirmationKind?: "local_pin";
-  terminalResult?: SignatureRequestHistoryTerminalResult;
+  confirmationKind?: "local_pin" | "policy";
+  policyHash?: string;
+  ruleRef?: string;
+  terminalResult?: SigningHistoryTerminalResult;
 }
 
 export type ApprovalHistoryRecord =
-  | MethodDecisionApprovalHistoryRecord
   | PolicyUpdateApprovalHistoryRecord
-  | SignatureRequestApprovalHistoryRecord;
+  | SigningApprovalHistoryRecord;
 
 export interface ApprovalHistoryResponse {
   id: string;
@@ -355,52 +348,69 @@ export interface PolicyUpdateResultResponse {
   policy?: PolicyUpdateResultPolicySummary;
 }
 
-export interface MethodResultRejectedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "method_result";
-  status: "rejected";
-  error: {
-    code: MethodResultErrorCode;
-    message: string;
-  };
-}
-
-export type MethodResultResponse = MethodResultRejectedResponse;
-
-export type SignatureResultStatus = "signed" | "rejected" | "timed_out" | "failed";
-export type SignatureResultReasonCode =
-  | "device_confirmed"
-  | "device_rejected"
-  | "device_timed_out"
+export type SignResultStatus =
+  | "signed"
+  | "user_rejected"
+  | "user_timed_out"
+  | "policy_rejected"
   | "signing_failed";
 
-export interface SignatureResultSignedResponse {
+export type SignResultAuthorization = "user" | "policy";
+
+export interface SignResultSignedResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
-  type: "signature_result";
+  type: "sign_result";
+  authorization: SignResultAuthorization;
   status: "signed";
-  reasonCode: "device_confirmed";
   chain: typeof SUI_CHAIN_ID;
   method: typeof SUI_SIGN_TRANSACTION_METHOD;
   signature: string;
 }
 
-export interface SignatureResultTerminalResponse {
+export interface SignResultUserRejectedResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
-  type: "signature_result";
-  status: Exclude<SignatureResultStatus, "signed">;
-  reasonCode: Exclude<SignatureResultReasonCode, "device_confirmed">;
+  type: "sign_result";
+  authorization: "user";
+  status: "user_rejected" | "user_timed_out";
   error: {
-    code: Exclude<SignatureResultReasonCode, "device_confirmed">;
+    code: "user_rejected" | "user_timed_out";
     message: string;
   };
 }
 
-export type SignatureResultResponse =
-  | SignatureResultSignedResponse
-  | SignatureResultTerminalResponse;
+export interface SignResultPolicyRejectedResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "sign_result";
+  authorization: "policy";
+  status: "policy_rejected";
+  policyHash: string;
+  ruleRef: string;
+  error: {
+    code: "policy_rejected";
+    message: string;
+  };
+}
+
+export interface SignResultSigningFailedResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "sign_result";
+  authorization: SignResultAuthorization;
+  status: "signing_failed";
+  error: {
+    code: "signing_failed";
+    message: string;
+  };
+}
+
+export type SignResultResponse =
+  | SignResultSignedResponse
+  | SignResultUserRejectedResponse
+  | SignResultPolicyRejectedResponse
+  | SignResultSigningFailedResponse;
 
 export interface ProtocolErrorResponse {
   id?: string;
@@ -422,8 +432,7 @@ export type ProtocolResponse =
   | PolicyResponse
   | ApprovalHistoryResponse
   | PolicyUpdateResultResponse
-  | MethodResultResponse
-  | SignatureResultResponse
+  | SignResultResponse
   | ProtocolErrorResponse;
 
 export class ProtocolError extends Error {
@@ -563,29 +572,6 @@ export function makeGetApprovalHistoryRequest(
   };
 }
 
-export function makeCallMethodRequest(
-  sessionId: string,
-  chain: string,
-  method: string,
-  params: Record<string, unknown> = {},
-  id = createRequestId(),
-): CallMethodRequest {
-  validateRequestId(id);
-  if (!isSessionId(sessionId)) {
-    throw new ProtocolError("invalid_session", "Invalid sessionId.");
-  }
-  validateCallMethodInput(chain, method, params);
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "call_method",
-    sessionId,
-    chain,
-    method,
-    params,
-  };
-}
-
 export function makeProposePolicyUpdateRequest(
   sessionId: string,
   policy: Record<string, unknown>,
@@ -599,10 +585,8 @@ export function makeProposePolicyUpdateRequest(
   const request: ProposePolicyUpdateRequest = {
     id,
     version: PROTOCOL_VERSION,
-    type: "call_method",
+    type: "propose_policy_update",
     sessionId,
-    methodNamespace: "admin",
-    method: "propose_policy_update",
     params: {
       policy,
     },
@@ -613,25 +597,56 @@ export function makeProposePolicyUpdateRequest(
   return request;
 }
 
-export function makeRequestSignatureRequest(
+export function makeSignByUserRequest(
   sessionId: string,
+  chain: unknown,
+  method: unknown,
   params: unknown,
   id = createRequestId(),
-): RequestSignatureRequest {
+): SignByUserRequest {
   validateRequestId(id);
   if (!isSessionId(sessionId)) {
     throw new ProtocolError("invalid_session", "Invalid sessionId.");
   }
-  const normalizedParams = validateRequestSignatureInput(params);
-  const request: RequestSignatureRequest = {
+  const normalizedParams = validateSignRequestInput(chain, method, params, "sign_by_user");
+  const request: SignByUserRequest = {
     id,
     version: PROTOCOL_VERSION,
-    type: "request_signature",
+    type: "sign_by_user",
     sessionId,
+    chain: SUI_CHAIN_ID,
+    method: SUI_SIGN_TRANSACTION_METHOD,
     params: normalizedParams,
   };
   if (Buffer.byteLength(JSON.stringify(request), "utf8") > MAX_RAW_PROTOCOL_JSON_BYTES) {
-    throw new ProtocolError("invalid_params", "request_signature request is too large for the runtime.");
+    throw new ProtocolError("invalid_params", "sign_by_user request is too large for the runtime.");
+  }
+  return request;
+}
+
+export function makeSignByPolicyRequest(
+  sessionId: string,
+  chain: unknown,
+  method: unknown,
+  params: unknown,
+  id = createRequestId(),
+): SignByPolicyRequest {
+  validateRequestId(id);
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  const normalizedParams = validateSignRequestInput(chain, method, params, "sign_by_policy");
+  const request: SignByPolicyRequest = {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "sign_by_policy",
+    sessionId,
+    chain: SUI_CHAIN_ID,
+    method: SUI_SIGN_TRANSACTION_METHOD,
+    params: normalizedParams,
+  };
+  if (Buffer.byteLength(JSON.stringify(request), "utf8") > MAX_RAW_PROTOCOL_JSON_BYTES) {
+    throw new ProtocolError("invalid_params", "sign_by_policy request is too large for the runtime.");
   }
   return request;
 }
@@ -643,42 +658,28 @@ export function validateProposePolicyUpdateRequestInput(
   makeProposePolicyUpdateRequest(sessionId, policy, "req_000000000000000000000000");
 }
 
-export function validateRequestSignatureInput(params: unknown): RequestSignatureParams {
-  if (!isRecord(params) || Array.isArray(params)) {
-    throw new ProtocolError("invalid_params", "request_signature params must be an object.");
-  }
-  if (hasSecretPayloadKey(params)) {
-    throw new ProtocolError("invalid_params", "request_signature params must not include secret material.");
-  }
-  if (!hasOnlyObjectKeys(params, ["chain", "method", "network", "txBytes"])) {
-    throw new ProtocolError("invalid_params", "request_signature params contain unsupported fields.");
-  }
-  if (params.chain !== SUI_CHAIN_ID || params.method !== SUI_SIGN_TRANSACTION_METHOD) {
-    throw new ProtocolError("invalid_method", "request_signature method is unsupported.");
-  }
-  return {
-    chain: SUI_CHAIN_ID,
-    method: SUI_SIGN_TRANSACTION_METHOD,
-    network: validateSuiSignTransactionNetwork(params.network),
-    txBytes: validateSuiSignTransactionTxBytes(params.txBytes),
-  };
-}
-
-export function validateCallMethodInput(
+export function validateSignRequestInput(
   chain: unknown,
   method: unknown,
   params: unknown,
-): asserts params is Record<string, unknown> {
-  if (!isCallMethodChain(chain)) {
-    throw new ProtocolError("invalid_method", "Invalid call_method chain.");
+  requestType = "sign",
+): SignTransactionParams {
+  if (!isRecord(params) || Array.isArray(params)) {
+    throw new ProtocolError("invalid_params", `${requestType} params must be an object.`);
   }
-  if (!isCallMethodName(method)) {
-    throw new ProtocolError("invalid_method", "Invalid call_method method.");
+  if (hasSecretPayloadKey(params)) {
+    throw new ProtocolError("invalid_params", `${requestType} params must not include secret material.`);
   }
-  validateCallMethodParams(params);
-  if (chain === SUI_CHAIN_ID && method === SUI_SIGN_TRANSACTION_METHOD) {
-    validateSuiSignTransactionParams(params);
+  if (!hasOnlyObjectKeys(params, ["network", "txBytes"])) {
+    throw new ProtocolError("invalid_params", `${requestType} params contain unsupported fields.`);
   }
+  if (chain !== SUI_CHAIN_ID || method !== SUI_SIGN_TRANSACTION_METHOD) {
+    throw new ProtocolError("invalid_method", `${requestType} method is unsupported.`);
+  }
+  return {
+    network: validateSuiSignTransactionNetwork(params.network),
+    txBytes: validateSuiSignTransactionTxBytes(params.txBytes),
+  };
 }
 
 export function validatePolicyUpdateProposalInput(policy: unknown): asserts policy is Record<string, unknown> {
@@ -866,7 +867,7 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     if (hasSecretPayloadKey(value)) {
       throw new ProtocolError("protocol_error", "Capabilities response must not include secret material.");
     }
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "chains", "signatureRequests"])) {
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "chains", "signing"])) {
       throw new ProtocolError("protocol_error", "Capabilities response contains unsupported fields.");
     }
     if (!Array.isArray(value.chains)) {
@@ -875,13 +876,13 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     if (value.chains.length !== MAX_CAPABILITY_CHAINS) {
       throw new ProtocolError("protocol_error", "Capabilities response has an unsupported chain count.");
     }
-    const signatureRequests = sanitizeSignatureRequestCapabilities(value.signatureRequests);
+    const signing = sanitizeSigningCapabilities(value.signing);
     return {
       id: value.id,
       version: PROTOCOL_VERSION,
       type: "capabilities",
       chains: value.chains.map((entry) => sanitizeCapabilityChain(entry)),
-      ...(signatureRequests === undefined ? {} : { signatureRequests }),
+      ...(signing === undefined ? {} : { signing }),
     };
   }
 
@@ -991,42 +992,8 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
-  if (value.type === "method_result") {
-    if (typeof value.id !== "string" || typeof value.status !== "string") {
-      throw new ProtocolError("protocol_error", "Method result response is malformed.");
-    }
-    if (hasSecretPayloadKey(value)) {
-      throw new ProtocolError("protocol_error", "Method result response must not include secret material.");
-    }
-
-    if (value.status !== "rejected") {
-      throw new ProtocolError("protocol_error", "Method result response is malformed.");
-    }
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "error"])) {
-      throw new ProtocolError("protocol_error", "Method result response contains unsupported fields.");
-    }
-    const error = value.error;
-    if (!isRecord(error) || !hasOnlyObjectKeys(error, ["code", "message"])) {
-      throw new ProtocolError("protocol_error", "Method result error is malformed.");
-    }
-    const errorMessage = methodResultErrorMessage(error.code);
-    if (errorMessage === undefined || error.message !== errorMessage) {
-      throw new ProtocolError("protocol_error", "Method result error is malformed.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "method_result",
-      status: "rejected",
-      error: {
-        code: error.code as MethodResultErrorCode,
-        message: errorMessage,
-      },
-    };
-  }
-
-  if (value.type === "signature_result") {
-    return sanitizeSignatureResultResponse(value);
+  if (value.type === "sign_result") {
+    return sanitizeSignResultResponse(value);
   }
 
   throw new ProtocolError("protocol_error", "Protocol response type is unsupported.");
@@ -1122,22 +1089,12 @@ export function assertPolicyUpdateResultResponse(response: ProtocolResponse): Po
   return response;
 }
 
-export function assertMethodResultResponse(response: ProtocolResponse): MethodResultResponse {
+export function assertSignResultResponse(response: ProtocolResponse): SignResultResponse {
   if (response.type === "error") {
     throw new ProtocolError(response.error.code, response.error.message);
   }
-  if (response.type !== "method_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not method_result.");
-  }
-  return response;
-}
-
-export function assertSignatureResultResponse(response: ProtocolResponse): SignatureResultResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "signature_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not signature_result.");
+  if (response.type !== "sign_result") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not sign_result.");
   }
   return response;
 }
@@ -1167,12 +1124,12 @@ export function sanitizeProvisioningStatus(value: unknown): ProvisioningStatus |
   return { state: value.state };
 }
 
-export function isCallMethodChain(value: unknown): value is string {
-  return typeof value === "string" && CALL_METHOD_CHAIN_PATTERN.test(value);
+export function isSignChain(value: unknown): value is string {
+  return typeof value === "string" && SIGN_CHAIN_PATTERN.test(value);
 }
 
-export function isCallMethodName(value: unknown): value is string {
-  return typeof value === "string" && CALL_METHOD_NAME_PATTERN.test(value);
+export function isSignMethod(value: unknown): value is string {
+  return typeof value === "string" && SIGN_METHOD_PATTERN.test(value);
 }
 
 export function isUint64DecimalString(value: unknown): value is string {
@@ -1191,7 +1148,7 @@ export const SUI_ED25519_SIGNATURE_BASE64_PATTERN = /^[A-Za-z0-9+/]{130}==$/;
 export const SUI_DERIVATION_PATH = "m/44'/784'/0'/0'/0'";
 export const MAX_CAPABILITY_CHAINS = 1;
 export const MAX_CAPABILITY_ACCOUNTS_PER_CHAIN = 1;
-export const MAX_SIGNATURE_REQUEST_CAPABILITIES = 1;
+export const MAX_SIGNING_CAPABILITIES_PER_AUTHORIZATION = 1;
 // The current target implements exactly one account (Sui Ed25519 account 0). Bound
 // the accounts array so a buggy or spoofed device cannot inflate the MCP result or
 // imply multi-account support that does not exist. Raise this as more accounts or
@@ -1205,22 +1162,15 @@ export const UINT_DECIMAL_STRING_PATTERN = /^(0|[1-9][0-9]{0,19})$/;
 const UINT64_MAX_DECIMAL = "18446744073709551615";
 export const APPROVAL_HISTORY_REASON_CODE_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
 export const APPROVAL_HISTORY_RULE_REF_PATTERN = /^[a-z][a-z0-9_.:/-]{0,31}$/;
-export const APPROVAL_HISTORY_DECISION_KINDS = [
-  "policy_rejected",
-] as const;
-export const APPROVAL_HISTORY_CONFIRMATION_KINDS = [
-  "none",
-  "policy",
-  "local_pin",
-] as const;
-export const SIGNATURE_REQUEST_HISTORY_RECORD_KINDS = [
+export const SIGNING_HISTORY_RECORD_KINDS = [
   "confirmation",
   "terminal",
 ] as const;
-export const SIGNATURE_REQUEST_HISTORY_TERMINAL_RESULTS = [
+export const SIGNING_HISTORY_TERMINAL_RESULTS = [
   "signed",
-  "rejected",
-  "timed_out",
+  "user_rejected",
+  "user_timed_out",
+  "policy_rejected",
   "signing_failed",
 ] as const;
 export const APPROVAL_HISTORY_POLICY_UPDATE_RESULTS = [
@@ -1229,7 +1179,7 @@ export const APPROVAL_HISTORY_POLICY_UPDATE_RESULTS = [
   "timed_out",
   "storage_error",
 ] as const;
-export const APPROVAL_HISTORY_HIGHEST_ACTIONS = ["reject"] as const;
+export const APPROVAL_HISTORY_HIGHEST_ACTIONS = ["reject", "sign"] as const;
 export const POLICY_UPDATE_RESULT_STATUSES = [
   "applied",
   "rejected",
@@ -1239,11 +1189,8 @@ export const POLICY_UPDATE_RESULT_STATUSES = [
   "storage_error",
   "consistency_error",
 ] as const;
-export const CALL_METHOD_CHAIN_PATTERN = /^[a-z][a-z0-9_.-]{0,31}$/;
-export const CALL_METHOD_NAME_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
-// The method runtime keeps request bodies bounded by the current Firmware JSONL
-// input buffer. Specific methods can add stricter semantic limits inside this cap.
-export const MAX_CALL_METHOD_PARAMS_JSON_BYTES = 600;
+export const SIGN_CHAIN_PATTERN = /^[a-z][a-z0-9_.-]{0,31}$/;
+export const SIGN_METHOD_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
 export const MAX_RAW_PROTOCOL_JSON_BYTES = 4096;
 export const MAX_POLICY_UPDATE_REQUEST_JSON_BYTES = 4096;
 export const SUI_CHAIN_ID = "sui";
@@ -1254,20 +1201,13 @@ export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES = 384;
 export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS = 512;
 const BASE64_CANONICAL_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 export const UNSUPPORTED_METHOD_MESSAGE = "Method is not supported.";
-export const METHOD_RESULT_ERROR_MESSAGES = {
-  unsupported_method: UNSUPPORTED_METHOD_MESSAGE,
-  policy_rejected: "The request was rejected by device policy.",
-  malformed_transaction: "Transaction bytes are malformed.",
-  unsupported_transaction: "Transaction shape is not supported.",
-  policy_error: "Active policy is unavailable.",
-} as const;
-export type MethodResultErrorCode = keyof typeof METHOD_RESULT_ERROR_MESSAGES;
-export const SIGNATURE_RESULT_ERROR_MESSAGES = {
-  device_rejected: "The signing request was rejected on the device.",
-  device_timed_out: "The signing request timed out on the device.",
+export const SIGN_RESULT_ERROR_MESSAGES = {
+  user_rejected: "The signing request was rejected on the device.",
+  user_timed_out: "The signing request timed out on the device.",
+  policy_rejected: "The signing request was rejected by device policy.",
   signing_failed: "The device could not produce a signature.",
 } as const;
-export type SignatureResultErrorCode = keyof typeof SIGNATURE_RESULT_ERROR_MESSAGES;
+export type SignResultErrorCode = keyof typeof SIGN_RESULT_ERROR_MESSAGES;
 export const FORBIDDEN_SECRET_FIELD_NAMES = [
   "entropy",
   "mnemonic",
@@ -1481,34 +1421,48 @@ function sanitizeCapabilityChain(value: unknown): CapabilityChain {
   };
 }
 
-function sanitizeSignatureRequestCapabilities(value: unknown): SignatureRequestCapability[] | undefined {
+function sanitizeSigningCapabilityEntry(value: unknown): SigningCapabilityEntry {
+  if (!isRecord(value)) {
+    throw new ProtocolError("protocol_error", "Signing capability entry is malformed.");
+  }
+  if (hasSecretPayloadKey(value)) {
+    throw new ProtocolError("protocol_error", "Signing capability entry must not include secret material.");
+  }
+  if (!hasOnlyObjectKeys(value, ["chain", "method"])) {
+    throw new ProtocolError("protocol_error", "Signing capability entry contains unsupported fields.");
+  }
+  if (value.chain !== SUI_CHAIN_ID || value.method !== SUI_SIGN_TRANSACTION_METHOD) {
+    throw new ProtocolError("protocol_error", "Signing capability is unsupported.");
+  }
+  return {
+    chain: SUI_CHAIN_ID,
+    method: SUI_SIGN_TRANSACTION_METHOD,
+  };
+}
+
+function sanitizeSigningCapabilities(value: unknown): SigningCapabilities | undefined {
   if (value === undefined) {
     return undefined;
   }
-  if (!Array.isArray(value)) {
-    throw new ProtocolError("protocol_error", "Signature request capabilities must be an array.");
+  if (!isRecord(value)) {
+    throw new ProtocolError("protocol_error", "Signing capabilities are malformed.");
   }
-  if (value.length !== MAX_SIGNATURE_REQUEST_CAPABILITIES) {
-    throw new ProtocolError("protocol_error", "Signature request capability count is unsupported.");
+  if (!hasOnlyObjectKeys(value, ["user", "policy"])) {
+    throw new ProtocolError("protocol_error", "Signing capabilities contain unsupported fields.");
   }
-  return value.map((entry) => {
-    if (!isRecord(entry)) {
-      throw new ProtocolError("protocol_error", "Signature request capability entry is malformed.");
-    }
-    if (hasSecretPayloadKey(entry)) {
-      throw new ProtocolError("protocol_error", "Signature request capability entry must not include secret material.");
-    }
-    if (!hasOnlyObjectKeys(entry, ["chain", "method"])) {
-      throw new ProtocolError("protocol_error", "Signature request capability entry contains unsupported fields.");
-    }
-    if (entry.chain !== SUI_CHAIN_ID || entry.method !== SUI_SIGN_TRANSACTION_METHOD) {
-      throw new ProtocolError("protocol_error", "Signature request capability is unsupported.");
-    }
-    return {
-      chain: SUI_CHAIN_ID,
-      method: SUI_SIGN_TRANSACTION_METHOD,
-    };
-  });
+  if (!Array.isArray(value.user) || !Array.isArray(value.policy)) {
+    throw new ProtocolError("protocol_error", "Signing capabilities are malformed.");
+  }
+  if (
+    value.user.length !== MAX_SIGNING_CAPABILITIES_PER_AUTHORIZATION ||
+    value.policy.length !== MAX_SIGNING_CAPABILITIES_PER_AUTHORIZATION
+  ) {
+    throw new ProtocolError("protocol_error", "Signing capability count is unsupported.");
+  }
+  return {
+    user: value.user.map((entry) => sanitizeSigningCapabilityEntry(entry)),
+    policy: value.policy.map((entry) => sanitizeSigningCapabilityEntry(entry)),
+  };
 }
 
 // Reduce an untrusted account entry to a safe Account or throw. Enforces the Sui
@@ -1625,8 +1579,8 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
     "uptimeMs",
     "timeSource",
     "eventKind",
-    "decisionKind",
     "confirmationKind",
+    "authorization",
     "chain",
     "method",
     "reasonCode",
@@ -1656,7 +1610,6 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
 
   if (value.eventKind === "policy_update") {
     if (
-      value.decisionKind !== undefined ||
       value.confirmationKind !== undefined ||
       value.chain !== undefined ||
       value.method !== undefined ||
@@ -1688,136 +1641,117 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
     };
   }
 
-  if (value.eventKind === "signature_request") {
+  if (value.eventKind === "signing") {
     if (
-      value.decisionKind !== undefined ||
       value.result !== undefined ||
       value.ruleCount !== undefined ||
       value.highestAction !== undefined ||
-      value.policyHash !== undefined ||
-      value.ruleRef !== undefined ||
-      !SIGNATURE_REQUEST_HISTORY_RECORD_KINDS.includes(value.recordKind as SignatureRequestHistoryRecordKind) ||
-      !isCallMethodChain(value.chain) ||
-      !isCallMethodName(value.method) ||
+      !SIGNING_HISTORY_RECORD_KINDS.includes(value.recordKind as SigningHistoryRecordKind) ||
+      (value.authorization !== "user" && value.authorization !== "policy") ||
+      !isSignChain(value.chain) ||
+      !isSignMethod(value.method) ||
       typeof value.payloadDigest !== "string" ||
       !POLICY_ID_PATTERN.test(value.payloadDigest)
     ) {
-      throw new ProtocolError("protocol_error", "Approval history signature request record is malformed.");
+      throw new ProtocolError("protocol_error", "Approval history signing record is malformed.");
     }
     if (value.recordKind === "confirmation") {
+      if (value.terminalResult !== undefined) {
+        throw new ProtocolError("protocol_error", "Approval history signing record is malformed.");
+      }
+      if (value.authorization === "user") {
+        if (
+          value.confirmationKind !== "local_pin" ||
+          value.policyHash !== undefined ||
+          value.ruleRef !== undefined
+        ) {
+          throw new ProtocolError("protocol_error", "Approval history signing record is malformed.");
+        }
+        return {
+          seq: value.seq,
+          uptimeMs: value.uptimeMs,
+          timeSource: "uptime",
+          eventKind: "signing",
+          reasonCode: value.reasonCode,
+          recordKind: "confirmation",
+          authorization: "user",
+          confirmationKind: "local_pin",
+          chain: value.chain,
+          method: value.method,
+          payloadDigest: value.payloadDigest,
+        };
+      }
       if (
-        value.confirmationKind !== "local_pin" ||
-        value.terminalResult !== undefined
+        value.confirmationKind !== "policy" ||
+        typeof value.policyHash !== "string" ||
+        !POLICY_ID_PATTERN.test(value.policyHash) ||
+        typeof value.ruleRef !== "string" ||
+        !APPROVAL_HISTORY_RULE_REF_PATTERN.test(value.ruleRef)
       ) {
-        throw new ProtocolError("protocol_error", "Approval history signature request record is malformed.");
+        throw new ProtocolError("protocol_error", "Approval history signing policy metadata is malformed.");
       }
       return {
         seq: value.seq,
         uptimeMs: value.uptimeMs,
         timeSource: "uptime",
-        eventKind: "signature_request",
+        eventKind: "signing",
         reasonCode: value.reasonCode,
         recordKind: "confirmation",
-        confirmationKind: "local_pin",
+        authorization: "policy",
+        confirmationKind: "policy",
         chain: value.chain,
         method: value.method,
         payloadDigest: value.payloadDigest,
+        policyHash: value.policyHash,
+        ruleRef: value.ruleRef,
       };
     }
     if (
       value.confirmationKind !== undefined ||
-      !SIGNATURE_REQUEST_HISTORY_TERMINAL_RESULTS.includes(
-        value.terminalResult as SignatureRequestHistoryTerminalResult,
+      !SIGNING_HISTORY_TERMINAL_RESULTS.includes(
+        value.terminalResult as SigningHistoryTerminalResult,
       )
     ) {
-      throw new ProtocolError("protocol_error", "Approval history signature request record is malformed.");
+      throw new ProtocolError("protocol_error", "Approval history signing record is malformed.");
+    }
+    const terminalResult = value.terminalResult as SigningHistoryTerminalResult;
+    if (value.authorization === "policy") {
+      if (
+        !["signed", "policy_rejected", "signing_failed"].includes(terminalResult) ||
+        typeof value.policyHash !== "string" ||
+        !POLICY_ID_PATTERN.test(value.policyHash) ||
+        typeof value.ruleRef !== "string" ||
+        !APPROVAL_HISTORY_RULE_REF_PATTERN.test(value.ruleRef)
+      ) {
+        throw new ProtocolError("protocol_error", "Approval history signing policy metadata is malformed.");
+      }
+    } else if (
+      !["signed", "user_rejected", "user_timed_out", "signing_failed"].includes(terminalResult) ||
+      value.policyHash !== undefined ||
+      value.ruleRef !== undefined
+    ) {
+      throw new ProtocolError("protocol_error", "Approval history signing policy metadata is malformed.");
     }
     return {
       seq: value.seq,
       uptimeMs: value.uptimeMs,
       timeSource: "uptime",
-      eventKind: "signature_request",
+      eventKind: "signing",
       reasonCode: value.reasonCode,
       recordKind: "terminal",
-      terminalResult: value.terminalResult as SignatureRequestHistoryTerminalResult,
+      authorization: value.authorization as "user" | "policy",
+      terminalResult,
       chain: value.chain,
       method: value.method,
       payloadDigest: value.payloadDigest,
+      ...(value.authorization === "policy" ? {
+        policyHash: value.policyHash as string,
+        ruleRef: value.ruleRef as string,
+      } : {}),
     };
   }
 
-  if (
-    value.eventKind !== "method_decision" ||
-    value.result !== undefined ||
-    value.ruleCount !== undefined ||
-    value.highestAction !== undefined ||
-    value.recordKind !== undefined ||
-    value.terminalResult !== undefined ||
-    !APPROVAL_HISTORY_DECISION_KINDS.includes(value.decisionKind as ApprovalHistoryDecisionKind) ||
-    value.confirmationKind !== "policy" ||
-    !isCallMethodChain(value.chain) ||
-    !isCallMethodName(value.method)
-  ) {
-    throw new ProtocolError("protocol_error", "Approval history record is malformed.");
-  }
-  if (
-    value.payloadDigest !== undefined &&
-    (typeof value.payloadDigest !== "string" || !POLICY_ID_PATTERN.test(value.payloadDigest))
-  ) {
-    throw new ProtocolError("protocol_error", "Approval history payloadDigest is malformed.");
-  }
-  if (
-    value.policyHash !== undefined &&
-    (typeof value.policyHash !== "string" || !POLICY_ID_PATTERN.test(value.policyHash))
-  ) {
-    throw new ProtocolError("protocol_error", "Approval history policyHash is malformed.");
-  }
-  if (
-    value.ruleRef !== undefined &&
-    (typeof value.ruleRef !== "string" || !APPROVAL_HISTORY_RULE_REF_PATTERN.test(value.ruleRef))
-  ) {
-    throw new ProtocolError("protocol_error", "Approval history ruleRef is malformed.");
-  }
-  return {
-    seq: value.seq,
-    uptimeMs: value.uptimeMs,
-    timeSource: "uptime",
-    eventKind: "method_decision",
-    reasonCode: value.reasonCode,
-    decisionKind: value.decisionKind as ApprovalHistoryDecisionKind,
-    confirmationKind: value.confirmationKind as ApprovalHistoryConfirmationKind,
-    chain: value.chain,
-    method: value.method,
-    ...(value.payloadDigest === undefined ? {} : { payloadDigest: value.payloadDigest }),
-    ...(value.policyHash === undefined ? {} : { policyHash: value.policyHash }),
-    ...(value.ruleRef === undefined ? {} : { ruleRef: value.ruleRef }),
-  };
-}
-
-function validateCallMethodParams(params: unknown): asserts params is Record<string, unknown> {
-  if (!isRecord(params) || Array.isArray(params)) {
-    throw new ProtocolError("invalid_params", "call_method params must be an object.");
-  }
-  if (hasSecretPayloadKey(params)) {
-    throw new ProtocolError("invalid_params", "call_method params must not include secret material.");
-  }
-  let serialized: string | undefined;
-  try {
-    serialized = JSON.stringify(params);
-  } catch {
-    throw new ProtocolError("invalid_params", "call_method params must be JSON serializable.");
-  }
-  if (serialized === undefined || Buffer.byteLength(serialized, "utf8") > MAX_CALL_METHOD_PARAMS_JSON_BYTES) {
-    throw new ProtocolError("invalid_params", "call_method params are too large for the runtime.");
-  }
-}
-
-function validateSuiSignTransactionParams(params: Record<string, unknown>): void {
-  if (!hasOnlyObjectKeys(params, ["network", "txBytes"])) {
-    throw new ProtocolError("invalid_params", "sui/sign_transaction params contain unsupported fields.");
-  }
-  validateSuiSignTransactionNetwork(params.network);
-  validateSuiSignTransactionTxBytes(params.txBytes);
+  throw new ProtocolError("protocol_error", "Approval history record is malformed.");
 }
 
 function validateSuiSignTransactionNetwork(value: unknown): SuiSignTransactionNetwork {
@@ -1849,89 +1783,139 @@ function validateSuiSignTransactionTxBytes(value: unknown): string {
   return value;
 }
 
-function methodResultErrorMessage(code: unknown): string | undefined {
-  if (typeof code !== "string" || !(code in METHOD_RESULT_ERROR_MESSAGES)) {
+function signResultErrorMessage(code: unknown): string | undefined {
+  if (typeof code !== "string" || !(code in SIGN_RESULT_ERROR_MESSAGES)) {
     return undefined;
   }
-  return METHOD_RESULT_ERROR_MESSAGES[code as MethodResultErrorCode];
+  return SIGN_RESULT_ERROR_MESSAGES[code as SignResultErrorCode];
 }
 
-function signatureResultErrorMessage(code: unknown): string | undefined {
-  if (typeof code !== "string" || !(code in SIGNATURE_RESULT_ERROR_MESSAGES)) {
-    return undefined;
-  }
-  return SIGNATURE_RESULT_ERROR_MESSAGES[code as SignatureResultErrorCode];
-}
-
-function sanitizeSignatureResultResponse(value: Record<string, unknown>): SignatureResultResponse {
+function sanitizeSignResultResponse(value: Record<string, unknown>): SignResultResponse {
   if (typeof value.id !== "string" || typeof value.status !== "string") {
-    throw new ProtocolError("protocol_error", "Signature result response is malformed.");
+    throw new ProtocolError("protocol_error", "Sign result response is malformed.");
   }
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Signature result response must not include secret material.");
+    throw new ProtocolError("protocol_error", "Sign result response must not include secret material.");
   }
 
   if (value.status === "signed") {
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "reasonCode", "chain", "method", "signature"])) {
-      throw new ProtocolError("protocol_error", "Signature result response contains unsupported fields.");
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "authorization", "status", "chain", "method", "signature"])) {
+      throw new ProtocolError("protocol_error", "Sign result response contains unsupported fields.");
     }
     if (
-      value.reasonCode !== "device_confirmed" ||
+      (value.authorization !== "user" && value.authorization !== "policy") ||
       value.chain !== SUI_CHAIN_ID ||
       value.method !== SUI_SIGN_TRANSACTION_METHOD ||
       typeof value.signature !== "string" ||
       !SUI_ED25519_SIGNATURE_BASE64_PATTERN.test(value.signature)
     ) {
-      throw new ProtocolError("protocol_error", "Signature result response is malformed.");
+      throw new ProtocolError("protocol_error", "Sign result response is malformed.");
     }
     return {
       id: value.id,
       version: PROTOCOL_VERSION,
-      type: "signature_result",
+      type: "sign_result",
+      authorization: value.authorization,
       status: "signed",
-      reasonCode: "device_confirmed",
       chain: SUI_CHAIN_ID,
       method: SUI_SIGN_TRANSACTION_METHOD,
       signature: value.signature,
     };
   }
 
-  if (value.status === "rejected" || value.status === "timed_out" || value.status === "failed") {
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "reasonCode", "error"])) {
-      throw new ProtocolError("protocol_error", "Signature result response contains unsupported fields.");
+  if (value.status === "user_rejected" || value.status === "user_timed_out") {
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "authorization", "status", "error"])) {
+      throw new ProtocolError("protocol_error", "Sign result response contains unsupported fields.");
     }
     const error = value.error;
     if (!isRecord(error) || !hasOnlyObjectKeys(error, ["code", "message"])) {
-      throw new ProtocolError("protocol_error", "Signature result error is malformed.");
+      throw new ProtocolError("protocol_error", "Sign result error is malformed.");
     }
-    const expectedReason: SignatureResultErrorCode =
-      value.status === "rejected"
-        ? "device_rejected"
-        : value.status === "timed_out"
-          ? "device_timed_out"
-          : "signing_failed";
-    const expectedMessage = SIGNATURE_RESULT_ERROR_MESSAGES[expectedReason];
+    const expectedCode = value.status;
+    const expectedMessage = SIGN_RESULT_ERROR_MESSAGES[expectedCode];
     if (
-      value.reasonCode !== expectedReason ||
-      error.code !== expectedReason ||
+      value.authorization !== "user" ||
+      error.code !== expectedCode ||
       error.message !== expectedMessage
     ) {
-      throw new ProtocolError("protocol_error", "Signature result error is malformed.");
+      throw new ProtocolError("protocol_error", "Sign result error is malformed.");
     }
     return {
       id: value.id,
       version: PROTOCOL_VERSION,
-      type: "signature_result",
+      type: "sign_result",
+      authorization: "user",
       status: value.status,
-      reasonCode: expectedReason,
       error: {
-        code: expectedReason,
+        code: expectedCode,
         message: expectedMessage,
       },
     };
   }
 
-  throw new ProtocolError("protocol_error", "Signature result status is unsupported.");
+  if (value.status === "policy_rejected") {
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "authorization", "status", "policyHash", "ruleRef", "error"])) {
+      throw new ProtocolError("protocol_error", "Sign result response contains unsupported fields.");
+    }
+    const error = value.error;
+    const message = SIGN_RESULT_ERROR_MESSAGES.policy_rejected;
+    if (
+      value.authorization !== "policy" ||
+      typeof value.policyHash !== "string" ||
+      !POLICY_ID_PATTERN.test(value.policyHash) ||
+      typeof value.ruleRef !== "string" ||
+      !APPROVAL_HISTORY_RULE_REF_PATTERN.test(value.ruleRef) ||
+      !isRecord(error) ||
+      !hasOnlyObjectKeys(error, ["code", "message"]) ||
+      error.code !== "policy_rejected" ||
+      error.message !== message
+    ) {
+      throw new ProtocolError("protocol_error", "Sign result error is malformed.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "sign_result",
+      authorization: "policy",
+      status: "policy_rejected",
+      policyHash: value.policyHash,
+      ruleRef: value.ruleRef,
+      error: {
+        code: "policy_rejected",
+        message,
+      },
+    };
+  }
+
+  if (value.status === "signing_failed") {
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "authorization", "status", "error"])) {
+      throw new ProtocolError("protocol_error", "Sign result response contains unsupported fields.");
+    }
+    const error = value.error;
+    const message = SIGN_RESULT_ERROR_MESSAGES.signing_failed;
+    if (
+      (value.authorization !== "user" && value.authorization !== "policy") ||
+      !isRecord(error) ||
+      !hasOnlyObjectKeys(error, ["code", "message"]) ||
+      error.code !== "signing_failed" ||
+      error.message !== message
+    ) {
+      throw new ProtocolError("protocol_error", "Sign result error is malformed.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "sign_result",
+      authorization: value.authorization,
+      status: "signing_failed",
+      error: {
+        code: "signing_failed",
+        message,
+      },
+    };
+  }
+
+  throw new ProtocolError("protocol_error", "Sign result status is unsupported.");
 }
 
 export function sanitizeDeviceStatusSnapshot(value: unknown): DeviceStatusSnapshot | null {

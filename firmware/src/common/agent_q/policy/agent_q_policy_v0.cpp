@@ -115,11 +115,15 @@ bool validate_policy(
     if (policy.schema != kAgentQPolicyV0Schema ||
         policy.default_action != AgentQPolicyAction::reject ||
         policy.rule_count > kAgentQPolicyMaxRules ||
-        (policy.rule_count != 0 && policy.rules == nullptr)) {
+        (policy.rule_count != 0 && policy.rules == nullptr) ||
+        !agent_q_policy_sign_rule_count_is_supported(policy)) {
         return false;
     }
     for (size_t index = 0; index < policy.rule_count; ++index) {
         if (!validate_rule(policy.rules[index], facts)) {
+            return false;
+        }
+        if (!agent_q_policy_sign_rule_is_bounded(policy.rules[index])) {
             return false;
         }
     }
@@ -232,6 +236,8 @@ const char* agent_q_policy_action_name(AgentQPolicyAction action)
     switch (action) {
         case AgentQPolicyAction::reject:
             return "reject";
+        case AgentQPolicyAction::sign:
+            return "sign";
     }
     return "unknown";
 }

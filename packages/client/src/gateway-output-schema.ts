@@ -1,6 +1,5 @@
 import * as z from "zod/v4";
 import {
-  CALL_METHOD_SESSION_ENDED_REASONS,
   DISCONNECT_ENDED_REASONS,
   DISCONNECT_REASONS,
   GET_ACCOUNTS_SESSION_ENDED_REASONS,
@@ -8,16 +7,13 @@ import {
   GET_CAPABILITIES_SESSION_ENDED_REASONS,
   GET_POLICY_SESSION_ENDED_REASONS,
   PROPOSE_POLICY_UPDATE_SESSION_ENDED_REASONS,
-  REQUEST_SIGNATURE_SESSION_ENDED_REASONS,
+  SIGN_BY_POLICY_SESSION_ENDED_REASONS,
+  SIGN_BY_USER_SESSION_ENDED_REASONS,
 } from "./core.js";
 import { PUBLIC_ERROR_MESSAGES } from "./public-error.js";
 import {
-  CALL_METHOD_CHAIN_PATTERN,
-  CALL_METHOD_NAME_PATTERN,
   ED25519_PUBLIC_KEY_BASE64_PATTERN,
   AGENT_Q_POLICY_SCHEMA,
-  APPROVAL_HISTORY_CONFIRMATION_KINDS,
-  APPROVAL_HISTORY_DECISION_KINDS,
   APPROVAL_HISTORY_HIGHEST_ACTIONS,
   APPROVAL_HISTORY_POLICY_UPDATE_RESULTS,
   APPROVAL_HISTORY_REASON_CODE_PATTERN,
@@ -27,11 +23,12 @@ import {
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
   MAX_POLICY_RULE_COUNT,
-  METHOD_RESULT_ERROR_MESSAGES,
   POLICY_ID_PATTERN,
   POLICY_UPDATE_RESULT_STATUSES,
-  SIGNATURE_REQUEST_HISTORY_TERMINAL_RESULTS,
-  SIGNATURE_RESULT_ERROR_MESSAGES,
+  SIGN_CHAIN_PATTERN,
+  SIGN_METHOD_PATTERN,
+  SIGNING_HISTORY_TERMINAL_RESULTS,
+  SIGN_RESULT_ERROR_MESSAGES,
   SUI_ADDRESS_PATTERN,
   SUI_DERIVATION_PATH,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
@@ -268,22 +265,44 @@ export const disconnectDeviceToolOutputShape = z.discriminatedUnion("source", [
 const capabilityAccountShape = z.object({
   keyScheme: z.literal("ed25519"),
   derivationPath: z.literal(SUI_DERIVATION_PATH),
-});
+}).strict();
 const capabilityChainShape = z.object({
   id: z.literal("sui"),
   accounts: z.array(capabilityAccountShape).length(MAX_CAPABILITY_ACCOUNTS_PER_CHAIN),
   methods: z.array(z.never()).length(0),
-});
-const signatureRequestCapabilityShape = z.object({
+}).strict();
+const signingCapabilityEntryShape = z.object({
   chain: z.literal("sui"),
   method: z.literal("sign_transaction"),
-});
+}).strict();
+const signingCapabilitiesShape = z.object({
+  user: z.array(signingCapabilityEntryShape).length(1),
+  policy: z.array(signingCapabilityEntryShape).length(1),
+}).strict();
+const providerSigningCapabilitiesShape = z.object({
+  user: z.array(signingCapabilityEntryShape).length(1),
+}).strict();
+const mcpSigningCapabilitiesShape = z.object({
+  policy: z.array(signingCapabilityEntryShape).length(1),
+}).strict();
 const liveCapabilitiesOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
   capabilities: z.array(capabilityChainShape).length(MAX_CAPABILITY_CHAINS),
-  signatureRequests: z.array(signatureRequestCapabilityShape).length(1).optional(),
-});
+  signing: signingCapabilitiesShape.optional(),
+}).strict();
+const liveProviderCapabilitiesOutputShape = z.object({
+  source: z.literal("live"),
+  deviceId: safeDeviceIdShape,
+  capabilities: z.array(capabilityChainShape).length(MAX_CAPABILITY_CHAINS),
+  signing: providerSigningCapabilitiesShape.optional(),
+}).strict();
+const liveMcpCapabilitiesOutputShape = z.object({
+  source: z.literal("live"),
+  deviceId: safeDeviceIdShape,
+  capabilities: z.array(capabilityChainShape).length(MAX_CAPABILITY_CHAINS),
+  signing: mcpSigningCapabilitiesShape.optional(),
+}).strict();
 const notConnectedCapabilitiesOutputShape = z.object({
   source: z.literal("not_connected"),
   deviceId: safeDeviceIdShape,
@@ -301,6 +320,28 @@ export const getCapabilitiesSuccessOutputShape = z.discriminatedUnion("source", 
 ]);
 export const getCapabilitiesToolOutputShape = z.discriminatedUnion("source", [
   liveCapabilitiesOutputShape,
+  notConnectedCapabilitiesOutputShape,
+  sessionEndedCapabilitiesOutputShape,
+  errorToolResultShape,
+]);
+export const providerGetCapabilitiesSuccessOutputShape = z.discriminatedUnion("source", [
+  liveProviderCapabilitiesOutputShape,
+  notConnectedCapabilitiesOutputShape,
+  sessionEndedCapabilitiesOutputShape,
+]);
+export const providerGetCapabilitiesToolOutputShape = z.discriminatedUnion("source", [
+  liveProviderCapabilitiesOutputShape,
+  notConnectedCapabilitiesOutputShape,
+  sessionEndedCapabilitiesOutputShape,
+  errorToolResultShape,
+]);
+export const mcpGetCapabilitiesSuccessOutputShape = z.discriminatedUnion("source", [
+  liveMcpCapabilitiesOutputShape,
+  notConnectedCapabilitiesOutputShape,
+  sessionEndedCapabilitiesOutputShape,
+]);
+export const mcpGetCapabilitiesToolOutputShape = z.discriminatedUnion("source", [
+  liveMcpCapabilitiesOutputShape,
   notConnectedCapabilitiesOutputShape,
   sessionEndedCapabilitiesOutputShape,
   errorToolResultShape,
@@ -381,16 +422,6 @@ const approvalHistoryRecordShape = z.object({
   timeSource: z.literal("uptime"),
   reasonCode: z.string().regex(APPROVAL_HISTORY_REASON_CODE_PATTERN),
 });
-const methodDecisionApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
-  eventKind: z.literal("method_decision"),
-  decisionKind: z.enum(APPROVAL_HISTORY_DECISION_KINDS),
-  confirmationKind: z.enum(APPROVAL_HISTORY_CONFIRMATION_KINDS),
-  chain: z.string().regex(CALL_METHOD_CHAIN_PATTERN),
-  method: z.string().regex(CALL_METHOD_NAME_PATTERN),
-  payloadDigest: z.string().regex(POLICY_ID_PATTERN).optional(),
-  policyHash: z.string().regex(POLICY_ID_PATTERN).optional(),
-  ruleRef: z.string().regex(APPROVAL_HISTORY_RULE_REF_PATTERN).optional(),
-});
 const policyUpdateApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
   eventKind: z.literal("policy_update"),
   result: z.enum(APPROVAL_HISTORY_POLICY_UPDATE_RESULTS),
@@ -398,27 +429,55 @@ const policyUpdateApprovalHistoryRecordShape = approvalHistoryRecordShape.extend
   ruleCount: z.number().int().min(0).max(MAX_POLICY_RULE_COUNT),
   highestAction: z.enum(APPROVAL_HISTORY_HIGHEST_ACTIONS),
 });
-const signatureRequestConfirmationApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
-  eventKind: z.literal("signature_request"),
+const signingUserConfirmationApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
+  eventKind: z.literal("signing"),
   recordKind: z.literal("confirmation"),
+  authorization: z.literal("user"),
   confirmationKind: z.literal("local_pin"),
-  chain: z.string().regex(CALL_METHOD_CHAIN_PATTERN),
-  method: z.string().regex(CALL_METHOD_NAME_PATTERN),
+  chain: z.string().regex(SIGN_CHAIN_PATTERN),
+  method: z.string().regex(SIGN_METHOD_PATTERN),
   payloadDigest: z.string().regex(POLICY_ID_PATTERN),
 });
-const signatureRequestTerminalApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
-  eventKind: z.literal("signature_request"),
+const signingPolicyConfirmationApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
+  eventKind: z.literal("signing"),
+  recordKind: z.literal("confirmation"),
+  authorization: z.literal("policy"),
+  confirmationKind: z.literal("policy"),
+  chain: z.string().regex(SIGN_CHAIN_PATTERN),
+  method: z.string().regex(SIGN_METHOD_PATTERN),
+  payloadDigest: z.string().regex(POLICY_ID_PATTERN),
+  policyHash: z.string().regex(POLICY_ID_PATTERN),
+  ruleRef: z.string().regex(APPROVAL_HISTORY_RULE_REF_PATTERN),
+});
+const signingTerminalApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
+  eventKind: z.literal("signing"),
   recordKind: z.literal("terminal"),
-  terminalResult: z.enum(SIGNATURE_REQUEST_HISTORY_TERMINAL_RESULTS),
-  chain: z.string().regex(CALL_METHOD_CHAIN_PATTERN),
-  method: z.string().regex(CALL_METHOD_NAME_PATTERN),
+  authorization: z.enum(["user", "policy"]),
+  terminalResult: z.enum(SIGNING_HISTORY_TERMINAL_RESULTS),
+  chain: z.string().regex(SIGN_CHAIN_PATTERN),
+  method: z.string().regex(SIGN_METHOD_PATTERN),
   payloadDigest: z.string().regex(POLICY_ID_PATTERN),
-});
+  policyHash: z.string().regex(POLICY_ID_PATTERN).optional(),
+  ruleRef: z.string().regex(APPROVAL_HISTORY_RULE_REF_PATTERN).optional(),
+}).refine((value) => {
+  const hasPolicyMetadata = value.policyHash !== undefined && value.ruleRef !== undefined;
+  if (value.authorization === "policy") {
+    return (
+      hasPolicyMetadata &&
+      ["signed", "policy_rejected", "signing_failed"].includes(value.terminalResult)
+    );
+  }
+  return (
+    value.policyHash === undefined &&
+    value.ruleRef === undefined &&
+    ["signed", "user_rejected", "user_timed_out", "signing_failed"].includes(value.terminalResult)
+  );
+}, { message: "signing policy metadata must match authorization" });
 const approvalHistoryRecordOutputShape = z.union([
-  methodDecisionApprovalHistoryRecordShape,
   policyUpdateApprovalHistoryRecordShape,
-  signatureRequestConfirmationApprovalHistoryRecordShape,
-  signatureRequestTerminalApprovalHistoryRecordShape,
+  signingUserConfirmationApprovalHistoryRecordShape,
+  signingPolicyConfirmationApprovalHistoryRecordShape,
+  signingTerminalApprovalHistoryRecordShape,
 ]);
 const liveApprovalHistoryOutputShape = z.object({
   source: z.literal("live"),
@@ -448,105 +507,114 @@ export const getApprovalHistoryToolOutputShape = z.discriminatedUnion("source", 
   errorToolResultShape,
 ]);
 
-const methodResultErrorShape = z.object({
-  code: z.enum(Object.keys(METHOD_RESULT_ERROR_MESSAGES) as [keyof typeof METHOD_RESULT_ERROR_MESSAGES, ...Array<keyof typeof METHOD_RESULT_ERROR_MESSAGES>]),
-  message: z.enum(Object.values(METHOD_RESULT_ERROR_MESSAGES) as [string, ...string[]]),
-}).refine((error) => error.message === METHOD_RESULT_ERROR_MESSAGES[error.code], {
-  message: "Method result error message must match its code.",
+const signResultErrorShape = z.object({
+  code: z.enum(Object.keys(SIGN_RESULT_ERROR_MESSAGES) as [keyof typeof SIGN_RESULT_ERROR_MESSAGES, ...Array<keyof typeof SIGN_RESULT_ERROR_MESSAGES>]),
+  message: z.enum(Object.values(SIGN_RESULT_ERROR_MESSAGES) as [string, ...string[]]),
+}).refine((error) => error.message === SIGN_RESULT_ERROR_MESSAGES[error.code], {
+  message: "Sign result error message must match its code.",
 });
-const liveCallMethodRejectedOutputShape = z.object({
-  source: z.literal("live"),
-  deviceId: safeDeviceIdShape,
-  status: z.literal("rejected"),
-  error: methodResultErrorShape,
-});
-const notConnectedCallMethodOutputShape = z.object({
-  source: z.literal("not_connected"),
-  deviceId: safeDeviceIdShape,
-  reason: z.literal("not_connected"),
-});
-const sessionEndedCallMethodOutputShape = z.object({
-  source: z.literal("session_ended"),
-  deviceId: safeDeviceIdShape,
-  reason: z.enum(CALL_METHOD_SESSION_ENDED_REASONS),
-});
-export const callMethodSuccessOutputShape = z.union([
-  liveCallMethodRejectedOutputShape,
-  notConnectedCallMethodOutputShape,
-  sessionEndedCallMethodOutputShape,
-]);
-export const callMethodToolOutputShape = z.union([
-  liveCallMethodRejectedOutputShape,
-  notConnectedCallMethodOutputShape,
-  sessionEndedCallMethodOutputShape,
-  errorToolResultShape,
-]);
-
-const signatureResultErrorShape = z.object({
-  code: z.enum(Object.keys(SIGNATURE_RESULT_ERROR_MESSAGES) as [keyof typeof SIGNATURE_RESULT_ERROR_MESSAGES, ...Array<keyof typeof SIGNATURE_RESULT_ERROR_MESSAGES>]),
-  message: z.enum(Object.values(SIGNATURE_RESULT_ERROR_MESSAGES) as [string, ...string[]]),
-}).refine((error) => error.message === SIGNATURE_RESULT_ERROR_MESSAGES[error.code], {
-  message: "Signature result error message must match its code.",
-});
-const liveRequestSignatureSignedOutputShape = z.object({
+const liveUserSignSignedOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
   status: z.literal("signed"),
-  reasonCode: z.literal("device_confirmed"),
+  authorization: z.literal("user"),
   chain: z.literal("sui"),
   method: z.literal("sign_transaction"),
   signature: z.string().regex(SUI_ED25519_SIGNATURE_BASE64_PATTERN),
 });
-const liveRequestSignatureTerminalOutputShape = z.discriminatedUnion("status", [
+const livePolicySignSignedOutputShape = liveUserSignSignedOutputShape.extend({
+  authorization: z.literal("policy"),
+});
+const liveUserSignTerminalOutputShape = z.discriminatedUnion("status", [
   z.object({
     source: z.literal("live"),
     deviceId: safeDeviceIdShape,
-    status: z.literal("rejected"),
-    reasonCode: z.literal("device_rejected"),
-    error: signatureResultErrorShape.refine((error) => error.code === "device_rejected", {
-      message: "Rejected signature result error code must be device_rejected.",
+    status: z.literal("user_rejected"),
+    authorization: z.literal("user"),
+    error: signResultErrorShape.refine((error) => error.code === "user_rejected", {
+      message: "User-rejected sign result error code must be user_rejected.",
     }),
   }),
   z.object({
     source: z.literal("live"),
     deviceId: safeDeviceIdShape,
-    status: z.literal("timed_out"),
-    reasonCode: z.literal("device_timed_out"),
-    error: signatureResultErrorShape.refine((error) => error.code === "device_timed_out", {
-      message: "Timed-out signature result error code must be device_timed_out.",
+    status: z.literal("user_timed_out"),
+    authorization: z.literal("user"),
+    error: signResultErrorShape.refine((error) => error.code === "user_timed_out", {
+      message: "Timed-out sign result error code must be user_timed_out.",
     }),
   }),
   z.object({
     source: z.literal("live"),
     deviceId: safeDeviceIdShape,
-    status: z.literal("failed"),
-    reasonCode: z.literal("signing_failed"),
-    error: signatureResultErrorShape.refine((error) => error.code === "signing_failed", {
-      message: "Failed signature result error code must be signing_failed.",
+    status: z.literal("signing_failed"),
+    authorization: z.literal("user"),
+    error: signResultErrorShape.refine((error) => error.code === "signing_failed", {
+      message: "Failed sign result error code must be signing_failed.",
     }),
   }),
 ]);
-const notConnectedRequestSignatureOutputShape = z.object({
+const livePolicySignTerminalOutputShape = z.discriminatedUnion("status", [
+  z.object({
+    source: z.literal("live"),
+    deviceId: safeDeviceIdShape,
+    status: z.literal("policy_rejected"),
+    authorization: z.literal("policy"),
+    policyHash: z.string().regex(POLICY_ID_PATTERN),
+    ruleRef: z.string().regex(APPROVAL_HISTORY_RULE_REF_PATTERN),
+    error: signResultErrorShape.refine((error) => error.code === "policy_rejected", {
+      message: "Policy-rejected sign result error code must be policy_rejected.",
+    }),
+  }),
+  z.object({
+    source: z.literal("live"),
+    deviceId: safeDeviceIdShape,
+    status: z.literal("signing_failed"),
+    authorization: z.literal("policy"),
+    error: signResultErrorShape.refine((error) => error.code === "signing_failed", {
+      message: "Failed sign result error code must be signing_failed.",
+    }),
+  }),
+]);
+const notConnectedSignOutputShape = z.object({
   source: z.literal("not_connected"),
   deviceId: safeDeviceIdShape,
   reason: z.literal("not_connected"),
 });
-const sessionEndedRequestSignatureOutputShape = z.object({
+const sessionEndedSignByUserOutputShape = z.object({
   source: z.literal("session_ended"),
   deviceId: safeDeviceIdShape,
-  reason: z.enum(REQUEST_SIGNATURE_SESSION_ENDED_REASONS),
+  reason: z.enum(SIGN_BY_USER_SESSION_ENDED_REASONS),
 });
-export const requestSignatureSuccessOutputShape = z.union([
-  liveRequestSignatureSignedOutputShape,
-  liveRequestSignatureTerminalOutputShape,
-  notConnectedRequestSignatureOutputShape,
-  sessionEndedRequestSignatureOutputShape,
+const sessionEndedSignByPolicyOutputShape = z.object({
+  source: z.literal("session_ended"),
+  deviceId: safeDeviceIdShape,
+  reason: z.enum(SIGN_BY_POLICY_SESSION_ENDED_REASONS),
+});
+export const signByUserSuccessOutputShape = z.union([
+  liveUserSignSignedOutputShape,
+  liveUserSignTerminalOutputShape,
+  notConnectedSignOutputShape,
+  sessionEndedSignByUserOutputShape,
 ]);
-export const requestSignatureToolOutputShape = z.union([
-  liveRequestSignatureSignedOutputShape,
-  liveRequestSignatureTerminalOutputShape,
-  notConnectedRequestSignatureOutputShape,
-  sessionEndedRequestSignatureOutputShape,
+export const signByUserToolOutputShape = z.union([
+  liveUserSignSignedOutputShape,
+  liveUserSignTerminalOutputShape,
+  notConnectedSignOutputShape,
+  sessionEndedSignByUserOutputShape,
+  errorToolResultShape,
+]);
+export const signByPolicySuccessOutputShape = z.union([
+  livePolicySignSignedOutputShape,
+  livePolicySignTerminalOutputShape,
+  notConnectedSignOutputShape,
+  sessionEndedSignByPolicyOutputShape,
+]);
+export const signByPolicyToolOutputShape = z.union([
+  livePolicySignSignedOutputShape,
+  livePolicySignTerminalOutputShape,
+  notConnectedSignOutputShape,
+  sessionEndedSignByPolicyOutputShape,
   errorToolResultShape,
 ]);
 
@@ -622,7 +690,7 @@ export const gatewaySuccessOutputSchemas = {
   getAccounts: getAccountsSuccessOutputShape,
   getPolicy: getPolicySuccessOutputShape,
   getApprovalHistory: getApprovalHistorySuccessOutputShape,
-  callMethod: callMethodSuccessOutputShape,
-  requestSignature: requestSignatureSuccessOutputShape,
+  signByUser: signByUserSuccessOutputShape,
+  signByPolicy: signByPolicySuccessOutputShape,
   proposePolicyUpdate: proposePolicyUpdateSuccessOutputShape,
 } as const;

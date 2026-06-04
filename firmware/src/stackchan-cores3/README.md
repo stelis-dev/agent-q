@@ -24,28 +24,31 @@ The current implementation includes:
 - a USB JSONL `get_capabilities` request that returns Firmware-authored Sui
   Ed25519 account identity capability over an approved session while
   `provisioned`, with no delegated public methods and provider-facing
-  `signatureRequests` signing availability for the provider-exposed-not-product-active
-  `request_signature` path.
+  `signing` signing availability for the provider-exposed-not-product-active
+  `sign_by_user` path.
 - a USB JSONL `get_approval_history` request that returns bounded persistent
-  Firmware-authored method-decision, policy-update terminal, and
-  signature-request confirmation/terminal metadata over an approved session. It
-  is read-only, rate-limits method-decision persistent writes to reduce flash
-  wear, stores no raw requests or secrets, and records validated `call_method`
-  policy-rejected decisions and recordable `propose_policy_update` terminal
-  results. `provider-exposed-not-product-active` `request_signature` creates signature-request
-  confirmation and terminal records. Current-tree provider
-  positive/reject/timeout/session-loss smoke is recorded; LVGL visual evidence
-  remains required before product-active status.
-- a USB JSONL `call_method` path. It requires material-backed `provisioned`
+  Firmware-authored signing and policy-update terminal metadata over an
+  approved session. It is read-only, stores no raw requests or secrets, and
+  records validated `sign_by_policy` policy confirmation records only after
+  policy approval, policy terminal signing records for signed/failed/rejected
+  outcomes, and recordable `propose_policy_update` terminal results.
+  `provider-exposed-not-product-active` `sign_by_user` creates user
+  confirmation and terminal signing records. Current-tree provider
+  positive/reject/timeout/session-loss smoke for the new Sign API wire names
+  remains pending, so product-active status is not claimed.
+- a USB JSONL `sign_by_policy` path. It requires material-backed `provisioned`
   state plus a matching active session, keeps unknown methods rejected with
   `unsupported_method`, and validates Sui `sign_transaction` restricted SUI
-  transfer request inputs for rejected-path policy evaluation. Signing output
-  through `call_method` is not implemented.
-- a provider-exposed-not-product-active USB JSONL `request_signature` path for provider-facing
-  device-confirmed signing of the bounded Sui `sign_transaction` transfer
-  shape. The public USB dispatcher, USB `signature_result` writer,
-  client/provider parser/API, and provider-facing `signatureRequests`
-  capability are present in source. The runtime owns material/busy/session
+  transfer request inputs for policy-authorized signing. It rejects broad,
+  multi-rule, or multi-recipient sign policies that the current device-local
+  policy review cannot show clearly, returns `policy_rejected` when no bounded
+  sign rule matches, and returns `signed` only after a bounded current-schema
+  `sign` rule matches and required signing history is durable.
+- a provider-exposed-not-product-active USB JSONL `sign_by_user` path for
+  provider-facing device-confirmed signing of the bounded Sui
+  `sign_transaction` transfer shape. The public USB dispatcher, USB
+  `sign_result` writer, client/provider parser/API, and provider-facing
+  `signing` capability are present in source. The runtime owns material/busy/session
   gates, review facts and account binding derived from the same `txBytes` that
   would be signed, local PIN confirmation, required confirmation history before
   signing-critical handoff, Sui signing-substrate handoff, terminal history and
@@ -53,8 +56,8 @@ The current implementation includes:
   gas, arbitrary Sui transactions, Sui personal-message signing, MCP signing
   tools, and chain-specific top-level signing APIs are not implemented.
   Current-tree provider positive/reject/timeout smoke and session-loss smoke
-  are recorded; review visual evidence is still required before product-active
-  status.
+  for the new Sign API wire names remain pending, so product-active status is
+  not claimed.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
   Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
   RAM, displays only the up-to-4-letter word prefixes on device in a 3-column
@@ -96,22 +99,24 @@ Runtime Firmware sessions are implemented only as RAM-held protocol sessions
 after material-backed provisioning. Sessions do not authorize signing.
 
 This target reports read-only identity capability with no delegated public
-methods plus provider-facing `signatureRequests`, derives read-only public account identity
+methods plus provider-facing `signing`, derives read-only public account identity
 (`get_accounts`), and links a restricted host-tested Sui transaction facts
-parser plus a common stored-policy runtime boundary. The current `call_method`
+parser plus a common stored-policy runtime boundary. The current `sign_by_policy`
 path consumes the committed active policy decision for Sui `sign_transaction`,
-rejects unsupported transactions, and returns rejected method results. The
-The `provider-exposed-not-product-active` `request_signature` runtime performs device confirmation and
-signing for the bounded restricted transfer shape after local PIN and required
-history. Current-tree provider positive/reject/timeout/session-loss smoke is
-recorded; product-active status is pending LVGL visual evidence. It
-also implements the Firmware-owned `propose_policy_update` admin method for bounded
-reject-policy proposals over an active session, local PIN approval, canonical
+rejects unsupported transactions, and returns `signed`, `policy_rejected`, or
+`signing_failed` through `sign_result`. The provider-exposed-not-product-active
+`sign_by_user` runtime performs device confirmation and signing for the bounded
+restricted transfer shape after local PIN and required history. Current-tree
+provider positive/reject/timeout/session-loss smoke for the new Sign API wire
+names remains pending, so product-active status is not claimed.
+
+This target also implements the Firmware-owned `propose_policy_update` request
+for bounded current-schema policy proposals over an active session, local PIN approval, canonical
 active-policy commit, and required policy-update terminal history. It does not
 expose MCP
 directly; Gateway/MCP only submit requests and parse Firmware responses. It
-does persist bounded approval-history metadata for method decisions, policy
-update terminal records, and provider-exposed-not-product-active signature-request records. The
+does persist bounded approval-history metadata for signing and policy
+update terminal records. The
 persisted values in this target implementation are the protocol `deviceId`,
 provisioning state flag, DEV_PROFILE root entropy blob after backup
 confirmation, canonical active policy slots plus commit metadata and a
@@ -170,8 +175,7 @@ required:
 firmware/tools/common/generate_sui_transaction_fixtures.mjs
 firmware/tools/common/test_sui_transaction_facts.sh
 firmware/tools/common/test_policy_v0.sh
-firmware/tools/stackchan-cores3/test_call_method_validation.sh
-firmware/tools/stackchan-cores3/test_method_runtime.sh
+firmware/tools/stackchan-cores3/test_sign_by_policy_runtime.sh
 firmware/tools/stackchan-cores3/test_policy_proposal_parser.sh
 firmware/tools/stackchan-cores3/test_policy_update_flow.sh
 firmware/tools/stackchan-cores3/test_policy_update_marker.sh
@@ -179,13 +183,13 @@ firmware/tools/stackchan-cores3/test_prepare_sync.sh
 firmware/tools/stackchan-cores3/test_persistent_material.sh
 firmware/tools/stackchan-cores3/test_provisioning_state_store.sh
 firmware/tools/stackchan-cores3/test_provisioning_runtime_state.sh
-firmware/tools/stackchan-cores3/test_signature_request_confirmation.sh
-firmware/tools/stackchan-cores3/test_signature_request_flow.sh
-firmware/tools/stackchan-cores3/test_signature_request_ingress.sh
-firmware/tools/stackchan-cores3/test_request_signature_activation_boundary.sh
-firmware/tools/stackchan-cores3/test_signature_request_review_view_model.sh
-firmware/tools/stackchan-cores3/test_signature_request_signing.sh
-firmware/tools/stackchan-cores3/test_signature_request_validation.sh
+firmware/tools/stackchan-cores3/test_sign_by_user_confirmation.sh
+firmware/tools/stackchan-cores3/test_sign_by_user_flow.sh
+firmware/tools/stackchan-cores3/test_sign_by_user_ingress.sh
+firmware/tools/stackchan-cores3/test_sign_api_activation_boundary.sh
+firmware/tools/stackchan-cores3/test_sign_by_user_review_view_model.sh
+firmware/tools/stackchan-cores3/test_sign_by_user_signing.sh
+firmware/tools/stackchan-cores3/test_sign_by_user_validation.sh
 firmware/tools/stackchan-cores3/test_local_auth.sh
 firmware/tools/stackchan-cores3/test_local_auth_worker.sh
 firmware/tools/stackchan-cores3/test_local_pin_auth.sh
@@ -227,15 +231,15 @@ signing boundary with host stubs. This is not a protocol signing test.
 The Sui transaction facts parser test is a common host-side check. It compiles
 `firmware/src/common/agent_q/sui` and verifies tracked BCS fixtures for
 the restricted SUI transfer parser. StackChan CoreS3 connects the parser to Sui
-`sign_transaction` rejected-path policy evaluation.
+`sign_transaction` policy-authorized signing.
 
 The policy test is also a common host-side check. It compiles
 `firmware/src/common/agent_q/policy` plus the Sui method adapter and
-verifies deny-by-default reject decisions, default provider behavior,
-missing/invalid policy provider rejection, malformed policy rejection, and
-unsupported-facts rejection. StackChan CoreS3 consumes the
+verifies deny-by-default reject decisions, bounded sign decisions, default
+provider behavior, missing/invalid policy provider rejection, malformed policy
+rejection, and unsupported-facts rejection. StackChan CoreS3 consumes the
 committed active policy for restricted Sui `sign_transaction` policy evaluation
-and rejected method results. Custom policy updates enter separately through the
+and signing decisions. Custom policy updates enter separately through the
 Firmware-owned `propose_policy_update` proposal flow.
 
 The StackChan policy-store test is target-specific. It compiles the tracked
@@ -250,8 +254,8 @@ The StackChan approval-history test is target-specific. It compiles the tracked
 `agent_q_approval_history.cpp` store with ESP-IDF mbedTLS SHA-256 sources and
 host NVS stubs, then verifies persistent ring-buffer append, newest-first
 pagination, payload digest formatting, unsupported-layout rejection, wipe
-behavior, required policy-update terminal record shape, method-decision write
-budgeting, and corrupt-record fail-closed behavior.
+behavior, required policy-update terminal record shape, signing record shape,
+and corrupt-record fail-closed behavior.
 
 The StackChan policy-update marker test is target-specific. It compiles the
 tracked `agent_q_policy_update_marker.cpp` NVS record boundary with host stubs,
@@ -260,17 +264,18 @@ validation, corrupt-marker fail-closed behavior, and storage-error reporting.
 This marker is a policy-update terminal substrate only; it is not a protocol
 policy-update handler.
 
-The StackChan method-runtime test is target-specific. It compiles the tracked
+The StackChan sign-by-policy runtime test is target-specific. It compiles the tracked
 `agent_q_method_runtime.cpp` runtime boundary with ArduinoJson, the common Sui
 facts parser, the common policy runtime, and pinned MicroSui base64 helpers,
 then verifies unsupported method rejection, invalid Sui params, approval-history
-metadata exposure, the default-reject policy result for a valid restricted SUI
-transfer fixture, and rejected-path scratch cleanup.
+metadata exposure, the default-reject policy result, bounded policy-approved
+signing handoff metadata, and scratch cleanup for a valid restricted SUI
+transfer fixture.
 
 The StackChan policy-proposal parser test is target-specific. It compiles the
 tracked `agent_q_policy_proposal_parser.cpp` parser with ArduinoJson and the
 common policy canonicalizer, then verifies bounded serialized proposal-object parsing,
-reject-only action enforcement, method/field/operator validation, embedded-NUL
+current-schema action enforcement, method/field/operator validation, embedded-NUL
 string rejection, canonical unsigned integer policy values, serialized
 policy-object bounds, and current canonical record validation. The parser does not
 implement raw protocol envelope handling, policy storage, pending update state,

@@ -23,7 +23,6 @@ const AgentQPolicyFieldDescriptor
     kAgentQPolicyCommonFieldDescriptors[kAgentQPolicyCommonFieldDescriptorCount] = {
         {"common.chain", AgentQPolicyValueType::string, true, true, false},
         {"common.method", AgentQPolicyValueType::string, true, true, false},
-        {"common.network", AgentQPolicyValueType::string, true, true, false},
         {"common.intent", AgentQPolicyValueType::string, true, true, false},
     };
 
@@ -31,6 +30,7 @@ bool agent_q_policy_is_known_action(AgentQPolicyAction action)
 {
     switch (action) {
         case AgentQPolicyAction::reject:
+        case AgentQPolicyAction::sign:
             return true;
     }
     return false;
@@ -211,7 +211,7 @@ bool agent_q_policy_validate_method_descriptor(
 {
     if (!agent_q_policy_is_identifier_string(descriptor.chain, kAgentQPolicyMaxChainIdLength) ||
         !agent_q_policy_is_identifier_string(descriptor.operation, kAgentQPolicyMaxOperationLength) ||
-        !descriptor.supports_reject) {
+        (!descriptor.supports_reject && !descriptor.supports_sign)) {
         return false;
     }
     return agent_q_policy_validate_adapter_field_descriptors(
@@ -236,6 +236,100 @@ bool agent_q_policy_validate_method_descriptors(
         for (size_t other = index + 1; other < descriptor_count; ++other) {
             if (string_eq(descriptors[index].chain, descriptors[other].chain) &&
                 string_eq(descriptors[index].operation, descriptors[other].operation)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+namespace {
+
+bool criterion_eq(const AgentQPolicyCriterion& criterion, const char* field, const char* value)
+{
+    return criterion.field != nullptr &&
+           criterion.value != nullptr &&
+           strcmp(criterion.field, field) == 0 &&
+           criterion.op == AgentQPolicyOperator::eq &&
+           strcmp(criterion.value, value) == 0;
+}
+
+bool criterion_lte(const AgentQPolicyCriterion& criterion, const char* field)
+{
+    return criterion.field != nullptr &&
+           criterion.value != nullptr &&
+           strcmp(criterion.field, field) == 0 &&
+           criterion.op == AgentQPolicyOperator::lte &&
+           agent_q_policy_is_decimal_u64_string(criterion.value);
+}
+
+bool criterion_recipient_bounded(const AgentQPolicyCriterion& criterion)
+{
+    if (criterion.field == nullptr ||
+        strcmp(criterion.field, "sui.recipient_address") != 0) {
+        return false;
+    }
+    if (criterion.op == AgentQPolicyOperator::eq) {
+        return string_present(criterion.value);
+    }
+    return criterion.op == AgentQPolicyOperator::in &&
+           criterion.values != nullptr &&
+           criterion.value_count == 1;
+}
+
+}  // namespace
+
+bool agent_q_policy_sign_rule_is_bounded(const AgentQPolicyRule& rule)
+{
+    if (rule.action != AgentQPolicyAction::sign) {
+        return true;
+    }
+    if (!string_eq(rule.chain, "sui") ||
+        !string_eq(rule.operation, "sign_transaction") ||
+        rule.criteria == nullptr ||
+        rule.criterion_count == 0) {
+        return false;
+    }
+
+    bool has_intent = false;
+    bool has_shape = false;
+    bool has_asset = false;
+    bool has_recipient = false;
+    bool has_amount_bound = false;
+    bool has_gas_budget_bound = false;
+    bool has_gas_price_bound = false;
+    for (size_t index = 0; index < rule.criterion_count; ++index) {
+        const AgentQPolicyCriterion& criterion = rule.criteria[index];
+        has_intent = has_intent ||
+            criterion_eq(criterion, "common.intent", "single_asset_transfer");
+        has_shape = has_shape ||
+            criterion_eq(criterion, "sui.command_shape", "restricted_transfer");
+        has_asset = has_asset ||
+            criterion_eq(criterion, "sui.coin_type", "0x2::sui::SUI");
+        has_recipient = has_recipient || criterion_recipient_bounded(criterion);
+        has_amount_bound = has_amount_bound || criterion_lte(criterion, "sui.amount_raw");
+        has_gas_budget_bound = has_gas_budget_bound || criterion_lte(criterion, "sui.gas_budget");
+        has_gas_price_bound = has_gas_price_bound || criterion_lte(criterion, "sui.gas_price");
+    }
+    return has_intent &&
+           has_shape &&
+           has_asset &&
+           has_recipient &&
+           has_amount_bound &&
+           has_gas_budget_bound &&
+           has_gas_price_bound;
+}
+
+bool agent_q_policy_sign_rule_count_is_supported(const AgentQPolicyDocument& policy)
+{
+    if (policy.rule_count != 0 && policy.rules == nullptr) {
+        return false;
+    }
+    size_t sign_rule_count = 0;
+    for (size_t index = 0; index < policy.rule_count; ++index) {
+        if (policy.rules[index].action == AgentQPolicyAction::sign) {
+            ++sign_rule_count;
+            if (sign_rule_count > 1) {
                 return false;
             }
         }

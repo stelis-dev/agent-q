@@ -14,7 +14,7 @@ enum class AgentQLocalPinAuthPurpose {
     settings_connect_pin,
     settings_change_pin,
     policy_update,
-    signature_request,
+    sign_by_user,
 };
 
 enum class AgentQLocalPinAuthStage {
@@ -91,9 +91,9 @@ void local_pin_auth_begin_connect_setting(bool target_require_pin_on_connect, Ti
 void local_pin_auth_begin_change_pin(TickType_t deadline);
 void local_pin_auth_begin_policy_update(TickType_t deadline);
 
-AgentQLocalPinAuthInputResult local_pin_auth_add_digit(char digit, TickType_t deadline);
-bool local_pin_auth_clear_pin(TickType_t deadline);
-bool local_pin_auth_backspace_pin(TickType_t deadline);
+AgentQLocalPinAuthInputResult local_pin_auth_add_digit(char digit, TickType_t retry_deadline);
+bool local_pin_auth_clear_pin(TickType_t retry_deadline);
+bool local_pin_auth_backspace_pin(TickType_t retry_deadline);
 AgentQLocalPinAuthSubmitResult local_pin_auth_submit(
     TickType_t verify_ready_at,
     TickType_t commit_ready_at,

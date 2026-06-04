@@ -56,6 +56,8 @@ const char* runtime_failure_message(AgentQPersistentMaterialRuntimeFailure failu
     switch (failure) {
         case AgentQPersistentMaterialRuntimeFailure::root_material_unreadable:
             return "Root material unreadable while provisioned; failing closed";
+        case AgentQPersistentMaterialRuntimeFailure::active_policy_unavailable:
+            return "Active policy unavailable while provisioned; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::pending_reset_resume_failed:
             return "Pending local reset could not be completed during boot; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::local_reset_root_wipe_failed:

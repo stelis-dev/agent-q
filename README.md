@@ -98,10 +98,11 @@ policies, evaluates requests locally, handles device-local approval for
 implemented sensitive flows, and returns Firmware-authored results to Gateway.
 Provider-facing device-confirmed signing for the current bounded Sui
 `sign_transaction` transfer shape has `provider-exposed-not-product-active`
-status through `request_signature`.
-Current-tree provider positive/reject/timeout/session-loss smoke is recorded;
-LVGL visual evidence is still pending before product-active status. MCP signing
-tools and `call_method` signing output are not available.
+status through `sign_by_user`.
+Current-tree provider positive/reject/timeout/session-loss smoke for the new
+Sign API wire names remains pending; product-active status is not claimed. MCP exposes
+policy-authorized signing through `sign_by_policy`; it does not expose
+user-confirmed provider signing.
 
 Firmware source is organized by hardware under `firmware/src/`.
 
@@ -126,19 +127,18 @@ get_status
     -> get_accounts
     -> get_policy
     -> get_approval_history
-    -> call_method*
+    -> sign_by_policy*
   -> disconnect
 ```
 
-Provider-facing device-confirmed signing must use a separate
-`request_signature` path. In the current source tree this path is wired for the
-bounded Sui `sign_transaction` shape through provider, Gateway/client, and
-StackChan CoreS3 Firmware, but product-active status still requires current-tree
-firmware build, flash, target hardware smoke, and visual review evidence. The
-current tree has provider positive/reject/timeout/session-loss smoke recorded;
-LVGL visual evidence is still pending. The provider-facing source flow adds
-`request_signature*` during an approved session. It is not an MCP signing tool
-and does not make `call_method` return signatures.
+Provider-facing device-confirmed signing uses `sign_by_user`. MCP
+policy-authorized signing uses `sign_by_policy`. Both use the shared Sign API
+request shape, but the authorization source differs: `sign_by_user` requires
+Firmware-owned device-local confirmation, while `sign_by_policy` requires the
+active Firmware policy to return the bounded `sign` action. The current source
+tree is wired for the bounded Sui `sign_transaction` restricted-transfer shape.
+Product-active status still requires current-tree firmware build, flash, target
+hardware smoke, and visual review evidence for the same contract.
 
 Chains, transports, and hardware targets must fit this protocol instead of
 creating separate product-level APIs.
@@ -171,41 +171,43 @@ Implemented:
 - Read-only Sui account and public-key discovery over an approved runtime
   session.
 - Session-scoped capability, policy-summary, and approval-history reads for the
-  currently implemented device metadata, method-decision records, and
-  policy-update terminal records.
-- A session-scoped `call_method` path. Unknown methods reject. The current Sui
-  `sign_transaction` path validates bounded restricted-transfer inputs and
-  returns rejected method results; it does not expose public signing support.
-- A bounded policy-update proposal path for currently enforceable reject
+  currently implemented device metadata, signing records, and policy-update
+  terminal records.
+- A session-scoped `sign_by_policy` path. The current Sui `sign_transaction`
+  path validates bounded restricted-transfer inputs, evaluates the active
+  Firmware policy, returns `policy_rejected` when no bounded sign rule matches,
+  and returns `signed` only after a current-schema single-recipient bounded
+  `sign` policy rule matches.
+- A bounded policy-update proposal path for currently enforceable reject/sign
   policies. Gateway/MCP can submit proposals, but Firmware validates them,
-  requires device-local approval, commits the active policy, and records the
-  terminal result.
+  rejects broad, multi-rule, or multi-recipient signing policies that the
+  current device-local policy review cannot show clearly, requires device-local
+  approval, commits the active policy, and records the terminal result.
 - A local Gateway-served Admin Page for device discovery, connection, policy
-  summary, approval history, and the current reject-policy proposal template. It
+  summary, approval history, and the current policy proposal template. It
   is not a policy authority.
 - An application-facing provider package for device discovery, connection,
   read-only session data, approval-history, and provider-facing
-  `requestSignature` transport. The provider does not store keys, update
+  `signByUser` transport. The provider does not store keys, update
   policy, or decide whether signing is allowed.
 - A common host-tested policy evaluator and default-reject runtime boundary.
 
 Under current-source verification:
 
-- Provider-facing device-confirmed `request_signature` has
+- Provider-facing device-confirmed `sign_by_user` has
   `provider-exposed-not-product-active` status for the bounded Sui
   `sign_transaction` transfer shape. The current source includes
   validation, state-first ingress, RAM-only request flow, clear-signing review,
   local PIN confirmation, required pre-signing history, signing-critical
-  handoff, terminal history, `signature_result`, provider `requestSignature`,
-  client parser/builder, and provider-facing `signatureRequests` capability.
-  Current-tree provider positive/reject/timeout/session-loss smoke has been
-  recorded; LVGL visual evidence is still required before this can be treated
-  as product-active.
+  handoff, terminal history, `sign_result`, provider `signByUser`,
+  client parser/builder, and provider-facing `signing` capability.
+  Current-tree provider positive/reject/timeout/session-loss smoke for the new
+  Sign API wire names remains pending; product-active status is not claimed.
 
-Not yet implemented: MCP signing tools, `call_method` signing output,
-arbitrary Sui transaction signing, sponsored Sui transaction signing, Sui
-personal-message signing, spending and rate limits beyond the current
-restricted-transfer criteria, multi-role separation, full Admin policy editing,
+Not yet implemented: arbitrary Sui transaction signing, sponsored Sui
+transaction signing, Sui personal-message signing, spending and rate limits
+beyond the current restricted-transfer criteria, multi-role separation, full
+Admin policy editing,
 multi-device approval, device revocation or transfer, a production audit layer
 beyond the current fixed-size approval-history record, and broad chain-specific
 transaction logic. Connection is not signing approval and does not authorize

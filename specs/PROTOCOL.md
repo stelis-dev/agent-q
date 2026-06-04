@@ -16,7 +16,7 @@ The protocol only needs enough structure for Gateway and Firmware to agree on:
 - provisioning setup-step boundary checks
 - supported chains and methods
 - addresses and public keys
-- method requests and method results
+- signing requests and signing results
 - read-only Firmware decision history
 
 Chain-specific requests must fit into the supported method list instead of
@@ -53,19 +53,21 @@ and CLI callers can submit bounded input only. Firmware owns the state gates,
 policy evaluation, device-local approval, signing execution, persistence, and
 failure cleanup.
 
-Current `call_method` requests are delegated policy requests. Firmware evaluates
-the request against its active policy and returns the Firmware-authored result.
-This path does not imply device-local confirmation for each method request. In
-the current implementation, Sui `sign_transaction` is recognized only for
-rejected-path policy evaluation and returns rejected method results.
+Current `sign_by_policy` requests are delegated policy requests. Firmware
+evaluates the request against its active policy and returns the
+Firmware-authored `sign_result`. This path does not imply device-local
+confirmation for each signing request. In the current implementation, Sui
+`sign_transaction` is recognized for bounded restricted SUI transfer signing:
+the active policy can reject the request or authorize signing through a bounded
+current-schema `sign` rule.
 
-Provider-facing device-confirmed signing uses the shared `request_signature`
-request defined below, not a `call_method` mode or request-authority flag. A
+Provider-facing device-confirmed signing uses the shared `sign_by_user` request
+defined below, not a `sign_by_policy` mode or request-authority flag. A
 device-confirmed request means Firmware shows and confirms a bounded request on
 the device; it does not prove that the host, dapp, provider, agent, or upstream
 user intent was trustworthy. Provider-facing APIs may expose only this
-device-confirmed path for application signing. MCP agent-facing `call_method`
-remains the delegated policy request path and does not expose signing output.
+device-confirmed path for application signing. MCP agent-facing signing uses
+`sign_by_policy` only and must not expose `sign_by_user`.
 
 Policy documents may use only actions accepted by the current schema and
 enforceable by the current runtime. Any other action value is invalid input and
@@ -160,16 +162,16 @@ get_status
     -> get_accounts
     -> get_policy
     -> get_approval_history
-    -> call_method*
+    -> sign_by_policy*
   -> disconnect
 ```
 
 Provider-facing device-confirmed signing uses a separate session-scoped
-`request_signature` request. In the current source tree the provider/client and
+`sign_by_user` request. In the current source tree the provider/client and
 StackChan CoreS3 USB surfaces are wired for this path, and provider-facing
-availability is advertised through `signatureRequests`. MCP still has no
-signing tool and must fail closed if provider-facing signing metadata reaches
-its output boundary. Product-active status depends on target implementation
+availability is advertised through `signing`. MCP exposes the separate
+policy-authorized `sign_by_policy` tool and must not expose provider-facing
+user-confirmed signing. Product-active status depends on target implementation
 status and current-tree hardware evidence; do not infer that status from this
 protocol shape alone.
 
@@ -189,7 +191,7 @@ Flow rules:
   approval as a physical confirm or as local PIN verification, but PIN entry
   must never be a USB protocol request.
 - `get_capabilities`, `get_accounts`, `get_policy`, `get_approval_history`,
-  `call_method`, and `request_signature` require `sessionId`.
+  `sign_by_policy`, and `sign_by_user` require `sessionId`.
 - `disconnect` ends the session.
 - Firmware should reject session-scoped requests with an unknown or inactive
   `sessionId`.
@@ -200,18 +202,19 @@ Flow rules:
   from keeping a session it can no longer confirm.
 
 Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
-`get_capabilities`, `get_accounts`, `get_policy`, `get_approval_history`, the
-Sui `sign_transaction` rejected-path validation runtime, explicit local Gateway
-device selection, and local Gateway caching of discovered devices. The current
-`call_method` runtime enforces state and session gates, keeps unknown methods
-rejected, recognizes bounded restricted SUI transfer request inputs for Sui
-`sign_transaction`, consumes the committed active policy, records required
-policy-rejected approval-history metadata, and returns rejected method results.
-Provider-facing `request_signature` has
-`provider-exposed-not-product-active` status for the same bounded Sui
-`sign_transaction` shape through Firmware USB runtime, Gateway client/parser,
-provider API, `signature_result`, and provider-facing `signatureRequests`.
-MCP agent-facing signing output remains unavailable.
+`get_capabilities`, `get_accounts`, `get_policy`, `get_approval_history`,
+`propose_policy_update`, `sign_by_policy`, `sign_by_user`, explicit local
+Gateway device selection, and local Gateway caching of discovered devices. The
+current `sign_by_policy` runtime enforces state and session gates, keeps unknown
+methods rejected, recognizes bounded restricted SUI transfer request inputs for
+Sui `sign_transaction`, consumes the committed active policy, records required
+approval-history metadata, and returns `sign_result`. The active policy can
+reject the request or authorize signing through a bounded `sign` rule.
+Provider-facing `sign_by_user` uses the same bounded Sui `sign_transaction`
+input shape through Firmware USB runtime, Gateway client/parser, provider API,
+`sign_result`, and provider-facing `signing`. Product-active status for the
+current tree still depends on target implementation status and hardware
+evidence in `docs/IMPLEMENTATION_STATUS.md`.
 
 Provisioning and material reset transitions are not USB protocol requests in the
 current implementation. The StackChan CoreS3 target enters setup from its local
@@ -233,21 +236,23 @@ does not prove agent identity, and does not change Firmware policy.
 
 `get_capabilities` is implemented as a read-only, session-scoped capability
 request that reports Sui account identity, no delegated public methods, and
-provider-facing `signatureRequests` signing availability. MCP rejects that
-provider-facing metadata instead of exposing it as an agent-facing signing
-capability.
+top-level `signing` availability split by authorization source. MCP projects
+this Firmware-authored capability to the policy-authorized signing audience and
+must not expose provider-facing `signing.user` metadata as an agent-facing
+signing capability.
 `get_accounts` is implemented as a read-only, session-scoped identity request
 for the Sui Ed25519 account at index 0 in the `provisioned` state.
 `get_policy` is implemented as a read-only, session-scoped summary of the
 committed active policy; it is metadata only and not a policy update surface.
 The normal product flow still installs the DEV_PROFILE default-reject policy.
 `get_approval_history` is implemented as a read-only, session-scoped
-view of Firmware-owned persistent decision metadata. `call_method` exists as a
-session-scoped runtime path: unknown methods are rejected, while Sui
+view of Firmware-owned persistent decision metadata. `sign_by_policy` exists as
+a session-scoped runtime path: unknown methods are rejected, while Sui
 `sign_transaction` validates bounded restricted SUI transfer request inputs,
-evaluates active policy, and returns rejected method results. Hardware
-verification remains required for changes to the `get_policy`,
-`get_approval_history`, and policy-store-backed `call_method` paths.
+evaluates active policy, and returns `sign_result` with `authorization:
+"policy"`. Hardware verification remains required for product-active claims
+after changes to the `get_policy`, `get_approval_history`, and policy-store
+backed `sign_by_policy` paths.
 
 ## Device Discovery And Selection
 
@@ -363,7 +368,8 @@ mnemonic recovery entry, persistent root material, active policy storage, local
 PIN verifier storage, local reset, and read-only `get_accounts` Sui account
 derivation are implemented. USB/Gateway/MCP mnemonic import is not implemented.
 Policy updates are available only through the Firmware-owned
-`propose_policy_update` proposal flow for custom reject policies.
+`propose_policy_update` proposal flow for current-schema reject policies and at
+most one single-recipient bounded sign rule.
 
 If a target boots with `prov_state = provisioned` but missing, unreadable, or
 unsupported current active policy material, Firmware must fail closed instead
@@ -540,11 +546,13 @@ Request rules:
   boundary and Firmware must not treat it as proof that the requester is
   trusted.
 - `gatewayName` is required, 1-64 characters of printable ASCII.
-- Firmware owns a fixed internal `30000` millisecond local approval window. The
-  host cannot set or negotiate it through the protocol.
+- Firmware owns fixed internal `30000` millisecond physical-input windows for
+  local approval/PIN entry. The host cannot set or negotiate them through the
+  protocol.
 - Gateway transport waits for `connect` are internally fixed and include a
-  non-configurable margin after that Firmware approval window. This is not a
-  request field and callers cannot set or negotiate it.
+  non-configurable budget for Firmware PIN retry/lockout handling plus a
+  transport margin. This is not a request field and callers cannot set or
+  negotiate it.
 
 Approved response:
 
@@ -617,12 +625,12 @@ Connect rules:
   complete PIN stops that input timeout while Firmware performs stored-PIN
   verification. This pause does not disable Firmware's internal local-auth
   worker watchdog; a stalled or lost worker result fails closed as local
-  authentication unavailable, not as a wrong PIN. The original fixed `connect`
-  approval deadline remains the outer request deadline. A correct PIN result
-  proceeds only if that fixed approval deadline has not expired. If the
-  submitted PIN is wrong, Firmware opens a fresh 30-second input window for the
-  next attempt, capped by the original fixed approval deadline and subject to
-  the shared wrong-PIN lockout.
+  authentication unavailable, not as a wrong PIN. A correct PIN result proceeds
+  after verification even if the prior input window would have expired during
+  the cryptographic work, but only while the original connect request deadline
+  remains open. If the submitted PIN is wrong, Firmware opens a fresh internal
+  input window for the next attempt, capped by that original request deadline
+  and subject to the shared wrong-PIN lockout.
 - When `requirePinOnConnect` is OFF, the target uses the existing physical
   Confirm approval path.
 - PIN is never submitted over USB. There is no protocol request or parameter for
@@ -755,7 +763,21 @@ Response:
       ],
       "methods": []
     }
-  ]
+  ],
+  "signing": {
+    "user": [
+      {
+        "chain": "sui",
+        "method": "sign_transaction"
+      }
+    ],
+    "policy": [
+      {
+        "chain": "sui",
+        "method": "sign_transaction"
+      }
+    ]
+  }
 }
 ```
 
@@ -768,14 +790,24 @@ Rules:
   `invalid_state`.
 - A missing, inactive, or mismatched session returns `invalid_session`.
 - The current StackChan CoreS3 target advertises Sui Ed25519 account identity
-  for account 0 at `m/44'/784'/0'/0'/0'` and no public signing methods.
+  for account 0 at `m/44'/784'/0'/0'/0'`, no entries in
+  `chains[].methods`, and top-level Sui `sign_transaction` availability in
+  `signing.user` and `signing.policy`.
 - A non-empty `methods` list is a Firmware-authored availability claim. Firmware
-  must advertise only methods that have a connected runtime
-  implementation, method-result schema, policy-action handling, required
-  approval behavior, required history behavior, Gateway parser/output support,
-  MCP output support, and provider support for the same method boundary.
+  must advertise only delegated non-signing methods that have a connected
+  runtime implementation, result schema, required approval behavior, required
+  history behavior, Gateway parser/output support, MCP output support, and
+  provider support for the same method boundary. Signing availability must use
+  top-level `signing`.
+- `signing.user` is provider-facing device-confirmed signing availability.
+  MCP runtime output must not expose it; the MCP output schema must reject any
+  unprojected result that still contains it.
+- `signing.policy` is MCP-facing policy-authorized signing availability.
+  Provider runtime output must not expose it; the provider output schema must
+  reject any unprojected result that still contains it.
 - Gateway validates the response strictly, rejects unknown chains, unsupported
-  account schemes or derivation paths, unknown method lists,
+  account schemes or derivation paths, unknown method lists, unknown signing
+  availability entries,
   secret-like fields, and any unexpected `sessionId` in the response. Gateway
   does not infer or add capabilities.
 
@@ -843,13 +875,13 @@ Rules:
   `get_accounts` reads identity only. Current delegated public method
   availability is reported by `get_capabilities.chains[].methods`.
   Provider-facing device-confirmed signing availability is reported separately
-  through top-level `signatureRequests` and is not an MCP agent-facing method
+  through top-level `signing` and is not an MCP agent-facing method
   list.
 
 ## Policy Summary
 
 `get_policy` is a session-scoped read-only request that returns public metadata
-for the active Firmware-owned policy provider used by `call_method`. It does not
+for the active Firmware-owned policy provider used by `sign_by_policy`. It does not
 return policy secrets, signing material, or an editable policy document.
 
 Request:
@@ -892,7 +924,7 @@ Rules:
   policy record. It is metadata for drift detection, not an authorization token.
 - The current StackChan CoreS3 target supports only `agentq.policy.v0`,
   `defaultAction: "reject"`, and a bounded `ruleCount` summary. The normal
-  product flow installs `ruleCount: 0`; custom reject-policy records may become
+  product flow installs `ruleCount: 0`; custom current-schema policy records may become
   active only through the Firmware-owned `propose_policy_update` proposal flow.
   Full policy content exposure is not implemented.
 - Gateway validates the response strictly, rejects secret-like fields and any
@@ -938,9 +970,10 @@ Response:
       "seq": "41",
       "uptimeMs": "183204",
       "timeSource": "uptime",
-      "eventKind": "method_decision",
-      "decisionKind": "policy_rejected",
-      "confirmationKind": "policy",
+      "eventKind": "signing",
+      "recordKind": "terminal",
+      "authorization": "policy",
+      "terminalResult": "policy_rejected",
       "chain": "sui",
       "method": "sign_transaction",
       "reasonCode": "policy_rejected",
@@ -974,20 +1007,20 @@ Rules:
 - Records are newest-first. `seq` and `uptimeMs` are unsigned decimal strings.
   `timeSource: "uptime"` means the timestamp is device uptime, not wall-clock
   time.
-- Current StackChan CoreS3 source records validated `policy_rejected` decisions
-  and recordable terminal metadata from `propose_policy_update`. Invalid
-  parameter, malformed transaction, unsupported-method, and unsupported
-  policy-action errors are not persisted as approval history.
+- Current StackChan CoreS3 source records required signing confirmation and
+  terminal metadata plus recordable terminal metadata from
+  `propose_policy_update`. Invalid parameter, malformed transaction,
+  unsupported-method, and unsupported policy-action errors are not persisted as
+  approval history.
 - Approval-history persistence is part of the terminal decision contract for
   decisions that are recorded. If Firmware cannot persist a required history
-  record or its write budget is exhausted, `call_method` returns the top-level
-  `history_error` protocol error instead of a `method_result`.
-- Firmware rate-limits persistent method-decision history writes to reduce
-  flash wear. The limit is Firmware-owned and does not authorize Gateway to
-  retry unbounded method requests. Required policy-update terminal records are
-  not consumed from the method-decision spam budget; that flow has its own
-  active-session, request-validation, and device-local approval gates before it
-  can emit them.
+  record or its write budget is exhausted, `sign_by_policy` returns the top-level
+  `history_error` protocol error instead of a `sign_result`.
+- Firmware rate-limits optional persistent signing history writes to reduce
+  flash wear. Required signing and policy-update history records are part of
+  their respective terminal contracts and must either be persisted before the
+  corresponding terminal result is reported or fail closed through the defined
+  error path.
 - History records must not store or return raw `txBytes`, full decoded
   transactions, session ids, raw request ids, gateway names, mnemonic text,
   seed, private key material, PINs, or complete policy documents.
@@ -996,56 +1029,55 @@ Rules:
   evaluate policy or signing safety.
 - The Gateway MCP `get_approval_history` tool never exposes the session id.
 
-## Method Request
+## Policy-Authorized Signing Request
 
-Gateway calls supported methods by name through `call_method`.
+Gateway requests policy-authorized signing through `sign_by_policy`.
 
-The current `call_method` implementation validates Sui `sign_transaction`
-restricted SUI transfer request inputs for rejected-path policy evaluation.
-Firmware
-validates the protocol envelope enough to identify the request, then enforces
-`provisioned` state, setup/pending busy gates, and a matching active session.
-After those gates pass, Firmware validates the `chain`, `method`, and `params`
-field shape and size. StackChan CoreS3 keeps that validation in a host-tested
-helper so JSON non-string values cannot be accepted through ArduinoJson fallback
-semantics. Unknown methods still return `method_result` with `status: "rejected"`
-and `error.code: "unsupported_method"`.
+The current `sign_by_policy` implementation validates Sui `sign_transaction`
+restricted SUI transfer request inputs and evaluates the request against the
+stored active policy. Firmware validates the protocol envelope enough to
+identify the request, then enforces `provisioned` state, setup/pending busy
+gates, and a matching active session. After those gates pass, Firmware validates
+the `chain`, `method`, and `params` field shape and size. StackChan CoreS3
+keeps that validation in host-tested helpers so JSON non-string values cannot
+be accepted through ArduinoJson fallback semantics. Unsupported methods,
+malformed transactions, unsupported transaction shapes, and unavailable policy
+providers fail closed as top-level protocol errors and do not produce
+`sign_result`.
 
-Sui `sign_transaction` is recognized for policy evaluation. It accepts
-`params.network` as `mainnet`, `testnet`, `devnet`, or `localnet`, and
-`params.txBytes` as canonical base64 bounded by the current Firmware JSONL
-request envelope. The current bound is `params` JSON up to 600 UTF-8 bytes,
-with `txBytes` up to 384 decoded bytes and 512 canonical base64 characters.
-Firmware decodes only the restricted SUI transfer shape documented in
-[Implementation Status](../docs/IMPLEMENTATION_STATUS.md) and adapts those facts
-into the Firmware-owned policy runtime. Valid policy-rejected transactions
-return `policy_rejected` after the corresponding approval-history record is
-persisted; if that required history write fails or is rate-limited, Firmware
-returns top-level `history_error`. A corrupt, unreadable, missing, or
-invalid current active policy fails closed as a persistent-material
-consistency error before normal session-scoped methods are available. Malformed
-BCS returns `malformed_transaction`; unsupported transaction shapes return
-`unsupported_transaction`.
+Sui `sign_transaction` accepts `params.network` as request context
+(`mainnet`, `testnet`, `devnet`, or `localnet`) and `params.txBytes` as
+canonical base64 bounded by the current Firmware JSONL request envelope. The
+current bound is `params` JSON up to 600 UTF-8 bytes, with `txBytes` up to 384
+decoded bytes and 512 canonical base64 characters. Firmware decodes only the
+restricted SUI transfer shape documented in
+[Implementation Status](../docs/IMPLEMENTATION_STATUS.md) and adapts those
+transaction-derived facts into the Firmware-owned policy runtime. Sui `txBytes`
+do not carry network identity, so the Sui adapter does not expose network as a
+policy fact. Any chain-specific network policy fact must be bound by the
+signable transaction, such as an EVM chain id.
 
 Policy evaluation is implemented as Firmware common source. It accepts already
 extracted transaction facts, loads the stored active policy through a
 Firmware-owned provider boundary, applies a declarative deny-by-default policy
 model over allowlisted namespace/field facts, and returns the current-schema
-`reject` decision. The common evaluator owns only the shared
-`common.*` policy fields; chain-specific field identifiers, descriptor
-enablement, and transaction meaning stay in the corresponding method adapter.
-The common evaluator does not decode Sui, EVM, or Solana transaction semantics.
-That
-decision is not a signature, does not update device state, does not trigger
-device-local approval by itself, and is not exposed through Gateway or MCP as
-authority.
-Missing or invalid active policy providers fail closed; in normal boot-time
+`reject` or `sign` decision. The common evaluator owns only shared `common.*`
+policy fields; chain-specific field identifiers, descriptor enablement, and
+transaction meaning stay in the corresponding method adapter. The common
+evaluator does not decode Sui, EVM, or Solana transaction semantics.
+
+A `reject` decision returns `sign_result` with `authorization: "policy"` and
+`status: "policy_rejected"` after the corresponding terminal approval-history
+record is persisted. A `sign` decision writes the required policy signing
+confirmation history record before calling the signing service, then writes the
+durable signed terminal history record before returning `sign_result` with
+`authorization: "policy"` and `status: "signed"`. If a required history write
+fails, Firmware returns top-level `history_error` and must not claim the
+corresponding terminal result.
+
+Missing or invalid active policy providers fail closed. In normal boot-time
 state handling that condition is a persistent-material consistency error, and
-any late provider failure is mapped to `policy_error`. Sui txBytes do not carry
-network identity; runtime integration supplies network context outside the
-txBytes before evaluating network criteria. Policy-authorized signing output
-requires a later policy/schema contract; it is not represented as a dormant
-action value in the current policy document.
+any late provider failure is mapped to `policy_error`.
 
 Request:
 
@@ -1053,7 +1085,7 @@ Request:
 {
   "id": "req_006",
   "version": 1,
-  "type": "call_method",
+  "type": "sign_by_policy",
   "sessionId": "session_001",
   "chain": "sui",
   "method": "sign_transaction",
@@ -1064,52 +1096,52 @@ Request:
 }
 ```
 
-Current policy-decision response for the normal default-reject policy:
+Response for a policy rejection:
 
 ```json
 {
   "id": "req_006",
   "version": 1,
-  "type": "method_result",
-  "status": "rejected",
+  "type": "sign_result",
+  "authorization": "policy",
+  "status": "policy_rejected",
+  "policyHash": "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+  "ruleRef": "default",
   "error": {
     "code": "policy_rejected",
-    "message": "The request was rejected by device policy."
+    "message": "The signing request was rejected by device policy."
   }
 }
 ```
 
-Current response when the active policy provider fails after normal state and
-session gates:
+Signed response for a bounded `sign` policy decision:
 
 ```json
 {
   "id": "req_006",
   "version": 1,
-  "type": "method_result",
-  "status": "rejected",
-  "error": {
-    "code": "policy_error",
-    "message": "Active policy is unavailable."
-  }
+  "type": "sign_result",
+  "authorization": "policy",
+  "status": "signed",
+  "chain": "sui",
+  "method": "sign_transaction",
+  "signature": "base64-sui-ed25519-signature-envelope"
 }
 ```
 
-Current method result statuses:
+`sign_result.status` values for `authorization: "policy"`:
 
-- `rejected`
+- `signed`
+- `policy_rejected`
+- `signing_failed`
 
-## Device-Confirmed Signature Request
+## Device-Confirmed Signing Request
 
-`request_signature` is the shared protocol request for provider-facing
-device-confirmed signing. It is separate from `call_method`, policy actions,
-and chain-specific top-level APIs. In the current source tree it is wired for
-the bounded Sui `sign_transaction` shape through the StackChan CoreS3 USB
-dispatcher, Gateway/client parser and request builder, provider API,
-`signature_result`, and provider-facing `signatureRequests` capability. MCP
-does not expose it as an agent-facing signing tool. Product-active status still
-requires current-tree target hardware smoke as tracked in
-`docs/IMPLEMENTATION_STATUS.md`.
+`sign_by_user` is the shared protocol request for provider-facing
+device-confirmed signing. It uses the same top-level `chain`, `method`, and
+`params` shape as `sign_by_policy`, but its authorization source is
+device-local confirmation instead of active policy. It is not exposed through
+MCP.
 
 Request shape:
 
@@ -1117,11 +1149,11 @@ Request shape:
 {
   "id": "req_signature_001",
   "version": 1,
-  "type": "request_signature",
+  "type": "sign_by_user",
   "sessionId": "session_001",
+  "chain": "sui",
+  "method": "sign_transaction",
   "params": {
-    "chain": "sui",
-    "method": "sign_transaction",
     "network": "devnet",
     "txBytes": "AA..."
   }
@@ -1130,28 +1162,30 @@ Request shape:
 
 Rules for the first implementation:
 
-- `request_signature` is valid only in material-backed `provisioned` state with
+- `sign_by_user` is valid only in material-backed `provisioned` state with
   a matching active session.
 - The request is a device-confirmed path. It must not evaluate or depend on an
-  active policy action, must not reuse `call_method`, and must not be exposed as
-  an MCP agent-facing signing tool.
+  active policy action, must not reuse `sign_by_policy`, and must not be exposed
+  as an MCP agent-facing signing tool.
 - The first implementation is limited to `chain: "sui"` and
   `method: "sign_transaction"` for the same restricted SUI transfer shape
   accepted by the current Sui transaction-facts parser.
-- `network` is required and must be one of `mainnet`, `testnet`, `devnet`, or
-  `localnet`. `txBytes` must be canonical base64 and must remain within the
-  current Sui signing request bounds unless a later spec change widens the
-  bound with matching parser, scratch, UI, and tests.
-- Firmware owns a fixed internal `30000` millisecond device-confirmation window.
-  The host cannot set or negotiate it through the protocol.
-- Gateway transport waits for `request_signature` are internally fixed and
-  include a non-configurable margin after that Firmware confirmation window.
-  This is not a request field and callers cannot set or negotiate it.
-- `network` is host-supplied context. Current Sui `txBytes` do not carry network
-  identity, so Firmware validates only that the value is one of the supported
-  labels. Firmware must not display it as a transaction-derived clear-signing
-  fact or store it as terminal history proof unless a later chain-specific
-  binding is implemented.
+- `params.network` is required and must be one of `mainnet`, `testnet`,
+  `devnet`, or `localnet`. `params.txBytes` must be canonical base64 and must
+  remain within the current Sui signing request bounds unless a later spec
+  change widens the bound with matching parser, scratch, UI, and tests.
+- Firmware owns fixed internal `30000` millisecond physical-input windows for
+  review confirmation and PIN entry. The host cannot set or negotiate them
+  through the protocol.
+- Gateway transport waits for `sign_by_user` are internally fixed and include a
+  non-configurable budget for Firmware PIN retry/lockout handling plus a
+  transport margin. This is not a request field and callers cannot set or
+  negotiate it.
+- `params.network` is host-supplied context. Current Sui `txBytes` do not carry
+  network identity, so Firmware validates only that the value is one of the
+  supported labels. Firmware must not display it as a transaction-derived
+  clear-signing fact or store it as terminal history proof unless a later
+  chain-specific binding is implemented.
 - Firmware must parse enough input to show a bounded clear-signing summary
   before entering device confirmation. Unsupported or malformed transactions
   must fail before any signing approval UI can be confirmed. The displayed
@@ -1163,16 +1197,16 @@ Rules for the first implementation:
   implementation.
 - The first implementation must require local PIN confirmation. The
   connect-only `pin_on_connect` setting does not control signing confirmation.
-- For signing confirmation, the 30-second device-confirmation window applies to
-  review/PIN input, not to stored-PIN cryptographic verification after a
-  complete PIN has been submitted. The original fixed confirmation deadline
-  remains the outer request deadline. A correct PIN result proceeds if the
-  verifier returns after the local input window would have expired but before
-  that fixed confirmation deadline expires and before the internal local-auth
-  worker watchdog fails. A stalled or lost verifier result fails closed as
-  local authentication unavailable. A wrong PIN result returns to PIN entry with
-  a fresh 30-second input window capped by the original fixed confirmation
-  deadline, unless the shared wrong-PIN lockout is active.
+- For signing confirmation, the 30-second windows apply to user input, not to
+  stored-PIN cryptographic verification after a complete PIN has been submitted.
+  Submitting a complete PIN stops the input timer. A correct PIN result proceeds
+  even if cryptographic verification returns after that input window would have
+  expired, provided the original signing confirmation deadline remains open and
+  the internal local-auth worker watchdog has not failed. A stalled or lost
+  verifier result fails closed as local authentication unavailable. A wrong PIN
+  result returns to PIN entry with a fresh internal input window capped by the
+  original signing confirmation deadline unless the shared wrong-PIN lockout is
+  active.
 - Firmware must not call the signing service before device confirmation and the
   required approval-history record are both durable. The state owner must
   validate the session immediately before performing that required history
@@ -1183,27 +1217,11 @@ Rules for the first implementation:
   verify that the same request and session are still in the history-write stage
   after the write callback returns before entering the signing critical
   section.
-- `get_capabilities.methods` does not advertise `request_signature`.
-  Provider-facing signing availability is advertised only through the separate
-  top-level `signatureRequests` field. MCP must fail closed if that
-  provider-facing metadata reaches the MCP output boundary; it must not turn it
-  into an agent-facing signing tool.
-
-Signing capability shape:
-
-```json
-{
-  "signatureRequests": [
-    {
-      "chain": "sui",
-      "method": "sign_transaction"
-    }
-  ]
-}
-```
-
-This field is provider-facing availability metadata for device-confirmed
-signing requests. It is not an MCP agent-facing signing method list.
+- `get_capabilities.methods` does not advertise `sign_by_user`.
+  Provider-facing signing availability is advertised only through
+  `signing.user`. MCP must project the raw Firmware capability to
+  `signing.policy` for the agent-facing output boundary and must not expose
+  `signing.user` as an MCP capability or tool.
 
 Signed response:
 
@@ -1211,148 +1229,130 @@ Signed response:
 {
   "id": "req_signature_001",
   "version": 1,
-  "type": "signature_result",
+  "type": "sign_result",
+  "authorization": "user",
   "status": "signed",
-  "reasonCode": "device_confirmed",
   "chain": "sui",
   "method": "sign_transaction",
   "signature": "base64-sui-ed25519-signature-envelope"
 }
 ```
 
-Rejected or timed-out response:
+Rejected response:
 
 ```json
 {
   "id": "req_signature_001",
   "version": 1,
-  "type": "signature_result",
-  "status": "rejected",
-  "reasonCode": "device_rejected",
+  "type": "sign_result",
+  "authorization": "user",
+  "status": "user_rejected",
   "error": {
-    "code": "device_rejected",
+    "code": "user_rejected",
     "message": "The signing request was rejected on the device."
   }
 }
 ```
 
-`signature_result.status` values:
+`sign_result.status` values for `authorization: "user"`:
 
 - `signed`: Firmware generated the signature after device confirmation, the
   required pre-signing confirmation history record, and a durable signed
   terminal history record.
-- `rejected`: device-local confirmation explicitly rejected the request.
-- `timed_out`: device-local confirmation expired without approval.
-- `failed`: device confirmation succeeded, but signing failed before a
+- `user_rejected`: device-local confirmation explicitly rejected the request.
+- `user_timed_out`: device-local confirmation expired without approval.
+- `signing_failed`: device confirmation succeeded, but signing failed before a
   signature response could be produced.
-
-Terminal reason codes:
-
-- `device_confirmed`
-- `device_rejected`
-- `device_timed_out`
-- `signing_failed`
 
 Pre-signing session loss, disconnect cancellation, or pre-signing confirmation
 history write failure are cleanup failures, not signature results. They must
-produce no signature and may return a top-level error instead of
-`signature_result`.
+produce no signature and may return a top-level error instead of `sign_result`.
 
 Terminal error mapping:
 
-| status | reasonCode | error.code | error.message |
-| --- | --- | --- | --- |
-| `rejected` | `device_rejected` | `device_rejected` | `The signing request was rejected on the device.` |
-| `timed_out` | `device_timed_out` | `device_timed_out` | `The signing request timed out on the device.` |
-| `failed` | `signing_failed` | `signing_failed` | `The device could not produce a signature.` |
+| status | error.code | error.message |
+| --- | --- | --- |
+| `user_rejected` | `user_rejected` | `The signing request was rejected on the device.` |
+| `user_timed_out` | `user_timed_out` | `The signing request timed out on the device.` |
+| `signing_failed` | `signing_failed` | `The device could not produce a signature.` |
 
-`signed` responses may contain only `reasonCode`, `chain`, `method`, and
+`signed` responses may contain only `authorization`, `chain`, `method`, and
 `signature` as method-specific output. Non-signed terminal responses may contain
-only `reasonCode` and `error` beyond the shared envelope fields. No
-`signature_result` response may contain raw `txBytes`, decoded transaction
+only `authorization` and `error` beyond the shared envelope fields. A
+`policy_rejected` response also includes `policyHash` and `ruleRef`. No
+`sign_result` response may contain raw `txBytes`, decoded transaction
 internals, session id, request id beyond the envelope id, account private
 material, seed, mnemonic, PIN, policy scratch, or device-local UI state.
 Client, provider, and MCP parsers must fail closed on extra or secret-like
-fields. MCP must not expose this request unless a later product decision adds a
-separate agent-facing signing capability.
+fields. MCP must not expose `sign_by_user`.
 
 Response delivery and provider boundary:
 
 - Firmware signature generation, terminal history persistence, USB response
   delivery, Gateway receipt, provider return, and application use of a
   signature are separate events.
-- `signature_result.status: "failed"` means device confirmation succeeded but
-  Firmware could not produce a signature. It is not a response-delivery failure
-  status.
+- `sign_result.status: "signing_failed"` means the authorization source
+  approved signing but Firmware could not produce a signature. It is not a
+  response-delivery failure status.
 - If Firmware generates a signature but cannot record the required signed
-  terminal history record before sending `signature_result`, Firmware must not
-  send the signature. It may return a top-level `history_error`. That error
-  means device-confirmed signature generation occurred, provider receipt did
-  not occur, and a later `get_approval_history` read must not be treated as
-  signed terminal proof unless the signed terminal record exists.
+  terminal history record before sending `sign_result`, Firmware must not send
+  the signature. It may return a top-level `history_error`. That error means
+  signature generation occurred, provider receipt did not occur, and a later
+  `get_approval_history` read must not be treated as signed terminal proof
+  unless the signed terminal record exists.
 - If Firmware generates a signature and records a durable `signed` terminal
   record, then response delivery fails before Gateway receives the response, the
   provider-facing result is a transport or protocol failure. That failure must
-  not be reported as `rejected`, `timed_out`, or `failed`, and it must not
-  claim that Firmware did not generate a signature. A later
-  `get_approval_history` read may show the durable `signed` terminal record.
-- The provider `requestSignature` API returns a discriminated result for
-  Firmware-authored terminal `signature_result` statuses: `signed`, `rejected`,
-  `timed_out`, and `failed`. Device rejection, device timeout, and signing
-  failure are product outcomes, not provider exceptions. Provider promise
-  rejection is reserved for local adapter/programmer errors; Gateway or
-  transport failures use the same structured public-error style as the current
-  provider methods.
-- The provider must not expose Admin or policy-update methods through
-  `requestSignature`, and MCP must not gain a chain-specific or top-level
-  signing tool as a side effect of provider signing support.
+  not be reported as `user_rejected`, `user_timed_out`, `policy_rejected`, or
+  `signing_failed`, and it must not claim that Firmware did not generate a
+  signature. A later `get_approval_history` read may show the durable `signed`
+  terminal record.
+- The provider `signByUser` API returns a discriminated result for
+  Firmware-authored terminal `sign_result` statuses with `authorization:
+  "user"`: `signed`, `user_rejected`, `user_timed_out`, and
+  `signing_failed`. Device rejection, device timeout, and signing failure are
+  product outcomes, not provider exceptions. Provider promise rejection is
+  reserved for local adapter/programmer errors; Gateway or transport failures
+  use the same structured public-error style as the current provider methods.
+- The provider must not expose Admin, policy-update, or `sign_by_policy`
+  methods through `signByUser`, and MCP must not gain `sign_by_user`.
 
 Approval-history contract:
 
-- Device-confirmed signing uses a new `eventKind: "signature_request"`, not the
-  current `method_decision` event kind.
-- The required pre-signing record is a `recordKind: "confirmation"` record with
-  `confirmationKind: "local_pin"` for the first implementation. This durable
-  record authorizes entering the signing critical section; it is not a `signed`
-  terminal result.
-- Recordable terminal results are `signed`, `rejected`, `timed_out`, and
-  `signing_failed`.
+- Device-confirmed and policy-authorized signing use `eventKind: "signing"`.
+- Required pre-signing records use `recordKind: "confirmation"`. User-confirmed
+  signing uses `confirmationKind: "local_pin"` for the first implementation.
+  Policy-authorized signing uses `confirmationKind: "policy"` and includes
+  `policyHash` and `ruleRef`.
+- Recordable terminal results are `signed`, `user_rejected`,
+  `user_timed_out`, `policy_rejected`, and `signing_failed`.
 - Terminal records use `recordKind: "terminal"` and store only bounded metadata:
-  chain, method, reason code, optional payload digest, and optional terminal
-  result. They must not store raw `txBytes`, decoded transaction internals,
-  session ids, raw request ids, PINs, seed, mnemonic, private key material, or
-  full UI text.
+  authorization, chain, method, reason code, payload digest, optional
+  `policyHash`, optional `ruleRef`, and optional terminal result. They must not
+  store raw `txBytes`, decoded transaction internals, session ids, raw request
+  ids, PINs, seed, mnemonic, private key material, or full UI text.
 - A durable `signed` terminal record means Firmware generated a signature after
-  device confirmation. It does not prove Gateway received the signature.
-- If the required confirmation history write fails before signing, Firmware must
+  device confirmation or policy authorization. It does not prove Gateway
+  received the signature.
+- If a required confirmation history write fails before signing, Firmware must
   return top-level `history_error` and must not call the signing service.
 
-## Admin Methods
+## Policy Update Proposal
 
-Admin is not a separate protocol. Admin actions are namespaced methods in the
-shared protocol. Chain signing methods continue to use `chain` plus `method`;
-admin/write methods must not overload `chain` with a control namespace or route
-through a chain adapter. `get_accounts` is implemented as a read-only identity
-request and does not perform any admin or signing action.
-
-Example methods:
-
-- `propose_policy_update` (implemented for the StackChan CoreS3 target as a
-  policy-update proposal flow)
-- `propose_key_generate`
-- `propose_key_import`
-
-Firmware must physically approve write methods before saving changes.
+Admin is a Gateway capability, not a separate product protocol. The current
+policy-write path is the top-level `propose_policy_update` request. It is not a
+signing method, it must not use `chain` or `method`, and it must not route
+through `sign_by_policy`.
 
 ### `propose_policy_update`
 
-`propose_policy_update` is a policy-write proposal method. StackChan CoreS3
-Firmware and Gateway/MCP implement the first supported path: a session-scoped proposal is
-validated by Firmware, shown on device for local PIN approval, committed through
-the canonical active-policy store, and reported as `policy_update_result`.
-The Gateway-served local Admin Page can submit the current reject-policy
-proposal template; full policy editing is not implemented. MCP/API callers can
-submit bounded reject-policy proposals.
+`propose_policy_update` is a policy-write proposal request. StackChan CoreS3
+Firmware and Gateway/MCP implement the first supported path: a session-scoped
+proposal is validated by Firmware, shown on device for local PIN approval,
+committed through the canonical active-policy store, and reported as
+`policy_update_result`. The Gateway-served local Admin Page can submit the
+current policy proposal template; full policy editing is not implemented.
+MCP/API callers can submit bounded current-schema policy proposals.
 
 The method is a proposal, not a setter. Gateway or Admin may submit a bounded
 policy document, but Firmware remains the authority that validates the document,
@@ -1368,25 +1368,23 @@ Request shape:
 {
   "id": "req_policy_update",
   "version": 1,
-  "type": "call_method",
+  "type": "propose_policy_update",
   "sessionId": "session_001",
-  "methodNamespace": "admin",
-  "method": "propose_policy_update",
   "params": {
     "policy": {
       "schema": "agentq.policy.v0",
       "defaultAction": "reject",
       "rules": [
         {
-          "id": "reject-sui-mainnet-transfer",
+          "id": "reject-sui-transfer",
           "chain": "sui",
           "method": "sign_transaction",
           "action": "reject",
           "criteria": [
             {
-              "field": "common.network",
+              "field": "common.intent",
               "op": "eq",
-              "value": "mainnet"
+              "value": "single_asset_transfer"
             }
           ]
         }
@@ -1395,11 +1393,6 @@ Request shape:
   }
 }
 ```
-
-`methodNamespace: "admin"` is the shared-protocol namespace for Firmware-owned
-administrative proposal methods. Admin methods must reject a `chain` field;
-chain-scoped signing methods must continue to use `chain` and must not use
-`methodNamespace`.
 
 Policy document rules for the first version:
 
@@ -1421,13 +1414,23 @@ Policy document rules for the first version:
   `ruleRef`: lowercase letter first, followed by lowercase letters, digits,
   `_`, `-`, `.`, `:`, or `/`.
 - Each rule has `chain`, `method`, `action`, and `criteria`.
-- The current policy schema accepts only `reject`.
+- The current policy schema accepts only `reject` and `sign`.
 - Action values outside the current schema are invalid policy input. A policy
-  update must not store dormant future behavior. Disabled policy drafts are out
+  update must not store dormant behavior. Disabled policy drafts are out
   of scope for this version.
 - A `reject` rule may have zero criteria.
+- A `sign` rule must be bounded, and the first implementation accepts at most
+  one `sign` rule in a policy document. For Sui `sign_transaction`, broad
+  signing is invalid. The first implementation requires criteria that restrict
+  the rule to the bounded restricted SUI transfer shape, including
+  `common.intent = single_asset_transfer`,
+  `sui.command_shape = restricted_transfer`,
+  `sui.coin_type = 0x2::sui::SUI`, one concrete recipient criterion,
+  amount bounds, and gas bounds. Multiple sign rules and multi-recipient sign
+  allowlists are invalid until the device-local policy-update review can show
+  every allowed signing rule and recipient clearly.
 - A rule may contain at most 8 criteria.
-- Criterion `field` is a bounded namespace/field id such as `common.network` or
+- Criterion `field` is a bounded namespace/field id such as `common.intent` or
   `sui.amount_raw`. Common fields are owned by the common policy evaluator;
   chain-specific fields are owned by the corresponding method adapter.
 - Criterion `op` may be `eq`, `in`, or `lte` only where the active method
@@ -1439,7 +1442,9 @@ Policy document rules for the first version:
   `uint64` range.
 - No policy may depend on Gateway labels, purpose routing, gateway name, raw
   request id, session id, external market data, network fetches, JavaScript,
-  Rego, CEL, JSONPath, or arbitrary code execution.
+  Rego, CEL, JSONPath, arbitrary code execution, or a Sui host-supplied network
+  label. Other chains may expose chain-specific transaction-bound network facts
+  only when implemented by their chain adapter.
 
 State and authorization rules:
 
@@ -1453,16 +1458,15 @@ State and authorization rules:
 - A second policy update proposal while one is pending is rejected with `busy`.
 - Device-local approval is required before commit. For the current display
   target, the approval model is local PIN verification plus an on-device summary
-  showing policy id/hash, rule count, default action, affected chains/methods,
-  and the current-schema action summary. A future
-  display-confirmed diff may strengthen this, but this implementation does not
-  rely on host-only confirmation.
+  showing a bounded policy hash prefix, rule count, default action, affected
+  chain/method, highest action, and the current-schema action summary. This
+  implementation does not rely on host-only confirmation.
 - During pending approval, read-only session methods may remain available only
-  if they do not dismiss or mutate the pending state. `call_method` and nested
+  if they do not dismiss or mutate the pending state. `sign_by_policy` and nested
   policy updates must return `busy` while a policy update is pending or
   committing.
 - `get_policy` returns the committed active policy only. It must not include or
-  imply the pending proposal unless a separate future review API is specified.
+  imply the pending proposal.
 - `disconnect` may perform session cleanup except during the commit critical
   section, where Firmware may return `busy`.
 

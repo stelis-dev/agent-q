@@ -544,12 +544,29 @@ int main()
     agent_q::local_reset_wipe();
 
     reset_stubs();
+    g_now = 90;
+    agent_q::local_reset_begin_settings(140);
+    expect(agent_q::local_reset_begin_pin_entry(140), "reset PIN entry starts before input deadline test");
+    expect(agent_q::local_reset_add_pin_digit('1'), "reset digit accepted before deadline");
+    expect(agent_q::local_reset_backspace_pin(), "reset backspace accepted before deadline");
+    expect(agent_q::local_reset_clear_pin(), "reset clear accepted before deadline");
+    expect(agent_q::local_reset_deadline_expired(140),
+           "reset digit, backspace, and clear do not extend input deadline");
+    g_now = 141;
+    expect(!agent_q::local_reset_add_pin_digit('1'),
+           "reset digit after deadline is rejected by owner");
+    expect(agent_q::local_reset_submit_pin_for_verification(141, 300, 200) ==
+               agent_q::AgentQLocalResetPinSubmitResult::unavailable_stage,
+           "reset submit after deadline does not start verification");
+    agent_q::local_reset_wipe();
+
+    reset_stubs();
     agent_q::local_reset_begin_settings(200);
     expect(agent_q::local_reset_begin_pin_entry(200), "reset PIN entry starts before verification");
     const char reset_verify_pin[] = "123456";
     for (size_t index = 0; reset_verify_pin[index] != '\0'; ++index) {
         const char digit = reset_verify_pin[index];
-        expect(agent_q::local_reset_add_pin_digit(digit, 200), "reset verification PIN digit accepted");
+        expect(agent_q::local_reset_add_pin_digit(digit), "reset verification PIN digit accepted");
     }
     expect(agent_q::local_reset_submit_pin_for_verification(110, 200, 150) ==
                agent_q::AgentQLocalResetPinSubmitResult::started_verification,
@@ -574,7 +591,7 @@ int main()
     expect(agent_q::local_reset_begin_pin_entry(300), "reset PIN entry starts before worker timeout test");
     for (size_t index = 0; reset_verify_pin[index] != '\0'; ++index) {
         const char digit = reset_verify_pin[index];
-        expect(agent_q::local_reset_add_pin_digit(digit, 300), "reset timeout PIN digit accepted");
+        expect(agent_q::local_reset_add_pin_digit(digit), "reset timeout PIN digit accepted");
     }
     expect(agent_q::local_reset_submit_pin_for_verification(210, 300, 250) ==
                agent_q::AgentQLocalResetPinSubmitResult::started_verification,
@@ -593,7 +610,7 @@ int main()
     expect(agent_q::local_reset_begin_pin_entry(400), "reset PIN entry starts before late-result test");
     for (size_t index = 0; reset_verify_pin[index] != '\0'; ++index) {
         const char digit = reset_verify_pin[index];
-        expect(agent_q::local_reset_add_pin_digit(digit, 400), "reset late-result PIN digit accepted");
+        expect(agent_q::local_reset_add_pin_digit(digit), "reset late-result PIN digit accepted");
     }
     expect(agent_q::local_reset_submit_pin_for_verification(310, 400, 350) ==
                agent_q::AgentQLocalResetPinSubmitResult::started_verification,

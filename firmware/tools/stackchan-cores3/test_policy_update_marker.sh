@@ -201,6 +201,18 @@ int main()
            "cleared marker reads as clear");
 
     expect(agent_q::policy_update_marker_begin(
+               digest,
+               sizeof(digest),
+               1,
+               agent_q::AgentQPolicyUpdateHighestAction::sign) == BeginResult::written,
+           "valid sign marker begin succeeds");
+    expect(agent_q::policy_update_marker_status() == Status::pending,
+           "valid sign marker reads as pending");
+    expect(g_blob.size() > 5 && g_blob[5] == 1,
+           "sign marker stores sign highest action");
+    expect(agent_q::policy_update_marker_clear(), "sign marker clear succeeds");
+
+    expect(agent_q::policy_update_marker_begin(
                nullptr,
                sizeof(digest),
                1,

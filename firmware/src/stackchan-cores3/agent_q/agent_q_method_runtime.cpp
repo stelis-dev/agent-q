@@ -2,10 +2,11 @@
 
 #include <string.h>
 
+#include "agent_q_base64.h"
 #include "agent_q_bip39.h"
-#include "agent_q_call_method_validation.h"
 #include "agent_q_json_input.h"
 #include "agent_q_policy_store.h"
+#include "agent_q_sui_signing_authority.h"
 #include "agent_q_common/policy/agent_q_policy_runtime.h"
 #include "agent_q_common/sui/agent_q_sui_method_adapter.h"
 #include "agent_q_common/sui/agent_q_sui_transaction_facts.h"
@@ -17,7 +18,7 @@ extern "C" {
 namespace agent_q {
 namespace {
 
-bool copy_runtime_history_string(char* output, size_t output_size, const char* value, bool required)
+bool copy_runtime_string(char* output, size_t output_size, const char* value, bool required)
 {
     if (output == nullptr || output_size == 0) {
         return false;
@@ -43,74 +44,118 @@ bool copy_runtime_history_string(char* output, size_t output_size, const char* v
     return true;
 }
 
-AgentQMethodRuntimeResult invalid_params(const char* message)
+bool supported_network(const char* network)
 {
-    return AgentQMethodRuntimeResult{
-        AgentQMethodRuntimeStatus::invalid_params,
-        "invalid_params",
-        message,
-        false,
-        {},
-    };
+    return network != nullptr &&
+           (strcmp(network, "mainnet") == 0 ||
+            strcmp(network, "testnet") == 0 ||
+            strcmp(network, "devnet") == 0 ||
+            strcmp(network, "localnet") == 0);
 }
 
-AgentQMethodRuntimeResult rejected(const char* code, const char* message)
+bool params_fields_supported(JsonObjectConst params)
 {
-    return AgentQMethodRuntimeResult{
-        AgentQMethodRuntimeStatus::rejected,
-        code,
-        message,
-        false,
-        {},
-    };
+    for (JsonPairConst pair : params) {
+        if (!agent_q_json_string_equals(pair.key(), "network") &&
+            !agent_q_json_string_equals(pair.key(), "txBytes")) {
+            return false;
+        }
+    }
+    return true;
 }
 
-AgentQMethodRuntimeResult rejected_with_history(
+bool validate_sign_transaction_params(JsonVariant params, size_t* decoded_tx_size)
+{
+    if (decoded_tx_size != nullptr) {
+        *decoded_tx_size = 0;
+    }
+    JsonObjectConst params_object = params.as<JsonObjectConst>();
+    if (params_object.isNull() || !params_fields_supported(params_object)) {
+        return false;
+    }
+    const char* network = nullptr;
+    const char* tx_bytes_base64 = nullptr;
+    if (!agent_q_json_value_c_string(params_object["network"], &network) ||
+        !supported_network(network) ||
+        !agent_q_json_value_c_string(params_object["txBytes"], &tx_bytes_base64)) {
+        return false;
+    }
+    return validate_canonical_base64(
+        tx_bytes_base64,
+        kAgentQSuiSignTransactionTxBytesMaxBase64Size,
+        kAgentQSuiSignTransactionTxBytesMaxBytes,
+        decoded_tx_size);
+}
+
+AgentQSignByPolicyRuntimeResult make_result(
+    AgentQSignByPolicyRuntimeStatus status,
     const char* code,
-    const char* message,
-    AgentQApprovalHistoryDecision decision,
-    AgentQApprovalHistoryConfirmationKind confirmation_kind,
+    const char* message)
+{
+    AgentQSignByPolicyRuntimeResult result = {};
+    result.status = status;
+    result.code = code;
+    result.message = message;
+    return result;
+}
+
+bool fill_sign_metadata(
+    AgentQSignByPolicyRuntimeResult* result,
+    const char* code,
     const char* chain,
     const char* method,
     const char* payload_digest,
     const char* policy_hash,
     const char* rule_ref)
 {
-    AgentQMethodRuntimeResult result = rejected(code, message);
-    result.has_approval_history = true;
-    result.approval_history.decision = decision;
-    result.approval_history.confirmation_kind = confirmation_kind;
-    if (!copy_runtime_history_string(result.approval_history.chain, sizeof(result.approval_history.chain), chain, true) ||
-        !copy_runtime_history_string(result.approval_history.method, sizeof(result.approval_history.method), method, true) ||
-        !copy_runtime_history_string(result.approval_history.reason_code, sizeof(result.approval_history.reason_code), code, true) ||
-        !copy_runtime_history_string(result.approval_history.payload_digest, sizeof(result.approval_history.payload_digest), payload_digest, false) ||
-        !copy_runtime_history_string(result.approval_history.policy_hash, sizeof(result.approval_history.policy_hash), policy_hash, false) ||
-        !copy_runtime_history_string(result.approval_history.rule_ref, sizeof(result.approval_history.rule_ref), rule_ref, false)) {
-        memset(&result.approval_history, 0, sizeof(result.approval_history));
-        result.has_approval_history = true;
+    if (result == nullptr) {
+        return false;
     }
-    return result;
+    return copy_runtime_string(result->chain, sizeof(result->chain), chain, true) &&
+           copy_runtime_string(result->method, sizeof(result->method), method, true) &&
+           copy_runtime_string(result->reason_code, sizeof(result->reason_code), code, true) &&
+           copy_runtime_string(result->payload_digest, sizeof(result->payload_digest), payload_digest, true) &&
+           copy_runtime_string(result->policy_hash, sizeof(result->policy_hash), policy_hash, true) &&
+           copy_runtime_string(result->rule_ref, sizeof(result->rule_ref), rule_ref, true);
 }
 
-AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
+const char* policy_rule_ref(const AgentQPolicyDecision& decision)
+{
+    if (decision.reason == AgentQPolicyDecisionReason::matched_rule &&
+        decision.rule_id != nullptr &&
+        decision.rule_id[0] != '\0') {
+        return decision.rule_id;
+    }
+    return "default";
+}
+
+AgentQSignByPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
 {
     size_t decoded_tx_size = 0;
-    if (!validate_sui_sign_transaction_params(params, &decoded_tx_size)) {
-        return invalid_params("Invalid sui/sign_transaction params.");
+    if (!validate_sign_transaction_params(params, &decoded_tx_size)) {
+        return make_result(
+            AgentQSignByPolicyRuntimeStatus::invalid_params,
+            "invalid_params",
+            "Invalid sui/sign_transaction params.");
     }
 
-    const char* network = nullptr;
     const char* tx_bytes_base64 = nullptr;
-    if (!agent_q_json_value_c_string(params["network"], &network) ||
-        !agent_q_json_value_c_string(params["txBytes"], &tx_bytes_base64)) {
-        return invalid_params("Invalid sui/sign_transaction params.");
-    }
-    uint8_t tx_bytes[kSuiSignTransactionTxBytesMaxBytes] = {};
-    if (base64_to_bytes(tx_bytes_base64, strlen(tx_bytes_base64), tx_bytes, sizeof(tx_bytes)) != 0) {
-        return invalid_params("Invalid sui/sign_transaction txBytes.");
+    if (!agent_q_json_value_c_string(params["txBytes"], &tx_bytes_base64)) {
+        return make_result(
+            AgentQSignByPolicyRuntimeStatus::invalid_params,
+            "invalid_params",
+            "Invalid sui/sign_transaction params.");
     }
 
-    char payload_digest[agent_q::kAgentQApprovalHistoryDigestSize] = {};
+    uint8_t tx_bytes[kAgentQSuiSignTransactionTxBytesMaxBytes] = {};
+    if (base64_to_bytes(tx_bytes_base64, strlen(tx_bytes_base64), tx_bytes, sizeof(tx_bytes)) != 0) {
+        return make_result(
+            AgentQSignByPolicyRuntimeStatus::invalid_params,
+            "invalid_params",
+            "Invalid sui/sign_transaction txBytes.");
+    }
+
+    char payload_digest[kAgentQApprovalHistoryDigestSize] = {};
     const bool digest_ready =
         approval_history_digest_payload(tx_bytes, decoded_tx_size, payload_digest, sizeof(payload_digest));
 
@@ -118,59 +163,112 @@ AgentQMethodRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
     const SuiTransactionFactsResult parse_result =
         parse_sui_transfer_facts(tx_bytes, decoded_tx_size, &sui_facts);
 
-    if (parse_result == SuiTransactionFactsResult::malformed) {
-        wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
-        return rejected(
-            "malformed_transaction",
-            "Transaction bytes are malformed.");
-    }
     if (parse_result != SuiTransactionFactsResult::ok) {
         wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
-        return rejected(
-            "unsupported_transaction",
-            "Transaction shape is not supported.");
+        return make_result(
+            AgentQSignByPolicyRuntimeStatus::unsupported_transaction,
+            parse_result == SuiTransactionFactsResult::malformed
+                ? "malformed_transaction"
+                : "unsupported_transaction",
+            parse_result == SuiTransactionFactsResult::malformed
+                ? "Transaction bytes are malformed."
+                : "Transaction shape is not supported.");
     }
 
     AgentQSuiSignTransactionPolicyFacts policy_facts = {};
-    if (!make_sui_sign_transaction_policy_facts(sui_facts, network, &policy_facts)) {
+    if (!make_sui_sign_transaction_policy_facts(sui_facts, &policy_facts) || !digest_ready) {
         wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
-        return rejected(
+        return make_result(
+            AgentQSignByPolicyRuntimeStatus::unsupported_transaction,
             "unsupported_transaction",
             "Transaction shape is not supported.");
     }
 
+    const AgentQSuiSigningAccountBindingResult account_result =
+        verify_sui_signing_stored_account_binding(sui_facts);
+    if (account_result != AgentQSuiSigningAccountBindingResult::ok) {
+        wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
+        return account_result == AgentQSuiSigningAccountBindingResult::account_unavailable
+                   ? make_result(
+                         AgentQSignByPolicyRuntimeStatus::account_unavailable,
+                         "account_unavailable",
+                         "Stored signing account is unavailable.")
+                   : make_result(
+                         AgentQSignByPolicyRuntimeStatus::account_mismatch,
+                         "invalid_account",
+                         "Transaction sender or gas owner is not the device account.");
+    }
+
     AgentQStoredPolicySummary policy_summary = {};
-    const bool policy_summary_ready = read_active_policy_summary(&policy_summary);
+    if (!read_active_policy_summary(&policy_summary)) {
+        wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
+        return make_result(
+            AgentQSignByPolicyRuntimeStatus::policy_error,
+            "policy_error",
+            "Active policy is unavailable.");
+    }
+
     const AgentQPolicyDecision decision =
         evaluate_agent_q_policy_runtime(active_policy_provider(), policy_facts.facts);
     if (decision.reason == AgentQPolicyDecisionReason::invalid_policy) {
         wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
-        return rejected(
+        return make_result(
+            AgentQSignByPolicyRuntimeStatus::policy_error,
             "policy_error",
             "Active policy is unavailable.");
     }
-    const char* rule_ref = "default";
-    if (decision.reason == AgentQPolicyDecisionReason::matched_rule &&
-        decision.rule_id != nullptr &&
-        decision.rule_id[0] != '\0') {
-        rule_ref = decision.rule_id;
+
+    const char* rule_ref = policy_rule_ref(decision);
+    if (decision.action != AgentQPolicyAction::sign) {
+        AgentQSignByPolicyRuntimeResult result = make_result(
+            AgentQSignByPolicyRuntimeStatus::policy_rejected,
+            "policy_rejected",
+            "The signing request was rejected by device policy.");
+        if (!fill_sign_metadata(
+                &result,
+                "policy_rejected",
+                "sui",
+                "sign_transaction",
+                payload_digest,
+                policy_summary.policy_id,
+                rule_ref)) {
+            wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
+            return make_result(
+                AgentQSignByPolicyRuntimeStatus::policy_error,
+                "policy_error",
+                "Active policy is unavailable.");
+        }
+        wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
+        return result;
     }
+
+    AgentQSignByPolicyRuntimeResult result = make_result(
+        AgentQSignByPolicyRuntimeStatus::policy_authorized,
+        "policy_signed",
+        "Policy authorized signing.");
+    if (!fill_sign_metadata(
+            &result,
+            "policy_signed",
+            "sui",
+            "sign_transaction",
+            payload_digest,
+            policy_summary.policy_id,
+            rule_ref)) {
+        wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
+        return make_result(
+            AgentQSignByPolicyRuntimeStatus::policy_error,
+            "policy_error",
+            "Active policy is unavailable.");
+    }
+    memcpy(result.tx_bytes, tx_bytes, decoded_tx_size);
+    result.tx_bytes_size = decoded_tx_size;
     wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
-    return rejected_with_history(
-        "policy_rejected",
-        "The request was rejected by device policy.",
-        AgentQApprovalHistoryDecision::policy_rejected,
-        AgentQApprovalHistoryConfirmationKind::policy,
-        "sui",
-        "sign_transaction",
-        digest_ready ? payload_digest : nullptr,
-        policy_summary_ready ? policy_summary.policy_id : nullptr,
-        rule_ref);
+    return result;
 }
 
 }  // namespace
 
-AgentQMethodRuntimeResult evaluate_call_method(
+AgentQSignByPolicyRuntimeResult evaluate_sign_by_policy(
     const char* chain,
     const char* method,
     JsonVariant params)
@@ -180,16 +278,18 @@ AgentQMethodRuntimeResult evaluate_call_method(
         return evaluate_sui_sign_transaction(params);
     }
 
-    return rejected(
+    return make_result(
+        AgentQSignByPolicyRuntimeStatus::invalid_params,
         "unsupported_method",
         "Method is not supported.");
 }
 
-void clear_method_runtime_result(AgentQMethodRuntimeResult* result)
+void clear_sign_by_policy_runtime_result(AgentQSignByPolicyRuntimeResult* result)
 {
     if (result == nullptr) {
         return;
     }
+    wipe_sensitive_buffer(result->tx_bytes, sizeof(result->tx_bytes));
     memset(result, 0, sizeof(*result));
 }
 

@@ -3,9 +3,9 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: firmware/tools/stackchan-cores3/test_signature_request_review_view_model.sh
+Usage: firmware/tools/stackchan-cores3/test_sign_by_user_review_view_model.sh
 
-Compiles the StackChan CoreS3 device-confirmed signature request review
+Compiles the StackChan CoreS3 device-confirmed sign_by_user review
 view-model against host stubs and verifies that clear-signing rows are built
 only from a reviewing signature-request snapshot. This test uses only a host
 C++ compiler and does NOT require ESP-IDF.
@@ -36,11 +36,11 @@ using TickType_t = uint32_t;
 #define pdMS_TO_TICKS(ms) (ms)
 H
 
-cat >"${TMP_DIR}/signature_request_review_view_model_test.cpp" <<'CPP'
+cat >"${TMP_DIR}/sign_by_user_review_view_model_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_signature_request_review_view_model.h"
+#include "agent_q_sign_by_user_review_view_model.h"
 
 namespace {
 
@@ -65,11 +65,11 @@ void copy_field(char* output, size_t output_size, const char* value)
     snprintf(output, output_size, "%s", value);
 }
 
-agent_q::AgentQSignatureRequestFlowSnapshot valid_snapshot()
+agent_q::AgentQSignByUserFlowSnapshot valid_snapshot()
 {
-    agent_q::AgentQSignatureRequestFlowSnapshot snapshot = {};
+    agent_q::AgentQSignByUserFlowSnapshot snapshot = {};
     snapshot.active = true;
-    snapshot.stage = agent_q::AgentQSignatureRequestStage::reviewing;
+    snapshot.stage = agent_q::AgentQSignByUserStage::reviewing;
     copy_field(snapshot.chain, sizeof(snapshot.chain), "sui");
     copy_field(snapshot.method, sizeof(snapshot.method), "sign_transaction");
     copy_field(snapshot.network, sizeof(snapshot.network), "devnet");
@@ -96,7 +96,7 @@ agent_q::AgentQSignatureRequestFlowSnapshot valid_snapshot()
 }
 
 const char* row_value(
-    const agent_q::AgentQSignatureRequestReviewViewModel& model,
+    const agent_q::AgentQSignByUserReviewViewModel& model,
     const char* label)
 {
     for (size_t index = 0; index < model.row_count; ++index) {
@@ -111,11 +111,11 @@ const char* row_value(
 
 int main()
 {
-    using Result = agent_q::AgentQSignatureRequestReviewBuildResult;
+    using Result = agent_q::AgentQSignByUserReviewBuildResult;
 
-    agent_q::AgentQSignatureRequestReviewViewModel model = {};
-    agent_q::AgentQSignatureRequestFlowSnapshot snapshot = valid_snapshot();
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::ok,
+    agent_q::AgentQSignByUserReviewViewModel model = {};
+    agent_q::AgentQSignByUserFlowSnapshot snapshot = valid_snapshot();
+    expect(agent_q::sign_by_user_review_view_model_build(snapshot, &model) == Result::ok,
            "valid reviewing snapshot builds review model");
     expect(strcmp(model.title, "Review Sui transfer") == 0,
            "model title names review action");
@@ -140,73 +140,73 @@ int main()
 
     snapshot = valid_snapshot();
     snapshot.active = false;
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::inactive,
+    expect(agent_q::sign_by_user_review_view_model_build(snapshot, &model) == Result::inactive,
            "inactive snapshot is rejected");
     expect(model.row_count == 0, "inactive failure clears output");
 
     snapshot = valid_snapshot();
-    snapshot.stage = agent_q::AgentQSignatureRequestStage::pin_entry;
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::wrong_stage,
+    snapshot.stage = agent_q::AgentQSignByUserStage::pin_entry;
+    expect(agent_q::sign_by_user_review_view_model_build(snapshot, &model) == Result::wrong_stage,
            "non-reviewing snapshot is rejected");
 
     snapshot = valid_snapshot();
     snapshot.sui_transfer.amount[0] = '\0';
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::sign_by_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "missing amount is rejected");
 
     snapshot = valid_snapshot();
     snapshot.sui_transfer.gas_budget[0] = '\0';
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::sign_by_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "missing gas budget is rejected");
 
     snapshot = valid_snapshot();
     snapshot.signable_payload_available = false;
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::sign_by_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unavailable signable payload is rejected");
 
     snapshot = valid_snapshot();
     snapshot.payload_digest[0] = '\0';
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::sign_by_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "missing payload digest is rejected");
 
     snapshot = valid_snapshot();
     copy_field(snapshot.method, sizeof(snapshot.method), "sign_personal_message");
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::sign_by_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unsupported method is rejected");
 
     snapshot = valid_snapshot();
     memset(snapshot.chain, 's', sizeof(snapshot.chain));
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::sign_by_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unterminated chain is rejected instead of overread");
 
     snapshot = valid_snapshot();
     memset(snapshot.method, 'm', sizeof(snapshot.method));
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::sign_by_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unterminated method is rejected instead of overread");
 
     snapshot = valid_snapshot();
     memset(snapshot.network, 'd', sizeof(snapshot.network));
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::ok,
+    expect(agent_q::sign_by_user_review_view_model_build(snapshot, &model) == Result::ok,
            "host-supplied network is ignored by the clear-signing view model");
 
     snapshot = valid_snapshot();
     memset(snapshot.sui_transfer.asset, 'S', sizeof(snapshot.sui_transfer.asset));
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::sign_by_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unterminated asset is rejected instead of overread");
 
     snapshot = valid_snapshot();
     memset(snapshot.sui_transfer.recipient, 'b', sizeof(snapshot.sui_transfer.recipient));
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::sign_by_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unterminated overlong recipient is rejected instead of truncated");
 
-    expect(strcmp(agent_q::signature_request_review_view_model_build_result_name(Result::ok), "ok") == 0,
+    expect(strcmp(agent_q::sign_by_user_review_view_model_build_result_name(Result::ok), "ok") == 0,
            "result name exposes ok");
-    expect(strcmp(agent_q::signature_request_review_view_model_build_result_name(Result::wrong_stage),
+    expect(strcmp(agent_q::sign_by_user_review_view_model_build_result_name(Result::wrong_stage),
                   "wrong_stage") == 0,
            "result name exposes wrong_stage");
 
     if (failures != 0) {
-        fprintf(stderr, "%d signature request review view-model checks failed\n", failures);
+        fprintf(stderr, "%d sign_by_user review view-model checks failed\n", failures);
         return 1;
     }
     return 0;
@@ -217,8 +217,8 @@ CPP
   -I"${TMP_DIR}" \
   -I"${AGENT_Q_DIR}" \
   -I"${REPO_ROOT}/firmware/src/common" \
-  "${TMP_DIR}/signature_request_review_view_model_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signature_request_review_view_model.cpp" \
-  -o "${TMP_DIR}/signature_request_review_view_model_test"
+  "${TMP_DIR}/sign_by_user_review_view_model_test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_by_user_review_view_model.cpp" \
+  -o "${TMP_DIR}/sign_by_user_review_view_model_test"
 
-"${TMP_DIR}/signature_request_review_view_model_test"
+"${TMP_DIR}/sign_by_user_review_view_model_test"

@@ -25,28 +25,29 @@ authority for keys, policies, device-local approval, and policy commits.
 - `get_accounts`
 - `get_policy`
 - `get_approval_history`
-- `call_method`
+- `sign_by_policy`
 - `propose_policy_update`
 
 `propose_policy_update` is a proposal path. MCP does not decide or commit
 policy; Firmware validates the proposal, requires device-local approval, and
 commits only supported policy records.
 
-MCP does not expose a signing tool. Provider-facing `signatureRequests`
-capability metadata is rejected by the MCP `get_capabilities` runtime boundary
-and by the exported MCP tool output schema.
+MCP exposes policy-authorized signing through `sign_by_policy`. It does not
+expose user-confirmed provider signing. Provider-facing user signing capability
+metadata is removed from MCP `get_capabilities` runtime output; the exported
+MCP tool output schema accepts policy-authorized signing capability only.
 
 MCP tool inputs do not expose caller-controlled timing fields. Firmware-owned
-device-local approval windows remain 30 seconds; Gateway uses fixed internal
-transport budgets with a non-configurable margin so a valid terminal device
-result can still be received at the end of that window.
+device-local physical-input windows remain 30 seconds; Gateway uses fixed
+internal transport budgets for PIN retry/lockout handling plus a
+non-configurable margin.
 
 ## Admin Page
 
 The `agent-q` binary serves a local Admin Page alongside stdio MCP tools through
 one shared Gateway core instance. The Admin Page supports device discovery,
 connection, active policy summary, approval history, and the current
-reject-policy proposal template.
+policy proposal template.
 
 The Admin Page is not a separate product and is not a policy authority.
 

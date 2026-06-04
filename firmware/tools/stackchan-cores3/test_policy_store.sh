@@ -161,9 +161,9 @@ agent_q::AgentQPolicyFacts valid_facts()
             "sign_transaction",
         },
         {
-            "common.network",
+            "common.intent",
             agent_q::AgentQPolicyValueType::string,
-            "devnet",
+            "single_asset_transfer",
         },
     };
     return agent_q::AgentQPolicyFacts{
@@ -190,9 +190,9 @@ agent_q::AgentQPolicyFacts mismatched_facts()
             "sign_transaction",
         },
         {
-            "common.network",
+            "common.intent",
             agent_q::AgentQPolicyValueType::string,
-            "mainnet",
+            "unsupported_intent",
         },
     };
     return agent_q::AgentQPolicyFacts{
@@ -228,17 +228,17 @@ bool make_default_record(std::vector<uint8_t>* output)
 
 bool make_reject_rule_record(
     const char* rule_id,
-    const char* network,
+    const char* intent,
     std::vector<uint8_t>* output)
 {
-    if (rule_id == nullptr || network == nullptr || output == nullptr) {
+    if (rule_id == nullptr || intent == nullptr || output == nullptr) {
         return false;
     }
     const agent_q::AgentQPolicyCriterion reject_criteria[] = {
         {
-            "common.network",
+            "common.intent",
             agent_q::AgentQPolicyOperator::eq,
-            network,
+            intent,
             nullptr,
             0,
         },
@@ -428,8 +428,8 @@ int main()
     std::vector<uint8_t> custom_record;
     std::vector<uint8_t> custom_record_2;
     expect(make_default_record(&default_record), "build default record fixture");
-    expect(make_reject_rule_record("reject-devnet", "devnet", &custom_record), "build custom policy record");
-    expect(make_reject_rule_record("reject-testnet", "testnet", &custom_record_2), "build second custom policy record");
+    expect(make_reject_rule_record("reject-transfer", "single_asset_transfer", &custom_record), "build custom policy record");
+    expect(make_reject_rule_record("reject-other-intent", "unsupported_intent", &custom_record_2), "build second custom policy record");
 
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "missing policy status");
     expect(!agent_q::read_active_policy_summary(&summary), "missing policy summary fails closed");
@@ -505,7 +505,7 @@ int main()
     expect(store_record(custom_record_2) == agent_q::AgentQPolicyStoreWriteResult::unchanged_failure, "stale commit pre-erase failure blocks inactive slot reuse");
     g_erase_fails_for_key.clear();
     decision = evaluate_active_policy();
-    expect(strcmp(decision.rule_id, "reject-devnet") == 0, "stale commit pre-erase failure preserves active policy");
+    expect(strcmp(decision.rule_id, "reject-transfer") == 0, "stale commit pre-erase failure preserves active policy");
     expect(agent_q::wipe_policy(), "wipe after stale commit cleanup failure");
     expect(agent_q::store_default_policy(), "restore default policy after stale commit cleanup failure");
 
@@ -517,7 +517,7 @@ int main()
     decision = evaluate_active_policy();
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "custom policy matching rule rejects");
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::matched_rule, "custom policy match reason");
-    expect(strcmp(decision.rule_id, "reject-devnet") == 0, "custom policy rule id");
+    expect(strcmp(decision.rule_id, "reject-transfer") == 0, "custom policy rule id");
     decision = evaluate_active_policy_mismatch();
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "custom policy mismatch rejects");
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "custom policy mismatch default reason");
@@ -538,7 +538,7 @@ int main()
     g_blobs["pol_c1"] = {0};
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "pending torn next commit metadata preserves newest policy");
     decision = evaluate_active_policy();
-    expect(strcmp(decision.rule_id, "reject-devnet") == 0, "pending torn next commit metadata keeps newest rule");
+    expect(strcmp(decision.rule_id, "reject-transfer") == 0, "pending torn next commit metadata keeps newest rule");
     g_blobs.erase("pol_c1");
     g_blobs.erase("pol_p");
 
@@ -557,7 +557,7 @@ int main()
     g_blobs["pol_s0"] = {0};
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "pending torn next slot preserves newest policy");
     decision = evaluate_active_policy();
-    expect(strcmp(decision.rule_id, "reject-devnet") == 0, "pending torn next slot keeps newest rule");
+    expect(strcmp(decision.rule_id, "reject-transfer") == 0, "pending torn next slot keeps newest rule");
     g_blobs.erase("pol_p");
 
     g_set_fails_for_key = "pol_c1";
@@ -565,7 +565,7 @@ int main()
     g_set_fails_for_key.clear();
     decision = evaluate_active_policy();
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::matched_rule, "commit metadata set failure keeps old policy");
-    expect(strcmp(decision.rule_id, "reject-devnet") == 0, "commit metadata set failure keeps old rule");
+    expect(strcmp(decision.rule_id, "reject-transfer") == 0, "commit metadata set failure keeps old rule");
 
     g_commit_fails_for_commit_record = true;
     expect(store_record(custom_record_2) == agent_q::AgentQPolicyStoreWriteResult::applied, "durable commit despite commit return failure is treated as applied");
@@ -575,9 +575,10 @@ int main()
 
     expect(store_record_applied(custom_record_2), "store second custom policy record");
     decision = evaluate_active_policy();
-    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "second custom policy does not match devnet");
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "second custom policy does not match normal intent");
     decision = evaluate_active_policy_mismatch();
-    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "second custom policy does not match mainnet");
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::matched_rule, "second custom policy matches alternate intent");
+    expect(strcmp(decision.rule_id, "reject-other-intent") == 0, "second custom policy rule id");
 
     set_pending_policy_write(1, 0, 3);
     g_blobs["pol_s0"][0] = 0;

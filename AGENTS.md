@@ -414,18 +414,18 @@ get_status
     -> get_accounts
     -> get_policy
     -> get_approval_history
-    -> call_method*
-    -> request_signature*
+    -> sign_by_policy*
+    -> sign_by_user*
   -> disconnect
 ```
 
-`call_method*` means zero or more method calls during an active session.
-`request_signature*` means zero or more provider-facing device-confirmed signing
+`sign_by_policy*` means zero or more MCP-facing policy-authorized signing
+requests during an active session.
+`sign_by_user*` means zero or more provider-facing device-confirmed signing
 requests during an active session. It is not an MCP signing tool and must not
-make `call_method` return signatures. Do not describe provider-facing
-device-confirmed signing as product-complete until tracked implementation
-status and target hardware-smoke evidence for the current tree both say it is
-verified.
+be exposed through MCP. Do not describe either signing path as product-complete
+until tracked implementation status and target hardware-smoke evidence for the
+current tree both say it is verified.
 
 Current intended structure:
 

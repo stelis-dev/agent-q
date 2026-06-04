@@ -8,8 +8,8 @@ import { createDefaultGatewayCore, GatewayCore } from "../dist/admin.js";
 test("client entrypoint constructs an admin-disabled device core facade", () => {
   const core = createDefaultDeviceClientCore();
   assert.equal(typeof core.scanDevices, "function");
-  assert.equal(typeof core.callMethod, "function");
-  assert.equal(typeof core.requestSignature, "function");
+  assert.equal(core.signByPolicy, undefined);
+  assert.equal(typeof core.signByUser, "function");
   assert.equal(core.proposePolicyUpdate, undefined);
 });
 
@@ -69,7 +69,8 @@ test("package self-reference resolves only client entrypoints", async () => {
   assert.equal(typeof adapterInternal.gatewaySuccessOutputSchemas, "object");
   assert.equal(typeof client.createDefaultDeviceClientCore, "function");
   assert.equal(typeof protocol.makeGetStatusRequest, "function");
-  assert.equal(typeof protocol.makeRequestSignatureRequest, "function");
+  assert.equal(typeof protocol.makeSignByUserRequest, "function");
+  assert.equal(typeof protocol.makeSignByPolicyRequest, "function");
   assert.equal(typeof admin.SerialPortUsbDriver, "function");
   for (const subpath of ["config", "core", "errors", "gateway-output-schema", "public-error", "safe-text", "usb"]) {
     await assert.rejects(() => import(`@stelis/agent-q-client/${subpath}`), {

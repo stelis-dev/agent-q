@@ -68,7 +68,7 @@ Rules:
   local PIN verifier are all present.
 - The local PIN verifier is a DEV_PROFILE UX gate for connect approval when
   enabled, settings changes, local reset, the current policy-update proposal
-  flow, and future sensitive writes. It is not root-material encryption or
+  flow, and sensitive local writes. It is not root-material encryption or
   physical extraction defense.
 
 ### Import Existing Mnemonic
@@ -106,7 +106,7 @@ read-only `get_accounts` Sui account derivation are implemented. The current
 setup source also records a DEV_PROFILE local PIN verifier before reporting
 `provisioned`. Source/build tests cover the provisioned Gateway/MCP session path
 through `get_accounts`, policy-decision rejection, and restricted SUI transfer
-request validation through policy-gated `call_method`. Hardware smoke coverage exists for
+request validation through policy-gated `sign_by_policy`. Hardware smoke coverage exists for
 StackChan CoreS3 local setup and PIN entry. Targeted hardware verification
 remains required after setup UI or state changes. Source-level local settings
 reset/material wipe now exists for provisioned StackChan CoreS3 devices, with
@@ -131,12 +131,13 @@ Rules:
 - Gateway must not derive private keys.
 - Firmware returns public key/address data through `get_accounts`.
 - Provider-facing signing has `provider-exposed-not-product-active` status
-  through the shared `request_signature` path for only the bounded Sui
+  through the shared `sign_by_user` path for only the bounded Sui
   `sign_transaction` transfer shape. Current-tree
-  positive/reject/timeout/session-loss hardware smoke is recorded, but
-  product-active status still requires LVGL visual evidence.
-  Current `call_method` handles delegated policy request validation and
-  rejected method results only; it does not return signatures.
+  positive/reject/timeout/session-loss hardware smoke for the new Sign API wire
+  names remains pending, so product-active status is not claimed.
+- Current `sign_by_policy` handles delegated policy-authorized signing for the
+  same bounded Sui `sign_transaction` transfer shape. It returns
+  `policy_rejected` unless a bounded current-schema `sign` rule matches.
 - Agent-Q must not add chain-specific top-level MCP tools.
 
 The first implementation target is Sui Ed25519.
@@ -169,9 +170,11 @@ during runtime checks, Firmware reports `provisioning.state = error`; it does
 not keep reporting `provisioned` while rejecting all session APIs.
 
 The current DEV_PROFILE runtime does not import or export root signing material.
-Read-only public Sui account derivation is available via `get_accounts`, and
-public signing methods are not implemented. Current StackChan CoreS3 source can
-generate a BIP-39 recovery
+Read-only public Sui account derivation is available via `get_accounts`.
+Provider-facing `sign_by_user` and MCP-facing `sign_by_policy` source paths
+exist for the bounded Sui `sign_transaction` shape, but product-active claims
+still depend on the target evidence tracked in `docs/IMPLEMENTATION_STATUS.md`.
+Current StackChan CoreS3 source can generate a BIP-39 recovery
 phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
 3-column by 4-row grid, and wipe scratch on confirm, cancel, timeout, failure,
 or display expiry. Three-letter BIP-39 words are displayed as the full word.
@@ -192,7 +195,7 @@ stateDiagram-v2
 
     Unprovisioned: no root signing material, active policy, or local PIN verifier
     Unprovisioned: optional volatile mnemonic/root/PIN setup scratch only
-    Provisioned: root material, active policy, and local PIN verifier stored; read-only get_accounts/get_policy available; call_method returns policy-gated rejected method results
+    Provisioned: root material, active policy, and local PIN verifier stored; read-only get_accounts/get_policy available; sign_by_policy evaluates bounded policy-authorized signing
 ```
 
 The current runtime does not expose USB requests for provisioning start,
@@ -275,10 +278,11 @@ persistent state `unprovisioned`. If display expiry, UI replacement, or another
 failure removes the panel, Firmware must wipe scratch and the user must start
 the local setup flow again.
 
-This DEV_PROFILE provisioning flow provides read-only `get_accounts` and
-device-local mnemonic recovery, but deliberately stops before signing and
-USER_PROFILE secure provisioning. Custom reject-policy updates are a separate
-provisioned-state proposal flow, not part of provisioning. USER_PROFILE signing
+This DEV_PROFILE provisioning flow provides read-only `get_accounts`,
+device-local mnemonic recovery, and the source signing paths described in the
+implementation status, but it remains separate from USER_PROFILE secure
+provisioning. Current-schema policy updates are a separate provisioned-state
+proposal flow, not part of provisioning. USER_PROFILE signing
 material remains blocked by the security-profile gates in
 `docs/SECURITY_MODEL.md`: secure firmware profile, encrypted storage, verified
 RNG readiness, destructive hardware rehearsal, and hardware smoke.
@@ -327,17 +331,16 @@ reset-state changes.
 Provisioning is not signing readiness. The current dependency order is: keep
 the policy facts / method adapter boundary stable, use the Firmware-owned
 `propose_policy_update` flow for current-schema active policy changes, keep
-`call_method` signing output unavailable, and keep provider-facing signing on
-the separate `request_signature` path. Current `call_method` remains a
-policy-gated rejected-result path for supported validation. Policy update
+MCP policy-authorized signing on `sign_by_policy`, and keep provider-facing
+device-confirmed signing on the separate `sign_by_user` path. Policy update
 remains a proposal flow, not a direct state setter: Gateway/Admin may submit a
 bounded proposal, but Firmware validates it, requires device-local approval,
 and commits it through rollback-safe storage. Sui `sign_personal_message`,
-arbitrary Sui transaction signing, agent-request signing output through MCP,
-full Admin policy editing beyond the current reject-policy proposal template,
-and USER_PROFILE secure provisioning are not implemented. Provider-facing
-`request_signature` product-active status still requires LVGL visual evidence
-for the current source tree.
+arbitrary Sui transaction signing outside the restricted transfer shape, full
+Admin policy editing beyond the current policy proposal template, and
+USER_PROFILE secure provisioning are not implemented. Provider-facing
+`sign_by_user` product-active status still requires LVGL visual evidence for
+the current source tree.
 
 ## Completion Criteria
 

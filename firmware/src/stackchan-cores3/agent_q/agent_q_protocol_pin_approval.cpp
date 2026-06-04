@@ -11,8 +11,8 @@ struct ProtocolPinApprovalState {
     AgentQProtocolPinApprovalPurpose purpose = AgentQProtocolPinApprovalPurpose::none;
     char request_id[kAgentQProtocolPinRequestIdSize] = {};
     char session_id[kAgentQSessionIdSize] = {};
-    TickType_t deadline = 0;
-    TickType_t approval_deadline = 0;
+    TickType_t request_deadline = 0;
+    TickType_t pin_input_deadline = 0;
 
     void clear()
     {
@@ -20,8 +20,8 @@ struct ProtocolPinApprovalState {
         purpose = AgentQProtocolPinApprovalPurpose::none;
         request_id[0] = '\0';
         session_id[0] = '\0';
-        deadline = 0;
-        approval_deadline = 0;
+        request_deadline = 0;
+        pin_input_deadline = 0;
     }
 };
 
@@ -61,12 +61,14 @@ bool tick_reached(TickType_t now, TickType_t deadline)
            static_cast<int32_t>(now - deadline) >= 0;
 }
 
-TickType_t cap_deadline(TickType_t deadline, TickType_t cap)
+TickType_t cap_to_request_deadline(TickType_t deadline)
 {
-    if (deadline == 0 || cap == 0) {
+    if (g_state.request_deadline == 0) {
         return deadline;
     }
-    return tick_reached(deadline, cap) ? cap : deadline;
+    return tick_reached(deadline, g_state.request_deadline)
+               ? g_state.request_deadline
+               : deadline;
 }
 
 }  // namespace
@@ -88,8 +90,8 @@ AgentQProtocolPinApprovalSnapshot protocol_pin_approval_snapshot()
         g_state.purpose,
         g_state.request_id,
         g_state.session_id,
-        g_state.deadline,
-        g_state.approval_deadline,
+        g_state.request_deadline,
+        g_state.pin_input_deadline,
     };
 }
 
@@ -97,7 +99,7 @@ bool protocol_pin_approval_begin_connect(
     const char* request_id,
     TickType_t deadline)
 {
-    if (g_state.active) {
+    if (g_state.active || deadline == 0) {
         return false;
     }
     ProtocolPinApprovalState next = {};
@@ -106,8 +108,8 @@ bool protocol_pin_approval_begin_connect(
     }
     next.active = true;
     next.purpose = AgentQProtocolPinApprovalPurpose::connect;
-    next.deadline = deadline;
-    next.approval_deadline = deadline;
+    next.request_deadline = deadline;
+    next.pin_input_deadline = deadline;
     g_state = next;
     return true;
 }
@@ -117,7 +119,7 @@ bool protocol_pin_approval_begin_policy_update(
     const char* session_id,
     TickType_t deadline)
 {
-    if (g_state.active) {
+    if (g_state.active || deadline == 0) {
         return false;
     }
     ProtocolPinApprovalState next = {};
@@ -127,8 +129,8 @@ bool protocol_pin_approval_begin_policy_update(
     }
     next.active = true;
     next.purpose = AgentQProtocolPinApprovalPurpose::policy_update;
-    next.deadline = deadline;
-    next.approval_deadline = deadline;
+    next.request_deadline = deadline;
+    next.pin_input_deadline = deadline;
     g_state = next;
     return true;
 }
@@ -148,18 +150,6 @@ bool protocol_pin_approval_request_id_for_local_pin_purpose(
     return copy_nonempty_c_string(g_state.request_id, output, output_size);
 }
 
-TickType_t protocol_pin_approval_retry_deadline_for_local_pin_purpose(
-    AgentQLocalPinAuthPurpose purpose,
-    TickType_t fallback_deadline)
-{
-    if (g_state.active &&
-        g_state.approval_deadline != 0 &&
-        local_pin_purpose_matches(g_state.purpose, purpose)) {
-        return cap_deadline(fallback_deadline, g_state.approval_deadline);
-    }
-    return fallback_deadline;
-}
-
 bool protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
     AgentQLocalPinAuthPurpose purpose,
     TickType_t deadline)
@@ -169,7 +159,7 @@ bool protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
         !local_pin_purpose_matches(g_state.purpose, purpose)) {
         return false;
     }
-    g_state.deadline = cap_deadline(deadline, g_state.approval_deadline);
+    g_state.pin_input_deadline = cap_to_request_deadline(deadline);
     return true;
 }
 
@@ -180,7 +170,7 @@ bool protocol_pin_approval_pause_deadline_for_local_pin_purpose(
         !local_pin_purpose_matches(g_state.purpose, purpose)) {
         return false;
     }
-    g_state.deadline = 0;
+    g_state.pin_input_deadline = 0;
     return true;
 }
 
@@ -191,8 +181,8 @@ bool protocol_pin_approval_deadline_reached_for_local_pin_purpose(
     if (!g_state.active || !local_pin_purpose_matches(g_state.purpose, purpose)) {
         return false;
     }
-    return tick_reached(now, g_state.approval_deadline) ||
-           tick_reached(now, g_state.deadline);
+    return tick_reached(now, g_state.request_deadline) ||
+           tick_reached(now, g_state.pin_input_deadline);
 }
 
 bool protocol_pin_approval_policy_update_session_matches(const char* session_id)

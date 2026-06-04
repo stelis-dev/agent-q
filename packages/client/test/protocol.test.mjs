@@ -4,10 +4,9 @@ import {
   assertAccountsResponse,
   assertApprovalHistoryResponse,
   assertCapabilitiesResponse,
-  assertMethodResultResponse,
   assertPolicyResponse,
   assertPolicyUpdateResultResponse,
-  assertSignatureResultResponse,
+  assertSignResultResponse,
   assertConnectResponse,
   assertDisconnectResponse,
   assertStatusResponse,
@@ -18,7 +17,6 @@ import {
   isSafeRequestId,
   isSessionId,
   isSuiAddressForPublicKey,
-  makeCallMethodRequest,
   makeConnectRequest,
   makeDisconnectRequest,
   makeGetCapabilitiesRequest,
@@ -28,7 +26,8 @@ import {
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
   makeProposePolicyUpdateRequest,
-  makeRequestSignatureRequest,
+  makeSignByPolicyRequest,
+  makeSignByUserRequest,
   MAX_SESSION_TTL_MS,
   parseProtocolResponse,
   sanitizeDisplayText,
@@ -328,128 +327,56 @@ test("makeGetApprovalHistoryRequest validates session and pagination params", ()
   );
 });
 
-test("makeCallMethodRequest validates session, method identifiers, and params", () => {
-  const request = makeCallMethodRequest(
-    "session_abcdef0123456789",
-    "sui",
-    "unknown_method",
-    {},
-    "req_call_method_1",
-  );
-  assert.deepEqual(request, {
-    id: "req_call_method_1",
-    version: 1,
-    type: "call_method",
-    sessionId: "session_abcdef0123456789",
-    chain: "sui",
-    method: "unknown_method",
-    params: {},
-  });
-
-  assert.throws(() => makeCallMethodRequest("not_a_session", "sui", "sign_transaction"), /sessionId/);
-  assert.throws(() => makeCallMethodRequest("session_abcdef0123456789", "Sui", "sign_transaction"), /chain/);
-  assert.throws(() => makeCallMethodRequest("session_abcdef0123456789", "sui", "sign transaction"), /method/);
-  assert.throws(
-    () => makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", []),
-    /params/,
-  );
-  assert.throws(
-    () =>
-      makeCallMethodRequest("session_abcdef0123456789", "sui", "unknown_method", {
-        memo: "가".repeat(250),
-      }),
-    /too large/,
-  );
-});
-
-test("makeCallMethodRequest validates Sui sign_transaction params", () => {
+test("makeSignByUserRequest and makeSignByPolicyRequest build identical signing params", () => {
   const params = { network: "devnet", txBytes: CANONICAL_TX_BYTES_BASE64 };
-  const request = makeCallMethodRequest(
+  const userRequest = makeSignByUserRequest(
     "session_abcdef0123456789",
     "sui",
     "sign_transaction",
     params,
-    "req_call_method_1",
+    "req_sign_user_1",
   );
-  assert.deepEqual(request.params, params);
-
-  assert.throws(
-    () => makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", {}),
-    /network/,
+  const policyRequest = makeSignByPolicyRequest(
+    "session_abcdef0123456789",
+    "sui",
+    "sign_transaction",
+    params,
+    "req_sign_policy_1",
   );
-  assert.throws(
-    () =>
-      makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", {
-        network: "invalidnet",
-        txBytes: CANONICAL_TX_BYTES_BASE64,
-      }),
-    /network/,
-  );
-  assert.throws(
-    () =>
-      makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", {
-        network: "devnet",
-        txBytes: "not-base64",
-      }),
-    /base64/,
-  );
-  assert.throws(
-    () =>
-      makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", {
-        network: "devnet",
-        txBytes: CANONICAL_TX_BYTES_BASE64,
-        memo: "extra",
-      }),
-    /unsupported fields/,
-  );
-  assert.throws(
-    () =>
-      makeCallMethodRequest("session_abcdef0123456789", "sui", "sign_transaction", {
-        seed: "must-not-forward",
-      }),
-    /secret material/,
-  );
-});
-
-test("makeRequestSignatureRequest builds bounded device-confirmed signing requests", () => {
-  const params = {
+  assert.deepEqual(userRequest, {
+    id: "req_sign_user_1",
+    version: 1,
+    type: "sign_by_user",
+    sessionId: "session_abcdef0123456789",
     chain: "sui",
     method: "sign_transaction",
-    network: "devnet",
-    txBytes: CANONICAL_TX_BYTES_BASE64,
-  };
-  const request = makeRequestSignatureRequest(
-    "session_abcdef0123456789",
-    params,
-    "req_signature_1",
-  );
-  assert.deepEqual(request, {
-    id: "req_signature_1",
-    version: 1,
-    type: "request_signature",
-    sessionId: "session_abcdef0123456789",
     params,
   });
+  assert.deepEqual(policyRequest, {
+    ...userRequest,
+    id: "req_sign_policy_1",
+    type: "sign_by_policy",
+  });
 
-  assert.throws(() => makeRequestSignatureRequest("not_a_session", params), /sessionId/);
+  assert.throws(() => makeSignByUserRequest("not_a_session", "sui", "sign_transaction", params), /sessionId/);
   assert.throws(
-    () => makeRequestSignatureRequest("session_abcdef0123456789", { ...params, method: "sign_personal_message" }),
+    () => makeSignByPolicyRequest("session_abcdef0123456789", "sui", "sign_personal_message", params),
     /unsupported/,
   );
   assert.throws(
-    () => makeRequestSignatureRequest("session_abcdef0123456789", { ...params, timeoutMs: 30000 }),
+    () => makeSignByUserRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, timeoutMs: 30000 }),
     /unsupported fields/,
   );
   assert.throws(
-    () => makeRequestSignatureRequest("session_abcdef0123456789", { ...params, approvalTimeoutMs: 30000 }),
+    () => makeSignByUserRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, approvalTimeoutMs: 30000 }),
     /unsupported fields/,
   );
   assert.throws(
-    () => makeRequestSignatureRequest("session_abcdef0123456789", { ...params, durationMs: 30000 }),
+    () => makeSignByUserRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, durationMs: 30000 }),
     /unsupported fields/,
   );
   assert.throws(
-    () => makeRequestSignatureRequest("session_abcdef0123456789", { ...params, privateKey: "must-not-forward" }),
+    () => makeSignByPolicyRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, privateKey: "must-not-forward" }),
     /secret material/,
   );
 });
@@ -464,7 +391,7 @@ test("makeProposePolicyUpdateRequest builds admin proposal requests without chai
         chain: "sui",
         method: "sign_transaction",
         action: "reject",
-        criteria: [{ field: "common.network", op: "eq", value: "devnet" }],
+        criteria: [{ field: "common.intent", op: "eq", value: "single_asset_transfer" }],
       },
     ],
   };
@@ -476,10 +403,8 @@ test("makeProposePolicyUpdateRequest builds admin proposal requests without chai
   assert.deepEqual(request, {
     id: "req_policy_update_1",
     version: 1,
-    type: "call_method",
+    type: "propose_policy_update",
     sessionId: "session_abcdef0123456789",
-    methodNamespace: "admin",
-    method: "propose_policy_update",
     params: { policy },
   });
   assert.equal("chain" in request, false);
@@ -538,10 +463,15 @@ const capabilitiesLine = (chainOverrides = {}, accountOverrides = {}, responseOv
     ...responseOverrides,
   });
 
-test("parseProtocolResponse accepts a valid capabilities response with provider signing metadata", () => {
+test("parseProtocolResponse accepts a valid capabilities response with signing metadata", () => {
   const response = assertCapabilitiesResponse(
     parseProtocolResponse(
-      capabilitiesLine({}, {}, { signatureRequests: [{ chain: "sui", method: "sign_transaction" }] }),
+      capabilitiesLine({}, {}, {
+        signing: {
+          user: [{ chain: "sui", method: "sign_transaction" }],
+          policy: [{ chain: "sui", method: "sign_transaction" }],
+        },
+      }),
       "req_capabilities",
     ),
   );
@@ -552,7 +482,10 @@ test("parseProtocolResponse accepts a valid capabilities response with provider 
   assert.equal(response.chains[0].accounts[0].keyScheme, "ed25519");
   assert.equal(response.chains[0].accounts[0].derivationPath, "m/44'/784'/0'/0'/0'");
   assert.deepEqual(response.chains[0].methods, []);
-  assert.deepEqual(response.signatureRequests, [{ chain: "sui", method: "sign_transaction" }]);
+  assert.deepEqual(response.signing, {
+    user: [{ chain: "sui", method: "sign_transaction" }],
+    policy: [{ chain: "sui", method: "sign_transaction" }],
+  });
 });
 
 test("parseProtocolResponse rejects unsupported capabilities", () => {
@@ -585,13 +518,13 @@ test("parseProtocolResponse rejects unsupported capabilities", () => {
     { code: "protocol_error" },
   );
   assert.throws(
-    () => parseProtocolResponse(capabilitiesLine({}, {}, { signatureRequests: [] }), "req_capabilities"),
+    () => parseProtocolResponse(capabilitiesLine({}, {}, { signing: { user: [], policy: [] } }), "req_capabilities"),
     { code: "protocol_error" },
   );
   assert.throws(
     () =>
       parseProtocolResponse(
-        capabilitiesLine({}, {}, { signatureRequests: [{ chain: "sui", method: "sign_personal_message" }] }),
+        capabilitiesLine({}, {}, { signing: { user: [{ chain: "sui", method: "sign_personal_message" }], policy: [{ chain: "sui", method: "sign_transaction" }] } }),
         "req_capabilities",
       ),
     { code: "protocol_error" },
@@ -599,7 +532,7 @@ test("parseProtocolResponse rejects unsupported capabilities", () => {
   assert.throws(
     () =>
       parseProtocolResponse(
-        capabilitiesLine({}, {}, { signatureRequests: [{ chain: "sui", method: "sign_transaction", txBytes: "AQID" }] }),
+        capabilitiesLine({}, {}, { signing: { user: [{ chain: "sui", method: "sign_transaction", txBytes: "AQID" }], policy: [{ chain: "sui", method: "sign_transaction" }] } }),
         "req_capabilities",
       ),
     { code: "protocol_error" },
@@ -805,9 +738,10 @@ const approvalHistoryRecord = (overrides = {}) => ({
   seq: "2",
   uptimeMs: "12345",
   timeSource: "uptime",
-  eventKind: "method_decision",
-  decisionKind: "policy_rejected",
-  confirmationKind: "policy",
+  eventKind: "signing",
+  authorization: "policy",
+  recordKind: "terminal",
+  terminalResult: "policy_rejected",
   chain: "sui",
   method: "sign_transaction",
   reasonCode: "default_reject",
@@ -850,11 +784,12 @@ const approvalHistoryPolicyUpdateLine = (recordOverrides = {}, topLevelOverrides
     ...topLevelOverrides,
   });
 
-const approvalHistorySignatureRequestConfirmationRecord = (overrides = {}) => ({
+const approvalHistorySigningUserConfirmationRecord = (overrides = {}) => ({
   seq: "4",
   uptimeMs: "12347",
   timeSource: "uptime",
-  eventKind: "signature_request",
+  eventKind: "signing",
+  authorization: "user",
   reasonCode: "device_confirmed",
   recordKind: "confirmation",
   confirmationKind: "local_pin",
@@ -864,11 +799,12 @@ const approvalHistorySignatureRequestConfirmationRecord = (overrides = {}) => ({
   ...overrides,
 });
 
-const approvalHistorySignatureRequestTerminalRecord = (overrides = {}) => ({
+const approvalHistorySigningUserTerminalRecord = (overrides = {}) => ({
   seq: "5",
   uptimeMs: "12348",
   timeSource: "uptime",
-  eventKind: "signature_request",
+  eventKind: "signing",
+  authorization: "user",
   reasonCode: "device_confirmed",
   recordKind: "terminal",
   terminalResult: "signed",
@@ -878,15 +814,15 @@ const approvalHistorySignatureRequestTerminalRecord = (overrides = {}) => ({
   ...overrides,
 });
 
-const approvalHistorySignatureRequestLine = (recordOverrides = {}, topLevelOverrides = {}, terminal = false) =>
+const approvalHistorySigningUserLine = (recordOverrides = {}, topLevelOverrides = {}, terminal = false) =>
   JSON.stringify({
     id: "req_approval_history",
     version: 1,
     type: "approval_history",
     records: [
       terminal
-        ? approvalHistorySignatureRequestTerminalRecord(recordOverrides)
-        : approvalHistorySignatureRequestConfirmationRecord(recordOverrides),
+        ? approvalHistorySigningUserTerminalRecord(recordOverrides)
+        : approvalHistorySigningUserConfirmationRecord(recordOverrides),
     ],
     hasMore: false,
     ...topLevelOverrides,
@@ -899,9 +835,9 @@ test("parseProtocolResponse accepts bounded approval history pages", () => {
   assert.equal(response.type, "approval_history");
   assert.equal(response.records.length, 1);
   assert.equal(response.hasMore, false);
-  assert.equal(response.records[0].eventKind, "method_decision");
-  assert.equal(response.records[0].decisionKind, "policy_rejected");
-  assert.equal(response.records[0].confirmationKind, "policy");
+  assert.equal(response.records[0].eventKind, "signing");
+  assert.equal(response.records[0].authorization, "policy");
+  assert.equal(response.records[0].terminalResult, "policy_rejected");
   assert.equal(response.records[0].payloadDigest, APPROVAL_DIGEST);
 
 });
@@ -919,23 +855,25 @@ test("parseProtocolResponse accepts policy update approval history records", () 
   assert.equal(response.records[0].highestAction, "reject");
 });
 
-test("parseProtocolResponse accepts signature request approval history records", () => {
+test("parseProtocolResponse accepts signing approval history records", () => {
   const confirmation = assertApprovalHistoryResponse(
-    parseProtocolResponse(approvalHistorySignatureRequestLine(), "req_approval_history"),
+    parseProtocolResponse(approvalHistorySigningUserLine(), "req_approval_history"),
   );
-  assert.equal(confirmation.records[0].eventKind, "signature_request");
+  assert.equal(confirmation.records[0].eventKind, "signing");
   assert.equal(confirmation.records[0].recordKind, "confirmation");
+  assert.equal(confirmation.records[0].authorization, "user");
   assert.equal(confirmation.records[0].confirmationKind, "local_pin");
   assert.equal(confirmation.records[0].payloadDigest, APPROVAL_DIGEST);
 
   const terminal = assertApprovalHistoryResponse(
     parseProtocolResponse(
-      approvalHistorySignatureRequestLine({}, {}, true),
+      approvalHistorySigningUserLine({}, {}, true),
       "req_approval_history",
     ),
   );
-  assert.equal(terminal.records[0].eventKind, "signature_request");
+  assert.equal(terminal.records[0].eventKind, "signing");
   assert.equal(terminal.records[0].recordKind, "terminal");
+  assert.equal(terminal.records[0].authorization, "user");
   assert.equal(terminal.records[0].terminalResult, "signed");
   assert.equal(terminal.records[0].payloadDigest, APPROVAL_DIGEST);
 });
@@ -972,8 +910,6 @@ test("parseProtocolResponse rejects malformed approval history records", () => {
     { uptimeMs: "not-number" },
     { timeSource: "wall_clock" },
     { eventKind: "session_event" },
-    { decisionKind: "approved" },
-    { decisionKind: "connect_approved" },
     { confirmationKind: "connect_pin" },
     { chain: "Sui" },
     { method: "sign transaction" },
@@ -1003,7 +939,6 @@ test("parseProtocolResponse rejects malformed policy update approval history rec
     { ruleCount: 17 },
     { ruleCount: 1.5 },
     { highestAction: "approve" },
-    { decisionKind: "policy_rejected" },
     { confirmationKind: "policy" },
     { chain: "sui" },
     { method: "sign_transaction" },
@@ -1019,7 +954,7 @@ test("parseProtocolResponse rejects malformed policy update approval history rec
   }
 });
 
-test("parseProtocolResponse rejects malformed signature request approval history records", () => {
+test("parseProtocolResponse rejects malformed signing approval history records", () => {
   for (const recordOverride of [
     { recordKind: "approved" },
     { recordKind: "confirmation", confirmationKind: "policy" },
@@ -1029,15 +964,14 @@ test("parseProtocolResponse rejects malformed signature request approval history
     { recordKind: "terminal", terminalResult: null },
     { payloadDigest: "not-a-digest" },
     { policyHash: APPROVAL_DIGEST },
-    { decisionKind: "policy_rejected" },
     { result: "signed" },
     { ruleRef: "default" },
     { sessionId: "session_abcdef0123456789" },
   ]) {
     assert.throws(
-      () => parseProtocolResponse(approvalHistorySignatureRequestLine(recordOverride), "req_approval_history"),
+      () => parseProtocolResponse(approvalHistorySigningUserLine(recordOverride), "req_approval_history"),
       { code: "protocol_error" },
-      `signature request approval history override should be rejected: ${JSON.stringify(recordOverride)}`,
+      `signing approval history override should be rejected: ${JSON.stringify(recordOverride)}`,
     );
   }
 });
@@ -1136,263 +1070,192 @@ test("parseProtocolResponse rejects malformed policy_update_result responses", (
   }
 });
 
-const methodResultLine = (overrides = {}, errorOverrides = {}) =>
+const signResultLine = (overrides = {}, errorOverrides = {}) =>
   JSON.stringify({
-    id: "req_call_method",
+    id: "req_sign",
     version: 1,
-    type: "method_result",
-    status: "rejected",
+    type: "sign_result",
+    authorization: "user",
+    status: "user_rejected",
     error: {
-      code: "unsupported_method",
-      message: "Method is not supported.",
+      code: "user_rejected",
+      message: "The signing request was rejected on the device.",
       ...errorOverrides,
     },
     ...overrides,
   });
 
-test("parseProtocolResponse accepts rejected method_result responses", () => {
-  const response = assertMethodResultResponse(
-    parseProtocolResponse(methodResultLine(), "req_call_method"),
-  );
-  assert.equal(response.type, "method_result");
-  assert.equal(response.status, "rejected");
-  assert.equal(response.error.code, "unsupported_method");
+test("parseProtocolResponse accepts signed sign_result responses for user and policy authorization", () => {
+  for (const authorization of ["user", "policy"]) {
+    const signature = Buffer.alloc(97, authorization === "user" ? 1 : 2).toString("base64");
+    const signed = assertSignResultResponse(
+      parseProtocolResponse(
+        signResultLine({
+          authorization,
+          status: "signed",
+          chain: "sui",
+          method: "sign_transaction",
+          signature,
+          error: undefined,
+        }),
+        "req_sign",
+      ),
+    );
+    assert.equal(signed.type, "sign_result");
+    assert.equal(signed.status, "signed");
+    assert.equal(signed.authorization, authorization);
+    assert.equal(signed.signature, signature);
+  }
 });
 
-test("parseProtocolResponse accepts rejected Sui sign_transaction policy decisions", () => {
+test("parseProtocolResponse accepts bounded sign_result terminal outcomes", () => {
   const cases = [
-    ["policy_rejected", "The request was rejected by device policy."],
-    ["malformed_transaction", "Transaction bytes are malformed."],
-    ["unsupported_transaction", "Transaction shape is not supported."],
-    ["policy_error", "Active policy is unavailable."],
-  ];
-  for (const [code, message] of cases) {
-    const response = assertMethodResultResponse(
-      parseProtocolResponse(methodResultLine({}, { code, message }), "req_call_method"),
-    );
-    assert.equal(response.status, "rejected");
-    assert.equal(response.error.code, code);
-    assert.equal(response.error.message, message);
-  }
-});
-
-test("parseProtocolResponse exposes call_method history write failures as top-level errors", () => {
-  const response = parseProtocolResponse(
-    JSON.stringify({
-      id: "req_call_method",
-      version: 1,
-      type: "error",
-      error: {
-        code: "history_error",
-        message: "Could not record method decision.",
-      },
-    }),
-    "req_call_method",
-  );
-  assert.equal(response.type, "error");
-  assert.equal(response.error.code, "history_error");
-  assert.throws(() => assertMethodResultResponse(response), { code: "history_error" });
-});
-
-test("parseProtocolResponse rejects unsupported method_result shapes", () => {
-  assert.throws(
-    () => parseProtocolResponse(methodResultLine({ status: "approved", result: { signature: "x" } }), "req_call_method"),
-    { code: "protocol_error" },
-  );
-  assert.throws(
-    () =>
-      parseProtocolResponse(
-        methodResultLine({
-          status: "approved",
-          chain: "sui",
-          method: "sign_transaction",
-          signature: "not-public",
-          error: undefined,
-        }),
-        "req_call_method",
-      ),
-    { code: "protocol_error" },
-  );
-  assert.throws(
-    () =>
-      parseProtocolResponse(
-        methodResultLine({
-          status: "approved",
-          chain: "sui",
-          method: "sign_personal_message",
-          signature: "not-public",
-          error: undefined,
-        }),
-        "req_call_method",
-      ),
-    { code: "protocol_error" },
-  );
-  assert.throws(
-    () =>
-      parseProtocolResponse(
-        methodResultLine({
-          status: "approved",
-          chain: "sui",
-          method: "sign_transaction",
-          signature: "not-public",
-          txBytes: CANONICAL_TX_BYTES_BASE64,
-          error: undefined,
-        }),
-        "req_call_method",
-      ),
-    { code: "protocol_error" },
-  );
-  assert.throws(
-    () => parseProtocolResponse(methodResultLine({ sessionId: "session_abcdef0123456789" }), "req_call_method"),
-    { code: "protocol_error" },
-  );
-  assert.throws(
-    () => parseProtocolResponse(methodResultLine({}, { code: "policy_rejected", message: "wrong" }), "req_call_method"),
-    { code: "protocol_error" },
-  );
-  for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
-    assert.throws(
-      () => parseProtocolResponse(methodResultLine({ [fieldName]: "secret-like value" }), "req_call_method"),
-      { code: "protocol_error" },
-      `secret-like method_result field ${fieldName} must be rejected`,
-    );
-  }
-});
-
-test("parseProtocolResponse accepts bounded signature_result product outcomes", () => {
-  const signed = assertSignatureResultResponse(
-    parseProtocolResponse(
-      JSON.stringify({
-        id: "req_signature",
-        version: 1,
-        type: "signature_result",
-        status: "signed",
-        reasonCode: "device_confirmed",
-        chain: "sui",
-        method: "sign_transaction",
-        signature: Buffer.alloc(97, 1).toString("base64"),
-      }),
-      "req_signature",
-    ),
-  );
-  assert.equal(signed.status, "signed");
-  assert.equal(signed.reasonCode, "device_confirmed");
-  assert.equal(signed.signature, Buffer.alloc(97, 1).toString("base64"));
-
-  for (const terminal of [
     {
-      status: "rejected",
-      reasonCode: "device_rejected",
+      status: "user_rejected",
+      authorization: "user",
+      code: "user_rejected",
       message: "The signing request was rejected on the device.",
     },
     {
-      status: "timed_out",
-      reasonCode: "device_timed_out",
+      status: "user_timed_out",
+      authorization: "user",
+      code: "user_timed_out",
       message: "The signing request timed out on the device.",
     },
     {
-      status: "failed",
-      reasonCode: "signing_failed",
+      status: "policy_rejected",
+      authorization: "policy",
+      code: "policy_rejected",
+      message: "The signing request was rejected by device policy.",
+      policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+      ruleRef: "default",
+    },
+    {
+      status: "signing_failed",
+      authorization: "policy",
+      code: "signing_failed",
       message: "The device could not produce a signature.",
     },
-  ]) {
-    const response = assertSignatureResultResponse(
+  ];
+  for (const terminal of cases) {
+    const response = assertSignResultResponse(
       parseProtocolResponse(
-        JSON.stringify({
-          id: "req_signature",
-          version: 1,
-          type: "signature_result",
+        signResultLine({
+          authorization: terminal.authorization,
           status: terminal.status,
-          reasonCode: terminal.reasonCode,
-          error: {
-            code: terminal.reasonCode,
-            message: terminal.message,
-          },
+          policyHash: terminal.policyHash,
+          ruleRef: terminal.ruleRef,
+        }, {
+          code: terminal.code,
+          message: terminal.message,
         }),
-        "req_signature",
+        "req_sign",
       ),
     );
     assert.equal(response.status, terminal.status);
-    assert.equal(response.reasonCode, terminal.reasonCode);
+    assert.equal(response.authorization, terminal.authorization);
+    if (response.status === "policy_rejected") {
+      assert.equal(response.policyHash, terminal.policyHash);
+      assert.equal(response.ruleRef, terminal.ruleRef);
+    }
     if (response.status !== "signed") {
-      assert.equal(response.error.code, terminal.reasonCode);
+      assert.equal(response.error.code, terminal.code);
     }
   }
 });
 
-test("parseProtocolResponse rejects signature_result leaks and inconsistent terminal errors", () => {
+test("parseProtocolResponse exposes signing history write failures as top-level errors", () => {
+  const response = parseProtocolResponse(
+    JSON.stringify({
+      id: "req_sign",
+      version: 1,
+      type: "error",
+      error: {
+        code: "history_error",
+        message: "Could not record signing terminal result.",
+      },
+    }),
+    "req_sign",
+  );
+  assert.equal(response.type, "error");
+  assert.equal(response.error.code, "history_error");
+  assert.throws(() => assertSignResultResponse(response), { code: "history_error" });
+});
+
+test("parseProtocolResponse rejects sign_result leaks and inconsistent terminal errors", () => {
   assert.throws(
     () =>
       parseProtocolResponse(
-        JSON.stringify({
-          id: "req_signature",
-          version: 1,
-          type: "signature_result",
+        signResultLine({
           status: "signed",
-          reasonCode: "device_confirmed",
           chain: "sui",
           method: "sign_transaction",
           signature: Buffer.alloc(96, 1).toString("base64"),
+          error: undefined,
         }),
-        "req_signature",
+        "req_sign",
       ),
     { code: "protocol_error" },
   );
   assert.throws(
     () =>
       parseProtocolResponse(
-        JSON.stringify({
-          id: "req_signature",
-          version: 1,
-          type: "signature_result",
+        signResultLine({
           status: "signed",
-          reasonCode: "device_confirmed",
           chain: "sui",
           method: "sign_transaction",
           signature: Buffer.alloc(97, 1).toString("base64"),
           txBytes: CANONICAL_TX_BYTES_BASE64,
+          error: undefined,
         }),
-        "req_signature",
+        "req_sign",
       ),
     { code: "protocol_error" },
   );
   assert.throws(
     () =>
       parseProtocolResponse(
-        JSON.stringify({
-          id: "req_signature",
-          version: 1,
-          type: "signature_result",
-          status: "rejected",
-          reasonCode: "device_rejected",
-          error: {
-            code: "device_timed_out",
-            message: "The signing request timed out on the device.",
-          },
+        signResultLine({}, {
+          code: "user_timed_out",
+          message: "The signing request timed out on the device.",
         }),
-        "req_signature",
+        "req_sign",
       ),
     { code: "protocol_error" },
   );
   assert.throws(
     () =>
       parseProtocolResponse(
-        JSON.stringify({
-          id: "req_signature",
-          version: 1,
-          type: "signature_result",
-          status: "rejected",
-          reasonCode: "device_rejected",
+        signResultLine({
           sessionId: "session_abcdef0123456789",
-          error: {
-            code: "device_rejected",
-            message: "The signing request was rejected on the device.",
-          },
         }),
-        "req_signature",
+        "req_sign",
       ),
     { code: "protocol_error" },
   );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        signResultLine({
+          authorization: "user",
+          status: "policy_rejected",
+          policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+          ruleRef: "default",
+        }, {
+          code: "policy_rejected",
+          message: "The signing request was rejected by device policy.",
+        }),
+        "req_sign",
+      ),
+    { code: "protocol_error" },
+  );
+  for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
+    assert.throws(
+      () => parseProtocolResponse(signResultLine({ [fieldName]: "secret-like value" }), "req_sign"),
+      { code: "protocol_error" },
+      `secret-like sign_result field ${fieldName} must be rejected`,
+    );
+  }
 });
 
 test("parses connect_result approved and rejected responses", () => {

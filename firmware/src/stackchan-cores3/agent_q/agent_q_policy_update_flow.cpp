@@ -24,6 +24,7 @@ struct AgentQPolicyUpdateFlowState {
     uint8_t digest[kAgentQPolicyUpdateDigestBytes] = {};
     char policy_hash[kAgentQPolicyIdSize] = {};
     char method_summary[kAgentQPolicyMaxChainIdLength + kAgentQPolicyMaxOperationLength + 2] = {};
+    char review_summary[192] = {};
     AgentQPolicyUpdateHighestAction highest_action = AgentQPolicyUpdateHighestAction::reject;
 
     void clear()
@@ -62,7 +63,12 @@ bool digest_record(
 AgentQPolicyUpdateHighestAction highest_action_for_document(
     const AgentQPolicyDocument& document)
 {
-    (void)document;
+    for (size_t index = 0; index < document.rule_count; ++index) {
+        if (document.rules != nullptr &&
+            document.rules[index].action == AgentQPolicyAction::sign) {
+            return AgentQPolicyUpdateHighestAction::sign;
+        }
+    }
     return AgentQPolicyUpdateHighestAction::reject;
 }
 
@@ -71,8 +77,174 @@ const char* highest_action_name(AgentQPolicyUpdateHighestAction action)
     switch (action) {
         case AgentQPolicyUpdateHighestAction::reject:
             return "reject";
+        case AgentQPolicyUpdateHighestAction::sign:
+            return "sign";
     }
     return "";
+}
+
+bool field_matches(const AgentQPolicyCriterion& criterion, const char* field)
+{
+    return criterion.field != nullptr &&
+           field != nullptr &&
+           strcmp(criterion.field, field) == 0;
+}
+
+const char* single_criterion_value(const AgentQPolicyRule& rule, const char* field)
+{
+    if (rule.criteria == nullptr) {
+        return nullptr;
+    }
+    for (size_t index = 0; index < rule.criterion_count; ++index) {
+        const AgentQPolicyCriterion& criterion = rule.criteria[index];
+        if (!field_matches(criterion, field)) {
+            continue;
+        }
+        if (criterion.op == AgentQPolicyOperator::eq) {
+            return criterion.value;
+        }
+        if (criterion.op == AgentQPolicyOperator::in &&
+            criterion.values != nullptr &&
+            criterion.value_count == 1) {
+            return criterion.values[0];
+        }
+    }
+    return nullptr;
+}
+
+const char* lte_criterion_value(const AgentQPolicyRule& rule, const char* field)
+{
+    if (rule.criteria == nullptr) {
+        return nullptr;
+    }
+    for (size_t index = 0; index < rule.criterion_count; ++index) {
+        const AgentQPolicyCriterion& criterion = rule.criteria[index];
+        if (field_matches(criterion, field) &&
+            criterion.op == AgentQPolicyOperator::lte) {
+            return criterion.value;
+        }
+    }
+    return nullptr;
+}
+
+void format_short_address(const char* input, char* output, size_t output_size)
+{
+    if (output == nullptr || output_size == 0) {
+        return;
+    }
+    output[0] = '\0';
+    if (input == nullptr || input[0] == '\0') {
+        return;
+    }
+    const size_t length = strlen(input);
+    if (length <= 18 || output_size < 14) {
+        snprintf(output, output_size, "%s", input);
+        return;
+    }
+    snprintf(
+        output,
+        output_size,
+        "%.6s..%.4s",
+        input,
+        input + length - 4);
+}
+
+void format_policy_hash_prefix(const char* input, char* output, size_t output_size)
+{
+    if (output == nullptr || output_size == 0) {
+        return;
+    }
+    output[0] = '\0';
+    if (input == nullptr || strncmp(input, "sha256:", 7) != 0 || strlen(input) < 15) {
+        return;
+    }
+    snprintf(output, output_size, "sha256:%.8s", input + 7);
+}
+
+bool build_sign_review_summary(
+    const AgentQPolicyRule& rule,
+    char* output,
+    size_t output_size)
+{
+    if (output == nullptr || output_size == 0) {
+        return false;
+    }
+    output[0] = '\0';
+    const char* recipient = single_criterion_value(rule, "sui.recipient_address");
+    const char* amount = lte_criterion_value(rule, "sui.amount_raw");
+    const char* gas_budget = lte_criterion_value(rule, "sui.gas_budget");
+    const char* gas_price = lte_criterion_value(rule, "sui.gas_price");
+    if (recipient == nullptr || amount == nullptr || gas_budget == nullptr || gas_price == nullptr) {
+        return false;
+    }
+    char short_recipient[16] = {};
+    format_short_address(recipient, short_recipient, sizeof(short_recipient));
+    if (short_recipient[0] == '\0') {
+        return false;
+    }
+    const int written = snprintf(
+        output,
+        output_size,
+        "to %s a<=%s g<=%s/%s",
+        short_recipient,
+        amount,
+        gas_budget,
+        gas_price);
+    return written > 0 && static_cast<size_t>(written) < output_size;
+}
+
+bool build_review_summary(
+    const AgentQPolicyDocument& document,
+    const char* method_summary,
+    const char* policy_hash,
+    AgentQPolicyUpdateHighestAction highest_action,
+    char* output,
+    size_t output_size)
+{
+    if (output == nullptr || output_size == 0) {
+        return false;
+    }
+    output[0] = '\0';
+    const AgentQPolicyRule* sign_rule = nullptr;
+    for (size_t index = 0; index < document.rule_count; ++index) {
+        if (document.rules != nullptr &&
+            document.rules[index].action == AgentQPolicyAction::sign) {
+            sign_rule = &document.rules[index];
+        }
+    }
+    if (!agent_q_policy_sign_rule_count_is_supported(document)) {
+        return false;
+    }
+    char hash_prefix[16] = {};
+    format_policy_hash_prefix(policy_hash, hash_prefix, sizeof(hash_prefix));
+    if (hash_prefix[0] == '\0') {
+        return false;
+    }
+    if (sign_rule != nullptr) {
+        char sign_summary[96] = {};
+        if (!build_sign_review_summary(*sign_rule, sign_summary, sizeof(sign_summary))) {
+            return false;
+        }
+        const int written = snprintf(
+            output,
+            output_size,
+            "%s r%u reject->%s\n%s\n%s",
+            hash_prefix,
+            static_cast<unsigned>(document.rule_count),
+            highest_action_name(highest_action),
+            method_summary != nullptr && method_summary[0] != '\0' ? method_summary : "none",
+            sign_summary);
+        return written > 0 && static_cast<size_t>(written) < output_size;
+    }
+    const int written = snprintf(
+        output,
+        output_size,
+        "%s r%u reject->%s\n%s reject policy",
+        hash_prefix,
+        static_cast<unsigned>(document.rule_count),
+        highest_action_name(highest_action),
+        method_summary != nullptr && method_summary[0] != '\0' ? method_summary : "none");
+    return written > 0 && static_cast<size_t>(written) < output_size;
 }
 
 bool append_policy_update_history(const char* result, const char* reason_code, uint64_t uptime_ms)
@@ -147,6 +319,7 @@ AgentQPolicyUpdateFlowSnapshot policy_update_flow_snapshot()
         highest_action_name(g_state.highest_action),
         agent_q_policy_action_name(g_state.parsed.document.default_action),
         g_state.method_summary,
+        g_state.review_summary,
     };
 }
 
@@ -213,6 +386,16 @@ AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(JsonVariantConst poli
             g_state.parsed.document.rules[0].operation);
     } else {
         strlcpy(g_state.method_summary, "none", sizeof(g_state.method_summary));
+    }
+    if (!build_review_summary(
+            g_state.parsed.document,
+            g_state.method_summary,
+            g_state.policy_hash,
+            g_state.highest_action,
+            g_state.review_summary,
+            sizeof(g_state.review_summary))) {
+        g_state.clear();
+        return AgentQPolicyUpdateFlowBeginResult::invalid_policy;
     }
     g_state.active = true;
     return AgentQPolicyUpdateFlowBeginResult::ok;

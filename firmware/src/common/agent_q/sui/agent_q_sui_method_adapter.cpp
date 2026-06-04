@@ -26,7 +26,6 @@ bool string_present(const char* value)
 
 bool make_sui_sign_transaction_policy_facts(
     const SuiTransferFacts& sui_facts,
-    const char* network,
     AgentQSuiSignTransactionPolicyFacts* out)
 {
     if (out == nullptr) {
@@ -34,8 +33,7 @@ bool make_sui_sign_transaction_policy_facts(
     }
     *out = {};
 
-    if (!string_present(network) ||
-        !string_present(sui_facts.sender) ||
+    if (!string_present(sui_facts.sender) ||
         !string_present(sui_facts.gas_owner) ||
         !string_present(sui_facts.recipient) ||
         !string_present(sui_facts.amount) ||
@@ -57,11 +55,6 @@ bool make_sui_sign_transaction_policy_facts(
         "common.method",
         AgentQPolicyValueType::string,
         kAgentQSuiPolicyOperationSignTransaction,
-    };
-    out->entries[index++] = AgentQPolicyFact{
-        "common.network",
-        AgentQPolicyValueType::string,
-        network,
     };
     out->entries[index++] = AgentQPolicyFact{
         "common.intent",
@@ -103,7 +96,7 @@ bool make_sui_sign_transaction_policy_facts(
         AgentQPolicyValueType::u64_decimal,
         sui_facts.gas_price,
     };
-    static_assert(kAgentQSuiTransferPolicyFactCount == 11, "Sui transfer policy fact count mismatch");
+    static_assert(kAgentQSuiTransferPolicyFactCount == 10, "Sui transfer policy fact count mismatch");
     out->facts = AgentQPolicyFacts{
         out->entries,
         index,
@@ -120,6 +113,7 @@ AgentQPolicyMethodDescriptor sui_sign_transaction_policy_method_descriptor()
         kAgentQSuiPolicyOperationSignTransaction,
         kSuiSignTransactionPolicyFields,
         sizeof(kSuiSignTransactionPolicyFields) / sizeof(kSuiSignTransactionPolicyFields[0]),
+        true,
         true,
     };
 }

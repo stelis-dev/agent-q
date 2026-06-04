@@ -384,6 +384,28 @@ int main()
     }
 
     {
+        agent_q::test_set_tick(200);
+        agent_q::local_pin_auth_begin_connect(260);
+        expect(agent_q::local_pin_auth_add_digit('1', 500) ==
+                   agent_q::AgentQLocalPinAuthInputResult::accepted,
+               "digit input is accepted before deadline");
+        expect(agent_q::local_pin_auth_backspace_pin(500),
+               "backspace is accepted before deadline");
+        expect(agent_q::local_pin_auth_clear_pin(500),
+               "clear is accepted before deadline");
+        expect(agent_q::local_pin_auth_deadline_expired(260),
+               "digit, backspace, and clear do not extend the input deadline");
+        agent_q::test_set_tick(261);
+        expect(agent_q::local_pin_auth_add_digit('1', 500) ==
+                   agent_q::AgentQLocalPinAuthInputResult::inactive,
+               "digit input after deadline is rejected by owner");
+        expect(agent_q::local_pin_auth_submit(262, 0, 500, 300) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::unavailable_stage,
+               "submit after deadline does not start verification");
+        agent_q::local_pin_auth_clear_flow();
+    }
+
+    {
         agent_q::test_set_tick(300);
         agent_q::local_pin_auth_begin_connect_setting(false, 360);
         enter_pin("123456", 360);

@@ -37,6 +37,7 @@ struct AgentQPolicyUpdateFlowSnapshot {
     const char* highest_action;
     const char* default_action;
     const char* method_summary;
+    const char* review_summary;
 };
 
 bool policy_update_flow_active();

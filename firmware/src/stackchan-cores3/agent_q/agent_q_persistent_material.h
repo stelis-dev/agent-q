@@ -29,6 +29,7 @@ enum class AgentQPersistentMaterialConsistencyResult {
 
 enum class AgentQPersistentMaterialRuntimeFailure {
     root_material_unreadable,
+    active_policy_unavailable,
     pending_reset_resume_failed,
     local_reset_root_wipe_failed,
     local_reset_policy_wipe_failed,

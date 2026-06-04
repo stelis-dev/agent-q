@@ -86,6 +86,10 @@ bool parse_action(const char* value, AgentQPolicyAction* out)
         *out = AgentQPolicyAction::reject;
         return true;
     }
+    if (string_eq(value, "sign")) {
+        *out = AgentQPolicyAction::sign;
+        return true;
+    }
     return false;
 }
 
@@ -256,7 +260,8 @@ AgentQPolicyProposalParseStatus parse_rule(
     if (method_descriptor == nullptr) {
         return AgentQPolicyProposalParseStatus::unsupported_method;
     }
-    if (action != AgentQPolicyAction::reject || !method_descriptor->supports_reject) {
+    if ((action == AgentQPolicyAction::reject && !method_descriptor->supports_reject) ||
+        (action == AgentQPolicyAction::sign && !method_descriptor->supports_sign)) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
 
@@ -287,6 +292,9 @@ AgentQPolicyProposalParseStatus parse_rule(
         if (status != AgentQPolicyProposalParseStatus::ok) {
             return status;
         }
+    }
+    if (!agent_q_policy_sign_rule_is_bounded(output)) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
     }
     return AgentQPolicyProposalParseStatus::ok;
 }
@@ -343,6 +351,10 @@ AgentQPolicyProposalParseStatus parse_agent_q_policy_proposal(
             memset(out, 0, sizeof(*out));
             return status;
         }
+    }
+    if (!agent_q_policy_sign_rule_count_is_supported(out->document)) {
+        memset(out, 0, sizeof(*out));
+        return AgentQPolicyProposalParseStatus::invalid_policy;
     }
     return AgentQPolicyProposalParseStatus::ok;
 }

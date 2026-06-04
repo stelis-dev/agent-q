@@ -2,7 +2,6 @@ import { ConfigStore } from "./config.js";
 import { GatewayCore } from "./core.js";
 import { SerialPortUsbDriver } from "./usb.js";
 import type {
-  CallMethodResult,
   ConnectDeviceResult,
   DeviceListResult,
   DisconnectDeviceResult,
@@ -13,13 +12,12 @@ import type {
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
-  RequestSignatureResult,
+  SignByUserResult,
   ScanDevicesResult,
   SelectDeviceResult,
 } from "./core.js";
 
 export type {
-  CallMethodResult,
   ConnectDeviceResult,
   DeviceListResult,
   DisconnectDeviceResult,
@@ -30,7 +28,7 @@ export type {
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
-  RequestSignatureResult,
+  SignByUserResult,
   ScanDevicesResult,
   SelectDeviceResult,
 } from "./core.js";
@@ -67,21 +65,14 @@ export interface DeviceClientCore {
     limit?: number;
     beforeSeq?: string;
   }): Promise<GetApprovalHistoryResult>;
-  callMethod(input: {
-    deviceId?: string;
-    purpose?: string;
-    chain: string;
-    method: string;
-    params?: Record<string, unknown>;
-  }): Promise<CallMethodResult>;
-  requestSignature(input: {
+  signByUser(input: {
     deviceId?: string;
     purpose?: string;
     chain: "sui";
     method: "sign_transaction";
     network: "mainnet" | "testnet" | "devnet" | "localnet";
     txBytes: string;
-  }): Promise<RequestSignatureResult>;
+  }): Promise<SignByUserResult>;
 }
 
 function deviceClientFromCore(core: GatewayCore): DeviceClientCore {
@@ -96,8 +87,7 @@ function deviceClientFromCore(core: GatewayCore): DeviceClientCore {
     getAccounts: (input = {}) => core.getAccounts(input),
     getPolicy: (input = {}) => core.getPolicy(input),
     getApprovalHistory: (input = {}) => core.getApprovalHistory(input),
-    callMethod: (input) => core.callMethod(input),
-    requestSignature: (input) => core.requestSignature(input),
+    signByUser: (input) => core.signByUser(input),
   };
 }
 

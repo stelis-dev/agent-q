@@ -2,11 +2,11 @@
 //
 // Skipped by default. Run only with a provisioned development device flashed
 // with a current build that intentionally enables provider-facing
-// request_signature.
+// sign_by_user.
 //
 // The test drives the public provider API:
 //   scanDevices -> selectDevice -> connectDevice (device approval)
-//   -> getCapabilities -> requestSignature -> getApprovalHistory
+//   -> getCapabilities -> signByUser -> getApprovalHistory
 //
 // It does not generate txBytes. Provide txBytes from a separate smoke fixture or
 // hardware-preflight helper so this file validates the provider boundary rather
@@ -109,9 +109,9 @@ function assertNewestSignatureTerminal(history, previousTopSeq, expectedTerminal
   const topRecord = history.records[0];
   const newTopSeq = BigInt(topRecord.seq);
   if (previousTopSeq !== null) {
-    assert.ok(newTopSeq > previousTopSeq, "expected requestSignature to create a newer approval-history record");
+    assert.ok(newTopSeq > previousTopSeq, "expected signByUser to create a newer approval-history record");
   }
-  assert.equal(topRecord.eventKind, "signature_request");
+  assert.equal(topRecord.eventKind, "signing");
   assert.equal(topRecord.recordKind, "terminal");
   assert.equal(topRecord.terminalResult, expectedTerminalResult);
   assert.equal(topRecord.chain, "sui");
@@ -122,7 +122,7 @@ function assertNewestSignatureTerminal(history, previousTopSeq, expectedTerminal
 function assertRecentSignatureConfirmation(history, previousTopSeq) {
   const confirmation = history.records.find((record) => {
     return (
-      record.eventKind === "signature_request" &&
+      record.eventKind === "signing" &&
       record.recordKind === "confirmation" &&
       record.confirmationKind === "local_pin" &&
       (previousTopSeq === null || BigInt(record.seq) > previousTopSeq)
@@ -134,11 +134,11 @@ function assertRecentSignatureConfirmation(history, previousTopSeq) {
   assert.match(confirmation.payloadDigest, /^sha256:[0-9a-f]{64}$/);
 }
 
-function assertNoNewSignatureRequestHistory(history, previousTopSeq) {
+function assertNoNewSignByUserHistory(history, previousTopSeq) {
   assert.equal(history.source, "live");
   const unexpected = history.records.find((record) => {
     return (
-      record.eventKind === "signature_request" &&
+      record.eventKind === "signing" &&
       (previousTopSeq === null || BigInt(record.seq) > previousTopSeq)
     );
   });
@@ -150,7 +150,7 @@ function assertNoNewSignatureRequestHistory(history, previousTopSeq) {
 }
 
 test(
-  "hardware: provider requestSignature terminal path",
+  "hardware: provider signByUser terminal path",
   { skip: skipReason() },
   async () => {
     const provider = createAgentQProvider();
@@ -174,7 +174,8 @@ test(
       console.log("[provider-signature-smoke] checking provider-facing signing capability...");
       const capabilities = await provider.getCapabilities({ deviceId, purpose: "provider-signature-smoke" });
       assert.equal(capabilities.source, "live");
-      assert.deepEqual(capabilities.signatureRequests, [{ chain: "sui", method: "sign_transaction" }]);
+      assert.deepEqual(capabilities.signing.user, [{ chain: "sui", method: "sign_transaction" }]);
+      assert.equal(JSON.stringify(capabilities).includes('"policy"'), false);
       assert.equal(
         capabilities.capabilities.some((chain) => chain.methods.includes("sign_transaction")),
         false,
@@ -200,7 +201,7 @@ test(
         console.log("[provider-signature-smoke] leave the signing review untouched until device timeout...");
       }
 
-      const result = await provider.requestSignature({
+      const result = await provider.signByUser({
         deviceId,
         purpose: "provider-signature-smoke",
         chain: "sui",
@@ -237,7 +238,7 @@ test(
           purpose: "provider-signature-smoke",
         });
         assert.equal(recoveredCapabilities.source, "live");
-        assert.deepEqual(recoveredCapabilities.signatureRequests, [{ chain: "sui", method: "sign_transaction" }]);
+        assert.deepEqual(recoveredCapabilities.signing.user, [{ chain: "sui", method: "sign_transaction" }]);
 
         const afterReconnectHistory = await provider.getApprovalHistory({
           deviceId,
@@ -245,7 +246,7 @@ test(
           limit: 4,
         });
         assertNoProviderLeak(afterReconnectHistory, requestedTxBytes);
-        assertNoNewSignatureRequestHistory(afterReconnectHistory, previousTopSeq);
+        assertNoNewSignByUserHistory(afterReconnectHistory, previousTopSeq);
         return;
       }
 
@@ -260,22 +261,22 @@ test(
 
       if (requestedScenario === "positive") {
         assert.equal(result.status, "signed");
-        assert.equal(result.reasonCode, "device_confirmed");
+        assert.equal(result.authorization, "user");
         assert.equal(result.chain, "sui");
         assert.equal(result.method, "sign_transaction");
         assert.match(result.signature, SUI_ED25519_SIGNATURE_BASE64_PATTERN);
         assertNewestSignatureTerminal(afterHistory, previousTopSeq, "signed");
         assertRecentSignatureConfirmation(afterHistory, previousTopSeq);
       } else if (requestedScenario === "reject") {
-        assert.equal(result.status, "rejected");
-        assert.equal(result.reasonCode, "device_rejected");
-        assert.equal(result.error.code, "device_rejected");
-        assertNewestSignatureTerminal(afterHistory, previousTopSeq, "rejected");
+        assert.equal(result.status, "user_rejected");
+        assert.equal(result.authorization, "user");
+        assert.equal(result.error.code, "user_rejected");
+        assertNewestSignatureTerminal(afterHistory, previousTopSeq, "user_rejected");
       } else {
-        assert.equal(result.status, "timed_out");
-        assert.equal(result.reasonCode, "device_timed_out");
-        assert.equal(result.error.code, "device_timed_out");
-        assertNewestSignatureTerminal(afterHistory, previousTopSeq, "timed_out");
+        assert.equal(result.status, "user_timed_out");
+        assert.equal(result.authorization, "user");
+        assert.equal(result.error.code, "user_timed_out");
+        assertNewestSignatureTerminal(afterHistory, previousTopSeq, "user_timed_out");
       }
     } finally {
       console.log("[provider-signature-smoke] disconnecting...");

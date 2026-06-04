@@ -3,9 +3,9 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: firmware/tools/stackchan-cores3/test_signature_request_ingress.sh
+Usage: firmware/tools/stackchan-cores3/test_sign_by_user_ingress.sh
 
-Compiles the StackChan CoreS3 request_signature ingress decision helper
+Compiles the StackChan CoreS3 sign_by_user ingress decision helper
 against ArduinoJson with a host C++ compiler and checks that envelope, state,
 session, and params gates stay ordered. This test does not require ESP-IDF,
 but it uses the pinned StackChan ArduinoJson component checkout prepared by
@@ -33,10 +33,10 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_request_id.h" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.h" \
-  "${AGENT_Q_DIR}/agent_q_signature_request_ingress.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signature_request_ingress.h" \
-  "${AGENT_Q_DIR}/agent_q_signature_request_validation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signature_request_validation.h"; do
+  "${AGENT_Q_DIR}/agent_q_sign_by_user_ingress.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_by_user_ingress.h" \
+  "${AGENT_Q_DIR}/agent_q_sign_by_user_validation.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_by_user_validation.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first, or set AGENT_Q_ARDUINOJSON_ROOT." >&2
@@ -48,7 +48,7 @@ CXX_BIN="${CXX:-c++}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-signature-request-ingress.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-cat >"${TMP_DIR}/signature_request_ingress_test.cpp" <<'CPP'
+cat >"${TMP_DIR}/sign_by_user_ingress_test.cpp" <<'CPP'
 #include <ArduinoJson.h>
 
 #include <stdio.h>
@@ -57,7 +57,7 @@ cat >"${TMP_DIR}/signature_request_ingress_test.cpp" <<'CPP'
 
 #include <string>
 
-#include "agent_q_signature_request_ingress.h"
+#include "agent_q_sign_by_user_ingress.h"
 
 namespace {
 
@@ -86,16 +86,17 @@ JsonDocument parse_json(const char* label, const std::string& json)
 
 std::string valid_params()
 {
-    return "{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-           "\"network\":\"devnet\",\"txBytes\":\"AAAA\"}";
+    return "{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}";
 }
 
 std::string request_with_session_and_params(
     const std::string& session_id,
     const std::string& params)
 {
-    return "{\"id\":\"req_signature_1\",\"version\":1,\"type\":\"request_signature\","
-           "\"sessionId\":\"" + session_id + "\",\"params\":" + params + "}";
+    return "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+           "\"sessionId\":\"" + session_id + "\","
+           "\"chain\":\"sui\",\"method\":\"sign_transaction\","
+           "\"params\":" + params + "}";
 }
 
 std::string valid_request()
@@ -107,8 +108,10 @@ std::string request_with_extra_top_level(
     const std::string& session_id,
     const std::string& params)
 {
-    return "{\"id\":\"req_signature_1\",\"version\":1,\"type\":\"request_signature\","
-           "\"sessionId\":\"" + session_id + "\",\"params\":" + params + ","
+    return "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+           "\"sessionId\":\"" + session_id + "\","
+           "\"chain\":\"sui\",\"method\":\"sign_transaction\","
+           "\"params\":" + params + ","
            "\"extra\":true}";
 }
 
@@ -130,12 +133,12 @@ agent_q::AgentQSessionValidationResult validate_session(
     return check->result;
 }
 
-agent_q::AgentQSignatureRequestIngressState state(
+agent_q::AgentQSignByUserIngressState state(
     bool material_ready,
     bool busy,
     SessionCheck* check)
 {
-    return agent_q::AgentQSignatureRequestIngressState{
+    return agent_q::AgentQSignByUserIngressState{
         material_ready,
         busy,
         validate_session,
@@ -146,16 +149,16 @@ agent_q::AgentQSignatureRequestIngressState state(
 void expect_ingress(
     const char* label,
     const std::string& json,
-    const agent_q::AgentQSignatureRequestIngressState& input_state,
-    agent_q::AgentQSignatureRequestIngressResult expected,
+    const agent_q::AgentQSignByUserIngressState& input_state,
+    agent_q::AgentQSignByUserIngressResult expected,
     int* expected_session_calls = nullptr,
     bool expect_valid_output = false)
 {
     JsonDocument document = parse_json(label, json);
-    agent_q::AgentQSignatureRequestIngressOutput output = {};
+    agent_q::AgentQSignByUserIngressOutput output = {};
     memset(&output, 0xA5, sizeof(output));
-    const agent_q::AgentQSignatureRequestIngressResult actual =
-        agent_q::evaluate_signature_request_ingress(document, input_state, &output);
+    const agent_q::AgentQSignByUserIngressResult actual =
+        agent_q::evaluate_sign_by_user_ingress(document, input_state, &output);
     if (actual != expected) {
         fprintf(stderr, "%s: expected ingress result %d, got %d\n",
                 label, static_cast<int>(expected), static_cast<int>(actual));
@@ -170,7 +173,7 @@ void expect_ingress(
             ++failures;
         }
     }
-    if (actual != agent_q::AgentQSignatureRequestIngressResult::ok &&
+    if (actual != agent_q::AgentQSignByUserIngressResult::ok &&
         (output.envelope.request_id[0] != '\0' ||
          output.session.session_id[0] != '\0' ||
          output.params.chain[0] != '\0' ||
@@ -182,7 +185,7 @@ void expect_ingress(
         ++failures;
     }
     if (expect_valid_output &&
-        (strcmp(output.envelope.request_id, "req_signature_1") != 0 ||
+        (strcmp(output.envelope.request_id, "req_sign_1") != 0 ||
          strcmp(output.session.session_id, "session_aaaaaaaaaaaaaaaa") != 0 ||
          strcmp(output.params.chain, "sui") != 0 ||
          strcmp(output.params.method, "sign_transaction") != 0 ||
@@ -211,7 +214,7 @@ void wipe_sensitive_buffer(void* data, size_t size)
 
 int main()
 {
-    using IngressResult = agent_q::AgentQSignatureRequestIngressResult;
+    using IngressResult = agent_q::AgentQSignByUserIngressResult;
     using SessionResult = agent_q::AgentQSessionValidationResult;
 
     {
@@ -231,7 +234,7 @@ int main()
         int calls = 0;
         expect_ingress(
             "unsupported type before state",
-            "{\"id\":\"req_signature_1\",\"version\":1,\"type\":\"call_method\","
+            "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_policy\","
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":[]}",
             state(false, false, &check),
             IngressResult::unsupported_type,
@@ -344,8 +347,7 @@ int main()
             "params invalid network after valid session",
             request_with_session_and_params(
                 "session_aaaaaaaaaaaaaaaa",
-                "{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                "\"network\":\"bogus\",\"txBytes\":\"AAAA\"}"),
+                "{\"network\":\"bogus\",\"txBytes\":\"AAAA\"}"),
             state(true, false, &check),
             IngressResult::invalid_network,
             &calls);
@@ -355,22 +357,22 @@ int main()
         JsonDocument document = parse_json("null output", valid_request());
         SessionCheck check{"session_aaaaaaaaaaaaaaaa", SessionResult::ok, 0};
         const IngressResult result =
-            agent_q::evaluate_signature_request_ingress(document, state(true, false, &check), nullptr);
+            agent_q::evaluate_sign_by_user_ingress(document, state(true, false, &check), nullptr);
         if (result != IngressResult::invalid_request_shape || check.calls != 0) {
             fprintf(stderr, "null output should fail before session validation\n");
             ++failures;
         }
     }
 
-    if (strcmp(agent_q::signature_request_ingress_result_name(IngressResult::busy), "busy") != 0 ||
-        strcmp(agent_q::signature_request_ingress_result_name(IngressResult::invalid_state), "invalid_state") != 0 ||
-        strcmp(agent_q::signature_request_ingress_result_name(IngressResult::invalid_tx_bytes), "invalid_tx_bytes") != 0) {
+    if (strcmp(agent_q::sign_by_user_ingress_result_name(IngressResult::busy), "busy") != 0 ||
+        strcmp(agent_q::sign_by_user_ingress_result_name(IngressResult::invalid_state), "invalid_state") != 0 ||
+        strcmp(agent_q::sign_by_user_ingress_result_name(IngressResult::invalid_tx_bytes), "invalid_tx_bytes") != 0) {
         fprintf(stderr, "ingress result names mismatch\n");
         ++failures;
     }
 
     if (failures != 0) {
-        fprintf(stderr, "signature request ingress tests failed: %d\n", failures);
+        fprintf(stderr, "sign_by_user ingress tests failed: %d\n", failures);
         return 1;
     }
     return 0;
@@ -384,12 +386,12 @@ CPP
   -Werror \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${AGENT_Q_DIR}" \
-  "${TMP_DIR}/signature_request_ingress_test.cpp" \
+  "${TMP_DIR}/sign_by_user_ingress_test.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signature_request_ingress.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signature_request_validation.cpp" \
-  -o "${TMP_DIR}/signature_request_ingress_test"
+  "${AGENT_Q_DIR}/agent_q_sign_by_user_ingress.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_by_user_validation.cpp" \
+  -o "${TMP_DIR}/sign_by_user_ingress_test"
 
-"${TMP_DIR}/signature_request_ingress_test"
+"${TMP_DIR}/sign_by_user_ingress_test"

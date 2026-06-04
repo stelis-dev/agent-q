@@ -32,18 +32,21 @@ uint8_t stored_highest_action(AgentQPolicyUpdateHighestAction value)
     switch (value) {
         case AgentQPolicyUpdateHighestAction::reject:
             return 0;
+        case AgentQPolicyUpdateHighestAction::sign:
+            return 1;
     }
     return 0;
 }
 
 bool highest_action_input_valid(AgentQPolicyUpdateHighestAction value)
 {
-    return value == AgentQPolicyUpdateHighestAction::reject;
+    return value == AgentQPolicyUpdateHighestAction::reject ||
+           value == AgentQPolicyUpdateHighestAction::sign;
 }
 
 bool stored_highest_action_valid(uint8_t value)
 {
-    return value == 0;
+    return value == 0 || value == 1;
 }
 
 bool marker_valid(const StoredPolicyUpdateMarker& marker)

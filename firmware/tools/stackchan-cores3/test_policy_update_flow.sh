@@ -87,6 +87,7 @@ char g_last_history_result[32] = {};
 char g_last_history_reason[32] = {};
 char g_last_history_policy_hash[72] = {};
 char g_last_highest_action[8] = {};
+char g_last_marker_highest_action[8] = {};
 size_t g_last_rule_count = 0;
 uint64_t g_last_uptime_ms = 0;
 
@@ -115,6 +116,7 @@ void reset_stubs()
     memset(g_last_history_reason, 0, sizeof(g_last_history_reason));
     memset(g_last_history_policy_hash, 0, sizeof(g_last_history_policy_hash));
     memset(g_last_highest_action, 0, sizeof(g_last_highest_action));
+    memset(g_last_marker_highest_action, 0, sizeof(g_last_marker_highest_action));
     g_last_rule_count = 0;
     g_last_uptime_ms = 0;
 }
@@ -127,11 +129,11 @@ JsonDocument parse_policy_json()
         "\"schema\":\"agentq.policy.v0\","
         "\"defaultAction\":\"reject\","
         "\"rules\":[{"
-        "\"id\":\"reject_devnet\","
+        "\"id\":\"reject_transfer\","
         "\"chain\":\"sui\","
         "\"method\":\"sign_transaction\","
         "\"action\":\"reject\","
-        "\"criteria\":[{\"field\":\"common.network\",\"op\":\"eq\",\"value\":\"devnet\"}]"
+        "\"criteria\":[{\"field\":\"common.intent\",\"op\":\"eq\",\"value\":\"single_asset_transfer\"}]"
         "}]"
         "}";
     const DeserializationError error = deserializeJson(document, json);
@@ -144,6 +146,86 @@ bool begin_valid_policy()
     JsonDocument document = parse_policy_json();
     return agent_q::policy_update_flow_begin(document.as<JsonVariantConst>()) ==
            agent_q::AgentQPolicyUpdateFlowBeginResult::ok;
+}
+
+JsonDocument parse_sign_policy_json()
+{
+    JsonDocument document;
+    const char* json =
+        "{"
+        "\"schema\":\"agentq.policy.v0\","
+        "\"defaultAction\":\"reject\","
+        "\"rules\":[{"
+        "\"id\":\"sign_transfer\","
+        "\"chain\":\"sui\","
+        "\"method\":\"sign_transaction\","
+        "\"action\":\"sign\","
+        "\"criteria\":["
+        "{\"field\":\"common.intent\",\"op\":\"eq\",\"value\":\"single_asset_transfer\"},"
+        "{\"field\":\"sui.command_shape\",\"op\":\"eq\",\"value\":\"restricted_transfer\"},"
+        "{\"field\":\"sui.coin_type\",\"op\":\"eq\",\"value\":\"0x2::sui::SUI\"},"
+        "{\"field\":\"sui.recipient_address\",\"op\":\"in\",\"values\":[\"0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"]},"
+        "{\"field\":\"sui.amount_raw\",\"op\":\"lte\",\"value\":\"1000000000\"},"
+        "{\"field\":\"sui.gas_budget\",\"op\":\"lte\",\"value\":\"10000000\"},"
+        "{\"field\":\"sui.gas_price\",\"op\":\"lte\",\"value\":\"1000\"}"
+        "]"
+        "}]"
+        "}";
+    const DeserializationError error = deserializeJson(document, json);
+    expect(!error, "test sign policy JSON parses");
+    return document;
+}
+
+bool begin_sign_policy()
+{
+    JsonDocument document = parse_sign_policy_json();
+    return agent_q::policy_update_flow_begin(document.as<JsonVariantConst>()) ==
+           agent_q::AgentQPolicyUpdateFlowBeginResult::ok;
+}
+
+JsonDocument parse_multi_sign_policy_json()
+{
+    JsonDocument document;
+    const char* json =
+        "{"
+        "\"schema\":\"agentq.policy.v0\","
+        "\"defaultAction\":\"reject\","
+        "\"rules\":["
+        "{"
+        "\"id\":\"sign_transfer_one\","
+        "\"chain\":\"sui\","
+        "\"method\":\"sign_transaction\","
+        "\"action\":\"sign\","
+        "\"criteria\":["
+        "{\"field\":\"common.intent\",\"op\":\"eq\",\"value\":\"single_asset_transfer\"},"
+        "{\"field\":\"sui.command_shape\",\"op\":\"eq\",\"value\":\"restricted_transfer\"},"
+        "{\"field\":\"sui.coin_type\",\"op\":\"eq\",\"value\":\"0x2::sui::SUI\"},"
+        "{\"field\":\"sui.recipient_address\",\"op\":\"in\",\"values\":[\"0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"]},"
+        "{\"field\":\"sui.amount_raw\",\"op\":\"lte\",\"value\":\"1000000000\"},"
+        "{\"field\":\"sui.gas_budget\",\"op\":\"lte\",\"value\":\"10000000\"},"
+        "{\"field\":\"sui.gas_price\",\"op\":\"lte\",\"value\":\"1000\"}"
+        "]"
+        "},"
+        "{"
+        "\"id\":\"sign_transfer_two\","
+        "\"chain\":\"sui\","
+        "\"method\":\"sign_transaction\","
+        "\"action\":\"sign\","
+        "\"criteria\":["
+        "{\"field\":\"common.intent\",\"op\":\"eq\",\"value\":\"single_asset_transfer\"},"
+        "{\"field\":\"sui.command_shape\",\"op\":\"eq\",\"value\":\"restricted_transfer\"},"
+        "{\"field\":\"sui.coin_type\",\"op\":\"eq\",\"value\":\"0x2::sui::SUI\"},"
+        "{\"field\":\"sui.recipient_address\",\"op\":\"in\",\"values\":[\"0x1111111111111111111111111111111111111111111111111111111111111111\"]},"
+        "{\"field\":\"sui.amount_raw\",\"op\":\"lte\",\"value\":\"1\"},"
+        "{\"field\":\"sui.gas_budget\",\"op\":\"lte\",\"value\":\"1\"},"
+        "{\"field\":\"sui.gas_price\",\"op\":\"lte\",\"value\":\"1\"}"
+        "]"
+        "}"
+        "]"
+        "}";
+    const DeserializationError error = deserializeJson(document, json);
+    expect(!error, "test multi-sign policy JSON parses");
+    return document;
 }
 
 }  // namespace
@@ -197,10 +279,13 @@ AgentQPolicyUpdateMarkerBeginResult policy_update_marker_begin(
     ++g_marker_begin_calls;
     if (policy_digest == nullptr ||
         policy_digest_size != kAgentQPolicyUpdateDigestBytes ||
-        rule_count != 1 ||
-        highest_action != AgentQPolicyUpdateHighestAction::reject) {
+        rule_count != 1) {
         return AgentQPolicyUpdateMarkerBeginResult::invalid_input;
     }
+    strlcpy(
+        g_last_marker_highest_action,
+        highest_action == AgentQPolicyUpdateHighestAction::sign ? "sign" : "reject",
+        sizeof(g_last_marker_highest_action));
     return g_marker_begin_result;
 }
 
@@ -224,6 +309,8 @@ int main()
     expect(strcmp(snapshot.highest_action, "reject") == 0, "snapshot exposes highest action");
     expect(strcmp(snapshot.default_action, "reject") == 0, "snapshot exposes default action");
     expect(strcmp(snapshot.method_summary, "sui/sign_transaction") == 0, "snapshot exposes method summary");
+    expect(strcmp(snapshot.review_summary, "sha256:aaaaaaaa r1 reject->reject\nsui/sign_transaction reject policy") == 0,
+           "snapshot exposes reject policy review summary");
 
     reset_stubs();
     expect(begin_valid_policy(), "begin before rejected terminal");
@@ -265,6 +352,30 @@ int main()
                strcmp(g_last_highest_action, "reject") == 0 &&
                g_last_rule_count == 1,
            "applied commit history metadata");
+
+    reset_stubs();
+    expect(begin_sign_policy(), "bounded sign policy begins flow");
+    snapshot = agent_q::policy_update_flow_snapshot();
+    expect(strcmp(snapshot.highest_action, "sign") == 0, "snapshot exposes sign as highest action");
+    expect(strcmp(snapshot.review_summary,
+                  "sha256:aaaaaaaa r1 reject->sign\nsui/sign_transaction\n"
+                  "to 0x0123..cdef a<=1000000000 g<=10000000/1000") == 0,
+           "snapshot exposes bounded sign rule review summary");
+    expect(agent_q::policy_update_flow_commit(350) ==
+               agent_q::AgentQPolicyUpdateFlowTerminalResult::applied,
+           "bounded sign policy commit returns applied");
+    expect(strcmp(g_last_marker_highest_action, "sign") == 0 &&
+               strcmp(g_last_highest_action, "sign") == 0,
+           "bounded sign policy marker and history preserve highest action");
+
+    reset_stubs();
+    {
+        JsonDocument multi_sign = parse_multi_sign_policy_json();
+        expect(agent_q::policy_update_flow_begin(multi_sign.as<JsonVariantConst>()) ==
+                   agent_q::AgentQPolicyUpdateFlowBeginResult::invalid_policy,
+               "multi-sign policy is rejected by the current schema");
+        expect(!agent_q::policy_update_flow_active(), "multi-sign policy leaves no active proposal");
+    }
 
     reset_stubs();
     expect(begin_valid_policy(), "begin before unchanged failure commit");
