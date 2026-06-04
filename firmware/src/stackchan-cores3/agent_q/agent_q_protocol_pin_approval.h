@@ -23,6 +23,7 @@ struct AgentQProtocolPinApprovalSnapshot {
     const char* request_id;
     const char* session_id;
     TickType_t deadline;
+    TickType_t approval_deadline;
 };
 
 void protocol_pin_approval_clear();
@@ -44,6 +45,11 @@ bool protocol_pin_approval_request_id_for_local_pin_purpose(
 TickType_t protocol_pin_approval_retry_deadline_for_local_pin_purpose(
     AgentQLocalPinAuthPurpose purpose,
     TickType_t fallback_deadline);
+bool protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
+    AgentQLocalPinAuthPurpose purpose,
+    TickType_t deadline);
+bool protocol_pin_approval_pause_deadline_for_local_pin_purpose(
+    AgentQLocalPinAuthPurpose purpose);
 bool protocol_pin_approval_deadline_reached_for_local_pin_purpose(
     AgentQLocalPinAuthPurpose purpose,
     TickType_t now);

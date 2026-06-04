@@ -208,10 +208,10 @@ test(
       const select = await client.callTool({ name: "select_device", arguments: { deviceId } });
       assert.equal(select.structuredContent.source, "selected");
 
-      console.log("[hw-smoke] sending connect — approve the device-local prompt within 60s...");
+      console.log("[hw-smoke] sending connect — approve the device-local prompt within 30s...");
       const connect = await client.callTool({
         name: "connect_device",
-        arguments: { deviceId, approvalTimeoutMs: 60000 },
+        arguments: { deviceId },
       });
       assert.equal(connect.structuredContent.source, "connected", "connect must be physically approved");
       assert.equal("sessionId" in connect.structuredContent, false, "sessionId must not reach the client");
@@ -325,10 +325,10 @@ test(
       const select = await client.callTool({ name: "select_device", arguments: { deviceId } });
       assert.equal(select.structuredContent.source, "selected");
 
-      console.log("[hw-policy-update] connecting — enter the device PIN within 60s...");
+      console.log("[hw-policy-update] connecting — enter the device PIN within 30s...");
       const connect = await client.callTool({
         name: "connect_device",
-        arguments: { deviceId, approvalTimeoutMs: 60000 },
+        arguments: { deviceId },
       });
       assert.equal(connect.structuredContent.source, "connected", "connect must be approved on the device");
       assert.equal("sessionId" in connect.structuredContent, false, "sessionId must not reach the client");
@@ -356,10 +356,10 @@ test(
         ],
       };
 
-      console.log("[hw-policy-update] proposing reject-only policy — enter the device PIN within 60s...");
+      console.log("[hw-policy-update] proposing reject-only policy — enter the device PIN within 30s...");
       const update = await client.callTool({
         name: "propose_policy_update",
-        arguments: { deviceId, policy: proposal, timeoutMs: 61000 },
+        arguments: { deviceId, policy: proposal },
       });
       assert.equal(update.structuredContent.source, "live");
       assert.equal(update.structuredContent.status, "applied");

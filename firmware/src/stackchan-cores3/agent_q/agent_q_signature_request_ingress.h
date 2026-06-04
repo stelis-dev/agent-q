@@ -20,7 +20,6 @@ enum class AgentQSignatureRequestIngressResult {
     unsupported_method,
     invalid_network,
     invalid_tx_bytes,
-    invalid_timeout,
 };
 
 using AgentQSignatureRequestSessionValidateFn =

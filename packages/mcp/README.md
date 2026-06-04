@@ -32,6 +32,15 @@ authority for keys, policies, device-local approval, and policy commits.
 policy; Firmware validates the proposal, requires device-local approval, and
 commits only supported policy records.
 
+MCP does not expose a signing tool. Provider-facing `signatureRequests`
+capability metadata is rejected by the MCP `get_capabilities` runtime boundary
+and by the exported MCP tool output schema.
+
+MCP tool inputs do not expose caller-controlled timing fields. Firmware-owned
+device-local approval windows remain 30 seconds; Gateway uses fixed internal
+transport budgets with a non-configurable margin so a valid terminal device
+result can still be received at the end of that window.
+
 ## Admin Page
 
 The `agent-q` binary serves a local Admin Page alongside stdio MCP tools through

@@ -8,7 +8,7 @@ import {
   scanUsbDeviceStatuses,
   scanUsbDevices,
   tryParseMatchingResponseLine,
-  validateTimeoutMs,
+  validateInternalDeadlineMs,
 } from "../dist/usb.js";
 import { assertPolicyUpdateResultResponse, assertStatusResponse } from "../dist/protocol.js";
 import { GatewayError } from "../dist/errors.js";
@@ -103,10 +103,10 @@ test("recognizes observed Espressif USB serial metadata", () => {
   );
 });
 
-test("rejects invalid timeout values", () => {
-  assert.equal(validateTimeoutMs(undefined), 2000);
-  assert.throws(() => validateTimeoutMs(0), /timeoutMs/);
-  assert.throws(() => validateTimeoutMs(10001), /timeoutMs/);
+test("validates internal USB deadline values", () => {
+  assert.equal(validateInternalDeadlineMs(undefined), 30000);
+  assert.throws(() => validateInternalDeadlineMs(0), /Internal USB deadline/);
+  assert.throws(() => validateInternalDeadlineMs(30001), /Internal USB deadline/);
 });
 
 test("surfaces id-less Firmware error responses for the in-flight request", () => {
@@ -172,8 +172,8 @@ test("scan applies a shrinking per-candidate timeout under one shared deadline",
         manufacturer: "Espressif",
       }));
     },
-    async requestStatus(_portPath, timeoutMs) {
-      seenTimeouts.push(timeoutMs);
+    async requestStatus(_portPath, deadlineMs) {
+      seenTimeouts.push(deadlineMs);
       now += 100;
       return status;
     },
@@ -202,10 +202,10 @@ test("scan surfaces a port-enumeration error instead of silently reporting no de
   );
 });
 
-test("deadlineEnforcingDriver bounds a call whose driver ignores its timeout", async () => {
-  // Single enforcement boundary: a hanging call is bounded by its timeout argument
+test("deadlineEnforcingDriver bounds a call whose driver ignores its deadline", async () => {
+  // Single enforcement boundary: a hanging call is bounded by its deadline argument
   // even though this driver ignores it. GatewayCore wraps its driver with this, so
-  // every timeout-bearing transport call is bounded in one place.
+  // every deadline-bearing transport call is bounded in one place.
   const driver = {
     requestStatus() {
       return new Promise(() => {});

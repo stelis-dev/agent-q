@@ -50,8 +50,6 @@ AgentQSignatureRequestIngressResult map_validation_result(
             return AgentQSignatureRequestIngressResult::invalid_network;
         case AgentQSignatureRequestValidationResult::invalid_tx_bytes:
             return AgentQSignatureRequestIngressResult::invalid_tx_bytes;
-        case AgentQSignatureRequestValidationResult::invalid_timeout:
-            return AgentQSignatureRequestIngressResult::invalid_timeout;
     }
     return AgentQSignatureRequestIngressResult::invalid_request_shape;
 }
@@ -180,8 +178,6 @@ const char* signature_request_ingress_result_name(
             return "invalid_network";
         case AgentQSignatureRequestIngressResult::invalid_tx_bytes:
             return "invalid_tx_bytes";
-        case AgentQSignatureRequestIngressResult::invalid_timeout:
-            return "invalid_timeout";
     }
     return "invalid_request_shape";
 }

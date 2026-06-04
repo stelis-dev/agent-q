@@ -37,7 +37,8 @@ Agent-Q Firmware:
 - stores keys and policies
 - evaluates requests
 - requests device-local approval when required
-- signs, rejects, or times out requests where implemented
+- signs, rejects, or times out only request types implemented by the current
+  target/runtime state
 
 The local Admin Page served by Gateway exists for read-only device metadata and
 the current policy proposal template. Firmware-owned admin methods exist
@@ -58,13 +59,14 @@ This path does not imply device-local confirmation for each method request. In
 the current implementation, Sui `sign_transaction` is recognized only for
 rejected-path policy evaluation and returns rejected method results.
 
-Device-confirmed signing requests are not implemented. If added, they must use
-the shared `request_signature` request defined below, not a `call_method` mode
-or request-authority flag. A device-confirmed request means Firmware shows and
+When provider-facing device-confirmed signing is activated, it must use the
+shared `request_signature` request defined below, not a `call_method` mode or
+request-authority flag. A device-confirmed request means Firmware shows and
 confirms a bounded request on the device; it does not prove that the host, dapp,
 provider, agent, or upstream user intent was trustworthy. Provider-facing APIs
-may expose only this future device-confirmed path for application signing. MCP
-agent-facing `call_method` remains the delegated policy request path.
+may expose only this device-confirmed path for application signing. MCP
+agent-facing `call_method` remains the delegated policy request path and does
+not expose signing output.
 
 Policy documents may use only actions accepted by the current schema and
 enforceable by the current runtime. Any other action value is invalid input and
@@ -128,9 +130,7 @@ Protocol error codes:
 - `invalid_json`
 - `invalid_id`
 - `invalid_code`
-- `invalid_duration`
 - `invalid_gateway_name`
-- `invalid_approval_timeout`
 - `invalid_session`
 - `invalid_state`
 - `invalid_method`
@@ -150,8 +150,8 @@ errors.
 
 ## Session Flow
 
-Protocol interaction has a clear discovery step, session start, and session
-end.
+Protocol interaction has a clear discovery step, session start, and session end.
+The delegated MCP-facing baseline is:
 
 ```text
 get_status
@@ -164,6 +164,13 @@ get_status
     -> call_method*
   -> disconnect
 ```
+
+Provider-facing device-confirmed signing must use a separate session-scoped
+`request_signature` request when it is activated. In the current public
+Gateway/provider/MCP/client/Firmware USB surface it is not active, is not
+advertised, and is not parsed as a public result. Its product-complete status
+depends on target implementation-status and current-tree hardware evidence; do
+not infer that status from this protocol shape alone.
 
 Flow rules:
 
@@ -180,8 +187,9 @@ Flow rules:
   Firmware-owned device-local approval. Hardware targets may implement that
   approval as a physical confirm or as local PIN verification, but PIN entry
   must never be a USB protocol request.
-- `get_capabilities`, `get_accounts`, `get_policy`, `get_approval_history`, and
-  `call_method` require `sessionId`.
+- `get_capabilities`, `get_accounts`, `get_policy`, `get_approval_history`,
+  and `call_method` require `sessionId`. Future `request_signature` activation
+  must also require `sessionId`.
 - `disconnect` ends the session.
 - Firmware should reject session-scoped requests with an unknown or inactive
   `sessionId`.
@@ -199,7 +207,11 @@ device selection, and local Gateway caching of discovered devices. The current
 rejected, recognizes bounded restricted SUI transfer request inputs for Sui
 `sign_transaction`, consumes the committed active policy, records required
 policy-rejected approval-history metadata, and returns rejected method results.
-Public signing methods are not implemented.
+Public-inactive internal Firmware partial runtime modules exist for future
+provider-facing device-confirmed signing for the same bounded Sui
+`sign_transaction` shape, but the current public USB dispatcher, Gateway
+client/parser/provider API, and capability advertisement are inactive. MCP
+agent-facing signing output remains unavailable.
 
 Provisioning and material reset transitions are not USB protocol requests in the
 current implementation. The StackChan CoreS3 target enters setup from its local
@@ -220,7 +232,9 @@ between Gateway and Firmware. A connection session does not authorize signing,
 does not prove agent identity, and does not change Firmware policy.
 
 `get_capabilities` is implemented as a read-only, session-scoped capability
-request that reports Sui account identity and no public methods.
+request that reports Sui account identity and no delegated public methods.
+Provider-facing `signatureRequests` signing availability is not part of the
+current public capability response.
 `get_accounts` is implemented as a read-only, session-scoped identity request
 for the Sui Ed25519 account at index 0 in the `provisioned` state.
 `get_policy` is implemented as a read-only, session-scoped summary of the
@@ -464,8 +478,7 @@ Request:
   "version": 1,
   "type": "identify_device",
   "params": {
-    "code": "1234",
-    "durationMs": 10000
+    "code": "1234"
   }
 }
 ```
@@ -489,11 +502,10 @@ Response:
 }
 ```
 
-Identification codes are four decimal digits. Identification display duration
-must be a positive integer no greater than `30000` milliseconds.
-
-Identification display is Firmware-owned temporary UI. Gateway may stop waiting
-earlier than the requested display duration; there is no cancel message.
+Identification codes are four decimal digits. Identification display duration is
+Firmware-owned temporary UI with a fixed internal `30000` millisecond window; it
+is not a request parameter. Gateway may stop waiting before the device clears
+the temporary layer; there is no cancel message.
 
 Identification display is temporary UI. Firmware must return to the previous
 device state after the display duration or when another request replaces the
@@ -514,8 +526,7 @@ Request:
   "version": 1,
   "type": "connect",
   "params": {
-    "gatewayName": "Agent-Q Gateway",
-    "approvalTimeoutMs": 30000
+    "gatewayName": "Agent-Q Gateway"
   }
 }
 ```
@@ -528,8 +539,11 @@ Request rules:
   boundary and Firmware must not treat it as proof that the requester is
   trusted.
 - `gatewayName` is required, 1-64 characters of printable ASCII.
-- `approvalTimeoutMs` is a positive integer with maximum `60000`.
-- Default `approvalTimeoutMs` when Gateway omits it is `30000`.
+- Firmware owns a fixed internal `30000` millisecond local approval window. The
+  host cannot set or negotiate it through the protocol.
+- Gateway transport waits for `connect` are internally fixed and include a
+  non-configurable margin after that Firmware approval window. This is not a
+  request field and callers cannot set or negotiate it.
 
 Approved response:
 
@@ -598,6 +612,16 @@ Connect rules:
   five wrong stored-PIN verification attempts across connect, Settings, Change
   PIN, and reset lock the local PIN UI for 30 seconds in RAM. Canceling and
   reopening the PIN UI must not clear the lockout. Power cycling clears it.
+- Device-local PIN entry uses a Firmware-owned input window. Submitting a
+  complete PIN stops that input timeout while Firmware performs stored-PIN
+  verification. This pause does not disable Firmware's internal local-auth
+  worker watchdog; a stalled or lost worker result fails closed as local
+  authentication unavailable, not as a wrong PIN. The original fixed `connect`
+  approval deadline remains the outer request deadline. A correct PIN result
+  proceeds only if that fixed approval deadline has not expired. If the
+  submitted PIN is wrong, Firmware opens a fresh 30-second input window for the
+  next attempt, capped by the original fixed approval deadline and subject to
+  the shared wrong-PIN lockout.
 - When `requirePinOnConnect` is OFF, the target uses the existing physical
   Confirm approval path.
 - PIN is never submitted over USB. There is no protocol request or parameter for
@@ -816,9 +840,8 @@ Rules:
   response, and Gateway bounds are updated. StackChan CoreS3 hardware smoke
   verifies the current single-account response over an approved session.
   `get_accounts` reads identity only. Current public method availability is
-  reported by `get_capabilities.chains[].methods`; future device-confirmed
-  signing availability must use the separate `signatureRequests` capability
-  field defined below.
+  reported by `get_capabilities.chains[].methods`. Device-confirmed signing
+  availability is not advertised in the current public capability response.
 
 ## Policy Summary
 
@@ -1076,12 +1099,17 @@ Current method result statuses:
 ## Device-Confirmed Signature Request
 
 `request_signature` is the reserved shared protocol request for future
-provider-facing device-confirmed signing. It is not implemented in the current
-StackChan CoreS3 target, Gateway client, MCP server, or provider package. This
-request is specified here so future signing work does not overload
-`call_method`, policy actions, or chain-specific top-level APIs.
+provider-facing device-confirmed signing. It is separate from `call_method`,
+policy actions, and chain-specific top-level APIs. The current public
+Gateway/client/provider/MCP and StackChan CoreS3 USB dispatcher do not expose
+this request, do not advertise `signatureRequests`, and do not parse
+`signature_result` as a public response. Public-inactive internal Firmware
+partial runtime modules for the bounded Sui `sign_transaction` shape are tracked in
+`docs/IMPLEMENTATION_STATUS.md`; future public activation must re-open
+dispatcher, client/provider parser/API, capability advertisement, and
+current-tree hardware smoke together.
 
-Future request shape:
+Request shape:
 
 ```json
 {
@@ -1093,16 +1121,15 @@ Future request shape:
     "chain": "sui",
     "method": "sign_transaction",
     "network": "devnet",
-    "txBytes": "AA...",
-    "approvalTimeoutMs": 30000
+    "txBytes": "AA..."
   }
 }
 ```
 
 Rules for the first implementation:
 
-- `request_signature` is valid only in material-backed `provisioned` state with
-  a matching active session.
+- Future `request_signature` activation is valid only in material-backed
+  `provisioned` state with a matching active session.
 - The request is a device-confirmed path. It must not evaluate or depend on an
   active policy action, must not reuse `call_method`, and must not be exposed as
   an MCP agent-facing signing tool.
@@ -1113,8 +1140,16 @@ Rules for the first implementation:
   `localnet`. `txBytes` must be canonical base64 and must remain within the
   current Sui signing request bounds unless a later spec change widens the
   bound with matching parser, scratch, UI, and tests.
-- `approvalTimeoutMs` is optional, defaults to `30000`, and is capped at
-  `60000`.
+- Firmware owns a fixed internal `30000` millisecond device-confirmation window.
+  The host cannot set or negotiate it through the protocol.
+- Gateway transport waits for `request_signature` are internally fixed and
+  include a non-configurable margin after that Firmware confirmation window.
+  This is not a request field and callers cannot set or negotiate it.
+- `network` is host-supplied context. Current Sui `txBytes` do not carry network
+  identity, so Firmware validates only that the value is one of the supported
+  labels. Firmware must not display it as a transaction-derived clear-signing
+  fact or store it as terminal history proof unless a later chain-specific
+  binding is implemented.
 - Firmware must parse enough input to show a bounded clear-signing summary
   before entering device confirmation. Unsupported or malformed transactions
   must fail before any signing approval UI can be confirmed. The displayed
@@ -1126,6 +1161,16 @@ Rules for the first implementation:
   implementation.
 - The first implementation must require local PIN confirmation. The
   connect-only `pin_on_connect` setting does not control signing confirmation.
+- For signing confirmation, the 30-second device-confirmation window applies to
+  review/PIN input, not to stored-PIN cryptographic verification after a
+  complete PIN has been submitted. The original fixed confirmation deadline
+  remains the outer request deadline. A correct PIN result proceeds if the
+  verifier returns after the local input window would have expired but before
+  that fixed confirmation deadline expires and before the internal local-auth
+  worker watchdog fails. A stalled or lost verifier result fails closed as
+  local authentication unavailable. A wrong PIN result returns to PIN entry with
+  a fresh 30-second input window capped by the original fixed confirmation
+  deadline, unless the shared wrong-PIN lockout is active.
 - Firmware must not call the signing service before device confirmation and the
   required approval-history record are both durable. The state owner must
   validate the session immediately before performing that required history
@@ -1136,12 +1181,14 @@ Rules for the first implementation:
   verify that the same request and session are still in the history-write stage
   after the write callback returns before entering the signing critical
   section.
-- `get_capabilities.methods` does not advertise `request_signature`. A future
-  signing capability must use a separate top-level `signatureRequests` field,
-  absent from current capabilities until Firmware, client, provider, docs, and
-  hardware smoke have all been updated for the same request contract.
+- `get_capabilities.methods` does not advertise `request_signature`. The
+  current public capability response also does not include `signatureRequests`.
+  A future provider-facing activation may use a separate top-level
+  `signatureRequests` field only after the implementation and current-tree
+  hardware evidence are complete. MCP must not turn provider-facing metadata
+  into an agent-facing signing tool.
 
-Future signing capability shape:
+Signing capability shape:
 
 ```json
 {
@@ -1154,11 +1201,11 @@ Future signing capability shape:
 }
 ```
 
-This field is provider-facing availability metadata for device-confirmed
-signing requests. It is not an MCP agent-facing signing method list and must not
-be populated while `request_signature` is unimplemented.
+This future field would be provider-facing availability metadata for
+device-confirmed signing requests. It is not part of the current public
+capability response and is not an MCP agent-facing signing method list.
 
-Future signed response:
+Signed response:
 
 ```json
 {
@@ -1173,7 +1220,7 @@ Future signed response:
 }
 ```
 
-Future rejected or timed-out response:
+Rejected or timed-out response:
 
 ```json
 {
@@ -1189,25 +1236,27 @@ Future rejected or timed-out response:
 }
 ```
 
-Future `signature_result.status` values:
+`signature_result.status` values:
 
-- `signed`: Firmware generated the signature after device confirmation and a
-  durable history record.
+- `signed`: Firmware generated the signature after device confirmation, the
+  required pre-signing confirmation history record, and a durable signed
+  terminal history record.
 - `rejected`: device-local confirmation explicitly rejected the request.
 - `timed_out`: device-local confirmation expired without approval.
 - `failed`: device confirmation succeeded, but signing failed before a
   signature response could be produced.
 
-Future terminal reason codes:
+Terminal reason codes:
 
 - `device_confirmed`
 - `device_rejected`
 - `device_timed_out`
 - `signing_failed`
 
-Pre-signing session loss, disconnect cancellation, or required-history write
-failure are cleanup failures, not signature results. They must produce no
-signature and may return a top-level error instead of `signature_result`.
+Pre-signing session loss, disconnect cancellation, or pre-signing confirmation
+history write failure are cleanup failures, not signature results. They must
+produce no signature and may return a top-level error instead of
+`signature_result`.
 
 Terminal error mapping:
 
@@ -1227,7 +1276,38 @@ Client, provider, and MCP parsers must fail closed on extra or secret-like
 fields. MCP must not expose this request unless a later product decision adds a
 separate agent-facing signing capability.
 
-Future approval-history contract:
+Response delivery and provider boundary:
+
+- Firmware signature generation, terminal history persistence, USB response
+  delivery, Gateway receipt, provider return, and application use of a
+  signature are separate events.
+- `signature_result.status: "failed"` means device confirmation succeeded but
+  Firmware could not produce a signature. It is not a response-delivery failure
+  status.
+- If Firmware generates a signature but cannot record the required signed
+  terminal history record before sending `signature_result`, Firmware must not
+  send the signature. It may return a top-level `history_error`. That error
+  means device-confirmed signature generation occurred, provider receipt did
+  not occur, and a later `get_approval_history` read must not be treated as
+  signed terminal proof unless the signed terminal record exists.
+- If Firmware generates a signature and records a durable `signed` terminal
+  record, then response delivery fails before Gateway receives the response, the
+  provider-facing result is a transport or protocol failure. That failure must
+  not be reported as `rejected`, `timed_out`, or `failed`, and it must not
+  claim that Firmware did not generate a signature. A later
+  `get_approval_history` read may show the durable `signed` terminal record.
+- A future provider `requestSignature` API must return a discriminated result
+  for Firmware-authored terminal `signature_result` statuses: `signed`,
+  `rejected`, `timed_out`, and `failed`. Device rejection, device timeout, and
+  signing failure are product outcomes, not provider exceptions. Provider
+  promise rejection is reserved for local adapter/programmer errors; Gateway or
+  transport failures should use the same structured public-error style as the
+  current provider methods.
+- The provider must not expose Admin or policy-update methods through
+  `requestSignature`, and MCP must not gain a chain-specific or top-level
+  signing tool as a side effect of provider signing support.
+
+Approval-history contract:
 
 - Device-confirmed signing uses a new `eventKind: "signature_request"`, not the
   current `method_decision` event kind.

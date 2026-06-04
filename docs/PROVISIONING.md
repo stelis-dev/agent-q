@@ -130,8 +130,12 @@ Rules:
 
 - Gateway must not derive private keys.
 - Firmware returns public key/address data through `get_accounts`.
-- Current public signing is not implemented. Current `call_method` handles
-  delegated policy request validation and rejected method results only.
+- Public provider-facing signing is not active. Public-inactive internal
+  Firmware partial runtime modules for a future `request_signature` path support
+  only the bounded Sui `sign_transaction` transfer shape. Current `call_method`
+  handles delegated
+  policy request validation and rejected method results only; it does not return
+  signatures.
 - Agent-Q must not add chain-specific top-level MCP tools.
 
 The first implementation target is Sui Ed25519.
@@ -165,8 +169,8 @@ not keep reporting `provisioned` while rejecting all session APIs.
 
 The current DEV_PROFILE runtime does not import or export root signing material.
 Read-only public Sui account derivation is available via `get_accounts`, and
-public signing methods are not implemented. Current StackChan CoreS3 source can generate a
-BIP-39 recovery
+public signing methods are not implemented. Current StackChan CoreS3 source can
+generate a BIP-39 recovery
 phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
 3-column by 4-row grid, and wipe scratch on confirm, cancel, timeout, failure,
 or display expiry. Three-letter BIP-39 words are displayed as the full word.
@@ -321,13 +325,15 @@ reset-state changes.
 
 Provisioning is not signing readiness. The current dependency order is: keep
 the policy facts / method adapter boundary stable, use the Firmware-owned
-`propose_policy_update` flow for current-schema active policy changes, and keep
-public signing unavailable. Current `call_method` remains a policy-gated
-rejected-result path for supported validation. Policy update remains a proposal
-flow, not a direct state setter: Gateway/Admin may submit a bounded proposal,
-but Firmware validates it, requires device-local approval, and commits it
-through rollback-safe storage. Sui `sign_personal_message`, arbitrary Sui
-transaction signing, agent-request signing output, full Admin policy
+`propose_policy_update` flow for current-schema active policy changes, keep
+`call_method` signing output unavailable, and keep provider-facing signing
+inactive until the future `request_signature` activation gate is complete. Current
+`call_method` remains a policy-gated rejected-result path for supported
+validation. Policy update remains a proposal flow, not a direct state setter:
+Gateway/Admin may submit a bounded proposal, but Firmware validates it, requires
+device-local approval, and commits it through rollback-safe storage. Sui
+`sign_personal_message`, arbitrary Sui transaction signing, agent-request
+signing output, full Admin policy
 editing beyond the current reject-policy proposal template, and USER_PROFILE
 secure provisioning are not implemented.
 

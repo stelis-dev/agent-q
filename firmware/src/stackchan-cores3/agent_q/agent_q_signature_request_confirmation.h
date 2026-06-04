@@ -40,6 +40,8 @@ signature_request_confirmation_complete_pin_verify_job_and_write_history(
     TickType_t lockout_until,
     AgentQSignatureRequestHistoryWriteFn write_fn,
     void* context);
+AgentQSignatureRequestConfirmationResult
+signature_request_confirmation_mark_pin_verification_started();
 
 AgentQSignatureRequestConfirmationResult
 signature_request_confirmation_record_device_rejected();

@@ -109,8 +109,8 @@ hardware and must be documented in each target's `SPEC.md`.
 |---|---|---|---:|
 | Persistent device state | provisioning state, stored root material, policy, local PIN verifier, approval history, policy-update terminal marker, account availability | Firmware | Yes |
 | Volatile sensitive scratch | generated recovery phrase, setup entropy, pending backup confirmation, typed PIN digits | Firmware | Yes |
-| Local PIN authorization state | connect/settings/policy-update/reset PIN entry purpose, verification stage, timeout, RAM-only lockout | Firmware | Yes |
-| Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or connect PIN approval; timeout; requested action | Firmware | Yes |
+| Local PIN authorization state | connect/settings/policy-update/reset PIN entry purpose, verification stage, Firmware-owned input deadline, RAM-only lockout | Firmware | Yes |
+| Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or connect PIN approval; Firmware-owned deadline; requested action | Firmware | Yes |
 | Pending policy update state | validated policy proposal summary, policy hash, approval deadline, commit stage | Firmware | Yes |
 | Runtime session state | active protocol session id and link-bound cleanup state | Firmware; Gateway mirrors its own client session state in RAM and clears that mirror when Firmware rejects it or live USB scan no longer observes the device | Yes |
 | Target-local display state | screen on/off, brightness, screensaver replacement | Firmware target display module | No |
@@ -230,13 +230,14 @@ Allowed:
 
 This state is not signing approval. In the current StackChan CoreS3
 implementation, `provisioned` enables `connect`, `disconnect`, read-only
-`get_capabilities` for Sui account identity with no public methods, read-only
-`get_accounts` (Sui Ed25519 account 0),
+`get_capabilities` for Sui account identity with no delegated public methods
+and no provider-facing `signatureRequests`, read-only `get_accounts` (Sui
+Ed25519 account 0),
 read-only `get_policy` for the committed active policy summary, read-only
 `get_approval_history` for Firmware-owned persistent decision metadata, and the
-session-scoped `call_method` rejected-path method runtime. Sui txBytes decoding
-is allowed only inside a session-scoped `call_method` request after
-`provisioned`; public signing remains unavailable.
+session-scoped `call_method` rejected-path method runtime. The separate
+provider-facing `request_signature` path has public-inactive internal partial
+runtime modules but is not currently public or allowed as a protocol entrypoint.
 Gateway must not evaluate policy. A corrupt, unreadable, missing,
 or invalid current active policy is a persistent-material consistency
 error, not a normal `provisioned` state. Provisioned DEV_PROFILE devices that
@@ -250,15 +251,15 @@ bounded request facts against Firmware-owned active policy. It does not perform
 per-request device-local confirmation and does not prove the upstream user,
 dapp, provider, host, or agent intent that produced the request.
 
-Device-confirmed signing is not implemented. Before any public
-device-confirmed signing request is added, it must be modeled as a separate
-shared `request_signature` protocol request, not as a `call_method` mode,
-policy action, request-authority flag, or compatibility fallback. The source
+Future device-confirmed signing activation must use the separate shared
+`request_signature` protocol request, not a `call_method` mode, policy action,
+request-authority flag, or compatibility fallback. The current public protocol
+entrypoint is inactive. The internal partial runtime modules assume source
 state must be material-backed `provisioned` with a matching active session. The
 target state after every terminal outcome remains `provisioned`, unless the
 terminal outcome detects persistent material inconsistency.
 
-Required owners for a future device-confirmed signing pending state:
+Required owners for the device-confirmed signing pending state:
 
 - persistent device state: Firmware-owned root material, local PIN verifier if
   PIN confirmation is required, and approval history. Active policy is not the
@@ -268,11 +269,12 @@ Required owners for a future device-confirmed signing pending state:
   sender and gas-owner account binding, signature scratch, and any local PIN
   scratch;
 - pending approval state: Firmware-owned request id, session id, chain, method,
-  request digest, confirmation deadline, and terminal stage;
+  request digest, fixed internal 30-second confirmation deadline, and terminal
+  stage. The host cannot set or negotiate this deadline;
 - UI/display state: target-local temporary review, approval, and result layers
   only. UI object lifetime must not decide whether signing is allowed.
 
-Allowed while a future device-confirmed signing request is pending:
+Allowed while a device-confirmed signing request is pending:
 
 - `get_status`;
 - `disconnect` only as cleanup before a signing critical section, or `busy`
@@ -280,7 +282,7 @@ Allowed while a future device-confirmed signing request is pending:
 - read-only session APIs only if they cannot mutate, dismiss, overwrite, or
   leak the pending request.
 
-Rejected while a future device-confirmed signing request is pending:
+Rejected while a device-confirmed signing request is pending:
 
 - nested signing requests;
 - policy update proposals;
@@ -288,7 +290,7 @@ Rejected while a future device-confirmed signing request is pending:
 - host-triggered reset, debug, setup, recovery, PIN entry, or confirmation
   shortcuts.
 
-Failure requirements for a future device-confirmed signing request:
+Failure requirements for a device-confirmed signing request:
 
 - reject, timeout, UI failure, invalid state, session loss, or disconnect before
   the signing critical section must wipe signable scratch and produce no
@@ -302,14 +304,15 @@ Failure requirements for a future device-confirmed signing request:
   value-owned request metadata, and the owner must reject callback reentry that
   clears, restarts, or otherwise changes the pending request before critical
   entry;
-- if signing or response delivery fails after a durable confirmation record, the
-  terminal history and user-visible result must distinguish signature generation
-  from Gateway receipt;
+- if signing, terminal history persistence, or response delivery fails after a
+  durable confirmation record, terminal history and the user-visible result must
+  distinguish signature generation, signed terminal proof, and Gateway receipt;
 - every terminal path must wipe signable payload and signature scratch.
 
-The first `request_signature` implementation must require local PIN
-confirmation. The connect-only `pin_on_connect` setting does not apply to
-signing. Planned terminal stages are:
+The public-inactive internal `request_signature` partial runtime models local
+PIN confirmation.
+The connect-only `pin_on_connect` setting does not apply to signing. Terminal
+stages for future activation are:
 
 - `reviewing`: parsed summary is displayed; no PIN or signing is active.
 - `pin_entry`: local PIN input is active for this request.
@@ -324,15 +327,20 @@ signing. Planned terminal stages are:
   and normal cleanup helpers must not force-clear this stage.
 - terminal `signed`, `rejected`, `timed_out`, or `signing_failed`.
   Pre-signing `canceled` and `history_error` are cleanup outcomes that wipe
-  scratch and produce no signature.
+  scratch and produce no signature. A post-signing terminal-history failure
+  produces no provider signature result and no signed terminal proof, but it
+  must still be displayed distinctly from signing failure or USB response
+  delivery failure.
 
-Planned history records for this path use `eventKind: "signature_request"`.
-The required pre-signing record uses `recordKind: "confirmation"` and
+History records for this path use `eventKind: "signature_request"`. The
+required pre-signing record uses `recordKind: "confirmation"` and
 `confirmationKind: "local_pin"` after device confirmation succeeds. Terminal
 records use `recordKind: "terminal"` and record whether Firmware generated a
 signature, rejected the request, timed out, or failed during signing. A `signed`
-terminal record means Firmware generated a signature after device confirmation;
-it does not prove Gateway received that signature.
+terminal record means Firmware generated a signature after device confirmation
+and persisted the signed terminal result; it does not prove Gateway received
+that signature. If signature generation succeeds but the signed terminal record
+cannot be persisted, Firmware must not return a provider signature result.
 
 #### Pending Policy Update
 
@@ -386,7 +394,8 @@ Rejected while pending:
 
 The pending state may be displayed by UI, but UI object lifetime is not the
 source of truth. Firmware owns the proposal summary, approval deadline, commit
-stage, cleanup, and rollback behavior.
+stage, cleanup, and rollback behavior. The approval deadline is an internal
+Firmware value, not a host-supplied request field.
 
 Firmware must accept only policy actions that the current schema allows and the
 current runtime can enforce. Other action values are invalid input and are not
@@ -461,6 +470,7 @@ This state is reserved until an unlock model is implemented.
 | `get_policy` | X | X | O | X | X | Firmware |
 | `get_approval_history` | X | X | O | X | X | Firmware |
 | `call_method` | X | X | O | X | X | Firmware |
+| `request_signature` | X | X | X (public entrypoint inactive; internal partial runtime only) | X | X | Firmware |
 | policy read | X | X | O | X | X | Firmware |
 | policy update | X | X | O (validated proposal + device-local approval) | X | X | Firmware |
 
@@ -479,13 +489,21 @@ Gateway may hide unavailable operations, but Firmware must still reject them.
 The current StackChan CoreS3 target has an explicit `local_pin_auth` runtime
 substate for local PIN authorization. It records `purpose` (`connect`,
 `settings_connect_pin`, `settings_change_pin`, `policy_update`, or the
-unconnected internal `signature_request` verifier purpose), `stage`
+internal `signature_request` verifier purpose), `stage`
 (`pin_entry`, `pin_verifying`, `new_pin_entry`, `repeat_pin_entry`,
 `committing_setting`, or `committing_pin_change`), typed PIN scratch, new-PIN
-scratch where applicable, deadline, and the RAM-only stored-PIN attempt budget
-shared with reset PIN verification. For policy updates, `local_pin_auth` owns
+scratch where applicable, input deadline, and the RAM-only stored-PIN attempt
+budget shared with reset PIN verification. Submitting a complete PIN stops the
+input deadline while stored-PIN verification runs; wrong PIN results reopen a
+fresh input window subject to the shared lockout. The input pause does not
+pause the local-auth worker watchdog; a stalled or lost worker result fails
+closed as local authentication unavailable. For protocol-backed purposes
+(`connect`, `policy_update`, and `signature_request`), this local input window
+is capped by the original fixed request approval or confirmation deadline; PIN
+verification does not extend that outer request deadline. For policy updates,
+`local_pin_auth` owns
 only PIN verification; the pending proposal summary, policy hash, commit stage,
-and terminal result remain owned by the policy-update flow. For future
+and terminal result remain owned by the policy-update flow. For
 device-confirmed signing, `local_pin_auth` is only a verifier input; the
 request identity, signable payload scratch, history-write transition, and
 terminal cleanup remain owned by the signature-request state owner and

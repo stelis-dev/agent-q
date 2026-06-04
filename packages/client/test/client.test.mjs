@@ -9,6 +9,7 @@ test("client entrypoint constructs an admin-disabled device core facade", () => 
   const core = createDefaultDeviceClientCore();
   assert.equal(typeof core.scanDevices, "function");
   assert.equal(typeof core.callMethod, "function");
+  assert.equal(core.requestSignature, undefined);
   assert.equal(core.proposePolicyUpdate, undefined);
 });
 

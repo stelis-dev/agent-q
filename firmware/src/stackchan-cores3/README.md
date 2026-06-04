@@ -23,51 +23,35 @@ The current implementation includes:
   verification. Firmware sessions are RAM-only and do not authorize signing.
 - a USB JSONL `get_capabilities` request that returns Firmware-authored Sui
   Ed25519 account identity capability over an approved session while
-  `provisioned`, with no public methods.
+  `provisioned`, with no delegated public methods and no provider-facing
+  signing capability advertisement.
 - a USB JSONL `get_approval_history` request that returns bounded persistent
-  Firmware-authored method-decision and policy-update terminal metadata over an
-  approved session. It is read-only, rate-limits method-decision persistent
-  writes to reduce flash wear, stores no raw requests or secrets, and records
-  validated `call_method` policy-rejected decisions and recordable
-  `propose_policy_update` terminal results.
+  Firmware-authored method-decision, policy-update terminal, and
+  signature-request confirmation/terminal metadata over an approved session. It
+  is read-only, rate-limits method-decision persistent writes to reduce flash
+  wear, stores no raw requests or secrets, and records validated `call_method`
+  policy-rejected decisions and recordable `propose_policy_update` terminal
+  results. Signature-request metadata remains schema-supported for the
+  public-inactive internal partial runtime modules, but current USB runtime does
+  not create public signing records.
 - a USB JSONL `call_method` path. It requires material-backed `provisioned`
   state plus a matching active session, keeps unknown methods rejected with
   `unsupported_method`, and validates Sui `sign_transaction` restricted SUI
-  transfer request inputs for rejected-path policy evaluation. Public signing
-  output is not implemented.
-- a source-level device-confirmed signature request state owner for future
-  `request_signature` work. Split validation helpers separately check the
-  future request envelope, session-id format, and params into bounded
-  value-owned fields. An unconnected ingress decision helper composes those
-  checks so future USB dispatcher work can keep material/busy/session gates
-  ahead of params validation. These helpers are not wired into the USB
-  dispatcher and do not create a protocol response contract. The state
-  owner owns RAM-only pending request metadata,
-  bounded signable payload scratch, a Sui transfer summary parsed from the same
-  `txBytes`, Firmware-derived sender/gas-owner account binding, staged
-  confirmation, terminal cleanup, and one-shot payload handoff after the
-  required confirmation history write succeeds. The history write receives
-  value-owned request metadata and cannot move a cleared or different request
-  into the signing critical section. An unconnected confirmation coordinator
-  binds the active request flow to a flow-identity token, signature-request
-  local PIN purpose, and required history write, so PIN verification cannot be
-  treated as an independent authority or applied to a different active request
-  even when request and session ids are reused. Signature PIN loss before the
-  signing critical section also terminalizes the paired request scratch. A
-  host-tested review view model turns a reviewing
-  snapshot into bounded clear-signing rows that include the full recipient,
-  amount, asset, network, gas budget, and gas price without using UI object
-  lifetime as state. An unconnected internal signing handoff helper consumes
-  the signable payload only inside the signing critical section, calls the Sui
-  signing substrate, copies a successful signature only into a caller-owned
-  bounded output after internal signed-terminal recording succeeds, and wipes
-  local payload/signature scratch plus caller output on failure. It does not
-  create a protocol response. The approval-history store and parser can represent
-  bounded future signature-request confirmation and terminal records, using the
-  current approval-history storage layout only. The state owner, coordinator,
-  and signing handoff helper are not connected to USB protocol ingress, LVGL
-  review drawing, Gateway/client/provider signing parsers, or capability
-  advertisement.
+  transfer request inputs for rejected-path policy evaluation. Signing output
+  through `call_method` is not implemented.
+- public-inactive internal partial runtime modules for a future USB JSONL
+  `request_signature` path for provider-facing device-confirmed signing of the
+  bounded Sui `sign_transaction` transfer shape. The public USB dispatcher and
+  USB `signature_result` writer, client/provider parser/API, and
+  `signatureRequests` capability are inactive. Standalone internal modules model
+  material/busy/session gates, review facts and account binding derived from the
+  same `txBytes` that would be signed, local PIN confirmation, required
+  confirmation history before signing-critical handoff, Sui signing-substrate
+  handoff, terminal metadata, and payload/signature/PIN scratch wiping. Sponsored
+  gas, arbitrary Sui transactions, Sui personal-message signing, MCP signing
+  tools, and chain-specific top-level signing APIs are not implemented. Future
+  public activation must re-open dispatcher/client/provider/capability together
+  and run current-tree hardware smoke before product-complete status.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
   Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
   RAM, displays only the up-to-4-letter word prefixes on device in a 3-column
@@ -108,19 +92,25 @@ The current implementation includes:
 Runtime Firmware sessions are implemented only as RAM-held protocol sessions
 after material-backed provisioning. Sessions do not authorize signing.
 
-This target reports read-only identity capability with no public methods,
-derives read-only public account identity
+This target reports read-only identity capability with no delegated public
+methods, derives read-only public account identity
 (`get_accounts`), and links a restricted host-tested Sui transaction facts
 parser plus a common stored-policy runtime boundary. The current `call_method`
 path consumes the committed active policy decision for Sui `sign_transaction`,
-rejects unsupported transactions, and returns rejected method results. It also
-implements the Firmware-owned `propose_policy_update` admin method for bounded
+rejects unsupported transactions, and returns rejected method results. The
+public-inactive internal `request_signature` modules model device confirmation
+and signing for the bounded restricted transfer shape after local PIN and
+required history, but
+they are not wired into the current USB request-server runtime; the public USB
+dispatcher and capability advertisement are inactive. It
+also implements the Firmware-owned `propose_policy_update` admin method for bounded
 reject-policy proposals over an active session, local PIN approval, canonical
 active-policy commit, and required policy-update terminal history. It does not
 expose MCP
 directly; Gateway/MCP only submit requests and parse Firmware responses. It
 does persist bounded approval-history metadata for method decisions and policy
-update terminal records. The
+update terminal records; signature-request record metadata is schema-supported
+for the public-inactive internal partial runtime modules. The
 persisted values in this target implementation are the protocol `deviceId`,
 provisioning state flag, DEV_PROFILE root entropy blob after backup
 confirmation, canonical active policy slots plus commit metadata and a
@@ -191,6 +181,7 @@ firmware/tools/stackchan-cores3/test_provisioning_runtime_state.sh
 firmware/tools/stackchan-cores3/test_signature_request_confirmation.sh
 firmware/tools/stackchan-cores3/test_signature_request_flow.sh
 firmware/tools/stackchan-cores3/test_signature_request_ingress.sh
+firmware/tools/stackchan-cores3/test_request_signature_public_inactive.sh
 firmware/tools/stackchan-cores3/test_signature_request_review_view_model.sh
 firmware/tools/stackchan-cores3/test_signature_request_signing.sh
 firmware/tools/stackchan-cores3/test_signature_request_validation.sh

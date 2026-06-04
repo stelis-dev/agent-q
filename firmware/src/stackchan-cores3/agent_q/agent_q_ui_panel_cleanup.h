@@ -15,6 +15,7 @@ struct AgentQUiPanelCleanupInput {
     AgentQUiPanelCleanupEvent event;
     bool local_reset_stage_matches;
     bool local_pin_auth_stage_matches;
+    bool signature_review_stage_matches;
 };
 
 struct AgentQUiPanelCleanupPlan {
@@ -24,6 +25,8 @@ struct AgentQUiPanelCleanupPlan {
     bool wipe_local_reset;
     bool wipe_local_pin_auth;
     bool recover_local_pin_auth_panel;
+    bool wipe_signature_request;
+    bool recover_signature_review_panel;
 };
 
 AgentQUiPanelCleanupPlan ui_panel_cleanup_plan(const AgentQUiPanelCleanupInput& input);

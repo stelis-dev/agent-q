@@ -338,14 +338,26 @@ test("exported output schema rejects raw error text and unknown firmware codes",
   );
 });
 
-test("get_device_status exposes timeoutMs", () => {
-  assert.equal("timeoutMs" in gatewayToolDefinitions.getDeviceStatus.inputSchema, true);
-});
-
-test("call_method timeout schema allows device approval window plus transport margin", () => {
-  const inputSchema = gatewayToolDefinitions.callMethod.inputSchema.timeoutMs;
-  assert.equal(inputSchema.safeParse(61000).success, true);
-  assert.equal(inputSchema.safeParse(61001).success, false);
+test("tool input schemas expose only current request fields", () => {
+  assert.deepEqual(Object.keys(gatewayToolDefinitions.scanDevices.inputSchema).sort(), []);
+  assert.deepEqual(Object.keys(gatewayToolDefinitions.identifyDevices.inputSchema).sort(), []);
+  assert.deepEqual(Object.keys(gatewayToolDefinitions.connectDevice.inputSchema).sort(), [
+    "deviceId",
+    "gatewayName",
+    "purpose",
+  ]);
+  assert.deepEqual(Object.keys(gatewayToolDefinitions.callMethod.inputSchema).sort(), [
+    "chain",
+    "deviceId",
+    "method",
+    "params",
+    "purpose",
+  ]);
+  assert.deepEqual(Object.keys(gatewayToolDefinitions.proposePolicyUpdate.inputSchema).sort(), [
+    "deviceId",
+    "policy",
+    "purpose",
+  ]);
 });
 
 test("select_device input accepts purpose but rejects reserved 'default'", () => {
@@ -534,6 +546,61 @@ test("get_capabilities dispatch returns current capabilities without a session t
     assert.deepEqual(result.structuredContent.capabilities[0].methods, []);
     assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
   });
+});
+
+test("get_capabilities dispatch fails closed on provider-facing signature request capability", async () => {
+  const core = {
+    ...noOpCore,
+    async getCapabilities() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        capabilities: [
+          {
+            id: "sui",
+            accounts: [
+              {
+                keyScheme: "ed25519",
+                derivationPath: "m/44'/784'/0'/0'/0'",
+              },
+            ],
+            methods: [],
+          },
+        ],
+        signatureRequests: [{ chain: "sui", method: "sign_transaction" }],
+      };
+    },
+  };
+
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "get_capabilities", arguments: {} });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.source, "error");
+    assert.equal(result.structuredContent.error.code, "internal_output_error");
+    assert.equal(JSON.stringify(result).includes("signatureRequests"), false);
+  }, core);
+});
+
+test("get_capabilities output schema rejects provider-facing signature request capability", () => {
+  const parsed = gatewayToolDefinitions.getCapabilities.outputSchema.safeParse({
+    source: "live",
+    deviceId: "device-1",
+    capabilities: [
+      {
+        id: "sui",
+        accounts: [
+          {
+            keyScheme: "ed25519",
+            derivationPath: "m/44'/784'/0'/0'/0'",
+          },
+        ],
+        methods: [],
+      },
+    ],
+    signatureRequests: [{ chain: "sui", method: "sign_transaction" }],
+  });
+
+  assert.equal(parsed.success, false);
 });
 
 test("call_method dispatch returns a rejected result without a session token", async () => {

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createAgentQProvider, AgentQProvider } from "../dist/provider.js";
-import { FORBIDDEN_SECRET_FIELD_NAMES } from "@stelis/agent-q-client/protocol";
+import { FORBIDDEN_SECRET_FIELD_NAMES, SUI_DERIVATION_PATH } from "@stelis/agent-q-client/protocol";
 
 function assertNoSecretFields(value) {
   const text = JSON.stringify(value).toLowerCase();
@@ -60,7 +60,13 @@ function createFakeCore() {
       return {
         source: "live",
         deviceId: "device-1",
-        capabilities: [{ id: "sui", accounts: [], methods: [] }],
+        capabilities: [
+          {
+            id: "sui",
+            accounts: [{ keyScheme: "ed25519", derivationPath: SUI_DERIVATION_PATH }],
+            methods: [],
+          },
+        ],
       };
     },
     async getAccounts() {
@@ -133,6 +139,9 @@ test("provider exposes only device-facing adapter API", () => {
     "scanDevices",
     "selectDevice",
   ]);
+  assert.equal(provider.requestSignature, undefined);
+  assert.equal(provider.callMethod, undefined);
+  assert.equal(provider.proposePolicyUpdate, undefined);
 });
 
 test("provider delegates current methods without exposing session ids or secrets", async () => {
@@ -152,4 +161,11 @@ test("provider delegates current methods without exposing session ids or secrets
   for (const output of outputs) {
     assertNoSecretFields(output);
   }
+});
+
+test("provider does not expose raw method or Admin policy update entrypoints", () => {
+  const provider = createAgentQProvider({ core: createFakeCore() });
+  assert.equal(provider.callMethod, undefined);
+  assert.equal(provider.proposePolicyUpdate, undefined);
+  assert.equal(provider.requestSignature, undefined);
 });

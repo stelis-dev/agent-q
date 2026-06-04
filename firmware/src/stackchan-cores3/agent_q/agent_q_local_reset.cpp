@@ -185,10 +185,15 @@ bool local_reset_deadline_expired(TickType_t now)
     return tick_reached(g_local_reset.deadline, now);
 }
 
-bool local_reset_fail_pin_verification_if_expired(TickType_t now)
+bool local_reset_processing_deadline_expired(TickType_t now)
 {
-    if (g_local_reset.stage != AgentQLocalResetStage::pin_verifying ||
-        !tick_reached(g_local_reset.worker_deadline, now)) {
+    return g_local_reset.stage == AgentQLocalResetStage::pin_verifying &&
+           tick_reached(g_local_reset.worker_deadline, now);
+}
+
+bool local_reset_fail_processing_if_expired(TickType_t now)
+{
+    if (!local_reset_processing_deadline_expired(now)) {
         return false;
     }
     g_local_reset.wipe();
@@ -332,8 +337,8 @@ AgentQLocalResetPinSubmitResult local_reset_submit_pin_for_verification(
     g_local_reset.auth_job_id = job_id;
     g_local_reset.deadline = 0;
     g_local_reset.verify_ready_at = verify_ready_at;
-    g_local_reset.worker_deadline = worker_deadline;
     g_local_reset.wipe_ready_at = 0;
+    g_local_reset.worker_deadline = worker_deadline;
     return AgentQLocalResetPinSubmitResult::started_verification;
 }
 
@@ -349,6 +354,10 @@ AgentQLocalResetPinVerifyResult local_reset_complete_pin_verify_job(
         result.owner != AgentQLocalAuthWorkerOwner::local_reset ||
         result.operation != AgentQLocalAuthWorkerOperation::verify_pin) {
         return AgentQLocalResetPinVerifyResult::not_ready;
+    }
+    if (local_reset_processing_deadline_expired(xTaskGetTickCount())) {
+        g_local_reset.wipe();
+        return AgentQLocalResetPinVerifyResult::auth_unavailable;
     }
 
     g_local_reset.auth_job_id = 0;

@@ -5,7 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: firmware/tools/stackchan-cores3/test_signature_request_confirmation.sh
 
-Compiles the StackChan CoreS3 unconnected signature request confirmation
+Compiles the StackChan CoreS3 signature request confirmation
 coordinator against host stubs and verifies review-to-PIN-to-history handoff
 without USB protocol ingress. This test uses only a host C++ compiler and does
 NOT require ESP-IDF.
@@ -210,7 +210,8 @@ agent_q::AgentQSignatureRequestBeginInput make_valid_input(
     const char* session_id,
     const char* network,
     const uint8_t* payload,
-    size_t payload_size)
+    size_t payload_size,
+    TickType_t deadline = 300)
 {
     return agent_q::AgentQSignatureRequestBeginInput{
         request_id,
@@ -220,7 +221,7 @@ agent_q::AgentQSignatureRequestBeginInput make_valid_input(
         network,
         payload,
         payload_size,
-        100,
+        deadline,
     };
 }
 
@@ -248,7 +249,7 @@ void reset_all()
              "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 }
 
-bool begin_valid_flow(const char* request_id)
+bool begin_valid_flow_with_deadline(const char* request_id, TickType_t deadline)
 {
     const std::vector<uint8_t>& payload = valid_payload();
     if (agent_q::session_replace(random_bytes, nullptr) !=
@@ -261,8 +262,14 @@ bool begin_valid_flow(const char* request_id)
                    agent_q::session_id(),
                    "devnet",
                    payload.data(),
-                   payload.size())) ==
+                   payload.size(),
+                   deadline)) ==
            agent_q::AgentQSignatureRequestFlowBeginResult::ok;
+}
+
+bool begin_valid_flow(const char* request_id)
+{
+    return begin_valid_flow_with_deadline(request_id, 300);
 }
 
 bool begin_valid_flow_in_current_session(const char* request_id, const char* network)
@@ -503,27 +510,110 @@ int main()
                "verified PIN terminal handling clears local PIN flow");
         expect(agent_q::signature_request_flow_in_signing_critical_section(),
                "request flow entered signing critical section");
+
+        reset_all();
+        expect(begin_valid_flow("req_pin_late_verify"), "begin before late PIN verify");
+        expect(agent_q::signature_request_confirmation_accept_review_and_begin_pin(99, 120) ==
+                   Confirm::ok,
+               "review acceptance starts short signing PIN window");
+        enter_pin("123456", 120);
+        expect(agent_q::local_pin_auth_submit(119, 0, 120, 125) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "PIN submit starts verification before input window closes");
+        expect(agent_q::signature_request_confirmation_mark_pin_verification_started() ==
+                   Confirm::ok,
+               "PIN verification start pauses signing request deadline");
+        expect(agent_q::signature_request_flow_snapshot().deadline == 0,
+               "signing request deadline is paused during PIN verification");
+        expect(agent_q::signature_request_confirmation_complete_pin_verify_job_and_write_history(
+                   make_verify_result(true), 140, 170, 0, write_confirmation_history, nullptr) ==
+                   Confirm::ok,
+               "verified PIN after input deadline still enters critical section");
+        expect(agent_q::signature_request_flow_in_signing_critical_section(),
+               "late verified PIN is not converted to timeout");
+    }
+
+    {
+        reset_all();
+        expect(begin_valid_flow_with_deadline("req_pin_after_fixed_deadline", 130),
+               "begin before late fixed-deadline PIN verify");
+        expect(agent_q::signature_request_confirmation_accept_review_and_begin_pin(99, 120) ==
+                   Confirm::ok,
+               "review acceptance starts short signing PIN window before fixed deadline");
+        enter_pin("123456", 120);
+        expect(agent_q::local_pin_auth_submit(119, 0, 120, 125) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "PIN submit starts verification before fixed deadline");
+        expect(agent_q::signature_request_confirmation_mark_pin_verification_started() ==
+                   Confirm::ok,
+               "PIN verification start leaves fixed confirmation deadline active");
+        expect(agent_q::signature_request_flow_snapshot().deadline == 0 &&
+                   agent_q::signature_request_flow_snapshot().confirmation_deadline == 130,
+               "local input deadline is paused but fixed confirmation deadline remains");
+        expect(agent_q::signature_request_confirmation_complete_pin_verify_job_and_write_history(
+                   make_verify_result(true), 140, 170, 0, write_confirmation_history, nullptr) ==
+                   Confirm::deadline_expired,
+               "verified PIN after fixed confirmation deadline times out");
+        expect(!agent_q::signature_request_confirmation_pin_active(),
+               "fixed-deadline timeout clears signing PIN");
+        expect(agent_q::signature_request_flow_snapshot().terminal_result ==
+                   agent_q::AgentQSignatureRequestTerminalResult::timed_out,
+               "fixed-deadline timeout records terminal result");
+        expect(g_history_write_calls == 0,
+               "fixed-deadline timeout does not write confirmation history");
     }
 
     {
         reset_all();
         expect(begin_valid_flow("req_wrong_pin"), "begin before wrong PIN");
-        expect(agent_q::signature_request_confirmation_accept_review_and_begin_pin(99, 200) ==
+        expect(agent_q::signature_request_confirmation_accept_review_and_begin_pin(99, 120) ==
                    Confirm::ok,
                "review acceptance before wrong PIN");
-        enter_pin("000000", 200);
-        expect(agent_q::local_pin_auth_submit(101, 0, 200, 150) ==
+        enter_pin("000000", 120);
+        expect(agent_q::local_pin_auth_submit(119, 0, 120, 125) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "wrong signing PIN starts verification");
+        expect(agent_q::signature_request_confirmation_mark_pin_verification_started() ==
+                   Confirm::ok,
+               "wrong PIN verification start pauses signing request deadline");
         expect(agent_q::signature_request_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(false), 102, 200, 300, write_confirmation_history, nullptr) ==
+                   make_verify_result(false), 140, 170, 300, write_confirmation_history, nullptr) ==
                    Confirm::wrong_pin,
-               "wrong signing PIN stays in PIN flow");
+               "wrong signing PIN after input deadline starts a fresh retry window");
         expect(agent_q::signature_request_confirmation_pin_active(),
                "wrong signing PIN keeps local PIN active");
         expect(agent_q::signature_request_flow_snapshot().stage == FlowStage::pin_entry,
                "wrong signing PIN does not write history");
+        expect(agent_q::signature_request_flow_snapshot().deadline == 170,
+               "wrong signing PIN refreshes request flow deadline");
         expect(g_history_write_calls == 0, "wrong signing PIN does not call history writer");
+    }
+
+    {
+        reset_all();
+        expect(begin_valid_flow_with_deadline("req_wrong_pin_after_fixed_deadline", 130),
+               "begin before wrong PIN after fixed deadline");
+        expect(agent_q::signature_request_confirmation_accept_review_and_begin_pin(99, 120) ==
+                   Confirm::ok,
+               "review acceptance before fixed-deadline wrong PIN");
+        enter_pin("000000", 120);
+        expect(agent_q::local_pin_auth_submit(119, 0, 120, 125) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "wrong PIN starts verification before fixed deadline");
+        expect(agent_q::signature_request_confirmation_mark_pin_verification_started() ==
+                   Confirm::ok,
+               "wrong PIN verification start leaves fixed deadline active");
+        expect(agent_q::signature_request_confirmation_complete_pin_verify_job_and_write_history(
+                   make_verify_result(false), 140, 170, 300, write_confirmation_history, nullptr) ==
+                   Confirm::deadline_expired,
+               "wrong PIN after fixed confirmation deadline does not reopen input");
+        expect(!agent_q::signature_request_confirmation_pin_active(),
+               "wrong PIN fixed-deadline timeout clears local PIN");
+        expect(agent_q::signature_request_flow_snapshot().terminal_result ==
+                   agent_q::AgentQSignatureRequestTerminalResult::timed_out,
+               "wrong PIN fixed-deadline timeout records terminal result");
+        expect(g_history_write_calls == 0,
+               "wrong PIN fixed-deadline timeout does not write history");
     }
 
     {
@@ -617,7 +707,7 @@ int main()
         expect(agent_q::signature_request_confirmation_complete_pin_verify_job_and_write_history(
                    make_verify_result(true), 102, 200, 0, write_confirmation_history, nullptr) ==
                    Confirm::invalid_session,
-               "session loss before history write cancels request");
+               "session loss before history write cancels the active confirmation");
         expect(!agent_q::signature_request_confirmation_pin_active(),
                "session loss clears local PIN");
         expect(g_history_write_calls == 0, "session loss happens before history writer");

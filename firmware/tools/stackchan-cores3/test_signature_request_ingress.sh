@@ -5,7 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: firmware/tools/stackchan-cores3/test_signature_request_ingress.sh
 
-Compiles the StackChan CoreS3 future request_signature ingress decision helper
+Compiles the StackChan CoreS3 request_signature ingress decision helper
 against ArduinoJson with a host C++ compiler and checks that envelope, state,
 session, and params gates stay ordered. This test does not require ESP-IDF,
 but it uses the pinned StackChan ArduinoJson component checkout prepared by
@@ -87,7 +87,7 @@ JsonDocument parse_json(const char* label, const std::string& json)
 std::string valid_params()
 {
     return "{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-           "\"network\":\"devnet\",\"txBytes\":\"AAAA\",\"approvalTimeoutMs\":30000}";
+           "\"network\":\"devnet\",\"txBytes\":\"AAAA\"}";
 }
 
 std::string request_with_session_and_params(
@@ -177,8 +177,7 @@ void expect_ingress(
          output.params.method[0] != '\0' ||
          output.params.network[0] != '\0' ||
          output.params.tx_bytes_base64[0] != '\0' ||
-         output.params.tx_bytes_decoded_size != 0 ||
-         output.params.approval_timeout_ms != 0)) {
+         output.params.tx_bytes_decoded_size != 0)) {
         fprintf(stderr, "%s: ingress failure did not clear output\n", label);
         ++failures;
     }
@@ -189,8 +188,7 @@ void expect_ingress(
          strcmp(output.params.method, "sign_transaction") != 0 ||
          strcmp(output.params.network, "devnet") != 0 ||
          strcmp(output.params.tx_bytes_base64, "AAAA") != 0 ||
-         output.params.tx_bytes_decoded_size != 3 ||
-         output.params.approval_timeout_ms != 30000)) {
+         output.params.tx_bytes_decoded_size != 3)) {
         fprintf(stderr, "%s: valid ingress output did not match expected fields\n", label);
         ++failures;
     }

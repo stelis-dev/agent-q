@@ -40,8 +40,7 @@ import {
   type StatusResponse,
 } from "./protocol.js";
 
-export const DEFAULT_SCAN_TIMEOUT_MS = 2000;
-export const MAX_SCAN_TIMEOUT_MS = 10000;
+export const INTERNAL_USB_DEADLINE_MS = 30000;
 export const AGENT_Q_USB_VENDOR_ID = "303a";
 export const AGENT_Q_USB_PRODUCT_ID = "1001";
 
@@ -81,52 +80,49 @@ export interface UsbStatusScanResult {
   failures: UsbStatusFailure[];
 }
 
-// Transport contract: each call should resolve or reject within its timeout
-// argument. Gateway does not rely on that alone — GatewayCore wraps the driver in
-// deadlineEnforcingDriver, which races every timeout-bearing call against its own
-// timeout argument, so a driver that ignores it still cannot exceed the budget.
-// listPorts has no timeout argument and is bounded by the shared scan deadline in
-// scanUsbDeviceStatuses. A new timeout-bearing method must be added to the wrapper.
+// Transport contract: each call should resolve or reject within its internal
+// deadline. GatewayCore wraps the driver in deadlineEnforcingDriver, so a driver
+// that ignores the deadline argument still cannot exceed the budget. listPorts
+// has no deadline argument and is bounded by the shared scan deadline in
+// scanUsbDeviceStatuses.
 export interface UsbSerialDriver {
   listPorts(): Promise<PortInfo[]>;
-  requestStatus(portPath: string, timeoutMs: number): Promise<StatusResponse>;
+  requestStatus(portPath: string, deadlineMs: number): Promise<StatusResponse>;
   identifyDevice(
     portPath: string,
     code: string,
-    timeoutMs: number,
-    durationMs: number,
+    deadlineMs: number,
   ): Promise<IdentifyDeviceResponse>;
   connectDevice(
     portPath: string,
     gatewayName: string,
-    timeoutMs: number,
-    approvalTimeoutMs: number,
+    deadlineMs: number,
   ): Promise<ConnectResponse>;
   disconnectDevice(
     portPath: string,
     sessionId: string,
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<DisconnectResponse>;
   getCapabilities(
     portPath: string,
     sessionId: string,
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<CapabilitiesResponse>;
   getAccounts(
     portPath: string,
     sessionId: string,
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<AccountsResponse>;
   getPolicy(
     portPath: string,
     sessionId: string,
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<PolicyResponse>;
   getApprovalHistory(
     portPath: string,
     sessionId: string,
     params: { limit?: number; beforeSeq?: string },
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<ApprovalHistoryResponse>;
   callMethod(
     portPath: string,
@@ -134,13 +130,13 @@ export interface UsbSerialDriver {
     chain: string,
     method: string,
     params: Record<string, unknown>,
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<MethodResultResponse>;
   proposePolicyUpdate(
     portPath: string,
     sessionId: string,
     policy: Record<string, unknown>,
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<PolicyUpdateResultResponse>;
 }
 
@@ -152,67 +148,65 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     }));
   }
 
-  async requestStatus(portPath: string, timeoutMs: number): Promise<StatusResponse> {
-    return requestStatusOverSerial(portPath, timeoutMs);
+  async requestStatus(portPath: string, deadlineMs: number): Promise<StatusResponse> {
+    return requestStatusOverSerial(portPath, deadlineMs);
   }
 
   async identifyDevice(
     portPath: string,
     code: string,
-    timeoutMs: number,
-    durationMs: number,
+    deadlineMs: number,
   ): Promise<IdentifyDeviceResponse> {
-    return identifyDeviceOverSerial(portPath, code, timeoutMs, durationMs);
+    return identifyDeviceOverSerial(portPath, code, deadlineMs);
   }
 
   async connectDevice(
     portPath: string,
     gatewayName: string,
-    timeoutMs: number,
-    approvalTimeoutMs: number,
+    deadlineMs: number,
   ): Promise<ConnectResponse> {
-    return connectDeviceOverSerial(portPath, gatewayName, timeoutMs, approvalTimeoutMs);
+    return connectDeviceOverSerial(portPath, gatewayName, deadlineMs);
   }
 
   async disconnectDevice(
     portPath: string,
     sessionId: string,
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<DisconnectResponse> {
-    return disconnectDeviceOverSerial(portPath, sessionId, timeoutMs);
+    return disconnectDeviceOverSerial(portPath, sessionId, deadlineMs);
   }
 
   async getCapabilities(
     portPath: string,
     sessionId: string,
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<CapabilitiesResponse> {
-    return getCapabilitiesOverSerial(portPath, sessionId, timeoutMs);
+    return getCapabilitiesOverSerial(portPath, sessionId, deadlineMs);
   }
 
   async getAccounts(
     portPath: string,
     sessionId: string,
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<AccountsResponse> {
-    return getAccountsOverSerial(portPath, sessionId, timeoutMs);
+    return getAccountsOverSerial(portPath, sessionId, deadlineMs);
   }
 
   async getPolicy(
     portPath: string,
     sessionId: string,
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<PolicyResponse> {
-    return getPolicyOverSerial(portPath, sessionId, timeoutMs);
+    return getPolicyOverSerial(portPath, sessionId, deadlineMs);
   }
 
   async getApprovalHistory(
     portPath: string,
     sessionId: string,
     params: { limit?: number; beforeSeq?: string },
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<ApprovalHistoryResponse> {
-    return getApprovalHistoryOverSerial(portPath, sessionId, params, timeoutMs);
+    return getApprovalHistoryOverSerial(portPath, sessionId, params, deadlineMs);
   }
 
   async callMethod(
@@ -221,18 +215,18 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     chain: string,
     method: string,
     params: Record<string, unknown>,
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<MethodResultResponse> {
-    return callMethodOverSerial(portPath, sessionId, chain, method, params, timeoutMs);
+    return callMethodOverSerial(portPath, sessionId, chain, method, params, deadlineMs);
   }
 
   async proposePolicyUpdate(
     portPath: string,
     sessionId: string,
     policy: Record<string, unknown>,
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<PolicyUpdateResultResponse> {
-    return proposePolicyUpdateOverSerial(portPath, sessionId, policy, timeoutMs);
+    return proposePolicyUpdateOverSerial(portPath, sessionId, policy, deadlineMs);
   }
 }
 
@@ -248,15 +242,15 @@ export function resolveUsbCalloutPath(
   return pathExists(calloutPath) ? calloutPath : path;
 }
 
-export function validateTimeoutMs(value: unknown): number {
+export function validateInternalDeadlineMs(value: unknown): number {
   if (value === undefined) {
-    return DEFAULT_SCAN_TIMEOUT_MS;
+    return INTERNAL_USB_DEADLINE_MS;
   }
   if (!Number.isInteger(value) || typeof value !== "number" || value <= 0) {
-    throw new GatewayError("invalid_timeout", "timeoutMs must be a positive integer.", false);
+    throw new GatewayError("gateway_error", "Internal USB deadline is invalid.", false);
   }
-  if (value > MAX_SCAN_TIMEOUT_MS) {
-    throw new GatewayError("invalid_timeout", `timeoutMs must be <= ${MAX_SCAN_TIMEOUT_MS}.`, false);
+  if (value > INTERNAL_USB_DEADLINE_MS) {
+    throw new GatewayError("gateway_error", "Internal USB deadline is invalid.", false);
   }
   return value;
 }
@@ -285,13 +279,13 @@ export function isLikelyAgentQUsbPort(port: PortInfo): boolean {
 
 export async function scanUsbDevices(
   driver: UsbSerialDriver,
-  timeoutMs = DEFAULT_SCAN_TIMEOUT_MS,
+  deadlineMs = INTERNAL_USB_DEADLINE_MS,
 ): Promise<UsbStatusResult[]> {
-  return (await scanUsbDeviceStatuses(driver, timeoutMs)).devices;
+  return (await scanUsbDeviceStatuses(driver, deadlineMs)).devices;
 }
 
 // Enforce a Gateway-side deadline on a transport call so a slow or uncooperative
-// driver — one that ignores its timeout argument, or a stuck listPorts() — cannot
+// driver — one that ignores its deadline argument, or a stuck listPorts() — cannot
 // push the scan past its budget. A genuine rejection from `work` propagates
 // UNCHANGED, so callers can still tell an enumeration/transport error apart from
 // "no device present"; swallowing the error (returning []) would conflate the two.
@@ -309,74 +303,74 @@ function raceDeadline<T>(work: Promise<T>, remainingMs: number, timeoutMessage: 
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }
 
-// Single enforcement boundary for the transport timeout contract. Wrapping a
-// driver here races every timeout-bearing call against its own timeout argument,
+// Single enforcement boundary for the transport deadline contract. Wrapping a
+// driver here races every deadline-bearing call against its own deadline argument,
 // so a driver that ignores the argument still cannot exceed the budget. Applied
-// once in GatewayCore, this bounds every present and future timeout-bearing call
+// once in GatewayCore, this bounds every present and future deadline-bearing call
 // in one place instead of relying on each call site to remember to race.
-// listPorts has no timeout argument and is bounded by the shared scan deadline in
+// listPorts has no deadline argument and is bounded by the shared scan deadline in
 // scanUsbDeviceStatuses.
 export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDriver {
   return {
     listPorts: () => driver.listPorts(),
-    requestStatus: (portPath, timeoutMs) =>
+    requestStatus: (portPath, deadlineMs) =>
       raceDeadline(
-        driver.requestStatus(portPath, timeoutMs),
-        timeoutMs,
+        driver.requestStatus(portPath, deadlineMs),
+        deadlineMs,
         "USB status handshake exceeded its timeout.",
       ),
-    identifyDevice: (portPath, code, timeoutMs, durationMs) =>
+    identifyDevice: (portPath, code, deadlineMs) =>
       raceDeadline(
-        driver.identifyDevice(portPath, code, timeoutMs, durationMs),
-        timeoutMs,
+        driver.identifyDevice(portPath, code, deadlineMs),
+        deadlineMs,
         "USB identify exceeded its timeout.",
       ),
-    connectDevice: (portPath, gatewayName, timeoutMs, approvalTimeoutMs) =>
+    connectDevice: (portPath, gatewayName, deadlineMs) =>
       raceDeadline(
-        driver.connectDevice(portPath, gatewayName, timeoutMs, approvalTimeoutMs),
-        timeoutMs,
+        driver.connectDevice(portPath, gatewayName, deadlineMs),
+        deadlineMs,
         "USB connect exceeded its timeout.",
       ),
-    disconnectDevice: (portPath, sessionId, timeoutMs) =>
+    disconnectDevice: (portPath, sessionId, deadlineMs) =>
       raceDeadline(
-        driver.disconnectDevice(portPath, sessionId, timeoutMs),
-        timeoutMs,
+        driver.disconnectDevice(portPath, sessionId, deadlineMs),
+        deadlineMs,
         "USB disconnect exceeded its timeout.",
       ),
-    getCapabilities: (portPath, sessionId, timeoutMs) =>
+    getCapabilities: (portPath, sessionId, deadlineMs) =>
       raceDeadline(
-        driver.getCapabilities(portPath, sessionId, timeoutMs),
-        timeoutMs,
+        driver.getCapabilities(portPath, sessionId, deadlineMs),
+        deadlineMs,
         "USB get capabilities exceeded its timeout.",
       ),
-    getAccounts: (portPath, sessionId, timeoutMs) =>
+    getAccounts: (portPath, sessionId, deadlineMs) =>
       raceDeadline(
-        driver.getAccounts(portPath, sessionId, timeoutMs),
-        timeoutMs,
+        driver.getAccounts(portPath, sessionId, deadlineMs),
+        deadlineMs,
         "USB get accounts exceeded its timeout.",
       ),
-    getPolicy: (portPath, sessionId, timeoutMs) =>
+    getPolicy: (portPath, sessionId, deadlineMs) =>
       raceDeadline(
-        driver.getPolicy(portPath, sessionId, timeoutMs),
-        timeoutMs,
+        driver.getPolicy(portPath, sessionId, deadlineMs),
+        deadlineMs,
         "USB get policy exceeded its timeout.",
       ),
-    getApprovalHistory: (portPath, sessionId, params, timeoutMs) =>
+    getApprovalHistory: (portPath, sessionId, params, deadlineMs) =>
       raceDeadline(
-        driver.getApprovalHistory(portPath, sessionId, params, timeoutMs),
-        timeoutMs,
+        driver.getApprovalHistory(portPath, sessionId, params, deadlineMs),
+        deadlineMs,
         "USB get approval history exceeded its timeout.",
       ),
-    callMethod: (portPath, sessionId, chain, method, params, timeoutMs) =>
+    callMethod: (portPath, sessionId, chain, method, params, deadlineMs) =>
       raceDeadline(
-        driver.callMethod(portPath, sessionId, chain, method, params, timeoutMs),
-        timeoutMs,
+        driver.callMethod(portPath, sessionId, chain, method, params, deadlineMs),
+        deadlineMs,
         "USB call_method exceeded its timeout.",
       ),
-    proposePolicyUpdate: (portPath, sessionId, policy, timeoutMs) =>
+    proposePolicyUpdate: (portPath, sessionId, policy, deadlineMs) =>
       raceDeadline(
-        driver.proposePolicyUpdate(portPath, sessionId, policy, timeoutMs),
-        timeoutMs,
+        driver.proposePolicyUpdate(portPath, sessionId, policy, deadlineMs),
+        deadlineMs,
         "USB policy update proposal exceeded its timeout.",
       ),
   };
@@ -384,15 +378,15 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
 
 export async function scanUsbDeviceStatuses(
   driver: UsbSerialDriver,
-  timeoutMs = DEFAULT_SCAN_TIMEOUT_MS,
+  deadlineMs = INTERNAL_USB_DEADLINE_MS,
   now: () => number = () => Date.now(),
 ): Promise<UsbStatusScanResult> {
-  // timeoutMs is a total wall-clock budget for the whole scan, not a per-candidate
+  // deadlineMs is a total wall-clock budget for the whole scan, not a per-candidate
   // limit. Port enumeration AND every handshake draw from one shared deadline, so
-  // a slow listPorts() or many candidates cannot push the call past timeoutMs.
+  // a slow listPorts() or many candidates cannot push the call past deadlineMs.
   // `now` is injectable so the deadline is deterministically testable.
-  const totalTimeoutMs = validateTimeoutMs(timeoutMs);
-  const deadline = now() + totalTimeoutMs;
+  const totalDeadlineMs = validateInternalDeadlineMs(deadlineMs);
+  const deadline = now() + totalDeadlineMs;
   // Enumeration is bounded by the deadline but its errors propagate (a failed
   // listPorts is not the same as "no devices"; the caller maps it).
   const ports = await raceDeadline(
@@ -472,75 +466,73 @@ export function mapErrorToUnavailableReason(error: unknown): UnavailableReason {
   return "handshake_failed";
 }
 
-async function requestStatusOverSerial(portPath: string, timeoutMs: number): Promise<StatusResponse> {
+async function requestStatusOverSerial(portPath: string, deadlineMs: number): Promise<StatusResponse> {
   const request = makeGetStatusRequest();
-  return requestOverSerial(portPath, request, timeoutMs, (response) => assertStatusResponse(response));
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertStatusResponse(response));
 }
 
 async function identifyDeviceOverSerial(
   portPath: string,
   code: string,
-  timeoutMs: number,
-  durationMs: number,
+  deadlineMs: number,
 ): Promise<IdentifyDeviceResponse> {
-  const request = makeIdentifyDeviceRequest(code, durationMs);
-  return requestOverSerial(portPath, request, timeoutMs, (response) => assertIdentifyDeviceResponse(response));
+  const request = makeIdentifyDeviceRequest(code);
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertIdentifyDeviceResponse(response));
 }
 
 async function connectDeviceOverSerial(
   portPath: string,
   gatewayName: string,
-  timeoutMs: number,
-  approvalTimeoutMs: number,
+  deadlineMs: number,
 ): Promise<ConnectResponse> {
-  const request = makeConnectRequest(gatewayName, approvalTimeoutMs);
-  return requestOverSerial(portPath, request, timeoutMs, (response) => assertConnectResponse(response));
+  const request = makeConnectRequest(gatewayName);
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertConnectResponse(response));
 }
 
 async function disconnectDeviceOverSerial(
   portPath: string,
   sessionId: string,
-  timeoutMs: number,
+  deadlineMs: number,
 ): Promise<DisconnectResponse> {
   const request = makeDisconnectRequest(sessionId);
-  return requestOverSerial(portPath, request, timeoutMs, (response) => assertDisconnectResponse(response));
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertDisconnectResponse(response));
 }
 
 async function getCapabilitiesOverSerial(
   portPath: string,
   sessionId: string,
-  timeoutMs: number,
+  deadlineMs: number,
 ): Promise<CapabilitiesResponse> {
   const request = makeGetCapabilitiesRequest(sessionId);
-  return requestOverSerial(portPath, request, timeoutMs, (response) => assertCapabilitiesResponse(response));
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertCapabilitiesResponse(response));
 }
 
 async function getAccountsOverSerial(
   portPath: string,
   sessionId: string,
-  timeoutMs: number,
+  deadlineMs: number,
 ): Promise<AccountsResponse> {
   const request = makeGetAccountsRequest(sessionId);
-  return requestOverSerial(portPath, request, timeoutMs, (response) => assertAccountsResponse(response));
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertAccountsResponse(response));
 }
 
 async function getPolicyOverSerial(
   portPath: string,
   sessionId: string,
-  timeoutMs: number,
+  deadlineMs: number,
 ): Promise<PolicyResponse> {
   const request = makeGetPolicyRequest(sessionId);
-  return requestOverSerial(portPath, request, timeoutMs, (response) => assertPolicyResponse(response));
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertPolicyResponse(response));
 }
 
 async function getApprovalHistoryOverSerial(
   portPath: string,
   sessionId: string,
   params: { limit?: number; beforeSeq?: string },
-  timeoutMs: number,
+  deadlineMs: number,
 ): Promise<ApprovalHistoryResponse> {
   const request = makeGetApprovalHistoryRequest(sessionId, params);
-  return requestOverSerial(portPath, request, timeoutMs, (response) => assertApprovalHistoryResponse(response));
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertApprovalHistoryResponse(response));
 }
 
 async function callMethodOverSerial(
@@ -549,26 +541,26 @@ async function callMethodOverSerial(
   chain: string,
   method: string,
   params: Record<string, unknown>,
-  timeoutMs: number,
+  deadlineMs: number,
 ): Promise<MethodResultResponse> {
   const request = makeCallMethodRequest(sessionId, chain, method, params);
-  return requestOverSerial(portPath, request, timeoutMs, (response) => assertMethodResultResponse(response));
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertMethodResultResponse(response));
 }
 
 async function proposePolicyUpdateOverSerial(
   portPath: string,
   sessionId: string,
   policy: Record<string, unknown>,
-  timeoutMs: number,
+  deadlineMs: number,
 ): Promise<PolicyUpdateResultResponse> {
   const request = makeProposePolicyUpdateRequest(sessionId, policy);
-  return requestOverSerial(portPath, request, timeoutMs, (response) => assertPolicyUpdateResultResponse(response));
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertPolicyUpdateResultResponse(response));
 }
 
 async function requestOverSerial<TResponse extends ProtocolResponse>(
   portPath: string,
   request: ProtocolRequest,
-  timeoutMs: number,
+  deadlineMs: number,
   assertResponse: (response: ProtocolResponse) => TResponse,
 ): Promise<TResponse> {
   const port = new SerialPort({
@@ -588,7 +580,7 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
       let buffer = "";
       const timer = setTimeout(() => {
         settle(() => reject(new GatewayError("timeout", "Timed out waiting for Firmware response.", true)));
-      }, timeoutMs);
+      }, deadlineMs);
 
       const settle = (complete: () => void): void => {
         if (settled) {

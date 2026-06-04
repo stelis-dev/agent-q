@@ -23,8 +23,6 @@ export { isGatewayName, isSafeDeviceId, isSafeRequestId, isSessionId, sanitizeDi
 export type { DeviceState, ProvisioningState };
 
 export const PROTOCOL_VERSION = 1;
-export const MAX_APPROVAL_TIMEOUT_MS = 60000;
-export const DEFAULT_APPROVAL_TIMEOUT_MS = 30000;
 // sessionTtlMs is uint32 wire metadata. Gateway does not use it as the session
 // authority; it is bounded here only to reject malformed Firmware responses.
 export const MAX_SESSION_TTL_MS = 4_294_967_295;
@@ -58,7 +56,6 @@ export interface IdentifyDeviceRequest {
   type: "identify_device";
   params: {
     code: string;
-    durationMs: number;
   };
 }
 
@@ -68,7 +65,6 @@ export interface ConnectRequest {
   type: "connect";
   params: {
     gatewayName: string;
-    approvalTimeoutMs: number;
   };
 }
 
@@ -396,17 +392,10 @@ export function makeGetStatusRequest(id = createRequestId()): GetStatusRequest {
   };
 }
 
-export function makeIdentifyDeviceRequest(
-  code: string,
-  durationMs: number,
-  id = createRequestId(),
-): IdentifyDeviceRequest {
+export function makeIdentifyDeviceRequest(code: string, id = createRequestId()): IdentifyDeviceRequest {
   validateRequestId(id);
   if (!isIdentificationCode(code)) {
     throw new ProtocolError("invalid_code", "Invalid identification code.");
-  }
-  if (!Number.isInteger(durationMs) || durationMs <= 0 || durationMs > 30000) {
-    throw new ProtocolError("invalid_duration", "Invalid identification duration.");
   }
   return {
     id,
@@ -414,7 +403,6 @@ export function makeIdentifyDeviceRequest(
     type: "identify_device",
     params: {
       code,
-      durationMs,
     },
   };
 }
@@ -425,7 +413,6 @@ export function createIdentificationCode(): string {
 
 export function makeConnectRequest(
   gatewayName: string,
-  approvalTimeoutMs: number = DEFAULT_APPROVAL_TIMEOUT_MS,
   id = createRequestId(),
 ): ConnectRequest {
   validateRequestId(id);
@@ -435,14 +422,12 @@ export function makeConnectRequest(
       "gatewayName must be 1-64 printable ASCII characters.",
     );
   }
-  validateApprovalTimeoutMs(approvalTimeoutMs);
   return {
     id,
     version: PROTOCOL_VERSION,
     type: "connect",
     params: {
       gatewayName,
-      approvalTimeoutMs,
     },
   };
 }
@@ -1143,6 +1128,7 @@ export const MAX_POLICY_UPDATE_REQUEST_JSON_BYTES = 4096;
 export const SUI_CHAIN_ID = "sui";
 export const SUI_SIGN_TRANSACTION_METHOD = "sign_transaction";
 export const SUI_SIGN_TRANSACTION_NETWORKS = ["mainnet", "testnet", "devnet", "localnet"] as const;
+export type SuiSignTransactionNetwork = (typeof SUI_SIGN_TRANSACTION_NETWORKS)[number];
 export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES = 384;
 export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS = 512;
 const BASE64_CANONICAL_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
@@ -1673,27 +1659,37 @@ function validateSuiSignTransactionParams(params: Record<string, unknown>): void
   if (!hasOnlyObjectKeys(params, ["network", "txBytes"])) {
     throw new ProtocolError("invalid_params", "sui/sign_transaction params contain unsupported fields.");
   }
-  if (!SUI_SIGN_TRANSACTION_NETWORKS.includes(params.network as (typeof SUI_SIGN_TRANSACTION_NETWORKS)[number])) {
+  validateSuiSignTransactionNetwork(params.network);
+  validateSuiSignTransactionTxBytes(params.txBytes);
+}
+
+function validateSuiSignTransactionNetwork(value: unknown): SuiSignTransactionNetwork {
+  if (!SUI_SIGN_TRANSACTION_NETWORKS.includes(value as SuiSignTransactionNetwork)) {
     throw new ProtocolError("invalid_params", "sui/sign_transaction network is unsupported.");
   }
-  if (typeof params.txBytes !== "string") {
+  return value as SuiSignTransactionNetwork;
+}
+
+function validateSuiSignTransactionTxBytes(value: unknown): string {
+  if (typeof value !== "string") {
     throw new ProtocolError("invalid_params", "sui/sign_transaction txBytes must be base64.");
   }
   if (
-    params.txBytes.length === 0 ||
-    params.txBytes.length > MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS ||
-    !BASE64_CANONICAL_PATTERN.test(params.txBytes)
+    value.length === 0 ||
+    value.length > MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS ||
+    !BASE64_CANONICAL_PATTERN.test(value)
   ) {
     throw new ProtocolError("invalid_params", "sui/sign_transaction txBytes must be canonical base64.");
   }
-  const decoded = Buffer.from(params.txBytes, "base64");
+  const decoded = Buffer.from(value, "base64");
   if (
     decoded.length === 0 ||
     decoded.length > MAX_SUI_SIGN_TRANSACTION_TX_BYTES ||
-    decoded.toString("base64") !== params.txBytes
+    decoded.toString("base64") !== value
   ) {
     throw new ProtocolError("invalid_params", "sui/sign_transaction txBytes are outside the supported size.");
   }
+  return value;
 }
 
 function methodResultErrorMessage(code: unknown): string | undefined {
@@ -1722,19 +1718,6 @@ function isIdentificationCode(value: unknown): value is string {
 function validateRequestId(id: string): void {
   if (!isSafeRequestId(id)) {
     throw new ProtocolError("invalid_id", "Invalid request id.");
-  }
-}
-
-function validateApprovalTimeoutMs(approvalTimeoutMs: number): void {
-  if (
-    !Number.isInteger(approvalTimeoutMs) ||
-    approvalTimeoutMs <= 0 ||
-    approvalTimeoutMs > MAX_APPROVAL_TIMEOUT_MS
-  ) {
-    throw new ProtocolError(
-      "invalid_approval_timeout",
-      `approvalTimeoutMs must be a positive integer <= ${MAX_APPROVAL_TIMEOUT_MS}.`,
-    );
   }
 }
 

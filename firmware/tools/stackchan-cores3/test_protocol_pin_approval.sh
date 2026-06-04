@@ -19,7 +19,28 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+USB_SERVER="${AGENT_Q_DIR}/agent_q_usb_request_server.cpp"
 CXX_BIN="${CXX:-c++}"
+
+check_usb_server_deadline_order() {
+  local deadline_line
+  local lockout_line
+
+  deadline_line="$(awk '
+    /void clear_local_pin_auth_if_needed\(\)/ { in_fn = 1 }
+    in_fn && /request_backed_local_pin_deadline_reached/ { print NR; exit }
+  ' "${USB_SERVER}")"
+  lockout_line="$(awk '
+    /void clear_local_pin_auth_if_needed\(\)/ { in_fn = 1 }
+    in_fn && /local_pin_auth_release_lockout_if_elapsed/ { print NR; exit }
+  ' "${USB_SERVER}")"
+
+  if [[ -z "${deadline_line}" || -z "${lockout_line}" || "${deadline_line}" -ge "${lockout_line}" ]]; then
+    echo "FAILED: protocol-backed PIN deadline must be handled before lockout retry UI recovery" >&2
+    echo "deadline_line=${deadline_line:-missing} lockout_line=${lockout_line:-missing}" >&2
+    exit 1
+  fi
+}
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-protocol-pin-approval.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
@@ -107,6 +128,7 @@ int main()
     expect(strcmp(snapshot.request_id, "connect-1") == 0, "connect request id stored");
     expect(snapshot.session_id[0] == '\0', "connect stores no session id");
     expect(snapshot.deadline == 100, "connect deadline stored");
+    expect(snapshot.approval_deadline == 100, "connect fixed approval deadline stored");
     expect(agent_q::protocol_pin_approval_request_id_for_local_pin_purpose(
                LocalPurpose::connect,
                request_id,
@@ -126,6 +148,27 @@ int main()
                LocalPurpose::connect,
                100),
            "deadline reached at deadline");
+    expect(agent_q::protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
+               LocalPurpose::connect,
+               130),
+           "connect local PIN retry refresh is accepted");
+    snapshot = agent_q::protocol_pin_approval_snapshot();
+    expect(snapshot.deadline == 100, "connect retry deadline is capped by fixed approval deadline");
+    expect(snapshot.approval_deadline == 100, "connect fixed approval deadline is unchanged");
+    expect(agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
+               LocalPurpose::connect,
+               100),
+           "capped retry deadline is reached at fixed approval deadline");
+    expect(agent_q::protocol_pin_approval_pause_deadline_for_local_pin_purpose(
+               LocalPurpose::connect),
+           "connect local PIN verification pauses protocol deadline");
+    snapshot = agent_q::protocol_pin_approval_snapshot();
+    expect(snapshot.deadline == 0, "connect paused deadline stored");
+    expect(snapshot.approval_deadline == 100, "paused connect keeps fixed approval deadline");
+    expect(agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
+               LocalPurpose::connect,
+               1000),
+           "fixed approval deadline still expires while PIN verification runs");
 
     char too_long[agent_q::kAgentQProtocolPinRequestIdSize + 4] = {};
     memset(too_long, 'a', sizeof(too_long) - 1);
@@ -159,6 +202,8 @@ int main()
     expect(snapshot.purpose == Purpose::policy_update, "policy update snapshot purpose");
     expect(strcmp(snapshot.request_id, "policy-1") == 0, "policy update request id stored");
     expect(strcmp(snapshot.session_id, session_id) == 0, "policy update session id stored");
+    expect(snapshot.deadline == 250 && snapshot.approval_deadline == 250,
+           "policy update stores both local and fixed deadlines");
     expect(agent_q::protocol_pin_approval_policy_update_session_matches(session_id),
            "matching policy update session recognized");
     expect(!agent_q::protocol_pin_approval_policy_update_session_matches(
@@ -205,3 +250,4 @@ CPP
   -o "${TMP_DIR}/protocol_pin_approval_test"
 
 "${TMP_DIR}/protocol_pin_approval_test"
+check_usb_server_deadline_order

@@ -93,6 +93,7 @@ bool flow_matches_expected(
            strcmp(current.method, expected.method) == 0 &&
            strcmp(current.network, expected.network) == 0 &&
            strcmp(current.payload_digest, expected.payload_digest) == 0 &&
+           current.confirmation_deadline == expected.confirmation_deadline &&
            current.signable_payload_size == expected.signable_payload_size &&
            current.signable_payload_available == expected.signable_payload_available;
 }
@@ -220,12 +221,53 @@ signature_request_confirmation_complete_pin_verify_job_and_write_history(
         case AgentQLocalPinAuthSignatureVerifyResult::auth_unavailable:
             clear_expected_flow_and_pin(expected);
             return AgentQSignatureRequestConfirmationResult::auth_unavailable;
-        case AgentQLocalPinAuthSignatureVerifyResult::locked:
+        case AgentQLocalPinAuthSignatureVerifyResult::locked: {
+            if (signature_request_flow_deadline_reached(now)) {
+                clear_signature_pin_if_active();
+                const AgentQSignatureRequestTransitionResult timeout =
+                    signature_request_flow_record_timeout(now);
+                return timeout == AgentQSignatureRequestTransitionResult::ok
+                           ? AgentQSignatureRequestConfirmationResult::deadline_expired
+                           : map_transition(timeout);
+            }
+            const AgentQSignatureRequestTransitionResult refresh =
+                signature_request_flow_refresh_pin_deadline(retry_deadline);
+            if (refresh != AgentQSignatureRequestTransitionResult::ok) {
+                clear_signature_pin_if_active();
+                return map_transition(refresh);
+            }
             return AgentQSignatureRequestConfirmationResult::locked;
-        case AgentQLocalPinAuthSignatureVerifyResult::wrong_pin:
+        }
+        case AgentQLocalPinAuthSignatureVerifyResult::wrong_pin: {
+            if (signature_request_flow_deadline_reached(now)) {
+                clear_signature_pin_if_active();
+                const AgentQSignatureRequestTransitionResult timeout =
+                    signature_request_flow_record_timeout(now);
+                return timeout == AgentQSignatureRequestTransitionResult::ok
+                           ? AgentQSignatureRequestConfirmationResult::deadline_expired
+                           : map_transition(timeout);
+            }
+            const AgentQSignatureRequestTransitionResult refresh =
+                signature_request_flow_refresh_pin_deadline(retry_deadline);
+            if (refresh != AgentQSignatureRequestTransitionResult::ok) {
+                clear_signature_pin_if_active();
+                return map_transition(refresh);
+            }
             return AgentQSignatureRequestConfirmationResult::wrong_pin;
+        }
     }
     return AgentQSignatureRequestConfirmationResult::wrong_stage;
+}
+
+AgentQSignatureRequestConfirmationResult
+signature_request_confirmation_mark_pin_verification_started()
+{
+    if (!signature_pin_bound_to_flow(
+            AgentQLocalPinAuthStage::pin_verifying,
+            AgentQSignatureRequestStage::pin_entry)) {
+        return AgentQSignatureRequestConfirmationResult::wrong_stage;
+    }
+    return map_transition(signature_request_flow_pause_pin_deadline());
 }
 
 AgentQSignatureRequestConfirmationResult

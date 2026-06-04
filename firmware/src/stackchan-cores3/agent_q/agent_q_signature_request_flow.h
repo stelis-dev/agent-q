@@ -87,6 +87,7 @@ struct AgentQSignatureRequestFlowSnapshot {
     char network[kAgentQSignatureRequestNetworkSize];
     char payload_digest[kAgentQApprovalHistoryDigestSize];
     TickType_t deadline;
+    TickType_t confirmation_deadline;
     size_t signable_payload_size;
     bool signable_payload_available;
     SuiTransferFacts sui_transfer;
@@ -107,6 +108,11 @@ AgentQSignatureRequestFlowBeginResult signature_request_flow_begin(
 AgentQSignatureRequestTransitionResult signature_request_flow_accept_review(
     TickType_t now,
     TickType_t pin_deadline);
+TickType_t signature_request_flow_retry_deadline(TickType_t fallback_deadline);
+AgentQSignatureRequestTransitionResult signature_request_flow_refresh_pin_deadline(
+    TickType_t pin_deadline);
+AgentQSignatureRequestTransitionResult signature_request_flow_pause_pin_deadline();
+bool signature_request_flow_deadline_reached(TickType_t now);
 AgentQSignatureRequestTransitionResult
 signature_request_flow_record_pin_verified_and_write_confirmation_history(
     TickType_t now,
@@ -124,6 +130,7 @@ AgentQSignatureRequestTransitionResult signature_request_flow_complete_signed();
 AgentQSignatureRequestTransitionResult signature_request_flow_cancel_for_disconnect(
     const char* session_id);
 AgentQSignatureRequestTransitionResult signature_request_flow_cancel_for_session_loss();
+AgentQSignatureRequestTransitionResult signature_request_flow_cancel_for_ui_loss();
 AgentQSignatureRequestTransitionResult signature_request_flow_cancel_for_pin_loss();
 
 bool signature_request_flow_terminal_pending();

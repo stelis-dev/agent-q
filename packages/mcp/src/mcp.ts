@@ -3,10 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import * as z from "zod/v4";
 import { createDefaultGatewayCore } from "@stelis/agent-q-client/admin";
 import {
-  DEFAULT_CALL_METHOD_TIMEOUT_MS,
   GatewayCore,
-  MAX_IDENTIFY_DURATION_MS,
-  MAX_SCAN_TIMEOUT_MS,
   type ConnectDeviceResult,
   type CallMethodResult,
   type DeviceListResult,
@@ -65,7 +62,6 @@ import {
   CALL_METHOD_CHAIN_PATTERN,
   CALL_METHOD_NAME_PATTERN,
   MAX_APPROVAL_HISTORY_RECORDS,
-  MAX_APPROVAL_TIMEOUT_MS,
   UINT_DECIMAL_STRING_PATTERN,
   isUint64DecimalString,
 } from "@stelis/agent-q-client/protocol";
@@ -77,29 +73,25 @@ const purposeSchema = z.string().regex(PURPOSE_PATTERN).refine((value) => isVali
   message: "purpose must be 1-32 characters of [A-Za-z0-9_.-] and not a reserved or prototype-sensitive name.",
 });
 
-// Shared discovery timeout. It is a TOTAL wall-clock budget for USB discovery
-// (port enumeration + status handshakes), documented so callers don't read it as
-// a per-port limit or as the device approval wait (connect_device's approval
-// uses approvalTimeoutMs separately).
-const scanTimeoutSchema = z
-  .number()
-  .int()
-  .positive()
-  .max(MAX_SCAN_TIMEOUT_MS)
-  .describe(
-    "Total wall-clock budget in ms for USB discovery (port enumeration and status handshakes). Not the device approval wait.",
-  )
-  .optional();
+const providerSigningCapabilityGuard = z.unknown().superRefine((value, ctx) => {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).source === "live" &&
+    "signatureRequests" in value
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      message: "MCP get_capabilities must not expose provider-facing signatureRequests.",
+    });
+  }
+});
 
-const callMethodTimeoutSchema = z
-  .number()
-  .int()
-  .positive()
-  .max(DEFAULT_CALL_METHOD_TIMEOUT_MS)
-  .describe(
-    "Budget in ms for call_method transport and any Firmware-owned device approval after the target device is resolved.",
-  )
-  .optional();
+const mcpGetCapabilitiesSuccessOutputShape =
+  providerSigningCapabilityGuard.pipe(getCapabilitiesSuccessOutputShape);
+const mcpGetCapabilitiesToolOutputShape =
+  providerSigningCapabilityGuard.pipe(getCapabilitiesToolOutputShape);
 
 export const gatewayToolDefinitions = {
   scanDevices: {
@@ -107,9 +99,7 @@ export const gatewayToolDefinitions = {
     title: "Scan devices",
     description:
       "Find USB-connected Agent-Q Firmware devices by writing a status handshake to candidate USB serial ports, and report sanitized candidate failure reasons.",
-    inputSchema: {
-      timeoutMs: scanTimeoutSchema,
-    },
+    inputSchema: {},
     outputSchema: scanDevicesToolOutputShape,
     successOutputSchema: scanDevicesSuccessOutputShape,
   },
@@ -118,10 +108,7 @@ export const gatewayToolDefinitions = {
     title: "Identify devices",
     description:
       "Ask discovered Agent-Q Firmware devices to display short identification codes. Writes a status handshake to candidate USB serial ports before sending the identify request.",
-    inputSchema: {
-      timeoutMs: scanTimeoutSchema,
-      durationMs: z.number().int().positive().max(MAX_IDENTIFY_DURATION_MS).optional(),
-    },
+    inputSchema: {},
     outputSchema: identifyDevicesToolOutputShape,
     successOutputSchema: identifyDevicesSuccessOutputShape,
   },
@@ -145,7 +132,6 @@ export const gatewayToolDefinitions = {
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
-      timeoutMs: scanTimeoutSchema,
     },
     // outputSchema (full union) is for Gateway-side tests only; it is not
     // registered with the SDK. successOutputSchema (live | cached) is the
@@ -183,8 +169,6 @@ export const gatewayToolDefinitions = {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
       gatewayName: z.string().regex(GATEWAY_NAME_PATTERN).optional(),
-      approvalTimeoutMs: z.number().int().positive().max(MAX_APPROVAL_TIMEOUT_MS).optional(),
-      timeoutMs: scanTimeoutSchema,
     },
     outputSchema: connectDeviceToolOutputShape,
     successOutputSchema: connectDeviceSuccessOutputShape,
@@ -197,7 +181,6 @@ export const gatewayToolDefinitions = {
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
-      timeoutMs: scanTimeoutSchema,
     },
     outputSchema: disconnectDeviceToolOutputShape,
     successOutputSchema: disconnectDeviceSuccessOutputShape,
@@ -210,10 +193,9 @@ export const gatewayToolDefinitions = {
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
-      timeoutMs: scanTimeoutSchema,
     },
-    outputSchema: getCapabilitiesToolOutputShape,
-    successOutputSchema: getCapabilitiesSuccessOutputShape,
+    outputSchema: mcpGetCapabilitiesToolOutputShape,
+    successOutputSchema: mcpGetCapabilitiesSuccessOutputShape,
   },
   getAccounts: {
     name: "get_accounts",
@@ -223,7 +205,6 @@ export const gatewayToolDefinitions = {
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
-      timeoutMs: scanTimeoutSchema,
     },
     outputSchema: getAccountsToolOutputShape,
     successOutputSchema: getAccountsSuccessOutputShape,
@@ -236,7 +217,6 @@ export const gatewayToolDefinitions = {
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
-      timeoutMs: scanTimeoutSchema,
     },
     outputSchema: getPolicyToolOutputShape,
     successOutputSchema: getPolicySuccessOutputShape,
@@ -251,7 +231,6 @@ export const gatewayToolDefinitions = {
       purpose: purposeSchema.optional(),
       limit: z.number().int().positive().max(MAX_APPROVAL_HISTORY_RECORDS).optional(),
       beforeSeq: z.string().regex(UINT_DECIMAL_STRING_PATTERN).refine((value) => isUint64DecimalString(value)).optional(),
-      timeoutMs: scanTimeoutSchema,
     },
     outputSchema: getApprovalHistoryToolOutputShape,
     successOutputSchema: getApprovalHistorySuccessOutputShape,
@@ -267,7 +246,6 @@ export const gatewayToolDefinitions = {
       chain: z.string().regex(CALL_METHOD_CHAIN_PATTERN),
       method: z.string().regex(CALL_METHOD_NAME_PATTERN),
       params: z.object({}).passthrough().optional(),
-      timeoutMs: callMethodTimeoutSchema,
     },
     outputSchema: callMethodToolOutputShape,
     successOutputSchema: callMethodSuccessOutputShape,
@@ -281,7 +259,6 @@ export const gatewayToolDefinitions = {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
       policy: z.object({}).passthrough(),
-      timeoutMs: z.number().int().positive().max(MAX_APPROVAL_TIMEOUT_MS + 1000).optional(),
     },
     outputSchema: proposePolicyUpdateToolOutputShape,
     successOutputSchema: proposePolicyUpdateSuccessOutputShape,
@@ -341,8 +318,8 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
       inputSchema: gatewayToolDefinitions.scanDevices.inputSchema,
       outputSchema: gatewayToolDefinitions.scanDevices.successOutputSchema,
     },
-    async ({ timeoutMs }) =>
-      run(gatewayToolDefinitions.scanDevices.successOutputSchema, () => core.scanDevices({ timeoutMs })),
+    async () =>
+      run(gatewayToolDefinitions.scanDevices.successOutputSchema, () => core.scanDevices()),
   );
 
   server.registerTool(
@@ -353,8 +330,8 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
       inputSchema: gatewayToolDefinitions.identifyDevices.inputSchema,
       outputSchema: gatewayToolDefinitions.identifyDevices.successOutputSchema,
     },
-    async ({ timeoutMs, durationMs }) =>
-      run({ parse: sanitizeIdentifyDevicesResult }, () => core.identifyDevices({ timeoutMs, durationMs })),
+    async () =>
+      run({ parse: sanitizeIdentifyDevicesResult }, () => core.identifyDevices()),
   );
 
   server.registerTool(
@@ -379,9 +356,9 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
       description: gatewayToolDefinitions.getDeviceStatus.description,
       inputSchema: gatewayToolDefinitions.getDeviceStatus.inputSchema,
     },
-    async ({ deviceId, purpose, timeoutMs }) =>
+    async ({ deviceId, purpose }) =>
       run({ parse: sanitizeGetDeviceStatusResult }, () =>
-        core.getDeviceStatus({ deviceId, purpose, timeoutMs }),
+        core.getDeviceStatus({ deviceId, purpose }),
       ),
   );
 
@@ -418,9 +395,9 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
       inputSchema: gatewayToolDefinitions.connectDevice.inputSchema,
       outputSchema: gatewayToolDefinitions.connectDevice.successOutputSchema,
     },
-    async ({ deviceId, purpose, gatewayName, approvalTimeoutMs, timeoutMs }) =>
+    async ({ deviceId, purpose, gatewayName }) =>
       run(gatewayToolDefinitions.connectDevice.successOutputSchema, () =>
-        core.connectDevice({ deviceId, purpose, gatewayName, approvalTimeoutMs, timeoutMs }),
+        core.connectDevice({ deviceId, purpose, gatewayName }),
       ),
   );
 
@@ -432,9 +409,9 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
       inputSchema: gatewayToolDefinitions.disconnectDevice.inputSchema,
       outputSchema: gatewayToolDefinitions.disconnectDevice.successOutputSchema,
     },
-    async ({ deviceId, purpose, timeoutMs }) =>
+    async ({ deviceId, purpose }) =>
       run(gatewayToolDefinitions.disconnectDevice.successOutputSchema, () =>
-        core.disconnectDevice({ deviceId, purpose, timeoutMs }),
+        core.disconnectDevice({ deviceId, purpose }),
       ),
   );
 
@@ -448,9 +425,9 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
-    async ({ deviceId, purpose, timeoutMs }) =>
-      run(gatewayToolDefinitions.getCapabilities.successOutputSchema, () =>
-        core.getCapabilities({ deviceId, purpose, timeoutMs }),
+    async ({ deviceId, purpose }) =>
+      run({ parse: sanitizeMcpGetCapabilitiesResult }, () =>
+        core.getCapabilities({ deviceId, purpose }),
       ),
   );
 
@@ -464,9 +441,9 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
-    async ({ deviceId, purpose, timeoutMs }) =>
+    async ({ deviceId, purpose }) =>
       run(gatewayToolDefinitions.getAccounts.successOutputSchema, () =>
-        core.getAccounts({ deviceId, purpose, timeoutMs }),
+        core.getAccounts({ deviceId, purpose }),
       ),
   );
 
@@ -480,9 +457,9 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
-    async ({ deviceId, purpose, timeoutMs }) =>
+    async ({ deviceId, purpose }) =>
       run(gatewayToolDefinitions.getPolicy.successOutputSchema, () =>
-        core.getPolicy({ deviceId, purpose, timeoutMs }),
+        core.getPolicy({ deviceId, purpose }),
       ),
   );
 
@@ -496,9 +473,9 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
-    async ({ deviceId, purpose, limit, beforeSeq, timeoutMs }) =>
+    async ({ deviceId, purpose, limit, beforeSeq }) =>
       run(gatewayToolDefinitions.getApprovalHistory.successOutputSchema, () =>
-        core.getApprovalHistory({ deviceId, purpose, limit, beforeSeq, timeoutMs }),
+        core.getApprovalHistory({ deviceId, purpose, limit, beforeSeq }),
       ),
   );
 
@@ -512,9 +489,9 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
-    async ({ deviceId, purpose, chain, method, params, timeoutMs }) =>
+    async ({ deviceId, purpose, chain, method, params }) =>
       run(gatewayToolDefinitions.callMethod.successOutputSchema, () =>
-        core.callMethod({ deviceId, purpose, chain, method, params, timeoutMs }),
+        core.callMethod({ deviceId, purpose, chain, method, params }),
       ),
   );
 
@@ -528,9 +505,9 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
-    async ({ deviceId, purpose, policy, timeoutMs }) =>
+    async ({ deviceId, purpose, policy }) =>
       run(gatewayToolDefinitions.proposePolicyUpdate.successOutputSchema, () =>
-        core.proposePolicyUpdate({ deviceId, purpose, policy, timeoutMs }),
+        core.proposePolicyUpdate({ deviceId, purpose, policy }),
       ),
   );
 
@@ -616,6 +593,10 @@ function sanitizeGetDeviceStatusResult(raw: unknown): object {
     }
   }
   return getDeviceStatusSuccessOutputShape.parse(candidate);
+}
+
+function sanitizeMcpGetCapabilitiesResult(raw: unknown): object {
+  return mcpGetCapabilitiesSuccessOutputShape.parse(raw);
 }
 
 type StructuredToolResult =

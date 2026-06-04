@@ -20,6 +20,7 @@ struct AgentQSignatureRequestFlowState {
     char network[kAgentQSignatureRequestNetworkSize] = {};
     char payload_digest[kAgentQApprovalHistoryDigestSize] = {};
     TickType_t deadline = 0;
+    TickType_t confirmation_deadline = 0;
     uint8_t tx_bytes[kAgentQSuiSignTransactionTxBytesMaxBytes] = {};
     size_t tx_bytes_size = 0;
     bool tx_bytes_available = false;
@@ -49,6 +50,7 @@ struct AgentQSignatureRequestFlowState {
         network[0] = '\0';
         payload_digest[0] = '\0';
         deadline = 0;
+        confirmation_deadline = 0;
         memset(&sui_transfer, 0, sizeof(sui_transfer));
     }
 
@@ -58,6 +60,7 @@ struct AgentQSignatureRequestFlowState {
         terminal_result = result;
         stage = AgentQSignatureRequestStage::terminal;
         deadline = 0;
+        confirmation_deadline = 0;
     }
 };
 
@@ -182,6 +185,20 @@ bool tick_reached(TickType_t deadline, TickType_t now)
            static_cast<int32_t>(now - deadline) >= 0;
 }
 
+TickType_t cap_deadline(TickType_t deadline, TickType_t cap)
+{
+    if (deadline == 0 || cap == 0) {
+        return deadline;
+    }
+    return tick_reached(cap, deadline) ? cap : deadline;
+}
+
+bool any_deadline_reached(TickType_t now)
+{
+    return tick_reached(g_state.confirmation_deadline, now) ||
+           tick_reached(g_state.deadline, now);
+}
+
 bool rejectable_stage(AgentQSignatureRequestStage stage)
 {
     return stage == AgentQSignatureRequestStage::reviewing ||
@@ -243,7 +260,7 @@ AgentQSignatureRequestTransitionResult require_active_session()
 
 AgentQSignatureRequestTransitionResult terminalize_if_deadline_expired(TickType_t now)
 {
-    if (tick_reached(g_state.deadline, now)) {
+    if (any_deadline_reached(now)) {
         g_state.terminalize(AgentQSignatureRequestTerminalResult::timed_out);
         return AgentQSignatureRequestTransitionResult::deadline_expired;
     }
@@ -262,6 +279,7 @@ bool same_history_write_request(const AgentQSignatureRequestFlowSnapshot& snapsh
            strcmp(g_state.method, snapshot.method) == 0 &&
            strcmp(g_state.network, snapshot.network) == 0 &&
            strcmp(g_state.payload_digest, snapshot.payload_digest) == 0 &&
+           g_state.confirmation_deadline == snapshot.confirmation_deadline &&
            g_state.tx_bytes_size == snapshot.signable_payload_size &&
            g_state.tx_bytes_available == snapshot.signable_payload_available;
 }
@@ -318,6 +336,7 @@ AgentQSignatureRequestFlowSnapshot signature_request_flow_snapshot()
     memcpy(snapshot.network, g_state.network, sizeof(snapshot.network));
     memcpy(snapshot.payload_digest, g_state.payload_digest, sizeof(snapshot.payload_digest));
     snapshot.deadline = g_state.deadline;
+    snapshot.confirmation_deadline = g_state.confirmation_deadline;
     snapshot.signable_payload_size = g_state.tx_bytes_size;
     snapshot.signable_payload_available = g_state.tx_bytes_available;
     snapshot.sui_transfer = g_state.sui_transfer;
@@ -403,6 +422,7 @@ AgentQSignatureRequestFlowBeginResult signature_request_flow_begin(
     g_state.tx_bytes_available = true;
     g_state.sui_transfer = parsed_facts;
     g_state.deadline = input.deadline;
+    g_state.confirmation_deadline = input.deadline;
     g_state.stage = AgentQSignatureRequestStage::reviewing;
     return AgentQSignatureRequestFlowBeginResult::ok;
 }
@@ -433,8 +453,57 @@ AgentQSignatureRequestTransitionResult signature_request_flow_accept_review(
         return AgentQSignatureRequestTransitionResult::deadline_expired;
     }
     g_state.stage = AgentQSignatureRequestStage::pin_entry;
-    g_state.deadline = pin_deadline;
+    g_state.deadline = cap_deadline(pin_deadline, g_state.confirmation_deadline);
     return AgentQSignatureRequestTransitionResult::ok;
+}
+
+TickType_t signature_request_flow_retry_deadline(TickType_t fallback_deadline)
+{
+    if (!g_state.active()) {
+        return fallback_deadline;
+    }
+    return cap_deadline(fallback_deadline, g_state.confirmation_deadline);
+}
+
+AgentQSignatureRequestTransitionResult signature_request_flow_refresh_pin_deadline(
+    TickType_t pin_deadline)
+{
+    if (!g_state.active()) {
+        return AgentQSignatureRequestTransitionResult::inactive;
+    }
+    if (g_state.stage != AgentQSignatureRequestStage::pin_entry) {
+        return AgentQSignatureRequestTransitionResult::wrong_stage;
+    }
+    if (pin_deadline == 0) {
+        return AgentQSignatureRequestTransitionResult::invalid_deadline;
+    }
+    const AgentQSignatureRequestTransitionResult guard = require_active_session();
+    if (guard != AgentQSignatureRequestTransitionResult::ok) {
+        return guard;
+    }
+    g_state.deadline = cap_deadline(pin_deadline, g_state.confirmation_deadline);
+    return AgentQSignatureRequestTransitionResult::ok;
+}
+
+AgentQSignatureRequestTransitionResult signature_request_flow_pause_pin_deadline()
+{
+    if (!g_state.active()) {
+        return AgentQSignatureRequestTransitionResult::inactive;
+    }
+    if (g_state.stage != AgentQSignatureRequestStage::pin_entry) {
+        return AgentQSignatureRequestTransitionResult::wrong_stage;
+    }
+    const AgentQSignatureRequestTransitionResult guard = require_active_session();
+    if (guard != AgentQSignatureRequestTransitionResult::ok) {
+        return guard;
+    }
+    g_state.deadline = 0;
+    return AgentQSignatureRequestTransitionResult::ok;
+}
+
+bool signature_request_flow_deadline_reached(TickType_t now)
+{
+    return g_state.active() && any_deadline_reached(now);
 }
 
 AgentQSignatureRequestTransitionResult
@@ -478,6 +547,7 @@ signature_request_flow_record_pin_verified_and_write_confirmation_history(
         return AgentQSignatureRequestTransitionResult::history_error;
     }
     g_state.stage = AgentQSignatureRequestStage::signing_critical_section;
+    g_state.confirmation_deadline = 0;
     return AgentQSignatureRequestTransitionResult::ok;
 }
 
@@ -527,7 +597,7 @@ AgentQSignatureRequestTransitionResult signature_request_flow_record_timeout(Tic
         g_state.stage != AgentQSignatureRequestStage::pin_entry) {
         return AgentQSignatureRequestTransitionResult::wrong_stage;
     }
-    if (!tick_reached(g_state.deadline, now)) {
+    if (!any_deadline_reached(now)) {
         return AgentQSignatureRequestTransitionResult::deadline_not_reached;
     }
     g_state.terminalize(AgentQSignatureRequestTerminalResult::timed_out);
@@ -587,12 +657,17 @@ AgentQSignatureRequestTransitionResult signature_request_flow_cancel_for_session
     return terminalize_if_precritical_cleanup(AgentQSignatureRequestTerminalResult::canceled);
 }
 
-AgentQSignatureRequestTransitionResult signature_request_flow_cancel_for_pin_loss()
+AgentQSignatureRequestTransitionResult signature_request_flow_cancel_for_ui_loss()
 {
     if (!g_state.active()) {
         return AgentQSignatureRequestTransitionResult::inactive;
     }
     return terminalize_if_precritical_cleanup(AgentQSignatureRequestTerminalResult::canceled);
+}
+
+AgentQSignatureRequestTransitionResult signature_request_flow_cancel_for_pin_loss()
+{
+    return signature_request_flow_cancel_for_ui_loss();
 }
 
 bool signature_request_flow_terminal_pending()

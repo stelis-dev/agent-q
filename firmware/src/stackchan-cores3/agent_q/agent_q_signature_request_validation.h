@@ -11,8 +11,7 @@
 
 namespace agent_q {
 
-constexpr uint32_t kAgentQSignatureRequestApprovalTimeoutDefaultMs = 30000;
-constexpr uint32_t kAgentQSignatureRequestApprovalTimeoutMaxMs = 60000;
+constexpr uint32_t kAgentQSignatureRequestApprovalWindowMs = 30000;
 constexpr size_t kAgentQSignatureRequestTxBytesBase64Size =
     kAgentQSuiSignTransactionTxBytesMaxBase64Size + 1;
 
@@ -27,7 +26,6 @@ enum class AgentQSignatureRequestValidationResult {
     unsupported_method,
     invalid_network,
     invalid_tx_bytes,
-    invalid_timeout,
 };
 
 struct AgentQSignatureRequestEnvelope {
@@ -44,7 +42,6 @@ struct AgentQSignatureRequestParams {
     char network[kAgentQSignatureRequestNetworkSize];
     char tx_bytes_base64[kAgentQSignatureRequestTxBytesBase64Size];
     size_t tx_bytes_decoded_size;
-    uint32_t approval_timeout_ms;
 };
 
 AgentQSignatureRequestValidationResult validate_signature_request_envelope(

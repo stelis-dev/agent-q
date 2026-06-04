@@ -85,6 +85,13 @@ bool processing_stage(AgentQLocalPinAuthStage stage)
            stage == AgentQLocalPinAuthStage::committing_pin_change;
 }
 
+bool timeout_bound_processing_stage(AgentQLocalPinAuthStage stage)
+{
+    return stage == AgentQLocalPinAuthStage::pin_verifying ||
+           stage == AgentQLocalPinAuthStage::committing_setting ||
+           stage == AgentQLocalPinAuthStage::committing_pin_change;
+}
+
 bool release_lockout_if_elapsed(TickType_t now, TickType_t retry_deadline)
 {
     if (!pin_attempt_release_if_elapsed(now)) {
@@ -136,7 +143,7 @@ bool local_pin_auth_deadline_expired(TickType_t now)
 bool local_pin_auth_processing_deadline_expired(TickType_t now)
 {
     return g_state.flow_active() &&
-           processing_stage(g_state.stage) &&
+           timeout_bound_processing_stage(g_state.stage) &&
            tick_reached(g_state.worker_deadline, now);
 }
 
@@ -364,6 +371,10 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
     if (g_state.purpose == AgentQLocalPinAuthPurpose::signature_request) {
         return AgentQLocalPinAuthVerifyResult::not_ready;
     }
+    if (local_pin_auth_processing_deadline_expired(xTaskGetTickCount())) {
+        g_state.clear_flow();
+        return AgentQLocalPinAuthVerifyResult::auth_unavailable;
+    }
 
     g_state.auth_job_id = 0;
     g_state.verify_ready_at = 0;
@@ -419,6 +430,10 @@ AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_signature_reques
         result.operation != AgentQLocalAuthWorkerOperation::verify_pin) {
         return AgentQLocalPinAuthSignatureVerifyResult::not_ready;
     }
+    if (local_pin_auth_processing_deadline_expired(xTaskGetTickCount())) {
+        g_state.clear_flow();
+        return AgentQLocalPinAuthSignatureVerifyResult::auth_unavailable;
+    }
 
     g_state.auth_job_id = 0;
     g_state.verify_ready_at = 0;
@@ -452,6 +467,10 @@ AgentQLocalPinAuthCommitResult local_pin_auth_complete_pin_change_job(
         result.owner != AgentQLocalAuthWorkerOwner::local_pin_auth ||
         result.operation != AgentQLocalAuthWorkerOperation::prepare_verifier_record) {
         return AgentQLocalPinAuthCommitResult::not_ready;
+    }
+    if (local_pin_auth_processing_deadline_expired(xTaskGetTickCount())) {
+        g_state.clear_flow();
+        return AgentQLocalPinAuthCommitResult::pin_change_auth_unavailable;
     }
 
     g_state.auth_job_id = 0;

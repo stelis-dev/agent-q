@@ -72,13 +72,15 @@ agent_q::AgentQUiPanelCleanupPlan plan(
     agent_q::AgentQUiPanelKind kind,
     agent_q::AgentQUiPanelCleanupEvent event,
     bool reset_matches = false,
-    bool pin_matches = false)
+    bool pin_matches = false,
+    bool signature_review_matches = false)
 {
     return agent_q::ui_panel_cleanup_plan(agent_q::AgentQUiPanelCleanupInput{
         kind,
         event,
         reset_matches,
         pin_matches,
+        signature_review_matches,
     });
 }
 
@@ -131,15 +133,29 @@ int main()
     expect(!p.wipe_local_pin_auth && !p.recover_local_pin_auth_panel,
            "explicit local PIN clear without owner match is no-op");
 
+    p = plan(Panel::signature_review, Event::external_delete);
+    expect(p.recover_signature_review_panel, "external signature review delete requests state-loop recovery");
+    expect(!p.wipe_signature_request, "external signature review delete does not wipe directly");
+
+    p = plan(Panel::signature_review, Event::explicit_clear, false, false, true);
+    expect(p.wipe_signature_request, "explicit signature review clear wipes matching signing owner");
+    expect(!p.recover_signature_review_panel, "explicit signature review clear does not request recovery");
+
+    p = plan(Panel::signature_review, Event::explicit_clear, false, false, false);
+    expect(!p.wipe_signature_request && !p.recover_signature_review_panel,
+           "explicit signature review clear without owner match is no-op");
+
     p = plan(Panel::settings_menu, Event::external_delete);
     expect(!p.route_provisioning_panel_deleted && !p.wipe_setup_if_unhandled &&
                !p.wipe_local_reset && !p.wipe_local_pin_auth &&
-               !p.recover_local_pin_auth_panel,
+               !p.recover_local_pin_auth_panel && !p.wipe_signature_request &&
+               !p.recover_signature_review_panel,
            "idle settings panel delete has no state cleanup");
 
     p = plan(Panel::decision_strip, Event::external_delete);
     expect(!p.route_provisioning_panel_deleted && !p.wipe_local_reset &&
-               !p.wipe_local_pin_auth && !p.recover_local_pin_auth_panel,
+               !p.wipe_local_pin_auth && !p.recover_local_pin_auth_panel &&
+               !p.wipe_signature_request && !p.recover_signature_review_panel,
            "decision strip delete does not decide or cancel");
 
     if (failures != 0) {

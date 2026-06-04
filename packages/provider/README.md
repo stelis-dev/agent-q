@@ -28,8 +28,15 @@ device-local approval, signing, and active policy commits.
 - `getPolicy`
 - `getApprovalHistory`
 
-Policy update proposals are Admin/MCP capabilities and are not exposed by this
-provider. Public signing methods are not implemented.
+Policy update proposals and provider-facing signing are not exposed by this
+provider. Future signing activation must add a separate device-confirmed API
+only after the Firmware USB dispatcher, client/provider parser/API, capability
+advertisement, and current-tree hardware smoke are all complete.
+
+Provider requests do not accept caller-controlled timing fields. Firmware-owned
+device-local approval windows remain 30 seconds; Gateway uses fixed internal
+transport budgets with a non-configurable margin so a valid terminal device
+result can still be received at the end of that window.
 
 ## Development
 
@@ -39,3 +46,6 @@ From the repository root:
 npm --workspace @stelis/agent-q-provider run build
 npm --workspace @stelis/agent-q-provider test
 ```
+
+No provider hardware signing smoke test is tracked while public provider
+signing is inactive.

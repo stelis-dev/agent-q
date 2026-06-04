@@ -259,29 +259,6 @@ test("returns cached status with a port permission failure reason", async () => 
   });
 });
 
-test("core bounds a driver that ignores its handshake timeout", async () => {
-  await withStore(async (store) => {
-    await store.rememberUsbStatus(status, "/dev/cu.usbmodem1", {
-      observedAt: new Date("2026-05-28T00:00:00.000Z"),
-      setActive: true,
-    });
-    const core = new GatewayCore(
-      store,
-      defaultDriver({
-        requestStatus() {
-          // Hangs and ignores its timeout argument; the GatewayCore driver wrapper
-          // (deadlineEnforcingDriver) must still bound it within timeoutMs.
-          return new Promise(() => {});
-        },
-      }),
-    );
-
-    const result = await core.getDeviceStatus({ timeoutMs: 50 });
-    assert.equal(result.source, "cached");
-    assert.equal(result.unavailableReason, "timeout");
-  });
-});
-
 test("falls back to scan when stored port hint is stale", async () => {
   await withStore(async (store) => {
     await store.rememberUsbStatus(status, "/dev/cu.stale", {
@@ -453,7 +430,7 @@ test("identifies devices without selecting one", async () => {
       }),
     );
 
-    const result = await core.identifyDevices({ durationMs: 10000 });
+    const result = await core.identifyDevices();
     assert.equal(result.devices.length, 2);
     assert.equal(result.devices.every((candidate) => candidate.status === "displayed"), true);
     assert.equal(new Set(identifiedCodes).size, 2);
@@ -495,7 +472,7 @@ test("identify reports per-device errors without failing the whole request", asy
       }),
     );
 
-    const result = await core.identifyDevices({ durationMs: 10000 });
+    const result = await core.identifyDevices();
     assert.equal(result.source, "live");
     assert.equal(result.devices.length, 2);
     assert.equal(result.devices[0].status, "displayed");
@@ -504,7 +481,7 @@ test("identify reports per-device errors without failing the whole request", asy
   });
 });
 
-test("identify bounds the whole call to timeoutMs across multiple devices", async () => {
+test("identify uses one internal deadline across multiple devices", async () => {
   await withStore(async (store) => {
     // Injected virtual clock: the first identify advances time past the budget, so
     // the second device is reported as a timeout deterministically (no real wait).
@@ -522,14 +499,14 @@ test("identify bounds the whole call to timeoutMs across multiple devices", asyn
           return portPath === "/dev/cu.usbmodem1" ? status : secondStatus;
         },
         async identifyDevice(portPath, code) {
-          now = new Date(now.getTime() + 60);
+          now = new Date(now.getTime() + 30001);
           return identifyResponse(code, portPath === "/dev/cu.usbmodem1" ? device : secondDevice);
         },
       }),
       () => now,
     );
 
-    const result = await core.identifyDevices({ timeoutMs: 50, durationMs: 10000 });
+    const result = await core.identifyDevices();
     assert.equal(result.devices.length, 2);
     assert.deepEqual(result.devices.map((entry) => entry.status).sort(), ["displayed", "error"]);
     const errored = result.devices.find((entry) => entry.status === "error");
@@ -596,11 +573,13 @@ test("setDeviceMetadata updates label via core", async () => {
 test("connectDevice approved stores in-memory session and does not persist sessionId", async () => {
   await withStore(async (store, dir) => {
     let connectCalls = 0;
+    let observedDeadlineMs = 0;
     const core = new GatewayCore(
       store,
       defaultDriver({
-        async connectDevice() {
+        async connectDevice(_portPath, _gatewayName, deadlineMs) {
           connectCalls += 1;
+          observedDeadlineMs = deadlineMs;
           return approvedConnectResponse();
         },
       }),
@@ -610,6 +589,7 @@ test("connectDevice approved stores in-memory session and does not persist sessi
 
     const result = await core.connectDevice({});
     assert.equal(connectCalls, 1);
+    assert.equal(observedDeadlineMs, 35000);
     assert.equal(result.source, "connected");
     assert.equal("sessionId" in result, false, "connect result must not expose sessionId");
     assert.equal(result.sessionTtlMs, MAX_SESSION_TTL_MS);
@@ -682,7 +662,7 @@ test("connectDevice does not reuse a stale local session when the device disappe
 
     const listPortsAfterConnect = listPortsCalls;
     portAvailable = false;
-    await assert.rejects(() => core.connectDevice({ timeoutMs: 1 }), { code: "port_not_found" });
+    await assert.rejects(() => core.connectDevice({}), { code: "port_not_found" });
     assert.equal(connectCalls, 1, "missing device must not receive a Firmware connect");
     assert.ok(listPortsCalls > listPortsAfterConnect, "connect must scan instead of reusing local session");
 
@@ -1085,11 +1065,9 @@ test("disconnectDevice clears the local session and reports timeout when Firmwar
     const core = new GatewayCore(
       store,
       defaultDriver({
-        // Firmware accepts the disconnect frame but never answers. The driver
-        // ignores its timeout; deadlineEnforcingDriver (wired in GatewayCore's
-        // constructor) bounds the hang and surfaces a GatewayError("timeout").
+        // Firmware accepts the disconnect frame but never answers.
         disconnectDevice() {
-          return new Promise(() => {});
+          throw new GatewayError("timeout", "Timed out.", true);
         },
       }),
     );
@@ -1097,7 +1075,7 @@ test("disconnectDevice clears the local session and reports timeout when Firmwar
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
-    const result = await core.disconnectDevice({ timeoutMs: 50 });
+    const result = await core.disconnectDevice();
     assert.equal(result.source, "disconnected");
     assert.equal(result.reason, "timeout");
     // Gateway cannot confirm Firmware observed the disconnect, but it must not
@@ -1120,7 +1098,7 @@ test("after a disconnect timeout, connectDevice contacts Firmware again instead 
           });
         },
         disconnectDevice() {
-          return new Promise(() => {});
+          throw new GatewayError("timeout", "Timed out.", true);
         },
       }),
     );
@@ -1130,7 +1108,7 @@ test("after a disconnect timeout, connectDevice contacts Firmware again instead 
     await core.connectDevice({});
     assert.equal(connectCalls, 1);
 
-    const disconnect = await core.disconnectDevice({ timeoutMs: 50 });
+    const disconnect = await core.disconnectDevice();
     assert.equal(disconnect.reason, "timeout");
 
     // The cleared session must not survive locally: a fresh connect re-contacts
@@ -1179,6 +1157,7 @@ test("getCapabilities returns Firmware-authored account identity and keeps the s
     assert.equal(result.capabilities[0].id, "sui");
     assert.equal(result.capabilities[0].accounts[0].keyScheme, "ed25519");
     assert.deepEqual(result.capabilities[0].methods, []);
+    assert.equal("signatureRequests" in result, false);
 
     // Read-only: the session is retained after get_capabilities.
     const listed = await core.listDevices();
@@ -1445,14 +1424,14 @@ test("callMethod returns Firmware's rejected method_result and keeps the session
   });
 });
 
-test("callMethod uses an approval-capable transport timeout by default", async () => {
+test("callMethod uses the internal request deadline by default", async () => {
   await withStore(async (store) => {
     let observedTimeoutMs = 0;
     const core = new GatewayCore(
       store,
       defaultDriver({
-        async callMethod(_portPath, _sessionId, _chain, _method, _params, timeoutMs) {
-          observedTimeoutMs = timeoutMs;
+        async callMethod(_portPath, _sessionId, _chain, _method, _params, deadlineMs) {
+          observedTimeoutMs = deadlineMs;
           return {
             id: "req_call_method",
             version: 1,
@@ -1472,7 +1451,7 @@ test("callMethod uses an approval-capable transport timeout by default", async (
 
     const result = await core.callMethod({ chain: "sui", method: "sign_transaction", params: signTransactionParams });
     assert.equal(result.status, "rejected");
-    assert.equal(observedTimeoutMs, 61000);
+    assert.equal(observedTimeoutMs, 30000);
   });
 });
 
@@ -1614,8 +1593,8 @@ test("proposePolicyUpdate forwards a bounded proposal and returns Firmware termi
     const core = new GatewayCore(
       store,
       defaultDriver({
-        async proposePolicyUpdate(portPath, sessionId, submittedPolicy, timeoutMs) {
-          observed = { portPath, sessionId, submittedPolicy, timeoutMs };
+        async proposePolicyUpdate(portPath, sessionId, submittedPolicy, deadlineMs) {
+          observed = { portPath, sessionId, submittedPolicy, deadlineMs };
           return {
             id: "req_policy_update",
             version: 1,
@@ -1635,7 +1614,7 @@ test("proposePolicyUpdate forwards a bounded proposal and returns Firmware termi
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
-    const result = await core.proposePolicyUpdate({ policy, timeoutMs: 61000 });
+    const result = await core.proposePolicyUpdate({ policy });
     assert.equal(result.source, "live");
     assert.equal(result.status, "applied");
     assert.equal(result.reasonCode, "device_confirmed");
@@ -1644,7 +1623,7 @@ test("proposePolicyUpdate forwards a bounded proposal and returns Firmware termi
       portPath: "/dev/cu.usbmodem1",
       sessionId: "session_aabbccdd",
       submittedPolicy: policy,
-      timeoutMs: 61000,
+      deadlineMs: 35000,
     });
   });
 });
@@ -1709,8 +1688,8 @@ test("proposePolicyUpdate validates proposals before live-port probing", async (
     assert.equal(proposeCalls, 0);
 
     await assert.rejects(
-      () => core.proposePolicyUpdate({ policy: { schema: "agentq.policy.v0" }, timeoutMs: 1 }),
-      { code: "invalid_timeout" },
+      () => core.proposePolicyUpdate({ policy: { schema: "agentq.policy.v0" }, extra: true }),
+      { code: "invalid_params" },
     );
     assert.equal(listPortsCalls, 0);
     assert.equal(requestStatusCalls, 0);

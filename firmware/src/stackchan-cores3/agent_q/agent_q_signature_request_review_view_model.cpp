@@ -29,15 +29,6 @@ bool decimal_string_valid(const char* value, size_t value_size)
     return true;
 }
 
-bool supported_network(const char* network, size_t network_size)
-{
-    return bounded_string_present(network, network_size) &&
-           (strcmp(network, "mainnet") == 0 ||
-            strcmp(network, "testnet") == 0 ||
-            strcmp(network, "devnet") == 0 ||
-            strcmp(network, "localnet") == 0);
-}
-
 bool copy_exact_c_string(const char* input, char* output, size_t output_size)
 {
     if (input == nullptr || output == nullptr || output_size == 0) {
@@ -84,7 +75,6 @@ bool summary_fields_valid(const AgentQSignatureRequestFlowSnapshot& snapshot)
            strcmp(snapshot.chain, "sui") == 0 &&
            bounded_string_present(snapshot.method, sizeof(snapshot.method)) &&
            strcmp(snapshot.method, "sign_transaction") == 0 &&
-           supported_network(snapshot.network, sizeof(snapshot.network)) &&
            bounded_string_present(facts.recipient, sizeof(facts.recipient)) &&
            bounded_string_present(facts.asset, sizeof(facts.asset)) &&
            strcmp(facts.asset, kSuiAsset) == 0 &&
@@ -119,7 +109,6 @@ AgentQSignatureRequestReviewBuildResult signature_request_review_view_model_buil
 
     if (!add_row(output, "Chain", snapshot.chain) ||
         !add_row(output, "Method", snapshot.method) ||
-        !add_row(output, "Network", snapshot.network) ||
         !add_row(output, "Amount", snapshot.sui_transfer.amount) ||
         !add_row(output, "Asset", snapshot.sui_transfer.asset) ||
         !add_row(output, "Recipient", snapshot.sui_transfer.recipient) ||

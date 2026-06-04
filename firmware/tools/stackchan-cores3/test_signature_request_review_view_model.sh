@@ -119,14 +119,14 @@ int main()
            "valid reviewing snapshot builds review model");
     expect(strcmp(model.title, "Review Sui transfer") == 0,
            "model title names review action");
-    expect(model.row_count == agent_q::kAgentQSignatureRequestReviewMaxRows,
-           "model uses bounded row count");
+    expect(model.row_count == 7,
+           "model uses only txBytes-derived clear-signing rows");
     expect(strcmp(row_value(model, "Chain"), "sui") == 0,
            "chain row included");
     expect(strcmp(row_value(model, "Method"), "sign_transaction") == 0,
            "method row included");
-    expect(strcmp(row_value(model, "Network"), "devnet") == 0,
-           "network row included");
+    expect(row_value(model, "Network") == nullptr,
+           "host-supplied network is not shown as a clear-signing fact");
     expect(strcmp(row_value(model, "Amount"), "1000000000") == 0,
            "amount row included");
     expect(strcmp(row_value(model, "Asset"), "0x2::sui::SUI") == 0,
@@ -186,8 +186,8 @@ int main()
 
     snapshot = valid_snapshot();
     memset(snapshot.network, 'd', sizeof(snapshot.network));
-    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::invalid_summary,
-           "unterminated network is rejected instead of overread");
+    expect(agent_q::signature_request_review_view_model_build(snapshot, &model) == Result::ok,
+           "host-supplied network is ignored by the clear-signing view model");
 
     snapshot = valid_snapshot();
     memset(snapshot.sui_transfer.asset, 'S', sizeof(snapshot.sui_transfer.asset));

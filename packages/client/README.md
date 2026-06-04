@@ -33,9 +33,18 @@ and active policy commits.
 - Policy update proposals are available only through the explicit admin-capable
   entrypoint. They are not part of the provider-facing device client facade.
 - Current StackChan CoreS3 capabilities report Sui account identity and no
-  public signing methods. The client parser accepts rejected method results and
-  rejects approved signing results, raw transaction bytes, decoded internals,
-  session ids, request ids, and secret-like fields.
+  delegated signing methods in `chains[].methods`. Provider-facing
+  device-confirmed signing availability is not advertised, and the device
+  client facade does not expose `requestSignature`. The client parser accepts
+  rejected `call_method` results and rejects `call_method` approved signing
+  results, provider-facing `signatureRequests`, `signature_result` responses,
+  raw transaction bytes in results, decoded internals, session ids, request ids,
+  and secret-like fields.
+- External client inputs do not accept caller-controlled timing fields. Gateway
+  uses fixed internal transport budgets. Firmware-owned device-local approval
+  windows remain 30 seconds; Gateway waits with a non-configurable transport
+  margin so a valid terminal device result can still be received at the end of
+  that window.
 
 ## Development
 

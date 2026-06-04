@@ -480,17 +480,50 @@ int main()
         agent_q::test_set_tick(500);
         agent_q::local_pin_auth_begin_connect(560);
         enter_pin("654321", 560);
-        expect(agent_q::local_pin_auth_submit(501, 0, 560, 520) ==
+        expect(agent_q::local_pin_auth_submit(501, 0, 560, 620) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
-               "connect PIN starts verification before worker timeout");
-        expect(!agent_q::local_pin_auth_fail_processing_if_expired(519),
-               "connect PIN processing stays active before worker deadline");
-        expect(agent_q::local_pin_auth_fail_processing_if_expired(520),
-               "connect PIN processing timeout closes flow");
+               "connect PIN starts verification");
+        expect(!agent_q::local_pin_auth_fail_processing_if_expired(560),
+               "connect PIN verification is not stopped by the input deadline");
+        agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
+        expect(agent_q::local_pin_auth_complete_verify_job(verify_result, 660, 0, 0) ==
+                   agent_q::AgentQLocalPinAuthVerifyResult::verified_connect,
+               "connect PIN verification result is accepted before worker deadline");
+        agent_q::local_pin_auth_clear_flow();
+    }
+
+    {
+        agent_q::test_set_tick(620);
+        agent_q::local_pin_auth_begin_connect(680);
+        enter_pin("654321", 680);
+        expect(agent_q::local_pin_auth_submit(621, 0, 680, 650) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "connect PIN worker-timeout test starts verification");
+        expect(!agent_q::local_pin_auth_fail_processing_if_expired(649),
+               "connect PIN verification stays active before worker deadline");
+        expect(agent_q::local_pin_auth_fail_processing_if_expired(650),
+               "connect PIN verification worker timeout closes flow");
         expect(agent_q::test_last_cancelled_worker_job_id() == agent_q::test_last_worker_job_id(),
-               "connect PIN processing timeout cancels worker job");
-        expect(!agent_q::local_pin_auth_snapshot(520).flow_active,
-               "connect PIN processing timeout clears flow");
+               "connect PIN verification worker timeout cancels worker job");
+        expect(!agent_q::local_pin_auth_snapshot(650).flow_active,
+               "connect PIN verification worker timeout clears flow");
+        agent_q::local_pin_auth_clear_flow();
+    }
+
+    {
+        agent_q::test_set_tick(700);
+        agent_q::local_pin_auth_begin_connect(760);
+        enter_pin("654321", 760);
+        expect(agent_q::local_pin_auth_submit(701, 0, 760, 720) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "connect PIN late-result test starts verification");
+        agent_q::test_set_tick(721);
+        agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
+        expect(agent_q::local_pin_auth_complete_verify_job(verify_result, 760, 0, 0) ==
+                   agent_q::AgentQLocalPinAuthVerifyResult::auth_unavailable,
+               "late connect PIN verification result fails closed");
+        expect(!agent_q::local_pin_auth_snapshot(721).flow_active,
+               "late connect PIN verification result clears flow");
     }
 
     {
@@ -499,7 +532,7 @@ int main()
         enter_pin("654321", 660);
         expect(agent_q::local_pin_auth_submit(601, 0, 660, 620) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
-               "change PIN current-PIN verification starts before worker timeout");
+               "change PIN current-PIN verification starts");
         agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
         expect(agent_q::local_pin_auth_complete_verify_job(verify_result, 660, 0, 0) ==
                    agent_q::AgentQLocalPinAuthVerifyResult::advanced_to_change_pin,
@@ -511,7 +544,7 @@ int main()
         enter_pin("123456", 660);
         expect(agent_q::local_pin_auth_submit(0, 605, 660, 620) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_pin_change_commit,
-               "change PIN commit starts before worker timeout");
+               "change PIN commit starts before commit timeout");
         expect(!agent_q::local_pin_auth_fail_processing_if_expired(619),
                "change PIN commit stays active before worker deadline");
         expect(agent_q::local_pin_auth_fail_processing_if_expired(620),

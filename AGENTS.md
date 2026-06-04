@@ -420,6 +420,10 @@ get_status
 
 `call_method*` means zero or more method calls during an active session.
 
+Do not add provider-facing device-confirmed signing to this root current-flow
+baseline or describe it as product-complete until tracked implementation status
+and target hardware-smoke evidence for the current tree both say it is verified.
+
 Current intended structure:
 
 ```text

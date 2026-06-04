@@ -5,7 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: firmware/tools/stackchan-cores3/test_signature_request_validation.sh
 
-Compiles the StackChan CoreS3 future request_signature split validation helpers
+Compiles the StackChan CoreS3 request_signature split validation helpers
 against ArduinoJson with a host C++ compiler and checks protocol shape
 boundaries. This test does not require ESP-IDF, but it uses the pinned
 StackChan ArduinoJson component checkout prepared by fetch.sh/build.sh. Set
@@ -159,7 +159,6 @@ void expect_params(
     const char* label,
     const std::string& json,
     agent_q::AgentQSignatureRequestValidationResult expected,
-    uint32_t expected_timeout_ms = 0,
     size_t expected_decoded_size = 0,
     const char* expected_network = nullptr)
 {
@@ -179,8 +178,7 @@ void expect_params(
          output.method[0] != '\0' ||
          output.network[0] != '\0' ||
          output.tx_bytes_base64[0] != '\0' ||
-         output.tx_bytes_decoded_size != 0 ||
-         output.approval_timeout_ms != 0)) {
+         output.tx_bytes_decoded_size != 0)) {
         fprintf(stderr, "%s: params failure did not clear output\n", label);
         ++failures;
     }
@@ -195,8 +193,7 @@ void expect_params(
          strcmp(output.method, "sign_transaction") != 0 ||
          strcmp(output.network, expected_network) != 0 ||
          strcmp(output.tx_bytes_base64, "AAAA") != 0 ||
-         output.tx_bytes_decoded_size != expected_decoded_size ||
-         output.approval_timeout_ms != expected_timeout_ms)) {
+         output.tx_bytes_decoded_size != expected_decoded_size)) {
         fprintf(stderr, "%s: params output fields did not match\n", label);
         ++failures;
     }
@@ -237,11 +234,10 @@ int main()
         "session_aaaaaaaaaaaaaaaa");
 
     expect_params(
-        "valid default timeout",
+        "valid params",
         valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
                                   "\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
         Result::ok,
-        agent_q::kAgentQSignatureRequestApprovalTimeoutDefaultMs,
         3,
         "devnet");
     for (const char* network : {"mainnet", "testnet", "devnet", "localnet"}) {
@@ -251,19 +247,15 @@ int main()
             valid_request_with_params(std::string("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
                                                   "\"network\":\"") + network + "\",\"txBytes\":\"AAAA\"}"),
             Result::ok,
-            agent_q::kAgentQSignatureRequestApprovalTimeoutDefaultMs,
             3,
             network);
     }
     expect_params(
-        "valid max timeout",
+        "unsupported extra params field",
         valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
                                   "\"network\":\"devnet\",\"txBytes\":\"AAAA\","
-                                  "\"approvalTimeoutMs\":60000}"),
-        Result::ok,
-        60000,
-        3,
-        "devnet");
+                                  "\"extra\":true}"),
+        Result::unsupported_field);
 
     expect_envelope(
         "missing id",
@@ -435,25 +427,6 @@ int main()
                                   std::string(agent_q::kAgentQSuiSignTransactionTxBytesMaxBase64Size + 4, 'A') +
                                   "\"}"),
         Result::invalid_tx_bytes);
-    expect_params(
-        "timeout zero",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                  "\"network\":\"devnet\",\"txBytes\":\"AAAA\","
-                                  "\"approvalTimeoutMs\":0}"),
-        Result::invalid_timeout);
-    expect_params(
-        "timeout too large",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                  "\"network\":\"devnet\",\"txBytes\":\"AAAA\","
-                                  "\"approvalTimeoutMs\":60001}"),
-        Result::invalid_timeout);
-    expect_params(
-        "timeout string",
-        valid_request_with_params("{\"chain\":\"sui\",\"method\":\"sign_transaction\","
-                                  "\"network\":\"devnet\",\"txBytes\":\"AAAA\","
-                                  "\"approvalTimeoutMs\":\"30000\"}"),
-        Result::invalid_timeout);
-
     if (strcmp(agent_q::signature_request_validation_result_name(Result::ok), "ok") != 0 ||
         strcmp(agent_q::signature_request_validation_result_name(Result::unsupported_type),
                "unsupported_type") != 0 ||

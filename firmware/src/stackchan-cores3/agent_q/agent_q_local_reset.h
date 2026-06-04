@@ -69,7 +69,8 @@ struct AgentQLocalResetPersistenceOps {
 AgentQLocalResetSnapshot local_reset_snapshot(TickType_t now);
 bool local_reset_persistent_material_exists();
 bool local_reset_deadline_expired(TickType_t now);
-bool local_reset_fail_pin_verification_if_expired(TickType_t now);
+bool local_reset_processing_deadline_expired(TickType_t now);
+bool local_reset_fail_processing_if_expired(TickType_t now);
 bool local_reset_release_lockout_if_elapsed(TickType_t now);
 bool local_reset_wipe_ready(TickType_t now);
 

@@ -63,8 +63,8 @@ request contents against local policy and limits risk through automatic rules
 such as allowlists, spending limits, rate limits, and rejection. Device-local
 approval is a separate request/state gate, not a policy action or policy
 escalation path.
-Future signing work must distinguish delegated policy requests from
-device-confirmed signing requests. Device confirmation is a Firmware-owned
+Agent-Q distinguishes delegated policy requests from device-confirmed signing
+requests. Device confirmation is a Firmware-owned
 approval step for a bounded request; it does not prove that the host, dapp,
 provider, agent, or upstream user intent was trustworthy.
 
@@ -96,7 +96,11 @@ Agent-Q Firmware is installed on hardware.
 Firmware is the authority component: it stores device-held key material and
 policies, evaluates requests locally, handles device-local approval for
 implemented sensitive flows, and returns Firmware-authored results to Gateway.
-Current public signing methods are not available.
+Public-inactive internal partial runtime modules exist for future
+provider-facing device-confirmed signing of the current bounded Sui
+`sign_transaction` transfer shape, but the public USB dispatcher,
+client/provider API, and capability advertisement are inactive. MCP signing
+tools and `call_method` signing output are not available.
 
 Firmware source is organized by hardware under `firmware/src/`.
 
@@ -124,6 +128,12 @@ get_status
     -> call_method*
   -> disconnect
 ```
+
+Provider-facing device-confirmed signing must use a separate
+`request_signature` path only after implementation status and target hardware
+evidence mark the current source tree verified. The current public Gateway,
+provider, MCP, and Firmware USB capability surfaces do not expose signing. It is
+not an MCP signing tool and does not make `call_method` return signatures.
 
 Chains, transports, and hardware targets must fit this protocol instead of
 creating separate product-level APIs.
@@ -173,8 +183,23 @@ Implemented:
   keys, update policy, or decide whether signing is allowed.
 - A common host-tested policy evaluator and default-reject runtime boundary.
 
-Not yet implemented: public signing methods, device-confirmed signing requests,
-agent-request signing output, arbitrary Sui transaction signing, Sui
+Under current-source verification:
+
+- Public-inactive internal Firmware partial runtime modules for a future
+  provider-facing device-confirmed `request_signature` path exist for the
+  bounded Sui `sign_transaction` transfer shape. They include standalone bounded
+  validation, state-first ingress decisions, RAM-only request flow,
+  clear-signing review model, confirmation, signing handoff, terminal-metadata,
+  and cleanup helpers for future
+  activation. Those helpers are not wired into the StackChan CoreS3 USB server
+  runtime: the public USB dispatcher, `signature_result` writer, provider
+  `requestSignature` API, client request/response parser, and
+  `signatureRequests` capability are not active. Current-tree hardware smoke is
+  required before any future public activation can be treated as
+  product-complete.
+
+Not yet implemented: MCP signing tools, `call_method` signing output,
+arbitrary Sui transaction signing, sponsored Sui transaction signing, Sui
 personal-message signing, spending and rate limits beyond the current
 restricted-transfer criteria, multi-role separation, full Admin policy editing,
 multi-device approval, device revocation or transfer, a production audit layer

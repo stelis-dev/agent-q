@@ -9,19 +9,6 @@
 namespace agent_q {
 namespace {
 
-bool json_object_has_key(JsonObjectConst object, const char* key)
-{
-    if (key == nullptr || object.isNull()) {
-        return false;
-    }
-    for (JsonPairConst pair : object) {
-        if (agent_q_json_string_equals(pair.key(), key)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 bool copy_nonempty_c_string(const char* input, char* output, size_t output_size)
 {
     if (input == nullptr || input[0] == '\0' || output == nullptr || output_size == 0) {
@@ -69,35 +56,11 @@ bool request_params_fields_supported(JsonObjectConst params)
         if (!agent_q_json_string_equals(pair.key(), "chain") &&
             !agent_q_json_string_equals(pair.key(), "method") &&
             !agent_q_json_string_equals(pair.key(), "network") &&
-            !agent_q_json_string_equals(pair.key(), "txBytes") &&
-            !agent_q_json_string_equals(pair.key(), "approvalTimeoutMs")) {
+            !agent_q_json_string_equals(pair.key(), "txBytes")) {
             return false;
         }
     }
     return true;
-}
-
-AgentQSignatureRequestValidationResult parse_timeout(
-    JsonVariantConst params,
-    uint32_t* output)
-{
-    if (output == nullptr) {
-        return AgentQSignatureRequestValidationResult::invalid_timeout;
-    }
-    *output = kAgentQSignatureRequestApprovalTimeoutDefaultMs;
-    if (!json_object_has_key(params.as<JsonObjectConst>(), "approvalTimeoutMs")) {
-        return AgentQSignatureRequestValidationResult::ok;
-    }
-    JsonVariantConst value = params["approvalTimeoutMs"];
-    if (!value.is<uint32_t>()) {
-        return AgentQSignatureRequestValidationResult::invalid_timeout;
-    }
-    const uint32_t timeout_ms = value.as<uint32_t>();
-    if (timeout_ms == 0 || timeout_ms > kAgentQSignatureRequestApprovalTimeoutMaxMs) {
-        return AgentQSignatureRequestValidationResult::invalid_timeout;
-    }
-    *output = timeout_ms;
-    return AgentQSignatureRequestValidationResult::ok;
 }
 
 }  // namespace
@@ -234,13 +197,6 @@ AgentQSignatureRequestValidationResult validate_signature_request_params(
         return AgentQSignatureRequestValidationResult::invalid_tx_bytes;
     }
 
-    const AgentQSignatureRequestValidationResult timeout_result =
-        parse_timeout(params_value, &output->approval_timeout_ms);
-    if (timeout_result != AgentQSignatureRequestValidationResult::ok) {
-        memset(output, 0, sizeof(*output));
-        return timeout_result;
-    }
-
     return AgentQSignatureRequestValidationResult::ok;
 }
 
@@ -268,8 +224,6 @@ const char* signature_request_validation_result_name(
             return "invalid_network";
         case AgentQSignatureRequestValidationResult::invalid_tx_bytes:
             return "invalid_tx_bytes";
-        case AgentQSignatureRequestValidationResult::invalid_timeout:
-            return "invalid_timeout";
     }
     return "unknown";
 }

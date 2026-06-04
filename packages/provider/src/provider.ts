@@ -55,11 +55,11 @@ export class AgentQProvider {
     this.core = options.core ?? createDefaultDeviceClientCore();
   }
 
-  scanDevices(input: { timeoutMs?: number } = {}): Promise<ScanDevicesResult> {
+  scanDevices(input: Record<string, never> = {}): Promise<ScanDevicesResult> {
     return this.core.scanDevices(input);
   }
 
-  identifyDevices(input: { timeoutMs?: number; durationMs?: number } = {}): Promise<IdentifyDevicesResult> {
+  identifyDevices(input: Record<string, never> = {}): Promise<IdentifyDevicesResult> {
     return this.core.identifyDevices(input);
   }
 
@@ -75,8 +75,6 @@ export class AgentQProvider {
     deviceId?: string;
     purpose?: string;
     gatewayName?: string;
-    approvalTimeoutMs?: number;
-    timeoutMs?: number;
   } = {}): Promise<ConnectDeviceResult> {
     return this.core.connectDevice(input);
   }
@@ -84,7 +82,6 @@ export class AgentQProvider {
   disconnectDevice(input: {
     deviceId?: string;
     purpose?: string;
-    timeoutMs?: number;
   } = {}): Promise<DisconnectDeviceResult> {
     return this.core.disconnectDevice(input);
   }
@@ -92,7 +89,6 @@ export class AgentQProvider {
   getCapabilities(input: {
     deviceId?: string;
     purpose?: string;
-    timeoutMs?: number;
   } = {}): Promise<GetCapabilitiesResult> {
     return this.core.getCapabilities(input);
   }
@@ -100,7 +96,6 @@ export class AgentQProvider {
   getAccounts(input: {
     deviceId?: string;
     purpose?: string;
-    timeoutMs?: number;
   } = {}): Promise<GetAccountsResult> {
     return this.core.getAccounts(input);
   }
@@ -108,7 +103,6 @@ export class AgentQProvider {
   getPolicy(input: {
     deviceId?: string;
     purpose?: string;
-    timeoutMs?: number;
   } = {}): Promise<GetPolicyResult> {
     return this.core.getPolicy(input);
   }
@@ -118,7 +112,6 @@ export class AgentQProvider {
     purpose?: string;
     limit?: number;
     beforeSeq?: string;
-    timeoutMs?: number;
   } = {}): Promise<GetApprovalHistoryResult> {
     return this.core.getApprovalHistory(input);
   }

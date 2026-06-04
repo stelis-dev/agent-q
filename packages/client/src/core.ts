@@ -11,8 +11,6 @@ import { isGatewayName, isSafeDeviceId, sanitizePortHint } from "./safe-text.js"
 import { normalizeErrorCode, toPublicError } from "./public-error.js";
 import {
   createIdentificationCode,
-  DEFAULT_APPROVAL_TIMEOUT_MS,
-  MAX_APPROVAL_TIMEOUT_MS,
   type Account,
   type ApprovalHistoryRecord,
   type CapabilityChain,
@@ -30,12 +28,11 @@ import {
   validateProposePolicyUpdateRequestInput,
 } from "./protocol.js";
 import {
-  DEFAULT_SCAN_TIMEOUT_MS,
+  INTERNAL_USB_DEADLINE_MS,
   deadlineEnforcingDriver,
   mapErrorToUnavailableReason,
   scanUsbDeviceStatuses,
   scanUsbDevices,
-  validateTimeoutMs,
   type UnavailableReason,
   type UsbSerialDriver,
   type UsbStatusFailure,
@@ -197,7 +194,11 @@ export type DisconnectDeviceResult =
 // get_capabilities is read-only and session-scoped. The returned capability set
 // is Firmware-authored; Gateway only transports and validates it.
 export type GetCapabilitiesResult =
-  | { source: "live"; deviceId: string; capabilities: CapabilityChain[] }
+  | {
+      source: "live";
+      deviceId: string;
+      capabilities: CapabilityChain[];
+    }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: GetCapabilitiesSessionEndedReason };
 
@@ -247,45 +248,16 @@ export type ProposePolicyUpdateResult =
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: ProposePolicyUpdateSessionEndedReason };
 
-export const DEFAULT_IDENTIFY_DURATION_MS = 10000;
-export const MAX_IDENTIFY_DURATION_MS = 30000;
 export const DEFAULT_GATEWAY_NAME = "Agent-Q Gateway";
-// Firmware owns the approval-window timeout. Gateway waits that long plus a
-// transport margin so the final approve/reject response (sent right at the
-// Firmware deadline) still arrives over the wire. Observed USB JTAG round trips
-// are well under 100ms; 1000ms is a generous margin.
-export const CONNECT_TRANSPORT_MARGIN_MS = 1000;
-export const DEFAULT_DISCONNECT_TIMEOUT_MS = DEFAULT_SCAN_TIMEOUT_MS;
-export const DEFAULT_POLICY_UPDATE_TIMEOUT_MS = MAX_APPROVAL_TIMEOUT_MS + CONNECT_TRANSPORT_MARGIN_MS;
-export const DEFAULT_CALL_METHOD_TIMEOUT_MS = MAX_APPROVAL_TIMEOUT_MS + CONNECT_TRANSPORT_MARGIN_MS;
-
-function validateCallMethodTimeoutMs(value: unknown): number {
-  if (!Number.isInteger(value) || typeof value !== "number" || value <= 0) {
-    throw new GatewayError("invalid_timeout", "timeoutMs must be a positive integer.", false);
-  }
-  if (value > DEFAULT_CALL_METHOD_TIMEOUT_MS) {
-    throw new GatewayError(
-      "invalid_timeout",
-      `timeoutMs must be <= the Firmware approval window plus transport margin (${DEFAULT_CALL_METHOD_TIMEOUT_MS}).`,
-      false,
-    );
-  }
-  return value;
-}
-
-function validatePolicyUpdateTimeoutMs(value: unknown): number {
-  if (!Number.isInteger(value) || typeof value !== "number" || value <= 0) {
-    throw new GatewayError("invalid_timeout", "timeoutMs must be a positive integer.", false);
-  }
-  if (value !== DEFAULT_POLICY_UPDATE_TIMEOUT_MS) {
-    throw new GatewayError(
-      "invalid_timeout",
-      `timeoutMs must equal the Firmware approval window plus transport margin (${DEFAULT_POLICY_UPDATE_TIMEOUT_MS}).`,
-      false,
-    );
-  }
-  return value;
-}
+const INTERNAL_DEVICE_APPROVAL_WINDOW_MS = 30000;
+const INTERNAL_TRANSPORT_MARGIN_MS = 5000;
+const INTERNAL_REQUEST_WINDOW_MS = INTERNAL_DEVICE_APPROVAL_WINDOW_MS;
+const INTERNAL_APPROVAL_TRANSPORT_DEADLINE_MS =
+  INTERNAL_DEVICE_APPROVAL_WINDOW_MS + INTERNAL_TRANSPORT_MARGIN_MS;
+const INTERNAL_DISCONNECT_DEADLINE_MS = INTERNAL_REQUEST_WINDOW_MS;
+const INTERNAL_POLICY_UPDATE_DEADLINE_MS = INTERNAL_APPROVAL_TRANSPORT_DEADLINE_MS;
+const INTERNAL_CALL_METHOD_DEADLINE_MS = INTERNAL_REQUEST_WINDOW_MS;
+const INTERNAL_CONNECT_DEADLINE_MS = INTERNAL_APPROVAL_TRANSPORT_DEADLINE_MS;
 
 export class GatewayCore {
   private readonly runtimeSessions = new Map<string, RuntimeSession>();
@@ -296,15 +268,15 @@ export class GatewayCore {
     usbDriver: UsbSerialDriver,
     private readonly clock: () => Date = () => new Date(),
   ) {
-    // Wrap the driver once so every timeout-bearing transport call is bounded by
-    // its timeout argument at a single boundary, regardless of whether the
+    // Wrap the driver once so every deadline-bearing transport call is bounded by
+    // its internal deadline at a single boundary, regardless of whether the
     // injected driver honors it.
     this.usbDriver = deadlineEnforcingDriver(usbDriver);
   }
 
-  async scanDevices(input: { timeoutMs?: number } = {}): Promise<ScanDevicesResult> {
-    const timeoutMs = validateTimeoutMs(input.timeoutMs);
-    const scanResult = await scanUsbDeviceStatuses(this.usbDriver, timeoutMs);
+  async scanDevices(input: Record<string, never> = {}): Promise<ScanDevicesResult> {
+    rejectUnsupportedInputFields(input, NO_INPUT_KEYS, "scanDevices");
+    const scanResult = await scanUsbDeviceStatuses(this.usbDriver, INTERNAL_USB_DEADLINE_MS);
     const devices: LiveDeviceStatus[] = [];
 
     for (const liveDevice of scanResult.devices) {
@@ -326,15 +298,13 @@ export class GatewayCore {
     };
   }
 
-  async identifyDevices(input: { timeoutMs?: number; durationMs?: number } = {}): Promise<IdentifyDevicesResult> {
-    const timeoutMs = validateTimeoutMs(input.timeoutMs);
-    const durationMs = validateIdentifyDurationMs(input.durationMs);
-    // timeoutMs is the total transport budget for the whole call (discovery plus
-    // every identify handshake), not a per-device limit, so identifying N devices
-    // cannot multiply the wait. durationMs is separate: it is the on-device
-    // display time owned by Firmware, not a Gateway-side wait.
-    const deadline = this.clock().getTime() + timeoutMs;
-    const liveDevices = await scanUsbDevices(this.usbDriver, timeoutMs);
+  async identifyDevices(input: Record<string, never> = {}): Promise<IdentifyDevicesResult> {
+    rejectUnsupportedInputFields(input, NO_INPUT_KEYS, "identifyDevices");
+    const deadlineMs = INTERNAL_USB_DEADLINE_MS;
+    // deadlineMs is the total internal transport budget for the whole call
+    // (discovery plus every identify handshake), not a per-device limit.
+    const deadline = this.clock().getTime() + deadlineMs;
+    const liveDevices = await scanUsbDevices(this.usbDriver, deadlineMs);
     const devices: Array<IdentifiedDevice | IdentifyDeviceFailure> = [];
     const usedCodes = new Set<string>();
 
@@ -359,7 +329,6 @@ export class GatewayCore {
           liveDevice.portPath,
           code,
           remainingMs,
-          durationMs,
         );
         if (response.device.deviceId !== liveDevice.protocolResponse.device.deviceId) {
           throw new GatewayError(
@@ -408,6 +377,7 @@ export class GatewayCore {
   }
 
   async selectDevice(input: { deviceId: string; purpose?: string }): Promise<SelectDeviceResult> {
+    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "selectDevice");
     if (!isSafeDeviceId(input.deviceId)) {
       throw new GatewayError("invalid_device_id", "deviceId is not a valid device identifier.", false);
     }
@@ -446,6 +416,7 @@ export class GatewayCore {
     deviceId: string;
     label?: string | null;
   }): Promise<SetDeviceMetadataResult> {
+    rejectUnsupportedInputFields(input, SET_DEVICE_METADATA_INPUT_KEYS, "setDeviceMetadata");
     if (!isSafeDeviceId(input.deviceId)) {
       throw new GatewayError("invalid_device_id", "deviceId is not a valid device identifier.", false);
     }
@@ -470,17 +441,15 @@ export class GatewayCore {
     deviceId?: string;
     purpose?: string;
     gatewayName?: string;
-    approvalTimeoutMs?: number;
-    timeoutMs?: number;
   } = {}): Promise<ConnectDeviceResult> {
-    const approvalTimeoutMs = validateApprovalTimeoutMs(input.approvalTimeoutMs);
+    rejectUnsupportedInputFields(input, CONNECT_DEVICE_INPUT_KEYS, "connectDevice");
     const gatewayName = validateGatewayName(input.gatewayName);
     const target = await this.resolveTargetDevice(input);
-    const scanTimeoutMs = validateTimeoutMs(input.timeoutMs);
+    const scanDeadlineMs = INTERNAL_USB_DEADLINE_MS;
 
     let matchingPort: UsbStatusResult;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
     } catch (error) {
       this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       throw error;
@@ -499,7 +468,7 @@ export class GatewayCore {
         await this.usbDriver.getCapabilities(
           matchingPort.portPath,
           existingSession.sessionId,
-          scanTimeoutMs,
+          scanDeadlineMs,
         );
         return {
           source: "connected",
@@ -516,14 +485,12 @@ export class GatewayCore {
       }
     }
 
-    const transportTimeoutMs = approvalTimeoutMs + CONNECT_TRANSPORT_MARGIN_MS;
     let response: ConnectResponse;
     try {
       response = await this.usbDriver.connectDevice(
         matchingPort.portPath,
         gatewayName,
-        transportTimeoutMs,
-        approvalTimeoutMs,
+        INTERNAL_CONNECT_DEADLINE_MS,
       );
     } catch (error) {
       this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
@@ -563,10 +530,10 @@ export class GatewayCore {
   async disconnectDevice(input: {
     deviceId?: string;
     purpose?: string;
-    timeoutMs?: number;
   } = {}): Promise<DisconnectDeviceResult> {
+    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "disconnectDevice");
     const target = await this.resolveTargetDevice(input);
-    const scanTimeoutMs = validateTimeoutMs(input.timeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS);
+    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
 
     const session = this.peekRuntimeSession(target.deviceId);
     if (session === null) {
@@ -575,7 +542,7 @@ export class GatewayCore {
 
     let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
     } catch (error) {
       // The device could not be located. clearRuntimeSessionMirrorIfEnded owns the policy
       // for which disconnect failures end Gateway's local session view; clearing
@@ -588,7 +555,7 @@ export class GatewayCore {
     }
 
     try {
-      await this.usbDriver.disconnectDevice(matchingPort.portPath, session.sessionId, scanTimeoutMs);
+      await this.usbDriver.disconnectDevice(matchingPort.portPath, session.sessionId, scanDeadlineMs);
     } catch (error) {
       const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
@@ -604,10 +571,10 @@ export class GatewayCore {
   async getCapabilities(input: {
     deviceId?: string;
     purpose?: string;
-    timeoutMs?: number;
   } = {}): Promise<GetCapabilitiesResult> {
+    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "getCapabilities");
     const target = await this.resolveTargetDevice(input);
-    const scanTimeoutMs = validateTimeoutMs(input.timeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS);
+    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
 
     const session = this.peekRuntimeSession(target.deviceId);
     if (session === null) {
@@ -616,7 +583,7 @@ export class GatewayCore {
 
     let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
     } catch (error) {
       const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
@@ -629,9 +596,13 @@ export class GatewayCore {
       const response = await this.usbDriver.getCapabilities(
         matchingPort.portPath,
         session.sessionId,
-        scanTimeoutMs,
+        scanDeadlineMs,
       );
-      return { source: "live", deviceId: target.deviceId, capabilities: response.chains };
+      return {
+        source: "live",
+        deviceId: target.deviceId,
+        capabilities: response.chains,
+      };
     } catch (error) {
       const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
@@ -644,10 +615,10 @@ export class GatewayCore {
   async getAccounts(input: {
     deviceId?: string;
     purpose?: string;
-    timeoutMs?: number;
   } = {}): Promise<GetAccountsResult> {
+    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "getAccounts");
     const target = await this.resolveTargetDevice(input);
-    const scanTimeoutMs = validateTimeoutMs(input.timeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS);
+    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
 
     const session = this.peekRuntimeSession(target.deviceId);
     if (session === null) {
@@ -656,7 +627,7 @@ export class GatewayCore {
 
     let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
     } catch (error) {
       // A transport/session failure while locating the device may end Gateway's
       // local session view; clearRuntimeSessionMirrorIfEnded owns that policy. get_accounts
@@ -673,7 +644,7 @@ export class GatewayCore {
       const response = await this.usbDriver.getAccounts(
         matchingPort.portPath,
         session.sessionId,
-        scanTimeoutMs,
+        scanDeadlineMs,
       );
       // Read-only: the session is retained on success.
       return { source: "live", deviceId: target.deviceId, accounts: response.accounts };
@@ -689,10 +660,10 @@ export class GatewayCore {
   async getPolicy(input: {
     deviceId?: string;
     purpose?: string;
-    timeoutMs?: number;
   } = {}): Promise<GetPolicyResult> {
+    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "getPolicy");
     const target = await this.resolveTargetDevice(input);
-    const scanTimeoutMs = validateTimeoutMs(input.timeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS);
+    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
 
     const session = this.peekRuntimeSession(target.deviceId);
     if (session === null) {
@@ -701,7 +672,7 @@ export class GatewayCore {
 
     let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
     } catch (error) {
       const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
@@ -714,7 +685,7 @@ export class GatewayCore {
       const response = await this.usbDriver.getPolicy(
         matchingPort.portPath,
         session.sessionId,
-        scanTimeoutMs,
+        scanDeadlineMs,
       );
       return { source: "live", deviceId: target.deviceId, policy: response.policy };
     } catch (error) {
@@ -731,14 +702,14 @@ export class GatewayCore {
     purpose?: string;
     limit?: number;
     beforeSeq?: string;
-    timeoutMs?: number;
   } = {}): Promise<GetApprovalHistoryResult> {
+    rejectUnsupportedInputFields(input, GET_APPROVAL_HISTORY_INPUT_KEYS, "getApprovalHistory");
     const params = validateApprovalHistoryInput({
       limit: input.limit,
       beforeSeq: input.beforeSeq,
     });
     const target = await this.resolveTargetDevice(input);
-    const scanTimeoutMs = validateTimeoutMs(input.timeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS);
+    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
 
     const session = this.peekRuntimeSession(target.deviceId);
     if (session === null) {
@@ -747,7 +718,7 @@ export class GatewayCore {
 
     let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
     } catch (error) {
       const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
@@ -761,7 +732,7 @@ export class GatewayCore {
         matchingPort.portPath,
         session.sessionId,
         params,
-        scanTimeoutMs,
+        scanDeadlineMs,
       );
       return {
         source: "live",
@@ -784,23 +755,23 @@ export class GatewayCore {
     chain: string;
     method: string;
     params?: Record<string, unknown>;
-    timeoutMs?: number;
   }): Promise<CallMethodResult> {
     const params = input.params ?? {};
     const target = await this.resolveTargetDevice(input);
-    const methodTimeoutMs = validateCallMethodTimeoutMs(input.timeoutMs ?? DEFAULT_CALL_METHOD_TIMEOUT_MS);
-    const scanTimeoutMs = validateTimeoutMs(Math.min(methodTimeoutMs, DEFAULT_DISCONNECT_TIMEOUT_MS));
+    const methodDeadlineMs = INTERNAL_CALL_METHOD_DEADLINE_MS;
+    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
 
     const session = this.peekRuntimeSession(target.deviceId);
     if (session === null) {
       return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
     }
 
+    rejectUnsupportedInputFields(input, CALL_METHOD_INPUT_KEYS, "callMethod");
     validateCallMethodGatewayInput(input.chain, input.method, params);
 
     let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
     } catch (error) {
       const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
@@ -816,7 +787,7 @@ export class GatewayCore {
         input.chain,
         input.method,
         params,
-        methodTimeoutMs,
+        methodDeadlineMs,
       );
       // Method-level terminal results are not session failures. Keep the session live.
       return { source: "live", deviceId: target.deviceId, status: "rejected", error: response.error };
@@ -833,23 +804,23 @@ export class GatewayCore {
     deviceId?: string;
     purpose?: string;
     policy: Record<string, unknown>;
-    timeoutMs?: number;
   }): Promise<ProposePolicyUpdateResult> {
     const target = await this.resolveTargetDevice(input);
-    const scanTimeoutMs = validateTimeoutMs(DEFAULT_DISCONNECT_TIMEOUT_MS);
-    const policyUpdateTimeoutMs = validatePolicyUpdateTimeoutMs(input.timeoutMs ?? DEFAULT_POLICY_UPDATE_TIMEOUT_MS);
+    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
+    const policyUpdateDeadlineMs = INTERNAL_POLICY_UPDATE_DEADLINE_MS;
 
     const session = this.peekRuntimeSession(target.deviceId);
     if (session === null) {
       return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
     }
 
+    rejectUnsupportedInputFields(input, PROPOSE_POLICY_UPDATE_INPUT_KEYS, "proposePolicyUpdate");
     validatePolicyUpdateProposalInput(input.policy);
     validateProposePolicyUpdateRequestInput(session.sessionId, input.policy);
 
     let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanTimeoutMs);
+      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
     } catch (error) {
       const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
@@ -863,7 +834,7 @@ export class GatewayCore {
         matchingPort.portPath,
         session.sessionId,
         input.policy,
-        policyUpdateTimeoutMs,
+        policyUpdateDeadlineMs,
       );
       if (response.status === "consistency_error") {
         this.clearRuntimeSessionMirror(target.deviceId);
@@ -972,9 +943,9 @@ export class GatewayCore {
 
   private async findLivePortForDevice(
     record: DeviceRecord,
-    timeoutMs: number,
+    deadlineMs: number,
   ): Promise<UsbStatusResult> {
-    const scanResult = await scanUsbDeviceStatuses(this.usbDriver, timeoutMs);
+    const scanResult = await scanUsbDeviceStatuses(this.usbDriver, deadlineMs);
     const matching = scanResult.devices.find(
       (candidate) => candidate.protocolResponse.device.deviceId === record.deviceId,
     );
@@ -1006,13 +977,14 @@ export class GatewayCore {
   }
 
   async getDeviceStatus(
-    input: { deviceId?: string; purpose?: string; timeoutMs?: number } = {},
+    input: { deviceId?: string; purpose?: string } = {},
   ): Promise<DeviceStatusResult> {
-    const timeoutMs = validateTimeoutMs(input.timeoutMs ?? DEFAULT_SCAN_TIMEOUT_MS);
+    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "getDeviceStatus");
+    const deadlineMs = INTERNAL_USB_DEADLINE_MS;
     const { record } = await this.resolveTargetDevice(input);
 
     try {
-      const scanResult = await scanUsbDeviceStatuses(this.usbDriver, timeoutMs);
+      const scanResult = await scanUsbDeviceStatuses(this.usbDriver, deadlineMs);
       const matchingDevice = scanResult.devices.find(
         (candidate) => candidate.protocolResponse.device.deviceId === record.deviceId,
       );
@@ -1082,40 +1054,6 @@ function toScanFailure(failure: UsbStatusFailure): ScanDeviceFailure {
   };
 }
 
-function validateIdentifyDurationMs(value: unknown): number {
-  if (value === undefined) {
-    return DEFAULT_IDENTIFY_DURATION_MS;
-  }
-  if (!Number.isInteger(value) || typeof value !== "number" || value <= 0) {
-    throw new GatewayError("invalid_duration", "durationMs must be a positive integer.", false);
-  }
-  if (value > MAX_IDENTIFY_DURATION_MS) {
-    throw new GatewayError("invalid_duration", `durationMs must be <= ${MAX_IDENTIFY_DURATION_MS}.`, false);
-  }
-  return value;
-}
-
-function validateApprovalTimeoutMs(value: unknown): number {
-  if (value === undefined) {
-    return DEFAULT_APPROVAL_TIMEOUT_MS;
-  }
-  if (!Number.isInteger(value) || typeof value !== "number" || value <= 0) {
-    throw new GatewayError(
-      "invalid_approval_timeout",
-      "approvalTimeoutMs must be a positive integer.",
-      false,
-    );
-  }
-  if (value > MAX_APPROVAL_TIMEOUT_MS) {
-    throw new GatewayError(
-      "invalid_approval_timeout",
-      `approvalTimeoutMs must be <= ${MAX_APPROVAL_TIMEOUT_MS}.`,
-      false,
-    );
-  }
-  return value;
-}
-
 function validateGatewayName(value: unknown): string {
   if (value === undefined) {
     return DEFAULT_GATEWAY_NAME;
@@ -1138,6 +1076,29 @@ function validateCallMethodGatewayInput(chain: unknown, method: unknown, params:
       throw new GatewayError(error.code, error.message, false);
     }
     throw error;
+  }
+}
+
+const NO_INPUT_KEYS = new Set<string>();
+const DEVICE_SCOPED_INPUT_KEYS = new Set(["deviceId", "purpose"]);
+const CONNECT_DEVICE_INPUT_KEYS = new Set(["deviceId", "purpose", "gatewayName"]);
+const SET_DEVICE_METADATA_INPUT_KEYS = new Set(["deviceId", "label"]);
+const GET_APPROVAL_HISTORY_INPUT_KEYS = new Set(["deviceId", "purpose", "limit", "beforeSeq"]);
+const CALL_METHOD_INPUT_KEYS = new Set(["deviceId", "purpose", "chain", "method", "params"]);
+const PROPOSE_POLICY_UPDATE_INPUT_KEYS = new Set(["deviceId", "purpose", "policy"]);
+
+function rejectUnsupportedInputFields(
+  input: unknown,
+  allowedKeys: ReadonlySet<string>,
+  inputName: string,
+): void {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return;
+  }
+  for (const key of Object.keys(input)) {
+    if (!allowedKeys.has(key)) {
+      throw new GatewayError("invalid_params", `${inputName} input contains unsupported fields.`, false);
+    }
   }
 }
 

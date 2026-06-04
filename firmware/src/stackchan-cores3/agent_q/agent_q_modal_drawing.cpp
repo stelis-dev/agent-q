@@ -51,6 +51,12 @@ constexpr int kSettingsMenuRowTwoY = 100;
 constexpr int kSettingsMenuRowThreeY = 138;
 constexpr int kSettingsMenuActionButtonWidth = 72;
 constexpr int kSettingsMenuActionButtonHeight = 26;
+constexpr int kSignatureReviewRowLabelX = 18;
+constexpr int kSignatureReviewRowValueX = 90;
+constexpr int kSignatureReviewRowTop = 34;
+constexpr int kSignatureReviewRowWidth = 206;
+constexpr int kSignatureReviewNormalRowHeight = 16;
+constexpr int kSignatureReviewRecipientRowHeight = 34;
 constexpr int kSetupMenuGenerateButtonY = 78;
 constexpr int kSetupMenuRecoverButtonY = 114;
 constexpr int kMnemonicWordCellWidth = 90;
@@ -345,6 +351,38 @@ static bool make_settings_row_label(lv_obj_t* parent, const char* text, int y)
     lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(label, lv_color_hex(0x063A1D), 0);
     lv_obj_align(label, LV_ALIGN_TOP_LEFT, kSettingsMenuRowLabelX, y + 4);
+    return true;
+}
+
+static bool make_signature_review_row(
+    lv_obj_t* parent,
+    const AgentQSignatureRequestReviewRow& row,
+    int y,
+    bool recipient_row)
+{
+    lv_obj_t* label = lv_label_create(parent);
+    if (label == nullptr) {
+        return false;
+    }
+    lv_label_set_text(label, row.label);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(label, kSignatureReviewRowValueX - kSignatureReviewRowLabelX - 8);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_font(label, &lv_font_unscii_8, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(0x475467), 0);
+    lv_obj_align(label, LV_ALIGN_TOP_LEFT, kSignatureReviewRowLabelX, y + 2);
+
+    lv_obj_t* value = lv_label_create(parent);
+    if (value == nullptr) {
+        return false;
+    }
+    lv_label_set_text(value, row.value);
+    lv_label_set_long_mode(value, recipient_row ? LV_LABEL_LONG_WRAP : LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(value, kSignatureReviewRowWidth);
+    lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_font(value, &lv_font_unscii_8, 0);
+    lv_obj_set_style_text_color(value, lv_color_hex(0x111827), 0);
+    lv_obj_align(value, LV_ALIGN_TOP_LEFT, kSignatureReviewRowValueX, y + 2);
     return true;
 }
 
@@ -1466,6 +1504,9 @@ static const char* local_pin_auth_default_message(
                  update.highest_action != nullptr ? update.highest_action : "reject");
         return message;
     }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::signature_request) {
+        return "Confirm signing with local PIN.";
+    }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {
             return "Enter new PIN.";
@@ -1489,6 +1530,9 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::policy_update) {
         return "Policy PIN";
     }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::signature_request) {
+        return "Signing PIN";
+    }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {
             return "New PIN";
@@ -1499,6 +1543,89 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
         return "Change PIN";
     }
     return "Settings PIN";
+}
+
+bool modal_draw_signature_request_review_panel(
+    const AgentQSignatureRequestReviewViewModel& model)
+{
+    if (model.title[0] == '\0' ||
+        model.row_count == 0 ||
+        model.row_count > kAgentQSignatureRequestReviewMaxRows) {
+        return false;
+    }
+
+    avatar_overlay_clear();
+
+    LvglLockGuard lock;
+    request_display_power_wake();
+    drawing_surface_clear_panel_locked();
+
+    lv_obj_t* panel = drawing_surface_create_panel_locked(AgentQUiPanelKind::signature_review);
+    if (panel == nullptr) {
+        return false;
+    }
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_radius(panel, 8, 0);
+    lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(panel, 0, 0);
+
+    lv_obj_t* title = lv_label_create(panel);
+    if (title == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(title, model.title);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(title, kScreenWidth - 44);
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    int row_y = kSignatureReviewRowTop;
+    for (size_t index = 0; index < model.row_count; ++index) {
+        const bool recipient_row = strcmp(model.rows[index].label, "Recipient") == 0;
+        if (!make_signature_review_row(panel, model.rows[index], row_y, recipient_row)) {
+            drawing_surface_clear_panel_locked();
+            return false;
+        }
+        row_y += recipient_row
+            ? kSignatureReviewRecipientRowHeight
+            : kSignatureReviewNormalRowHeight;
+    }
+
+    if (!make_setup_button(
+            panel,
+            "Reject",
+            kRecoveryPhraseButtonLeftX,
+            kSetupActionButtonY,
+            kRecoveryPhraseButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0xA53B3B),
+            g_callbacks.on_signature_review_reject_clicked) ||
+        !make_setup_button(
+            panel,
+            "Sign",
+            kRecoveryPhraseButtonRightX,
+            kSetupActionButtonY,
+            kRecoveryPhraseButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0x24875A),
+            g_callbacks.on_signature_review_accept_clicked)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    drawing_surface_move_panel_foreground_locked();
+    return true;
 }
 
 bool modal_draw_local_pin_auth_panel(const char* notice)

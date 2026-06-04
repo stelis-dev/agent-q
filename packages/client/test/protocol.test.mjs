@@ -58,14 +58,13 @@ test("rejects unsafe request ids", () => {
 });
 
 test("creates and parses identify_device messages", () => {
-  const request = makeIdentifyDeviceRequest("1234", 10000, "req_identify");
+  const request = makeIdentifyDeviceRequest("1234", "req_identify");
   assert.deepEqual(request, {
     id: "req_identify",
     version: 1,
     type: "identify_device",
     params: {
       code: "1234",
-      durationMs: 10000,
     },
   });
 
@@ -241,24 +240,20 @@ test("status response requires provisioning and rejects invalid provisioning sta
   }
 });
 
-test("makeConnectRequest validates gatewayName and approvalTimeoutMs", () => {
-  const request = makeConnectRequest("Agent-Q Gateway", 30000, "req_connect_1");
+test("makeConnectRequest validates gatewayName", () => {
+  const request = makeConnectRequest("Agent-Q Gateway", "req_connect_1");
   assert.deepEqual(request, {
     id: "req_connect_1",
     version: 1,
     type: "connect",
     params: {
       gatewayName: "Agent-Q Gateway",
-      approvalTimeoutMs: 30000,
     },
   });
 
-  assert.throws(() => makeConnectRequest("", 30000), /gatewayName/);
-  assert.throws(() => makeConnectRequest("a".repeat(65), 30000), /gatewayName/);
-  assert.throws(() => makeConnectRequest("Hello ÿ", 30000), /gatewayName/);
-  assert.throws(() => makeConnectRequest("Agent-Q Gateway", 0), /approvalTimeoutMs/);
-  assert.throws(() => makeConnectRequest("Agent-Q Gateway", 60001), /approvalTimeoutMs/);
-  assert.throws(() => makeConnectRequest("Agent-Q Gateway", 1.5), /approvalTimeoutMs/);
+  assert.throws(() => makeConnectRequest(""), /gatewayName/);
+  assert.throws(() => makeConnectRequest("a".repeat(65)), /gatewayName/);
+  assert.throws(() => makeConnectRequest("Hello ÿ"), /gatewayName/);
 });
 
 test("makeDisconnectRequest validates sessionId", () => {
@@ -509,6 +504,7 @@ test("parseProtocolResponse accepts a valid capabilities response without public
   assert.equal(response.chains[0].accounts[0].keyScheme, "ed25519");
   assert.equal(response.chains[0].accounts[0].derivationPath, "m/44'/784'/0'/0'/0'");
   assert.deepEqual(response.chains[0].methods, []);
+  assert.equal("signatureRequests" in response, false);
 });
 
 test("parseProtocolResponse rejects unsupported capabilities", () => {
@@ -536,6 +532,14 @@ test("parseProtocolResponse rejects unsupported capabilities", () => {
     () =>
       parseProtocolResponse(
         capabilitiesLine({}, {}, { sessionId: "session_abcdef0123456789" }),
+        "req_capabilities",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        capabilitiesLine({}, {}, { signatureRequests: [{ chain: "sui", method: "sign_transaction" }] }),
         "req_capabilities",
       ),
     { code: "protocol_error" },
@@ -1193,6 +1197,26 @@ test("parseProtocolResponse rejects unsupported method_result shapes", () => {
       `secret-like method_result field ${fieldName} must be rejected`,
     );
   }
+});
+
+test("parseProtocolResponse does not expose signature_result responses before product activation", () => {
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        JSON.stringify({
+          id: "req_signature",
+          version: 1,
+          type: "signature_result",
+          status: "signed",
+          reasonCode: "device_confirmed",
+          chain: "sui",
+          method: "sign_transaction",
+          signature: Buffer.alloc(97, 1).toString("base64"),
+        }),
+        "req_signature",
+      ),
+    { code: "protocol_error" },
+  );
 });
 
 test("parses connect_result approved and rejected responses", () => {

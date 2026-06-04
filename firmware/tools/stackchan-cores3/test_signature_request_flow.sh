@@ -167,7 +167,8 @@ agent_q::AgentQSignatureRequestBeginInput make_valid_input(
     const char* request_id,
     const char* session_id,
     const uint8_t* payload,
-    size_t payload_size)
+    size_t payload_size,
+    TickType_t deadline = 300)
 {
     return agent_q::AgentQSignatureRequestBeginInput{
         request_id,
@@ -177,7 +178,7 @@ agent_q::AgentQSignatureRequestBeginInput make_valid_input(
         "devnet",
         payload,
         payload_size,
-        100,
+        deadline,
     };
 }
 
@@ -332,6 +333,8 @@ int main()
     expect(strcmp(snapshot.network, "devnet") == 0, "network stored");
     expect(strcmp(snapshot.payload_digest, "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == 0,
            "payload digest stored");
+    expect(snapshot.deadline == 300 && snapshot.confirmation_deadline == 300,
+           "request stores local and fixed confirmation deadlines");
     expect(snapshot.signable_payload_available, "payload initially available to owner");
     expect(snapshot.signable_payload_size == payload.size(), "payload size stored");
     expect(strcmp(snapshot.sui_transfer.sender, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0,
@@ -384,8 +387,10 @@ int main()
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok,
            "review acceptance moves to PIN entry");
     snapshot = agent_q::signature_request_flow_snapshot();
-    expect(snapshot.stage == Stage::pin_entry && snapshot.deadline == 200,
-           "PIN entry stage stores new deadline");
+    expect(snapshot.stage == Stage::pin_entry &&
+               snapshot.deadline == 200 &&
+               snapshot.confirmation_deadline == 300,
+           "PIN entry stage stores capped local deadline and keeps fixed confirmation deadline");
     expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
                199,
                nullptr,
@@ -458,7 +463,7 @@ int main()
 
     agent_q::signature_request_flow_clear();
     expect(begin_valid_flow("req_timeout"), "begin before timeout");
-    expect(agent_q::signature_request_flow_record_timeout(100) == Transition::ok,
+    expect(agent_q::signature_request_flow_record_timeout(300) == Transition::ok,
            "deadline timeout terminalizes");
     snapshot = agent_q::signature_request_flow_snapshot();
     expect(snapshot.stage == Stage::terminal &&
@@ -514,6 +519,16 @@ int main()
            "canceled is cleanup-only, not a signature_result status");
 
     agent_q::signature_request_flow_clear();
+    expect(begin_valid_flow("req_review_ui_loss"), "begin before review UI loss");
+    expect(agent_q::signature_request_flow_cancel_for_ui_loss() == Transition::ok,
+           "review UI loss cancels before PIN exists");
+    snapshot = agent_q::signature_request_flow_snapshot();
+    expect(snapshot.stage == Stage::terminal &&
+               snapshot.terminal_result == Terminal::canceled &&
+               !snapshot.signable_payload_available,
+           "review UI loss terminalizes canceled and wipes payload");
+
+    agent_q::signature_request_flow_clear();
     expect(begin_valid_flow("req_signing_failed"), "begin before signing failure");
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok, "review before signing failure");
     expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
@@ -533,7 +548,10 @@ int main()
            "signing failure terminal mapping");
 
     agent_q::signature_request_flow_clear();
-    expect(begin_valid_flow("req_expired_review"), "begin before expired review");
+    expect(agent_q::signature_request_flow_begin(
+               make_valid_input("req_expired_review", agent_q::session_id(), payload.data(), payload.size(), 100)) ==
+               Begin::ok,
+           "begin before expired review");
     expect(agent_q::signature_request_flow_accept_review(100, 200) == Transition::deadline_expired,
            "accept review after review deadline terminalizes as timeout");
     snapshot = agent_q::signature_request_flow_snapshot();
@@ -543,19 +561,48 @@ int main()
            "expired review wipes payload");
 
     agent_q::signature_request_flow_clear();
-    expect(begin_valid_flow("req_expired_pin"), "begin before expired PIN");
+    expect(agent_q::signature_request_flow_begin(
+               make_valid_input("req_expired_pin", agent_q::session_id(), payload.data(), payload.size(), 220)) ==
+               Begin::ok,
+           "begin before expired PIN");
     expect(agent_q::signature_request_flow_accept_review(99, 200) == Transition::ok,
            "review accepted before PIN expiry test");
+    expect(agent_q::signature_request_flow_pause_pin_deadline() == Transition::ok,
+           "PIN verification pauses only local input deadline");
     expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
                200,
                write_confirmation_history,
+               nullptr) == Transition::ok,
+           "PIN verification result after input deadline enters critical section");
+    snapshot = agent_q::signature_request_flow_snapshot();
+    expect(snapshot.stage == Stage::signing_critical_section &&
+               snapshot.signable_payload_available,
+           "PIN verification result after input deadline does not timeout");
+    expect(agent_q::signature_request_flow_record_signing_failed() == Transition::ok,
+           "late PIN verification test cleanup closes critical section");
+
+    agent_q::signature_request_flow_clear();
+    expect(agent_q::signature_request_flow_begin(
+               make_valid_input("req_expired_fixed_confirmation", agent_q::session_id(), payload.data(), payload.size(), 130)) ==
+               Begin::ok,
+           "begin before fixed confirmation deadline expiry");
+    expect(agent_q::signature_request_flow_accept_review(99, 120) == Transition::ok,
+           "review accepted before fixed confirmation expiry");
+    expect(agent_q::signature_request_flow_pause_pin_deadline() == Transition::ok,
+           "PIN verification pauses only the local input deadline");
+    expect(agent_q::signature_request_flow_snapshot().deadline == 0 &&
+               agent_q::signature_request_flow_snapshot().confirmation_deadline == 130,
+           "fixed confirmation deadline remains while PIN verification runs");
+    expect(agent_q::signature_request_flow_record_pin_verified_and_write_confirmation_history(
+               140,
+               write_confirmation_history,
                nullptr) == Transition::deadline_expired,
-           "PIN verification after PIN deadline terminalizes as timeout");
+           "PIN verification after fixed confirmation deadline cannot enter signing");
     snapshot = agent_q::signature_request_flow_snapshot();
     expect(snapshot.stage == Stage::terminal &&
                snapshot.terminal_result == Terminal::timed_out &&
                !snapshot.signable_payload_available,
-           "expired PIN wipes payload");
+           "fixed confirmation expiry terminalizes and wipes payload");
 
     agent_q::signature_request_flow_clear();
     expect(begin_valid_flow("req_expired_pin_deadline"), "begin before expired PIN deadline handoff");
