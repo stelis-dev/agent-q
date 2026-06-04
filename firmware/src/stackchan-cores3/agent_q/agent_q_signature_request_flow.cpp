@@ -587,6 +587,14 @@ AgentQSignatureRequestTransitionResult signature_request_flow_cancel_for_session
     return terminalize_if_precritical_cleanup(AgentQSignatureRequestTerminalResult::canceled);
 }
 
+AgentQSignatureRequestTransitionResult signature_request_flow_cancel_for_pin_loss()
+{
+    if (!g_state.active()) {
+        return AgentQSignatureRequestTransitionResult::inactive;
+    }
+    return terminalize_if_precritical_cleanup(AgentQSignatureRequestTerminalResult::canceled);
+}
+
 bool signature_request_flow_terminal_pending()
 {
     return g_state.stage == AgentQSignatureRequestStage::terminal &&

@@ -478,15 +478,21 @@ Gateway may hide unavailable operations, but Firmware must still reject them.
 
 The current StackChan CoreS3 target has an explicit `local_pin_auth` runtime
 substate for local PIN authorization. It records `purpose` (`connect`,
-`settings_connect_pin`, `settings_change_pin`, or `policy_update`), `stage`
+`settings_connect_pin`, `settings_change_pin`, `policy_update`, or the
+unconnected internal `signature_request` verifier purpose), `stage`
 (`pin_entry`, `pin_verifying`, `new_pin_entry`, `repeat_pin_entry`,
 `committing_setting`, or `committing_pin_change`), typed PIN scratch, new-PIN
 scratch where applicable, deadline, and the RAM-only stored-PIN attempt budget
 shared with reset PIN verification. For policy updates, `local_pin_auth` owns
 only PIN verification; the pending proposal summary, policy hash, commit stage,
-and terminal result remain owned by the policy-update flow. The UI panel may
-display that state, but panel existence is not the source of truth. The target
-must not expose a USB/Gateway/MCP PIN submit request.
+and terminal result remain owned by the policy-update flow. For future
+device-confirmed signing, `local_pin_auth` is only a verifier input; the
+request identity, signable payload scratch, history-write transition, and
+terminal cleanup remain owned by the signature-request state owner and
+confirmation coordinator. The `signature_request` purpose is not a protocol
+request, signing API, or capability advertisement. The UI panel may display
+that state, but panel existence is not the source of truth. The target must not
+expose a USB/Gateway/MCP PIN submit request.
 
 ## Boot Flows
 

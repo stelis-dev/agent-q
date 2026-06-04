@@ -12,7 +12,8 @@ AgentQUsbSessionLossPlan usb_session_loss_plan(const AgentQUsbSessionLossInput& 
         input.local_pin == AgentQUsbSessionLossLocalPinPurpose::connect;
     const bool local_policy_update =
         input.local_pin == AgentQUsbSessionLossLocalPinPurpose::policy_update;
-    const bool local_session_bound = local_connect || local_policy_update;
+    const bool local_session_bound =
+        local_connect || local_policy_update;
     const bool protocol_session_bound = protocol_connect || protocol_policy_update;
 
     return AgentQUsbSessionLossPlan{

@@ -14,6 +14,7 @@ enum class AgentQLocalPinAuthPurpose {
     settings_connect_pin,
     settings_change_pin,
     policy_update,
+    signature_request,
 };
 
 enum class AgentQLocalPinAuthStage {
@@ -80,6 +81,7 @@ AgentQLocalPinAuthSnapshot local_pin_auth_snapshot(TickType_t now);
 bool local_pin_auth_flow_active();
 bool local_pin_auth_accepts_keypad_input();
 bool local_pin_auth_deadline_expired(TickType_t now);
+bool local_pin_auth_processing_deadline_expired(TickType_t now);
 bool local_pin_auth_fail_processing_if_expired(TickType_t now);
 bool local_pin_auth_release_lockout_if_elapsed(TickType_t now, TickType_t retry_deadline);
 

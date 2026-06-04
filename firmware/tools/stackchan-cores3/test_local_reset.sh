@@ -29,6 +29,7 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/agent_q_common" "${TMP_DIR}/stubs/freertos"
 ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/agent_q_common/sui"
 
 cat >"${TMP_DIR}/stubs/freertos/FreeRTOS.h" <<'H'
 #pragma once

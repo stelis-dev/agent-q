@@ -48,13 +48,19 @@ The current implementation includes:
   confirmation, terminal cleanup, and one-shot payload handoff after the
   required confirmation history write succeeds. The history write receives
   value-owned request metadata and cannot move a cleared or different request
-  into the signing critical section. A host-tested review view model turns a
-  reviewing snapshot into bounded clear-signing rows that include the full
-  recipient, amount, asset, network, gas budget, and gas price without using UI
-  object lifetime as state. The approval-history store and parser can
-  represent bounded future signature-request confirmation and terminal records,
-  using the current approval-history storage layout only. The state owner is not
-  connected to USB protocol ingress, LVGL review drawing, local PIN UI, signing
+  into the signing critical section. An unconnected confirmation coordinator
+  binds the active request flow to a flow-identity token, signature-request
+  local PIN purpose, and required history write, so PIN verification cannot be
+  treated as an independent authority or applied to a different active request
+  even when request and session ids are reused. Signature PIN loss before the
+  signing critical section also terminalizes the paired request scratch. A
+  host-tested review view model turns a reviewing
+  snapshot into bounded clear-signing rows that include the full recipient,
+  amount, asset, network, gas budget, and gas price without using UI object
+  lifetime as state. The approval-history store and parser can represent
+  bounded future signature-request confirmation and terminal records, using the
+  current approval-history storage layout only. The state owner and coordinator
+  are not connected to USB protocol ingress, LVGL review drawing, signing
   service calls, Gateway/client/provider signing parsers, or capability
   advertisement.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
@@ -177,6 +183,7 @@ firmware/tools/stackchan-cores3/test_prepare_sync.sh
 firmware/tools/stackchan-cores3/test_persistent_material.sh
 firmware/tools/stackchan-cores3/test_provisioning_state_store.sh
 firmware/tools/stackchan-cores3/test_provisioning_runtime_state.sh
+firmware/tools/stackchan-cores3/test_signature_request_confirmation.sh
 firmware/tools/stackchan-cores3/test_signature_request_flow.sh
 firmware/tools/stackchan-cores3/test_signature_request_ingress.sh
 firmware/tools/stackchan-cores3/test_signature_request_review_view_model.sh

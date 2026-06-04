@@ -5,6 +5,7 @@
 #include "agent_q_bip39.h"
 #include "agent_q_connect_settings.h"
 #include "agent_q_local_auth.h"
+#include "agent_q_local_pin_auth_signature_internal.h"
 #include "agent_q_pin_attempt.h"
 #include "freertos/task.h"
 
@@ -23,6 +24,7 @@ struct AgentQLocalPinAuthState {
     TickType_t verify_ready_at = 0;
     TickType_t commit_ready_at = 0;
     TickType_t worker_deadline = 0;
+    AgentQLocalPinAuthSignatureBinding signature_binding = {};
 
     bool flow_active() const
     {
@@ -44,6 +46,11 @@ struct AgentQLocalPinAuthState {
         wipe_sensitive_buffer(new_pin, sizeof(new_pin));
     }
 
+    void clear_signature_binding()
+    {
+        signature_binding = {};
+    }
+
     void clear_flow()
     {
         if (auth_job_id != 0) {
@@ -60,6 +67,7 @@ struct AgentQLocalPinAuthState {
         verify_ready_at = 0;
         commit_ready_at = 0;
         worker_deadline = 0;
+        clear_signature_binding();
     }
 };
 
@@ -125,11 +133,16 @@ bool local_pin_auth_deadline_expired(TickType_t now)
     return tick_reached(g_state.deadline, now);
 }
 
+bool local_pin_auth_processing_deadline_expired(TickType_t now)
+{
+    return g_state.flow_active() &&
+           processing_stage(g_state.stage) &&
+           tick_reached(g_state.worker_deadline, now);
+}
+
 bool local_pin_auth_fail_processing_if_expired(TickType_t now)
 {
-    if (!g_state.flow_active() ||
-        !processing_stage(g_state.stage) ||
-        !tick_reached(g_state.worker_deadline, now)) {
+    if (!local_pin_auth_processing_deadline_expired(now)) {
         return false;
     }
     g_state.clear_flow();
@@ -177,6 +190,31 @@ void local_pin_auth_begin_policy_update(TickType_t deadline)
     g_state.purpose = AgentQLocalPinAuthPurpose::policy_update;
     g_state.stage = AgentQLocalPinAuthStage::pin_entry;
     g_state.deadline = deadline;
+}
+
+bool local_pin_auth_begin_signature_request(
+    const AgentQLocalPinAuthSignatureBinding& binding,
+    TickType_t deadline)
+{
+    if (deadline == 0 ||
+        g_state.flow_active() ||
+        binding.token == 0) {
+        return false;
+    }
+    g_state.purpose = AgentQLocalPinAuthPurpose::signature_request;
+    g_state.stage = AgentQLocalPinAuthStage::pin_entry;
+    g_state.deadline = deadline;
+    g_state.signature_binding = binding;
+    return true;
+}
+
+bool local_pin_auth_signature_request_matches(
+    const AgentQLocalPinAuthSignatureBinding& binding)
+{
+    return g_state.flow_active() &&
+           g_state.purpose == AgentQLocalPinAuthPurpose::signature_request &&
+           binding.token != 0 &&
+           g_state.signature_binding.token == binding.token;
 }
 
 AgentQLocalPinAuthInputResult local_pin_auth_add_digit(char digit, TickType_t deadline)
@@ -323,6 +361,9 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
         result.operation != AgentQLocalAuthWorkerOperation::verify_pin) {
         return AgentQLocalPinAuthVerifyResult::not_ready;
     }
+    if (g_state.purpose == AgentQLocalPinAuthPurpose::signature_request) {
+        return AgentQLocalPinAuthVerifyResult::not_ready;
+    }
 
     g_state.auth_job_id = 0;
     g_state.verify_ready_at = 0;
@@ -362,6 +403,43 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
     }
 
     return AgentQLocalPinAuthVerifyResult::verified_connect;
+}
+
+AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_signature_request_verify_job(
+    const AgentQLocalAuthWorkerResult& result,
+    TickType_t retry_deadline,
+    TickType_t lockout_until)
+{
+    if (!g_state.flow_active() ||
+        g_state.purpose != AgentQLocalPinAuthPurpose::signature_request ||
+        g_state.stage != AgentQLocalPinAuthStage::pin_verifying ||
+        g_state.auth_job_id == 0 ||
+        result.job_id != g_state.auth_job_id ||
+        result.owner != AgentQLocalAuthWorkerOwner::local_pin_auth ||
+        result.operation != AgentQLocalAuthWorkerOperation::verify_pin) {
+        return AgentQLocalPinAuthSignatureVerifyResult::not_ready;
+    }
+
+    g_state.auth_job_id = 0;
+    g_state.verify_ready_at = 0;
+    g_state.worker_deadline = 0;
+    if (result.status != AgentQLocalAuthWorkerStatus::ok) {
+        g_state.clear_flow();
+        return AgentQLocalPinAuthSignatureVerifyResult::auth_unavailable;
+    }
+
+    if (!result.verified) {
+        g_state.clear_pin_only();
+        g_state.stage = AgentQLocalPinAuthStage::pin_entry;
+        g_state.deadline = retry_deadline;
+        const bool locked = pin_attempt_record_failure(lockout_until);
+        return locked ? AgentQLocalPinAuthSignatureVerifyResult::locked
+                      : AgentQLocalPinAuthSignatureVerifyResult::wrong_pin;
+    }
+
+    g_state.clear_flow();
+    pin_attempt_clear();
+    return AgentQLocalPinAuthSignatureVerifyResult::verified;
 }
 
 AgentQLocalPinAuthCommitResult local_pin_auth_complete_pin_change_job(

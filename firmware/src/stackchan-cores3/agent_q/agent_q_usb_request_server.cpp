@@ -180,6 +180,7 @@ bool pending_request_id_for_local_pin_purpose(
     LocalPinAuthPurpose purpose,
     char* output,
     size_t output_size);
+void handle_local_pin_auth_display_failure(const char* reason, bool clear_panel = false);
 void show_persistent_error_recovery_if_needed();
 
 void wipe_setup_scratch(const char* reason)
@@ -763,6 +764,7 @@ agent_q::AgentQUsbSessionLossLocalPinPurpose local_pin_loss_purpose(
         case LocalPinAuthPurpose::policy_update:
             return agent_q::AgentQUsbSessionLossLocalPinPurpose::policy_update;
         case LocalPinAuthPurpose::none:
+        case LocalPinAuthPurpose::signature_request:
         case LocalPinAuthPurpose::settings_connect_pin:
         case LocalPinAuthPurpose::settings_change_pin:
             return agent_q::AgentQUsbSessionLossLocalPinPurpose::other;
@@ -2181,7 +2183,7 @@ void begin_policy_update_pin_auth(const char* id, const char* session_id, uint32
     }
 }
 
-void handle_local_pin_auth_display_failure(const char* reason, bool clear_panel = false)
+void handle_local_pin_auth_display_failure(const char* reason, bool clear_panel)
 {
     const agent_q::AgentQLocalPinAuthSnapshot snapshot =
         agent_q::local_pin_auth_snapshot(xTaskGetTickCount());

@@ -124,6 +124,7 @@ AgentQSignatureRequestTransitionResult signature_request_flow_complete_signed();
 AgentQSignatureRequestTransitionResult signature_request_flow_cancel_for_disconnect(
     const char* session_id);
 AgentQSignatureRequestTransitionResult signature_request_flow_cancel_for_session_loss();
+AgentQSignatureRequestTransitionResult signature_request_flow_cancel_for_pin_loss();
 
 bool signature_request_flow_terminal_pending();
 bool signature_request_flow_consume_terminal_result(

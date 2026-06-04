@@ -20,6 +20,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
 
 for required in \
   "${AGENT_Q_DIR}/agent_q_local_pin_auth.cpp" \
@@ -37,7 +38,9 @@ CXX_BIN="${CXX:-c++}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-local-pin-auth.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/stubs/freertos"
+mkdir -p "${TMP_DIR}/agent_q_common" "${TMP_DIR}/stubs/freertos"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/agent_q_common/sui"
 
 cat >"${TMP_DIR}/stubs/freertos/FreeRTOS.h" <<'H'
 #pragma once
@@ -530,6 +533,7 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
+  -I"${TMP_DIR}" \
   -I"${AGENT_Q_DIR}" \
   "${TMP_DIR}/local_pin_auth_test.cpp" \
   "${TMP_DIR}/stubs.cpp" \
