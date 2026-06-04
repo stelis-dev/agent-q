@@ -4,7 +4,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm --workspace @stelis/agent-q-client run build && npm --workspace @stelis/agent-q-mcp run build && npm --workspace @stelis/agent-q-provider run build",
-    "test": "npm run build && npm --workspace @stelis/agent-q-client test && npm --workspace @stelis/agent-q-mcp test && npm --workspace @stelis/agent-q-provider test"
+    "build": "npm --workspace @stelis/agent-q-client run build && npm --workspace @stelis/agent-q-mcp run build && npm --workspace @stelis/agent-q-provider-sui run build",
+    "test": "npm run build && npm --workspace @stelis/agent-q-client test && npm --workspace @stelis/agent-q-mcp test && npm --workspace @stelis/agent-q-provider-sui test"
   }
 }

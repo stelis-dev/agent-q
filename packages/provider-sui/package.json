@@ -1,24 +1,24 @@
 {
-  "name": "@stelis/agent-q-provider",
+  "name": "@stelis/agent-q-provider-sui",
   "version": "0.0.0",
-  "description": "Dapp-facing Agent-Q provider adapter for device, session, read-only capabilities, and user-confirmed signing.",
+  "description": "Sui dapp-facing Agent-Q provider adapter for device, session, read-only Sui capabilities, and user-confirmed Sui signing.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "https://github.com/stelis-dev/agent-q.git",
-    "directory": "packages/provider"
+    "directory": "packages/provider-sui"
   },
-  "main": "./dist/provider.js",
-  "types": "./dist/provider.d.ts",
+  "main": "./dist/provider-sui.js",
+  "types": "./dist/provider-sui.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/provider.d.ts",
-      "import": "./dist/provider.js"
+      "types": "./dist/provider-sui.d.ts",
+      "import": "./dist/provider-sui.js"
     },
-    "./provider": {
-      "types": "./dist/provider.d.ts",
-      "import": "./dist/provider.js"
+    "./provider-sui": {
+      "types": "./dist/provider-sui.d.ts",
+      "import": "./dist/provider-sui.js"
     },
     "./package.json": "./package.json"
   },

@@ -82,8 +82,10 @@ Agent-Q Gateway is distributed as npm packages.
 `@stelis/agent-q-client` provides the device-facing client layer: local device
 registry, USB transport, runtime session mirror, and protocol parsing and
 building. `@stelis/agent-q-mcp` provides the stdio MCP server, CLI binary, and
-local Admin Page. `@stelis/agent-q-provider` provides an application-facing
-adapter for current device, session, and read-only capabilities.
+local Admin Page. `@stelis/agent-q-provider-sui` provides the Sui
+application-facing adapter for current device, session, read-only Sui
+capabilities, and provider-facing user-confirmed Sui signing. It is not yet a
+Sui Wallet Standard registration adapter.
 
 Gateway does not store keys and does not make signing or policy decisions. It
 may relay requests, validate protocol shapes, and display summaries, but
@@ -186,10 +188,10 @@ Implemented:
 - A local Gateway-served Admin Page for device discovery, connection, policy
   summary, approval history, and the current policy proposal template. It
   is not a policy authority.
-- An application-facing provider package for device discovery, connection,
-  read-only session data, approval-history, and provider-facing
-  `signByUser` transport. The provider does not store keys, update
-  policy, or decide whether signing is allowed.
+- A Sui application-facing provider package for device discovery, connection,
+  read-only Sui account/capability data, and provider-facing `signByUser`
+  transport. The provider does not expose active policy summaries, approval
+  history, policy update, policy signing, key storage, or signing decisions.
 - A common host-tested policy evaluator and default-reject runtime boundary.
 
 Under current-source verification:
@@ -231,7 +233,7 @@ specs/
 packages/
   client/
   mcp/
-  provider/
+  provider-sui/
 
 firmware/
   README.md

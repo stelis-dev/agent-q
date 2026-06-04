@@ -5,7 +5,7 @@ local Admin Page.
 
 It depends on `@stelis/agent-q-client` for device discovery, runtime sessions,
 USB transport, protocol requests, and output validation. It does not depend on
-`@stelis/agent-q-provider`.
+`@stelis/agent-q-provider-sui`.
 
 The MCP package is an adapter. It does not store signing keys, does not make
 signing or policy decisions, and does not apply policy. Firmware remains the

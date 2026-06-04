@@ -257,7 +257,7 @@ Inspect `package.json` before running project commands. Do not invent scripts.
 
 This repository has a root `package.json` with npm workspaces. Package-local
 commands also work from `packages/client/`, `packages/mcp/`, and
-`packages/provider/`.
+`packages/provider-sui/`.
 
 Current root commands:
 
@@ -276,8 +276,8 @@ Current MCP package commands:
 
 Current provider package commands:
 
-- Build: `cd packages/provider && npm run build`
-- Test: `cd packages/provider && npm test`
+- Build: `cd packages/provider-sui && npm run build`
+- Test: `cd packages/provider-sui && npm test`
 
 Current common firmware helper commands:
 
@@ -438,7 +438,7 @@ specs/
 packages/
   client/
   mcp/
-  provider/
+  provider-sui/
 
 firmware/
   README.md

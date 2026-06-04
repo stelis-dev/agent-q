@@ -6,7 +6,11 @@
 //
 // The test drives the public provider API:
 //   scanDevices -> selectDevice -> connectDevice (device approval)
-//   -> getCapabilities -> signByUser -> getApprovalHistory
+//   -> getCapabilities -> signByUser
+//
+// It verifies approval history through the shared device client core used by
+// the provider instance. Approval history is smoke evidence, not a public
+// provider-sui API.
 //
 // It does not generate txBytes. Provide txBytes from a separate smoke fixture or
 // hardware-preflight helper so this file validates the provider boundary rather
@@ -26,7 +30,8 @@
 //   disconnect unplug USB while the signing review is visible, then reconnect
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createAgentQProvider } from "../dist/provider.js";
+import { createDefaultDeviceClientCore } from "@stelis/agent-q-client";
+import { createAgentQSuiProvider } from "../dist/provider-sui.js";
 import {
   FORBIDDEN_SECRET_FIELD_NAMES,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
@@ -93,7 +98,7 @@ function topSeq(history) {
   return record === undefined ? null : BigInt(record.seq);
 }
 
-function assertNoProviderLeak(value, txBytes) {
+function assertNoSmokeOutputLeak(value, txBytes) {
   const text = JSON.stringify(value);
   const lower = text.toLowerCase();
   for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
@@ -153,7 +158,8 @@ test(
   "hardware: provider signByUser terminal path",
   { skip: skipReason() },
   async () => {
-    const provider = createAgentQProvider();
+    const core = createDefaultDeviceClientCore();
+    const provider = createAgentQSuiProvider({ core });
 
     console.log("[provider-signature-smoke] scanning devices...");
     const scan = await provider.scanDevices();
@@ -181,9 +187,9 @@ test(
         false,
         "delegated chain methods must not advertise signing",
       );
-      assertNoProviderLeak(capabilities, requestedTxBytes);
+      assertNoSmokeOutputLeak(capabilities, requestedTxBytes);
 
-      const beforeHistory = await provider.getApprovalHistory({
+      const beforeHistory = await core.getApprovalHistory({
         deviceId,
         purpose: "provider-signature-smoke",
         limit: 4,
@@ -209,7 +215,7 @@ test(
         network: "devnet",
         txBytes: requestedTxBytes,
       });
-      assertNoProviderLeak(result, requestedTxBytes);
+      assertNoSmokeOutputLeak(result, requestedTxBytes);
 
       if (requestedScenario === "disconnect") {
         assert.equal(result.source, "session_ended");
@@ -240,24 +246,24 @@ test(
         assert.equal(recoveredCapabilities.source, "live");
         assert.deepEqual(recoveredCapabilities.signing.user, [{ chain: "sui", method: "sign_transaction" }]);
 
-        const afterReconnectHistory = await provider.getApprovalHistory({
+        const afterReconnectHistory = await core.getApprovalHistory({
           deviceId,
           purpose: "provider-signature-smoke",
           limit: 4,
         });
-        assertNoProviderLeak(afterReconnectHistory, requestedTxBytes);
+        assertNoSmokeOutputLeak(afterReconnectHistory, requestedTxBytes);
         assertNoNewSignByUserHistory(afterReconnectHistory, previousTopSeq);
         return;
       }
 
       assert.equal(result.source, "live");
 
-      const afterHistory = await provider.getApprovalHistory({
+      const afterHistory = await core.getApprovalHistory({
         deviceId,
         purpose: "provider-signature-smoke",
         limit: 4,
       });
-      assertNoProviderLeak(afterHistory, requestedTxBytes);
+      assertNoSmokeOutputLeak(afterHistory, requestedTxBytes);
 
       if (requestedScenario === "positive") {
         assert.equal(result.status, "signed");

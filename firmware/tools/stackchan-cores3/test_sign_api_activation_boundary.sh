@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 USB_SERVER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_server.cpp"
 MCP_SOURCE="${REPO_ROOT}/packages/mcp/src/mcp.ts"
-PROVIDER_SOURCE="${REPO_ROOT}/packages/provider/src/provider.ts"
+PROVIDER_SOURCE="${REPO_ROOT}/packages/provider-sui/src/provider-sui.ts"
 CLIENT_SOURCE="${REPO_ROOT}/packages/client/src"
 
 failures=0
@@ -114,7 +114,7 @@ expect_absent "${MCP_SOURCE}" 'signByUser|"sign_by_user"' \
 
 for source_dir in \
   "${REPO_ROOT}/packages/client/src" \
-  "${REPO_ROOT}/packages/provider/src" \
+  "${REPO_ROOT}/packages/provider-sui/src" \
   "${REPO_ROOT}/packages/mcp/src" \
   "${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q" \
   "${REPO_ROOT}/firmware/src/common/agent_q"; do
@@ -125,7 +125,7 @@ done
 while IFS= read -r source_file; do
   expect_absent "${source_file}" 'approvalTimeoutMs|durationMs|timeoutMs' \
     "Production signing source must not accept caller-controlled timing fields"
-done < <(find "${REPO_ROOT}/packages/client/src" "${REPO_ROOT}/packages/provider/src" "${REPO_ROOT}/packages/mcp/src" -type f \( -name '*.ts' -o -name '*.mts' -o -name '*.cts' \))
+done < <(find "${REPO_ROOT}/packages/client/src" "${REPO_ROOT}/packages/provider-sui/src" "${REPO_ROOT}/packages/mcp/src" -type f \( -name '*.ts' -o -name '*.mts' -o -name '*.cts' \))
 
 if [[ ${failures} -ne 0 ]]; then
   echo "${failures} Sign API activation boundary check(s) failed" >&2

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { createAgentQProvider, AgentQProvider } from "../dist/provider.js";
+import { createAgentQSuiProvider, AgentQSuiProvider } from "../dist/provider-sui.js";
 import { FORBIDDEN_SECRET_FIELD_NAMES, SUI_DERIVATION_PATH } from "@stelis/agent-q-client/protocol";
 
 function assertNoSecretFields(value) {
@@ -88,21 +88,6 @@ function createFakeCore() {
         ],
       };
     },
-    async getPolicy() {
-      return {
-        source: "live",
-        deviceId: "device-1",
-        policy: {
-          schema: "agentq.policy.v0",
-          policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-          defaultAction: "reject",
-          ruleCount: 0,
-        },
-      };
-    },
-    async getApprovalHistory() {
-      return { source: "live", deviceId: "device-1", records: [], hasMore: false };
-    },
     async signByUser() {
       return {
         source: "live",
@@ -118,50 +103,51 @@ function createFakeCore() {
   };
 }
 
-test("provider package metadata exposes only provider entrypoints", async () => {
+test("provider-sui package metadata exposes only Sui provider entrypoints", async () => {
   const packagePath = fileURLToPath(new URL("../package.json", import.meta.url));
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
-  assert.equal(packageJson.name, "@stelis/agent-q-provider");
-  assert.deepEqual(Object.keys(packageJson.exports).sort(), [".", "./package.json", "./provider"]);
+  assert.equal(packageJson.name, "@stelis/agent-q-provider-sui");
+  assert.deepEqual(Object.keys(packageJson.exports).sort(), [".", "./package.json", "./provider-sui"]);
   assert.equal(packageJson.dependencies["@stelis/agent-q-client"], "0.0.0");
   assert.equal(packageJson.dependencies["@stelis/agent-q-mcp"], undefined);
   assert.equal(packageJson.bin, undefined);
 });
 
-test("provider package self-reference resolves provider only", async () => {
-  const root = await import("@stelis/agent-q-provider");
-  const provider = await import("@stelis/agent-q-provider/provider");
-  assert.equal(typeof root.createAgentQProvider, "function");
-  assert.equal(typeof provider.AgentQProvider, "function");
-  await assert.rejects(() => import("@stelis/agent-q-provider/mcp"), {
+test("provider-sui package self-reference resolves Sui provider only", async () => {
+  const root = await import("@stelis/agent-q-provider-sui");
+  const provider = await import("@stelis/agent-q-provider-sui/provider-sui");
+  assert.equal(typeof root.createAgentQSuiProvider, "function");
+  assert.equal(typeof provider.AgentQSuiProvider, "function");
+  await assert.rejects(() => import("@stelis/agent-q-provider-sui/provider"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
   });
-  await assert.rejects(() => import("@stelis/agent-q-provider/admin"), {
+  await assert.rejects(() => import("@stelis/agent-q-provider-sui/mcp"), {
+    code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
+  });
+  await assert.rejects(() => import("@stelis/agent-q-provider-sui/admin"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
   });
 });
 
 test("provider does not import MCP or Admin adapters", async () => {
-  const providerPath = fileURLToPath(new URL("../dist/provider.js", import.meta.url));
+  const providerPath = fileURLToPath(new URL("../dist/provider-sui.js", import.meta.url));
   const source = await readFile(providerPath, "utf8");
   assert.doesNotMatch(source, /@stelis\/agent-q-mcp/);
   assert.doesNotMatch(source, /mcp/i);
   assert.doesNotMatch(source, /admin/i);
 });
 
-test("provider exposes device-facing adapter API including signByUser", () => {
-  const provider = createAgentQProvider({ core: createFakeCore() });
+test("provider exposes the Sui dapp-facing adapter API including signByUser", () => {
+  const provider = createAgentQSuiProvider({ core: createFakeCore() });
   const methodNames = Object.getOwnPropertyNames(Object.getPrototypeOf(provider))
     .filter((name) => name !== "constructor")
     .sort();
-  assert.equal(provider instanceof AgentQProvider, true);
+  assert.equal(provider instanceof AgentQSuiProvider, true);
   assert.deepEqual(methodNames, [
     "connectDevice",
     "disconnectDevice",
     "getAccounts",
-    "getApprovalHistory",
     "getCapabilities",
-    "getPolicy",
     "identifyDevices",
     "listDevices",
     "scanDevices",
@@ -171,10 +157,12 @@ test("provider exposes device-facing adapter API including signByUser", () => {
   assert.equal(typeof provider.signByUser, "function");
   assert.equal(provider.signByPolicy, undefined);
   assert.equal(provider.proposePolicyUpdate, undefined);
+  assert.equal(provider.getPolicy, undefined);
+  assert.equal(provider.getApprovalHistory, undefined);
 });
 
 test("provider delegates current methods and signByUser without exposing session ids or secrets", async () => {
-  const provider = createAgentQProvider({ core: createFakeCore() });
+  const provider = createAgentQSuiProvider({ core: createFakeCore() });
   const outputs = [
     await provider.scanDevices(),
     await provider.identifyDevices(),
@@ -184,8 +172,6 @@ test("provider delegates current methods and signByUser without exposing session
     await provider.disconnectDevice({ deviceId: "device-1" }),
     await provider.getCapabilities({ deviceId: "device-1" }),
     await provider.getAccounts({ deviceId: "device-1" }),
-    await provider.getPolicy({ deviceId: "device-1" }),
-    await provider.getApprovalHistory({ deviceId: "device-1" }),
     await provider.signByUser({
       deviceId: "device-1",
       chain: "sui",
@@ -225,7 +211,7 @@ test("provider getCapabilities applies the provider capability schema after proj
       };
     },
   };
-  const provider = createAgentQProvider({ core });
+  const provider = createAgentQSuiProvider({ core });
   await assert.rejects(
     () => provider.getCapabilities({ deviceId: "device-1" }),
   );
@@ -241,8 +227,6 @@ test("provider applies output boundary to every custom core method", async () =>
     ["disconnectDevice", (provider) => provider.disconnectDevice({ deviceId: "device-1" })],
     ["getCapabilities", (provider) => provider.getCapabilities({ deviceId: "device-1" })],
     ["getAccounts", (provider) => provider.getAccounts({ deviceId: "device-1" })],
-    ["getPolicy", (provider) => provider.getPolicy({ deviceId: "device-1" })],
-    ["getApprovalHistory", (provider) => provider.getApprovalHistory({ deviceId: "device-1" })],
     ["signByUser", (provider) => provider.signByUser({
       deviceId: "device-1",
       chain: "sui",
@@ -261,7 +245,7 @@ test("provider applies output boundary to every custom core method", async () =>
         return { ...(await original(...args)), sessionId: "session_should_not_leak" };
       },
     };
-    const provider = createAgentQProvider({ core });
+    const provider = createAgentQSuiProvider({ core });
     await assert.rejects(
       () => callProvider(provider),
       /forbidden output field/,
@@ -288,7 +272,7 @@ test("provider signByUser rejects non-user signing results from custom cores", a
       };
     },
   };
-  const provider = createAgentQProvider({ core });
+  const provider = createAgentQSuiProvider({ core });
   await assert.rejects(() => provider.signByUser({
     deviceId: "device-1",
     chain: "sui",
@@ -299,8 +283,10 @@ test("provider signByUser rejects non-user signing results from custom cores", a
 });
 
 test("provider does not expose raw method or Admin policy update entrypoints", () => {
-  const provider = createAgentQProvider({ core: createFakeCore() });
+  const provider = createAgentQSuiProvider({ core: createFakeCore() });
   assert.equal(provider.signByPolicy, undefined);
   assert.equal(provider.proposePolicyUpdate, undefined);
+  assert.equal(provider.getPolicy, undefined);
+  assert.equal(provider.getApprovalHistory, undefined);
   assert.equal(typeof provider.signByUser, "function");
 });

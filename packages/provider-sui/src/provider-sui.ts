@@ -3,8 +3,6 @@ import {
   connectDeviceSuccessOutputShape,
   disconnectDeviceSuccessOutputShape,
   getAccountsSuccessOutputShape,
-  getApprovalHistorySuccessOutputShape,
-  getPolicySuccessOutputShape,
   identifyDevicesSuccessOutputShape,
   listDevicesSuccessOutputShape,
   providerGetCapabilitiesSuccessOutputShape,
@@ -18,9 +16,7 @@ import type {
   DeviceListResult,
   DisconnectDeviceResult,
   GetAccountsResult,
-  GetApprovalHistoryResult,
   GetCapabilitiesResult as CoreGetCapabilitiesResult,
-  GetPolicyResult,
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
@@ -43,7 +39,7 @@ export type GetCapabilitiesResult =
   | LiveProviderGetCapabilitiesResult
   | Exclude<CoreGetCapabilitiesResult, { source: "live" }>;
 
-export type AgentQProviderCore = Pick<
+export type AgentQSuiProviderCore = Pick<
   DeviceClientCore,
   | "scanDevices"
   | "identifyDevices"
@@ -53,13 +49,11 @@ export type AgentQProviderCore = Pick<
   | "disconnectDevice"
   | "getCapabilities"
   | "getAccounts"
-  | "getPolicy"
-  | "getApprovalHistory"
   | "signByUser"
 >;
 
-export interface AgentQProviderOptions {
-  core?: AgentQProviderCore;
+export interface AgentQSuiProviderOptions {
+  core?: AgentQSuiProviderCore;
 }
 
 const FORBIDDEN_PROVIDER_OUTPUT_FIELDS = new Set(
@@ -94,8 +88,6 @@ export type {
   DeviceListResult,
   DisconnectDeviceResult,
   GetAccountsResult,
-  GetApprovalHistoryResult,
-  GetPolicyResult,
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
@@ -104,10 +96,10 @@ export type {
   SignByUserResult,
 };
 
-export class AgentQProvider {
-  private readonly core: AgentQProviderCore;
+export class AgentQSuiProvider {
+  private readonly core: AgentQSuiProviderCore;
 
-  constructor(options: AgentQProviderOptions = {}) {
+  constructor(options: AgentQSuiProviderOptions = {}) {
     this.core = options.core ?? createDefaultDeviceClientCore();
   }
 
@@ -160,22 +152,6 @@ export class AgentQProvider {
     return parseProviderOutput(getAccountsSuccessOutputShape, await this.core.getAccounts(input)) as GetAccountsResult;
   }
 
-  async getPolicy(input: {
-    deviceId?: string;
-    purpose?: string;
-  } = {}): Promise<GetPolicyResult> {
-    return parseProviderOutput(getPolicySuccessOutputShape, await this.core.getPolicy(input)) as GetPolicyResult;
-  }
-
-  async getApprovalHistory(input: {
-    deviceId?: string;
-    purpose?: string;
-    limit?: number;
-    beforeSeq?: string;
-  } = {}): Promise<GetApprovalHistoryResult> {
-    return parseProviderOutput(getApprovalHistorySuccessOutputShape, await this.core.getApprovalHistory(input)) as GetApprovalHistoryResult;
-  }
-
   async signByUser(input: {
     deviceId?: string;
     purpose?: string;
@@ -188,6 +164,6 @@ export class AgentQProvider {
   }
 }
 
-export function createAgentQProvider(options: AgentQProviderOptions = {}): AgentQProvider {
-  return new AgentQProvider(options);
+export function createAgentQSuiProvider(options: AgentQSuiProviderOptions = {}): AgentQSuiProvider {
+  return new AgentQSuiProvider(options);
 }
