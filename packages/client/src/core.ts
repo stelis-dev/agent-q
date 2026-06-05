@@ -577,7 +577,6 @@ export class GatewayCore {
     deviceId?: string;
     purpose?: string;
   } = {}): Promise<DisconnectDeviceResult> {
-    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "disconnectDevice");
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
 
@@ -585,6 +584,7 @@ export class GatewayCore {
     if (session === null) {
       return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
     }
+    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "disconnectDevice");
 
     let matchingPort: UsbStatusResult | undefined;
     try {
@@ -618,7 +618,6 @@ export class GatewayCore {
     deviceId?: string;
     purpose?: string;
   } = {}): Promise<GetCapabilitiesResult> {
-    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "getCapabilities");
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
 
@@ -626,6 +625,7 @@ export class GatewayCore {
     if (session === null) {
       return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
     }
+    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "getCapabilities");
 
     let matchingPort: UsbStatusResult | undefined;
     try {
@@ -663,7 +663,6 @@ export class GatewayCore {
     deviceId?: string;
     purpose?: string;
   } = {}): Promise<GetAccountsResult> {
-    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "getAccounts");
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
 
@@ -671,6 +670,7 @@ export class GatewayCore {
     if (session === null) {
       return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
     }
+    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "getAccounts");
 
     let matchingPort: UsbStatusResult | undefined;
     try {
@@ -708,7 +708,6 @@ export class GatewayCore {
     deviceId?: string;
     purpose?: string;
   } = {}): Promise<PolicyGetResult> {
-    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "policyGet");
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
 
@@ -716,6 +715,7 @@ export class GatewayCore {
     if (session === null) {
       return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
     }
+    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "policyGet");
 
     let matchingPort: UsbStatusResult | undefined;
     try {
@@ -750,11 +750,6 @@ export class GatewayCore {
     limit?: number;
     beforeSeq?: string;
   } = {}): Promise<GetApprovalHistoryResult> {
-    rejectUnsupportedInputFields(input, GET_APPROVAL_HISTORY_INPUT_KEYS, "getApprovalHistory");
-    const params = validateApprovalHistoryInput({
-      limit: input.limit,
-      beforeSeq: input.beforeSeq,
-    });
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
 
@@ -762,6 +757,11 @@ export class GatewayCore {
     if (session === null) {
       return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
     }
+    rejectUnsupportedInputFields(input, GET_APPROVAL_HISTORY_INPUT_KEYS, "getApprovalHistory");
+    const params = validateApprovalHistoryInput({
+      limit: input.limit,
+      beforeSeq: input.beforeSeq,
+    });
 
     let matchingPort: UsbStatusResult | undefined;
     try {

@@ -198,6 +198,19 @@ function defaultDriver(overrides = {}) {
         signature: Buffer.alloc(97, 1).toString("base64"),
       };
     },
+    async signPersonalMessage() {
+      return {
+        id: "req_sign_personal_message",
+        version: 1,
+        type: "sign_result",
+        authorization: "user",
+        status: "signed",
+        chain: "sui",
+        method: "sign_personal_message",
+        signature: Buffer.alloc(97, 2).toString("base64"),
+        messageBytes: Buffer.from("hello").toString("base64"),
+      };
+    },
     ...overrides,
   };
 }
@@ -1337,6 +1350,124 @@ test("policyGet clears the local session when Firmware reports invalid_session",
   });
 });
 
+test("session-scoped APIs return not_connected before validating operation input", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(store, defaultDriver());
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+
+    const invalidSessionScopedCalls = [
+      ["disconnectDevice", () => core.disconnectDevice({ unexpected: true })],
+      ["getCapabilities", () => core.getCapabilities({ unexpected: true })],
+      ["getAccounts", () => core.getAccounts({ unexpected: true })],
+      ["policyGet", () => core.policyGet({ unexpected: true })],
+      ["getApprovalHistory", () => core.getApprovalHistory({ limit: 5, unexpected: true })],
+      ["policyPropose", () => core.policyPropose({ policy: { privateKey: "must-not-forward" }, unexpected: true })],
+      [
+        "signTransaction",
+        () => core.signTransaction({
+          chain: "sui",
+          method: "sign_transaction",
+          network: "devnet",
+          txBytes: "not-base64",
+          unexpected: true,
+        }),
+      ],
+      [
+        "signPersonalMessage",
+        () => core.signPersonalMessage({
+          chain: "sui",
+          method: "sign_personal_message",
+          network: "devnet",
+          message: "not-base64",
+          unexpected: true,
+        }),
+      ],
+    ];
+
+    for (const [name, call] of invalidSessionScopedCalls) {
+      const result = await call();
+      assert.equal(result.source, "not_connected", name);
+      assert.equal(result.reason, "not_connected", name);
+      assert.equal(result.deviceId, device.deviceId, name);
+    }
+  });
+});
+
+test("session-scoped APIs reject unsupported fields before USB live-port probing when connected", async () => {
+  await withStore(async (store) => {
+    let listPortsCalls = 0;
+    let requestStatusCalls = 0;
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async listPorts() {
+          listPortsCalls += 1;
+          return [
+            {
+              path: "/dev/cu.usbmodem1",
+              vendorId: "303a",
+              productId: "1001",
+              manufacturer: "Espressif",
+            },
+          ];
+        },
+        async requestStatus() {
+          requestStatusCalls += 1;
+          return status;
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    listPortsCalls = 0;
+    requestStatusCalls = 0;
+
+    const validPolicy = {
+      schema: "agentq.policy.v0",
+      defaultAction: "reject",
+      rules: [],
+    };
+    const validMessage = Buffer.from("hello").toString("base64");
+    const invalidConnectedCalls = [
+      ["disconnectDevice", () => core.disconnectDevice({ unexpected: true })],
+      ["getCapabilities", () => core.getCapabilities({ unexpected: true })],
+      ["getAccounts", () => core.getAccounts({ unexpected: true })],
+      ["policyGet", () => core.policyGet({ unexpected: true })],
+      ["getApprovalHistory", () => core.getApprovalHistory({ unexpected: true })],
+      ["policyPropose", () => core.policyPropose({ policy: validPolicy, unexpected: true })],
+      [
+        "signTransaction",
+        () => core.signTransaction({
+          chain: "sui",
+          method: "sign_transaction",
+          network: "devnet",
+          txBytes: CANONICAL_TX_BYTES_BASE64,
+          unexpected: true,
+        }),
+      ],
+      [
+        "signPersonalMessage",
+        () => core.signPersonalMessage({
+          chain: "sui",
+          method: "sign_personal_message",
+          network: "devnet",
+          message: validMessage,
+          unexpected: true,
+        }),
+      ],
+    ];
+
+    for (const [name, call] of invalidConnectedCalls) {
+      await assert.rejects(call, { code: "invalid_params" }, name);
+      assert.equal(listPortsCalls, 0, name);
+      assert.equal(requestStatusCalls, 0, name);
+    }
+  });
+});
+
 test("getApprovalHistory without a runtime session returns not_connected", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(store, defaultDriver());
@@ -1909,6 +2040,172 @@ test("signTransaction clears the local session when Firmware reports invalid_ses
       method: "sign_transaction",
       network: "devnet",
       txBytes: CANONICAL_TX_BYTES_BASE64,
+    });
+    assert.equal(result.source, "session_ended");
+    assert.equal(result.reason, "invalid_session");
+    const listed = await core.listDevices();
+    assert.equal(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("signPersonalMessage returns not_connected before validating message payload", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(store, defaultDriver());
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+
+    const result = await core.signPersonalMessage({
+      chain: "sui",
+      method: "sign_personal_message",
+      network: "devnet",
+      message: "not-base64",
+    });
+    assert.deepEqual(result, {
+      source: "not_connected",
+      deviceId: device.deviceId,
+      reason: "not_connected",
+    });
+  });
+});
+
+test("signPersonalMessage forwards a bounded user signing request with internal local-PIN interaction budget", async () => {
+  await withStore(async (store) => {
+    let observed = null;
+    const signature = Buffer.alloc(97, 9).toString("base64");
+    const messageBytes = Buffer.from("hello").toString("base64");
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async signPersonalMessage(portPath, sessionId, chain, method, params, deadlineMs) {
+          observed = { portPath, sessionId, chain, method, params, deadlineMs };
+          return {
+            id: "req_sign_personal_message",
+            version: 1,
+            type: "sign_result",
+            authorization: "user",
+            status: "signed",
+            chain: "sui",
+            method: "sign_personal_message",
+            signature,
+            messageBytes,
+          };
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.signPersonalMessage({
+      chain: "sui",
+      method: "sign_personal_message",
+      network: "devnet",
+      message: messageBytes,
+    });
+    assert.deepEqual(result, {
+      source: "live",
+      deviceId: device.deviceId,
+      status: "signed",
+      authorization: "user",
+      chain: "sui",
+      method: "sign_personal_message",
+      signature,
+      messageBytes,
+    });
+    assert.deepEqual(observed, {
+      portPath: "/dev/cu.usbmodem1",
+      sessionId: "session_aabbccdd",
+      chain: "sui",
+      method: "sign_personal_message",
+      params: {
+        network: "devnet",
+        message: messageBytes,
+      },
+      deadlineMs: 185000,
+    });
+  });
+});
+
+test("signPersonalMessage validates params before USB live-port probing", async () => {
+  await withStore(async (store) => {
+    let listPortsCalls = 0;
+    let requestStatusCalls = 0;
+    let signPersonalMessageCalls = 0;
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async listPorts() {
+          listPortsCalls += 1;
+          return [
+            {
+              path: "/dev/cu.usbmodem1",
+              vendorId: "303a",
+              productId: "1001",
+              manufacturer: "Espressif",
+            },
+          ];
+        },
+        async requestStatus() {
+          requestStatusCalls += 1;
+          return status;
+        },
+        async signPersonalMessage() {
+          signPersonalMessageCalls += 1;
+          throw new Error("sign_personal_message should not reach USB");
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    listPortsCalls = 0;
+    requestStatusCalls = 0;
+
+    await assert.rejects(
+      () => core.signPersonalMessage({
+        chain: "sui",
+        method: "sign_personal_message",
+        network: "devnet",
+        message: Buffer.from("hello").toString("base64"),
+        timeoutMs: 30000,
+      }),
+      { code: "invalid_params" },
+    );
+    await assert.rejects(
+      () => core.signPersonalMessage({
+        chain: "sui",
+        method: "sign_personal_message",
+        network: "devnet",
+        message: "not-base64",
+      }),
+      { code: "invalid_params" },
+    );
+    assert.equal(listPortsCalls, 0);
+    assert.equal(requestStatusCalls, 0);
+    assert.equal(signPersonalMessageCalls, 0);
+  });
+});
+
+test("signPersonalMessage clears the local session when Firmware reports invalid_session", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async signPersonalMessage() {
+          throw new GatewayError("invalid_session", "Session is unknown or already ended.", false);
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.signPersonalMessage({
+      chain: "sui",
+      method: "sign_personal_message",
+      network: "devnet",
+      message: Buffer.from("hello").toString("base64"),
     });
     assert.equal(result.source, "session_ended");
     assert.equal(result.reason, "invalid_session");
