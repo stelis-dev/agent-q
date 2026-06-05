@@ -23,6 +23,130 @@ function validLiveAccount() {
   };
 }
 
+function validDevice() {
+  return {
+    deviceId: DEVICE_ID,
+    state: "idle",
+    firmwareName: "Agent-Q Firmware",
+    hardware: "stackchan-cores3",
+    firmwareVersion: "0.0.0",
+  };
+}
+
+function validProvisioning() {
+  return { state: "provisioned" };
+}
+
+function validLiveStatus() {
+  return {
+    source: "live",
+    connected: true,
+    portPath: "/dev/cu.usbmodem1",
+    protocolResponse: {
+      id: "req_status",
+      version: 1,
+      type: "status",
+      device: validDevice(),
+      provisioning: validProvisioning(),
+    },
+  };
+}
+
+function validPolicySummary() {
+  return {
+    schema: "agentq.policy.v0",
+    policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+    defaultAction: "reject",
+    ruleCount: 0,
+  };
+}
+
+function validGatewaySuccessOutputSamples() {
+  return {
+    scanDevices: { source: "live", devices: [], failures: [], activeDeviceId: null },
+    identifyDevices: { source: "live", devices: [], activeDeviceId: null },
+    selectDevice: {
+      source: "selected",
+      activeDeviceId: DEVICE_ID,
+      purpose: null,
+      device: validDevice(),
+    },
+    getDeviceStatus: validLiveStatus(),
+    listDevices: {
+      source: "list",
+      devices: [
+        {
+          deviceId: DEVICE_ID,
+          transport: "usb",
+          lastPortHint: "/dev/cu.usbmodem1",
+          lastSeenAt: "2026-05-28T00:00:00.000Z",
+          label: null,
+          lastStatus: {
+            device: validDevice(),
+            provisioning: validProvisioning(),
+          },
+          assignedPurposes: [],
+          isDefaultActive: true,
+          runtimeSession: {
+            sessionTtlMs: 4294967295,
+            connectedAt: "2026-05-28T00:00:00.000Z",
+          },
+        },
+      ],
+      activeDeviceId: DEVICE_ID,
+      activeDeviceIdsByPurpose: {},
+    },
+    setDeviceMetadata: { source: "metadata", deviceId: DEVICE_ID, label: null },
+    connectDevice: {
+      source: "connected",
+      deviceId: DEVICE_ID,
+      sessionTtlMs: 4294967295,
+      connectedAt: "2026-05-28T00:00:00.000Z",
+      device: validDevice(),
+    },
+    disconnectDevice: { source: "disconnected", deviceId: DEVICE_ID, reason: "firmware_confirmed" },
+    getCapabilities: {
+      source: "live",
+      deviceId: DEVICE_ID,
+      capabilities: [
+        {
+          id: "sui",
+          accounts: [
+            {
+              keyScheme: "ed25519",
+              derivationPath: SUI_DERIVATION_PATH,
+            },
+          ],
+          methods: [],
+        },
+      ],
+      signing: {
+        authorization: "user",
+        methods: [
+          { chain: "sui", method: "sign_transaction" },
+          { chain: "sui", method: "sign_personal_message" },
+        ],
+      },
+    },
+    getAccounts: { source: "live", deviceId: DEVICE_ID, accounts: [validLiveAccount()] },
+    policyGet: { source: "live", deviceId: DEVICE_ID, policy: validPolicySummary() },
+    getApprovalHistory: { source: "live", deviceId: DEVICE_ID, records: [], hasMore: false },
+    signTransaction: validSignTransactionSignedOutput(),
+    signPersonalMessage: validSignPersonalMessageSignedOutput(),
+    policyPropose: {
+      source: "live",
+      deviceId: DEVICE_ID,
+      status: "applied",
+      reasonCode: "device_confirmed",
+      policy: {
+        policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+        ruleCount: 0,
+        highestAction: "reject",
+      },
+    },
+  };
+}
+
 function validSignTransactionSignedOutput() {
   return {
     source: "live",
@@ -47,6 +171,50 @@ function validSignPersonalMessageSignedOutput() {
     messageBytes: PERSONAL_MESSAGE_BYTES,
   };
 }
+
+test("gateway success output schemas reject unknown top-level fields", () => {
+  const samples = validGatewaySuccessOutputSamples();
+  for (const [name, sample] of Object.entries(samples)) {
+    const schema = gatewaySuccessOutputSchemas[name];
+    assert.equal(schema.safeParse(sample).success, true, `${name} sample must be valid`);
+    assert.throws(
+      () => schema.parse({ ...sample, sessionId: "session_should_not_leak" }),
+      `${name} must reject unknown top-level fields`,
+    );
+  }
+});
+
+test("gateway success output schemas reject unknown nested fields", () => {
+  const samples = validGatewaySuccessOutputSamples();
+  assert.throws(() => gatewaySuccessOutputSchemas.connectDevice.parse({
+    ...samples.connectDevice,
+    device: { ...samples.connectDevice.device, sessionId: "session_should_not_leak" },
+  }));
+  assert.throws(() => gatewaySuccessOutputSchemas.getDeviceStatus.parse({
+    ...samples.getDeviceStatus,
+    protocolResponse: {
+      ...samples.getDeviceStatus.protocolResponse,
+      sessionId: "session_should_not_leak",
+    },
+  }));
+  assert.throws(() => gatewaySuccessOutputSchemas.listDevices.parse({
+    ...samples.listDevices,
+    devices: [
+      {
+        ...samples.listDevices.devices[0],
+        sessionId: "session_should_not_leak",
+      },
+    ],
+  }));
+  assert.throws(() => gatewaySuccessOutputSchemas.policyGet.parse({
+    ...samples.policyGet,
+    policy: { ...samples.policyGet.policy, sessionId: "session_should_not_leak" },
+  }));
+  assert.throws(() => gatewaySuccessOutputSchemas.policyPropose.parse({
+    ...samples.policyPropose,
+    policy: { ...samples.policyPropose.policy, sessionId: "session_should_not_leak" },
+  }));
+});
 
 test("client entrypoint constructs an admin-disabled device core facade", () => {
   const core = createDefaultDeviceClientCore();

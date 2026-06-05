@@ -69,6 +69,7 @@ export const publicErrorShape = z
     message: z.string(),
     retryable: z.boolean(),
   })
+  .strict()
   .refine((value) => PUBLIC_ERROR_MESSAGES[value.code] === value.message, {
     message: "error must be a canonical public error (allowlisted code with its matching message)",
   });
@@ -91,14 +92,14 @@ export const deviceShape = z.object({
   firmwareName: displayTextShape(MAX_FIRMWARE_NAME_LENGTH),
   hardware: displayTextShape(MAX_HARDWARE_ID_LENGTH),
   firmwareVersion: displayTextShape(MAX_FIRMWARE_VERSION_LENGTH),
-});
+}).strict();
 export const provisioningShape = z.object({
   state: z.enum(PROVISIONING_STATES),
-});
+}).strict();
 export const deviceStatusSnapshotShape = z.object({
   device: deviceShape,
   provisioning: provisioningShape,
-});
+}).strict();
 
 export const statusResponseShape = z.object({
   id: requestIdShape,
@@ -106,7 +107,7 @@ export const statusResponseShape = z.object({
   type: z.literal("status"),
   device: deviceShape,
   provisioning: provisioningShape,
-});
+}).strict();
 
 export const identifyResponseShape = z.object({
   id: requestIdShape,
@@ -115,14 +116,14 @@ export const identifyResponseShape = z.object({
   status: z.literal("displayed"),
   code: identificationCodeShape,
   device: deviceShape,
-});
+}).strict();
 
 export const liveStatusShape = z.object({
   source: z.literal("live"),
   connected: z.literal(true),
   portPath: portHintShape,
   protocolResponse: statusResponseShape,
-});
+}).strict();
 
 export const identifiedDeviceShape = z.object({
   source: z.literal("live"),
@@ -131,7 +132,7 @@ export const identifiedDeviceShape = z.object({
   status: z.literal("displayed"),
   code: identificationCodeShape,
   protocolResponse: identifyResponseShape,
-});
+}).strict();
 
 export const failedIdentificationShape = z.object({
   source: z.literal("error"),
@@ -140,18 +141,18 @@ export const failedIdentificationShape = z.object({
   deviceId: safeDeviceIdShape,
   status: z.literal("error"),
   error: publicErrorShape,
-});
+}).strict();
 
 export const errorToolResultShape = z.object({
   source: z.literal("error"),
   connected: z.literal(false),
   error: publicErrorShape,
-});
+}).strict();
 
 export const runtimeSessionShape = z.object({
   sessionTtlMs: z.number().int().positive(),
   connectedAt: isoInstantShape,
-});
+}).strict();
 
 export const deviceListEntryShape = z.object({
   deviceId: safeDeviceIdShape,
@@ -163,7 +164,7 @@ export const deviceListEntryShape = z.object({
   assignedPurposes: z.array(safePurposeShape),
   isDefaultActive: z.boolean(),
   runtimeSession: runtimeSessionShape.nullable(),
-});
+}).strict();
 
 const unavailableReasonShape = z.enum([
   "timeout",
@@ -183,13 +184,13 @@ const scanDeviceFailureShape = z.object({
     .string()
     .refine((code) => Object.prototype.hasOwnProperty.call(PUBLIC_ERROR_MESSAGES, code))
     .optional(),
-});
+}).strict();
 export const scanDevicesSuccessOutputShape = z.object({
   source: z.literal("live"),
   devices: z.array(liveStatusShape),
   failures: z.array(scanDeviceFailureShape),
   activeDeviceId: safeDeviceIdShape.nullable(),
-});
+}).strict();
 export const scanDevicesToolOutputShape = z.discriminatedUnion("source", [
   scanDevicesSuccessOutputShape,
   errorToolResultShape,
@@ -199,7 +200,7 @@ export const identifyDevicesSuccessOutputShape = z.object({
   source: z.literal("live"),
   devices: z.array(z.discriminatedUnion("source", [identifiedDeviceShape, failedIdentificationShape])),
   activeDeviceId: safeDeviceIdShape.nullable(),
-});
+}).strict();
 export const identifyDevicesToolOutputShape = z.discriminatedUnion("source", [
   identifyDevicesSuccessOutputShape,
   errorToolResultShape,
@@ -210,7 +211,7 @@ export const selectDeviceSuccessOutputShape = z.object({
   activeDeviceId: safeDeviceIdShape,
   purpose: safePurposeShape.nullable(),
   device: deviceShape,
-});
+}).strict();
 export const selectDeviceToolOutputShape = z.discriminatedUnion("source", [
   selectDeviceSuccessOutputShape,
   errorToolResultShape,
@@ -221,7 +222,7 @@ export const listDevicesSuccessOutputShape = z.object({
   devices: z.array(deviceListEntryShape),
   activeDeviceId: safeDeviceIdShape.nullable(),
   activeDeviceIdsByPurpose: z.record(safePurposeShape, safeDeviceIdShape),
-});
+}).strict();
 export const listDevicesToolOutputShape = z.discriminatedUnion("source", [
   listDevicesSuccessOutputShape,
   errorToolResultShape,
@@ -231,7 +232,7 @@ export const setDeviceMetadataSuccessOutputShape = z.object({
   source: z.literal("metadata"),
   deviceId: safeDeviceIdShape,
   label: safeLabelShape.nullable(),
-});
+}).strict();
 export const setDeviceMetadataToolOutputShape = z.discriminatedUnion("source", [
   setDeviceMetadataSuccessOutputShape,
   errorToolResultShape,
@@ -243,7 +244,7 @@ export const connectDeviceSuccessOutputShape = z.object({
   sessionTtlMs: z.number().int().positive(),
   connectedAt: isoInstantShape,
   device: deviceShape,
-});
+}).strict();
 export const connectDeviceToolOutputShape = z.discriminatedUnion("source", [
   connectDeviceSuccessOutputShape,
   errorToolResultShape,
@@ -255,6 +256,7 @@ export const disconnectDeviceSuccessOutputShape = z
     deviceId: safeDeviceIdShape,
     reason: z.enum(DISCONNECT_REASONS),
   })
+  .strict()
   .refine(
     (result) =>
       (result.source === "not_connected" && result.reason === "not_connected") ||
@@ -322,12 +324,12 @@ const notConnectedCapabilitiesOutputShape = z.object({
   source: z.literal("not_connected"),
   deviceId: safeDeviceIdShape,
   reason: z.literal("not_connected"),
-});
+}).strict();
 const sessionEndedCapabilitiesOutputShape = z.object({
   source: z.literal("session_ended"),
   deviceId: safeDeviceIdShape,
   reason: z.enum(GET_CAPABILITIES_SESSION_ENDED_REASONS),
-});
+}).strict();
 export const getCapabilitiesSuccessOutputShape = z.discriminatedUnion("source", [
   liveCapabilitiesOutputShape,
   notConnectedCapabilitiesOutputShape,
@@ -403,22 +405,22 @@ const policySummaryShape = z.object({
   policyId: z.string().regex(POLICY_ID_PATTERN),
   defaultAction: z.literal("reject"),
   ruleCount: z.number().int().min(0).max(MAX_POLICY_RULE_COUNT),
-});
+}).strict();
 const livePolicyOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
   policy: policySummaryShape,
-});
+}).strict();
 const notConnectedPolicyOutputShape = z.object({
   source: z.literal("not_connected"),
   deviceId: safeDeviceIdShape,
   reason: z.literal("not_connected"),
-});
+}).strict();
 const sessionEndedPolicyOutputShape = z.object({
   source: z.literal("session_ended"),
   deviceId: safeDeviceIdShape,
   reason: z.enum(POLICY_GET_SESSION_ENDED_REASONS),
-});
+}).strict();
 export const policyGetSuccessOutputShape = z.discriminatedUnion("source", [
   livePolicyOutputShape,
   notConnectedPolicyOutputShape,
@@ -436,14 +438,14 @@ const approvalHistoryRecordShape = z.object({
   uptimeMs: z.string().regex(UINT_DECIMAL_STRING_PATTERN).refine((value) => isUint64DecimalString(value)),
   timeSource: z.literal("uptime"),
   reasonCode: z.string().regex(APPROVAL_HISTORY_REASON_CODE_PATTERN),
-});
+}).strict();
 const policyUpdateApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
   eventKind: z.literal("policy_update"),
   result: z.enum(APPROVAL_HISTORY_POLICY_UPDATE_RESULTS),
   policyHash: z.string().regex(POLICY_ID_PATTERN),
   ruleCount: z.number().int().min(0).max(MAX_POLICY_RULE_COUNT),
   highestAction: z.enum(APPROVAL_HISTORY_HIGHEST_ACTIONS),
-});
+}).strict();
 const signingUserConfirmationApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
   eventKind: z.literal("signing"),
   recordKind: z.literal("confirmation"),
@@ -452,7 +454,7 @@ const signingUserConfirmationApprovalHistoryRecordShape = approvalHistoryRecordS
   chain: z.string().regex(SIGN_CHAIN_PATTERN),
   method: z.string().regex(SIGN_METHOD_PATTERN),
   payloadDigest: z.string().regex(POLICY_ID_PATTERN),
-});
+}).strict();
 const signingPolicyConfirmationApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
   eventKind: z.literal("signing"),
   recordKind: z.literal("confirmation"),
@@ -463,7 +465,7 @@ const signingPolicyConfirmationApprovalHistoryRecordShape = approvalHistoryRecor
   payloadDigest: z.string().regex(POLICY_ID_PATTERN),
   policyHash: z.string().regex(POLICY_ID_PATTERN),
   ruleRef: z.string().regex(APPROVAL_HISTORY_RULE_REF_PATTERN),
-});
+}).strict();
 const signingTerminalApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
   eventKind: z.literal("signing"),
   recordKind: z.literal("terminal"),
@@ -474,7 +476,7 @@ const signingTerminalApprovalHistoryRecordShape = approvalHistoryRecordShape.ext
   payloadDigest: z.string().regex(POLICY_ID_PATTERN),
   policyHash: z.string().regex(POLICY_ID_PATTERN).optional(),
   ruleRef: z.string().regex(APPROVAL_HISTORY_RULE_REF_PATTERN).optional(),
-}).refine((value) => {
+}).strict().refine((value) => {
   const hasPolicyMetadata = value.policyHash !== undefined && value.ruleRef !== undefined;
   if (value.authorization === "policy") {
     return (
@@ -499,17 +501,17 @@ const liveApprovalHistoryOutputShape = z.object({
   deviceId: safeDeviceIdShape,
   records: z.array(approvalHistoryRecordOutputShape).max(MAX_APPROVAL_HISTORY_RECORDS),
   hasMore: z.boolean(),
-});
+}).strict();
 const notConnectedApprovalHistoryOutputShape = z.object({
   source: z.literal("not_connected"),
   deviceId: safeDeviceIdShape,
   reason: z.literal("not_connected"),
-});
+}).strict();
 const sessionEndedApprovalHistoryOutputShape = z.object({
   source: z.literal("session_ended"),
   deviceId: safeDeviceIdShape,
   reason: z.enum(GET_APPROVAL_HISTORY_SESSION_ENDED_REASONS),
-});
+}).strict();
 export const getApprovalHistorySuccessOutputShape = z.discriminatedUnion("source", [
   liveApprovalHistoryOutputShape,
   notConnectedApprovalHistoryOutputShape,
@@ -555,7 +557,7 @@ const liveUserSignSignedOutputShape = z.object({
 }).strict();
 const livePolicySignSignedOutputShape = liveUserSignSignedOutputShape.extend({
   authorization: z.literal("policy"),
-});
+}).strict();
 const liveUserSignPersonalMessageSignedOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
@@ -667,7 +669,7 @@ const policyProposeResultPolicyShape = z.object({
   policyHash: z.string().regex(POLICY_ID_PATTERN),
   ruleCount: z.number().int().min(0).max(MAX_POLICY_RULE_COUNT),
   highestAction: z.enum(APPROVAL_HISTORY_HIGHEST_ACTIONS),
-});
+}).strict();
 const livePolicyProposeOutputShape = z
   .object({
     source: z.literal("live"),
@@ -676,6 +678,7 @@ const livePolicyProposeOutputShape = z
     reasonCode: z.string().regex(APPROVAL_HISTORY_REASON_CODE_PATTERN),
     policy: policyProposeResultPolicyShape.optional(),
   })
+  .strict()
   .refine((value) => (value.status === "invalid_policy") === (value.policy === undefined), {
     message: "invalid_policy omits policy metadata; other policy_propose_result statuses include it",
   });
@@ -683,12 +686,12 @@ const notConnectedPolicyProposeOutputShape = z.object({
   source: z.literal("not_connected"),
   deviceId: safeDeviceIdShape,
   reason: z.literal("not_connected"),
-});
+}).strict();
 const sessionEndedPolicyProposeOutputShape = z.object({
   source: z.literal("session_ended"),
   deviceId: safeDeviceIdShape,
   reason: z.enum(POLICY_PROPOSE_SESSION_ENDED_REASONS),
-});
+}).strict();
 export const policyProposeSuccessOutputShape = z.discriminatedUnion("source", [
   livePolicyProposeOutputShape,
   notConnectedPolicyProposeOutputShape,
@@ -711,7 +714,7 @@ const cachedDeviceStatusOutputShape = z.object({
     .refine((code) => Object.prototype.hasOwnProperty.call(PUBLIC_ERROR_MESSAGES, code))
     .optional(),
   cachedStatus: deviceStatusSnapshotShape,
-});
+}).strict();
 export const getDeviceStatusSuccessOutputShape = z.discriminatedUnion("source", [
   liveStatusShape,
   cachedDeviceStatusOutputShape,

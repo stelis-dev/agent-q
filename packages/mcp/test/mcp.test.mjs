@@ -279,17 +279,13 @@ test("connect_device output omits sessionId and secret fields", () => {
       firmwareVersion: "0.0.0",
     },
   });
-  // Zod strips unknown keys by default, so success is fine; assert the parsed
-  // output does not carry sessionId through.
-  assert.equal(withSessionId.success, true);
-  assert.equal("sessionId" in withSessionId.data, false);
+  assert.equal(withSessionId.success, false);
 
   const withExpiresAt = gatewayToolDefinitions.connectDevice.outputSchema.safeParse({
     ...sample.data,
     expiresAt: "2026-05-28T00:30:00.000Z",
   });
-  assert.equal(withExpiresAt.success, true);
-  assert.equal("expiresAt" in withExpiresAt.data, false);
+  assert.equal(withExpiresAt.success, false);
 
   for (const shape of [
     gatewayToolDefinitions.connectDevice.outputSchema,
@@ -908,15 +904,10 @@ function assertNoLeakMarkers(result, toolName) {
 }
 
 // A core that returns otherwise-valid success shapes with extra secret-like
-// fields spread in. The MCP boundary strips fields on broad management shapes,
-// while exact capability/account/signing projections fail closed.
+// fields spread in. Any extra field on a Gateway success output is now an
+// internal contract bug, so the MCP boundary must fail closed instead of
+// dispatching a stripped success.
 const SECRET_EXTRAS = { sessionId: "SESSION_LEAK", privateKey: "PRIVATEKEY_LEAK", seed: "SEED_LEAK" };
-const EXACT_PROJECTION_TOOLS = new Set([
-  "get_capabilities",
-  "get_accounts",
-  "sign_transaction",
-  "sign_personal_message",
-]);
 
 const leakyCore = {
   async scanDevices() {
@@ -1091,12 +1082,8 @@ test("MCP boundary prevents secret-like extra fields from leaking out", async ()
   await withConnectedClient(async (client) => {
     for (const dispatchCase of dispatchCases) {
       const result = await client.callTool(dispatchCase);
-      if (EXACT_PROJECTION_TOOLS.has(dispatchCase.name)) {
-        assert.equal(result.isError, true, `${dispatchCase.name}: exact projection drift must fail closed`);
-        assert.equal(result.structuredContent.error.code, "internal_output_error");
-        continue;
-      }
-      assert.equal(result.isError ?? false, false, `${dispatchCase.name}: leaky-but-valid success must dispatch ok`);
+      assert.equal(result.isError, true, `${dispatchCase.name}: egress output drift must fail closed`);
+      assert.equal(result.structuredContent.error.code, "internal_output_error");
       assertNoLeakMarkers(result, dispatchCase.name);
     }
   }, leakyCore);

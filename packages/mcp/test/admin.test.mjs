@@ -223,7 +223,7 @@ test("Admin API accepts same-origin JSON requests", async () => {
   });
 });
 
-test("Admin API sanitizes success results before returning JSON", async () => {
+test("Admin API fails closed when a success result carries unsupported fields", async () => {
   await withAdminServer(
     defaultCore({
       async listDevices() {
@@ -238,10 +238,9 @@ test("Admin API sanitizes success results before returning JSON", async () => {
     }),
     async (baseUrl) => {
       const response = await postJson(baseUrl, "/api/list_devices");
-      assert.equal(response.status, 200);
-      assert.equal(response.body.ok, true);
-      assert.equal(response.body.result.source, "list");
-      assert.equal(response.body.result.sessionId, undefined);
+      assert.equal(response.status, 500);
+      assert.equal(response.body.ok, false);
+      assert.equal(response.body.error.code, "internal_output_error");
       assert.doesNotMatch(JSON.stringify(response.body), /must-not-leak/);
     },
   );

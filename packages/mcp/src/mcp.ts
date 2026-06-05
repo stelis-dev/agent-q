@@ -278,7 +278,7 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
   // fields, and so that error output never echoes a raw (possibly
   // device/OS-originated) message back to the untrusted client.
   //
-  //   work succeeds       -> successSchema.parse() strips unknown fields
+  //   work succeeds       -> successSchema.parse() accepts the exact success shape
   //   work throws         -> canonical public error keyed by error code
   //   sanitize fails      -> fixed internal_output_error (never the raw ZodError)
   const run = async (
