@@ -7,8 +7,7 @@ import {
   GET_CAPABILITIES_SESSION_ENDED_REASONS,
   POLICY_PROPOSE_SESSION_ENDED_REASONS,
   POLICY_GET_SESSION_ENDED_REASONS,
-  SIGN_BY_POLICY_SESSION_ENDED_REASONS,
-  SIGN_BY_USER_SESSION_ENDED_REASONS,
+  SIGN_TRANSACTION_SESSION_ENDED_REASONS,
 } from "./core.js";
 import { PUBLIC_ERROR_MESSAGES } from "./public-error.js";
 import {
@@ -276,14 +275,8 @@ const signingCapabilityEntryShape = z.object({
   method: z.literal("sign_transaction"),
 }).strict();
 const signingCapabilitiesShape = z.object({
-  user: z.array(signingCapabilityEntryShape).length(1),
-  policy: z.array(signingCapabilityEntryShape).length(1),
-}).strict();
-const providerSigningCapabilitiesShape = z.object({
-  user: z.array(signingCapabilityEntryShape).length(1),
-}).strict();
-const mcpSigningCapabilitiesShape = z.object({
-  policy: z.array(signingCapabilityEntryShape).length(1),
+  authorization: z.enum(["user", "policy"]),
+  methods: z.array(signingCapabilityEntryShape).length(1),
 }).strict();
 const liveCapabilitiesOutputShape = z.object({
   source: z.literal("live"),
@@ -295,13 +288,13 @@ const liveProviderCapabilitiesOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
   capabilities: z.array(capabilityChainShape).length(MAX_CAPABILITY_CHAINS),
-  signing: providerSigningCapabilitiesShape.optional(),
+  signing: signingCapabilitiesShape.optional(),
 }).strict();
 const liveMcpCapabilitiesOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
   capabilities: z.array(capabilityChainShape).length(MAX_CAPABILITY_CHAINS),
-  signing: mcpSigningCapabilitiesShape.optional(),
+  signing: signingCapabilitiesShape.optional(),
 }).strict();
 const notConnectedCapabilitiesOutputShape = z.object({
   source: z.literal("not_connected"),
@@ -581,40 +574,26 @@ const notConnectedSignOutputShape = z.object({
   deviceId: safeDeviceIdShape,
   reason: z.literal("not_connected"),
 });
-const sessionEndedSignByUserOutputShape = z.object({
+const sessionEndedSignTransactionOutputShape = z.object({
   source: z.literal("session_ended"),
   deviceId: safeDeviceIdShape,
-  reason: z.enum(SIGN_BY_USER_SESSION_ENDED_REASONS),
+  reason: z.enum(SIGN_TRANSACTION_SESSION_ENDED_REASONS),
 });
-const sessionEndedSignByPolicyOutputShape = z.object({
-  source: z.literal("session_ended"),
-  deviceId: safeDeviceIdShape,
-  reason: z.enum(SIGN_BY_POLICY_SESSION_ENDED_REASONS),
-});
-export const signByUserSuccessOutputShape = z.union([
+export const signTransactionSuccessOutputShape = z.union([
   liveUserSignSignedOutputShape,
-  liveUserSignTerminalOutputShape,
-  notConnectedSignOutputShape,
-  sessionEndedSignByUserOutputShape,
-]);
-export const signByUserToolOutputShape = z.union([
-  liveUserSignSignedOutputShape,
-  liveUserSignTerminalOutputShape,
-  notConnectedSignOutputShape,
-  sessionEndedSignByUserOutputShape,
-  errorToolResultShape,
-]);
-export const signByPolicySuccessOutputShape = z.union([
   livePolicySignSignedOutputShape,
+  liveUserSignTerminalOutputShape,
   livePolicySignTerminalOutputShape,
   notConnectedSignOutputShape,
-  sessionEndedSignByPolicyOutputShape,
+  sessionEndedSignTransactionOutputShape,
 ]);
-export const signByPolicyToolOutputShape = z.union([
+export const signTransactionToolOutputShape = z.union([
+  liveUserSignSignedOutputShape,
   livePolicySignSignedOutputShape,
+  liveUserSignTerminalOutputShape,
   livePolicySignTerminalOutputShape,
   notConnectedSignOutputShape,
-  sessionEndedSignByPolicyOutputShape,
+  sessionEndedSignTransactionOutputShape,
   errorToolResultShape,
 ]);
 
@@ -690,7 +669,6 @@ export const gatewaySuccessOutputSchemas = {
   getAccounts: getAccountsSuccessOutputShape,
   policyGet: policyGetSuccessOutputShape,
   getApprovalHistory: getApprovalHistorySuccessOutputShape,
-  signByUser: signByUserSuccessOutputShape,
-  signByPolicy: signByPolicySuccessOutputShape,
+  signTransaction: signTransactionSuccessOutputShape,
   policyPropose: policyProposeSuccessOutputShape,
 } as const;

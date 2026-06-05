@@ -22,7 +22,7 @@ const expectedToolNames = [
   "scan_devices",
   "select_device",
   "set_device_metadata",
-  "sign_by_policy",
+  "sign_transaction",
 ];
 
 test("MCP package metadata exposes MCP and Admin adapter entrypoints", async () => {
@@ -129,6 +129,10 @@ const noOpCore = {
           methods: [],
         },
       ],
+      signing: {
+        authorization: "policy",
+        methods: [{ chain: "sui", method: "sign_transaction" }],
+      },
     };
   },
   async getAccounts() {
@@ -182,7 +186,7 @@ const noOpCore = {
       hasMore: false,
     };
   },
-  async signByPolicy() {
+  async signTransaction() {
     return {
       source: "live",
       deviceId: "device-1",
@@ -350,7 +354,7 @@ test("tool input schemas expose only current request fields", () => {
     "gatewayName",
     "purpose",
   ]);
-  assert.deepEqual(Object.keys(gatewayToolDefinitions.signByPolicy.inputSchema).sort(), [
+  assert.deepEqual(Object.keys(gatewayToolDefinitions.signTransaction.inputSchema).sort(), [
     "chain",
     "deviceId",
     "method",
@@ -445,7 +449,7 @@ const dispatchCases = [
   { name: "get_accounts", arguments: {} },
   { name: "policy_get", arguments: {} },
   { name: "get_approval_history", arguments: {} },
-  { name: "sign_by_policy", arguments: { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" } },
+  { name: "sign_transaction", arguments: { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" } },
   {
     name: "policy_propose",
     arguments: {
@@ -554,7 +558,7 @@ test("get_capabilities dispatch returns current capabilities without a session t
   });
 });
 
-test("get_capabilities dispatch projects raw Firmware signing capability to MCP policy capability", async () => {
+test("get_capabilities dispatch returns Firmware-authored signing capability", async () => {
   const core = {
     ...noOpCore,
     async getCapabilities() {
@@ -574,8 +578,8 @@ test("get_capabilities dispatch projects raw Firmware signing capability to MCP 
           },
         ],
         signing: {
-          user: [{ chain: "sui", method: "sign_transaction" }],
-          policy: [{ chain: "sui", method: "sign_transaction" }],
+          authorization: "policy",
+          methods: [{ chain: "sui", method: "sign_transaction" }],
         },
       };
     },
@@ -585,13 +589,13 @@ test("get_capabilities dispatch projects raw Firmware signing capability to MCP 
     const result = await client.callTool({ name: "get_capabilities", arguments: {} });
     assert.equal(result.structuredContent.source, "live");
     assert.deepEqual(result.structuredContent.signing, {
-      policy: [{ chain: "sui", method: "sign_transaction" }],
+      authorization: "policy",
+      methods: [{ chain: "sui", method: "sign_transaction" }],
     });
-    assert.equal(JSON.stringify(result).includes('"user"'), false);
   }, core);
 });
 
-test("get_capabilities MCP output schema rejects user-confirmed signing capability", () => {
+test("get_capabilities MCP output schema rejects legacy split signing capability", () => {
   const parsed = gatewayToolDefinitions.getCapabilities.outputSchema.safeParse({
     source: "live",
     deviceId: "device-1",
@@ -616,10 +620,10 @@ test("get_capabilities MCP output schema rejects user-confirmed signing capabili
   assert.equal(parsed.success, false);
 });
 
-test("sign_by_policy dispatch returns a policy result without a session token", async () => {
+test("sign_transaction dispatch returns a policy result without a session token", async () => {
   await withConnectedClient(async (client) => {
     const result = await client.callTool({
-      name: "sign_by_policy",
+      name: "sign_transaction",
       arguments: { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" },
     });
     assert.equal(result.structuredContent.source, "live");
@@ -650,10 +654,10 @@ test("policy_propose dispatch returns Firmware-authored terminal metadata withou
   });
 });
 
-test("sign_by_policy dispatch accepts signed policy results without a session token", async () => {
+test("sign_transaction dispatch accepts signed policy results without a session token", async () => {
   const core = {
     ...noOpCore,
-    async signByPolicy() {
+    async signTransaction() {
       return {
         source: "live",
         deviceId: "device-1",
@@ -667,7 +671,7 @@ test("sign_by_policy dispatch accepts signed policy results without a session to
   };
   await withConnectedClient(async (client) => {
     const result = await client.callTool({
-      name: "sign_by_policy",
+      name: "sign_transaction",
       arguments: { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" },
     });
     assert.equal(result.structuredContent.source, "live");
@@ -677,18 +681,18 @@ test("sign_by_policy dispatch accepts signed policy results without a session to
   }, core);
 });
 
-test("sign_by_policy dispatch lets core own state-first validation", async () => {
-  let signByPolicyCalls = 0;
+test("sign_transaction dispatch lets core own state-first validation", async () => {
+  let signTransactionCalls = 0;
   const core = {
     ...noOpCore,
-    async signByPolicy() {
-      signByPolicyCalls += 1;
+    async signTransaction() {
+      signTransactionCalls += 1;
       return { source: "not_connected", deviceId: "device-1", reason: "not_connected" };
     },
   };
   await withConnectedClient(async (client) => {
     const result = await client.callTool({
-      name: "sign_by_policy",
+      name: "sign_transaction",
       arguments: {
         chain: "sui",
         method: "sign_transaction",
@@ -698,7 +702,7 @@ test("sign_by_policy dispatch lets core own state-first validation", async () =>
     });
     assert.equal(result.isError, false);
     assert.equal(result.structuredContent.source, "not_connected");
-    assert.equal(signByPolicyCalls, 1);
+    assert.equal(signTransactionCalls, 1);
   }, core);
 });
 
@@ -841,7 +845,7 @@ const leakyCore = {
       ...SECRET_EXTRAS,
     };
   },
-  async signByPolicy() {
+  async signTransaction() {
     return {
       source: "live",
       deviceId: "device-1",
@@ -1004,24 +1008,27 @@ test("get_approval_history rejects malformed records", async () => {
   }, malformedCore);
 });
 
-test("sign_by_policy malformed user-authorized shape cannot leak out as a success", async () => {
+test("sign_transaction malformed authorization/status pair cannot leak out as a success", async () => {
   const malformedCore = {
     ...noOpCore,
-    async signByPolicy() {
+    async signTransaction() {
       return {
         source: "live",
         deviceId: "device-1",
-        status: "signed",
+        status: "policy_rejected",
         authorization: "user",
-        chain: "sui",
-        method: "sign_transaction",
-        signature: Buffer.alloc(97, 1).toString("base64"),
+        policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+        ruleRef: "default",
+        error: {
+          code: "policy_rejected",
+          message: "The signing request was rejected by device policy.",
+        },
       };
     },
   };
   await withConnectedClient(async (client) => {
     const result = await client.callTool({
-      name: "sign_by_policy",
+      name: "sign_transaction",
       arguments: { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" },
     });
     assert.equal(result.isError, true);
@@ -1094,7 +1101,7 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
     },
     {
-      name: "sign_by_policy",
+      name: "sign_transaction",
       result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
     },
     {
@@ -1114,7 +1121,7 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
     {
-      name: "sign_by_policy",
+      name: "sign_transaction",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
     {
@@ -1141,7 +1148,7 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       async getApprovalHistory() {
         return testCase.result;
       },
-      async signByPolicy() {
+      async signTransaction() {
         return testCase.result;
       },
       async policyPropose() {
@@ -1149,7 +1156,7 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       },
     };
     await withConnectedClient(async (client) => {
-      const args = testCase.name === "sign_by_policy"
+      const args = testCase.name === "sign_transaction"
         ? { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" }
         : testCase.name === "policy_propose"
           ? { policy: { schema: "agentq.policy.v0", defaultAction: "reject", rules: [] } }

@@ -14,7 +14,7 @@ import {
   type PolicyGetResult,
   type PolicyProposeResult,
   type SetDeviceMetadataResult,
-  type SignByPolicyResult,
+  type SignTransactionResult,
 } from "@stelis/agent-q-client/admin";
 import {
   DEVICE_ID_PATTERN,
@@ -50,8 +50,8 @@ import {
   selectDeviceToolOutputShape,
   setDeviceMetadataSuccessOutputShape,
   setDeviceMetadataToolOutputShape,
-  signByPolicySuccessOutputShape,
-  signByPolicyToolOutputShape,
+  signTransactionSuccessOutputShape,
+  signTransactionToolOutputShape,
   isValidLabel,
   isValidPurpose,
   normalizeErrorCode,
@@ -167,7 +167,7 @@ export const gatewayToolDefinitions = {
     name: "get_capabilities",
     title: "Get capabilities",
     description:
-      "Read Firmware-authored supported chains, public account schemes, and currently implemented delegated methods over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Signing availability is reported only through the MCP-facing signing.policy projection, not through chains[].methods.",
+      "Read Firmware-authored supported chains, public account schemes, and supported signing methods over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. signing.authorization is Firmware-authored read-only state and is not a request option.",
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
@@ -213,11 +213,11 @@ export const gatewayToolDefinitions = {
     outputSchema: getApprovalHistoryToolOutputShape,
     successOutputSchema: getApprovalHistorySuccessOutputShape,
   },
-  signByPolicy: {
-    name: "sign_by_policy",
-    title: "Sign by policy",
+  signTransaction: {
+    name: "sign_transaction",
+    title: "Sign transaction",
     description:
-      "Request a Firmware-owned policy-authorized signature over an approved session. Gateway and MCP do not store keys or make policy decisions; Firmware evaluates the active policy and returns sign_result.",
+      "Request a Firmware-owned transaction signature over an approved session. Gateway and MCP do not store keys, choose authorization, or make signing decisions; Firmware uses its local signing authorization mode to select policy authorization or user confirmation and returns sign_result.",
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
@@ -226,8 +226,8 @@ export const gatewayToolDefinitions = {
       network: z.enum(["mainnet", "testnet", "devnet", "localnet"]),
       txBytes: z.string(),
     },
-    outputSchema: signByPolicyToolOutputShape,
-    successOutputSchema: signByPolicySuccessOutputShape,
+    outputSchema: signTransactionToolOutputShape,
+    successOutputSchema: signTransactionSuccessOutputShape,
   },
   policyPropose: {
     name: "policy_propose",
@@ -459,18 +459,18 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
   );
 
   server.registerTool(
-    gatewayToolDefinitions.signByPolicy.name,
+    gatewayToolDefinitions.signTransaction.name,
     {
-      title: gatewayToolDefinitions.signByPolicy.title,
-      description: gatewayToolDefinitions.signByPolicy.description,
-      inputSchema: gatewayToolDefinitions.signByPolicy.inputSchema,
+      title: gatewayToolDefinitions.signTransaction.title,
+      description: gatewayToolDefinitions.signTransaction.description,
+      inputSchema: gatewayToolDefinitions.signTransaction.inputSchema,
       // Success is a discriminated union (live | not_connected | session_ended),
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
     async ({ deviceId, purpose, chain, method, network, txBytes }) =>
-      run(gatewayToolDefinitions.signByPolicy.successOutputSchema, () =>
-        core.signByPolicy({ deviceId, purpose, chain: chain as "sui", method: method as "sign_transaction", network, txBytes }),
+      run(gatewayToolDefinitions.signTransaction.successOutputSchema, () =>
+        core.signTransaction({ deviceId, purpose, chain: chain as "sui", method: method as "sign_transaction", network, txBytes }),
       ),
   );
 
@@ -575,25 +575,7 @@ function sanitizeGetDeviceStatusResult(raw: unknown): object {
 }
 
 function sanitizeMcpGetCapabilitiesResult(raw: unknown): object {
-  let candidate = raw;
-  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
-    const record = raw as Record<string, unknown>;
-    if (record.source === "live" &&
-        typeof record.signing === "object" &&
-        record.signing !== null &&
-        !Array.isArray(record.signing)) {
-      const signing = record.signing as Record<string, unknown>;
-      const { signing: _rawSigning, ...projected } = record;
-      void _rawSigning;
-      candidate = {
-        ...projected,
-        ...(Array.isArray(signing.policy) && signing.policy.length > 0
-          ? { signing: { policy: signing.policy } }
-          : {}),
-      };
-    }
-  }
-  return mcpGetCapabilitiesSuccessOutputShape.parse(candidate);
+  return mcpGetCapabilitiesSuccessOutputShape.parse(raw);
 }
 
 type StructuredToolResult =
@@ -601,7 +583,7 @@ type StructuredToolResult =
   | DeviceListResult
   | SetDeviceMetadataResult
   | ConnectDeviceResult
-  | SignByPolicyResult
+  | SignTransactionResult
   | DisconnectDeviceResult
   | GetAccountsResult
   | GetApprovalHistoryResult

@@ -69,6 +69,7 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include "agent_q_connect_settings.h"
 #include "agent_q_local_auth.h"
 #include "agent_q_local_auth_worker.h"
+#include "agent_q_signing_mode.h"
 #include "freertos/FreeRTOS.h"
 
 namespace {
@@ -210,6 +211,11 @@ bool connect_requires_pin()
 bool store_require_pin_on_connect(bool required)
 {
     g_require_pin_on_connect = required;
+    return true;
+}
+
+bool store_signing_authorization_mode(AgentQSigningAuthorizationMode)
+{
     return true;
 }
 

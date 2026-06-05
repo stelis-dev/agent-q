@@ -3,9 +3,9 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: firmware/tools/stackchan-cores3/test_sign_by_policy_runtime.sh
+Usage: firmware/tools/stackchan-cores3/test_sign_transaction_policy_runtime.sh
 
-Compiles the StackChan CoreS3 sign_by_policy runtime boundary against
+Compiles the StackChan CoreS3 sign_transaction_policy runtime boundary against
 ArduinoJson, the common Sui facts parser, the common policy runtime, and pinned
 MicroSui base64 helpers. It verifies default policy rejection, bounded policy
 sign approval, unsupported methods, invalid params, and policy metadata.
@@ -36,7 +36,7 @@ for required in \
   "${SIGNING_CORE}/byte_conversions.c" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
   "${COMMON_ROOT}/agent_q_u64_decimal.h" \
-  "${AGENT_Q_DIR}/agent_q_method_runtime.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_transaction_policy_runtime.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_signing_authority.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
@@ -53,7 +53,7 @@ done
 
 CC_BIN="${CC:-cc}"
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sign-by-policy-runtime.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sign-transaction-policy-runtime.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/agent_q_common" "${TMP_DIR}/stubs"
@@ -68,7 +68,7 @@ cat >"${TMP_DIR}/stubs/esp_log.h" <<'H'
 #define ESP_LOGE(tag, format, ...) do { (void)(tag); } while (0)
 H
 
-cat >"${TMP_DIR}/sign_by_policy_runtime_test.cpp" <<'CPP'
+cat >"${TMP_DIR}/sign_transaction_policy_runtime_test.cpp" <<'CPP'
 #include <ArduinoJson.h>
 
 #include <stdio.h>
@@ -79,7 +79,7 @@ cat >"${TMP_DIR}/sign_by_policy_runtime_test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_method_runtime.h"
+#include "agent_q_sign_transaction_policy_runtime.h"
 #include "agent_q_policy_store.h"
 #include "agent_q_sui_account_store.h"
 #include "agent_q_common/policy/agent_q_policy_v0.h"
@@ -333,7 +333,7 @@ bool approval_history_digest_payload(const uint8_t*, size_t, char* output, size_
 int main(int argc, char** argv)
 {
     if (argc != 2) {
-        fprintf(stderr, "usage: sign_by_policy_runtime_test <valid_tx_hex_fixture>\n");
+        fprintf(stderr, "usage: sign_transaction_policy_runtime_test <valid_tx_hex_fixture>\n");
         return 2;
     }
 
@@ -355,11 +355,11 @@ int main(int argc, char** argv)
 
     ::g_policy_has_rule = false;
     ::g_policy_action = agent_q::AgentQPolicyAction::reject;
-    const agent_q::AgentQSignByPolicyRuntimeResult rejected =
-        agent_q::evaluate_sign_by_policy("sui", "sign_transaction", valid_params.as<JsonVariant>());
+    const agent_q::AgentQSignTransactionPolicyRuntimeResult rejected =
+        agent_q::evaluate_sign_transaction_policy("sui", "sign_transaction", valid_params.as<JsonVariant>());
     clobber_stack();
-    expect(rejected.status == agent_q::AgentQSignByPolicyRuntimeStatus::policy_rejected,
-           "default policy rejects sign_by_policy");
+    expect(rejected.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_rejected,
+           "default policy rejects sign_transaction_policy");
     expect(strcmp(rejected.code, "policy_rejected") == 0,
            "default policy rejection code");
     expect(strcmp(rejected.chain, "sui") == 0 &&
@@ -378,10 +378,10 @@ int main(int argc, char** argv)
     ::g_policy_has_rule = true;
     ::g_policy_action = agent_q::AgentQPolicyAction::sign;
     ::g_rule_id = "sign-small-sui-transfer";
-    const agent_q::AgentQSignByPolicyRuntimeResult approved =
-        agent_q::evaluate_sign_by_policy("sui", "sign_transaction", valid_params.as<JsonVariant>());
-    expect(approved.status == agent_q::AgentQSignByPolicyRuntimeStatus::policy_authorized,
-           "bounded policy sign rule approves sign_by_policy");
+    const agent_q::AgentQSignTransactionPolicyRuntimeResult approved =
+        agent_q::evaluate_sign_transaction_policy("sui", "sign_transaction", valid_params.as<JsonVariant>());
+    expect(approved.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized,
+           "bounded policy sign rule approves sign_transaction_policy");
     expect(strcmp(approved.code, "policy_signed") == 0,
            "policy approval code");
     expect(strcmp(approved.rule_ref, "sign-small-sui-transfer") == 0,
@@ -391,9 +391,9 @@ int main(int argc, char** argv)
            "policy approval preserves signable tx bytes");
 
     ::g_stored_address = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
-    const agent_q::AgentQSignByPolicyRuntimeResult account_mismatch =
-        agent_q::evaluate_sign_by_policy("sui", "sign_transaction", valid_params.as<JsonVariant>());
-    expect(account_mismatch.status == agent_q::AgentQSignByPolicyRuntimeStatus::account_mismatch,
+    const agent_q::AgentQSignTransactionPolicyRuntimeResult account_mismatch =
+        agent_q::evaluate_sign_transaction_policy("sui", "sign_transaction", valid_params.as<JsonVariant>());
+    expect(account_mismatch.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::account_mismatch,
            "stored account mismatch rejects before policy signing");
     expect(strcmp(account_mismatch.code, "invalid_account") == 0,
            "stored account mismatch reports invalid_account");
@@ -402,9 +402,9 @@ int main(int argc, char** argv)
 
     ::g_stored_address = sui_facts.sender;
     ::g_account_available = false;
-    const agent_q::AgentQSignByPolicyRuntimeResult account_unavailable =
-        agent_q::evaluate_sign_by_policy("sui", "sign_transaction", valid_params.as<JsonVariant>());
-    expect(account_unavailable.status == agent_q::AgentQSignByPolicyRuntimeStatus::account_unavailable,
+    const agent_q::AgentQSignTransactionPolicyRuntimeResult account_unavailable =
+        agent_q::evaluate_sign_transaction_policy("sui", "sign_transaction", valid_params.as<JsonVariant>());
+    expect(account_unavailable.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::account_unavailable,
            "stored account unavailable fails before policy signing");
     expect(strcmp(account_unavailable.code, "account_unavailable") == 0,
            "stored account unavailable reports account_unavailable");
@@ -412,14 +412,14 @@ int main(int argc, char** argv)
            "stored account unavailable does not expose signable tx bytes");
     ::g_account_available = true;
 
-    agent_q::AgentQSignByPolicyRuntimeResult cleared = approved;
-    agent_q::clear_sign_by_policy_runtime_result(&cleared);
+    agent_q::AgentQSignTransactionPolicyRuntimeResult cleared = approved;
+    agent_q::clear_sign_transaction_policy_runtime_result(&cleared);
     expect(cleared.code == nullptr && cleared.tx_bytes_size == 0,
-           "clearing sign_by_policy result wipes public metadata");
+           "clearing sign_transaction_policy result wipes public metadata");
 
-    const agent_q::AgentQSignByPolicyRuntimeResult unsupported =
-        agent_q::evaluate_sign_by_policy("sui", "unknown", valid_params.as<JsonVariant>());
-    expect(unsupported.status == agent_q::AgentQSignByPolicyRuntimeStatus::invalid_params,
+    const agent_q::AgentQSignTransactionPolicyRuntimeResult unsupported =
+        agent_q::evaluate_sign_transaction_policy("sui", "unknown", valid_params.as<JsonVariant>());
+    expect(unsupported.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::invalid_params,
            "unknown method returns protocol invalid params");
     expect(strcmp(unsupported.code, "unsupported_method") == 0,
            "unknown method reports unsupported_method");
@@ -427,18 +427,18 @@ int main(int argc, char** argv)
     JsonDocument invalid_params = parse_json(
         "invalid params",
         "{\"network\":\"devnet\",\"txBytes\":\"AAAA\",\"seed\":\"x\"}");
-    const agent_q::AgentQSignByPolicyRuntimeResult invalid =
-        agent_q::evaluate_sign_by_policy("sui", "sign_transaction", invalid_params.as<JsonVariant>());
-    expect(invalid.status == agent_q::AgentQSignByPolicyRuntimeStatus::invalid_params,
+    const agent_q::AgentQSignTransactionPolicyRuntimeResult invalid =
+        agent_q::evaluate_sign_transaction_policy("sui", "sign_transaction", invalid_params.as<JsonVariant>());
+    expect(invalid.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::invalid_params,
            "invalid Sui params return protocol invalid params");
     expect(strcmp(invalid.code, "invalid_params") == 0,
            "invalid Sui params code is invalid_params");
 
     if (failures != 0) {
-        fprintf(stderr, "%d sign_by_policy runtime test(s) failed\n", failures);
+        fprintf(stderr, "%d sign_transaction_policy runtime test(s) failed\n", failures);
         return 1;
     }
-    printf("sign_by_policy runtime tests passed\n");
+    printf("sign_transaction_policy runtime tests passed\n");
     return 0;
 }
 CPP
@@ -454,8 +454,8 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${COMMON_POLICY_DIR}" \
   -I"${COMMON_SUI_DIR}" \
-  "${TMP_DIR}/sign_by_policy_runtime_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_method_runtime.cpp" \
+  "${TMP_DIR}/sign_transaction_policy_runtime_test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_transaction_policy_runtime.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_signing_authority.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
@@ -465,6 +465,6 @@ CPP
   "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${TMP_DIR}/byte_conversions.o" \
-  -o "${TMP_DIR}/sign_by_policy_runtime_test"
+  -o "${TMP_DIR}/sign_transaction_policy_runtime_test"
 
-"${TMP_DIR}/sign_by_policy_runtime_test" "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex"
+"${TMP_DIR}/sign_transaction_policy_runtime_test" "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex"

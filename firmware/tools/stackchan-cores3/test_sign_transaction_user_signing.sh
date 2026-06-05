@@ -3,9 +3,9 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: firmware/tools/stackchan-cores3/test_sign_by_user_signing.sh
+Usage: firmware/tools/stackchan-cores3/test_sign_transaction_user_signing.sh
 
-Compiles the StackChan CoreS3 device-confirmed sign_by_user signing
+Compiles the StackChan CoreS3 device-confirmed sign_transaction_user signing
 handoff helper against host stubs. It verifies that signing only happens inside
 the request flow's signing critical section, the signable payload is one-shot,
 and internal signed/signing_failed terminal state is recorded. This is not a
@@ -37,7 +37,7 @@ using TickType_t = uint32_t;
 #define pdMS_TO_TICKS(ms) (ms)
 H
 
-cat >"${TMP_DIR}/sign_by_user_signing_test.cpp" <<'CPP'
+cat >"${TMP_DIR}/sign_transaction_user_signing_test.cpp" <<'CPP'
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -47,8 +47,8 @@ cat >"${TMP_DIR}/sign_by_user_signing_test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_sign_by_user_flow.h"
-#include "agent_q_sign_by_user_signing.h"
+#include "agent_q_sign_transaction_user_flow.h"
+#include "agent_q_sign_transaction_user_signing.h"
 #include "agent_q_sui_account_store.h"
 
 namespace {
@@ -159,12 +159,12 @@ const std::vector<uint8_t>& valid_payload()
     return payload;
 }
 
-agent_q::AgentQSignByUserBeginInput make_valid_input(
+agent_q::AgentQSignTransactionUserBeginInput make_valid_input(
     const char* request_id,
     const char* session_id)
 {
     const std::vector<uint8_t>& payload = valid_payload();
-    return agent_q::AgentQSignByUserBeginInput{
+    return agent_q::AgentQSignTransactionUserBeginInput{
         request_id,
         session_id,
         "sui",
@@ -177,17 +177,17 @@ agent_q::AgentQSignByUserBeginInput make_valid_input(
 }
 
 bool write_confirmation_history(
-    const agent_q::AgentQSignByUserFlowSnapshot& snapshot,
+    const agent_q::AgentQSignTransactionUserFlowSnapshot& snapshot,
     void*)
 {
-    expect(snapshot.stage == agent_q::AgentQSignByUserStage::history_write,
+    expect(snapshot.stage == agent_q::AgentQSignTransactionUserStage::history_write,
            "history writer receives history_write snapshot");
     return true;
 }
 
 void reset_state()
 {
-    agent_q::sign_by_user_flow_clear();
+    agent_q::sign_transaction_user_flow_clear();
     agent_q::session_clear();
     g_digest_calls = 0;
     g_signing_calls = 0;
@@ -206,37 +206,37 @@ void begin_reviewing_request(const char* request_id)
     expect(agent_q::session_replace(random_bytes, nullptr) ==
                agent_q::AgentQSessionStartResult::ok,
            "session starts");
-    expect(agent_q::sign_by_user_flow_begin(
+    expect(agent_q::sign_transaction_user_flow_begin(
                make_valid_input(request_id, agent_q::session_id())) ==
-               agent_q::AgentQSignByUserFlowBeginResult::ok,
-           "sign_by_user begins");
+               agent_q::AgentQSignTransactionUserFlowBeginResult::ok,
+           "sign_transaction_user begins");
 }
 
 void enter_critical_section(const char* request_id)
 {
     begin_reviewing_request(request_id);
-    expect(agent_q::sign_by_user_flow_accept_review(50, 90) ==
-               agent_q::AgentQSignByUserTransitionResult::ok,
+    expect(agent_q::sign_transaction_user_flow_accept_review(50, 90) ==
+               agent_q::AgentQSignTransactionUserTransitionResult::ok,
            "review accepted");
-    expect(agent_q::sign_by_user_flow_pause_pin_deadline() ==
-               agent_q::AgentQSignByUserTransitionResult::ok,
+    expect(agent_q::sign_transaction_user_flow_pause_pin_deadline() ==
+               agent_q::AgentQSignTransactionUserTransitionResult::ok,
            "PIN submit pauses input deadline");
-    expect(agent_q::sign_by_user_flow_record_pin_verified_and_write_confirmation_history(55,
+    expect(agent_q::sign_transaction_user_flow_record_pin_verified_and_write_confirmation_history(55,
                write_confirmation_history,
-               nullptr) == agent_q::AgentQSignByUserTransitionResult::ok,
+               nullptr) == agent_q::AgentQSignTransactionUserTransitionResult::ok,
            "history write enters critical section");
-    expect(agent_q::sign_by_user_flow_snapshot().stage ==
-               agent_q::AgentQSignByUserStage::signing_critical_section,
+    expect(agent_q::sign_transaction_user_flow_snapshot().stage ==
+               agent_q::AgentQSignTransactionUserStage::signing_critical_section,
            "flow is in critical section");
 }
 
-void poison_output(agent_q::AgentQSignByUserSigningOutput& output)
+void poison_output(agent_q::AgentQSignTransactionUserSigningOutput& output)
 {
     memset(output.signature, 0xCC, sizeof(output.signature));
     output.signature_size = 999;
 }
 
-bool output_is_wiped(const agent_q::AgentQSignByUserSigningOutput& output)
+bool output_is_wiped(const agent_q::AgentQSignTransactionUserSigningOutput& output)
 {
     if (output.signature_size != 0) {
         return false;
@@ -250,7 +250,7 @@ bool output_is_wiped(const agent_q::AgentQSignByUserSigningOutput& output)
 }
 
 bool output_matches_stub_signature(
-    const agent_q::AgentQSignByUserSigningOutput& output)
+    const agent_q::AgentQSignTransactionUserSigningOutput& output)
 {
     if (output.signature_size != agent_q::kSuiEd25519SignatureBytes) {
         return false;
@@ -347,54 +347,54 @@ const char* sui_transaction_signing_result_to_string(SuiTransactionSigningResult
 int main()
 {
     namespace aq = agent_q;
-    aq::AgentQSignByUserSigningOutput output = {};
+    aq::AgentQSignTransactionUserSigningOutput output = {};
 
     reset_state();
     poison_output(output);
-    aq::AgentQSignByUserSigningHandoffReport report =
-        aq::sign_by_user_signing_execute_critical_section(&output);
-    expect(report.result == aq::AgentQSignByUserSigningHandoffResult::inactive,
+    aq::AgentQSignTransactionUserSigningHandoffReport report =
+        aq::sign_transaction_user_signing_execute_critical_section(&output);
+    expect(report.result == aq::AgentQSignTransactionUserSigningHandoffResult::inactive,
            "inactive flow cannot sign");
     expect(g_signing_calls == 0, "inactive flow does not call signing service");
     expect(output_is_wiped(output), "inactive flow wipes output");
 
     reset_state();
     enter_critical_section("req_null_output");
-    report = aq::sign_by_user_signing_execute_critical_section(nullptr);
-    expect(report.result == aq::AgentQSignByUserSigningHandoffResult::invalid_output,
+    report = aq::sign_transaction_user_signing_execute_critical_section(nullptr);
+    expect(report.result == aq::AgentQSignTransactionUserSigningHandoffResult::invalid_output,
            "null output is rejected");
     expect(g_signing_calls == 0, "null output does not call signing service");
-    expect(aq::sign_by_user_flow_snapshot().stage ==
-               aq::AgentQSignByUserStage::signing_critical_section,
+    expect(aq::sign_transaction_user_flow_snapshot().stage ==
+               aq::AgentQSignTransactionUserStage::signing_critical_section,
            "null output keeps critical flow active");
-    expect(aq::sign_by_user_flow_record_signing_failed() ==
-               aq::AgentQSignByUserTransitionResult::ok,
+    expect(aq::sign_transaction_user_flow_record_signing_failed() ==
+               aq::AgentQSignTransactionUserTransitionResult::ok,
            "test cleanup terminalizes null-output critical flow");
-    aq::AgentQSignByUserTerminalResult cleanup_terminal =
-        aq::AgentQSignByUserTerminalResult::none;
-    expect(aq::sign_by_user_flow_consume_terminal_result(&cleanup_terminal),
+    aq::AgentQSignTransactionUserTerminalResult cleanup_terminal =
+        aq::AgentQSignTransactionUserTerminalResult::none;
+    expect(aq::sign_transaction_user_flow_consume_terminal_result(&cleanup_terminal),
            "test cleanup consumes null-output terminal");
 
     reset_state();
     begin_reviewing_request("req_wrong_stage");
     poison_output(output);
-    report = aq::sign_by_user_signing_execute_critical_section(&output);
-    expect(report.result == aq::AgentQSignByUserSigningHandoffResult::wrong_stage,
+    report = aq::sign_transaction_user_signing_execute_critical_section(&output);
+    expect(report.result == aq::AgentQSignTransactionUserSigningHandoffResult::wrong_stage,
            "reviewing flow cannot sign");
     expect(g_signing_calls == 0, "wrong stage does not call signing service");
     expect(output_is_wiped(output), "wrong stage wipes output");
-    expect(aq::sign_by_user_flow_snapshot().stage ==
-               aq::AgentQSignByUserStage::reviewing,
+    expect(aq::sign_transaction_user_flow_snapshot().stage ==
+               aq::AgentQSignTransactionUserStage::reviewing,
            "wrong stage keeps request active");
 
     reset_state();
     enter_critical_section("req_success");
     const std::vector<uint8_t> expected_payload = valid_payload();
     poison_output(output);
-    report = aq::sign_by_user_signing_execute_critical_section(&output);
-    expect(report.result == aq::AgentQSignByUserSigningHandoffResult::ok,
+    report = aq::sign_transaction_user_signing_execute_critical_section(&output);
+    expect(report.result == aq::AgentQSignTransactionUserSigningHandoffResult::ok,
            "critical section signs successfully");
-    expect(report.flow_result == aq::AgentQSignByUserTransitionResult::ok,
+    expect(report.flow_result == aq::AgentQSignTransactionUserTransitionResult::ok,
            "successful handoff completes flow");
     expect(report.signing_result == aq::SuiTransactionSigningResult::ok,
            "signing service result is reported");
@@ -403,32 +403,32 @@ int main()
            "signing service receives exact request payload");
     expect(output_matches_stub_signature(output),
            "successful signing returns caller-owned signature output");
-    aq::AgentQSignByUserFlowSnapshot snapshot = aq::sign_by_user_flow_snapshot();
-    expect(snapshot.stage == aq::AgentQSignByUserStage::terminal &&
-               snapshot.terminal_result == aq::AgentQSignByUserTerminalResult::signed_success,
+    aq::AgentQSignTransactionUserFlowSnapshot snapshot = aq::sign_transaction_user_flow_snapshot();
+    expect(snapshot.stage == aq::AgentQSignTransactionUserStage::terminal &&
+               snapshot.terminal_result == aq::AgentQSignTransactionUserTerminalResult::signed_success,
            "successful signing records signed terminal");
-    aq::AgentQSignByUserTerminalResult terminal =
-        aq::AgentQSignByUserTerminalResult::none;
-    expect(aq::sign_by_user_flow_consume_terminal_result(&terminal),
+    aq::AgentQSignTransactionUserTerminalResult terminal =
+        aq::AgentQSignTransactionUserTerminalResult::none;
+    expect(aq::sign_transaction_user_flow_consume_terminal_result(&terminal),
            "signed terminal can be consumed");
-    expect(terminal == aq::AgentQSignByUserTerminalResult::signed_success,
+    expect(terminal == aq::AgentQSignTransactionUserTerminalResult::signed_success,
            "signed terminal value is preserved");
 
     reset_state();
     enter_critical_section("req_failure");
     g_signing_result_ok = false;
     poison_output(output);
-    report = aq::sign_by_user_signing_execute_critical_section(&output);
-    expect(report.result == aq::AgentQSignByUserSigningHandoffResult::signing_failed,
+    report = aq::sign_transaction_user_signing_execute_critical_section(&output);
+    expect(report.result == aq::AgentQSignTransactionUserSigningHandoffResult::signing_failed,
            "signing service failure is reported");
-    expect(report.flow_result == aq::AgentQSignByUserTransitionResult::ok,
+    expect(report.flow_result == aq::AgentQSignTransactionUserTransitionResult::ok,
            "signing failure terminalizes flow");
     expect(report.signing_result == aq::SuiTransactionSigningResult::signing_error,
            "signing failure cause is reported");
     expect(g_signing_calls == 1, "failing signing service called once");
-    snapshot = aq::sign_by_user_flow_snapshot();
-    expect(snapshot.stage == aq::AgentQSignByUserStage::terminal &&
-               snapshot.terminal_result == aq::AgentQSignByUserTerminalResult::signing_failed,
+    snapshot = aq::sign_transaction_user_flow_snapshot();
+    expect(snapshot.stage == aq::AgentQSignTransactionUserStage::terminal &&
+               snapshot.terminal_result == aq::AgentQSignTransactionUserTerminalResult::signing_failed,
            "signing service failure records failed terminal");
     expect(output_is_wiped(output), "signing service failure wipes output");
 
@@ -436,51 +436,51 @@ int main()
     enter_critical_section("req_missing_payload");
     uint8_t consumed_payload[agent_q::kAgentQSuiSignTransactionTxBytesMaxBytes] = {};
     size_t consumed_size = 0;
-    expect(aq::sign_by_user_flow_consume_signable_payload(
+    expect(aq::sign_transaction_user_flow_consume_signable_payload(
                consumed_payload,
                sizeof(consumed_payload),
-               &consumed_size) == aq::AgentQSignByUserTransitionResult::ok,
+               &consumed_size) == aq::AgentQSignTransactionUserTransitionResult::ok,
            "test setup consumes payload");
     poison_output(output);
-    report = aq::sign_by_user_signing_execute_critical_section(&output);
-    expect(report.result == aq::AgentQSignByUserSigningHandoffResult::payload_unavailable,
+    report = aq::sign_transaction_user_signing_execute_critical_section(&output);
+    expect(report.result == aq::AgentQSignTransactionUserSigningHandoffResult::payload_unavailable,
            "missing critical payload is reported");
     expect(g_signing_calls == 0, "missing payload does not call signing service");
     expect(output_is_wiped(output), "missing payload wipes output");
-    snapshot = aq::sign_by_user_flow_snapshot();
-    expect(snapshot.stage == aq::AgentQSignByUserStage::terminal &&
-               snapshot.terminal_result == aq::AgentQSignByUserTerminalResult::signing_failed,
+    snapshot = aq::sign_transaction_user_flow_snapshot();
+    expect(snapshot.stage == aq::AgentQSignTransactionUserStage::terminal &&
+               snapshot.terminal_result == aq::AgentQSignTransactionUserTerminalResult::signing_failed,
            "missing critical payload records failed terminal");
 
     reset_state();
     enter_critical_section("req_session_loss");
     aq::session_clear();
     poison_output(output);
-    report = aq::sign_by_user_signing_execute_critical_section(&output);
-    expect(report.result == aq::AgentQSignByUserSigningHandoffResult::ok,
+    report = aq::sign_transaction_user_signing_execute_critical_section(&output);
+    expect(report.result == aq::AgentQSignTransactionUserSigningHandoffResult::ok,
            "critical signing is not downgraded by session loss");
     expect(output_matches_stub_signature(output),
            "post-history session loss still returns signature output");
-    expect(aq::sign_by_user_flow_snapshot().terminal_result ==
-               aq::AgentQSignByUserTerminalResult::signed_success,
+    expect(aq::sign_transaction_user_flow_snapshot().terminal_result ==
+               aq::AgentQSignTransactionUserTerminalResult::signed_success,
            "post-history session loss stays signed after service success");
 
     expect(strcmp(
-               aq::sign_by_user_signing_handoff_result_name(
-                   aq::AgentQSignByUserSigningHandoffResult::payload_unavailable),
+               aq::sign_transaction_user_signing_handoff_result_name(
+                   aq::AgentQSignTransactionUserSigningHandoffResult::payload_unavailable),
                "payload_unavailable") == 0,
            "result names include payload_unavailable");
     expect(strcmp(
-               aq::sign_by_user_signing_handoff_result_name(
-                   aq::AgentQSignByUserSigningHandoffResult::invalid_output),
+               aq::sign_transaction_user_signing_handoff_result_name(
+                   aq::AgentQSignTransactionUserSigningHandoffResult::invalid_output),
                "invalid_output") == 0,
            "result names include invalid_output");
 
     if (failures != 0) {
-        fprintf(stderr, "%d sign_by_user signing test(s) failed\n", failures);
+        fprintf(stderr, "%d sign_transaction_user signing test(s) failed\n", failures);
         return 1;
     }
-    printf("sign_by_user signing tests passed\n");
+    printf("sign_transaction_user signing tests passed\n");
     return 0;
 }
 CPP
@@ -491,13 +491,13 @@ CPP
   -I"${AGENT_Q_DIR}" \
   -I"${COMMON_ROOT}" \
   -I"${COMMON_ROOT}/sui" \
-  "${TMP_DIR}/sign_by_user_signing_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_by_user_signing.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_by_user_flow.cpp" \
+  "${TMP_DIR}/sign_transaction_user_signing_test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_signing.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_flow.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_signing_authority.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_bcs_reader.cpp" \
-  -o "${TMP_DIR}/sign_by_user_signing_test"
+  -o "${TMP_DIR}/sign_transaction_user_signing_test"
 
-"${TMP_DIR}/sign_by_user_signing_test"
+"${TMP_DIR}/sign_transaction_user_signing_test"

@@ -1,4 +1,4 @@
-#include "agent_q_sign_by_user_validation.h"
+#include "agent_q_sign_transaction_user_validation.h"
 
 #include <string.h>
 
@@ -65,23 +65,23 @@ bool request_params_fields_supported(JsonObjectConst params)
 
 }  // namespace
 
-AgentQSignByUserValidationResult validate_sign_by_user_envelope(
+AgentQSignTransactionUserValidationResult validate_sign_transaction_user_envelope(
     JsonDocument& request,
-    AgentQSignByUserEnvelope* output)
+    AgentQSignTransactionUserEnvelope* output)
 {
     if (output != nullptr) {
         memset(output, 0, sizeof(*output));
     }
     if (output == nullptr) {
-        return AgentQSignByUserValidationResult::invalid_request_shape;
+        return AgentQSignTransactionUserValidationResult::invalid_request_shape;
     }
 
     JsonObjectConst request_object = request.as<JsonObjectConst>();
     if (request_object.isNull()) {
-        return AgentQSignByUserValidationResult::invalid_request_shape;
+        return AgentQSignTransactionUserValidationResult::invalid_request_shape;
     }
     if (!request_top_level_fields_supported(request_object)) {
-        return AgentQSignByUserValidationResult::unsupported_field;
+        return AgentQSignTransactionUserValidationResult::unsupported_field;
     }
 
     const char* request_id = nullptr;
@@ -89,39 +89,39 @@ AgentQSignByUserValidationResult validate_sign_by_user_envelope(
         !request_id_format_valid(request_id) ||
         !copy_nonempty_c_string(request_id, output->request_id, sizeof(output->request_id))) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignByUserValidationResult::invalid_request_shape;
+        return AgentQSignTransactionUserValidationResult::invalid_request_shape;
     }
 
     JsonVariantConst version = request_object["version"];
     if (!version.is<uint32_t>() || version.as<uint32_t>() != 1) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignByUserValidationResult::unsupported_version;
+        return AgentQSignTransactionUserValidationResult::unsupported_version;
     }
 
     const char* request_type = nullptr;
     if (!agent_q_json_value_c_string(request_object["type"], &request_type) ||
-        strcmp(request_type, "sign_by_user") != 0) {
+        strcmp(request_type, "sign_transaction") != 0) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignByUserValidationResult::unsupported_type;
+        return AgentQSignTransactionUserValidationResult::unsupported_type;
     }
 
-    return AgentQSignByUserValidationResult::ok;
+    return AgentQSignTransactionUserValidationResult::ok;
 }
 
-AgentQSignByUserValidationResult validate_sign_by_user_session_format(
+AgentQSignTransactionUserValidationResult validate_sign_transaction_user_session_format(
     JsonDocument& request,
-    AgentQSignByUserSessionRef* output)
+    AgentQSignTransactionUserSessionRef* output)
 {
     if (output != nullptr) {
         memset(output, 0, sizeof(*output));
     }
     if (output == nullptr) {
-        return AgentQSignByUserValidationResult::invalid_session;
+        return AgentQSignTransactionUserValidationResult::invalid_session;
     }
 
     JsonObjectConst request_object = request.as<JsonObjectConst>();
     if (request_object.isNull()) {
-        return AgentQSignByUserValidationResult::invalid_session;
+        return AgentQSignTransactionUserValidationResult::invalid_session;
     }
 
     const char* session_id = nullptr;
@@ -129,37 +129,37 @@ AgentQSignByUserValidationResult validate_sign_by_user_session_format(
         !session_id_format_valid(session_id) ||
         !copy_nonempty_c_string(session_id, output->session_id, sizeof(output->session_id))) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignByUserValidationResult::invalid_session;
+        return AgentQSignTransactionUserValidationResult::invalid_session;
     }
 
-    return AgentQSignByUserValidationResult::ok;
+    return AgentQSignTransactionUserValidationResult::ok;
 }
 
-AgentQSignByUserValidationResult validate_sign_by_user_params(
+AgentQSignTransactionUserValidationResult validate_sign_transaction_user_params(
     JsonDocument& request,
-    AgentQSignByUserParams* output)
+    AgentQSignTransactionUserParams* output)
 {
     if (output != nullptr) {
         memset(output, 0, sizeof(*output));
     }
     if (output == nullptr) {
-        return AgentQSignByUserValidationResult::invalid_params_shape;
+        return AgentQSignTransactionUserValidationResult::invalid_params_shape;
     }
 
     JsonObjectConst request_object = request.as<JsonObjectConst>();
     if (request_object.isNull()) {
-        return AgentQSignByUserValidationResult::invalid_params_shape;
+        return AgentQSignTransactionUserValidationResult::invalid_params_shape;
     }
 
     JsonVariantConst params_value = request_object["params"];
     JsonObjectConst params = params_value.as<JsonObjectConst>();
     if (params.isNull()) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignByUserValidationResult::invalid_params_shape;
+        return AgentQSignTransactionUserValidationResult::invalid_params_shape;
     }
     if (!request_params_fields_supported(params)) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignByUserValidationResult::unsupported_field;
+        return AgentQSignTransactionUserValidationResult::unsupported_field;
     }
 
     const char* chain = nullptr;
@@ -171,7 +171,7 @@ AgentQSignByUserValidationResult validate_sign_by_user_params(
         strcmp(output->chain, "sui") != 0 ||
         strcmp(output->method, "sign_transaction") != 0) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignByUserValidationResult::unsupported_method;
+        return AgentQSignTransactionUserValidationResult::unsupported_method;
     }
 
     const char* network = nullptr;
@@ -179,7 +179,7 @@ AgentQSignByUserValidationResult validate_sign_by_user_params(
         !copy_nonempty_c_string(network, output->network, sizeof(output->network)) ||
         !supported_network(output->network)) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignByUserValidationResult::invalid_network;
+        return AgentQSignTransactionUserValidationResult::invalid_network;
     }
 
     const char* tx_bytes_base64 = nullptr;
@@ -194,35 +194,35 @@ AgentQSignByUserValidationResult validate_sign_by_user_params(
             kAgentQSuiSignTransactionTxBytesMaxBytes,
             &output->tx_bytes_decoded_size)) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignByUserValidationResult::invalid_tx_bytes;
+        return AgentQSignTransactionUserValidationResult::invalid_tx_bytes;
     }
 
-    return AgentQSignByUserValidationResult::ok;
+    return AgentQSignTransactionUserValidationResult::ok;
 }
 
-const char* sign_by_user_validation_result_name(
-    AgentQSignByUserValidationResult result)
+const char* sign_transaction_user_validation_result_name(
+    AgentQSignTransactionUserValidationResult result)
 {
     switch (result) {
-        case AgentQSignByUserValidationResult::ok:
+        case AgentQSignTransactionUserValidationResult::ok:
             return "ok";
-        case AgentQSignByUserValidationResult::invalid_request_shape:
+        case AgentQSignTransactionUserValidationResult::invalid_request_shape:
             return "invalid_request_shape";
-        case AgentQSignByUserValidationResult::unsupported_version:
+        case AgentQSignTransactionUserValidationResult::unsupported_version:
             return "unsupported_version";
-        case AgentQSignByUserValidationResult::unsupported_type:
+        case AgentQSignTransactionUserValidationResult::unsupported_type:
             return "unsupported_type";
-        case AgentQSignByUserValidationResult::invalid_session:
+        case AgentQSignTransactionUserValidationResult::invalid_session:
             return "invalid_session";
-        case AgentQSignByUserValidationResult::invalid_params_shape:
+        case AgentQSignTransactionUserValidationResult::invalid_params_shape:
             return "invalid_params_shape";
-        case AgentQSignByUserValidationResult::unsupported_field:
+        case AgentQSignTransactionUserValidationResult::unsupported_field:
             return "unsupported_field";
-        case AgentQSignByUserValidationResult::unsupported_method:
+        case AgentQSignTransactionUserValidationResult::unsupported_method:
             return "unsupported_method";
-        case AgentQSignByUserValidationResult::invalid_network:
+        case AgentQSignTransactionUserValidationResult::invalid_network:
             return "invalid_network";
-        case AgentQSignByUserValidationResult::invalid_tx_bytes:
+        case AgentQSignTransactionUserValidationResult::invalid_tx_bytes:
             return "invalid_tx_bytes";
     }
     return "unknown";

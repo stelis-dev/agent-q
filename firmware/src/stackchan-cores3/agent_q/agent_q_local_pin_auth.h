@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "agent_q_local_auth_worker.h"
+#include "agent_q_signing_mode.h"
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
@@ -12,9 +13,10 @@ enum class AgentQLocalPinAuthPurpose {
     none,
     connect,
     settings_connect_pin,
+    settings_signing_mode,
     settings_change_pin,
     policy_update,
-    sign_by_user,
+    sign_transaction_user,
 };
 
 enum class AgentQLocalPinAuthStage {
@@ -71,6 +73,7 @@ struct AgentQLocalPinAuthSnapshot {
     AgentQLocalPinAuthStage stage;
     size_t pin_entry_length;
     bool target_require_pin_on_connect;
+    AgentQSigningAuthorizationMode target_signing_authorization_mode;
     bool flow_active;
     bool accepts_keypad_input;
     bool processing;
@@ -88,6 +91,9 @@ bool local_pin_auth_release_lockout_if_elapsed(TickType_t now, TickType_t retry_
 void local_pin_auth_clear_flow();
 void local_pin_auth_begin_connect(TickType_t deadline);
 void local_pin_auth_begin_connect_setting(bool target_require_pin_on_connect, TickType_t deadline);
+void local_pin_auth_begin_signing_mode_setting(
+    AgentQSigningAuthorizationMode target_mode,
+    TickType_t deadline);
 void local_pin_auth_begin_change_pin(TickType_t deadline);
 void local_pin_auth_begin_policy_update(TickType_t deadline);
 

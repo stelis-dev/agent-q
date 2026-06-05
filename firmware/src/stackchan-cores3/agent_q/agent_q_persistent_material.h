@@ -7,6 +7,7 @@
 #include "agent_q_policy_store.h"
 #include "agent_q_policy_update_marker.h"
 #include "agent_q_root_material.h"
+#include "agent_q_signing_mode.h"
 
 namespace agent_q {
 
@@ -35,6 +36,7 @@ enum class AgentQPersistentMaterialRuntimeFailure {
     local_reset_policy_wipe_failed,
     local_reset_local_auth_wipe_failed,
     local_reset_connect_setting_wipe_failed,
+    local_reset_signing_mode_wipe_failed,
     local_reset_approval_history_wipe_failed,
     local_reset_policy_update_marker_wipe_failed,
     local_reset_material_remaining,
@@ -51,6 +53,7 @@ enum class AgentQPersistentMaterialCommitResult {
     root_storage_error,
     policy_storage_error,
     local_auth_storage_error,
+    signing_mode_storage_error,
     state_storage_error,
 };
 
@@ -60,6 +63,7 @@ enum class AgentQPersistentMaterialWipeResult {
     policy_wipe_error,
     local_auth_wipe_error,
     connect_setting_wipe_error,
+    signing_mode_wipe_error,
     approval_history_wipe_error,
     policy_update_marker_wipe_error,
     material_remaining_error,
@@ -69,6 +73,7 @@ struct AgentQPersistentMaterialStatus {
     bool root_present;
     AgentQPolicyStoreStatus policy_status;
     AgentQLocalAuthStatus local_auth_status;
+    AgentQSigningAuthorizationModeStatus signing_mode_status;
     AgentQPolicyUpdateMarkerStatus policy_update_marker_status;
 
     bool complete() const;

@@ -12,7 +12,7 @@ import type {
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
-  SignByUserResult,
+  SignTransactionResult,
   ScanDevicesResult,
   SelectDeviceResult,
 } from "./core.js";
@@ -28,7 +28,7 @@ export type {
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
-  SignByUserResult,
+  SignTransactionResult,
   ScanDevicesResult,
   SelectDeviceResult,
 } from "./core.js";
@@ -65,14 +65,14 @@ export interface DeviceClientCore {
     limit?: number;
     beforeSeq?: string;
   }): Promise<GetApprovalHistoryResult>;
-  signByUser(input: {
+  signTransaction(input: {
     deviceId?: string;
     purpose?: string;
     chain: "sui";
     method: "sign_transaction";
     network: "mainnet" | "testnet" | "devnet" | "localnet";
     txBytes: string;
-  }): Promise<SignByUserResult>;
+  }): Promise<SignTransactionResult>;
 }
 
 function deviceClientFromCore(core: GatewayCore): DeviceClientCore {
@@ -87,7 +87,7 @@ function deviceClientFromCore(core: GatewayCore): DeviceClientCore {
     getAccounts: (input = {}) => core.getAccounts(input),
     policyGet: (input = {}) => core.policyGet(input),
     getApprovalHistory: (input = {}) => core.getApprovalHistory(input),
-    signByUser: (input) => core.signByUser(input),
+    signTransaction: (input) => core.signTransaction(input),
   };
 }
 

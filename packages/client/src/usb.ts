@@ -18,8 +18,7 @@ import {
   makeGetAccountsRequest,
   makeGetApprovalHistoryRequest,
   makePolicyProposeRequest,
-  makeSignByPolicyRequest,
-  makeSignByUserRequest,
+  makeSignTransactionRequest,
   makeIdentifyDeviceRequest,
   makePolicyGetRequest,
   makeGetStatusRequest,
@@ -132,15 +131,7 @@ export interface UsbSerialDriver {
     policy: Record<string, unknown>,
     deadlineMs: number,
   ): Promise<PolicyProposeResultResponse>;
-  signByUser(
-    portPath: string,
-    sessionId: string,
-    chain: "sui",
-    method: "sign_transaction",
-    params: SignTransactionParams,
-    deadlineMs: number,
-  ): Promise<SignResultResponse>;
-  signByPolicy(
+  signTransaction(
     portPath: string,
     sessionId: string,
     chain: "sui",
@@ -228,7 +219,7 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     return policyProposeOverSerial(portPath, sessionId, policy, deadlineMs);
   }
 
-  async signByUser(
+  async signTransaction(
     portPath: string,
     sessionId: string,
     chain: "sui",
@@ -236,18 +227,7 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     params: SignTransactionParams,
     deadlineMs: number,
   ): Promise<SignResultResponse> {
-    return signByUserOverSerial(portPath, sessionId, chain, method, params, deadlineMs);
-  }
-
-  async signByPolicy(
-    portPath: string,
-    sessionId: string,
-    chain: "sui",
-    method: "sign_transaction",
-    params: SignTransactionParams,
-    deadlineMs: number,
-  ): Promise<SignResultResponse> {
-    return signByPolicyOverSerial(portPath, sessionId, chain, method, params, deadlineMs);
+    return signTransactionOverSerial(portPath, sessionId, chain, method, params, deadlineMs);
   }
 }
 
@@ -388,17 +368,11 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         deadlineMs,
         "USB policy_propose exceeded its timeout.",
       ),
-    signByUser: (portPath, sessionId, chain, method, params, deadlineMs) =>
+    signTransaction: (portPath, sessionId, chain, method, params, deadlineMs) =>
       raceDeadline(
-        driver.signByUser(portPath, sessionId, chain, method, params, deadlineMs),
+        driver.signTransaction(portPath, sessionId, chain, method, params, deadlineMs),
         deadlineMs,
-        "USB sign_by_user exceeded its timeout.",
-      ),
-    signByPolicy: (portPath, sessionId, chain, method, params, deadlineMs) =>
-      raceDeadline(
-        driver.signByPolicy(portPath, sessionId, chain, method, params, deadlineMs),
-        deadlineMs,
-        "USB sign_by_policy exceeded its timeout.",
+        "USB sign_transaction exceeded its timeout.",
       ),
   };
 }
@@ -572,7 +546,7 @@ async function policyProposeOverSerial(
   return requestOverSerial(portPath, request, deadlineMs, (response) => assertPolicyProposeResultResponse(response));
 }
 
-async function signByUserOverSerial(
+async function signTransactionOverSerial(
   portPath: string,
   sessionId: string,
   chain: "sui",
@@ -580,19 +554,7 @@ async function signByUserOverSerial(
   params: SignTransactionParams,
   deadlineMs: number,
 ): Promise<SignResultResponse> {
-  const request = makeSignByUserRequest(sessionId, chain, method, params);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertSignResultResponse(response));
-}
-
-async function signByPolicyOverSerial(
-  portPath: string,
-  sessionId: string,
-  chain: "sui",
-  method: "sign_transaction",
-  params: SignTransactionParams,
-  deadlineMs: number,
-): Promise<SignResultResponse> {
-  const request = makeSignByPolicyRequest(sessionId, chain, method, params);
+  const request = makeSignTransactionRequest(sessionId, chain, method, params);
   return requestOverSerial(portPath, request, deadlineMs, (response) => assertSignResultResponse(response));
 }
 

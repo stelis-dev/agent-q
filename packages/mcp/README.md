@@ -30,18 +30,22 @@ decisions, signing, persistence, and cleanup.
 - `get_accounts`
 - `policy_get`
 - `get_approval_history`
-- `sign_by_policy`
+- `sign_transaction`
 - `policy_propose`
 
 `policy_propose` is a proposal path. MCP does not decide or commit
 policy; Firmware validates the proposal, requires device-local approval, and
 commits only supported policy records.
 
-MCP exposes policy-authorized signing through the `sign_by_policy` tool. Its
-tool set does not include provider-facing user-confirmed signing. Provider-facing
-user signing capability metadata is removed from MCP `get_capabilities` runtime
-output; the exported MCP tool output schema accepts policy-authorized signing
-capability only. This is MCP adapter projection, not signing authority.
+MCP exposes transaction signing through the `sign_transaction` tool. Firmware
+uses its device-local signing mode to select the policy or user authorization
+gate: policy mode evaluates active policy and signs after policy authorization,
+while user mode requires device-local confirmation. The tool returns the
+Firmware-authored `sign_result`.
+`get_capabilities`
+reports the read-only current signing authorization mode for UX/display only;
+the request never selects it. This is MCP adapter projection, not signing
+authority.
 
 MCP tool inputs do not expose caller-controlled timing fields. Firmware-owned
 device-local physical-input windows remain 30 seconds; Gateway uses fixed

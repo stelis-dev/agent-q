@@ -1,7 +1,7 @@
 #pragma once
 
 #include "agent_q_drawing_surface.h"
-#include "agent_q_sign_by_user_review_view_model.h"
+#include "agent_q_sign_transaction_user_review_view_model.h"
 #include "lvgl.h"
 
 namespace agent_q {
@@ -14,6 +14,7 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_setup_cancel_clicked = nullptr;
     lv_event_cb_t on_settings_cancel_clicked = nullptr;
     lv_event_cb_t on_settings_connect_pin_clicked = nullptr;
+    lv_event_cb_t on_settings_signing_mode_clicked = nullptr;
     lv_event_cb_t on_settings_change_pin_clicked = nullptr;
     lv_event_cb_t on_settings_reset_clicked = nullptr;
     lv_event_cb_t on_error_recovery_erase_clicked = nullptr;
@@ -33,8 +34,8 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_recover_previous_clicked = nullptr;
     lv_event_cb_t on_recover_next_clicked = nullptr;
     lv_event_cb_t on_recover_cancel_clicked = nullptr;
-    lv_event_cb_t on_sign_by_user_review_accept_clicked = nullptr;
-    lv_event_cb_t on_sign_by_user_review_reject_clicked = nullptr;
+    lv_event_cb_t on_sign_transaction_user_review_accept_clicked = nullptr;
+    lv_event_cb_t on_sign_transaction_user_review_reject_clicked = nullptr;
 };
 
 void modal_drawing_set_callbacks(const AgentQModalDrawingCallbacks& callbacks);
@@ -48,8 +49,8 @@ bool modal_draw_settings_menu_panel();
 bool modal_draw_error_recovery_panel(bool confirm);
 bool modal_draw_reset_pin_panel(const char* notice = nullptr);
 bool modal_draw_local_pin_auth_panel(const char* notice = nullptr);
-bool modal_draw_sign_by_user_review_panel(
-    const AgentQSignByUserReviewViewModel& model);
+bool modal_draw_sign_transaction_user_review_panel(
+    const AgentQSignTransactionUserReviewViewModel& model);
 bool modal_draw_processing_overlay_on_current_panel(AgentQUiPanelKind expected_kind);
 
 }  // namespace agent_q

@@ -21,19 +21,19 @@ Its current role is:
 - provide hardware smoke coverage for implemented device flows.
 
 It is not a general signing product. It does not expose MCP directly and does
-not provide chain-specific signing APIs. MCP-facing policy-authorized signing
-uses `sign_by_policy`; provider-facing device-confirmed signing uses
-`sign_by_user`.
-Provider-facing device-confirmed signing uses the shared `sign_by_user`
-path for the bounded restricted Sui transfer shape. That path has
-`provider-exposed-not-product-active` status in the current tree. Current-tree
-provider positive/reject/timeout/session-loss smoke for the new Sign API wire
-names remains pending, so product-active status is not claimed.
+not provide chain-specific signing APIs. The target exposes one
+`sign_transaction` request for the bounded restricted Sui transfer shape.
+Firmware reads its device-local signing authorization mode to use either policy
+authorization or user confirmation internally. That path has
+`source-wired-not-product-active` status in the current tree. Current-tree
+positive/reject/timeout/session-loss smoke for the new Sign API wire name
+remains pending, so product-active status is not claimed.
 Policy updates enter only through the Firmware-owned `policy_propose`
 proposal flow; there is no direct policy setter. It links a
 restricted host-tested Sui transaction facts parser plus a common policy
 evaluator, stores DEV_PROFILE root entropy and a DEV_PROFILE active
-default-reject policy record plus a DEV_PROFILE local PIN verifier, and
+default-reject policy record plus a DEV_PROFILE local PIN verifier plus
+device-local signing authorization mode, and
 consumes the committed active policy for Sui `sign_transaction` policy
 evaluation. Product-reachable active policies currently produce
 `policy_rejected` or `signed` through `sign_result` depending on whether a
@@ -53,12 +53,12 @@ Legend:
 | USB JSONL transport | O | Uses ESP32-S3 USB Serial/JTAG. |
 | Persistent protocol `deviceId` | O | Stored in NVS namespace `agent_q`, key `device_id`. |
 | `get_status` | O | Returns device id, current state, and provisioning status without approval UI. |
-| Provisioning status reporting | △ | Reports `unprovisioned`, material-backed `provisioned`, or `error` for persistent material inconsistency. Hardware smoke coverage exists for local setup and recovery setup reaching `provisioned`; failure and consistency-error states still need targeted hardware checks. This is not signing approval. `sign_by_user` still requires a matching active session plus separate review, local PIN confirmation, required history, signing critical section, response writer, and evidence before product-active status. Current-tree provider positive/reject/timeout/session-loss smoke for the new Sign API wire names remains pending. |
-| Mnemonic UI flow | △ | The local setup speech bubble opens a Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and advances to local 6-digit PIN entry after local backup confirmation. Recover accepts 12 BIP-39 words through a device-local 3-word-per-page prefix/candidate UI, verifies checksum, then enters the same PIN setup path. The target stores root entropy plus an active default-reject policy plus a salt/PIN verifier only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. The target keeps setup/recover volatile state and cleanup decisions in a provisioning-flow state module; USB/UI code routes events and renders the current state. Local controls own the setup transitions; there are no USB setup transition requests. Hardware smoke coverage exists for Generate setup, PIN entry, and Recover entry. |
+| Provisioning status reporting | △ | Reports `unprovisioned`, material-backed `provisioned`, or `error` for persistent material inconsistency. Hardware smoke coverage exists for local setup and recovery setup reaching `provisioned`; failure and consistency-error states still need targeted hardware checks. This is not signing approval. `sign_transaction` still requires a matching active session, the selected policy or user authorization gate, required history, signing critical section, response writer, and evidence before product-active status. Current-tree positive/reject/timeout/session-loss smoke for the new Sign API wire name remains pending. |
+| Mnemonic UI flow | △ | The local setup speech bubble opens a Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and advances to local 6-digit PIN entry after local backup confirmation. Recover accepts 12 BIP-39 words through a device-local 3-word-per-page prefix/candidate UI, verifies checksum, then enters the same PIN setup path. The target stores root entropy plus an active default-reject policy plus a salt/PIN verifier plus signing authorization mode only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. The target keeps setup/recover volatile state and cleanup decisions in a provisioning-flow state module; USB/UI code routes events and renders the current state. Local controls own the setup transitions; there are no USB setup transition requests. Hardware smoke coverage exists for Generate setup, PIN entry, and Recover entry. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `connect` | O | Source accepts connection only after material-backed `provisioned` state. Default connect approval requires local PIN entry on device; local settings can switch connect approval to physical Confirm after PIN verification. The session is RAM-only and does not authorize signing. Hardware smoke coverage exists for local PIN approval and fresh reconnect after USB detach/replug. |
 | `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. It returns `busy` while local setup/PIN/reset or sensitive settings subflow state is active, including Change PIN, so external session teardown cannot interleave with device-local sensitive UI. A matching disconnect cancels a pending policy update before the commit critical section, because that proposal is session-bound rather than generic local UI; the canceled policy-update request receives `invalid_session`, and the disconnect request receives `disconnect_result`. Idle Settings menu does not block disconnect. |
-| Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: connect PIN toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, approval history, policy-update terminal marker, connect-approval setting, session, and returns to `unprovisioned`. Source also implements device-local destructive erase-only recovery from persistent-material consistency `error`, without PIN because the verifier may be unreadable, using the same reset-pending marker and wipe transaction. Host-triggered reset/debug/recovery/PIN-change protocol paths are intentionally not implemented. Hardware smoke coverage exists for local reset, idle Settings session behavior, Change PIN session retention, USB detach/replug session invalidation, and error-recovery modal layering; broader failure-path coverage remains limited. |
+| Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: connect PIN toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, signing authorization mode, approval history, policy-update terminal marker, connect-approval setting, session, and returns to `unprovisioned`. Source also implements device-local destructive erase-only recovery from persistent-material consistency `error`, without PIN because the verifier may be unreadable, using the same reset-pending marker and wipe transaction. Host-triggered reset/debug/recovery/PIN-change protocol paths are intentionally not implemented. Hardware smoke coverage exists for local reset, idle Settings session behavior, Change PIN session retention, USB detach/replug session invalidation, and error-recovery modal layering; broader failure-path coverage remains limited. |
 | Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
@@ -66,16 +66,15 @@ Legend:
 | Boot/sleep posture | O | Centers yaw and raises pitch when the default avatar is attached at boot or the screen wakes. Moves to centered yaw and lowered pitch before screen-off or power-off. |
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
 | Sui transaction signing substrate | △ | Source can derive the Sui account 0 signing seed from stored DEV_PROFILE root material, sign Sui transaction bytes with the pinned MicroSui Ed25519 transaction-intent routine, return only a Sui signature envelope to internal callers, and wipe root/mnemonic/seed scratch. Host tests cover a deterministic signature vector, verification, invalid-input output wiping, and missing-root failure. The substrate is not exposed as a public signing API. |
-| `sign_by_user` | △ | Source is wired for provider-facing device-confirmed Sui `sign_transaction` over the bounded restricted-transfer shape. The public USB dispatcher, `sign_result` writer, client/provider parser/API, and provider-facing `signing` capability are present in source. Host tests cover bounded request metadata parsed from `txBytes`, signable payload scratch, payload digest, review/PIN/history/signing stages, session ownership, terminal cleanup, review view-model rows derived from `txBytes`, host-supplied `network` handling, local-PIN confirmation, required history write, signing-critical handoff, response boundaries, and payload/signature scratch wiping. MCP does not expose user-confirmed signing. Sponsored gas, arbitrary Sui transactions, Sui personal-message signing, and caller-controlled timing fields are not supported; Firmware-owned review and PIN input windows use a fixed internal 30-second window, submitting a complete PIN stops the input timer while stored-PIN cryptographic verification runs, the original signing confirmation deadline remains enforceable, the internal local-auth worker watchdog still fails closed as authentication unavailable, and wrong PIN results open a fresh input window capped by the original confirmation deadline unless the shared lockout is active. Current-tree provider positive/reject/timeout smoke and USB session-loss smoke for the new Sign API wire names remain pending, so product-active status is not claimed. |
-| `get_capabilities` | O | Source reports Sui Ed25519 account identity capability for account 0 and no delegated public methods over an approved session while material-backed `provisioned`. Provider-facing `signing` is advertised for the `provider-exposed-not-product-active` `sign_by_user` path and is not an MCP signing method list. |
+| `sign_transaction` | △ | Source is wired for Sui `sign_transaction` over the bounded restricted-transfer shape. The public USB dispatcher, `sign_result` writer, client/MCP/provider parser/API, Wallet Standard adapter, and raw `signing` capability are present in source. Host tests cover bounded request metadata parsed from `txBytes`, signable payload scratch, payload digest, policy runtime, review/PIN/history/signing stages, session ownership, terminal cleanup, review view-model rows derived from `txBytes`, host-supplied `network` handling, required history writes, signing-critical handoff, response boundaries, and payload/signature scratch wiping. Firmware reads device-local signing authorization mode and selects one gate: policy mode evaluates active policy and signs after policy authorization with speech-bubble notifications, while user mode requires clear-signing review and local PIN confirmation without applying active policy as an additional filter. Sponsored gas, arbitrary Sui transactions, Sui personal-message signing, and caller-controlled timing fields are not supported; Firmware-owned review and PIN input windows use a fixed internal 30-second window, submitting a complete PIN stops the input timer while stored-PIN cryptographic verification runs, the original signing confirmation deadline remains enforceable, the internal local-auth worker watchdog still fails closed as authentication unavailable, and wrong PIN results open a fresh input window capped by the original confirmation deadline unless the shared lockout is active. Current-tree positive/reject/timeout smoke and USB session-loss smoke for the new Sign API wire name remain pending, so product-active status is not claimed. |
+| `get_capabilities` | O | Source reports Sui Ed25519 account identity capability for account 0 and no delegated public methods over an approved session while material-backed `provisioned`. Top-level `signing` reports read-only Firmware signing authorization mode and supported signing methods. |
 | `get_accounts` | O | Source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is verified against Sui SDK address vectors on host; hardware smoke coverage exists for this path while idle Settings is open, after Change PIN on the same session, and after reconnect. |
 | `policy_get` | △ | Source implements a session-scoped read-only summary of the committed active `agentq.policy.v0` policy record. The current product flow installs the DEV_PROFILE default-reject policy, and the target active-policy store can load canonical current-schema policy records through its internal storage boundary. Corrupt/unreadable active policy or missing policy under `provisioned` fails closed. Gateway/MCP parser tests, target policy-store host tests, and hardware smoke coverage for idle-Settings read access cover this path. |
-| `get_approval_history` | △ | Source implements a session-scoped read-only view of persistent Firmware-authored signing and policy-update terminal metadata. Records are stored in a fixed-size binary NVS ring buffer, newest-first paginated, and wiped by local reset or error-state erase recovery. `sign_by_policy` records policy confirmation only after policy approval, then records policy terminal signing metadata for `signed`, `policy_rejected`, and `signing_failed` outcomes; invalid parameter, malformed transaction, and unsupported-method errors are not persisted as approval history. The policy-update flow records `applied`, `rejected`, `timed_out`, and `storage_error` terminal records through a required-write path. The `provider-exposed-not-product-active` `sign_by_user` path creates user confirmation and terminal signing records. Current-tree provider positive/reject/timeout/session-loss smoke for the new Sign API wire names remains pending. Gateway/MCP parser tests, target approval-history host tests, and opt-in policy-update hardware smoke coverage cover current source behavior. |
-| `sign_by_policy` | △ | Source requires material-backed `provisioned` plus a matching active session, keeps unknown methods rejected with `unsupported_method`, and validates Sui `sign_transaction` restricted SUI transfer request inputs for policy-authorized signing. It consumes the committed active policy, rejects unsupported transactions, rejects broad, multi-rule, or multi-recipient sign policies that the current device-local policy review cannot show clearly, persists required policy signing history metadata, returns `policy_rejected` when no bounded `sign` rule matches, and returns `signed` only after policy approval, signing, and durable signed terminal history. Corrupt/unreadable or missing policy is a material-consistency error rather than a normal `provisioned` state. Host tests cover the request field/type validation helper, policy store provider, bounded sign policy rules, and sign-by-policy runtime paths. |
-| Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation plus matching PIN repeat. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Internal Sui signing substrate is wired into provider-facing `sign_by_user` for the bounded restricted-transfer shape. Current-tree provider positive/reject/timeout/session-loss smoke for the new Sign API wire names remains pending. USER_PROFILE secure storage and import are not implemented. |
+| `get_approval_history` | △ | Source implements a session-scoped read-only view of persistent Firmware-authored signing and policy-update terminal metadata. Records are stored in a fixed-size binary NVS ring buffer, newest-first paginated, and wiped by local reset or error-state erase recovery. `sign_transaction` records policy confirmation after policy approval, user confirmation after device-local approval, and terminal signing metadata for signed, rejected, timed-out, and failed outcomes as applicable. Invalid parameter, malformed transaction, and unsupported-method errors are not persisted as approval history. The policy-update flow records `applied`, `rejected`, `timed_out`, and `storage_error` terminal records through a required-write path. Current-tree positive/reject/timeout/session-loss smoke for the new Sign API wire name remains pending. Gateway/MCP parser tests, target approval-history host tests, and opt-in policy-update hardware smoke coverage cover current source behavior. |
+| Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation plus matching PIN repeat. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Internal Sui signing substrate is wired into `sign_transaction` for the bounded restricted-transfer shape. Current-tree positive/reject/timeout/session-loss smoke for the new Sign API wire name remains pending. USER_PROFILE secure storage and import are not implemented. |
 | Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display, device-local mnemonic recovery entry, local 6-digit PIN setup, and backup-confirmed/checksum-verified root entropy storage source exists. USB/Gateway/MCP mnemonic import and USER_PROFILE secure provisioning are not implemented. |
-| Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat stores root entropy, initializes the active default-reject policy, and stores the local PIN verifier. Public account derivation is implemented via `get_accounts`; USER_PROFILE secure provisioning is not implemented. |
-| Policy evaluation | △ | Links the common host-tested policy evaluator, stored-policy provider boundary, and Sui restricted-transfer method adapter. The common evaluator matches allowlisted namespace/field facts and owns only shared `common.*` fields; chain-specific field identifiers, descriptors, and transaction semantics stay in the method adapter. Sui `sign_transaction` consumes the committed active policy for policy-authorized signing. Current active policy records may contain `reject` rules and at most one single-recipient bounded `sign` rule; broad, multi-rule, and multi-recipient sign policies are invalid. |
+| Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat stores root entropy, initializes the active default-reject policy, stores the local PIN verifier, and initializes signing authorization mode. Public account derivation is implemented via `get_accounts`; USER_PROFILE secure provisioning is not implemented. |
+| Policy evaluation | △ | Links the common host-tested policy evaluator, stored-policy provider boundary, and Sui restricted-transfer method adapter. The common evaluator matches allowlisted namespace/field facts and owns only shared `common.*` fields; chain-specific field identifiers, descriptors, and transaction semantics stay in the method adapter. Sui `sign_transaction` consumes the committed active policy in policy authorization mode. Current active policy records may contain `reject` rules and at most one single-recipient bounded `sign` rule; broad, multi-rule, and multi-recipient sign policies are invalid. |
 | Policy storage/read | △ | Stores the active policy as canonical `agentq.policy.v0` binary records in two bounded NVS slots plus commit metadata and a pending-write marker, exposes a read-only `policy_get` summary, preserves the old committed policy only for interrupted writes identified by that pending marker, treats metadata flip as the commit point, classifies each write as applied, unchanged failure, or consistency error, tolerates stale pending markers that exactly match the selected committed policy, removes stale commit metadata before slot reuse, and treats corrupt/unreadable committed records, invalid commit metadata without a matching pending marker, or pending targets that overlap active material without exactly matching it as a material-consistency error. The current product flow installs the DEV_PROFILE default-reject policy; current-schema policy records enter through the Firmware-owned `policy_propose` proposal path. |
 | Policy update | △ | Source implements a Firmware-owned `policy_propose` flow for active sessions: bounded proposal validation, broad, multi-rule, and multi-recipient sign rejection, device-local local-PIN approval with an on-device summary, canonical active-policy commit, required terminal history recording, and no direct policy setter. The target accepts current-schema reject policies and at most one single-recipient bounded sign rule. The flow uses the two-slot active-policy store plus a persistent policy-update terminal marker that makes an incomplete post-commit terminal sequence a material-consistency error on reboot. Gateway/MCP request/parser surface exists, and Gateway has a local Admin Page for the current policy proposal template. |
 | Secure user profile | X | Not implemented. |
@@ -83,29 +82,28 @@ Legend:
 ## Chain And Method Support
 
 This target exposes chain support only through the shared session-scoped
-protocol. Provider-facing signing has `provider-exposed-not-product-active`
-status through `sign_by_user`, with current-tree provider
-positive/reject/timeout/session-loss smoke for the new Sign API wire names
-pending. MCP exposes only policy-authorized `sign_by_policy`; it does not
-expose provider-facing user-confirmed signing.
+protocol. `sign_transaction` has `source-wired-not-product-active` status, with
+current-tree positive/reject/timeout/session-loss smoke for the new Sign API
+wire name pending. Firmware-local signing mode selects policy authorization or
+user confirmation.
 
 | Chain / method | Status | Notes |
 |---|---:|---|
 | Sui Ed25519 self-test | △ | Diagnostic only. It proves the signing dependency links and works on-device. |
-| Sui transaction signing substrate | △ | Signs transaction bytes using Sui's transaction intent prefix and Ed25519 signature envelope for internal substrate tests and the `sign_by_user` critical section, then wipes private scratch. |
-| `sign_by_user` | △ | Provider-facing device-confirmed signing request with `provider-exposed-not-product-active` status for the bounded Sui restricted-transfer shape. Public USB dispatcher, USB `sign_result` writer, provider/client parser/API, and provider-facing `signing` capability are present; current-tree provider positive/reject/timeout/session-loss smoke for the new Sign API wire names remains pending, so product-active status is not claimed. |
-| Sui `sign_personal_message` | X | Not implemented. |
-| Sui `sign_transaction` | △ | Through `sign_by_policy`, this method validates request-context `network` and base64 `txBytes`, decodes the restricted SUI transfer shape, consumes the committed active policy runtime decision, and returns `signed`, `policy_rejected`, or `signing_failed`. Provider-facing `sign_by_user` has `provider-exposed-not-product-active` status for the same bounded restricted-transfer shape with device confirmation, required history, signing, and `sign_result`; current-tree provider positive/reject/timeout/session-loss smoke for the new Sign API wire names remains pending. Corrupt/unreadable or missing policy fails closed as material inconsistency before normal session-scoped methods are available. |
-| Sui txBytes decoding | △ | The StackChan build links the common restricted SUI transfer facts parser. Host fixtures cover valid SUI transfer facts and malformed/unsupported rejects. The runtime connects it to Sui `sign_transaction` policy-authorized signing and user-confirmed signing. |
+| Sui transaction signing substrate | △ | Signs transaction bytes using Sui's transaction intent prefix and Ed25519 signature envelope for internal substrate tests and the `sign_transaction` critical section, then wipes private scratch. |
+| `sign_transaction` | △ | Unified signing request with `source-wired-not-product-active` status for the bounded Sui restricted-transfer shape. Public USB dispatcher, USB `sign_result` writer, provider/client/MCP parser/API, Wallet Standard adapter, and raw `signing` capability are present; Firmware-local signing mode selects either policy evaluation or user confirmation; current-tree positive/reject/timeout/session-loss smoke for the new Sign API wire name remains pending, so product-active status is not claimed. |
+| Sui `sign_personal_message` | X | Not implemented. The current target does not have matching policy facts, device-local review rows, approval-history metadata, or Wallet Standard feature exposure for personal-message signing, so this method must remain unadvertised and rejected. |
+| Sui `sign_transaction` | △ | Through `sign_transaction`, this method validates request-context `network` and base64 `txBytes`, decodes the restricted SUI transfer shape, and then uses the Firmware-local signing authorization mode. Policy mode evaluates the committed active policy and returns `signed`, `policy_rejected`, or `signing_failed`; user mode proceeds to device-local confirmation without applying active policy as an additional filter and returns `signed`, `user_rejected`, `user_timed_out`, or `signing_failed`. Current-tree positive/reject/timeout/session-loss smoke for the new Sign API wire name remains pending. Corrupt/unreadable or missing policy fails closed before policy-mode signing is available. |
+| Sui txBytes decoding | △ | The StackChan build links the common restricted SUI transfer facts parser. Host fixtures cover valid SUI transfer facts and malformed/unsupported rejects. The runtime connects it to Sui `sign_transaction` policy and user authorization gates. |
 | Sui zkLogin | X | Not implemented; requires a separate trust model. |
 | EVM signing | X | Not implemented. |
 | Solana signing | X | Not implemented. |
 
 Current public chain support uses the common session-scoped protocol flow:
-`connect -> get_capabilities -> get_accounts -> sign_by_policy* ->
-sign_by_user* -> disconnect`. Provider-facing signing uses only the same
-shared protocol and provider API. This target must not add StackChan-specific
-or chain-specific MCP tools.
+`connect -> get_capabilities -> get_accounts -> sign_transaction* ->
+disconnect`. Signing uses the shared protocol; Firmware-local signing mode
+selects policy or user authorization internally. This target must not add
+StackChan-specific or chain-specific MCP tools.
 
 ## StackChan Runtime Boundary
 
@@ -251,11 +249,12 @@ for session-scoped protocol requests.
 This target persists the protocol `deviceId`, the provisioning state flag, a
 DEV_PROFILE binary root entropy blob, the DEV_PROFILE active default-reject
 policy record, and a DEV_PROFILE local PIN verifier in ordinary NVS after
-physical backup confirmation plus matching PIN repeat. The provisioning state
+physical backup confirmation plus matching PIN repeat. Setup also initializes
+device-local signing authorization mode. The provisioning state
 flag is not signing material by itself and does not make the device ready to
 sign. The target reports `provisioned` only when the persisted state, valid root
-entropy blob, valid active policy record, and valid local PIN verifier all
-exist. If those records disagree after boot or during runtime checks, the target
+entropy blob, valid active policy record, valid local PIN verifier, and valid
+signing authorization mode all exist. If those records disagree after boot or during runtime checks, the target
 reports `provisioning.state = error` and fails closed. It does not store the
 mnemonic display string, prefixes, seed, or account data to NVS. The local PIN
 verifier is a UX gate for connect approval when enabled, settings changes, local
@@ -271,13 +270,14 @@ verifier fail closed until reprovisioned.
 | Namespace | Key | Purpose |
 |---|---|---|
 | `agent_q` | `device_id` | Gateway reconnect and device-selection identity |
-| `agent_q` | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy, active policy, and local PIN verifier present |
+| `agent_q` | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy, active policy, local PIN verifier, and signing authorization mode present |
 | `agent_q` | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
 | `agent_q` | `pol_s0`, `pol_s1` | Active policy canonical record slots |
 | `agent_q` | `pol_c0`, `pol_c1` | Active policy commit metadata records |
 | `agent_q` | `pol_p` | Active policy pending-write marker used to distinguish interrupted inactive-slot writes from post-commit corruption |
 | `agent_q` | `pol_um` | Policy-update terminal marker; presence means an incomplete policy-update terminal sequence is material inconsistency |
 | `agent_q` | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
+| `agent_q` | `sign_auth_mode` | Device-local signing authorization mode; setup initializes it to user and Settings can change it after local PIN verification |
 | `agent_q` | `pin_on_connect` | Optional local connect approval setting; missing means require PIN on connect; local reset erases it back to the missing-key default |
 | `agent_q` | `approval_hist` | Fixed-size 32-record binary ring buffer of Firmware-authored signing and policy-update metadata; local reset and error-state erase wipe it |
 | `agent_q` | `reset_pending` | Internal Firmware-owned marker used to resume an interrupted local reset wipe at boot; not a protocol state or host API |
@@ -298,7 +298,7 @@ longer protocol field name `provisioning.state`.
 This target implements persistent approval history as a Firmware-owned,
 read-only decision log. It is not an on-chain transaction history and is not a
 host activity log. The current source records bounded metadata for signing
-confirmation and terminal results from `sign_by_policy` and `sign_by_user`, plus
+confirmation and terminal results from `sign_transaction`, plus
 recordable terminal results from `policy_propose`. Invalid parameter,
 malformed transaction, and unsupported-method errors are not persisted as
 approval history.
@@ -340,8 +340,9 @@ USB requests for setup start, setup cancel, recovery phrase backup
 confirmation, mnemonic import/recovery, factory reset, or diagnostic display
 signaling. `provisioned` is set only after local backup confirmation or
 checksum-verified local recovery, matching local PIN repeat, and successful
-root entropy, active policy, local PIN verifier, and provisioning-state
-persistence. `locked` is not used because no unlock model exists.
+root entropy, active policy, local PIN verifier, signing authorization mode,
+and provisioning-state persistence. `locked` is not used because no unlock
+model exists.
 
 Device-local recovery phrase setup starts from the local setup speech bubble shown while
 the device is `unprovisioned`, then shows local Generate and Recover choices.
@@ -379,8 +380,9 @@ mismatch, and returns to first PIN entry while retaining root entropy scratch.
 Matching PIN repeat enters
 `pin_committing`, keeps the PIN panel active with a non-interactive processing
 overlay, stores the DEV_PROFILE root entropy blob, stores the active
-default-reject policy, stores a salt + PIN verifier, persists `provisioned`, and
-then wipes volatile scratch. Storage failure rolls back persistent setup
+default-reject policy, stores a salt + PIN verifier, stores the signing
+authorization mode, persists `provisioned`, and then wipes volatile scratch.
+Storage failure rolls back persistent setup
 material where possible, wipes scratch, and must not report `provisioned`.
 Hardware smoke coverage exists for StackChan CoreS3 Generate setup, PIN entry,
 and Recover entry. Targeted hardware verification remains required after setup
@@ -401,7 +403,7 @@ later backup confirmation or PIN submit can use that scratch.
 
 The device-local Cancel button wipes volatile setup scratch and leaves
 persistent state `unprovisioned`. Cancellation does not erase already-confirmed
-root material, active policy, or PIN verifier.
+root material, active policy, PIN verifier, or signing authorization mode.
 
 Local settings actions are separate device-local flows under `provisioned`.
 The target enters local settings only when no setup, approval, identification,
@@ -423,7 +425,8 @@ settings menu instead of closing local settings. Successfully changing the
 connect-approval setting affects the next `connect`; it does not end the current
 active RAM session.
 Wrong PIN, timeout, or cancel leaves root material, active policy, PIN verifier,
-the local connect setting, and `provisioned` state intact.
+signing authorization mode, the local connect setting, and `provisioned` state
+intact.
 Submitting a complete PIN stops the input deadline while stored-PIN
 cryptographic verification runs. A wrong PIN result returns to PIN entry with a
 fresh input window unless the shared wrong-PIN lockout is active. For
@@ -439,9 +442,9 @@ of remaining in verification.
 After Reset PIN confirm, the target keeps the reset PIN panel active and adds a
 non-interactive processing overlay before PIN verification. Correct PIN
 verification advances to destructive wipe while keeping the processing overlay
-active, then wipes root material, active policy, PIN verifier, the local
-connect setting, approval history, policy-update terminal marker, runtime
-session, and provisioning state before reporting `unprovisioned`. Before destructive wipe starts, Firmware
+active, then wipes root material, active policy, PIN verifier, signing
+authorization mode, the local connect setting, approval history,
+policy-update terminal marker, runtime session, and provisioning state before reporting `unprovisioned`. Before destructive wipe starts, Firmware
 writes an internal
 reset-pending marker; if power is lost
 mid-reset, boot resumes the material wipe before loading normal state. If the
@@ -460,14 +463,13 @@ opening another does not clear that budget. Power cycling clears the local
 lockout.
 
 Read-only public account derivation (`get_accounts`), the Firmware-owned
-`policy_propose` proposal flow, MCP-facing bounded `sign_by_policy`, and
-provider-exposed-not-product-active bounded `sign_by_user` signing path are
-implemented in source. Product-active signing status still requires the current
-hardware evidence tracked in the implementation status. Mnemonic import, direct
-policy setters, Firmware-local Admin UI, user-confirmed signing through MCP,
-arbitrary Sui transaction signing, and USER_PROFILE secure root-material
-handling are not implemented on this target. Full Gateway Admin policy editing
-beyond the current policy proposal template is not implemented.
+`policy_propose` proposal flow, and bounded `sign_transaction` are implemented
+in source. Product-active signing status still requires the current hardware
+evidence tracked in the implementation status. Mnemonic import, direct policy
+setters, Firmware-local Admin UI, arbitrary Sui transaction signing,
+personal-message signing, and USER_PROFILE secure root-material handling are not
+implemented on this target. Full Gateway Admin policy editing beyond the current
+policy proposal template is not implemented.
 
 StackChan CoreS3 has a display and touch input, so the current DEV_PROFILE local
 provisioning flow can:
@@ -480,11 +482,10 @@ provisioning flow can:
   DEV_PROFILE setup path;
 - expose only public keys and addresses after provisioning.
 
-This target has a device-confirmed `sign_by_user` path with
-`provider-exposed-not-product-active` status for the bounded restricted Sui
-transfer shape and an MCP-facing `sign_by_policy` path for bounded
-policy-authorized signing. It does not expose user-confirmed signing through
-MCP, arbitrary Sui transactions, sponsored gas, or personal-message signing.
+This target has a `source-wired-not-product-active` `sign_transaction` path for
+the bounded restricted Sui transfer shape. Firmware-local signing mode chooses
+policy or user authorization internally. It does not expose arbitrary Sui
+transactions, sponsored gas, or personal-message signing.
 
 ## Build Inputs
 
@@ -529,9 +530,9 @@ Current verification expectations for this target:
 - run `firmware/tools/stackchan-cores3/test_usb_session_loss.sh` to check the
   session-bound volatile cleanup plan for USB host SOF loss;
 - run `firmware/tools/stackchan-cores3/test_sign_api_activation_boundary.sh`
-  to check that provider-facing signing is wired only through the intended
-  provider/client/Firmware USB path, that MCP signing remains closed, and that
-  caller-controlled timing fields remain absent;
+  to check that the old public Sign API names are absent, `sign_transaction` is
+  wired through the intended client/MCP/provider/Firmware USB path, and
+  caller-controlled authorization or timing fields remain absent;
 - run `firmware/tools/stackchan-cores3/test_ui_panel_cleanup.sh` to check
   panel-deletion cleanup routing between temporary UI and state owners;
 - run `firmware/tools/stackchan-cores3/test_local_reset.sh` to check local reset
@@ -569,16 +570,16 @@ Current verification expectations for this target:
   unprovisioned`;
 - smoke-test local Confirm advances to local PIN setup without storing material;
 - smoke-test matching local PIN repeat stores root material plus active
-  default-reject policy plus local PIN verifier, wipes scratch, and reports
-  `provisioning.state = provisioned`;
+  default-reject policy plus local PIN verifier plus signing authorization
+  mode, wipes scratch, and reports `provisioning.state = provisioned`;
 - smoke-test PIN mismatch wipes typed PIN scratch only and retries first PIN
   entry;
 - smoke-test PIN cancel/timeout wipes PIN plus root scratch and remains
   `unprovisioned`;
 - smoke-test reboot persistence after matching PIN repeat;
-- smoke-test `connect` after backup-confirmed root material, active policy, and
-  local PIN verifier storage requires local PIN by default and returns a
-  RAM-only session id;
+- smoke-test `connect` after backup-confirmed root material, active policy,
+  local PIN verifier, and signing authorization mode storage requires local PIN
+  by default and returns a RAM-only session id;
 - smoke-test local settings connect PIN toggle requires current PIN, changes
   only that local setting, and leaves it unchanged after wrong PIN, cancel, or
   timeout;
@@ -598,17 +599,19 @@ Current verification expectations for this target:
   `policy_propose` attempts, verifying that the previously committed
   active policy is still reported by `policy_get`; do not count the positive
   `applied` smoke as coverage for those terminal paths;
-- run tracked client-owned signing smoke for the `provider-exposed-not-product-active`
-  `sign_by_user` path: positive signed result, device-local reject, review
-  timeout, USB detach/reconnect cleanup, newest approval history, and no
+- run tracked client-owned signing smoke for the `source-wired-not-product-active`
+  `sign_transaction` path: positive signed result, user reject, timeout, policy
+  signed/rejected outcomes, USB detach/reconnect cleanup, newest approval
+  history, and no
   client output leak of session ids, raw `txBytes`, PINs, or secret-like
   fields;
 - capture LVGL clear-signing visual evidence on current firmware before
   claiming product-active status;
 - smoke-test local settings reset from `provisioned`: wrong PIN leaves
   `provisioned` material intact, cancel/timeout leaves material intact, correct
-  PIN wipes root material, active policy, PIN verifier, approval history,
-  policy-update terminal marker, connect-approval setting, and session, then `get_status` reports
+  PIN wipes root material, active policy, PIN verifier, signing authorization
+  mode, approval history, policy-update terminal marker, connect-approval
+  setting, and session, then `get_status` reports
   `unprovisioned`;
 - smoke-test three minutes of inactivity turns the screen backlight off, Agent-Q
   request UI wakes it, side-button short press toggles display power, and

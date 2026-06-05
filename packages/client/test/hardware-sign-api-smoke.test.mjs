@@ -7,15 +7,15 @@
 // Build first because this file imports ../dist/*.js:
 //   npm --workspace @stelis/agent-q-client run build
 //
-// Provider-facing user signing smoke:
-//   AGENTQ_HW_CLIENT_SIGN_BY_USER=1 \
-//   AGENTQ_HW_CLIENT_SIGN_BY_USER_SCENARIO=positive \
-//   AGENTQ_HW_CLIENT_SIGN_BY_USER_TX_BYTES=<base64> \
+// User-authorized sign_transaction smoke:
+//   AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER=1 \
+//   AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive \
+//   AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES=<base64> \
 //   node --test packages/client/test/hardware-sign-api-smoke.test.mjs
 //
-// Policy-authorized signing smoke:
-//   AGENTQ_HW_CLIENT_SIGN_BY_POLICY=1 \
-//   AGENTQ_HW_CLIENT_SIGN_BY_POLICY_SCENARIO=rejected \
+// Policy-authorized sign_transaction smoke:
+//   AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY=1 \
+//   AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO=rejected \
 //   node --test packages/client/test/hardware-sign-api-smoke.test.mjs
 //
 // Policy update smoke mutates the active policy on the device:
@@ -36,16 +36,16 @@ import {
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
 } from "../dist/protocol.js";
 
-const userSigningEnabled = process.env.AGENTQ_HW_CLIENT_SIGN_BY_USER === "1";
-const userSigningScenario = process.env.AGENTQ_HW_CLIENT_SIGN_BY_USER_SCENARIO ?? "";
-const userSigningDeviceId = process.env.AGENTQ_HW_CLIENT_SIGN_BY_USER_DEVICE_ID ?? "";
-const userSigningTxBytes = (process.env.AGENTQ_HW_CLIENT_SIGN_BY_USER_TX_BYTES ?? "").replace(/\s+/g, "");
+const userSigningEnabled = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER === "1";
+const userSigningScenario = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO ?? "";
+const userSigningDeviceId = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_DEVICE_ID ?? "";
+const userSigningTxBytes = (process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES ?? "").replace(/\s+/g, "");
 const userSigningScenarios = new Set(["positive", "reject", "timeout", "disconnect"]);
 
-const policySigningEnabled = process.env.AGENTQ_HW_CLIENT_SIGN_BY_POLICY === "1";
-const policySigningScenario = process.env.AGENTQ_HW_CLIENT_SIGN_BY_POLICY_SCENARIO ?? "";
-const policySigningDeviceId = process.env.AGENTQ_HW_CLIENT_SIGN_BY_POLICY_DEVICE_ID ?? "";
-const policySigningTxBytes = (process.env.AGENTQ_HW_CLIENT_SIGN_BY_POLICY_TX_BYTES ?? "").replace(/\s+/g, "");
+const policySigningEnabled = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY === "1";
+const policySigningScenario = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO ?? "";
+const policySigningDeviceId = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_DEVICE_ID ?? "";
+const policySigningTxBytes = (process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_TX_BYTES ?? "").replace(/\s+/g, "");
 const policySigningScenarios = new Set(["signed", "rejected"]);
 
 const policyUpdateEnabled = process.env.AGENTQ_HW_CLIENT_POLICY_UPDATE === "1";
@@ -65,26 +65,26 @@ function isCanonicalBase64(value) {
 
 function userSigningSkipReason() {
   if (!userSigningEnabled) {
-    return "set AGENTQ_HW_CLIENT_SIGN_BY_USER=1 with a provisioned development device";
+    return "set AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER=1 with a provisioned development device in user signing mode";
   }
   if (!userSigningScenarios.has(userSigningScenario)) {
-    return "set AGENTQ_HW_CLIENT_SIGN_BY_USER_SCENARIO=positive, reject, timeout, or disconnect";
+    return "set AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive, reject, timeout, or disconnect";
   }
   if (!isCanonicalBase64(userSigningTxBytes)) {
-    return "set AGENTQ_HW_CLIENT_SIGN_BY_USER_TX_BYTES to canonical base64 txBytes accepted by the device";
+    return "set AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES to canonical base64 txBytes accepted by the device";
   }
   return false;
 }
 
 function policySigningSkipReason() {
   if (!policySigningEnabled) {
-    return "set AGENTQ_HW_CLIENT_SIGN_BY_POLICY=1 with a provisioned development device";
+    return "set AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY=1 with a provisioned development device in policy signing mode";
   }
   if (!policySigningScenarios.has(policySigningScenario)) {
-    return "set AGENTQ_HW_CLIENT_SIGN_BY_POLICY_SCENARIO=signed or rejected";
+    return "set AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO=signed or rejected";
   }
   if (policySigningScenario === "signed" && !isCanonicalBase64(policySigningTxBytes)) {
-    return "set AGENTQ_HW_CLIENT_SIGN_BY_POLICY_TX_BYTES to txBytes matching the active sign policy";
+    return "set AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_TX_BYTES to txBytes matching the active sign policy";
   }
   return false;
 }
@@ -332,35 +332,36 @@ test("client hardware smoke policy-update proof requires the newest record from 
 });
 
 test(
-  "hardware: client core signByUser terminal path",
+  "hardware: client core signTransaction terminal path",
   { skip: userSigningSkipReason() },
   async () => {
-    await withSmokeCore("agent-q-client-sign-by-user-", async (core) => {
-      console.log("[client-sign-by-user-smoke] scanning devices...");
+    await withSmokeCore("agent-q-client-sign-transaction-user-", async (core) => {
+      console.log("[client-sign-transaction-user-smoke] scanning devices...");
       const scan = await core.scanDevices();
       const deviceId = selectSmokeDeviceId(
         scan.devices,
         userSigningDeviceId,
-        "AGENTQ_HW_CLIENT_SIGN_BY_USER_DEVICE_ID",
-        "AGENTQ_HW_CLIENT_SIGN_BY_USER",
+        "AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_DEVICE_ID",
+        "AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER",
       );
 
       try {
-        console.log("[client-sign-by-user-smoke] selecting device...");
-        await core.selectDevice({ deviceId, purpose: "client-sign-by-user-smoke" });
+        console.log("[client-sign-transaction-user-smoke] selecting device...");
+        await core.selectDevice({ deviceId, purpose: "client-sign-transaction-user-smoke" });
 
-        console.log("[client-sign-by-user-smoke] approve connect on device...");
+        console.log("[client-sign-transaction-user-smoke] approve connect on device...");
         const connect = await core.connectDevice({
           deviceId,
-          purpose: "client-sign-by-user-smoke",
-          gatewayName: "Agent-Q client sign_by_user smoke",
+          purpose: "client-sign-transaction-user-smoke",
+          gatewayName: "Agent-Q client sign_transaction smoke",
         });
         assert.equal(connect.source, "connected");
 
-        console.log("[client-sign-by-user-smoke] checking raw client signing capability...");
-        const capabilities = await core.getCapabilities({ deviceId, purpose: "client-sign-by-user-smoke" });
+        console.log("[client-sign-transaction-user-smoke] checking raw client signing capability...");
+        const capabilities = await core.getCapabilities({ deviceId, purpose: "client-sign-transaction-user-smoke" });
         assert.equal(capabilities.source, "live");
-        assert.deepEqual(capabilities.signing?.user, [{ chain: "sui", method: "sign_transaction" }]);
+        assert.equal(capabilities.signing?.authorization, "user");
+        assert.deepEqual(capabilities.signing?.methods, [{ chain: "sui", method: "sign_transaction" }]);
         assert.equal(
           capabilities.capabilities.some((chain) => chain.methods.includes("sign_transaction")),
           false,
@@ -370,25 +371,25 @@ test(
 
         const beforeHistory = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-sign-by-user-smoke",
+          purpose: "client-sign-transaction-user-smoke",
           limit: 4,
         });
         assert.equal(beforeHistory.source, "live");
         const previousTopSeq = topSeq(beforeHistory);
 
         if (userSigningScenario === "positive") {
-          console.log("[client-sign-by-user-smoke] approve review and enter local PIN on device...");
+          console.log("[client-sign-transaction-user-smoke] approve review and enter local PIN on device...");
         } else if (userSigningScenario === "reject") {
-          console.log("[client-sign-by-user-smoke] reject the signing review on device...");
+          console.log("[client-sign-transaction-user-smoke] reject the signing review on device...");
         } else if (userSigningScenario === "disconnect") {
-          console.log("[client-sign-by-user-smoke] unplug USB while the signing review is visible, then reconnect...");
+          console.log("[client-sign-transaction-user-smoke] unplug USB while the signing review is visible, then reconnect...");
         } else {
-          console.log("[client-sign-by-user-smoke] leave the signing review untouched until device timeout...");
+          console.log("[client-sign-transaction-user-smoke] leave the signing review untouched until device timeout...");
         }
 
-        const result = await core.signByUser({
+        const result = await core.signTransaction({
           deviceId,
-          purpose: "client-sign-by-user-smoke",
+          purpose: "client-sign-transaction-user-smoke",
           chain: "sui",
           method: "sign_transaction",
           network: "devnet",
@@ -402,32 +403,33 @@ test(
             ["transport_unavailable", "timeout"].includes(result.reason),
             `expected transport session end, got ${result.reason}`,
           );
-          console.log("[client-sign-by-user-smoke] verifying post-reconnect cleanup...");
+          console.log("[client-sign-transaction-user-smoke] verifying post-reconnect cleanup...");
           const recoveryScan = await core.scanDevices();
           const recoveredDevice = recoveryScan.devices.find((device) => scanDeviceId(device) === deviceId);
           assert.ok(recoveredDevice, "expected the same device after USB reconnect");
           assert.equal(recoveredDevice.protocolResponse.device.state, "idle");
           assert.equal(recoveredDevice.protocolResponse.provisioning.state, "provisioned");
 
-          await core.selectDevice({ deviceId, purpose: "client-sign-by-user-smoke" });
-          console.log("[client-sign-by-user-smoke] approve reconnect after USB session loss...");
+          await core.selectDevice({ deviceId, purpose: "client-sign-transaction-user-smoke" });
+          console.log("[client-sign-transaction-user-smoke] approve reconnect after USB session loss...");
           const reconnect = await core.connectDevice({
             deviceId,
-            purpose: "client-sign-by-user-smoke",
-            gatewayName: "Agent-Q client sign_by_user smoke",
+            purpose: "client-sign-transaction-user-smoke",
+            gatewayName: "Agent-Q client sign_transaction smoke",
           });
           assert.equal(reconnect.source, "connected");
 
           const recoveredCapabilities = await core.getCapabilities({
             deviceId,
-            purpose: "client-sign-by-user-smoke",
+            purpose: "client-sign-transaction-user-smoke",
           });
           assert.equal(recoveredCapabilities.source, "live");
-          assert.deepEqual(recoveredCapabilities.signing?.user, [{ chain: "sui", method: "sign_transaction" }]);
+          assert.equal(recoveredCapabilities.signing?.authorization, "user");
+          assert.deepEqual(recoveredCapabilities.signing?.methods, [{ chain: "sui", method: "sign_transaction" }]);
 
           const afterReconnectHistory = await core.getApprovalHistory({
             deviceId,
-            purpose: "client-sign-by-user-smoke",
+            purpose: "client-sign-transaction-user-smoke",
             limit: 4,
           });
           assertNoSmokeOutputLeak(afterReconnectHistory, userSigningTxBytes);
@@ -439,7 +441,7 @@ test(
 
         const afterHistory = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-sign-by-user-smoke",
+          purpose: "client-sign-transaction-user-smoke",
           limit: 4,
         });
         assertNoSmokeOutputLeak(afterHistory, userSigningTxBytes);
@@ -464,57 +466,58 @@ test(
           assertNewestSigningTerminal(afterHistory, previousTopSeq, "user", "user_timed_out");
         }
       } finally {
-        console.log("[client-sign-by-user-smoke] disconnecting...");
-        await core.disconnectDevice({ deviceId, purpose: "client-sign-by-user-smoke" }).catch(() => {});
+        console.log("[client-sign-transaction-user-smoke] disconnecting...");
+        await core.disconnectDevice({ deviceId, purpose: "client-sign-transaction-user-smoke" }).catch(() => {});
       }
     });
   },
 );
 
 test(
-  "hardware: client core signByPolicy terminal path",
+  "hardware: client core signTransaction terminal path",
   { skip: policySigningSkipReason() },
   async () => {
-    await withSmokeCore("agent-q-client-sign-by-policy-", async (core) => {
-      console.log("[client-sign-by-policy-smoke] scanning devices...");
+    await withSmokeCore("agent-q-client-sign-transaction-policy-", async (core) => {
+      console.log("[client-sign-transaction-policy-smoke] scanning devices...");
       const scan = await core.scanDevices();
       const deviceId = selectSmokeDeviceId(
         scan.devices,
         policySigningDeviceId,
-        "AGENTQ_HW_CLIENT_SIGN_BY_POLICY_DEVICE_ID",
-        "AGENTQ_HW_CLIENT_SIGN_BY_POLICY",
+        "AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_DEVICE_ID",
+        "AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY",
       );
       const txBytes = policySigningTxBytes.length > 0
         ? policySigningTxBytes
         : await readDefaultSuiTransferTxBytes();
 
       try {
-        await core.selectDevice({ deviceId, purpose: "client-sign-by-policy-smoke" });
-        console.log("[client-sign-by-policy-smoke] approve connect on device...");
+        await core.selectDevice({ deviceId, purpose: "client-sign-transaction-policy-smoke" });
+        console.log("[client-sign-transaction-policy-smoke] approve connect on device...");
         const connect = await core.connectDevice({
           deviceId,
-          purpose: "client-sign-by-policy-smoke",
-          gatewayName: "Agent-Q client sign_by_policy smoke",
+          purpose: "client-sign-transaction-policy-smoke",
+          gatewayName: "Agent-Q client sign_transaction smoke",
         });
         assert.equal(connect.source, "connected");
 
-        const capabilities = await core.getCapabilities({ deviceId, purpose: "client-sign-by-policy-smoke" });
+        const capabilities = await core.getCapabilities({ deviceId, purpose: "client-sign-transaction-policy-smoke" });
         assert.equal(capabilities.source, "live");
-        assert.deepEqual(capabilities.signing?.policy, [{ chain: "sui", method: "sign_transaction" }]);
+        assert.equal(capabilities.signing?.authorization, "policy");
+        assert.deepEqual(capabilities.signing?.methods, [{ chain: "sui", method: "sign_transaction" }]);
         assertNoSmokeOutputLeak(capabilities, txBytes);
 
         const beforeHistory = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-sign-by-policy-smoke",
+          purpose: "client-sign-transaction-policy-smoke",
           limit: 4,
         });
         assert.equal(beforeHistory.source, "live");
         const previousTopSeq = topSeq(beforeHistory);
 
-        console.log("[client-sign-by-policy-smoke] sending policy-authorized Sui sign_transaction...");
-        const result = await core.signByPolicy({
+        console.log("[client-sign-transaction-policy-smoke] sending policy-authorized Sui sign_transaction...");
+        const result = await core.signTransaction({
           deviceId,
-          purpose: "client-sign-by-policy-smoke",
+          purpose: "client-sign-transaction-policy-smoke",
           chain: "sui",
           method: "sign_transaction",
           network: "devnet",
@@ -526,7 +529,7 @@ test(
 
         const afterHistory = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-sign-by-policy-smoke",
+          purpose: "client-sign-transaction-policy-smoke",
           limit: 4,
         });
         assertNoSmokeOutputLeak(afterHistory, txBytes);
@@ -545,8 +548,8 @@ test(
           assertNewestSigningTerminal(afterHistory, previousTopSeq, "policy", "policy_rejected");
         }
       } finally {
-        console.log("[client-sign-by-policy-smoke] disconnecting...");
-        await core.disconnectDevice({ deviceId, purpose: "client-sign-by-policy-smoke" }).catch(() => {});
+        console.log("[client-sign-transaction-policy-smoke] disconnecting...");
+        await core.disconnectDevice({ deviceId, purpose: "client-sign-transaction-policy-smoke" }).catch(() => {});
       }
     });
   },

@@ -64,8 +64,9 @@ Implemented today:
   They are device-local UX only: Change PIN verifies the stored PIN and replaces
   only the local PIN verifier after repeated new PIN entry, and Reset verifies
   the stored PIN before root material wipe, active policy wipe, PIN verifier
-  wipe, approval history wipe, policy-update terminal marker wipe,
-  connect-approval setting wipe, session cleanup, and return to `unprovisioned`.
+  wipe, signing authorization mode wipe, approval history wipe,
+  policy-update terminal marker wipe, connect-approval setting wipe, session
+  cleanup, and return to `unprovisioned`.
   Firmware records an internal reset-pending marker so boot can resume an
   interrupted reset wipe. Host-triggered reset/debug protocol paths are
   intentionally not implemented. StackChan CoreS3 source also uses this
@@ -84,35 +85,34 @@ Implemented today:
   while the target stores the committed active policy as a canonical binary
   record in ordinary NVS and can load canonical current-schema policy records
   through its internal storage boundary. Firmware reads a public summary through
-  `policy_get`, consumes that active policy for Sui `sign_transaction`
-  policy-authorized signing, rejects broad, multi-rule, and multi-recipient sign
-  policies that the current device-local policy review cannot show clearly, and
-  exposes policy update authorization only through the Firmware-owned
-  `policy_propose` proposal flow. Policy actions do not authorize the
-  separate device-confirmed signing path.
+  `policy_get`, consumes that active policy only when the Firmware-local signing
+  authorization mode is `policy`, rejects broad, multi-rule, and
+  multi-recipient sign policies that the current device-local policy review
+  cannot show clearly, and exposes policy update authorization only through the
+  Firmware-owned `policy_propose` proposal flow. Policy actions do not authorize
+  user-mode signing.
 - A Gateway-served local Admin Page for read-only device metadata and the
   current policy proposal template. It uses the same Gateway core
   boundary as MCP and is not a policy authority.
 - A bounded persistent approval-history read path. The current StackChan CoreS3
   target stores Firmware-authored signing confirmation/terminal metadata for
-  `sign_by_policy` and `sign_by_user`, plus recordable terminal metadata from
+  `sign_transaction`, plus recordable terminal metadata from
   `policy_propose`. History does not store raw txBytes,
   decoded transactions, raw policy documents, full rule content, session ids,
   request ids, gateway names, PINs, secret material, or full policy documents.
   Local reset and error-state erase recovery wipe the history.
-- Provider-facing device-confirmed signing has
-  `provider-exposed-not-product-active` status for bounded Sui
-  `sign_transaction` through the shared `sign_by_user` path. Firmware
-  derives the review summary and account binding from `txBytes` and stored
-  material, models local PIN confirmation, requires history before signing,
-  emits terminal metadata, and owns cleanup. The current public USB dispatcher,
-  client/provider parser/API, `sign_result` writer, and provider-facing
-  `signing` capability are wired in source. The MCP adapter projects this to
-  policy-authorized `sign_by_policy` only and fails closed on provider-facing
-  user-confirmed signing metadata. That projection is not a security boundary;
-  Firmware still owns signing authorization. Current-tree
-  positive/reject/timeout/session-loss hardware smoke for the new Sign API wire
-  names remains pending; product-active status is not claimed.
+- The unified `sign_transaction` path has `source-wired-not-product-active`
+  status for bounded Sui restricted transfers. Firmware derives the facts and
+  account binding from `txBytes` and stored material, reads its device-local
+  signing authorization mode, selects the policy or user signing gate, requires
+  history before signing, emits terminal metadata, and owns cleanup. Policy
+  mode evaluates active policy and signs after policy authorization with
+  speech-bubble status notifications; user mode shows clear-signing review and
+  requires local PIN confirmation. Requests cannot choose the authorization
+  mode.
+  Current-tree positive/reject/timeout/
+  session-loss hardware smoke for the new Sign API wire name remains pending;
+  product-active status is not claimed.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
@@ -213,22 +213,21 @@ Agents, MCP clients, the Admin Page, and CLI input:
 Device-local approval gates `connect` / session establishment and sensitive
 policy-write proposals. A connection session alone does not authorize signing.
 
-Signing requests have two separate authority models:
+`sign_transaction` has one public request shape and two internal authority
+gates. Firmware chooses the gate from device-local signing authorization mode;
+requests, adapters, and host callers cannot choose it.
 
-- Delegated policy requests: Firmware evaluates bounded request facts against
-  active policy. This path is for agent-delegated authority and does not imply
-  per-request device-local confirmation.
-- Device-confirmed requests: provider-facing signing uses the shared
-  `sign_by_user` protocol request and must require Firmware-owned
-  device-local confirmation for a bounded signing request. The confirmation
-  does not prove the request came from a trustworthy host, dapp, provider,
-  agent, or upstream user intent. The provider-sui adapter presents this model
-  through its dapp-facing API, while the MCP adapter presents delegated
-  `sign_by_policy` through its agent-facing tool surface. That package-level
-  projection is not a hard security barrier against direct imports of broader
-  client/Admin entrypoints. The `provider-exposed-not-product-active` runtime
-  models local PIN confirmation and does not reuse the connect-only PIN setting
-  as the signing confirmation policy.
+- Policy mode evaluates the active policy for transaction signing. A policy
+  reject is terminal and must not fall back to user confirmation.
+- Policy mode treats policy authorization as sufficient for signing after the
+  required policy history record, with speech-bubble status notifications
+  instead of per-request device-local confirmation.
+- User mode uses device-local clear-signing review and local PIN confirmation
+  for the bounded request.
+- User mode confirmation does not prove the request came from a trustworthy
+  host, dapp, provider, agent, or upstream user intent. The runtime models local
+  PIN confirmation and does not reuse the connect-only PIN setting as the
+  signing confirmation policy.
 
 Policy actions must not bridge these models. A policy document may use only
 action values accepted by the current schema. Any other action value is invalid
@@ -298,7 +297,7 @@ Device-generated key (preferred):
   active.
 - The private key never existed outside the device.
 - The first target chain signs with Ed25519 (Sui); the protocol stays
-  chain-agnostic through `sign_by_policy`.
+  chain-agnostic through `sign_transaction`.
 
 Imported key (weaker):
 
@@ -512,16 +511,16 @@ Enforcement today:
   registered tools must equal a fixed set, both at definition and over the live
   transport. A new tool such as `export_key` cannot be added without failing
   those tests.
-- The MCP adapter exposes policy-authorized signing through `sign_by_policy`,
-  which remains bounded by Firmware state gates, the Sui restricted-transfer
-  adapter, and the active policy. The provider-sui adapter exposes
-  device-confirmed signing through `sign_by_user` for the bounded restricted
-  transfer shape. These adapter surfaces clarify caller audience; they are not
-  the signing authority. Arbitrary Sui transactions, personal-message signing,
-  and other chains are not implemented. The top-level tool allowlist does not
-  grant authority to method names carried inside `sign_by_policy`; Firmware
-  method adapters and active policy validation remain the method boundary for
-  delegated policy requests.
+- MCP and provider-sui expose `sign_transaction` through different package
+  interfaces for their audiences, but those adapter surfaces are not the
+  signing authority. Firmware state gates, the Sui restricted-transfer adapter,
+  the device-local signing authorization mode, active policy evaluation in
+  policy mode, and local confirmation in user mode remain the boundaries.
+  Arbitrary Sui
+  transactions, personal-message signing, and other chains are not implemented.
+  The top-level tool allowlist does not grant authority to method names carried
+  inside `sign_transaction`; Firmware method adapters and active policy
+  validation remain the method boundary.
 
 ## 12. Device Capability Tiers
 
@@ -538,8 +537,8 @@ Button Device:
 Display Approval Device:
 
 - Can show a summary for flows that explicitly require local approval, such as
-  connection establishment, policy update proposals, or provider-facing
-  `sign_by_user` signing.
+  connection establishment, policy update proposals, or user-mode
+  `sign_transaction` signing.
 
 The current StackChan CoreS3 target has a display and touch, so it is closest to
 the Display Approval tier. "Minimal Device" describes a non-current hardware
@@ -623,7 +622,7 @@ API boundary:
 
 - No `export_key`, `raw_sign`, `read_memory`, or `debug_command`.
 - The MCP top-level exact-allowlist test passes.
-- `sign_by_policy` allowlist and negative tests cover every shipped signing method.
+- `sign_transaction` allowlist and negative tests cover every shipped signing method.
 
 Key and policy:
 

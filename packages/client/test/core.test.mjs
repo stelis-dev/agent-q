@@ -110,8 +110,8 @@ function defaultDriver(overrides = {}) {
           },
         ],
         signing: {
-          user: [{ chain: "sui", method: "sign_transaction" }],
-          policy: [{ chain: "sui", method: "sign_transaction" }],
+          authorization: "user",
+          methods: [{ chain: "sui", method: "sign_transaction" }],
         },
       };
     },
@@ -169,21 +169,6 @@ function defaultDriver(overrides = {}) {
         hasMore: false,
       };
     },
-    async signByPolicy() {
-      return {
-        id: "req_sign_policy",
-        version: 1,
-        type: "sign_result",
-        authorization: "policy",
-        status: "policy_rejected",
-        policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-        ruleRef: "default",
-        error: {
-          code: "policy_rejected",
-          message: "The signing request was rejected by device policy.",
-        },
-      };
-    },
     async policyPropose() {
       return {
         id: "req_policy_propose",
@@ -198,9 +183,9 @@ function defaultDriver(overrides = {}) {
         },
       };
     },
-    async signByUser() {
+    async signTransaction() {
       return {
-        id: "req_sign_user",
+        id: "req_sign_transaction",
         version: 1,
         type: "sign_result",
         authorization: "user",
@@ -319,7 +304,26 @@ test("falls back to scan when stored port hint is stale", async () => {
 
 test("scan stores live device without selecting it", async () => {
   await withStore(async (store) => {
-    const core = new GatewayCore(store, defaultDriver());
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async signTransaction() {
+          return {
+            id: "req_sign_policy",
+            version: 1,
+            type: "sign_result",
+            authorization: "policy",
+            status: "policy_rejected",
+            policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+            ruleRef: "default",
+            error: {
+              code: "policy_rejected",
+              message: "The signing request was rejected by device policy.",
+            },
+          };
+        },
+      }),
+    );
     const result = await core.scanDevices();
     assert.equal(result.devices.length, 1);
     assert.deepEqual(result.failures, []);
@@ -538,7 +542,26 @@ test("identify uses one internal deadline across multiple devices", async () => 
 test("selects default and purpose-specific active devices", async () => {
   await withStore(async (store) => {
     await store.rememberUsbStatus(status, "/dev/cu.usbmodem1");
-    const core = new GatewayCore(store, defaultDriver());
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async signTransaction() {
+          return {
+            id: "req_sign_policy",
+            version: 1,
+            type: "sign_result",
+            authorization: "policy",
+            status: "policy_rejected",
+            policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+            ruleRef: "default",
+            error: {
+              code: "policy_rejected",
+              message: "The signing request was rejected by device policy.",
+            },
+          };
+        },
+      }),
+    );
 
     const defaultResult = await core.selectDevice({ deviceId: device.deviceId });
     assert.equal(defaultResult.purpose, null);
@@ -1178,8 +1201,8 @@ test("getCapabilities returns Firmware-authored account identity and keeps the s
     assert.equal(result.capabilities[0].id, "sui");
     assert.equal(result.capabilities[0].accounts[0].keyScheme, "ed25519");
     assert.deepEqual(result.capabilities[0].methods, []);
-    assert.deepEqual(result.signing.user, [{ chain: "sui", method: "sign_transaction" }]);
-    assert.deepEqual(result.signing.policy, [{ chain: "sui", method: "sign_transaction" }]);
+    assert.equal(result.signing.authorization, "user");
+    assert.deepEqual(result.signing.methods, [{ chain: "sui", method: "sign_transaction" }]);
 
     // Read-only: the session is retained after get_capabilities.
     const listed = await core.listDevices();
@@ -1414,13 +1437,13 @@ test("getApprovalHistory clears the local session when Firmware reports invalid_
   });
 });
 
-test("signByPolicy without a runtime session returns not_connected before validating signable payload", async () => {
+test("signTransaction without a runtime session returns not_connected before validating signable payload", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
-    const result = await core.signByPolicy({
+    const result = await core.signTransaction({
       chain: "sui",
       method: "sign_transaction",
       network: "devnet",
@@ -1432,14 +1455,33 @@ test("signByPolicy without a runtime session returns not_connected before valida
   });
 });
 
-test("signByPolicy returns Firmware's policy_rejected sign_result and keeps the session", async () => {
+test("signTransaction returns Firmware's policy_rejected sign_result and keeps the session", async () => {
   await withStore(async (store) => {
-    const core = new GatewayCore(store, defaultDriver());
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async signTransaction() {
+          return {
+            id: "req_sign_policy",
+            version: 1,
+            type: "sign_result",
+            authorization: "policy",
+            status: "policy_rejected",
+            policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+            ruleRef: "default",
+            error: {
+              code: "policy_rejected",
+              message: "The signing request was rejected by device policy.",
+            },
+          };
+        },
+      }),
+    );
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
-    const result = await core.signByPolicy({
+    const result = await core.signTransaction({
       chain: "sui",
       method: "sign_transaction",
       network: "devnet",
@@ -1455,13 +1497,13 @@ test("signByPolicy returns Firmware's policy_rejected sign_result and keeps the 
   });
 });
 
-test("signByPolicy uses the internal request deadline by default", async () => {
+test("signTransaction uses the internal request deadline by default", async () => {
   await withStore(async (store) => {
     let observedTimeoutMs = 0;
     const core = new GatewayCore(
       store,
       defaultDriver({
-        async signByPolicy(_portPath, _sessionId, _chain, _method, _params, deadlineMs) {
+        async signTransaction(_portPath, _sessionId, _chain, _method, _params, deadlineMs) {
           observedTimeoutMs = deadlineMs;
           return {
             id: "req_sign_policy",
@@ -1483,23 +1525,23 @@ test("signByPolicy uses the internal request deadline by default", async () => {
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
-    const result = await core.signByPolicy({
+    const result = await core.signTransaction({
       chain: "sui",
       method: "sign_transaction",
       network: "devnet",
       txBytes: CANONICAL_TX_BYTES_BASE64,
     });
     assert.equal(result.status, "policy_rejected");
-    assert.equal(observedTimeoutMs, 30000);
+    assert.equal(observedTimeoutMs, 185000);
   });
 });
 
-test("signByPolicy propagates history_error without clearing the session", async () => {
+test("signTransaction propagates history_error without clearing the session", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(
       store,
       defaultDriver({
-        async signByPolicy() {
+        async signTransaction() {
           throw new GatewayError("history_error", "Could not record policy signing approval.", false);
         },
       }),
@@ -1509,7 +1551,7 @@ test("signByPolicy propagates history_error without clearing the session", async
     await core.connectDevice({});
 
     await assert.rejects(
-      () => core.signByPolicy({
+      () => core.signTransaction({
         chain: "sui",
         method: "sign_transaction",
         network: "devnet",
@@ -1523,11 +1565,11 @@ test("signByPolicy propagates history_error without clearing the session", async
   });
 });
 
-test("signByPolicy validates input before USB live-port probing", async () => {
+test("signTransaction validates input before USB live-port probing", async () => {
   await withStore(async (store) => {
     let listPortsCalls = 0;
     let requestStatusCalls = 0;
-    let signByPolicyCalls = 0;
+    let signTransactionCalls = 0;
     const core = new GatewayCore(
       store,
       defaultDriver({
@@ -1546,8 +1588,8 @@ test("signByPolicy validates input before USB live-port probing", async () => {
           requestStatusCalls += 1;
           return status;
         },
-        async signByPolicy() {
-          signByPolicyCalls += 1;
+        async signTransaction() {
+          signTransactionCalls += 1;
           return {
             id: "req_sign_policy",
             version: 1,
@@ -1570,10 +1612,10 @@ test("signByPolicy validates input before USB live-port probing", async () => {
 
     listPortsCalls = 0;
     requestStatusCalls = 0;
-    signByPolicyCalls = 0;
+    signTransactionCalls = 0;
 
     await assert.rejects(
-      () => core.signByPolicy({
+      () => core.signTransaction({
         chain: "sui",
         method: "sign_transaction",
         network: "devnet",
@@ -1584,16 +1626,16 @@ test("signByPolicy validates input before USB live-port probing", async () => {
     );
     assert.equal(listPortsCalls, 0);
     assert.equal(requestStatusCalls, 0);
-    assert.equal(signByPolicyCalls, 0);
+    assert.equal(signTransactionCalls, 0);
   });
 });
 
-test("signByPolicy clears the local session when Firmware reports invalid_session", async () => {
+test("signTransaction clears the local session when Firmware reports invalid_session", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(
       store,
       defaultDriver({
-        async signByPolicy() {
+        async signTransaction() {
           throw new GatewayError("invalid_session", "Session is unknown or already ended.", false);
         },
       }),
@@ -1602,7 +1644,7 @@ test("signByPolicy clears the local session when Firmware reports invalid_sessio
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
-    const result = await core.signByPolicy({
+    const result = await core.signTransaction({
       chain: "sui",
       method: "sign_transaction",
       network: "devnet",
@@ -1615,13 +1657,13 @@ test("signByPolicy clears the local session when Firmware reports invalid_sessio
   });
 });
 
-test("signByUser returns not_connected before validating signable payload", async () => {
+test("signTransaction returns not_connected before validating signable payload", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
-    const result = await core.signByUser({
+    const result = await core.signTransaction({
       chain: "sui",
       method: "sign_transaction",
       network: "devnet",
@@ -1635,7 +1677,7 @@ test("signByUser returns not_connected before validating signable payload", asyn
   });
 });
 
-test("signByUser forwards a bounded provider signing request with internal local-PIN interaction budget", async () => {
+test("signTransaction forwards a bounded provider signing request with internal local-PIN interaction budget", async () => {
   await withStore(async (store) => {
     let observed = null;
     const signature = Buffer.alloc(97, 7).toString("base64");
@@ -1660,12 +1702,12 @@ test("signByUser forwards a bounded provider signing request with internal local
               },
             ],
             signing: {
-              user: [{ chain: "sui", method: "sign_transaction" }],
-              policy: [{ chain: "sui", method: "sign_transaction" }],
+              authorization: "user",
+              methods: [{ chain: "sui", method: "sign_transaction" }],
             },
           };
         },
-        async signByUser(portPath, sessionId, chain, method, params, deadlineMs) {
+        async signTransaction(portPath, sessionId, chain, method, params, deadlineMs) {
           observed = { portPath, sessionId, chain, method, params, deadlineMs };
           return {
             id: "req_sign_user",
@@ -1685,9 +1727,10 @@ test("signByUser forwards a bounded provider signing request with internal local
     await core.connectDevice({});
 
     const capabilities = await core.getCapabilities({});
-    assert.deepEqual(capabilities.signing.user, [{ chain: "sui", method: "sign_transaction" }]);
+    assert.equal(capabilities.signing.authorization, "user");
+    assert.deepEqual(capabilities.signing.methods, [{ chain: "sui", method: "sign_transaction" }]);
 
-    const result = await core.signByUser({
+    const result = await core.signTransaction({
       chain: "sui",
       method: "sign_transaction",
       network: "devnet",
@@ -1716,7 +1759,7 @@ test("signByUser forwards a bounded provider signing request with internal local
   });
 });
 
-test("signByUser returns Firmware terminal outcomes without throwing", async () => {
+test("signTransaction returns Firmware terminal outcomes without throwing", async () => {
   for (const terminal of [
     {
       status: "user_rejected",
@@ -1738,7 +1781,7 @@ test("signByUser returns Firmware terminal outcomes without throwing", async () 
       const core = new GatewayCore(
         store,
         defaultDriver({
-          async signByUser() {
+          async signTransaction() {
             return {
               id: "req_sign_user",
               version: 1,
@@ -1757,7 +1800,7 @@ test("signByUser returns Firmware terminal outcomes without throwing", async () 
       await core.selectDevice({ deviceId: device.deviceId });
       await core.connectDevice({});
 
-      const result = await core.signByUser({
+      const result = await core.signTransaction({
         chain: "sui",
         method: "sign_transaction",
         network: "devnet",
@@ -1773,11 +1816,11 @@ test("signByUser returns Firmware terminal outcomes without throwing", async () 
   }
 });
 
-test("signByUser validates params before USB live-port probing", async () => {
+test("signTransaction validates params before USB live-port probing", async () => {
   await withStore(async (store) => {
     let listPortsCalls = 0;
     let requestStatusCalls = 0;
-    let signByUserCalls = 0;
+    let signTransactionCalls = 0;
     const core = new GatewayCore(
       store,
       defaultDriver({
@@ -1796,9 +1839,9 @@ test("signByUser validates params before USB live-port probing", async () => {
           requestStatusCalls += 1;
           return status;
         },
-        async signByUser() {
-          signByUserCalls += 1;
-          throw new Error("sign_by_user should not reach USB");
+        async signTransaction() {
+          signTransactionCalls += 1;
+          throw new Error("sign_transaction should not reach USB");
         },
       }),
     );
@@ -1810,7 +1853,7 @@ test("signByUser validates params before USB live-port probing", async () => {
     requestStatusCalls = 0;
 
     await assert.rejects(
-      () => core.signByUser({
+      () => core.signTransaction({
         chain: "sui",
         method: "sign_transaction",
         network: "devnet",
@@ -1820,7 +1863,7 @@ test("signByUser validates params before USB live-port probing", async () => {
       { code: "invalid_params" },
     );
     await assert.rejects(
-      () => core.signByUser({
+      () => core.signTransaction({
         chain: "sui",
         method: "sign_transaction",
         network: "devnet",
@@ -1831,16 +1874,16 @@ test("signByUser validates params before USB live-port probing", async () => {
     );
     assert.equal(listPortsCalls, 0);
     assert.equal(requestStatusCalls, 0);
-    assert.equal(signByUserCalls, 0);
+    assert.equal(signTransactionCalls, 0);
   });
 });
 
-test("signByUser clears the local session when Firmware reports invalid_session", async () => {
+test("signTransaction clears the local session when Firmware reports invalid_session", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(
       store,
       defaultDriver({
-        async signByUser() {
+        async signTransaction() {
           throw new GatewayError("invalid_session", "Session is unknown or already ended.", false);
         },
       }),
@@ -1849,7 +1892,7 @@ test("signByUser clears the local session when Firmware reports invalid_session"
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
-    const result = await core.signByUser({
+    const result = await core.signTransaction({
       chain: "sui",
       method: "sign_transaction",
       network: "devnet",

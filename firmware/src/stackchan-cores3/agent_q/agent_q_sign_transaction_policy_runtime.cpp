@@ -1,4 +1,4 @@
-#include "agent_q_method_runtime.h"
+#include "agent_q_sign_transaction_policy_runtime.h"
 
 #include <string.h>
 
@@ -87,12 +87,12 @@ bool validate_sign_transaction_params(JsonVariant params, size_t* decoded_tx_siz
         decoded_tx_size);
 }
 
-AgentQSignByPolicyRuntimeResult make_result(
-    AgentQSignByPolicyRuntimeStatus status,
+AgentQSignTransactionPolicyRuntimeResult make_result(
+    AgentQSignTransactionPolicyRuntimeStatus status,
     const char* code,
     const char* message)
 {
-    AgentQSignByPolicyRuntimeResult result = {};
+    AgentQSignTransactionPolicyRuntimeResult result = {};
     result.status = status;
     result.code = code;
     result.message = message;
@@ -100,7 +100,7 @@ AgentQSignByPolicyRuntimeResult make_result(
 }
 
 bool fill_sign_metadata(
-    AgentQSignByPolicyRuntimeResult* result,
+    AgentQSignTransactionPolicyRuntimeResult* result,
     const char* code,
     const char* chain,
     const char* method,
@@ -129,12 +129,12 @@ const char* policy_rule_ref(const AgentQPolicyDecision& decision)
     return "default";
 }
 
-AgentQSignByPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
+AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params)
 {
     size_t decoded_tx_size = 0;
     if (!validate_sign_transaction_params(params, &decoded_tx_size)) {
         return make_result(
-            AgentQSignByPolicyRuntimeStatus::invalid_params,
+            AgentQSignTransactionPolicyRuntimeStatus::invalid_params,
             "invalid_params",
             "Invalid sui/sign_transaction params.");
     }
@@ -142,7 +142,7 @@ AgentQSignByPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params
     const char* tx_bytes_base64 = nullptr;
     if (!agent_q_json_value_c_string(params["txBytes"], &tx_bytes_base64)) {
         return make_result(
-            AgentQSignByPolicyRuntimeStatus::invalid_params,
+            AgentQSignTransactionPolicyRuntimeStatus::invalid_params,
             "invalid_params",
             "Invalid sui/sign_transaction params.");
     }
@@ -150,7 +150,7 @@ AgentQSignByPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params
     uint8_t tx_bytes[kAgentQSuiSignTransactionTxBytesMaxBytes] = {};
     if (base64_to_bytes(tx_bytes_base64, strlen(tx_bytes_base64), tx_bytes, sizeof(tx_bytes)) != 0) {
         return make_result(
-            AgentQSignByPolicyRuntimeStatus::invalid_params,
+            AgentQSignTransactionPolicyRuntimeStatus::invalid_params,
             "invalid_params",
             "Invalid sui/sign_transaction txBytes.");
     }
@@ -166,7 +166,7 @@ AgentQSignByPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params
     if (parse_result != SuiTransactionFactsResult::ok) {
         wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
         return make_result(
-            AgentQSignByPolicyRuntimeStatus::unsupported_transaction,
+            AgentQSignTransactionPolicyRuntimeStatus::unsupported_transaction,
             parse_result == SuiTransactionFactsResult::malformed
                 ? "malformed_transaction"
                 : "unsupported_transaction",
@@ -179,7 +179,7 @@ AgentQSignByPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params
     if (!make_sui_sign_transaction_policy_facts(sui_facts, &policy_facts) || !digest_ready) {
         wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
         return make_result(
-            AgentQSignByPolicyRuntimeStatus::unsupported_transaction,
+            AgentQSignTransactionPolicyRuntimeStatus::unsupported_transaction,
             "unsupported_transaction",
             "Transaction shape is not supported.");
     }
@@ -190,11 +190,11 @@ AgentQSignByPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params
         wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
         return account_result == AgentQSuiSigningAccountBindingResult::account_unavailable
                    ? make_result(
-                         AgentQSignByPolicyRuntimeStatus::account_unavailable,
+                         AgentQSignTransactionPolicyRuntimeStatus::account_unavailable,
                          "account_unavailable",
                          "Stored signing account is unavailable.")
                    : make_result(
-                         AgentQSignByPolicyRuntimeStatus::account_mismatch,
+                         AgentQSignTransactionPolicyRuntimeStatus::account_mismatch,
                          "invalid_account",
                          "Transaction sender or gas owner is not the device account.");
     }
@@ -203,7 +203,7 @@ AgentQSignByPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params
     if (!read_active_policy_summary(&policy_summary)) {
         wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
         return make_result(
-            AgentQSignByPolicyRuntimeStatus::policy_error,
+            AgentQSignTransactionPolicyRuntimeStatus::policy_error,
             "policy_error",
             "Active policy is unavailable.");
     }
@@ -213,15 +213,15 @@ AgentQSignByPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params
     if (decision.reason == AgentQPolicyDecisionReason::invalid_policy) {
         wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
         return make_result(
-            AgentQSignByPolicyRuntimeStatus::policy_error,
+            AgentQSignTransactionPolicyRuntimeStatus::policy_error,
             "policy_error",
             "Active policy is unavailable.");
     }
 
     const char* rule_ref = policy_rule_ref(decision);
     if (decision.action != AgentQPolicyAction::sign) {
-        AgentQSignByPolicyRuntimeResult result = make_result(
-            AgentQSignByPolicyRuntimeStatus::policy_rejected,
+        AgentQSignTransactionPolicyRuntimeResult result = make_result(
+            AgentQSignTransactionPolicyRuntimeStatus::policy_rejected,
             "policy_rejected",
             "The signing request was rejected by device policy.");
         if (!fill_sign_metadata(
@@ -234,7 +234,7 @@ AgentQSignByPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params
                 rule_ref)) {
             wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
             return make_result(
-                AgentQSignByPolicyRuntimeStatus::policy_error,
+                AgentQSignTransactionPolicyRuntimeStatus::policy_error,
                 "policy_error",
                 "Active policy is unavailable.");
         }
@@ -242,8 +242,8 @@ AgentQSignByPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params
         return result;
     }
 
-    AgentQSignByPolicyRuntimeResult result = make_result(
-        AgentQSignByPolicyRuntimeStatus::policy_authorized,
+    AgentQSignTransactionPolicyRuntimeResult result = make_result(
+        AgentQSignTransactionPolicyRuntimeStatus::policy_authorized,
         "policy_signed",
         "Policy authorized signing.");
     if (!fill_sign_metadata(
@@ -256,7 +256,7 @@ AgentQSignByPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params
             rule_ref)) {
         wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
         return make_result(
-            AgentQSignByPolicyRuntimeStatus::policy_error,
+            AgentQSignTransactionPolicyRuntimeStatus::policy_error,
             "policy_error",
             "Active policy is unavailable.");
     }
@@ -268,7 +268,7 @@ AgentQSignByPolicyRuntimeResult evaluate_sui_sign_transaction(JsonVariant params
 
 }  // namespace
 
-AgentQSignByPolicyRuntimeResult evaluate_sign_by_policy(
+AgentQSignTransactionPolicyRuntimeResult evaluate_sign_transaction_policy(
     const char* chain,
     const char* method,
     JsonVariant params)
@@ -279,12 +279,12 @@ AgentQSignByPolicyRuntimeResult evaluate_sign_by_policy(
     }
 
     return make_result(
-        AgentQSignByPolicyRuntimeStatus::invalid_params,
+        AgentQSignTransactionPolicyRuntimeStatus::invalid_params,
         "unsupported_method",
         "Method is not supported.");
 }
 
-void clear_sign_by_policy_runtime_result(AgentQSignByPolicyRuntimeResult* result)
+void clear_sign_transaction_policy_runtime_result(AgentQSignTransactionPolicyRuntimeResult* result)
 {
     if (result == nullptr) {
         return;

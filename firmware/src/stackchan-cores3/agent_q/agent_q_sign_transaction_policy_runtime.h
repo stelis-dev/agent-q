@@ -3,12 +3,12 @@
 #include <ArduinoJson.h>
 
 #include "agent_q_approval_history.h"
-#include "agent_q_method_limits.h"
-#include "agent_q_sign_by_user_limits.h"
+#include "agent_q_sign_transaction_limits.h"
+#include "agent_q_sign_transaction_user_limits.h"
 
 namespace agent_q {
 
-enum class AgentQSignByPolicyRuntimeStatus {
+enum class AgentQSignTransactionPolicyRuntimeStatus {
     invalid_params,
     unsupported_transaction,
     account_unavailable,
@@ -18,8 +18,8 @@ enum class AgentQSignByPolicyRuntimeStatus {
     policy_authorized,
 };
 
-struct AgentQSignByPolicyRuntimeResult {
-    AgentQSignByPolicyRuntimeStatus status;
+struct AgentQSignTransactionPolicyRuntimeResult {
+    AgentQSignTransactionPolicyRuntimeStatus status;
     const char* code;
     const char* message;
     char chain[kAgentQApprovalHistoryChainSize];
@@ -32,10 +32,10 @@ struct AgentQSignByPolicyRuntimeResult {
     size_t tx_bytes_size;
 };
 
-AgentQSignByPolicyRuntimeResult evaluate_sign_by_policy(
+AgentQSignTransactionPolicyRuntimeResult evaluate_sign_transaction_policy(
     const char* chain,
     const char* method,
     JsonVariant params);
-void clear_sign_by_policy_runtime_result(AgentQSignByPolicyRuntimeResult* result);
+void clear_sign_transaction_policy_runtime_result(AgentQSignTransactionPolicyRuntimeResult* result);
 
 }  // namespace agent_q

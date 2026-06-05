@@ -86,8 +86,8 @@ function createFakeCore() {
           },
         ],
         signing: {
-          user: [{ chain: "sui", method: "sign_transaction" }],
-          policy: [{ chain: "sui", method: "sign_transaction" }],
+          authorization: "user",
+          methods: [{ chain: "sui", method: "sign_transaction" }],
         },
       };
     },
@@ -106,7 +106,7 @@ function createFakeCore() {
         ],
       };
     },
-    async signByUser() {
+    async signTransaction() {
       return {
         source: "live",
         deviceId: "device-1",
@@ -127,7 +127,7 @@ function createSigningCore() {
     calls,
     core: {
       ...createFakeCore(),
-      async signByUser(input) {
+      async signTransaction(input) {
         calls.push(input);
         return {
           source: "live",
@@ -215,7 +215,7 @@ test("Wallet Standard entrypoint stays separated from Node device transport", as
   assert.doesNotMatch(types, /\.\/provider-sui\.js/);
 });
 
-test("provider object presents the Sui dapp-facing adapter API including signByUser", () => {
+test("provider object presents the Sui dapp-facing adapter API including signTransaction", () => {
   const provider = createAgentQSuiProvider({ core: createFakeCore() });
   const methodNames = Object.getOwnPropertyNames(Object.getPrototypeOf(provider))
     .filter((name) => name !== "constructor")
@@ -230,16 +230,17 @@ test("provider object presents the Sui dapp-facing adapter API including signByU
     "listDevices",
     "scanDevices",
     "selectDevice",
-    "signByUser",
+    "signTransaction",
   ]);
-  assert.equal(typeof provider.signByUser, "function");
+  assert.equal(typeof provider.signTransaction, "function");
+  assert.equal(provider.signByUser, undefined);
   assert.equal(provider.signByPolicy, undefined);
   assert.equal(provider.policyPropose, undefined);
   assert.equal(provider.policyGet, undefined);
   assert.equal(provider.getApprovalHistory, undefined);
 });
 
-test("provider delegates current methods and signByUser without exposing session ids or secrets", async () => {
+test("provider delegates current methods and signTransaction without exposing session ids or secrets", async () => {
   const provider = createAgentQSuiProvider({ core: createFakeCore() });
   const outputs = [
     await provider.scanDevices(),
@@ -250,7 +251,7 @@ test("provider delegates current methods and signByUser without exposing session
     await provider.disconnectDevice({ deviceId: "device-1" }),
     await provider.getCapabilities({ deviceId: "device-1" }),
     await provider.getAccounts({ deviceId: "device-1" }),
-    await provider.signByUser({
+    await provider.signTransaction({
       deviceId: "device-1",
       chain: "sui",
       method: "sign_transaction",
@@ -263,12 +264,13 @@ test("provider delegates current methods and signByUser without exposing session
   }
   const capabilities = outputs[6];
   assert.deepEqual(capabilities.signing, {
-    user: [{ chain: "sui", method: "sign_transaction" }],
+    authorization: "user",
+    methods: [{ chain: "sui", method: "sign_transaction" }],
   });
-  assert.equal(JSON.stringify(capabilities).includes('"policy"'), false);
+  assert.equal(JSON.stringify(capabilities).includes('"signByPolicy"'), false);
 });
 
-test("provider getCapabilities applies the provider capability schema after projection", async () => {
+test("provider getCapabilities applies the provider capability schema", async () => {
   const core = {
     ...createFakeCore(),
     async getCapabilities() {
@@ -283,8 +285,8 @@ test("provider getCapabilities applies the provider capability schema after proj
           },
         ],
         signing: {
-          user: [{ chain: "sui", method: "sign_personal_message" }],
-          policy: [{ chain: "sui", method: "sign_transaction" }],
+          authorization: "user",
+          methods: [{ chain: "sui", method: "sign_personal_message" }],
         },
       };
     },
@@ -305,7 +307,7 @@ test("provider applies output boundary to every custom core method", async () =>
     ["disconnectDevice", (provider) => provider.disconnectDevice({ deviceId: "device-1" })],
     ["getCapabilities", (provider) => provider.getCapabilities({ deviceId: "device-1" })],
     ["getAccounts", (provider) => provider.getAccounts({ deviceId: "device-1" })],
-    ["signByUser", (provider) => provider.signByUser({
+    ["signTransaction", (provider) => provider.signTransaction({
       deviceId: "device-1",
       chain: "sui",
       method: "sign_transaction",
@@ -332,10 +334,10 @@ test("provider applies output boundary to every custom core method", async () =>
   }
 });
 
-test("provider signByUser rejects non-user signing results from custom cores", async () => {
+test("provider signTransaction returns Firmware-authored policy terminal results", async () => {
   const core = {
     ...createFakeCore(),
-    async signByUser() {
+    async signTransaction() {
       return {
         source: "live",
         deviceId: "device-1",
@@ -351,22 +353,26 @@ test("provider signByUser rejects non-user signing results from custom cores", a
     },
   };
   const provider = createAgentQSuiProvider({ core });
-  await assert.rejects(() => provider.signByUser({
+  const result = await provider.signTransaction({
     deviceId: "device-1",
     chain: "sui",
     method: "sign_transaction",
     network: "devnet",
     txBytes: "AQID",
-  }));
+  });
+  assert.equal(result.status, "policy_rejected");
+  assert.equal(result.authorization, "policy");
+  assert.equal(result.error.code, "policy_rejected");
 });
 
 test("provider object omits policy signing and Admin management entrypoints", () => {
   const provider = createAgentQSuiProvider({ core: createFakeCore() });
+  assert.equal(provider.signByUser, undefined);
   assert.equal(provider.signByPolicy, undefined);
   assert.equal(provider.policyPropose, undefined);
   assert.equal(provider.policyGet, undefined);
   assert.equal(provider.getApprovalHistory, undefined);
-  assert.equal(typeof provider.signByUser, "function");
+  assert.equal(typeof provider.signTransaction, "function");
 });
 
 test("Wallet Standard adapter advertises only current Agent-Q Sui signing features", () => {
@@ -447,7 +453,7 @@ test("Wallet Standard connect and disconnect delegate through provider-sui witho
   assertNoSecretFields(connected);
   assert.equal(wallet.policyGet, undefined);
   assert.equal(wallet.getApprovalHistory, undefined);
-  assert.equal(wallet.signByPolicy, undefined);
+  assert.equal(wallet.signTransaction, undefined);
   await wallet.features[StandardDisconnect].disconnect();
   unsubscribe();
   assert.equal(wallet.accounts.length, 0);
@@ -480,8 +486,8 @@ test("Wallet Standard connect fails closed when provider-sui returns no Sui acco
         ],
       };
     },
-    async signByUser() {
-      return createFakeCore().signByUser();
+    async signTransaction() {
+      return createFakeCore().signTransaction();
     },
   };
   const wallet = createAgentQSuiWallet({
@@ -497,7 +503,7 @@ test("Wallet Standard connect fails closed when provider-sui returns no Sui acco
   assert.equal(disconnectCalls, 1);
 });
 
-test("Wallet Standard signTransaction builds bytes and delegates to signByUser only", async () => {
+test("Wallet Standard signTransaction builds bytes and delegates to signTransaction only", async () => {
   const { core, calls } = createSigningCore();
   const wallet = createAgentQSuiWallet({
     provider: createAgentQSuiProvider({ core }),
@@ -560,7 +566,7 @@ test("Wallet Standard signTransaction fails closed for wrong account, wrong chai
   );
   const rejectingCore = {
     ...createFakeCore(),
-    async signByUser() {
+    async signTransaction() {
       return {
         source: "live",
         deviceId: "device-1",
@@ -593,7 +599,7 @@ test("Wallet Standard signTransaction emits bounded canonical terminal errors", 
   for (const status of ["user_rejected", "user_timed_out", "signing_failed"]) {
     const core = {
       ...createFakeCore(),
-      async signByUser() {
+      async signTransaction() {
         return {
           source: "live",
           deviceId: "device-1",
@@ -649,7 +655,7 @@ test("Wallet Standard signTransaction bounds unknown injected provider result la
   for (const { signResult } of cases) {
     const core = {
       ...createFakeCore(),
-      async signByUser() {
+      async signTransaction() {
         return signResult;
       },
     };
@@ -667,7 +673,7 @@ test("Wallet Standard signTransaction bounds unknown injected provider result la
         transaction: { toJSON: async () => transactionJson },
       }),
       (error) => {
-        assert.equal(error.message, "Agent-Q signByUser did not return a signed result.");
+        assert.equal(error.message, "Agent-Q signTransaction did not return a signed result.");
         assert.doesNotMatch(error.message, /sessionId|rootEntropy|secret_should_not_leak/);
         return true;
       },
@@ -714,7 +720,7 @@ test("Wallet Standard signTransaction clears connected accounts on non-live sign
   for (const { signResult, expectedMessage } of cases) {
     const core = {
       ...createFakeCore(),
-      async signByUser() {
+      async signTransaction() {
         return {
           ...signResult,
           deviceId: "device-1",

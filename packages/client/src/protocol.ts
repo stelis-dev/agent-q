@@ -122,20 +122,10 @@ export interface SignTransactionParams {
   txBytes: string;
 }
 
-export interface SignByUserRequest {
+export interface SignTransactionRequest {
   id: string;
   version: typeof PROTOCOL_VERSION;
-  type: "sign_by_user";
-  sessionId: string;
-  chain: typeof SUI_CHAIN_ID;
-  method: typeof SUI_SIGN_TRANSACTION_METHOD;
-  params: SignTransactionParams;
-}
-
-export interface SignByPolicyRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "sign_by_policy";
+  type: typeof SUI_SIGN_TRANSACTION_METHOD;
   sessionId: string;
   chain: typeof SUI_CHAIN_ID;
   method: typeof SUI_SIGN_TRANSACTION_METHOD;
@@ -152,8 +142,7 @@ export type ProtocolRequest =
   | PolicyGetRequest
   | GetApprovalHistoryRequest
   | PolicyProposeRequest
-  | SignByUserRequest
-  | SignByPolicyRequest;
+  | SignTransactionRequest;
 
 export interface StatusResponse {
   id: string;
@@ -219,8 +208,8 @@ export interface SigningCapabilityEntry {
 }
 
 export interface SigningCapabilities {
-  user: SigningCapabilityEntry[];
-  policy: SigningCapabilityEntry[];
+  authorization: SignResultAuthorization;
+  methods: SigningCapabilityEntry[];
 }
 
 export interface CapabilitiesResponse {
@@ -597,56 +586,29 @@ export function makePolicyProposeRequest(
   return request;
 }
 
-export function makeSignByUserRequest(
+export function makeSignTransactionRequest(
   sessionId: string,
   chain: unknown,
   method: unknown,
   params: unknown,
   id = createRequestId(),
-): SignByUserRequest {
+): SignTransactionRequest {
   validateRequestId(id);
   if (!isSessionId(sessionId)) {
     throw new ProtocolError("invalid_session", "Invalid sessionId.");
   }
-  const normalizedParams = validateSignRequestInput(chain, method, params, "sign_by_user");
-  const request: SignByUserRequest = {
+  const normalizedParams = validateSignRequestInput(chain, method, params, SUI_SIGN_TRANSACTION_METHOD);
+  const request: SignTransactionRequest = {
     id,
     version: PROTOCOL_VERSION,
-    type: "sign_by_user",
+    type: SUI_SIGN_TRANSACTION_METHOD,
     sessionId,
     chain: SUI_CHAIN_ID,
     method: SUI_SIGN_TRANSACTION_METHOD,
     params: normalizedParams,
   };
   if (Buffer.byteLength(JSON.stringify(request), "utf8") > MAX_RAW_PROTOCOL_JSON_BYTES) {
-    throw new ProtocolError("invalid_params", "sign_by_user request is too large for the runtime.");
-  }
-  return request;
-}
-
-export function makeSignByPolicyRequest(
-  sessionId: string,
-  chain: unknown,
-  method: unknown,
-  params: unknown,
-  id = createRequestId(),
-): SignByPolicyRequest {
-  validateRequestId(id);
-  if (!isSessionId(sessionId)) {
-    throw new ProtocolError("invalid_session", "Invalid sessionId.");
-  }
-  const normalizedParams = validateSignRequestInput(chain, method, params, "sign_by_policy");
-  const request: SignByPolicyRequest = {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "sign_by_policy",
-    sessionId,
-    chain: SUI_CHAIN_ID,
-    method: SUI_SIGN_TRANSACTION_METHOD,
-    params: normalizedParams,
-  };
-  if (Buffer.byteLength(JSON.stringify(request), "utf8") > MAX_RAW_PROTOCOL_JSON_BYTES) {
-    throw new ProtocolError("invalid_params", "sign_by_policy request is too large for the runtime.");
+    throw new ProtocolError("invalid_params", "sign_transaction request is too large for the runtime.");
   }
   return request;
 }
@@ -1148,7 +1110,7 @@ export const SUI_ED25519_SIGNATURE_BASE64_PATTERN = /^[A-Za-z0-9+/]{130}==$/;
 export const SUI_DERIVATION_PATH = "m/44'/784'/0'/0'/0'";
 export const MAX_CAPABILITY_CHAINS = 1;
 export const MAX_CAPABILITY_ACCOUNTS_PER_CHAIN = 1;
-export const MAX_SIGNING_CAPABILITIES_PER_AUTHORIZATION = 1;
+export const MAX_SIGNING_CAPABILITIES = 1;
 // The current target implements exactly one account (Sui Ed25519 account 0). Bound
 // the accounts array so a buggy or spoofed device cannot inflate the MCP result or
 // imply multi-account support that does not exist. Raise this as more accounts or
@@ -1447,21 +1409,21 @@ function sanitizeSigningCapabilities(value: unknown): SigningCapabilities | unde
   if (!isRecord(value)) {
     throw new ProtocolError("protocol_error", "Signing capabilities are malformed.");
   }
-  if (!hasOnlyObjectKeys(value, ["user", "policy"])) {
+  if (!hasOnlyObjectKeys(value, ["authorization", "methods"])) {
     throw new ProtocolError("protocol_error", "Signing capabilities contain unsupported fields.");
   }
-  if (!Array.isArray(value.user) || !Array.isArray(value.policy)) {
+  if (value.authorization !== "user" && value.authorization !== "policy") {
+    throw new ProtocolError("protocol_error", "Signing authorization is unsupported.");
+  }
+  if (!Array.isArray(value.methods)) {
     throw new ProtocolError("protocol_error", "Signing capabilities are malformed.");
   }
-  if (
-    value.user.length !== MAX_SIGNING_CAPABILITIES_PER_AUTHORIZATION ||
-    value.policy.length !== MAX_SIGNING_CAPABILITIES_PER_AUTHORIZATION
-  ) {
+  if (value.methods.length !== MAX_SIGNING_CAPABILITIES) {
     throw new ProtocolError("protocol_error", "Signing capability count is unsupported.");
   }
   return {
-    user: value.user.map((entry) => sanitizeSigningCapabilityEntry(entry)),
-    policy: value.policy.map((entry) => sanitizeSigningCapabilityEntry(entry)),
+    authorization: value.authorization,
+    methods: value.methods.map((entry) => sanitizeSigningCapabilityEntry(entry)),
   };
 }
 

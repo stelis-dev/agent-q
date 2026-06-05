@@ -643,6 +643,7 @@ CPP
   -I"${AGENT_Q_DIR}" \
   "${AGENT_Q_DIR}/agent_q_pin_attempt.cpp" \
   "${AGENT_Q_DIR}/agent_q_persistent_material.cpp" \
+  "${AGENT_Q_DIR}/agent_q_signing_mode.cpp" \
   "${AGENT_Q_DIR}/agent_q_local_pin_auth.cpp" \
   "${AGENT_Q_DIR}/agent_q_local_reset.cpp" \
   "${TMP_DIR}/local_reset_test.cpp" \

@@ -73,14 +73,14 @@ agent_q::AgentQUiPanelCleanupPlan plan(
     agent_q::AgentQUiPanelCleanupEvent event,
     bool reset_matches = false,
     bool pin_matches = false,
-    bool sign_by_user_review_matches = false)
+    bool sign_transaction_user_review_matches = false)
 {
     return agent_q::ui_panel_cleanup_plan(agent_q::AgentQUiPanelCleanupInput{
         kind,
         event,
         reset_matches,
         pin_matches,
-        sign_by_user_review_matches,
+        sign_transaction_user_review_matches,
     });
 }
 
@@ -133,29 +133,29 @@ int main()
     expect(!p.wipe_local_pin_auth && !p.recover_local_pin_auth_panel,
            "explicit local PIN clear without owner match is no-op");
 
-    p = plan(Panel::sign_by_user_review, Event::external_delete);
-    expect(p.recover_sign_by_user_review_panel, "external sign_by_user review delete requests state-loop recovery");
-    expect(!p.wipe_sign_by_user, "external sign_by_user review delete does not wipe directly");
+    p = plan(Panel::sign_transaction_user_review, Event::external_delete);
+    expect(p.recover_sign_transaction_user_review_panel, "external sign_transaction_user review delete requests state-loop recovery");
+    expect(!p.wipe_sign_transaction_user, "external sign_transaction_user review delete does not wipe directly");
 
-    p = plan(Panel::sign_by_user_review, Event::explicit_clear, false, false, true);
-    expect(p.wipe_sign_by_user, "explicit sign_by_user review clear wipes matching signing owner");
-    expect(!p.recover_sign_by_user_review_panel, "explicit sign_by_user review clear does not request recovery");
+    p = plan(Panel::sign_transaction_user_review, Event::explicit_clear, false, false, true);
+    expect(p.wipe_sign_transaction_user, "explicit sign_transaction_user review clear wipes matching signing owner");
+    expect(!p.recover_sign_transaction_user_review_panel, "explicit sign_transaction_user review clear does not request recovery");
 
-    p = plan(Panel::sign_by_user_review, Event::explicit_clear, false, false, false);
-    expect(!p.wipe_sign_by_user && !p.recover_sign_by_user_review_panel,
-           "explicit sign_by_user review clear without owner match is no-op");
+    p = plan(Panel::sign_transaction_user_review, Event::explicit_clear, false, false, false);
+    expect(!p.wipe_sign_transaction_user && !p.recover_sign_transaction_user_review_panel,
+           "explicit sign_transaction_user review clear without owner match is no-op");
 
     p = plan(Panel::settings_menu, Event::external_delete);
     expect(!p.route_provisioning_panel_deleted && !p.wipe_setup_if_unhandled &&
                !p.wipe_local_reset && !p.wipe_local_pin_auth &&
-               !p.recover_local_pin_auth_panel && !p.wipe_sign_by_user &&
-               !p.recover_sign_by_user_review_panel,
+               !p.recover_local_pin_auth_panel && !p.wipe_sign_transaction_user &&
+               !p.recover_sign_transaction_user_review_panel,
            "idle settings panel delete has no state cleanup");
 
     p = plan(Panel::decision_strip, Event::external_delete);
     expect(!p.route_provisioning_panel_deleted && !p.wipe_local_reset &&
                !p.wipe_local_pin_auth && !p.recover_local_pin_auth_panel &&
-               !p.wipe_sign_by_user && !p.recover_sign_by_user_review_panel,
+               !p.wipe_sign_transaction_user && !p.recover_sign_transaction_user_review_panel,
            "decision strip delete does not decide or cancel");
 
     if (failures != 0) {

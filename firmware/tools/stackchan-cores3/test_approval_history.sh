@@ -155,7 +155,7 @@ agent_q::AgentQPolicyUpdateHistoryAppendInput policy_update_input(
     };
 }
 
-agent_q::AgentQSigningHistoryAppendInput sign_by_user_confirmation_input(
+agent_q::AgentQSigningHistoryAppendInput sign_transaction_user_confirmation_input(
     const char* reason = "device_confirmed")
 {
     return agent_q::AgentQSigningHistoryAppendInput{
@@ -171,7 +171,7 @@ agent_q::AgentQSigningHistoryAppendInput sign_by_user_confirmation_input(
     };
 }
 
-agent_q::AgentQSigningHistoryAppendInput sign_by_user_terminal_input(
+agent_q::AgentQSigningHistoryAppendInput sign_transaction_user_terminal_input(
     agent_q::AgentQSigningHistoryTerminalResult result =
         agent_q::AgentQSigningHistoryTerminalResult::signed_success,
     const char* reason = "device_confirmed")
@@ -426,25 +426,25 @@ int main()
                page.records[0].rule_count == 1,
            "policy-update record metadata is preserved");
     expect(agent_q::approval_history_append_required_signing(
-               sign_by_user_confirmation_input(),
+               sign_transaction_user_confirmation_input(),
                1100),
-           "required sign_by_user confirmation history appends");
+           "required sign_transaction_user confirmation history appends");
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
-           "read sign_by_user confirmation record");
+           "read sign_transaction_user confirmation record");
     expect(page.records[0].event_kind == agent_q::AgentQApprovalHistoryEventKind::signing &&
                page.records[0].signing_record_kind ==
                    agent_q::AgentQSigningHistoryRecordKind::confirmation &&
                page.records[0].confirmation_kind == agent_q::AgentQApprovalHistoryConfirmationKind::local_pin &&
                page.records[0].signing_terminal_result ==
                    agent_q::AgentQSigningHistoryTerminalResult::none,
-           "sign_by_user confirmation metadata is preserved");
+           "sign_transaction_user confirmation metadata is preserved");
     expect(strcmp(page.records[0].chain, "sui") == 0 &&
                strcmp(page.records[0].method, "sign_transaction") == 0 &&
                strcmp(page.records[0].payload_digest,
                       "sha256:0000000000000000000000000000000000000000000000000000000000000002") == 0,
-           "sign_by_user confirmation bounded fields are preserved");
+           "sign_transaction_user confirmation bounded fields are preserved");
     expect(agent_q::approval_history_append_required_signing(
-               sign_by_user_terminal_input(),
+               sign_transaction_user_terminal_input(),
                1101),
            "required signing terminal history appends");
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
@@ -508,16 +508,16 @@ int main()
 	    overlarge_rule_count.rule_count = agent_q::kAgentQPolicyMaxRules + 1;
 	    expect(!agent_q::approval_history_append_required_policy_update(overlarge_rule_count, 1205),
 	           "policy-update history rejects overlarge rule count");
-    expect(agent_q::approval_history_wipe(), "wipe before sign_by_user invalid input tests");
-    agent_q::AgentQSigningHistoryAppendInput invalid_signature = sign_by_user_confirmation_input();
+    expect(agent_q::approval_history_wipe(), "wipe before sign_transaction_user invalid input tests");
+    agent_q::AgentQSigningHistoryAppendInput invalid_signature = sign_transaction_user_confirmation_input();
     invalid_signature.confirmation_kind = agent_q::AgentQApprovalHistoryConfirmationKind::policy;
     expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1300),
-           "sign_by_user confirmation rejects policy confirmation kind");
-    invalid_signature = sign_by_user_terminal_input();
+           "sign_transaction_user confirmation rejects policy confirmation kind");
+    invalid_signature = sign_transaction_user_terminal_input();
     invalid_signature.terminal_result = agent_q::AgentQSigningHistoryTerminalResult::none;
     expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1301),
            "signing terminal rejects empty terminal result");
-    invalid_signature = sign_by_user_terminal_input(
+    invalid_signature = sign_transaction_user_terminal_input(
         agent_q::AgentQSigningHistoryTerminalResult::policy_rejected,
         "policy_rejected");
     expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1301),
@@ -527,7 +527,7 @@ int main()
     invalid_signature.reason_code = "user_rejected";
     expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1301),
            "policy signing terminal rejects user_rejected");
-    invalid_signature = sign_by_user_terminal_input();
+    invalid_signature = sign_transaction_user_terminal_input();
     invalid_signature.policy_hash = "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3";
     invalid_signature.rule_ref = "default";
     expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1301),
@@ -536,14 +536,14 @@ int main()
     invalid_signature.policy_hash = nullptr;
     expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1301),
            "policy signing terminal requires policy metadata");
-    invalid_signature = sign_by_user_terminal_input();
+    invalid_signature = sign_transaction_user_terminal_input();
     invalid_signature.payload_digest = "not-a-digest";
     expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1302),
            "signing history rejects invalid payload digest");
     expect(agent_q::approval_history_append_required_signing(
-               sign_by_user_confirmation_input(),
+               sign_transaction_user_confirmation_input(),
                1303),
-           "append sign_by_user before enum corruption");
+           "append sign_transaction_user before enum corruption");
     const std::vector<uint8_t> valid_signature_blob = g_blob;
     expect(mutate_first_method_record_byte(19, 0xFF), "mutate stored event enum");
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
@@ -552,10 +552,10 @@ int main()
     expect(mutate_first_method_record_byte(22, 0xFF), "mutate signature record kind enum");
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
            "stored unsupported signature record kind fails closed");
-    expect(agent_q::approval_history_wipe(), "wipe after sign_by_user enum corruption");
+    expect(agent_q::approval_history_wipe(), "wipe after sign_transaction_user enum corruption");
 
     expect(agent_q::approval_history_append_required_signing(
-               sign_by_user_terminal_input(
+               sign_transaction_user_terminal_input(
                    agent_q::AgentQSigningHistoryTerminalResult::user_rejected,
                    "user_rejected"),
                1400),

@@ -3,9 +3,9 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: firmware/tools/stackchan-cores3/test_sign_by_user_validation.sh
+Usage: firmware/tools/stackchan-cores3/test_sign_transaction_user_validation.sh
 
-Compiles the StackChan CoreS3 sign_by_user split validation helpers
+Compiles the StackChan CoreS3 sign_transaction_user split validation helpers
 against ArduinoJson with a host C++ compiler and checks protocol shape
 boundaries. This test does not require ESP-IDF, but it uses the pinned
 StackChan ArduinoJson component checkout prepared by fetch.sh/build.sh. Set
@@ -32,8 +32,8 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_request_id.h" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.h" \
-  "${AGENT_Q_DIR}/agent_q_sign_by_user_validation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_by_user_validation.h"; do
+  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first, or set AGENT_Q_ARDUINOJSON_ROOT." >&2
@@ -45,7 +45,7 @@ CXX_BIN="${CXX:-c++}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-signature-request-validation.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-cat >"${TMP_DIR}/sign_by_user_validation_test.cpp" <<'CPP'
+cat >"${TMP_DIR}/sign_transaction_user_validation_test.cpp" <<'CPP'
 #include <ArduinoJson.h>
 
 #include <stdio.h>
@@ -55,7 +55,7 @@ cat >"${TMP_DIR}/sign_by_user_validation_test.cpp" <<'CPP'
 #include <string>
 
 #include "agent_q_base64.h"
-#include "agent_q_sign_by_user_validation.h"
+#include "agent_q_sign_transaction_user_validation.h"
 
 namespace {
 
@@ -78,7 +78,7 @@ JsonDocument parse_json(const char* label, const std::string& json)
 
 std::string valid_request_with_params(const std::string& params)
 {
-    return "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+    return "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\","
            "\"chain\":\"sui\",\"method\":\"sign_transaction\","
            "\"params\":" + params + "}";
@@ -89,7 +89,7 @@ std::string request_with_shape(
     const char* method_fragment,
     const std::string& params)
 {
-    return "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+    return "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\"," +
            std::string(chain_fragment == nullptr ? "" : chain_fragment) +
            std::string(method_fragment == nullptr ? "" : method_fragment) +
@@ -114,25 +114,25 @@ void expect_base64(const char* label, const char* value, size_t max_size, bool e
 void expect_envelope(
     const char* label,
     const std::string& json,
-    agent_q::AgentQSignByUserValidationResult expected,
+    agent_q::AgentQSignTransactionUserValidationResult expected,
     const char* expected_request_id = nullptr)
 {
     JsonDocument document = parse_json(label, json);
-    agent_q::AgentQSignByUserEnvelope output = {};
+    agent_q::AgentQSignTransactionUserEnvelope output = {};
     memset(&output, 0xA5, sizeof(output));
-    const agent_q::AgentQSignByUserValidationResult actual =
-        agent_q::validate_sign_by_user_envelope(document, &output);
+    const agent_q::AgentQSignTransactionUserValidationResult actual =
+        agent_q::validate_sign_transaction_user_envelope(document, &output);
     if (actual != expected) {
         fprintf(stderr, "%s: expected envelope result %d, got %d\n",
                 label, static_cast<int>(expected), static_cast<int>(actual));
         ++failures;
     }
-    if (actual != agent_q::AgentQSignByUserValidationResult::ok &&
+    if (actual != agent_q::AgentQSignTransactionUserValidationResult::ok &&
         output.request_id[0] != '\0') {
         fprintf(stderr, "%s: envelope failure did not clear output\n", label);
         ++failures;
     }
-    if (actual == agent_q::AgentQSignByUserValidationResult::ok &&
+    if (actual == agent_q::AgentQSignTransactionUserValidationResult::ok &&
         expected_request_id != nullptr &&
         strcmp(output.request_id, expected_request_id) != 0) {
         fprintf(stderr, "%s: envelope request id did not match\n", label);
@@ -143,25 +143,25 @@ void expect_envelope(
 void expect_session(
     const char* label,
     const std::string& json,
-    agent_q::AgentQSignByUserValidationResult expected,
+    agent_q::AgentQSignTransactionUserValidationResult expected,
     const char* expected_session_id = nullptr)
 {
     JsonDocument document = parse_json(label, json);
-    agent_q::AgentQSignByUserSessionRef output = {};
+    agent_q::AgentQSignTransactionUserSessionRef output = {};
     memset(&output, 0xA5, sizeof(output));
-    const agent_q::AgentQSignByUserValidationResult actual =
-        agent_q::validate_sign_by_user_session_format(document, &output);
+    const agent_q::AgentQSignTransactionUserValidationResult actual =
+        agent_q::validate_sign_transaction_user_session_format(document, &output);
     if (actual != expected) {
         fprintf(stderr, "%s: expected session result %d, got %d\n",
                 label, static_cast<int>(expected), static_cast<int>(actual));
         ++failures;
     }
-    if (actual != agent_q::AgentQSignByUserValidationResult::ok &&
+    if (actual != agent_q::AgentQSignTransactionUserValidationResult::ok &&
         output.session_id[0] != '\0') {
         fprintf(stderr, "%s: session failure did not clear output\n", label);
         ++failures;
     }
-    if (actual == agent_q::AgentQSignByUserValidationResult::ok &&
+    if (actual == agent_q::AgentQSignTransactionUserValidationResult::ok &&
         expected_session_id != nullptr &&
         strcmp(output.session_id, expected_session_id) != 0) {
         fprintf(stderr, "%s: session id did not match\n", label);
@@ -172,22 +172,22 @@ void expect_session(
 void expect_params(
     const char* label,
     const std::string& json,
-    agent_q::AgentQSignByUserValidationResult expected,
+    agent_q::AgentQSignTransactionUserValidationResult expected,
     size_t expected_decoded_size = 0,
     const char* expected_network = nullptr)
 {
     JsonDocument document = parse_json(label, json);
-    agent_q::AgentQSignByUserParams output = {};
+    agent_q::AgentQSignTransactionUserParams output = {};
     memset(&output, 0xA5, sizeof(output));
-    const agent_q::AgentQSignByUserValidationResult actual =
-        agent_q::validate_sign_by_user_params(document, &output);
+    const agent_q::AgentQSignTransactionUserValidationResult actual =
+        agent_q::validate_sign_transaction_user_params(document, &output);
     if (actual != expected) {
         fprintf(stderr, "%s: expected params result %d, got %d\n",
                 label, static_cast<int>(expected), static_cast<int>(actual));
         ++failures;
         return;
     }
-    if (actual != agent_q::AgentQSignByUserValidationResult::ok &&
+    if (actual != agent_q::AgentQSignTransactionUserValidationResult::ok &&
         (output.chain[0] != '\0' ||
          output.method[0] != '\0' ||
          output.network[0] != '\0' ||
@@ -196,12 +196,12 @@ void expect_params(
         fprintf(stderr, "%s: params failure did not clear output\n", label);
         ++failures;
     }
-    if (actual == agent_q::AgentQSignByUserValidationResult::ok &&
+    if (actual == agent_q::AgentQSignTransactionUserValidationResult::ok &&
         expected_network == nullptr) {
         fprintf(stderr, "%s: params test did not provide expected output fields\n", label);
         ++failures;
     }
-    if (actual == agent_q::AgentQSignByUserValidationResult::ok &&
+    if (actual == agent_q::AgentQSignTransactionUserValidationResult::ok &&
         expected_network != nullptr &&
         (strcmp(output.chain, "sui") != 0 ||
          strcmp(output.method, "sign_transaction") != 0 ||
@@ -230,10 +230,10 @@ void wipe_sensitive_buffer(void* data, size_t size)
 
 int main()
 {
-    using Result = agent_q::AgentQSignByUserValidationResult;
+    using Result = agent_q::AgentQSignTransactionUserValidationResult;
 
     const std::string malformed_params_request =
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":[]}";
 
     expect_envelope(
@@ -270,28 +270,28 @@ int main()
 
     expect_envelope(
         "missing id",
-        "{\"version\":1,\"type\":\"sign_by_user\","
+        "{\"version\":1,\"type\":\"sign_transaction\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "embedded nul id",
-        "{\"id\":\"req_sign_1\\u0000x\",\"version\":1,\"type\":\"sign_by_user\","
+        "{\"id\":\"req_sign_1\\u0000x\",\"version\":1,\"type\":\"sign_transaction\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "unsafe id with slash",
-        "{\"id\":\"req/signature/1\",\"version\":1,\"type\":\"sign_by_user\","
+        "{\"id\":\"req/signature/1\",\"version\":1,\"type\":\"sign_transaction\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "unsafe id with space",
-        "{\"id\":\"req signature 1\",\"version\":1,\"type\":\"sign_by_user\","
+        "{\"id\":\"req signature 1\",\"version\":1,\"type\":\"sign_transaction\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
@@ -299,14 +299,14 @@ int main()
     expect_envelope(
         "overlong id",
         "{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
-        "\"version\":1,\"type\":\"sign_by_user\","
+        "\"version\":1,\"type\":\"sign_transaction\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "unsupported version",
-        "{\"id\":\"req_sign_1\",\"version\":2,\"type\":\"sign_by_user\","
+        "{\"id\":\"req_sign_1\",\"version\":2,\"type\":\"sign_transaction\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
@@ -320,53 +320,53 @@ int main()
         Result::unsupported_type);
     expect_envelope(
         "wrong type",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_policy\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction_policy\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::unsupported_type);
     expect_envelope(
         "top level unsupported field",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"extra\":true,\"params\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::unsupported_field);
     expect_session(
         "missing session",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
         "\"params\":{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_session(
         "bad session prefix",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
         "\"sessionId\":\"not_session_aaaaaaaaaaaaaaaa\",\"params\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_session(
         "uppercase session hex",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
         "\"sessionId\":\"session_AAAAAAAAAAAAAAAA\",\"params\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_session(
         "embedded nul session",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
         "\"sessionId\":\"session_aaaaaaaa\\u0000x\",\"params\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_session(
         "overlong session",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
         "\"params\":{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_params(
         "params missing",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_by_user\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\"}",
         Result::invalid_params_shape);
     expect_params(
@@ -433,10 +433,10 @@ int main()
                                   std::string(agent_q::kAgentQSuiSignTransactionTxBytesMaxBase64Size + 4, 'A') +
                                   "\"}"),
         Result::invalid_tx_bytes);
-    if (strcmp(agent_q::sign_by_user_validation_result_name(Result::ok), "ok") != 0 ||
-        strcmp(agent_q::sign_by_user_validation_result_name(Result::unsupported_type),
+    if (strcmp(agent_q::sign_transaction_user_validation_result_name(Result::ok), "ok") != 0 ||
+        strcmp(agent_q::sign_transaction_user_validation_result_name(Result::unsupported_type),
                "unsupported_type") != 0 ||
-        strcmp(agent_q::sign_by_user_validation_result_name(Result::invalid_tx_bytes),
+        strcmp(agent_q::sign_transaction_user_validation_result_name(Result::invalid_tx_bytes),
                "invalid_tx_bytes") != 0) {
         fprintf(stderr, "result names did not match\n");
         ++failures;
@@ -447,7 +447,7 @@ int main()
     expect_base64("base64 unterminated within max", unterminated, 3, false);
 
     if (failures != 0) {
-        fprintf(stderr, "%d sign_by_user validation checks failed\n", failures);
+        fprintf(stderr, "%d sign_transaction_user validation checks failed\n", failures);
         return 1;
     }
     return 0;
@@ -459,11 +459,11 @@ CPP
   -I"${ARDUINOJSON_ROOT}" \
   -I"${AGENT_Q_DIR}" \
   -I"${REPO_ROOT}/firmware/src/common" \
-  "${TMP_DIR}/sign_by_user_validation_test.cpp" \
+  "${TMP_DIR}/sign_transaction_user_validation_test.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_by_user_validation.cpp" \
-  -o "${TMP_DIR}/sign_by_user_validation_test"
+  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.cpp" \
+  -o "${TMP_DIR}/sign_transaction_user_validation_test"
 
-"${TMP_DIR}/sign_by_user_validation_test"
+"${TMP_DIR}/sign_transaction_user_validation_test"

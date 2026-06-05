@@ -63,10 +63,11 @@ request contents against local policy and limits risk through automatic rules
 such as allowlists, spending limits, rate limits, and rejection. Device-local
 approval is a separate request/state gate, not a policy action or policy
 escalation path.
-Agent-Q distinguishes delegated policy requests from device-confirmed signing
-requests. Device confirmation is a Firmware-owned
+Agent-Q distinguishes policy authorization from device-local confirmation as
+separate Firmware-owned signing gates. Device confirmation is a Firmware-owned
 approval step for a bounded request; it does not prove that the host, dapp,
-provider, agent, or upstream user intent was trustworthy.
+provider, agent, or upstream user intent was trustworthy. Protocol requests and
+adapter surfaces do not choose the signing authorization mode.
 
 ## Products
 
@@ -84,8 +85,8 @@ registry, USB transport, runtime session mirror, and protocol parsing and
 building. `@stelis/agent-q-mcp` provides the stdio MCP server, CLI binary, and
 local Admin Page. `@stelis/agent-q-provider-sui` provides the Sui
 application-facing adapter for current device, session, read-only Sui
-capabilities, provider-facing user-confirmed Sui signing, and an app-imported
-Sui Wallet Standard registration adapter for `sui:signTransaction`.
+capabilities, Sui `signTransaction`, and an app-imported Sui Wallet Standard
+registration adapter for `sui:signTransaction`.
 
 Current package roles and dependencies:
 
@@ -93,7 +94,7 @@ Current package roles and dependencies:
 | --- | --- | --- | --- |
 | `@stelis/agent-q-client` | Device-facing SDK for hardware discovery, USB transport, runtime sessions, protocol builders/parsers, and output schemas. | Firmware protocol / USB transport. | Owns the direct Firmware protocol boundary. |
 | `@stelis/agent-q-mcp` | Local Gateway adapter: stdio MCP server, CLI binary, and local Admin Page. | `@stelis/agent-q-client`. | Uses the admin-capable client entrypoint for MCP tools and Admin Page requests. |
-| `@stelis/agent-q-provider-sui` | Sui dapp-facing provider and Wallet Standard adapter for `sui:signTransaction`. | `@stelis/agent-q-client` and Sui SDK packages. | Uses the device client facade for dapp-facing discovery, connection, account reads, capabilities, and `signByUser`. |
+| `@stelis/agent-q-provider-sui` | Sui dapp-facing provider and Wallet Standard adapter for `sui:signTransaction`. | `@stelis/agent-q-client` and Sui SDK packages. | Uses the device client facade for dapp-facing discovery, connection, account reads, capabilities, and `signTransaction`. |
 | `packages/example-sui-dapp-kit` | Private workspace example for dapp-kit integration. | `@stelis/agent-q-provider-sui` and dapp-kit dependencies. | Uses the provider-sui Wallet Standard adapter with an injected provider runtime. |
 
 MCP and provider packages narrow the API surface they present to their audience,
@@ -114,13 +115,13 @@ Agent-Q Firmware is installed on hardware.
 Firmware is the authority component: it stores device-held key material and
 policies, evaluates requests locally, handles device-local approval for
 implemented sensitive flows, and returns Firmware-authored results to Gateway.
-Provider-facing device-confirmed signing for the current bounded Sui
-`sign_transaction` transfer shape has `provider-exposed-not-product-active`
-status through `sign_by_user`.
-Current-tree provider positive/reject/timeout/session-loss smoke for the new
-Sign API wire names remains pending; product-active status is not claimed. The
-MCP tool surface includes policy-authorized signing through `sign_by_policy`;
-it does not include user-confirmed provider signing.
+The current bounded Sui `sign_transaction` transfer shape is source-wired
+through Firmware, client, MCP, provider-sui, and Wallet Standard surfaces.
+Firmware reads its device-local signing authorization mode, then chooses either
+the policy signing gate or the user-confirmed signing gate; requests do not
+choose it. Current-tree positive/reject/timeout/session-loss smoke and LVGL
+visual evidence remain pending, so product-active signing status is not
+claimed.
 
 Firmware source is organized by hardware under `firmware/src/`.
 
@@ -135,7 +136,7 @@ tracked Agent-Q overlay, and build.
 Gateway and Firmware communicate through the shared protocol in
 `specs/PROTOCOL.md`.
 
-The delegated MCP-facing baseline has a clear session flow:
+The active-session baseline has a clear session flow:
 
 ```text
 get_status
@@ -145,18 +146,17 @@ get_status
     -> get_accounts
     -> policy_get
     -> get_approval_history
-    -> sign_by_policy*
+    -> sign_transaction*
   -> disconnect
 ```
 
-Provider-facing device-confirmed signing uses `sign_by_user`. MCP
-policy-authorized signing uses `sign_by_policy`. Both use the shared Sign API
-request shape, but the authorization source differs: `sign_by_user` requires
-Firmware-owned device-local confirmation, while `sign_by_policy` requires the
-active Firmware policy to return the bounded `sign` action. The current source
-tree is wired for the bounded Sui `sign_transaction` restricted-transfer shape.
-Product-active status still requires current-tree firmware build, flash, target
-hardware smoke, and visual review evidence for the same contract.
+`sign_transaction` is the shared transaction signing request. Firmware selects
+the signing gate from its local signing mode: policy mode evaluates the active
+policy and signs with speech-bubble status notifications when policy authorizes
+the bounded request, while user mode uses device-local clear-signing
+confirmation and local PIN for the bounded request. Product-active status still
+requires current-tree firmware build, flash, target hardware smoke, and visual
+review evidence for the same contract.
 
 Chains, transports, and hardware targets must fit this protocol instead of
 creating separate product-level APIs.
@@ -191,11 +191,13 @@ Implemented:
 - Session-scoped capability, policy-summary, and approval-history reads for the
   currently implemented device metadata, signing records, and policy-update
   terminal records.
-- A session-scoped `sign_by_policy` path. The current Sui `sign_transaction`
-  path validates bounded restricted-transfer inputs, evaluates the active
-  Firmware policy, returns `policy_rejected` when no bounded sign rule matches,
-  and returns `signed` only after a current-schema single-recipient bounded
-  `sign` policy rule matches.
+- A session-scoped `sign_transaction` path. The current Sui `sign_transaction`
+  path validates bounded restricted-transfer inputs. In policy authorization
+  mode it evaluates the active Firmware policy, returns `policy_rejected` when
+  no bounded sign rule matches, and returns `signed` only after a
+  current-schema single-recipient bounded `sign` policy rule matches. In user
+  authorization mode it uses device-local clear-signing review and local PIN
+  confirmation.
 - A bounded policy-update proposal path for currently enforceable reject/sign
   policies. Gateway/MCP can submit proposals, but Firmware validates them,
   rejects broad, multi-rule, or multi-recipient signing policies that the
@@ -205,27 +207,27 @@ Implemented:
   summary, approval history, and the current policy proposal template. It
   is not a policy authority.
 - A Sui application-facing provider package for device discovery, connection,
-  read-only Sui account/capability data, and provider-facing `signByUser`
-  transport. The provider also exposes a Wallet Standard registration adapter
-  for `sui:signTransaction`. Its dapp-facing provider object and Wallet
-  Standard adapter do not include active policy summaries, approval history,
-  policy update, policy signing, key storage, signing decisions,
-  `sui:signPersonalMessage`, or `sui:signAndExecuteTransaction`. This is
+  read-only Sui account/capability data, and `signTransaction` transport. The
+  provider also exposes a Wallet Standard registration adapter for
+  `sui:signTransaction`. Its dapp-facing provider object and Wallet Standard
+  adapter do not include active policy summaries, approval history, policy
+  update, policy signing, key storage, signing decisions,
+  `sui:signPersonalMessage`, or `sui:signAndExecuteTransaction`. Personal
+  message signing is not exposed because the current Firmware policy facts,
+  clear-review UI, and history contract are transaction-only. This is
   adapter API projection, not a security boundary against direct imports of
   broader client/Admin package entrypoints.
 - A common host-tested policy evaluator and default-reject runtime boundary.
 
 Under current-source verification:
 
-- Provider-facing device-confirmed `sign_by_user` has
-  `provider-exposed-not-product-active` status for the bounded Sui
-  `sign_transaction` transfer shape. The current source includes
-  validation, state-first ingress, RAM-only request flow, clear-signing review,
-  local PIN confirmation, required pre-signing history, signing-critical
-  handoff, terminal history, `sign_result`, provider `signByUser`,
-  client parser/builder, and provider-facing `signing` capability.
-  Current-tree provider positive/reject/timeout/session-loss smoke for the new
-  Sign API wire names remains pending; product-active status is not claimed.
+- `sign_transaction` has source-wired but not product-active status for the
+  bounded Sui transfer shape. The current source includes validation,
+  state-first ingress, policy authorization, user clear-signing review, local
+  PIN confirmation, required history, signing-critical handoff, terminal
+  history, `sign_result`, provider `signTransaction`, client parser/builder,
+  MCP tool, and `get_capabilities.signing` metadata. Current-tree hardware
+  smoke remains pending; product-active status is not claimed.
 
 Not yet implemented: arbitrary Sui transaction signing, sponsored Sui
 transaction signing, Sui personal-message signing, spending and rate limits

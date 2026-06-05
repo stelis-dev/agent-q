@@ -12,6 +12,7 @@
 #include "agent_q_local_reset.h"
 #include "agent_q_policy_update_flow.h"
 #include "agent_q_provisioning_flow.h"
+#include "agent_q_signing_mode.h"
 #include "hal/hal.h"
 
 namespace agent_q {
@@ -46,17 +47,18 @@ constexpr int kPinKeypadRowHeight = 25;
 constexpr int kSettingsMenuButtonCenterX = (kScreenWidth - 16 - kRecoveryPhraseButtonWidth) / 2;
 constexpr int kSettingsMenuRowLabelX = 24;
 constexpr int kSettingsMenuRowControlX = 218;
-constexpr int kSettingsMenuRowOneY = 62;
-constexpr int kSettingsMenuRowTwoY = 100;
-constexpr int kSettingsMenuRowThreeY = 138;
+constexpr int kSettingsMenuRowOneY = 54;
+constexpr int kSettingsMenuRowTwoY = 86;
+constexpr int kSettingsMenuRowThreeY = 118;
+constexpr int kSettingsMenuRowFourY = 150;
 constexpr int kSettingsMenuActionButtonWidth = 72;
 constexpr int kSettingsMenuActionButtonHeight = 26;
-constexpr int kSignByUserReviewRowLabelX = 18;
-constexpr int kSignByUserReviewRowValueX = 90;
-constexpr int kSignByUserReviewRowTop = 34;
-constexpr int kSignByUserReviewRowWidth = 206;
-constexpr int kSignByUserReviewNormalRowHeight = 16;
-constexpr int kSignByUserReviewRecipientRowHeight = 34;
+constexpr int kSignTransactionUserReviewRowLabelX = 18;
+constexpr int kSignTransactionUserReviewRowValueX = 90;
+constexpr int kSignTransactionUserReviewRowTop = 34;
+constexpr int kSignTransactionUserReviewRowWidth = 206;
+constexpr int kSignTransactionUserReviewNormalRowHeight = 16;
+constexpr int kSignTransactionUserReviewRecipientRowHeight = 34;
 constexpr int kSetupMenuGenerateButtonY = 78;
 constexpr int kSetupMenuRecoverButtonY = 114;
 constexpr int kMnemonicWordCellWidth = 90;
@@ -354,9 +356,9 @@ static bool make_settings_row_label(lv_obj_t* parent, const char* text, int y)
     return true;
 }
 
-static bool make_sign_by_user_review_row(
+static bool make_sign_transaction_user_review_row(
     lv_obj_t* parent,
-    const AgentQSignByUserReviewRow& row,
+    const AgentQSignTransactionUserReviewRow& row,
     int y,
     bool recipient_row)
 {
@@ -366,11 +368,11 @@ static bool make_sign_by_user_review_row(
     }
     lv_label_set_text(label, row.label);
     lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_width(label, kSignByUserReviewRowValueX - kSignByUserReviewRowLabelX - 8);
+    lv_obj_set_width(label, kSignTransactionUserReviewRowValueX - kSignTransactionUserReviewRowLabelX - 8);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(label, &lv_font_unscii_8, 0);
     lv_obj_set_style_text_color(label, lv_color_hex(0x475467), 0);
-    lv_obj_align(label, LV_ALIGN_TOP_LEFT, kSignByUserReviewRowLabelX, y + 2);
+    lv_obj_align(label, LV_ALIGN_TOP_LEFT, kSignTransactionUserReviewRowLabelX, y + 2);
 
     lv_obj_t* value = lv_label_create(parent);
     if (value == nullptr) {
@@ -378,11 +380,11 @@ static bool make_sign_by_user_review_row(
     }
     lv_label_set_text(value, row.value);
     lv_label_set_long_mode(value, recipient_row ? LV_LABEL_LONG_WRAP : LV_LABEL_LONG_CLIP);
-    lv_obj_set_width(value, kSignByUserReviewRowWidth);
+    lv_obj_set_width(value, kSignTransactionUserReviewRowWidth);
     lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(value, &lv_font_unscii_8, 0);
     lv_obj_set_style_text_color(value, lv_color_hex(0x111827), 0);
-    lv_obj_align(value, LV_ALIGN_TOP_LEFT, kSignByUserReviewRowValueX, y + 2);
+    lv_obj_align(value, LV_ALIGN_TOP_LEFT, kSignTransactionUserReviewRowValueX, y + 2);
     return true;
 }
 
@@ -1212,6 +1214,9 @@ bool modal_draw_settings_menu_panel()
     bool require_pin_on_connect = true;
     const bool connect_setting_read_ok =
         agent_q::read_require_pin_on_connect(&require_pin_on_connect);
+    AgentQSigningAuthorizationMode signing_mode = AgentQSigningAuthorizationMode::user;
+    const bool signing_mode_read_ok =
+        agent_q::read_signing_authorization_mode(&signing_mode);
 
     // Settings are fixed rows: add future settings by appending the same
     // label/control pair, not by adding explanatory text blocks.
@@ -1228,23 +1233,38 @@ bool modal_draw_settings_menu_panel()
             connect_setting_read_ok ? g_callbacks.on_settings_connect_pin_clicked : nullptr,
             nullptr,
             connect_setting_read_ok) ||
-        !make_settings_row_label(panel, "Change PIN", kSettingsMenuRowTwoY) ||
+        !make_settings_row_label(panel, "Sign auth", kSettingsMenuRowTwoY) ||
         !make_setup_button(
             panel,
-            "CHANGE",
+            signing_mode_read_ok
+                ? (signing_mode == AgentQSigningAuthorizationMode::policy ? "POLICY" : "USER")
+                : "ERR",
             kSettingsMenuRowControlX,
             kSettingsMenuRowTwoY,
             kSettingsMenuActionButtonWidth,
             kSettingsMenuActionButtonHeight,
             SetupButtonKind::outlined_keypad,
             lv_color_hex(0x24875A),
+            signing_mode_read_ok ? g_callbacks.on_settings_signing_mode_clicked : nullptr,
+            nullptr,
+            signing_mode_read_ok) ||
+        !make_settings_row_label(panel, "Change PIN", kSettingsMenuRowThreeY) ||
+        !make_setup_button(
+            panel,
+            "CHANGE",
+            kSettingsMenuRowControlX,
+            kSettingsMenuRowThreeY,
+            kSettingsMenuActionButtonWidth,
+            kSettingsMenuActionButtonHeight,
+            SetupButtonKind::outlined_keypad,
+            lv_color_hex(0x24875A),
             g_callbacks.on_settings_change_pin_clicked) ||
-        !make_settings_row_label(panel, "Reset device", kSettingsMenuRowThreeY) ||
+        !make_settings_row_label(panel, "Reset device", kSettingsMenuRowFourY) ||
         !make_setup_button(
             panel,
             "RESET",
             kSettingsMenuRowControlX,
-            kSettingsMenuRowThreeY,
+            kSettingsMenuRowFourY,
             kSettingsMenuActionButtonWidth,
             kSettingsMenuActionButtonHeight,
             SetupButtonKind::solid_action,
@@ -1504,8 +1524,11 @@ static const char* local_pin_auth_default_message(
         }
         return "Approve policy update.";
     }
-    if (snapshot.purpose == AgentQLocalPinAuthPurpose::sign_by_user) {
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::sign_transaction_user) {
         return "Confirm signing with local PIN.";
+    }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_signing_mode) {
+        return "Enter PIN to change signing mode.";
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {
@@ -1530,8 +1553,11 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::policy_update) {
         return "Policy PIN";
     }
-    if (snapshot.purpose == AgentQLocalPinAuthPurpose::sign_by_user) {
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::sign_transaction_user) {
         return "Signing PIN";
+    }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_signing_mode) {
+        return "Signing Mode";
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {
@@ -1545,12 +1571,12 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
     return "Settings PIN";
 }
 
-bool modal_draw_sign_by_user_review_panel(
-    const AgentQSignByUserReviewViewModel& model)
+bool modal_draw_sign_transaction_user_review_panel(
+    const AgentQSignTransactionUserReviewViewModel& model)
 {
     if (model.title[0] == '\0' ||
         model.row_count == 0 ||
-        model.row_count > kAgentQSignByUserReviewMaxRows) {
+        model.row_count > kAgentQSignTransactionUserReviewMaxRows) {
         return false;
     }
 
@@ -1560,7 +1586,7 @@ bool modal_draw_sign_by_user_review_panel(
     request_display_power_wake();
     drawing_surface_clear_panel_locked();
 
-    lv_obj_t* panel = drawing_surface_create_panel_locked(AgentQUiPanelKind::sign_by_user_review);
+    lv_obj_t* panel = drawing_surface_create_panel_locked(AgentQUiPanelKind::sign_transaction_user_review);
     if (panel == nullptr) {
         return false;
     }
@@ -1588,16 +1614,16 @@ bool modal_draw_sign_by_user_review_panel(
     lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
 
-    int row_y = kSignByUserReviewRowTop;
+    int row_y = kSignTransactionUserReviewRowTop;
     for (size_t index = 0; index < model.row_count; ++index) {
         const bool recipient_row = strcmp(model.rows[index].label, "Recipient") == 0;
-        if (!make_sign_by_user_review_row(panel, model.rows[index], row_y, recipient_row)) {
+        if (!make_sign_transaction_user_review_row(panel, model.rows[index], row_y, recipient_row)) {
             drawing_surface_clear_panel_locked();
             return false;
         }
         row_y += recipient_row
-            ? kSignByUserReviewRecipientRowHeight
-            : kSignByUserReviewNormalRowHeight;
+            ? kSignTransactionUserReviewRecipientRowHeight
+            : kSignTransactionUserReviewNormalRowHeight;
     }
 
     if (!make_setup_button(
@@ -1609,7 +1635,7 @@ bool modal_draw_sign_by_user_review_panel(
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(0xA53B3B),
-            g_callbacks.on_sign_by_user_review_reject_clicked) ||
+            g_callbacks.on_sign_transaction_user_review_reject_clicked) ||
         !make_setup_button(
             panel,
             "Sign",
@@ -1619,7 +1645,7 @@ bool modal_draw_sign_by_user_review_panel(
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(0x24875A),
-            g_callbacks.on_sign_by_user_review_accept_clicked)) {
+            g_callbacks.on_sign_transaction_user_review_accept_clicked)) {
         drawing_surface_clear_panel_locked();
         return false;
     }

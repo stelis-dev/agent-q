@@ -4,10 +4,9 @@
 package.
 
 It exposes current device discovery, device selection, connection, read-only
-Sui account/capability data, and provider-facing device-confirmed Sui
-`sign_transaction` transport through a small provider object. It also exposes
-an app-imported Sui Wallet Standard registration adapter for
-`sui:signTransaction`.
+Sui account/capability data, and Sui `sign_transaction` transport through a
+small provider object. It also exposes an app-imported Sui Wallet Standard
+registration adapter for `sui:signTransaction`.
 
 The Sui provider does not store signing keys and does not make policy
 decisions. Agent-Q Firmware remains the authority for keys, policy evaluation,
@@ -31,7 +30,7 @@ The current package still depends on `@stelis/agent-q-client` because the root
 provider factory is Node/Gateway-local. The `./wallet-standard` subpath must
 remain runtime-separated from that Node transport. A future browser-safe
 provider runtime must be injected into the Wallet Standard adapter and must
-expose only the provider-facing methods described below.
+expose only the dapp-facing methods described below.
 
 This package narrows the dapp-facing API it presents. That is not a security
 boundary against an application that deliberately imports
@@ -57,16 +56,19 @@ policy evaluation, signing, persistence, and cleanup.
 - `disconnectDevice`
 - `getCapabilities`
 - `getAccounts`
-- `signByUser`
+- `signTransaction`
 
-The dapp-facing provider object does not include policy update proposals, raw
-delegated `signByPolicy` access, active policy summaries, or approval history.
+The dapp-facing provider object does not include policy update proposals,
+active policy summaries, approval history, or any host-selected signing
+authorization API.
 Those APIs remain on broader client, MCP, or Admin surfaces. This is API
 projection for the provider audience, not a security claim that the same
 application cannot import the client/Admin package directly. Provider-facing
-signing uses only `signByUser`, which passes a bounded request to Firmware for
-device-local review, local PIN confirmation, required history, and signing. The
-provider does not decide whether signing is allowed.
+signing uses only `signTransaction`, which passes a bounded request to
+Firmware. Firmware uses its device-local signing mode to select the policy or
+user authorization gate, records required history, and signs or rejects. The
+provider does not decide whether signing is allowed and cannot select the
+authorization mode.
 
 The current signing method is Sui `sign_transaction` only. Sui personal-message
 signing and transaction execution are not implemented and must not be
@@ -83,8 +85,8 @@ features only:
 - `sui:signTransaction`
 
 It does not expose `sui:signPersonalMessage`,
-`sui:signAndExecuteTransaction`, Admin, policy update, `signByPolicy`, policy
-reads, or approval-history reads.
+`sui:signAndExecuteTransaction`, Admin, policy update, policy reads,
+approval-history reads, or a host-selected authorization API.
 
 Apps can register the wallet directly:
 
@@ -125,9 +127,11 @@ export const dAppKit = createDAppKit({
 });
 ```
 
-The wallet signs through provider-sui `signByUser`, which sends
-`sign_by_user` to Firmware. Firmware remains responsible for review, local PIN,
-history, signing, and cleanup.
+The wallet signs through provider-sui `signTransaction`, which sends
+`sign_transaction` to Firmware. Firmware remains responsible for selecting the
+policy or user signing gate from its local signing mode, active policy
+evaluation in policy mode, device-local user confirmation in user mode, history,
+signing, and cleanup.
 
 See `packages/example-sui-dapp-kit/` for a minimal dapp-kit integration
 skeleton. The example intentionally does not create a fake provider; it
@@ -142,13 +146,13 @@ provider factory:
 - `connectDevice`
 - `disconnectDevice`
 - `getAccounts`
-- `signByUser`
+- `signTransaction`
 
 The injected browser provider contract contains only the methods above. It must
 not include Admin, policy update, active-policy reads, approval-history reads,
-`signByPolicy`, `sign_by_policy`, raw session tokens, secrets, or
+host-selected authorization controls, raw session tokens, secrets, or
 caller-controlled timing fields. That keeps the Wallet Standard adapter
-provider-facing; Firmware remains the security authority. Any future browser
+dapp-facing; Firmware remains the security authority. Any future browser
 runtime must implement this provider-only injection contract instead of reusing
 broader management surfaces.
 
@@ -166,14 +170,14 @@ npm --workspace @stelis/agent-q-provider-sui run build
 npm --workspace @stelis/agent-q-provider-sui test
 ```
 
-The current source tree tracks an opt-in hardware smoke test for
-`provider-exposed-not-product-active` signing in the client package, where the
+The current source tree tracks opt-in hardware smoke tests for
+`source-wired-not-product-active` signing in the client package, where the
 direct USB/Firmware boundary lives:
 
 ```sh
-AGENTQ_HW_CLIENT_SIGN_BY_USER=1 \
-AGENTQ_HW_CLIENT_SIGN_BY_USER_SCENARIO=positive \
-AGENTQ_HW_CLIENT_SIGN_BY_USER_TX_BYTES=<base64> \
+AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER=1 \
+AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive \
+AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES=<base64> \
 node --test packages/client/test/hardware-sign-api-smoke.test.mjs
 ```
 

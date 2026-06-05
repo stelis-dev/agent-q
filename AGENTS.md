@@ -59,15 +59,19 @@ Non-negotiable boundaries:
   or host environment before a signing request was created.
 - Agent-Q must not claim to detect user intent, prompt injection, compromised
   agent behavior, or any other upstream cause of a signing request.
-- Treat all external requests as untrusted inputs. Firmware policy must evaluate
-  request contents and constrain risk through explicit automatic rules such as
-  allowlists, spending limits, rate limits, and rejection. Device-local approval
-  is a separate request/state gate, not a policy action or policy escalation
-  path.
-- Future signing work must keep delegated policy requests and device-confirmed
-  requests separate. A device-confirmed request means Firmware requires
-  device-local confirmation for a bounded request; it does not prove the host,
-  dapp, provider, agent, or user intent that produced the request.
+- Treat all external requests as untrusted inputs. Firmware-owned gates must
+  validate bounded request contents before signing. In policy-authorization
+  mode, Firmware policy constrains risk through explicit automatic rules such
+  as allowlists, spending limits, rate limits, and rejection. In
+  device-confirmed mode, Firmware must parse, bind, display, confirm, and sign
+  only the implemented bounded request shape. Device-local approval is a
+  separate request/state gate, not a policy action or policy escalation path.
+- Signing work must keep policy authorization and device-local confirmation as
+  separate Firmware-owned gates. A device-confirmed gate means Firmware
+  requires device-local confirmation for a bounded request; it does not prove
+  the host, dapp, provider, agent, or user intent that produced the request.
+  Protocol requests and adapter surfaces must not choose the signing
+  authorization mode.
 - Current policy documents may contain only current-schema action values. Any
   other action value is invalid input and must fail closed without named
   compatibility branches, reserved paths, or hidden conversion into another
@@ -414,18 +418,17 @@ get_status
     -> get_accounts
     -> policy_get
     -> get_approval_history
-    -> sign_by_policy*
-    -> sign_by_user*
+    -> sign_transaction*
   -> disconnect
 ```
 
-`sign_by_policy*` means zero or more policy-authorized signing requests during
-an active session.
-`sign_by_user*` means zero or more device-confirmed signing requests during an
-active session. Current adapters may project different subsets for their
+`sign_transaction*` means zero or more transaction-signing requests during an
+active session. Firmware chooses the policy or user signing gate from its
+device-local signing authorization mode; protocol requests and adapter surfaces
+must not select that mode. Current adapters may project different UX for their
 audiences, but adapter projection is not the security boundary. Do not describe
-either signing path as product-complete until tracked implementation status and
-target hardware-smoke evidence for the current tree both say it is verified.
+signing as product-complete until tracked implementation status and target
+hardware-smoke evidence for the current tree both say it is verified.
 
 Current intended structure:
 
@@ -439,6 +442,7 @@ packages/
   client/
   mcp/
   provider-sui/
+  example-sui-dapp-kit/
 
 firmware/
   README.md

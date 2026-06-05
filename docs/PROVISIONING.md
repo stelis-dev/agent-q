@@ -64,8 +64,8 @@ Rules:
 - The mnemonic is shown only during provisioning.
 - After confirmation, the mnemonic is not shown again.
 - If setup is canceled, Firmware wipes the generated material.
-- A device is not `provisioned` unless root material, an active policy, and a
-  local PIN verifier are all present.
+- A device is not `provisioned` unless root material, an active policy, a local
+  PIN verifier, and a signing authorization mode are all present.
 - The local PIN verifier is a DEV_PROFILE UX gate for connect approval when
   enabled, settings changes, local reset, the current policy-update proposal
   flow, and sensitive local writes. It is not root-material encryption or
@@ -104,11 +104,13 @@ StackChan CoreS3 has display and touch hardware. Source-level DEV_PROFILE
 recovery phrase generation, backup confirmation, persistent root storage, and
 read-only `get_accounts` Sui account derivation are implemented. The current
 setup source also records a DEV_PROFILE local PIN verifier before reporting
-`provisioned`. Source/build tests cover the provisioned Gateway/MCP session path
-through `get_accounts`, policy-decision rejection, and restricted SUI transfer
-request validation through policy-gated `sign_by_policy`. Hardware smoke coverage exists for
-StackChan CoreS3 local setup and PIN entry. Targeted hardware verification
-remains required after setup UI or state changes. Source-level local settings
+`provisioned`, and initializes device-local signing authorization mode to
+`user`. Source/build tests cover the provisioned Gateway/MCP session path
+through `get_accounts`, policy-decision rejection, restricted SUI transfer
+request validation, and the current `sign_transaction` policy/user gate split.
+Hardware smoke coverage exists for StackChan CoreS3 local setup and PIN entry.
+Targeted hardware verification remains required after setup UI or state changes.
+Source-level local settings
 reset/material wipe now exists for provisioned StackChan CoreS3 devices, with
 hardware smoke coverage for local reset.
 Device-local Recover is implemented for DEV_PROFILE. USB/Gateway/MCP mnemonic
@@ -130,14 +132,16 @@ Rules:
 
 - Gateway must not derive private keys.
 - Firmware returns public key/address data through `get_accounts`.
-- Provider-facing signing has `provider-exposed-not-product-active` status
-  through the shared `sign_by_user` path for only the bounded Sui
-  `sign_transaction` transfer shape. Current-tree
+- The unified `sign_transaction` path has `source-wired-not-product-active`
+  status for only the bounded Sui `sign_transaction` transfer shape.
+  Firmware reads its local signing authorization mode and selects one gate:
+  policy mode evaluates active policy and signs with speech-bubble status
+  notifications when policy authorizes the bounded request, while user mode uses
+  device-local clear-signing review and local PIN confirmation. Requests cannot
+  choose this mode.
+  Current-tree
   positive/reject/timeout/session-loss hardware smoke for the new Sign API wire
-  names remains pending, so product-active status is not claimed.
-- Current `sign_by_policy` handles delegated policy-authorized signing for the
-  same bounded Sui `sign_transaction` transfer shape. It returns
-  `policy_rejected` unless a bounded current-schema `sign` rule matches.
+  name remains pending, so product-active status is not claimed.
 - Agent-Q must not add chain-specific top-level MCP tools.
 
 The first implementation target is Sui Ed25519.
@@ -148,8 +152,8 @@ Target provisioning states:
 
 - `unprovisioned`: no root signing material is stored.
 - `provisioning`: setup flow is active.
-- `provisioned`: root signing material, an active policy, and a local PIN
-  verifier exist.
+- `provisioned`: root signing material, an active policy, a local PIN verifier,
+  and signing authorization mode exist.
 - `error`: Firmware detected persistent-material inconsistency and is failing
   closed.
 - `locked`: sensitive actions require local unlock.
@@ -158,8 +162,9 @@ The current DEV_PROFILE runtime implements the StackChan CoreS3 mnemonic UI flow
 persistent root material storage path. It loads and reports `provisioning.state`, but
 does not persist `provisioning` during the normal create-new-mnemonic flow.
 After physical backup confirmation, Firmware stores the binary BIP-39 root
-entropy, the active default-reject policy, and a salt + PIN verifier in
-ordinary DEV_PROFILE device-local NVS and only then moves to `provisioned`.
+entropy, the active default-reject policy, a salt + PIN verifier, and signing
+authorization mode in ordinary DEV_PROFILE device-local NVS and only then moves
+to `provisioned`.
 Existing DEV_PROFILE devices with `prov_state = provisioned` but missing,
 unreadable, or unsupported current active policy material fail closed.
 Destructive local reset or error-state erase is the supported recovery path;
@@ -171,16 +176,17 @@ not keep reporting `provisioned` while rejecting all session APIs.
 
 The current DEV_PROFILE runtime does not import or export root signing material.
 Read-only public Sui account derivation is available via `get_accounts`.
-Provider-facing `sign_by_user` and MCP-facing `sign_by_policy` source paths
-exist for the bounded Sui `sign_transaction` shape, but product-active claims
-still depend on the target evidence tracked in `docs/IMPLEMENTATION_STATUS.md`.
+The `sign_transaction` source path exists for the bounded Sui
+`sign_transaction` shape, but product-active claims still depend on the target
+evidence tracked in `docs/IMPLEMENTATION_STATUS.md`.
 Current StackChan CoreS3 source can generate a BIP-39 recovery
 phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
 3-column by 4-row grid, and wipe scratch on confirm, cancel, timeout, failure,
 or display expiry. Three-letter BIP-39 words are displayed as the full word.
 This is DEV_PROFILE storage scaffolding and is not USER_PROFILE key
-provisioning. Firmware must not set `provisioned` unless root signing material
-an active policy, and a local PIN verifier exist in device-local storage.
+provisioning. Firmware must not set `provisioned` unless root signing material,
+an active policy, a local PIN verifier, and signing authorization mode exist in
+device-local storage.
 Firmware must not set `locked` until an unlock model exists.
 
 Current DEV_PROFILE state transitions:
@@ -190,12 +196,12 @@ stateDiagram-v2
     [*] --> Unprovisioned: boot default or stored state
     Unprovisioned --> Unprovisioned: local setup opens phrase display
     Unprovisioned --> Unprovisioned: local Confirm, PIN entry active
-    Unprovisioned --> Provisioned: matching PIN repeat, root material + policy + PIN verifier stored
+    Unprovisioned --> Provisioned: matching PIN repeat, root material + policy + PIN verifier + signing mode stored
     Unprovisioned --> Unprovisioned: local Cancel/timeout/failure, scratch wiped
 
-    Unprovisioned: no root signing material, active policy, or local PIN verifier
+    Unprovisioned: no root signing material, active policy, local PIN verifier, or signing mode
     Unprovisioned: optional volatile mnemonic/root/PIN setup scratch only
-    Provisioned: root material, active policy, and local PIN verifier stored; read-only get_accounts/policy_get available; sign_by_policy evaluates bounded policy-authorized signing
+    Provisioned: root material, active policy, local PIN verifier, and signing mode stored; read-only get_accounts/policy_get available; sign_transaction can run after session approval
 ```
 
 The current runtime does not expose USB requests for provisioning start,
@@ -294,8 +300,9 @@ PIN, accepts and repeats a new 6-digit PIN, stores only the replacement
 salt/verifier, and returns to Settings; no root material is changed and no PIN is
 sent over USB. Reset uses the same Settings entry point: a Reset menu action,
 stored PIN verification, root material wipe, active policy wipe, PIN verifier
-wipe, approval history wipe, policy-update terminal marker wipe, session
-cleanup, connect-approval setting wipe, and `unprovisioned` persistence.
+wipe, signing authorization mode wipe, approval history wipe, policy-update
+terminal marker wipe, session cleanup, connect-approval setting wipe, and
+`unprovisioned` persistence.
 Firmware writes an internal reset-pending marker before destructive wipe starts,
 so boot can resume an interrupted reset wipe. PIN failure, timeout, or cancel
 leaves existing material and settings intact. Wrong reset PIN attempts use a
@@ -317,9 +324,9 @@ Provisioning-specific sequence:
    host exposure.
 4. Add DEV_PROFILE device-local mnemonic recovery entry with checksum
    validation.
-5. Add DEV_PROFILE persistent root material, active policy, and local PIN
-   verifier storage after backup confirmation or successful recovery plus
-   matching PIN repeat.
+5. Add DEV_PROFILE persistent root material, active policy, local PIN verifier,
+   and signing authorization mode storage after backup confirmation or
+   successful recovery plus matching PIN repeat.
 6. Add Sui Ed25519 account derivation and read-only `get_accounts`.
 
 Current implementation status: steps 1 through 6 are implemented for the
@@ -330,16 +337,19 @@ reset-state changes.
 
 Provisioning is not signing readiness. The current dependency order is: keep
 the policy facts / method adapter boundary stable, use the Firmware-owned
-`policy_propose` flow for current-schema active policy changes, keep
-MCP policy-authorized signing on `sign_by_policy`, and keep provider-facing
-device-confirmed signing on the separate `sign_by_user` path. Policy update
+`policy_propose` flow for current-schema active policy changes, and keep
+`sign_transaction` as a single request whose Firmware-local signing mode selects
+policy evaluation or user confirmation as the authorization gate. Policy update
 remains a proposal flow, not a direct state setter: Gateway/Admin may submit a
 bounded proposal, but Firmware validates it, requires device-local approval,
-and commits it through rollback-safe storage. Sui `sign_personal_message`,
-arbitrary Sui transaction signing outside the restricted transfer shape, full
-Admin policy editing beyond the current policy proposal template, and
-USER_PROFILE secure provisioning are not implemented. Provider-facing
-`sign_by_user` product-active status still requires LVGL visual evidence for
+and commits it through rollback-safe storage. Sui `sign_personal_message`
+remains unimplemented because the current source lacks the matching policy
+facts, device-local review rows, approval-history metadata, and Wallet
+Standard exposure needed to open it safely. Arbitrary Sui transaction signing
+outside the restricted transfer shape, full Admin policy editing beyond the
+current policy proposal template, and USER_PROFILE secure provisioning are not
+implemented. Provider-facing
+`sign_transaction` product-active status still requires LVGL visual evidence for
 the current source tree.
 
 ## Completion Criteria

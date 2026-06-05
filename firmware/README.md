@@ -5,7 +5,11 @@ Agent-Q Firmware is the program installed on a hardware device.
 Firmware is the signing authority. It stores keys and policies, evaluates
 requests, and handles device-local approval according to target policy. Current
 public methods expose account, session, policy, approval-history, and policy
-proposal behavior. Public signing methods are not implemented.
+proposal behavior plus the bounded Sign API source paths documented in
+`specs/PROTOCOL.md`. `sign_transaction` exists for the current bounded Sui
+`sign_transaction` shape. Firmware chooses policy or user authorization from
+its device-local signing mode, but current-tree target hardware smoke and
+visual evidence remain pending before any product-active signing claim.
 
 ## Folder Policy
 

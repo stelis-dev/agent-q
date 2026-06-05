@@ -54,7 +54,7 @@ export type AgentQSuiWalletGetAccountsResult = {
   accounts?: AgentQSuiWalletSuiAccount[];
 };
 
-export type AgentQSuiWalletSignByUserResult = {
+export type AgentQSuiWalletSignTransactionResult = {
   source: string;
   status?: string;
   signature?: string;
@@ -77,14 +77,14 @@ export type AgentQSuiWalletProvider = {
     deviceId?: string;
     purpose?: string;
   }): Promise<AgentQSuiWalletGetAccountsResult>;
-  signByUser(input: {
+  signTransaction(input: {
     deviceId?: string;
     purpose?: string;
     chain: "sui";
     method: "sign_transaction";
     network: AgentQSuiNetwork;
     txBytes: string;
-  }): Promise<AgentQSuiWalletSignByUserResult>;
+  }): Promise<AgentQSuiWalletSignTransactionResult>;
 };
 
 export type AgentQSuiWalletRegistration = {
@@ -97,14 +97,15 @@ const DEFAULT_WALLET_NAME = "Agent-Q Sui";
 const DEFAULT_WALLET_ICON =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgdmlld0JveD0iMCAwIDMyIDMyIj48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI2IiBmaWxsPSIjMTExODI3Ii8+PHRleHQgeD0iMTYiIHk9IjIwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjExIiBmb250LWZhbWlseT0iQXJpYWwsIHNhbnMtc2VyaWYiIGZpbGw9IiNmOGZhZmMiPkFRPC90ZXh0Pjwvc3ZnPg==" as Wallet["icon"];
 // Keep bounded dapp-facing messages local so this subpath stays client-runtime free.
-const SIGN_BY_USER_DAPP_ERROR_MESSAGES: Record<string, string> = {
+const SIGN_TRANSACTION_DAPP_ERROR_MESSAGES: Record<string, string> = {
   not_connected: "Agent-Q Sui wallet is not connected.",
   session_ended: "Agent-Q Sui wallet session ended before signing completed.",
   user_rejected: "The signing request was rejected on the device.",
   user_timed_out: "The signing request timed out on the device.",
+  policy_rejected: "The signing request was rejected by device policy.",
   signing_failed: "The device could not produce a signature.",
 };
-const UNKNOWN_SIGN_BY_USER_DAPP_ERROR_MESSAGE = "Agent-Q signByUser did not return a signed result.";
+const UNKNOWN_SIGN_TRANSACTION_DAPP_ERROR_MESSAGE = "Agent-Q signTransaction did not return a signed result.";
 
 const CHAIN_TO_NETWORK: Record<SuiChain, AgentQSuiNetwork> = {
   "sui:mainnet": "mainnet",
@@ -167,7 +168,7 @@ function accountPublicKeyBytes(publicKey: string): Uint8Array {
 
 function errorForSignResult(status: string): Error {
   return new Error(
-    SIGN_BY_USER_DAPP_ERROR_MESSAGES[status] ?? UNKNOWN_SIGN_BY_USER_DAPP_ERROR_MESSAGE,
+    SIGN_TRANSACTION_DAPP_ERROR_MESSAGES[status] ?? UNKNOWN_SIGN_TRANSACTION_DAPP_ERROR_MESSAGE,
   );
 }
 
@@ -292,7 +293,7 @@ export class AgentQSuiWallet implements Wallet {
     const bytes = await parsedTransaction.build({ client: this.#getClient(network) });
     signal?.throwIfAborted();
     const txBytes = toBase64(bytes);
-    const result = await this.#provider.signByUser({
+    const result = await this.#provider.signTransaction({
       ...this.#deviceScope,
       chain: "sui",
       method: "sign_transaction",

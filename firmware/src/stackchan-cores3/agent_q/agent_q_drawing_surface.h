@@ -15,7 +15,7 @@ enum class AgentQUiPanelKind {
     reset_pin_entry,
     error_recovery,
     local_pin_auth,
-    sign_by_user_review,
+    sign_transaction_user_review,
 };
 
 enum class SensitiveUiClearPolicy {

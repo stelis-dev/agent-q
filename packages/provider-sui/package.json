@@ -1,7 +1,7 @@
 {
   "name": "@stelis/agent-q-provider-sui",
   "version": "0.0.0",
-  "description": "Sui dapp-facing Agent-Q provider and Wallet Standard adapter for user-confirmed Sui signing.",
+  "description": "Sui dapp-facing Agent-Q provider and Wallet Standard adapter for Firmware-authorized Sui signing.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {

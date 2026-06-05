@@ -185,10 +185,8 @@ export const GET_APPROVAL_HISTORY_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_E
 export type GetApprovalHistorySessionEndedReason = GetAccountsSessionEndedReason;
 export const POLICY_PROPOSE_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
 export type PolicyProposeSessionEndedReason = GetAccountsSessionEndedReason;
-export const SIGN_BY_USER_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
-export type SignByUserSessionEndedReason = GetAccountsSessionEndedReason;
-export const SIGN_BY_POLICY_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
-export type SignByPolicySessionEndedReason = GetAccountsSessionEndedReason;
+export const SIGN_TRANSACTION_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
+export type SignTransactionSessionEndedReason = GetAccountsSessionEndedReason;
 type RuntimeSessionMirrorEndReason = GetAccountsSessionEndedReason;
 
 export type DisconnectDeviceResult =
@@ -217,7 +215,7 @@ export type GetAccountsResult =
   | { source: "session_ended"; deviceId: string; reason: GetAccountsSessionEndedReason };
 
 // policy_get is read-only and session-scoped. The policy summary is
-// Firmware-authored metadata for the active policy provider used by sign_by_policy.
+// Firmware-authored metadata for the active policy provider used by transaction signing.
 export type PolicyGetResult =
   | { source: "live"; deviceId: string; policy: PolicySummary }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
@@ -274,17 +272,11 @@ type LiveTerminalSignResult =
       error: Extract<SignTerminalResponse, { status: "policy_rejected" }>["error"];
     };
 
-export type SignByUserResult =
+export type SignTransactionResult =
   | LiveSignedResult
-  | Extract<LiveTerminalSignResult, { status: "user_rejected" | "user_timed_out" | "signing_failed" }>
+  | LiveTerminalSignResult
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
-  | { source: "session_ended"; deviceId: string; reason: SignByUserSessionEndedReason };
-
-export type SignByPolicyResult =
-  | LiveSignedResult
-  | Extract<LiveTerminalSignResult, { status: "policy_rejected" | "signing_failed" }>
-  | { source: "not_connected"; deviceId: string; reason: "not_connected" }
-  | { source: "session_ended"; deviceId: string; reason: SignByPolicySessionEndedReason };
+  | { source: "session_ended"; deviceId: string; reason: SignTransactionSessionEndedReason };
 
 export const DEFAULT_GATEWAY_NAME = "Agent-Q Gateway";
 const INTERNAL_PIN_INPUT_WINDOW_MS = 30000;
@@ -298,8 +290,7 @@ const INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS =
   INTERNAL_TRANSPORT_MARGIN_MS;
 const INTERNAL_DISCONNECT_DEADLINE_MS = INTERNAL_REQUEST_WINDOW_MS;
 const INTERNAL_POLICY_UPDATE_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
-const INTERNAL_SIGN_BY_USER_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
-const INTERNAL_SIGN_BY_POLICY_DEADLINE_MS = INTERNAL_REQUEST_WINDOW_MS;
+const INTERNAL_SIGN_TRANSACTION_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
 const INTERNAL_CONNECT_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
 
 export class GatewayCore {
@@ -848,26 +839,26 @@ export class GatewayCore {
     }
   }
 
-  async signByUser(input: {
+  async signTransaction(input: {
     deviceId?: string;
     purpose?: string;
     chain: "sui";
     method: "sign_transaction";
     network: SignTransactionParams["network"];
     txBytes: string;
-  }): Promise<SignByUserResult> {
+  }): Promise<SignTransactionResult> {
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
-    const deadlineMs = INTERNAL_SIGN_BY_USER_DEADLINE_MS;
+    const deadlineMs = INTERNAL_SIGN_TRANSACTION_DEADLINE_MS;
 
     const session = this.peekRuntimeSession(target.deviceId);
     if (session === null) {
       return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
     }
 
-    rejectUnsupportedInputFields(input, SIGN_BY_USER_INPUT_KEYS, "signByUser");
+    rejectUnsupportedInputFields(input, SIGN_TRANSACTION_INPUT_KEYS, "signTransaction");
     const params = validateSignGatewayInput({
-      requestType: "sign_by_user",
+      requestType: "sign_transaction",
       chain: input.chain,
       method: input.method,
       network: input.network,
@@ -886,7 +877,7 @@ export class GatewayCore {
     }
 
     try {
-      const response = await this.usbDriver.signByUser(
+      const response = await this.usbDriver.signTransaction(
         matchingPort.portPath,
         session.sessionId,
         input.chain,
@@ -894,63 +885,7 @@ export class GatewayCore {
         params,
         deadlineMs,
       );
-      return toLiveSignByUserResult(target.deviceId, response);
-    } catch (error) {
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
-      if (reason !== null) {
-        return { source: "session_ended", deviceId: target.deviceId, reason };
-      }
-      throw error;
-    }
-  }
-
-  async signByPolicy(input: {
-    deviceId?: string;
-    purpose?: string;
-    chain: "sui";
-    method: "sign_transaction";
-    network: SignTransactionParams["network"];
-    txBytes: string;
-  }): Promise<SignByPolicyResult> {
-    const target = await this.resolveTargetDevice(input);
-    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
-    const deadlineMs = INTERNAL_SIGN_BY_POLICY_DEADLINE_MS;
-
-    const session = this.peekRuntimeSession(target.deviceId);
-    if (session === null) {
-      return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
-    }
-
-    rejectUnsupportedInputFields(input, SIGN_BY_POLICY_INPUT_KEYS, "signByPolicy");
-    const params = validateSignGatewayInput({
-      requestType: "sign_by_policy",
-      chain: input.chain,
-      method: input.method,
-      network: input.network,
-      txBytes: input.txBytes,
-    });
-
-    let matchingPort: UsbStatusResult | undefined;
-    try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
-    } catch (error) {
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
-      if (reason !== null) {
-        return { source: "session_ended", deviceId: target.deviceId, reason };
-      }
-      throw error;
-    }
-
-    try {
-      const response = await this.usbDriver.signByPolicy(
-        matchingPort.portPath,
-        session.sessionId,
-        input.chain,
-        input.method,
-        params,
-        deadlineMs,
-      );
-      return toLiveSignByPolicyResult(target.deviceId, response);
+      return toLiveSignResult(target.deviceId, response);
     } catch (error) {
       const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
@@ -1174,7 +1109,7 @@ function validateGatewayName(value: unknown): string {
 }
 
 function validateSignGatewayInput(input: {
-  requestType: "sign_by_user" | "sign_by_policy";
+  requestType: "sign_transaction";
   chain: unknown;
   method: unknown;
   network: unknown;
@@ -1230,30 +1165,13 @@ function toLiveSignResult(deviceId: string, response: SignResultResponse): LiveS
   };
 }
 
-function toLiveSignByUserResult(deviceId: string, response: SignResultResponse): SignByUserResult {
-  const result = toLiveSignResult(deviceId, response);
-  if (result.source === "live" && result.authorization !== "user") {
-    throw new GatewayError("protocol_error", "sign_by_user returned a non-user authorization result.", false);
-  }
-  return result as SignByUserResult;
-}
-
-function toLiveSignByPolicyResult(deviceId: string, response: SignResultResponse): SignByPolicyResult {
-  const result = toLiveSignResult(deviceId, response);
-  if (result.source === "live" && result.authorization !== "policy") {
-    throw new GatewayError("protocol_error", "sign_by_policy returned a non-policy authorization result.", false);
-  }
-  return result as SignByPolicyResult;
-}
-
 const NO_INPUT_KEYS = new Set<string>();
 const DEVICE_SCOPED_INPUT_KEYS = new Set(["deviceId", "purpose"]);
 const CONNECT_DEVICE_INPUT_KEYS = new Set(["deviceId", "purpose", "gatewayName"]);
 const SET_DEVICE_METADATA_INPUT_KEYS = new Set(["deviceId", "label"]);
 const GET_APPROVAL_HISTORY_INPUT_KEYS = new Set(["deviceId", "purpose", "limit", "beforeSeq"]);
 const POLICY_PROPOSE_INPUT_KEYS = new Set(["deviceId", "purpose", "policy"]);
-const SIGN_BY_USER_INPUT_KEYS = new Set(["deviceId", "purpose", "chain", "method", "network", "txBytes"]);
-const SIGN_BY_POLICY_INPUT_KEYS = SIGN_BY_USER_INPUT_KEYS;
+const SIGN_TRANSACTION_INPUT_KEYS = new Set(["deviceId", "purpose", "chain", "method", "network", "txBytes"]);
 
 function rejectUnsupportedInputFields(
   input: unknown,

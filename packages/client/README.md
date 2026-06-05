@@ -36,12 +36,11 @@ and active policy commits.
   deliberately imports the admin entrypoint. Firmware remains responsible for
   validating and approving sensitive writes.
 - Current StackChan CoreS3 capabilities report Sui account identity and no
-  delegated signing methods in `chains[].methods`. Provider-facing
-  device-confirmed signing availability is advertised through top-level
-  `signing`, and the device client facade exposes `signByUser`
-  for the provider-facing path. The client parser accepts `sign_result` for
-  both `signByUser` and `signByPolicy`, then enforces the expected
-  authorization source at the Gateway core boundary. It rejects
+  delegated signing methods in `chains[].methods`. Signing availability is
+  advertised through top-level `signing.authorization` and `signing.methods`,
+  and the device client facade exposes `signTransaction`. The client parser
+  accepts Firmware-authored `sign_result` values for both policy and user
+  authorization outcomes. It rejects
   raw transaction bytes in results, decoded internals, session ids, request ids,
   and secret-like fields.
 - External client inputs do not accept caller-controlled timing fields. Gateway
@@ -65,13 +64,13 @@ They are skipped unless their `AGENTQ_HW_CLIENT_*` environment gates are set:
 ```sh
 npm --workspace @stelis/agent-q-client run build
 
-AGENTQ_HW_CLIENT_SIGN_BY_USER=1 \
-AGENTQ_HW_CLIENT_SIGN_BY_USER_SCENARIO=positive \
-AGENTQ_HW_CLIENT_SIGN_BY_USER_TX_BYTES=<base64> \
+AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER=1 \
+AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive \
+AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES=<base64> \
 node --test packages/client/test/hardware-sign-api-smoke.test.mjs
 
-AGENTQ_HW_CLIENT_SIGN_BY_POLICY=1 \
-AGENTQ_HW_CLIENT_SIGN_BY_POLICY_SCENARIO=rejected \
+AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY=1 \
+AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO=rejected \
 node --test packages/client/test/hardware-sign-api-smoke.test.mjs
 
 AGENTQ_HW_CLIENT_POLICY_UPDATE=1 \

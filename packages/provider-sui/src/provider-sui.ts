@@ -8,7 +8,7 @@ import {
   providerGetCapabilitiesSuccessOutputShape,
   scanDevicesSuccessOutputShape,
   selectDeviceSuccessOutputShape,
-  signByUserSuccessOutputShape,
+  signTransactionSuccessOutputShape,
 } from "@stelis/agent-q-client/adapter-internal";
 import { FORBIDDEN_SECRET_FIELD_NAMES } from "@stelis/agent-q-client/protocol";
 import type {
@@ -22,21 +22,12 @@ import type {
   IdentifyDevicesResult,
   ScanDevicesResult,
   SelectDeviceResult,
-  SignByUserResult,
+  SignTransactionResult,
   DeviceClientCore,
 } from "@stelis/agent-q-client";
 
-type ProviderSigningCapabilities = {
-  user: Array<{ chain: "sui"; method: "sign_transaction" }>;
-};
-
-type LiveProviderGetCapabilitiesResult =
-  Omit<Extract<CoreGetCapabilitiesResult, { source: "live" }>, "signing"> & {
-    signing?: ProviderSigningCapabilities;
-  };
-
 export type GetCapabilitiesResult =
-  | LiveProviderGetCapabilitiesResult
+  | Extract<CoreGetCapabilitiesResult, { source: "live" }>
   | Exclude<CoreGetCapabilitiesResult, { source: "live" }>;
 
 export type AgentQSuiProviderCore = Pick<
@@ -49,7 +40,7 @@ export type AgentQSuiProviderCore = Pick<
   | "disconnectDevice"
   | "getCapabilities"
   | "getAccounts"
-  | "signByUser"
+  | "signTransaction"
 >;
 
 export interface AgentQSuiProviderOptions {
@@ -93,7 +84,7 @@ export type {
   IdentifyDevicesResult,
   ScanDevicesResult,
   SelectDeviceResult,
-  SignByUserResult,
+  SignTransactionResult,
 };
 
 export class AgentQSuiProvider {
@@ -139,10 +130,7 @@ export class AgentQSuiProvider {
     purpose?: string;
   } = {}): Promise<GetCapabilitiesResult> {
     const result = await this.core.getCapabilities(input);
-    const projected = result.source === "live" && result.signing !== undefined
-      ? { ...result, signing: { user: result.signing.user } }
-      : result;
-    return parseProviderOutput(providerGetCapabilitiesSuccessOutputShape, projected) as GetCapabilitiesResult;
+    return parseProviderOutput(providerGetCapabilitiesSuccessOutputShape, result) as GetCapabilitiesResult;
   }
 
   async getAccounts(input: {
@@ -152,15 +140,15 @@ export class AgentQSuiProvider {
     return parseProviderOutput(getAccountsSuccessOutputShape, await this.core.getAccounts(input)) as GetAccountsResult;
   }
 
-  async signByUser(input: {
+  async signTransaction(input: {
     deviceId?: string;
     purpose?: string;
     chain: "sui";
     method: "sign_transaction";
     network: "mainnet" | "testnet" | "devnet" | "localnet";
     txBytes: string;
-  }): Promise<SignByUserResult> {
-    return parseProviderOutput(signByUserSuccessOutputShape, await this.core.signByUser(input)) as SignByUserResult;
+  }): Promise<SignTransactionResult> {
+    return parseProviderOutput(signTransactionSuccessOutputShape, await this.core.signTransaction(input)) as SignTransactionResult;
   }
 }
 

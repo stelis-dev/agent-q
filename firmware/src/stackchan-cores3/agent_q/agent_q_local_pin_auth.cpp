@@ -7,6 +7,7 @@
 #include "agent_q_local_auth.h"
 #include "agent_q_local_pin_auth_signature_internal.h"
 #include "agent_q_pin_attempt.h"
+#include "agent_q_signing_mode.h"
 #include "freertos/task.h"
 
 namespace agent_q {
@@ -19,6 +20,7 @@ struct AgentQLocalPinAuthState {
     AgentQLocalPinAuthPurpose purpose = AgentQLocalPinAuthPurpose::none;
     AgentQLocalPinAuthStage stage = AgentQLocalPinAuthStage::none;
     bool target_require_pin_on_connect = true;
+    AgentQSigningAuthorizationMode target_signing_authorization_mode = AgentQSigningAuthorizationMode::user;
     uint32_t auth_job_id = 0;
     TickType_t deadline = 0;
     TickType_t verify_ready_at = 0;
@@ -62,6 +64,7 @@ struct AgentQLocalPinAuthState {
         purpose = AgentQLocalPinAuthPurpose::none;
         stage = AgentQLocalPinAuthStage::none;
         target_require_pin_on_connect = true;
+        target_signing_authorization_mode = AgentQSigningAuthorizationMode::user;
         auth_job_id = 0;
         deadline = 0;
         verify_ready_at = 0;
@@ -115,6 +118,7 @@ AgentQLocalPinAuthSnapshot local_pin_auth_snapshot(TickType_t now)
         g_state.stage,
         g_state.pin_entry_length,
         g_state.target_require_pin_on_connect,
+        g_state.target_signing_authorization_mode,
         g_state.flow_active(),
         accepts,
         processing_stage(g_state.stage),
@@ -183,6 +187,17 @@ void local_pin_auth_begin_connect_setting(bool target_require_pin_on_connect, Ti
     g_state.deadline = deadline;
 }
 
+void local_pin_auth_begin_signing_mode_setting(
+    AgentQSigningAuthorizationMode target_mode,
+    TickType_t deadline)
+{
+    g_state.clear_flow();
+    g_state.purpose = AgentQLocalPinAuthPurpose::settings_signing_mode;
+    g_state.stage = AgentQLocalPinAuthStage::pin_entry;
+    g_state.target_signing_authorization_mode = target_mode;
+    g_state.deadline = deadline;
+}
+
 void local_pin_auth_begin_change_pin(TickType_t deadline)
 {
     g_state.clear_flow();
@@ -199,7 +214,7 @@ void local_pin_auth_begin_policy_update(TickType_t deadline)
     g_state.deadline = deadline;
 }
 
-bool local_pin_auth_begin_sign_by_user(
+bool local_pin_auth_begin_sign_transaction_user(
     const AgentQLocalPinAuthSignatureBinding& binding,
     TickType_t deadline)
 {
@@ -208,18 +223,18 @@ bool local_pin_auth_begin_sign_by_user(
         binding.token == 0) {
         return false;
     }
-    g_state.purpose = AgentQLocalPinAuthPurpose::sign_by_user;
+    g_state.purpose = AgentQLocalPinAuthPurpose::sign_transaction_user;
     g_state.stage = AgentQLocalPinAuthStage::pin_entry;
     g_state.deadline = deadline;
     g_state.signature_binding = binding;
     return true;
 }
 
-bool local_pin_auth_sign_by_user_matches(
+bool local_pin_auth_sign_transaction_user_matches(
     const AgentQLocalPinAuthSignatureBinding& binding)
 {
     return g_state.flow_active() &&
-           g_state.purpose == AgentQLocalPinAuthPurpose::sign_by_user &&
+           g_state.purpose == AgentQLocalPinAuthPurpose::sign_transaction_user &&
            binding.token != 0 &&
            g_state.signature_binding.token == binding.token;
 }
@@ -370,7 +385,7 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
         result.operation != AgentQLocalAuthWorkerOperation::verify_pin) {
         return AgentQLocalPinAuthVerifyResult::not_ready;
     }
-    if (g_state.purpose == AgentQLocalPinAuthPurpose::sign_by_user) {
+    if (g_state.purpose == AgentQLocalPinAuthPurpose::sign_transaction_user) {
         return AgentQLocalPinAuthVerifyResult::not_ready;
     }
     if (local_pin_auth_processing_deadline_expired(xTaskGetTickCount())) {
@@ -404,7 +419,8 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
         return AgentQLocalPinAuthVerifyResult::advanced_to_change_pin;
     }
 
-    if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_connect_pin) {
+    if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_connect_pin ||
+        g_state.purpose == AgentQLocalPinAuthPurpose::settings_signing_mode) {
         g_state.stage = AgentQLocalPinAuthStage::committing_setting;
         g_state.commit_ready_at = setting_commit_ready_at;
         g_state.deadline = 0;
@@ -418,13 +434,13 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
     return AgentQLocalPinAuthVerifyResult::verified_connect;
 }
 
-AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_sign_by_user_verify_job(
+AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_sign_transaction_user_verify_job(
     const AgentQLocalAuthWorkerResult& result,
     TickType_t retry_deadline,
     TickType_t lockout_until)
 {
     if (!g_state.flow_active() ||
-        g_state.purpose != AgentQLocalPinAuthPurpose::sign_by_user ||
+        g_state.purpose != AgentQLocalPinAuthPurpose::sign_transaction_user ||
         g_state.stage != AgentQLocalPinAuthStage::pin_verifying ||
         g_state.auth_job_id == 0 ||
         result.job_id != g_state.auth_job_id ||
@@ -503,8 +519,14 @@ AgentQLocalPinAuthCommitResult local_pin_auth_commit_if_ready(TickType_t now)
         return AgentQLocalPinAuthCommitResult::not_ready;
     }
 
-    const bool next_value = g_state.target_require_pin_on_connect;
-    const bool stored = store_require_pin_on_connect(next_value);
+    bool stored = false;
+    if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_connect_pin) {
+        stored = store_require_pin_on_connect(g_state.target_require_pin_on_connect);
+    } else if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_signing_mode) {
+        stored = store_signing_authorization_mode(g_state.target_signing_authorization_mode);
+    } else {
+        return AgentQLocalPinAuthCommitResult::not_ready;
+    }
     g_state.clear_flow();
 
     if (!stored) {

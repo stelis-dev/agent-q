@@ -26,8 +26,7 @@ import {
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
   makePolicyProposeRequest,
-  makeSignByPolicyRequest,
-  makeSignByUserRequest,
+  makeSignTransactionRequest,
   MAX_SESSION_TTL_MS,
   parseProtocolResponse,
   sanitizeDisplayText,
@@ -327,56 +326,44 @@ test("makeGetApprovalHistoryRequest validates session and pagination params", ()
   );
 });
 
-test("makeSignByUserRequest and makeSignByPolicyRequest build identical signing params", () => {
+test("makeSignTransactionRequest builds bounded signing params without caller-selected authorization", () => {
   const params = { network: "devnet", txBytes: CANONICAL_TX_BYTES_BASE64 };
-  const userRequest = makeSignByUserRequest(
+  const request = makeSignTransactionRequest(
     "session_abcdef0123456789",
     "sui",
     "sign_transaction",
     params,
-    "req_sign_user_1",
+    "req_sign_transaction_1",
   );
-  const policyRequest = makeSignByPolicyRequest(
-    "session_abcdef0123456789",
-    "sui",
-    "sign_transaction",
-    params,
-    "req_sign_policy_1",
-  );
-  assert.deepEqual(userRequest, {
-    id: "req_sign_user_1",
+  assert.deepEqual(request, {
+    id: "req_sign_transaction_1",
     version: 1,
-    type: "sign_by_user",
+    type: "sign_transaction",
     sessionId: "session_abcdef0123456789",
     chain: "sui",
     method: "sign_transaction",
     params,
   });
-  assert.deepEqual(policyRequest, {
-    ...userRequest,
-    id: "req_sign_policy_1",
-    type: "sign_by_policy",
-  });
 
-  assert.throws(() => makeSignByUserRequest("not_a_session", "sui", "sign_transaction", params), /sessionId/);
+  assert.throws(() => makeSignTransactionRequest("not_a_session", "sui", "sign_transaction", params), /sessionId/);
   assert.throws(
-    () => makeSignByPolicyRequest("session_abcdef0123456789", "sui", "sign_personal_message", params),
+    () => makeSignTransactionRequest("session_abcdef0123456789", "sui", "sign_personal_message", params),
     /unsupported/,
   );
   assert.throws(
-    () => makeSignByUserRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, timeoutMs: 30000 }),
+    () => makeSignTransactionRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, timeoutMs: 30000 }),
     /unsupported fields/,
   );
   assert.throws(
-    () => makeSignByUserRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, approvalTimeoutMs: 30000 }),
+    () => makeSignTransactionRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, approvalTimeoutMs: 30000 }),
     /unsupported fields/,
   );
   assert.throws(
-    () => makeSignByUserRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, durationMs: 30000 }),
+    () => makeSignTransactionRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, durationMs: 30000 }),
     /unsupported fields/,
   );
   assert.throws(
-    () => makeSignByPolicyRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, privateKey: "must-not-forward" }),
+    () => makeSignTransactionRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, privateKey: "must-not-forward" }),
     /secret material/,
   );
 });
@@ -468,8 +455,8 @@ test("parseProtocolResponse accepts a valid capabilities response with signing m
     parseProtocolResponse(
       capabilitiesLine({}, {}, {
         signing: {
-          user: [{ chain: "sui", method: "sign_transaction" }],
-          policy: [{ chain: "sui", method: "sign_transaction" }],
+          authorization: "policy",
+          methods: [{ chain: "sui", method: "sign_transaction" }],
         },
       }),
       "req_capabilities",
@@ -483,8 +470,8 @@ test("parseProtocolResponse accepts a valid capabilities response with signing m
   assert.equal(response.chains[0].accounts[0].derivationPath, "m/44'/784'/0'/0'/0'");
   assert.deepEqual(response.chains[0].methods, []);
   assert.deepEqual(response.signing, {
-    user: [{ chain: "sui", method: "sign_transaction" }],
-    policy: [{ chain: "sui", method: "sign_transaction" }],
+    authorization: "policy",
+    methods: [{ chain: "sui", method: "sign_transaction" }],
   });
 });
 
@@ -518,13 +505,13 @@ test("parseProtocolResponse rejects unsupported capabilities", () => {
     { code: "protocol_error" },
   );
   assert.throws(
-    () => parseProtocolResponse(capabilitiesLine({}, {}, { signing: { user: [], policy: [] } }), "req_capabilities"),
+    () => parseProtocolResponse(capabilitiesLine({}, {}, { signing: { authorization: "host", methods: [] } }), "req_capabilities"),
     { code: "protocol_error" },
   );
   assert.throws(
     () =>
       parseProtocolResponse(
-        capabilitiesLine({}, {}, { signing: { user: [{ chain: "sui", method: "sign_personal_message" }], policy: [{ chain: "sui", method: "sign_transaction" }] } }),
+        capabilitiesLine({}, {}, { signing: { authorization: "user", methods: [{ chain: "sui", method: "sign_personal_message" }] } }),
         "req_capabilities",
       ),
     { code: "protocol_error" },
@@ -532,7 +519,15 @@ test("parseProtocolResponse rejects unsupported capabilities", () => {
   assert.throws(
     () =>
       parseProtocolResponse(
-        capabilitiesLine({}, {}, { signing: { user: [{ chain: "sui", method: "sign_transaction", txBytes: "AQID" }], policy: [{ chain: "sui", method: "sign_transaction" }] } }),
+        capabilitiesLine({}, {}, { signing: { authorization: "user", methods: [{ chain: "sui", method: "sign_transaction", txBytes: "AQID" }] } }),
+        "req_capabilities",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        capabilitiesLine({}, {}, { signing: { user: [{ chain: "sui", method: "sign_transaction" }], policy: [{ chain: "sui", method: "sign_transaction" }] } }),
         "req_capabilities",
       ),
     { code: "protocol_error" },
