@@ -1,6 +1,6 @@
-import { Buffer } from "node:buffer";
 import type { ClientWithCoreApi } from "@mysten/sui/client";
 import { Transaction } from "@mysten/sui/transactions";
+import { fromBase64, toBase64 } from "@mysten/sui/utils";
 import {
   getWallets,
   ReadonlyWalletAccount,
@@ -20,12 +20,10 @@ import {
   type Wallet,
   type WalletAccount,
 } from "@mysten/wallet-standard";
-import { AgentQSuiProvider, createAgentQSuiProvider, type AgentQSuiProviderOptions } from "./provider-sui.js";
-
 type AgentQSuiNetwork = "mainnet" | "testnet" | "devnet" | "localnet";
 
 type DAppKitInitializerInput = {
-  networks: readonly AgentQSuiNetwork[];
+  networks: readonly unknown[];
   getClient: (network?: AgentQSuiNetwork) => ClientWithCoreApi;
 };
 
@@ -35,8 +33,7 @@ export type AgentQSuiWalletInitializer = {
 };
 
 export interface AgentQSuiWalletOptions {
-  provider?: AgentQSuiProvider;
-  providerOptions?: AgentQSuiProviderOptions;
+  provider: AgentQSuiWalletProvider;
   getClient: (network: AgentQSuiNetwork) => ClientWithCoreApi;
   deviceId?: string;
   purpose?: string;
@@ -45,6 +42,50 @@ export interface AgentQSuiWalletOptions {
   name?: string;
   icon?: Wallet["icon"];
 }
+
+export type AgentQSuiWalletSuiAccount = {
+  chain: "sui";
+  address: string;
+  publicKey: string;
+};
+
+export type AgentQSuiWalletGetAccountsResult = {
+  source: string;
+  accounts?: AgentQSuiWalletSuiAccount[];
+};
+
+export type AgentQSuiWalletSignByUserResult = {
+  source: string;
+  status?: string;
+  signature?: string;
+  error?: {
+    message?: string;
+  };
+};
+
+export type AgentQSuiWalletProvider = {
+  connectDevice(input?: {
+    deviceId?: string;
+    purpose?: string;
+    gatewayName?: string;
+  }): Promise<unknown>;
+  disconnectDevice(input?: {
+    deviceId?: string;
+    purpose?: string;
+  }): Promise<unknown>;
+  getAccounts(input?: {
+    deviceId?: string;
+    purpose?: string;
+  }): Promise<AgentQSuiWalletGetAccountsResult>;
+  signByUser(input: {
+    deviceId?: string;
+    purpose?: string;
+    chain: "sui";
+    method: "sign_transaction";
+    network: AgentQSuiNetwork;
+    txBytes: string;
+  }): Promise<AgentQSuiWalletSignByUserResult>;
+};
 
 export type AgentQSuiWalletRegistration = {
   wallet: AgentQSuiWallet;
@@ -55,6 +96,15 @@ const DEFAULT_WALLET_ID = "stelis:agent-q:sui";
 const DEFAULT_WALLET_NAME = "Agent-Q Sui";
 const DEFAULT_WALLET_ICON =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgdmlld0JveD0iMCAwIDMyIDMyIj48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI2IiBmaWxsPSIjMTExODI3Ii8+PHRleHQgeD0iMTYiIHk9IjIwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjExIiBmb250LWZhbWlseT0iQXJpYWwsIHNhbnMtc2VyaWYiIGZpbGw9IiNmOGZhZmMiPkFRPC90ZXh0Pjwvc3ZnPg==" as Wallet["icon"];
+// Keep bounded dapp-facing messages local so this subpath stays client-runtime free.
+const SIGN_BY_USER_DAPP_ERROR_MESSAGES: Record<string, string> = {
+  not_connected: "Agent-Q Sui wallet is not connected.",
+  session_ended: "Agent-Q Sui wallet session ended before signing completed.",
+  user_rejected: "The signing request was rejected on the device.",
+  user_timed_out: "The signing request timed out on the device.",
+  signing_failed: "The device could not produce a signature.",
+};
+const UNKNOWN_SIGN_BY_USER_DAPP_ERROR_MESSAGE = "Agent-Q signByUser did not return a signed result.";
 
 const CHAIN_TO_NETWORK: Record<SuiChain, AgentQSuiNetwork> = {
   "sui:mainnet": "mainnet",
@@ -88,7 +138,7 @@ function networkToChain(network: unknown): SuiChain {
   return NETWORK_TO_CHAIN[network];
 }
 
-function networksToChains(networks: readonly AgentQSuiNetwork[]): SuiChain[] {
+function networksToChains(networks: readonly unknown[]): SuiChain[] {
   if (!Array.isArray(networks) || networks.length === 0) {
     throw new Error("Agent-Q Sui wallet initializer requires at least one Sui network.");
   }
@@ -112,11 +162,13 @@ function toIdentifierArray(chains: readonly unknown[]): IdentifierArray {
 }
 
 function accountPublicKeyBytes(publicKey: string): Uint8Array {
-  return new Uint8Array(Buffer.from(publicKey, "base64"));
+  return fromBase64(publicKey);
 }
 
-function errorForSignResult(status: string, message?: string): Error {
-  return new Error(message ?? `Agent-Q signByUser did not return a signed result: ${status}.`);
+function errorForSignResult(status: string): Error {
+  return new Error(
+    SIGN_BY_USER_DAPP_ERROR_MESSAGES[status] ?? UNKNOWN_SIGN_BY_USER_DAPP_ERROR_MESSAGE,
+  );
 }
 
 export class AgentQSuiWallet implements Wallet {
@@ -125,7 +177,7 @@ export class AgentQSuiWallet implements Wallet {
   readonly name: string;
   readonly icon: Wallet["icon"];
 
-  readonly #provider: AgentQSuiProvider;
+  readonly #provider: AgentQSuiWalletProvider;
   readonly #getClient: (network: AgentQSuiNetwork) => ClientWithCoreApi;
   readonly #deviceScope: { deviceId?: string; purpose?: string };
   readonly #chains: IdentifierArray;
@@ -133,7 +185,7 @@ export class AgentQSuiWallet implements Wallet {
   #accounts: ReadonlyWalletAccount[] = [];
 
   constructor(options: AgentQSuiWalletOptions) {
-    this.#provider = options.provider ?? createAgentQSuiProvider(options.providerOptions);
+    this.#provider = options.provider;
     this.#getClient = options.getClient;
     this.#deviceScope = {
       deviceId: options.deviceId,
@@ -184,7 +236,7 @@ export class AgentQSuiWallet implements Wallet {
         await this.#provider.connectDevice(this.#deviceScope);
         connected = true;
         const accounts = await this.#provider.getAccounts(this.#deviceScope);
-        if (accounts.source !== "live" || accounts.accounts.length === 0) {
+        if (accounts.source !== "live" || !Array.isArray(accounts.accounts) || accounts.accounts.length === 0) {
           throw new Error("Agent-Q Sui wallet could not read a connected Sui account.");
         }
         const nextAccounts = accounts.accounts
@@ -239,7 +291,7 @@ export class AgentQSuiWallet implements Wallet {
     parsedTransaction.setSenderIfNotSet(activeAccount.address);
     const bytes = await parsedTransaction.build({ client: this.#getClient(network) });
     signal?.throwIfAborted();
-    const txBytes = Buffer.from(bytes).toString("base64");
+    const txBytes = toBase64(bytes);
     const result = await this.#provider.signByUser({
       ...this.#deviceScope,
       chain: "sui",
@@ -252,11 +304,15 @@ export class AgentQSuiWallet implements Wallet {
       throw errorForSignResult(result.source);
     }
     if (result.status !== "signed") {
-      throw errorForSignResult(result.status, result.error?.message);
+      throw errorForSignResult(result.status ?? "unknown");
+    }
+    const signature = result.signature;
+    if (typeof signature !== "string" || signature.length === 0) {
+      throw errorForSignResult("missing_signature");
     }
     return {
       bytes: txBytes,
-      signature: result.signature,
+      signature,
     };
   };
 
@@ -300,7 +356,7 @@ export function registerAgentQSuiWallet(options: AgentQSuiWalletOptions): AgentQ
 }
 
 export function createAgentQSuiWalletInitializer(
-  options: Omit<AgentQSuiWalletOptions, "chains" | "getClient"> = {},
+  options: Omit<AgentQSuiWalletOptions, "chains" | "getClient">,
 ): AgentQSuiWalletInitializer {
   return {
     id: options.id ?? DEFAULT_WALLET_ID,

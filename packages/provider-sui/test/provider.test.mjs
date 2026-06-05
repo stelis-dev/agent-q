@@ -17,7 +17,7 @@ import {
   createAgentQSuiWalletInitializer,
   registerAgentQSuiWallet,
 } from "../dist/wallet-standard.js";
-import { FORBIDDEN_SECRET_FIELD_NAMES, SUI_DERIVATION_PATH } from "@stelis/agent-q-client/protocol";
+import { FORBIDDEN_SECRET_FIELD_NAMES, SIGN_RESULT_ERROR_MESSAGES, SUI_DERIVATION_PATH } from "@stelis/agent-q-client/protocol";
 
 const SUI_ADDRESS = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
 const SUI_PUBLIC_KEY = "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=";
@@ -200,6 +200,19 @@ test("provider does not import MCP or Admin adapters", async () => {
   assert.doesNotMatch(source, /@stelis\/agent-q-mcp/);
   assert.doesNotMatch(source, /mcp/i);
   assert.doesNotMatch(source, /admin/i);
+});
+
+test("Wallet Standard entrypoint stays separated from Node device transport", async () => {
+  const walletStandardPath = fileURLToPath(new URL("../dist/wallet-standard.js", import.meta.url));
+  const source = await readFile(walletStandardPath, "utf8");
+  assert.doesNotMatch(source, /@stelis\/agent-q-client/);
+  assert.doesNotMatch(source, /\.\/provider-sui\.js/);
+  assert.doesNotMatch(source, /node:buffer/);
+
+  const walletStandardTypesPath = fileURLToPath(new URL("../dist/wallet-standard.d.ts", import.meta.url));
+  const types = await readFile(walletStandardTypesPath, "utf8");
+  assert.doesNotMatch(types, /@stelis\/agent-q-client/);
+  assert.doesNotMatch(types, /\.\/provider-sui\.js/);
 });
 
 test("provider exposes the Sui dapp-facing adapter API including signByUser", () => {
@@ -576,6 +589,92 @@ test("Wallet Standard signTransaction fails closed for wrong account, wrong chai
   );
 });
 
+test("Wallet Standard signTransaction emits bounded canonical terminal errors", async () => {
+  for (const status of ["user_rejected", "user_timed_out", "signing_failed"]) {
+    const core = {
+      ...createFakeCore(),
+      async signByUser() {
+        return {
+          source: "live",
+          deviceId: "device-1",
+          status,
+          authorization: "user",
+          error: {
+            code: status,
+            message: "sessionId=session_should_not_leak rootEntropy=secret_should_not_leak",
+          },
+        };
+      },
+    };
+    const wallet = createAgentQSuiWallet({
+      provider: core,
+      getClient: fakeClient,
+      chains: ["sui:devnet"],
+    });
+    const { accounts } = await wallet.features[StandardConnect].connect();
+    const transactionJson = await createResolvedTransactionJson();
+    await assert.rejects(
+      () => wallet.features[SuiSignTransaction].signTransaction({
+        account: accounts[0],
+        chain: "sui:devnet",
+        transaction: { toJSON: async () => transactionJson },
+      }),
+      (error) => {
+        assert.equal(error.message, SIGN_RESULT_ERROR_MESSAGES[status]);
+        assert.doesNotMatch(error.message, /sessionId|rootEntropy|secret_should_not_leak/);
+        return true;
+      },
+    );
+  }
+});
+
+test("Wallet Standard signTransaction bounds unknown injected provider result labels", async () => {
+  const cases = [
+    {
+      signResult: {
+        source: "sessionId=session_should_not_leak",
+        deviceId: "device-1",
+        reason: "transport_unavailable",
+      },
+    },
+    {
+      signResult: {
+        source: "live",
+        deviceId: "device-1",
+        status: "rootEntropy=secret_should_not_leak",
+        authorization: "user",
+      },
+    },
+  ];
+  for (const { signResult } of cases) {
+    const core = {
+      ...createFakeCore(),
+      async signByUser() {
+        return signResult;
+      },
+    };
+    const wallet = createAgentQSuiWallet({
+      provider: core,
+      getClient: fakeClient,
+      chains: ["sui:devnet"],
+    });
+    const { accounts } = await wallet.features[StandardConnect].connect();
+    const transactionJson = await createResolvedTransactionJson();
+    await assert.rejects(
+      () => wallet.features[SuiSignTransaction].signTransaction({
+        account: accounts[0],
+        chain: "sui:devnet",
+        transaction: { toJSON: async () => transactionJson },
+      }),
+      (error) => {
+        assert.equal(error.message, "Agent-Q signByUser did not return a signed result.");
+        assert.doesNotMatch(error.message, /sessionId|rootEntropy|secret_should_not_leak/);
+        return true;
+      },
+    );
+  }
+});
+
 test("Wallet Standard signTransaction validates chain support against the connected account", async () => {
   const { core, calls } = createSigningCore();
   const wallet = createAgentQSuiWallet({
@@ -603,10 +702,16 @@ test("Wallet Standard signTransaction validates chain support against the connec
 
 test("Wallet Standard signTransaction clears connected accounts on non-live signing results", async () => {
   const cases = [
-    { source: "session_ended", reason: "transport_unavailable" },
-    { source: "not_connected", reason: "not_connected" },
+    {
+      signResult: { source: "session_ended", reason: "transport_unavailable" },
+      expectedMessage: "Agent-Q Sui wallet session ended before signing completed.",
+    },
+    {
+      signResult: { source: "not_connected", reason: "not_connected" },
+      expectedMessage: "Agent-Q Sui wallet is not connected.",
+    },
   ];
-  for (const signResult of cases) {
+  for (const { signResult, expectedMessage } of cases) {
     const core = {
       ...createFakeCore(),
       async signByUser() {
@@ -633,7 +738,10 @@ test("Wallet Standard signTransaction clears connected accounts on non-live sign
         chain: "sui:devnet",
         transaction: { toJSON: async () => transactionJson },
       }),
-      new RegExp(signResult.source),
+      (error) => {
+        assert.equal(error.message, expectedMessage);
+        return true;
+      },
     );
     unsubscribe();
     assert.equal(wallet.accounts.length, 0);

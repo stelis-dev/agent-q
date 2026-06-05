@@ -236,6 +236,7 @@ packages/
   client/
   mcp/
   provider-sui/
+  example-sui-dapp-kit/
 
 firmware/
   README.md

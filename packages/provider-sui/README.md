@@ -19,6 +19,20 @@ wallet object, a global registration helper, and a dapp-kit initializer helper.
 Agent-Q is not a self-injecting browser wallet; applications import this
 package and register the wallet during app initialization.
 
+The Wallet Standard entrypoint requires an injected provider implementation and
+does not create a default provider internally. The repository's
+`createAgentQSuiProvider()` factory is Node/Gateway-local and uses the device
+client transport. Ordinary browser dapps need a provider-only browser runtime
+that implements `AgentQSuiWalletProvider` before a runtime dapp-kit demo can be
+considered product-real. Do not use the Wallet Standard adapter as evidence
+that browser hardware signing has been verified.
+
+The current package still depends on `@stelis/agent-q-client` because the root
+provider factory is Node/Gateway-local. The `./wallet-standard` subpath must
+remain runtime-separated from that Node transport. A future browser-safe
+provider runtime must be injected into the Wallet Standard adapter and must
+expose only the provider-facing methods described below.
+
 ## Entrypoints
 
 - `@stelis/agent-q-provider-sui` exposes the Sui provider factory and class.
@@ -69,8 +83,12 @@ Apps can register the wallet directly:
 
 ```ts
 import { registerAgentQSuiWallet } from "@stelis/agent-q-provider-sui/wallet-standard";
+import type { AgentQSuiWalletProvider } from "@stelis/agent-q-provider-sui/wallet-standard";
+
+declare const provider: AgentQSuiWalletProvider;
 
 const registration = registerAgentQSuiWallet({
+  provider,
   getClient(network) {
     return clients[network];
   },
@@ -86,6 +104,9 @@ For dapp-kit, use the initializer helper before wallet UI is created:
 ```ts
 import { createDAppKit } from "@mysten/dapp-kit-react";
 import { createAgentQSuiWalletInitializer } from "@stelis/agent-q-provider-sui/wallet-standard";
+import type { AgentQSuiWalletProvider } from "@stelis/agent-q-provider-sui/wallet-standard";
+
+declare const provider: AgentQSuiWalletProvider;
 
 export const dAppKit = createDAppKit({
   networks: ["testnet"],
@@ -93,13 +114,34 @@ export const dAppKit = createDAppKit({
   createClient(network) {
     return clients[network];
   },
-  walletInitializers: [createAgentQSuiWalletInitializer()],
+  walletInitializers: [createAgentQSuiWalletInitializer({ provider })],
 });
 ```
 
 The wallet signs through provider-sui `signByUser`, which sends
 `sign_by_user` to Firmware. Firmware remains responsible for review, local PIN,
 history, signing, and cleanup.
+
+See `packages/example-sui-dapp-kit/` for a minimal dapp-kit integration
+skeleton. The example intentionally does not create a fake provider; it
+registers Agent-Q only when a browser-safe provider is injected by the host page.
+
+### Browser-Safe Provider Boundary
+
+`AgentQSuiWalletProvider` is the current browser injection contract for the
+Wallet Standard adapter. It is intentionally smaller than the Node-local
+provider factory:
+
+- `connectDevice`
+- `disconnectDevice`
+- `getAccounts`
+- `signByUser`
+
+It must not expose Admin, policy update, active-policy reads,
+approval-history reads, `signByPolicy`, `sign_by_policy`, raw session tokens,
+secrets, or caller-controlled timing fields. Any future browser runtime must
+implement this provider-only injection contract instead of reusing broader
+management surfaces.
 
 Provider requests do not accept caller-controlled timing fields. Firmware-owned
 device-local physical-input windows remain 30 seconds; Gateway uses fixed
