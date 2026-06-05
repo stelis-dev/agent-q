@@ -43,8 +43,10 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test test/*.test.mjs"
+    "build": "npm run build:self",
+    "build:self": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
+    "test": "npm run build && npm run test:self",
+    "test:self": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "serialport": "13.0.0",

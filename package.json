@@ -4,9 +4,9 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm --workspace @stelis/agent-q-client run build && npm --workspace @stelis/agent-q-mcp run build && npm --workspace @stelis/agent-q-provider-sui run build",
+    "build": "npm --workspace @stelis/agent-q-client run build:self && npm --workspace @stelis/agent-q-mcp run build:self && npm --workspace @stelis/agent-q-provider-sui run build:self",
     "build:example-sui-dapp-kit": "npm --workspace @stelis/agent-q-example-sui-dapp-kit run build",
     "build:examples": "npm run build:example-sui-dapp-kit",
-    "test": "npm run build && npm --workspace @stelis/agent-q-client test && npm --workspace @stelis/agent-q-mcp test && npm --workspace @stelis/agent-q-provider-sui test"
+    "test": "npm run build && npm --workspace @stelis/agent-q-client run test:self && npm --workspace @stelis/agent-q-mcp run test:self && npm --workspace @stelis/agent-q-provider-sui run test:self"
   }
 }

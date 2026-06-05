@@ -255,14 +255,16 @@ for the Sui Ed25519 account at index 0 in the `provisioned` state.
 committed active policy; it is metadata only and not a policy update surface.
 The normal product flow still installs the DEV_PROFILE default-reject policy.
 `get_approval_history` is implemented as a read-only, session-scoped
-view of Firmware-owned persistent decision metadata. `sign_transaction` exists as
-a session-scoped runtime path: unknown methods are rejected, while Sui
-`sign_transaction` validates bounded restricted SUI transfer request inputs,
-reads the Firmware-local signing authorization mode, and returns `sign_result`
-with the authorization actually used by the selected gate. Hardware verification
-remains required for product-active claims after changes to the `policy_get`,
-`get_approval_history`, policy-mode `sign_transaction`, and user-mode
-`sign_transaction` paths.
+view of Firmware-owned persistent decision metadata. The current Sign API
+runtime paths are session-scoped: unknown methods are rejected, Sui
+`sign_transaction` validates bounded restricted SUI transfer request inputs and
+uses the Firmware-local signing authorization mode, and Sui
+`sign_personal_message` validates bounded personal-message bytes in user
+authorization mode only. Both methods return `sign_result` for supported
+terminal outcomes. Hardware verification remains required for product-active
+claims after changes to `policy_get`, `get_approval_history`, policy-mode
+`sign_transaction`, user-mode `sign_transaction`, and user-mode
+`sign_personal_message` paths.
 
 ## Device Discovery And Selection
 
@@ -783,6 +785,10 @@ Response:
       {
         "chain": "sui",
         "method": "sign_transaction"
+      },
+      {
+        "chain": "sui",
+        "method": "sign_personal_message"
       }
     ]
   }
@@ -799,8 +805,10 @@ Rules:
 - A missing, inactive, or mismatched session returns `invalid_session`.
 - The current StackChan CoreS3 target advertises Sui Ed25519 account identity
   for account 0 at `m/44'/784'/0'/0'/0'`, no entries in
-  `chains[].methods`, and top-level Sui `sign_transaction` availability in
-  `signing.methods`.
+  `chains[].methods`, and top-level Sui signing availability in
+  `signing.methods`. In user authorization mode this includes
+  `sign_transaction` and `sign_personal_message`; in policy authorization mode
+  this includes `sign_transaction` only.
 - `signing.authorization` is the Firmware-authored read-only local signing
   authorization mode (`"user"` or `"policy"`) that will be used for supported
   signing methods. Protocol requests must not contain this field, and there is

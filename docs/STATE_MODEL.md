@@ -212,8 +212,14 @@ Allowed:
 - `get_approval_history` (read-only, session-scoped)
 - `sign_transaction` (session-scoped; unknown methods reject; Sui
   `sign_transaction` validates bounded restricted SUI transfer request inputs
-  and returns `signed`, `policy_rejected`, or `signing_failed` through
-  `sign_result`)
+  and returns the selected gate's bounded `sign_result` terminal status:
+  policy mode can return `signed`, `policy_rejected`, or `signing_failed`;
+  user mode can return `signed`, `user_rejected`, `user_timed_out`, or
+  `signing_failed`)
+- `sign_personal_message` (session-scoped; user authorization mode only;
+  bounded Sui personal-message bytes return `signed`, `user_rejected`,
+  `user_timed_out`, or `signing_failed`; policy mode fails closed with
+  `unsupported_method`)
 - device-local settings reset/material wipe after a local Settings Reset action
   and stored PIN verification; successful reset also erases the local
   connect-approval setting, approval history, and policy-update terminal marker
@@ -232,7 +238,7 @@ implementation, `provisioned` enables `connect`, `disconnect`, read-only
 and top-level `signing`, read-only `get_accounts` (Sui Ed25519 account 0),
 read-only `policy_get` for the committed active policy summary, read-only
 `get_approval_history` for Firmware-owned persistent decision metadata, and the
-session-scoped `sign_transaction` runtime. `sign_transaction` has
+session-scoped Sign API runtime. `sign_transaction` has
 `source-wired-not-product-active` status for the bounded Sui `sign_transaction`
 shape: the public request exists in source, but current-tree hardware smoke and
 LVGL visual evidence remain pending, so product-active status is not claimed.
