@@ -1,4 +1,5 @@
 import type { ClientWithCoreApi } from "@mysten/sui/client";
+import { Ed25519PublicKey } from "@mysten/sui/keypairs/ed25519";
 import { Transaction } from "@mysten/sui/transactions";
 import { fromBase64, toBase64 } from "@mysten/sui/utils";
 import {
@@ -8,6 +9,7 @@ import {
   StandardDisconnect,
   StandardEvents,
   SUI_CHAINS,
+  SuiSignPersonalMessage,
   SuiSignTransaction,
   type IdentifierArray,
   type IdentifierString,
@@ -16,6 +18,7 @@ import {
   type StandardEventsChangeProperties,
   type StandardEventsOnMethod,
   type SuiChain,
+  type SuiSignPersonalMessageMethod,
   type SuiSignTransactionMethod,
   type Wallet,
   type WalletAccount,
@@ -47,6 +50,8 @@ export type AgentQSuiWalletSuiAccount = {
   chain: "sui";
   address: string;
   publicKey: string;
+  keyScheme: "ed25519";
+  derivationPath: "m/44'/784'/0'/0'/0'";
 };
 
 export type AgentQSuiWalletGetAccountsResult = {
@@ -54,10 +59,22 @@ export type AgentQSuiWalletGetAccountsResult = {
   accounts?: AgentQSuiWalletSuiAccount[];
 };
 
+export type AgentQSuiWalletGetCapabilitiesResult = {
+  source?: unknown;
+  deviceId?: unknown;
+  capabilities?: unknown;
+  signing?: unknown;
+};
+
 export type AgentQSuiWalletSignTransactionResult = {
   source: string;
+  deviceId?: string;
   status?: string;
+  authorization?: string;
+  chain?: string;
+  method?: string;
   signature?: string;
+  messageBytes?: string;
   error?: {
     message?: string;
   };
@@ -77,6 +94,10 @@ export type AgentQSuiWalletProvider = {
     deviceId?: string;
     purpose?: string;
   }): Promise<AgentQSuiWalletGetAccountsResult>;
+  getCapabilities(input?: {
+    deviceId?: string;
+    purpose?: string;
+  }): Promise<AgentQSuiWalletGetCapabilitiesResult>;
   signTransaction(input: {
     deviceId?: string;
     purpose?: string;
@@ -84,6 +105,14 @@ export type AgentQSuiWalletProvider = {
     method: "sign_transaction";
     network: AgentQSuiNetwork;
     txBytes: string;
+  }): Promise<AgentQSuiWalletSignTransactionResult>;
+  signPersonalMessage(input: {
+    deviceId?: string;
+    purpose?: string;
+    chain: "sui";
+    method: "sign_personal_message";
+    network: AgentQSuiNetwork;
+    message: string;
   }): Promise<AgentQSuiWalletSignTransactionResult>;
 };
 
@@ -96,6 +125,11 @@ const DEFAULT_WALLET_ID = "stelis:agent-q:sui";
 const DEFAULT_WALLET_NAME = "Agent-Q Sui";
 const DEFAULT_WALLET_ICON =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgdmlld0JveD0iMCAwIDMyIDMyIj48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI2IiBmaWxsPSIjMTExODI3Ii8+PHRleHQgeD0iMTYiIHk9IjIwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjExIiBmb250LWZhbWlseT0iQXJpYWwsIHNhbnMtc2VyaWYiIGZpbGw9IiNmOGZhZmMiPkFRPC90ZXh0Pjwvc3ZnPg==" as Wallet["icon"];
+const SUI_DERIVATION_PATH = "m/44'/784'/0'/0'/0'";
+const SUI_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{64}$/;
+const DEVICE_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
+const ED25519_PUBLIC_KEY_BYTES = 32;
+const SUI_ED25519_SIGNATURE_BYTES = 97;
 // Keep bounded dapp-facing messages local so this subpath stays client-runtime free.
 const SIGN_TRANSACTION_DAPP_ERROR_MESSAGES: Record<string, string> = {
   not_connected: "Agent-Q Sui wallet is not connected.",
@@ -106,6 +140,7 @@ const SIGN_TRANSACTION_DAPP_ERROR_MESSAGES: Record<string, string> = {
   signing_failed: "The device could not produce a signature.",
 };
 const UNKNOWN_SIGN_TRANSACTION_DAPP_ERROR_MESSAGE = "Agent-Q signTransaction did not return a signed result.";
+const UNKNOWN_SIGN_PERSONAL_MESSAGE_DAPP_ERROR_MESSAGE = "Agent-Q signPersonalMessage did not return a signed result.";
 
 const CHAIN_TO_NETWORK: Record<SuiChain, AgentQSuiNetwork> = {
   "sui:mainnet": "mainnet",
@@ -146,6 +181,24 @@ function networksToChains(networks: readonly unknown[]): SuiChain[] {
   return [...new Set(networks.map(networkToChain))];
 }
 
+function walletAccountFeaturesFromCapabilities(
+  capabilities: AgentQSuiWalletGetCapabilitiesResult,
+): Array<typeof SuiSignTransaction | typeof SuiSignPersonalMessage> {
+  const message = "Agent-Q Sui wallet could not read supported signing methods.";
+  requireExactKeys(capabilities, ["source", "deviceId", "capabilities", "signing"], message);
+  if (
+    capabilities.source !== "live" ||
+    typeof capabilities.deviceId !== "string" ||
+    !DEVICE_ID_PATTERN.test(capabilities.deviceId) ||
+    !Array.isArray(capabilities.capabilities) ||
+    capabilities.capabilities.length !== 1
+  ) {
+    throw new Error(message);
+  }
+  validateWalletCapabilityChain(capabilities.capabilities[0]);
+  return validateWalletSigningCapabilities(capabilities.signing);
+}
+
 function toIdentifierArray(chains: readonly unknown[]): IdentifierArray {
   if (!Array.isArray(chains) || chains.length === 0) {
     throw new Error("Agent-Q Sui wallet requires at least one Sui chain.");
@@ -163,12 +216,219 @@ function toIdentifierArray(chains: readonly unknown[]): IdentifierArray {
 }
 
 function accountPublicKeyBytes(publicKey: string): Uint8Array {
-  return fromBase64(publicKey);
+  return decodeCanonicalBase64(publicKey, ED25519_PUBLIC_KEY_BYTES);
 }
 
-function errorForSignResult(status: string): Error {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requireExactKeys(
+  value: unknown,
+  keys: readonly string[],
+  errorMessage: string,
+): asserts value is Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(errorMessage);
+  }
+  const allowed = new Set(keys);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new Error(errorMessage);
+    }
+  }
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      throw new Error(errorMessage);
+    }
+  }
+}
+
+function decodeCanonicalBase64(value: unknown, expectedBytes: number): Uint8Array {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("invalid_base64");
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = fromBase64(value);
+  } catch {
+    throw new Error("invalid_base64");
+  }
+  if (bytes.length !== expectedBytes || toBase64(bytes) !== value) {
+    throw new Error("invalid_base64");
+  }
+  return bytes;
+}
+
+function validateWalletCapabilityAccount(value: unknown): void {
+  const message = "Agent-Q Sui wallet could not read supported signing methods.";
+  requireExactKeys(value, ["keyScheme", "derivationPath"], message);
+  if (value.keyScheme !== "ed25519" || value.derivationPath !== SUI_DERIVATION_PATH) {
+    throw new Error(message);
+  }
+}
+
+function validateWalletCapabilityChain(value: unknown): void {
+  const message = "Agent-Q Sui wallet could not read supported signing methods.";
+  requireExactKeys(value, ["id", "accounts", "methods"], message);
+  if (
+    value.id !== "sui" ||
+    !Array.isArray(value.accounts) ||
+    value.accounts.length !== 1 ||
+    !Array.isArray(value.methods) ||
+    value.methods.length !== 0
+  ) {
+    throw new Error(message);
+  }
+  validateWalletCapabilityAccount(value.accounts[0]);
+}
+
+function validateWalletSigningCapabilities(value: unknown): Array<typeof SuiSignTransaction | typeof SuiSignPersonalMessage> {
+  const message = "Agent-Q Sui wallet could not read supported signing methods.";
+  requireExactKeys(value, ["authorization", "methods"], message);
+  if ((value.authorization !== "user" && value.authorization !== "policy") || !Array.isArray(value.methods)) {
+    throw new Error(message);
+  }
+
+  const seenMethods = new Set<string>();
+  for (const method of value.methods) {
+    requireExactKeys(method, ["chain", "method"], message);
+    const methodName = method.method;
+    if (method.chain !== "sui" || (methodName !== "sign_transaction" && methodName !== "sign_personal_message")) {
+      throw new Error(message);
+    }
+    if (seenMethods.has(methodName)) {
+      throw new Error(message);
+    }
+    seenMethods.add(methodName);
+  }
+
+  if (value.authorization === "policy") {
+    if (seenMethods.size !== 1 || !seenMethods.has("sign_transaction")) {
+      throw new Error(message);
+    }
+    return [SuiSignTransaction];
+  }
+
+  if (
+    seenMethods.size !== 2 ||
+    !seenMethods.has("sign_transaction") ||
+    !seenMethods.has("sign_personal_message")
+  ) {
+    throw new Error(message);
+  }
+  return [SuiSignTransaction, SuiSignPersonalMessage];
+}
+
+function validateWalletAccount(value: unknown): AgentQSuiWalletSuiAccount {
+  const message = "Agent-Q Sui wallet could not read a connected Sui account.";
+  requireExactKeys(value, ["chain", "address", "publicKey", "keyScheme", "derivationPath"], message);
+  if (
+    value.chain !== "sui" ||
+    typeof value.address !== "string" ||
+    !SUI_ADDRESS_PATTERN.test(value.address) ||
+    typeof value.publicKey !== "string" ||
+    value.keyScheme !== "ed25519" ||
+    value.derivationPath !== SUI_DERIVATION_PATH
+  ) {
+    throw new Error(message);
+  }
+
+  let publicKeyBytes: Uint8Array;
+  try {
+    publicKeyBytes = decodeCanonicalBase64(value.publicKey, ED25519_PUBLIC_KEY_BYTES);
+  } catch {
+    throw new Error(message);
+  }
+  const publicKey = value.publicKey;
+  const address = value.address.toLowerCase();
+  if (new Ed25519PublicKey(publicKeyBytes).toSuiAddress() !== address) {
+    throw new Error(message);
+  }
+
+  return {
+    chain: "sui",
+    address,
+    publicKey,
+    keyScheme: "ed25519",
+    derivationPath: SUI_DERIVATION_PATH,
+  };
+}
+
+function validateWalletAccountsResult(result: AgentQSuiWalletGetAccountsResult): AgentQSuiWalletSuiAccount[] {
+  const message = "Agent-Q Sui wallet could not read a connected Sui account.";
+  if (!isRecord(result) || result.source !== "live" || !Array.isArray(result.accounts)) {
+    throw new Error(message);
+  }
+  const allowedKeys = new Set(["source", "deviceId", "accounts"]);
+  for (const key of Object.keys(result)) {
+    if (!allowedKeys.has(key)) {
+      throw new Error(message);
+    }
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(result, "deviceId") &&
+    typeof (result as { deviceId?: unknown }).deviceId !== "string"
+  ) {
+    throw new Error(message);
+  }
+  return result.accounts.map(validateWalletAccount);
+}
+
+function validateSignedTransactionResult(result: AgentQSuiWalletSignTransactionResult): string {
+  const message = UNKNOWN_SIGN_TRANSACTION_DAPP_ERROR_MESSAGE;
+  requireExactKeys(result, ["source", "deviceId", "status", "authorization", "chain", "method", "signature"], message);
+  if (
+    result.source !== "live" ||
+    typeof result.deviceId !== "string" ||
+    result.status !== "signed" ||
+    (result.authorization !== "user" && result.authorization !== "policy") ||
+    result.chain !== "sui" ||
+    result.method !== "sign_transaction" ||
+    typeof result.signature !== "string"
+  ) {
+    throw errorForSignResult("unknown");
+  }
+  try {
+    decodeCanonicalBase64(result.signature, SUI_ED25519_SIGNATURE_BYTES);
+  } catch {
+    throw errorForSignResult("missing_signature");
+  }
+  return result.signature;
+}
+
+function validateSignedPersonalMessageResult(
+  result: AgentQSuiWalletSignTransactionResult,
+  expectedMessageBytes: string,
+): string {
+  const message = UNKNOWN_SIGN_PERSONAL_MESSAGE_DAPP_ERROR_MESSAGE;
+  requireExactKeys(result, ["source", "deviceId", "status", "authorization", "chain", "method", "signature", "messageBytes"], message);
+  if (
+    result.source !== "live" ||
+    typeof result.deviceId !== "string" ||
+    result.status !== "signed" ||
+    result.authorization !== "user" ||
+    result.chain !== "sui" ||
+    result.method !== "sign_personal_message" ||
+    result.messageBytes !== expectedMessageBytes ||
+    typeof result.signature !== "string"
+  ) {
+    throw errorForSignResult("unknown", message);
+  }
+  try {
+    decodeCanonicalBase64(result.signature, SUI_ED25519_SIGNATURE_BYTES);
+  } catch {
+    throw errorForSignResult("missing_signature", message);
+  }
+  return result.signature;
+}
+
+function errorForSignResult(
+  status: string,
+  unknownMessage = UNKNOWN_SIGN_TRANSACTION_DAPP_ERROR_MESSAGE,
+): Error {
   return new Error(
-    SIGN_TRANSACTION_DAPP_ERROR_MESSAGES[status] ?? UNKNOWN_SIGN_TRANSACTION_DAPP_ERROR_MESSAGE,
+    SIGN_TRANSACTION_DAPP_ERROR_MESSAGES[status] ?? unknownMessage,
   );
 }
 
@@ -224,6 +484,10 @@ export class AgentQSuiWallet implements Wallet {
         version: "2.0.0",
         signTransaction: this.#signTransaction,
       },
+      [SuiSignPersonalMessage]: {
+        version: "1.1.0",
+        signPersonalMessage: this.#signPersonalMessage,
+      },
     };
   }
 
@@ -236,17 +500,17 @@ export class AgentQSuiWallet implements Wallet {
       try {
         await this.#provider.connectDevice(this.#deviceScope);
         connected = true;
-        const accounts = await this.#provider.getAccounts(this.#deviceScope);
-        if (accounts.source !== "live" || !Array.isArray(accounts.accounts) || accounts.accounts.length === 0) {
-          throw new Error("Agent-Q Sui wallet could not read a connected Sui account.");
-        }
-        const nextAccounts = accounts.accounts
+        const accounts = validateWalletAccountsResult(await this.#provider.getAccounts(this.#deviceScope));
+        const accountFeatures = walletAccountFeaturesFromCapabilities(
+          await this.#provider.getCapabilities(this.#deviceScope),
+        );
+        const nextAccounts = accounts
           .filter((account) => account.chain === "sui")
           .map((account) => new ReadonlyWalletAccount({
             address: account.address,
             publicKey: accountPublicKeyBytes(account.publicKey),
             chains: this.#chains,
-            features: [SuiSignTransaction],
+            features: [...accountFeatures],
           }));
         if (nextAccounts.length === 0) {
           throw new Error("Agent-Q Sui wallet could not read a connected Sui account.");
@@ -286,7 +550,7 @@ export class AgentQSuiWallet implements Wallet {
 
   #signTransaction: SuiSignTransactionMethod = async ({ transaction, account, chain, signal }) => {
     signal?.throwIfAborted();
-    const activeAccount = this.#requireActiveAccount(account, chain);
+    const activeAccount = this.#requireActiveAccount(account, chain, SuiSignTransaction);
     const network = chainToNetwork(chain);
     const parsedTransaction = Transaction.from(await transaction.toJSON());
     parsedTransaction.setSenderIfNotSet(activeAccount.address);
@@ -307,17 +571,59 @@ export class AgentQSuiWallet implements Wallet {
     if (result.status !== "signed") {
       throw errorForSignResult(result.status ?? "unknown");
     }
-    const signature = result.signature;
-    if (typeof signature !== "string" || signature.length === 0) {
-      throw errorForSignResult("missing_signature");
-    }
+    const signature = validateSignedTransactionResult(result);
     return {
       bytes: txBytes,
       signature,
     };
   };
 
-  #requireActiveAccount(account: WalletAccount, chain: IdentifierString): ReadonlyWalletAccount {
+  #signPersonalMessage: SuiSignPersonalMessageMethod = async ({ message, account, chain }) => {
+    const requestedChain = this.#resolvePersonalMessageChain(account, chain);
+    this.#requireActiveAccount(account, requestedChain, SuiSignPersonalMessage);
+    const network = chainToNetwork(requestedChain);
+    const messageBytes = toBase64(message);
+    const result = await this.#provider.signPersonalMessage({
+      ...this.#deviceScope,
+      chain: "sui",
+      method: "sign_personal_message",
+      network,
+      message: messageBytes,
+    });
+    if (result.source !== "live") {
+      this.#clearAccounts();
+      throw errorForSignResult(result.source, UNKNOWN_SIGN_PERSONAL_MESSAGE_DAPP_ERROR_MESSAGE);
+    }
+    if (result.status !== "signed") {
+      throw errorForSignResult(result.status ?? "unknown", UNKNOWN_SIGN_PERSONAL_MESSAGE_DAPP_ERROR_MESSAGE);
+    }
+    const signature = validateSignedPersonalMessageResult(result, messageBytes);
+    return {
+      bytes: messageBytes,
+      signature,
+    };
+  };
+
+  #resolvePersonalMessageChain(account: WalletAccount, chain?: IdentifierString): SuiChain {
+    if (chain !== undefined) {
+      if (!isSuiChain(chain)) {
+        throw new Error("Agent-Q Sui wallet account does not support the requested signing feature.");
+      }
+      return chain;
+    }
+    for (const candidate of account.chains) {
+      if (isSuiChain(candidate) && this.#chains.includes(candidate)) {
+        return candidate;
+      }
+    }
+    throw new Error("Agent-Q Sui wallet account does not support the requested signing feature.");
+  }
+
+  #requireActiveAccount(
+    account: WalletAccount,
+    chain: IdentifierString,
+    feature: typeof SuiSignTransaction | typeof SuiSignPersonalMessage,
+  ): ReadonlyWalletAccount {
     if (!isSuiChain(chain)) {
       throw new Error("Agent-Q Sui wallet account does not support the requested signing feature.");
     }
@@ -325,7 +631,7 @@ export class AgentQSuiWallet implements Wallet {
     if (!activeAccount) {
       throw new Error("Agent-Q Sui wallet account is not connected.");
     }
-    if (!activeAccount.chains.includes(chain) || !activeAccount.features.includes(SuiSignTransaction)) {
+    if (!activeAccount.chains.includes(chain) || !activeAccount.features.includes(feature)) {
       throw new Error("Agent-Q Sui wallet account does not support the requested signing feature.");
     }
     return activeAccount;

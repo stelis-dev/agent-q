@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import * as z from "zod/v4";
 import {
   DISCONNECT_ENDED_REASONS,
@@ -7,6 +8,7 @@ import {
   GET_CAPABILITIES_SESSION_ENDED_REASONS,
   POLICY_PROPOSE_SESSION_ENDED_REASONS,
   POLICY_GET_SESSION_ENDED_REASONS,
+  SIGN_PERSONAL_MESSAGE_SESSION_ENDED_REASONS,
   SIGN_TRANSACTION_SESSION_ENDED_REASONS,
 } from "./core.js";
 import { PUBLIC_ERROR_MESSAGES } from "./public-error.js";
@@ -21,6 +23,8 @@ import {
   MAX_APPROVAL_HISTORY_RECORDS,
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
+  MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS,
+  MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
   MAX_POLICY_RULE_COUNT,
   POLICY_ID_PATTERN,
   POLICY_PROPOSE_RESULT_STATUSES,
@@ -31,6 +35,8 @@ import {
   SUI_ADDRESS_PATTERN,
   SUI_DERIVATION_PATH,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
+  SUI_SIGN_PERSONAL_MESSAGE_METHOD,
+  SUI_SIGN_TRANSACTION_METHOD,
   UINT_DECIMAL_STRING_PATTERN,
   isUint64DecimalString,
   isSuiAddressForPublicKey,
@@ -272,12 +278,28 @@ const capabilityChainShape = z.object({
 }).strict();
 const signingCapabilityEntryShape = z.object({
   chain: z.literal("sui"),
-  method: z.literal("sign_transaction"),
+  method: z.enum([SUI_SIGN_TRANSACTION_METHOD, SUI_SIGN_PERSONAL_MESSAGE_METHOD]),
 }).strict();
-const signingCapabilitiesShape = z.object({
-  authorization: z.enum(["user", "policy"]),
-  methods: z.array(signingCapabilityEntryShape).length(1),
-}).strict();
+const signingCapabilitiesShape = z
+  .object({
+    authorization: z.enum(["user", "policy"]),
+    methods: z.array(signingCapabilityEntryShape).min(1).max(2),
+  })
+  .strict()
+  .refine((value) => {
+    const methods = new Set(value.methods.map((entry) => entry.method));
+    if (methods.size !== value.methods.length) {
+      return false;
+    }
+    if (value.authorization === "policy") {
+      return methods.size === 1 && methods.has(SUI_SIGN_TRANSACTION_METHOD);
+    }
+    return (
+      methods.size === 2 &&
+      methods.has(SUI_SIGN_TRANSACTION_METHOD) &&
+      methods.has(SUI_SIGN_PERSONAL_MESSAGE_METHOD)
+    );
+  }, { message: "signing methods must match authorization mode" });
 const liveCapabilitiesOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
@@ -346,24 +368,24 @@ const accountShape = z.object({
   publicKey: z.string().regex(ED25519_PUBLIC_KEY_BASE64_PATTERN),
   keyScheme: z.literal("ed25519"),
   derivationPath: z.literal(SUI_DERIVATION_PATH),
-}).refine((account) => isSuiAddressForPublicKey(account.address, account.publicKey), {
+}).strict().refine((account) => isSuiAddressForPublicKey(account.address, account.publicKey), {
   message: "Sui address must match publicKey",
 });
 const liveAccountsOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
   accounts: z.array(accountShape).length(MAX_ACCOUNTS_PER_RESPONSE),
-});
+}).strict();
 const notConnectedAccountsOutputShape = z.object({
   source: z.literal("not_connected"),
   deviceId: safeDeviceIdShape,
   reason: z.literal("not_connected"),
-});
+}).strict();
 const sessionEndedAccountsOutputShape = z.object({
   source: z.literal("session_ended"),
   deviceId: safeDeviceIdShape,
   reason: z.enum(GET_ACCOUNTS_SESSION_ENDED_REASONS),
-});
+}).strict();
 export const getAccountsSuccessOutputShape = z.discriminatedUnion("source", [
   liveAccountsOutputShape,
   notConnectedAccountsOutputShape,
@@ -503,21 +525,47 @@ export const getApprovalHistoryToolOutputShape = z.discriminatedUnion("source", 
 const signResultErrorShape = z.object({
   code: z.enum(Object.keys(SIGN_RESULT_ERROR_MESSAGES) as [keyof typeof SIGN_RESULT_ERROR_MESSAGES, ...Array<keyof typeof SIGN_RESULT_ERROR_MESSAGES>]),
   message: z.enum(Object.values(SIGN_RESULT_ERROR_MESSAGES) as [string, ...string[]]),
-}).refine((error) => error.message === SIGN_RESULT_ERROR_MESSAGES[error.code], {
+}).strict().refine((error) => error.message === SIGN_RESULT_ERROR_MESSAGES[error.code], {
   message: "Sign result error message must match its code.",
 });
+const canonicalBase64Shape = z
+  .string()
+  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/);
+const personalMessageBytesShape = canonicalBase64Shape
+  .min(1)
+  .max(MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS)
+  .refine((value) => {
+    const decoded = Buffer.from(value, "base64");
+    return (
+      decoded.length > 0 &&
+      decoded.length <= MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES &&
+      decoded.toString("base64") === value
+    );
+  }, {
+    message: "messageBytes must be canonical base64",
+  });
 const liveUserSignSignedOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
   status: z.literal("signed"),
   authorization: z.literal("user"),
   chain: z.literal("sui"),
-  method: z.literal("sign_transaction"),
+  method: z.literal(SUI_SIGN_TRANSACTION_METHOD),
   signature: z.string().regex(SUI_ED25519_SIGNATURE_BASE64_PATTERN),
-});
+}).strict();
 const livePolicySignSignedOutputShape = liveUserSignSignedOutputShape.extend({
   authorization: z.literal("policy"),
 });
+const liveUserSignPersonalMessageSignedOutputShape = z.object({
+  source: z.literal("live"),
+  deviceId: safeDeviceIdShape,
+  status: z.literal("signed"),
+  authorization: z.literal("user"),
+  chain: z.literal("sui"),
+  method: z.literal(SUI_SIGN_PERSONAL_MESSAGE_METHOD),
+  signature: z.string().regex(SUI_ED25519_SIGNATURE_BASE64_PATTERN),
+  messageBytes: personalMessageBytesShape,
+}).strict();
 const liveUserSignTerminalOutputShape = z.discriminatedUnion("status", [
   z.object({
     source: z.literal("live"),
@@ -527,7 +575,7 @@ const liveUserSignTerminalOutputShape = z.discriminatedUnion("status", [
     error: signResultErrorShape.refine((error) => error.code === "user_rejected", {
       message: "User-rejected sign result error code must be user_rejected.",
     }),
-  }),
+  }).strict(),
   z.object({
     source: z.literal("live"),
     deviceId: safeDeviceIdShape,
@@ -536,7 +584,7 @@ const liveUserSignTerminalOutputShape = z.discriminatedUnion("status", [
     error: signResultErrorShape.refine((error) => error.code === "user_timed_out", {
       message: "Timed-out sign result error code must be user_timed_out.",
     }),
-  }),
+  }).strict(),
   z.object({
     source: z.literal("live"),
     deviceId: safeDeviceIdShape,
@@ -545,7 +593,7 @@ const liveUserSignTerminalOutputShape = z.discriminatedUnion("status", [
     error: signResultErrorShape.refine((error) => error.code === "signing_failed", {
       message: "Failed sign result error code must be signing_failed.",
     }),
-  }),
+  }).strict(),
 ]);
 const livePolicySignTerminalOutputShape = z.discriminatedUnion("status", [
   z.object({
@@ -558,7 +606,7 @@ const livePolicySignTerminalOutputShape = z.discriminatedUnion("status", [
     error: signResultErrorShape.refine((error) => error.code === "policy_rejected", {
       message: "Policy-rejected sign result error code must be policy_rejected.",
     }),
-  }),
+  }).strict(),
   z.object({
     source: z.literal("live"),
     deviceId: safeDeviceIdShape,
@@ -567,18 +615,23 @@ const livePolicySignTerminalOutputShape = z.discriminatedUnion("status", [
     error: signResultErrorShape.refine((error) => error.code === "signing_failed", {
       message: "Failed sign result error code must be signing_failed.",
     }),
-  }),
+  }).strict(),
 ]);
 const notConnectedSignOutputShape = z.object({
   source: z.literal("not_connected"),
   deviceId: safeDeviceIdShape,
   reason: z.literal("not_connected"),
-});
+}).strict();
 const sessionEndedSignTransactionOutputShape = z.object({
   source: z.literal("session_ended"),
   deviceId: safeDeviceIdShape,
   reason: z.enum(SIGN_TRANSACTION_SESSION_ENDED_REASONS),
-});
+}).strict();
+const sessionEndedSignPersonalMessageOutputShape = z.object({
+  source: z.literal("session_ended"),
+  deviceId: safeDeviceIdShape,
+  reason: z.enum(SIGN_PERSONAL_MESSAGE_SESSION_ENDED_REASONS),
+}).strict();
 export const signTransactionSuccessOutputShape = z.union([
   liveUserSignSignedOutputShape,
   livePolicySignSignedOutputShape,
@@ -594,6 +647,19 @@ export const signTransactionToolOutputShape = z.union([
   livePolicySignTerminalOutputShape,
   notConnectedSignOutputShape,
   sessionEndedSignTransactionOutputShape,
+  errorToolResultShape,
+]);
+export const signPersonalMessageSuccessOutputShape = z.union([
+  liveUserSignPersonalMessageSignedOutputShape,
+  liveUserSignTerminalOutputShape,
+  notConnectedSignOutputShape,
+  sessionEndedSignPersonalMessageOutputShape,
+]);
+export const signPersonalMessageToolOutputShape = z.union([
+  liveUserSignPersonalMessageSignedOutputShape,
+  liveUserSignTerminalOutputShape,
+  notConnectedSignOutputShape,
+  sessionEndedSignPersonalMessageOutputShape,
   errorToolResultShape,
 ]);
 
@@ -670,5 +736,6 @@ export const gatewaySuccessOutputSchemas = {
   policyGet: policyGetSuccessOutputShape,
   getApprovalHistory: getApprovalHistorySuccessOutputShape,
   signTransaction: signTransactionSuccessOutputShape,
+  signPersonalMessage: signPersonalMessageSuccessOutputShape,
   policyPropose: policyProposeSuccessOutputShape,
 } as const;

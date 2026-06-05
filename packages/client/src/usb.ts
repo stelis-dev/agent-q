@@ -18,6 +18,7 @@ import {
   makeGetAccountsRequest,
   makeGetApprovalHistoryRequest,
   makePolicyProposeRequest,
+  makeSignPersonalMessageRequest,
   makeSignTransactionRequest,
   makeIdentifyDeviceRequest,
   makePolicyGetRequest,
@@ -37,6 +38,7 @@ import {
   type ProtocolRequest,
   type ProtocolResponse,
   type SignResultResponse,
+  type SignPersonalMessageParams,
   type SignTransactionParams,
   type StatusResponse,
 } from "./protocol.js";
@@ -139,6 +141,14 @@ export interface UsbSerialDriver {
     params: SignTransactionParams,
     deadlineMs: number,
   ): Promise<SignResultResponse>;
+  signPersonalMessage(
+    portPath: string,
+    sessionId: string,
+    chain: "sui",
+    method: "sign_personal_message",
+    params: SignPersonalMessageParams,
+    deadlineMs: number,
+  ): Promise<SignResultResponse>;
 }
 
 export class SerialPortUsbDriver implements UsbSerialDriver {
@@ -228,6 +238,17 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     deadlineMs: number,
   ): Promise<SignResultResponse> {
     return signTransactionOverSerial(portPath, sessionId, chain, method, params, deadlineMs);
+  }
+
+  async signPersonalMessage(
+    portPath: string,
+    sessionId: string,
+    chain: "sui",
+    method: "sign_personal_message",
+    params: SignPersonalMessageParams,
+    deadlineMs: number,
+  ): Promise<SignResultResponse> {
+    return signPersonalMessageOverSerial(portPath, sessionId, chain, method, params, deadlineMs);
   }
 }
 
@@ -373,6 +394,12 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         driver.signTransaction(portPath, sessionId, chain, method, params, deadlineMs),
         deadlineMs,
         "USB sign_transaction exceeded its timeout.",
+      ),
+    signPersonalMessage: (portPath, sessionId, chain, method, params, deadlineMs) =>
+      raceDeadline(
+        driver.signPersonalMessage(portPath, sessionId, chain, method, params, deadlineMs),
+        deadlineMs,
+        "USB sign_personal_message exceeded its timeout.",
       ),
   };
 }
@@ -555,6 +582,18 @@ async function signTransactionOverSerial(
   deadlineMs: number,
 ): Promise<SignResultResponse> {
   const request = makeSignTransactionRequest(sessionId, chain, method, params);
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertSignResultResponse(response));
+}
+
+async function signPersonalMessageOverSerial(
+  portPath: string,
+  sessionId: string,
+  chain: "sui",
+  method: "sign_personal_message",
+  params: SignPersonalMessageParams,
+  deadlineMs: number,
+): Promise<SignResultResponse> {
+  const request = makeSignPersonalMessageRequest(sessionId, chain, method, params);
   return requestOverSerial(portPath, request, deadlineMs, (response) => assertSignResultResponse(response));
 }
 

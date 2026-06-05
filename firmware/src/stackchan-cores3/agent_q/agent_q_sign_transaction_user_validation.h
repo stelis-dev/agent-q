@@ -7,12 +7,11 @@
 
 #include "agent_q_sign_transaction_limits.h"
 #include "agent_q_session.h"
-#include "agent_q_sign_transaction_user_limits.h"
+#include "agent_q_user_signing_limits.h"
 
 namespace agent_q {
 
-constexpr uint32_t kAgentQSignTransactionUserApprovalWindowMs = 30000;
-constexpr size_t kAgentQSignTransactionUserTxBytesBase64Size =
+constexpr size_t kAgentQUserSigningTxBytesBase64Size =
     kAgentQSuiSignTransactionTxBytesMaxBase64Size + 1;
 
 enum class AgentQSignTransactionUserValidationResult {
@@ -29,7 +28,7 @@ enum class AgentQSignTransactionUserValidationResult {
 };
 
 struct AgentQSignTransactionUserEnvelope {
-    char request_id[kAgentQSignTransactionUserIdSize];
+    char request_id[kAgentQUserSigningIdSize];
 };
 
 struct AgentQSignTransactionUserSessionRef {
@@ -37,10 +36,10 @@ struct AgentQSignTransactionUserSessionRef {
 };
 
 struct AgentQSignTransactionUserParams {
-    char chain[kAgentQSignTransactionUserChainSize];
-    char method[kAgentQSignTransactionUserMethodSize];
-    char network[kAgentQSignTransactionUserNetworkSize];
-    char tx_bytes_base64[kAgentQSignTransactionUserTxBytesBase64Size];
+    char chain[kAgentQUserSigningChainSize];
+    char method[kAgentQUserSigningMethodSize];
+    char network[kAgentQUserSigningNetworkSize];
+    char tx_bytes_base64[kAgentQUserSigningTxBytesBase64Size];
     size_t tx_bytes_decoded_size;
 };
 

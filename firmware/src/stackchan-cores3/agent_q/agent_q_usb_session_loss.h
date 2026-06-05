@@ -13,7 +13,7 @@ enum class AgentQUsbSessionLossLocalPinPurpose {
     none,
     connect,
     policy_update,
-    sign_transaction_user,
+    user_signing,
     other,
 };
 
@@ -22,8 +22,8 @@ struct AgentQUsbSessionLossInput {
     bool connect_approval_active;
     AgentQUsbSessionLossProtocolPinPurpose protocol_pin;
     AgentQUsbSessionLossLocalPinPurpose local_pin;
-    bool sign_transaction_user_active;
-    bool sign_transaction_user_critical;
+    bool user_signing_active;
+    bool user_signing_critical;
 };
 
 struct AgentQUsbSessionLossPlan {
@@ -33,10 +33,10 @@ struct AgentQUsbSessionLossPlan {
     bool clear_protocol_pin;
     bool wipe_local_pin_auth;
     bool clear_policy_update_flow;
-    bool cancel_sign_transaction_user;
+    bool cancel_user_signing;
     bool clear_decision_panel;
     bool clear_local_pin_panel;
-    bool clear_sign_transaction_user_review_panel;
+    bool clear_user_signing_review_panel;
 };
 
 AgentQUsbSessionLossPlan usb_session_loss_plan(const AgentQUsbSessionLossInput& input);

@@ -22,6 +22,7 @@ const expectedToolNames = [
   "scan_devices",
   "select_device",
   "set_device_metadata",
+  "sign_personal_message",
   "sign_transaction",
 ];
 
@@ -200,6 +201,18 @@ const noOpCore = {
       },
     };
   },
+  async signPersonalMessage() {
+    return {
+      source: "live",
+      deviceId: "device-1",
+      status: "user_rejected",
+      authorization: "user",
+      error: {
+        code: "user_rejected",
+        message: "The signing request was rejected on the device.",
+      },
+    };
+  },
   async policyPropose() {
     return {
       source: "live",
@@ -362,6 +375,14 @@ test("tool input schemas expose only current request fields", () => {
     "purpose",
     "txBytes",
   ]);
+  assert.deepEqual(Object.keys(gatewayToolDefinitions.signPersonalMessage.inputSchema).sort(), [
+    "chain",
+    "deviceId",
+    "message",
+    "method",
+    "network",
+    "purpose",
+  ]);
   assert.deepEqual(Object.keys(gatewayToolDefinitions.policyPropose.inputSchema).sort(), [
     "deviceId",
     "policy",
@@ -450,6 +471,15 @@ const dispatchCases = [
   { name: "policy_get", arguments: {} },
   { name: "get_approval_history", arguments: {} },
   { name: "sign_transaction", arguments: { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" } },
+  {
+    name: "sign_personal_message",
+    arguments: {
+      chain: "sui",
+      method: "sign_personal_message",
+      network: "devnet",
+      message: Buffer.from("Agent-Q personal message").toString("base64"),
+    },
+  },
   {
     name: "policy_propose",
     arguments: {
@@ -681,6 +711,37 @@ test("sign_transaction dispatch accepts signed policy results without a session 
   }, core);
 });
 
+test("sign_personal_message dispatch accepts signed user results without a session token", async () => {
+  const messageBytes = Buffer.from("Agent-Q personal message").toString("base64");
+  const core = {
+    ...noOpCore,
+    async signPersonalMessage() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        status: "signed",
+        authorization: "user",
+        chain: "sui",
+        method: "sign_personal_message",
+        signature: Buffer.alloc(97, 1).toString("base64"),
+        messageBytes,
+      };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({
+      name: "sign_personal_message",
+      arguments: { chain: "sui", method: "sign_personal_message", network: "devnet", message: messageBytes },
+    });
+    assert.equal(result.structuredContent.source, "live");
+    assert.equal(result.structuredContent.status, "signed");
+    assert.equal(result.structuredContent.authorization, "user");
+    assert.equal(result.structuredContent.method, "sign_personal_message");
+    assert.equal(result.structuredContent.messageBytes, messageBytes);
+    assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
+  }, core);
+});
+
 test("sign_transaction dispatch lets core own state-first validation", async () => {
   let signTransactionCalls = 0;
   const core = {
@@ -718,8 +779,15 @@ function assertNoLeakMarkers(result, toolName) {
 }
 
 // A core that returns otherwise-valid success shapes with extra secret-like
-// fields spread in. The MCP boundary must strip them.
+// fields spread in. The MCP boundary strips fields on broad management shapes,
+// while exact capability/account/signing projections fail closed.
 const SECRET_EXTRAS = { sessionId: "SESSION_LEAK", privateKey: "PRIVATEKEY_LEAK", seed: "SEED_LEAK" };
+const EXACT_PROJECTION_TOOLS = new Set([
+  "get_capabilities",
+  "get_accounts",
+  "sign_transaction",
+  "sign_personal_message",
+]);
 
 const leakyCore = {
   async scanDevices() {
@@ -860,6 +928,19 @@ const leakyCore = {
       ...SECRET_EXTRAS,
     };
   },
+  async signPersonalMessage() {
+    return {
+      source: "live",
+      deviceId: "device-1",
+      status: "user_rejected",
+      authorization: "user",
+      error: {
+        code: "user_rejected",
+        message: "The signing request was rejected on the device.",
+      },
+      ...SECRET_EXTRAS,
+    };
+  },
   async policyPropose() {
     return {
       source: "live",
@@ -881,8 +962,8 @@ test("MCP boundary prevents secret-like extra fields from leaking out", async ()
   await withConnectedClient(async (client) => {
     for (const dispatchCase of dispatchCases) {
       const result = await client.callTool(dispatchCase);
-      if (dispatchCase.name === "get_capabilities") {
-        assert.equal(result.isError, true, "capability drift must fail closed instead of being silently stripped");
+      if (EXACT_PROJECTION_TOOLS.has(dispatchCase.name)) {
+        assert.equal(result.isError, true, `${dispatchCase.name}: exact projection drift must fail closed`);
         assert.equal(result.structuredContent.error.code, "internal_output_error");
         continue;
       }
@@ -1105,6 +1186,10 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
     },
     {
+      name: "sign_personal_message",
+      result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
+    },
+    {
       name: "get_accounts",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
@@ -1122,6 +1207,10 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
     },
     {
       name: "sign_transaction",
+      result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
+    },
+    {
+      name: "sign_personal_message",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
     {
@@ -1151,6 +1240,9 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       async signTransaction() {
         return testCase.result;
       },
+      async signPersonalMessage() {
+        return testCase.result;
+      },
       async policyPropose() {
         return testCase.result;
       },
@@ -1158,6 +1250,13 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
     await withConnectedClient(async (client) => {
       const args = testCase.name === "sign_transaction"
         ? { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" }
+        : testCase.name === "sign_personal_message"
+          ? {
+              chain: "sui",
+              method: "sign_personal_message",
+              network: "devnet",
+              message: Buffer.from("Agent-Q personal message").toString("base64"),
+            }
         : testCase.name === "policy_propose"
           ? { policy: { schema: "agentq.policy.v0", defaultAction: "reject", rules: [] } }
           : {};

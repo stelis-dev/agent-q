@@ -343,9 +343,8 @@ policy evaluation or user confirmation as the authorization gate. Policy update
 remains a proposal flow, not a direct state setter: Gateway/Admin may submit a
 bounded proposal, but Firmware validates it, requires device-local approval,
 and commits it through rollback-safe storage. Sui `sign_personal_message`
-remains unimplemented because the current source lacks the matching policy
-facts, device-local review rows, approval-history metadata, and Wallet
-Standard exposure needed to open it safely. Arbitrary Sui transaction signing
+is source-wired for user authorization mode only; policy facts and rules for
+personal-message signing are not implemented. Arbitrary Sui transaction signing
 outside the restricted transfer shape, full Admin policy editing beyond the
 current policy proposal template, and USER_PROFILE secure provisioning are not
 implemented. Provider-facing

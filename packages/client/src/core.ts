@@ -20,6 +20,7 @@ import {
   type PolicyProposeResultResponse,
   type PolicySummary,
   ProtocolError,
+  type SignPersonalMessageParams,
   type SignResultResponse,
   type SignTransactionParams,
   type SigningCapabilities,
@@ -27,6 +28,7 @@ import {
   validateApprovalHistoryInput,
   validatePolicyProposeInput,
   validatePolicyProposeRequestInput,
+  validateSignPersonalMessageRequestInput,
   validateSignRequestInput,
 } from "./protocol.js";
 import {
@@ -187,6 +189,8 @@ export const POLICY_PROPOSE_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_R
 export type PolicyProposeSessionEndedReason = GetAccountsSessionEndedReason;
 export const SIGN_TRANSACTION_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
 export type SignTransactionSessionEndedReason = GetAccountsSessionEndedReason;
+export const SIGN_PERSONAL_MESSAGE_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
+export type SignPersonalMessageSessionEndedReason = GetAccountsSessionEndedReason;
 type RuntimeSessionMirrorEndReason = GetAccountsSessionEndedReason;
 
 export type DisconnectDeviceResult =
@@ -252,6 +256,7 @@ type LiveSignedResult = {
   chain: Extract<SignResultResponse, { status: "signed" }>["chain"];
   method: Extract<SignResultResponse, { status: "signed" }>["method"];
   signature: string;
+  messageBytes?: string;
 };
 
 type LiveTerminalSignResult =
@@ -278,6 +283,12 @@ export type SignTransactionResult =
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: SignTransactionSessionEndedReason };
 
+export type SignPersonalMessageResult =
+  | LiveSignedResult
+  | LiveTerminalSignResult
+  | { source: "not_connected"; deviceId: string; reason: "not_connected" }
+  | { source: "session_ended"; deviceId: string; reason: SignPersonalMessageSessionEndedReason };
+
 export const DEFAULT_GATEWAY_NAME = "Agent-Q Gateway";
 const INTERNAL_PIN_INPUT_WINDOW_MS = 30000;
 const INTERNAL_WRONG_PIN_ATTEMPTS_BEFORE_LOCKOUT = 5;
@@ -291,6 +302,7 @@ const INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS =
 const INTERNAL_DISCONNECT_DEADLINE_MS = INTERNAL_REQUEST_WINDOW_MS;
 const INTERNAL_POLICY_UPDATE_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
 const INTERNAL_SIGN_TRANSACTION_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
+const INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
 const INTERNAL_CONNECT_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
 
 export class GatewayCore {
@@ -895,6 +907,62 @@ export class GatewayCore {
     }
   }
 
+  async signPersonalMessage(input: {
+    deviceId?: string;
+    purpose?: string;
+    chain: "sui";
+    method: "sign_personal_message";
+    network: SignPersonalMessageParams["network"];
+    message: string;
+  }): Promise<SignPersonalMessageResult> {
+    const target = await this.resolveTargetDevice(input);
+    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
+    const deadlineMs = INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS;
+
+    const session = this.peekRuntimeSession(target.deviceId);
+    if (session === null) {
+      return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
+    }
+
+    rejectUnsupportedInputFields(input, SIGN_PERSONAL_MESSAGE_INPUT_KEYS, "signPersonalMessage");
+    const params = validateSignPersonalMessageGatewayInput({
+      requestType: "sign_personal_message",
+      chain: input.chain,
+      method: input.method,
+      network: input.network,
+      message: input.message,
+    });
+
+    let matchingPort: UsbStatusResult | undefined;
+    try {
+      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
+    } catch (error) {
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
+      if (reason !== null) {
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+
+    try {
+      const response = await this.usbDriver.signPersonalMessage(
+        matchingPort.portPath,
+        session.sessionId,
+        input.chain,
+        input.method,
+        params,
+        deadlineMs,
+      );
+      return toLiveSignResult(target.deviceId, response);
+    } catch (error) {
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
+      if (reason !== null) {
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+  }
+
   private peekRuntimeSession(deviceId: string): RuntimeSession | null {
     const session = this.runtimeSessions.get(deviceId);
     if (session === undefined) {
@@ -1133,6 +1201,31 @@ function validateSignGatewayInput(input: {
   }
 }
 
+function validateSignPersonalMessageGatewayInput(input: {
+  requestType: "sign_personal_message";
+  chain: unknown;
+  method: unknown;
+  network: unknown;
+  message: unknown;
+}): SignPersonalMessageParams {
+  try {
+    return validateSignPersonalMessageRequestInput(
+      input.chain,
+      input.method,
+      {
+        network: input.network,
+        message: input.message,
+      },
+      input.requestType,
+    );
+  } catch (error) {
+    if (error instanceof ProtocolError) {
+      throw new GatewayError(error.code, error.message, false);
+    }
+    throw error;
+  }
+}
+
 function toLiveSignResult(deviceId: string, response: SignResultResponse): LiveSignedResult | LiveTerminalSignResult {
   if (response.status === "signed") {
     return {
@@ -1143,6 +1236,7 @@ function toLiveSignResult(deviceId: string, response: SignResultResponse): LiveS
       chain: response.chain,
       method: response.method,
       signature: response.signature,
+      ...(response.method === "sign_personal_message" ? { messageBytes: response.messageBytes } : {}),
     };
   }
   if (response.status === "policy_rejected") {
@@ -1172,6 +1266,7 @@ const SET_DEVICE_METADATA_INPUT_KEYS = new Set(["deviceId", "label"]);
 const GET_APPROVAL_HISTORY_INPUT_KEYS = new Set(["deviceId", "purpose", "limit", "beforeSeq"]);
 const POLICY_PROPOSE_INPUT_KEYS = new Set(["deviceId", "purpose", "policy"]);
 const SIGN_TRANSACTION_INPUT_KEYS = new Set(["deviceId", "purpose", "chain", "method", "network", "txBytes"]);
+const SIGN_PERSONAL_MESSAGE_INPUT_KEYS = new Set(["deviceId", "purpose", "chain", "method", "network", "message"]);
 
 function rejectUnsupportedInputFields(
   input: unknown,

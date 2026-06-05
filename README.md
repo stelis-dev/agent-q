@@ -207,14 +207,14 @@ Implemented:
   summary, approval history, and the current policy proposal template. It
   is not a policy authority.
 - A Sui application-facing provider package for device discovery, connection,
-  read-only Sui account/capability data, and `signTransaction` transport. The
-  provider also exposes a Wallet Standard registration adapter for
-  `sui:signTransaction`. Its dapp-facing provider object and Wallet Standard
-  adapter do not include active policy summaries, approval history, policy
-  update, policy signing, key storage, signing decisions,
-  `sui:signPersonalMessage`, or `sui:signAndExecuteTransaction`. Personal
-  message signing is not exposed because the current Firmware policy facts,
-  clear-review UI, and history contract are transaction-only. This is
+  read-only Sui account/capability data, `signTransaction` transport, and
+  user-confirmed `signPersonalMessage` transport. The provider also exposes a
+  Wallet Standard registration adapter for `sui:signTransaction` and
+  `sui:signPersonalMessage`. Its dapp-facing provider object and Wallet
+  Standard adapter do not include active policy summaries, approval history,
+  policy update, policy signing, key storage, signing decisions, or
+  `sui:signAndExecuteTransaction`. Personal-message signing is source-wired for
+  user authorization mode only and fails closed in policy mode. This is
   adapter API projection, not a security boundary against direct imports of
   broader client/Admin package entrypoints.
 - A common host-tested policy evaluator and default-reject runtime boundary.
@@ -228,11 +228,19 @@ Under current-source verification:
   history, `sign_result`, provider `signTransaction`, client parser/builder,
   MCP tool, and `get_capabilities.signing` metadata. Current-tree hardware
   smoke remains pending; product-active status is not claimed.
+- `sign_personal_message` has source-wired but not product-active status for
+  bounded Sui personal-message bytes. It uses user clear-signing review, local
+  PIN confirmation, required history, the Sui PersonalMessage intent digest,
+  `sign_result`, client/MCP/provider parser/API, Wallet Standard
+  `sui:signPersonalMessage`, and user-mode `get_capabilities.signing`
+  metadata. Policy mode is intentionally unsupported for this method until
+  matching policy facts and rules are designed. Current-tree hardware smoke
+  remains pending; product-active status is not claimed.
 
 Not yet implemented: arbitrary Sui transaction signing, sponsored Sui
-transaction signing, Sui personal-message signing, spending and rate limits
-beyond the current restricted-transfer criteria, multi-role separation, full
-Admin policy editing,
+transaction signing, policy-authorized Sui personal-message signing, spending
+and rate limits beyond the current restricted-transfer criteria, multi-role
+separation, full Admin policy editing,
 multi-device approval, device revocation or transfer, a production audit layer
 beyond the current fixed-size approval-history record, and broad chain-specific
 transaction logic. Connection is not signing approval and does not authorize

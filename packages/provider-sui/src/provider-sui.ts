@@ -8,6 +8,7 @@ import {
   providerGetCapabilitiesSuccessOutputShape,
   scanDevicesSuccessOutputShape,
   selectDeviceSuccessOutputShape,
+  signPersonalMessageSuccessOutputShape,
   signTransactionSuccessOutputShape,
 } from "@stelis/agent-q-client/adapter-internal";
 import { FORBIDDEN_SECRET_FIELD_NAMES } from "@stelis/agent-q-client/protocol";
@@ -22,6 +23,7 @@ import type {
   IdentifyDevicesResult,
   ScanDevicesResult,
   SelectDeviceResult,
+  SignPersonalMessageResult,
   SignTransactionResult,
   DeviceClientCore,
 } from "@stelis/agent-q-client";
@@ -41,6 +43,7 @@ export type AgentQSuiProviderCore = Pick<
   | "getCapabilities"
   | "getAccounts"
   | "signTransaction"
+  | "signPersonalMessage"
 >;
 
 export interface AgentQSuiProviderOptions {
@@ -84,6 +87,7 @@ export type {
   IdentifyDevicesResult,
   ScanDevicesResult,
   SelectDeviceResult,
+  SignPersonalMessageResult,
   SignTransactionResult,
 };
 
@@ -149,6 +153,17 @@ export class AgentQSuiProvider {
     txBytes: string;
   }): Promise<SignTransactionResult> {
     return parseProviderOutput(signTransactionSuccessOutputShape, await this.core.signTransaction(input)) as SignTransactionResult;
+  }
+
+  async signPersonalMessage(input: {
+    deviceId?: string;
+    purpose?: string;
+    chain: "sui";
+    method: "sign_personal_message";
+    network: "mainnet" | "testnet" | "devnet" | "localnet";
+    message: string;
+  }): Promise<SignPersonalMessageResult> {
+    return parseProviderOutput(signPersonalMessageSuccessOutputShape, await this.core.signPersonalMessage(input)) as SignPersonalMessageResult;
   }
 }
 

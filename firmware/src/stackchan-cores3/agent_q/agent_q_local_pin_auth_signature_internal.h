@@ -19,12 +19,12 @@ struct AgentQLocalPinAuthSignatureBinding {
     uint32_t token;
 };
 
-bool local_pin_auth_begin_sign_transaction_user(
+bool local_pin_auth_begin_user_signing(
     const AgentQLocalPinAuthSignatureBinding& binding,
     TickType_t deadline);
-bool local_pin_auth_sign_transaction_user_matches(
+bool local_pin_auth_user_signing_matches(
     const AgentQLocalPinAuthSignatureBinding& binding);
-AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_sign_transaction_user_verify_job(
+AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_user_signing_verify_job(
     const AgentQLocalAuthWorkerResult& result,
     TickType_t retry_deadline,
     TickType_t lockout_until);

@@ -37,7 +37,7 @@ dapp-facing example. That is example/provider API projection, not a security
 barrier against direct imports of broader client/Admin entrypoints.
 
 The example's Wallet Standard registration path includes `sui:signTransaction`
-through the injected provider. It does not expose raw Agent-Q protocol, client,
-or MCP `sign_transaction`, Admin, policy update, policy reads,
-approval-history reads, `sui:signPersonalMessage`, or
+and `sui:signPersonalMessage` through the injected provider. It does not expose
+raw Agent-Q protocol, client, or MCP signing requests, Admin, policy update,
+policy reads, approval-history reads, deprecated `sui:signMessage`, or
 `sui:signAndExecuteTransaction`.

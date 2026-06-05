@@ -419,16 +419,21 @@ get_status
     -> policy_get
     -> get_approval_history
     -> sign_transaction*
+    -> sign_personal_message*
   -> disconnect
 ```
 
 `sign_transaction*` means zero or more transaction-signing requests during an
-active session. Firmware chooses the policy or user signing gate from its
-device-local signing authorization mode; protocol requests and adapter surfaces
-must not select that mode. Current adapters may project different UX for their
-audiences, but adapter projection is not the security boundary. Do not describe
-signing as product-complete until tracked implementation status and target
-hardware-smoke evidence for the current tree both say it is verified.
+active session. `sign_personal_message*` means zero or more user-confirmed Sui
+personal-message signing requests during an active session. Firmware chooses
+the policy or user signing gate for transaction signing from its device-local
+signing authorization mode; protocol requests and adapter surfaces must not
+select that mode. Personal-message signing is currently user-mode only and must
+fail closed when the device is in policy mode. Current adapters may project
+different UX for their audiences, but adapter projection is not the security
+boundary. Do not describe signing as product-complete until tracked
+implementation status and target hardware-smoke evidence for the current tree
+both say it is verified.
 
 Current intended structure:
 

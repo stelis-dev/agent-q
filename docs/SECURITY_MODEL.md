@@ -123,7 +123,8 @@ Designed but not implemented (do not treat as present):
 - USER_PROFILE first-install mnemonic generation or import.
 - zkLogin signing material.
 - USER_PROFILE policy storage and policy update authorization.
-- Arbitrary Sui transactions, Sui personal-message signing, and other chains.
+- Arbitrary Sui transactions, policy-authorized Sui personal-message signing,
+  and other chains.
 - Full Admin policy editing beyond the current policy proposal template.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.
 - Secure Boot, Flash Encryption, and NVS Encryption setup flow.
@@ -516,8 +517,8 @@ Enforcement today:
   signing authority. Firmware state gates, the Sui restricted-transfer adapter,
   the device-local signing authorization mode, active policy evaluation in
   policy mode, and local confirmation in user mode remain the boundaries.
-  Arbitrary Sui
-  transactions, personal-message signing, and other chains are not implemented.
+  Arbitrary Sui transactions, policy-authorized personal-message signing, and
+  other chains are not implemented.
   The top-level tool allowlist does not grant authority to method names carried
   inside `sign_transaction`; Firmware method adapters and active policy
   validation remain the method boundary.

@@ -2,8 +2,51 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { gatewaySuccessOutputSchemas } from "../dist/adapter-internal.js";
 import { createDefaultDeviceClientCore } from "../dist/client.js";
 import { createDefaultGatewayCore, GatewayCore } from "../dist/admin.js";
+import { SIGN_RESULT_ERROR_MESSAGES, SUI_DERIVATION_PATH } from "../dist/protocol.js";
+
+const SUI_ADDRESS = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
+const SUI_PUBLIC_KEY = "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=";
+const DEVICE_ID = "device-1";
+const SUI_SIGNATURE = Buffer.alloc(97, 1).toString("base64");
+const PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q personal message").toString("base64");
+
+function validLiveAccount() {
+  return {
+    chain: "sui",
+    address: SUI_ADDRESS,
+    publicKey: SUI_PUBLIC_KEY,
+    keyScheme: "ed25519",
+    derivationPath: SUI_DERIVATION_PATH,
+  };
+}
+
+function validSignTransactionSignedOutput() {
+  return {
+    source: "live",
+    deviceId: DEVICE_ID,
+    status: "signed",
+    authorization: "user",
+    chain: "sui",
+    method: "sign_transaction",
+    signature: SUI_SIGNATURE,
+  };
+}
+
+function validSignPersonalMessageSignedOutput() {
+  return {
+    source: "live",
+    deviceId: DEVICE_ID,
+    status: "signed",
+    authorization: "user",
+    chain: "sui",
+    method: "sign_personal_message",
+    signature: SUI_SIGNATURE,
+    messageBytes: PERSONAL_MESSAGE_BYTES,
+  };
+}
 
 test("client entrypoint constructs an admin-disabled device core facade", () => {
   const core = createDefaultDeviceClientCore();
@@ -83,4 +126,87 @@ test("package self-reference resolves only client entrypoints", async () => {
   await assert.rejects(() => import("@stelis/agent-q-client/provider"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
   });
+});
+
+test("adapter output schema keeps signing method result shapes exact", () => {
+  const transactionSchema = gatewaySuccessOutputSchemas.signTransaction;
+  const personalMessageSchema = gatewaySuccessOutputSchemas.signPersonalMessage;
+  assert.equal(transactionSchema.parse(validSignTransactionSignedOutput()).method, "sign_transaction");
+  assert.equal(personalMessageSchema.parse(validSignPersonalMessageSignedOutput()).method, "sign_personal_message");
+
+  assert.throws(() => transactionSchema.parse({
+    ...validSignTransactionSignedOutput(),
+    messageBytes: PERSONAL_MESSAGE_BYTES,
+  }));
+  assert.throws(() => transactionSchema.parse({
+    ...validSignTransactionSignedOutput(),
+    txBytes: "AQID",
+  }));
+  assert.throws(() => transactionSchema.parse({
+    ...validSignTransactionSignedOutput(),
+    authorization: "policy",
+    messageBytes: PERSONAL_MESSAGE_BYTES,
+  }));
+  assert.throws(() => personalMessageSchema.parse({
+    ...validSignPersonalMessageSignedOutput(),
+    txBytes: "AQID",
+  }));
+});
+
+test("adapter output schema keeps terminal signing results exact", () => {
+  const userTerminal = {
+    source: "live",
+    deviceId: DEVICE_ID,
+    status: "user_rejected",
+    authorization: "user",
+    error: {
+      code: "user_rejected",
+      message: SIGN_RESULT_ERROR_MESSAGES.user_rejected,
+    },
+  };
+  const policyTerminal = {
+    source: "live",
+    deviceId: DEVICE_ID,
+    status: "policy_rejected",
+    authorization: "policy",
+    policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+    ruleRef: "default",
+    error: {
+      code: "policy_rejected",
+      message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
+    },
+  };
+  const schema = gatewaySuccessOutputSchemas.signTransaction;
+  assert.equal(schema.parse(userTerminal).status, "user_rejected");
+  assert.equal(schema.parse(policyTerminal).status, "policy_rejected");
+  assert.throws(() => schema.parse({ ...userTerminal, signature: SUI_SIGNATURE }));
+  assert.throws(() => schema.parse({ ...userTerminal, messageBytes: PERSONAL_MESSAGE_BYTES }));
+  assert.throws(() => schema.parse({ ...policyTerminal, signature: SUI_SIGNATURE }));
+  assert.throws(() => schema.parse({
+    ...userTerminal,
+    error: {
+      ...userTerminal.error,
+      sessionId: "session_should_not_leak",
+    },
+  }));
+});
+
+test("adapter output schema keeps Sui account projection exact", () => {
+  const schema = gatewaySuccessOutputSchemas.getAccounts;
+  const output = {
+    source: "live",
+    deviceId: DEVICE_ID,
+    accounts: [validLiveAccount()],
+  };
+  assert.equal(schema.parse(output).accounts[0].address, SUI_ADDRESS);
+  assert.throws(() => schema.parse({ ...output, sessionId: "session_should_not_leak" }));
+  assert.throws(() => schema.parse({
+    ...output,
+    accounts: [
+      {
+        ...validLiveAccount(),
+        label: "unexpected",
+      },
+    ],
+  }));
 });

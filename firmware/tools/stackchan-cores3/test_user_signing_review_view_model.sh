@@ -3,9 +3,9 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: firmware/tools/stackchan-cores3/test_sign_transaction_user_review_view_model.sh
+Usage: firmware/tools/stackchan-cores3/test_user_signing_review_view_model.sh
 
-Compiles the StackChan CoreS3 device-confirmed sign_transaction_user review
+Compiles the StackChan CoreS3 device-confirmed user_signing review
 view-model against host stubs and verifies that clear-signing rows are built
 only from a reviewing signature-request snapshot. This test uses only a host
 C++ compiler and does NOT require ESP-IDF.
@@ -36,11 +36,11 @@ using TickType_t = uint32_t;
 #define pdMS_TO_TICKS(ms) (ms)
 H
 
-cat >"${TMP_DIR}/sign_transaction_user_review_view_model_test.cpp" <<'CPP'
+cat >"${TMP_DIR}/user_signing_review_view_model_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_sign_transaction_user_review_view_model.h"
+#include "agent_q_user_signing_review_view_model.h"
 
 namespace {
 
@@ -65,11 +65,12 @@ void copy_field(char* output, size_t output_size, const char* value)
     snprintf(output, output_size, "%s", value);
 }
 
-agent_q::AgentQSignTransactionUserFlowSnapshot valid_snapshot()
+agent_q::AgentQUserSigningFlowSnapshot valid_snapshot()
 {
-    agent_q::AgentQSignTransactionUserFlowSnapshot snapshot = {};
+    agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
     snapshot.active = true;
-    snapshot.stage = agent_q::AgentQSignTransactionUserStage::reviewing;
+    snapshot.stage = agent_q::AgentQUserSigningStage::reviewing;
+    snapshot.signing_method = agent_q::AgentQSigningMethod::sui_sign_transaction;
     copy_field(snapshot.chain, sizeof(snapshot.chain), "sui");
     copy_field(snapshot.method, sizeof(snapshot.method), "sign_transaction");
     copy_field(snapshot.network, sizeof(snapshot.network), "devnet");
@@ -96,7 +97,7 @@ agent_q::AgentQSignTransactionUserFlowSnapshot valid_snapshot()
 }
 
 const char* row_value(
-    const agent_q::AgentQSignTransactionUserReviewViewModel& model,
+    const agent_q::AgentQUserSigningReviewViewModel& model,
     const char* label)
 {
     for (size_t index = 0; index < model.row_count; ++index) {
@@ -111,11 +112,11 @@ const char* row_value(
 
 int main()
 {
-    using Result = agent_q::AgentQSignTransactionUserReviewBuildResult;
+    using Result = agent_q::AgentQUserSigningReviewBuildResult;
 
-    agent_q::AgentQSignTransactionUserReviewViewModel model = {};
-    agent_q::AgentQSignTransactionUserFlowSnapshot snapshot = valid_snapshot();
-    expect(agent_q::sign_transaction_user_review_view_model_build(snapshot, &model) == Result::ok,
+    agent_q::AgentQUserSigningReviewViewModel model = {};
+    agent_q::AgentQUserSigningFlowSnapshot snapshot = valid_snapshot();
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
            "valid reviewing snapshot builds review model");
     expect(strcmp(model.title, "Review Sui transfer") == 0,
            "model title names review action");
@@ -139,74 +140,109 @@ int main()
            "full recipient row included without tail-only truncation");
 
     snapshot = valid_snapshot();
+    copy_field(snapshot.method, sizeof(snapshot.method), "sign_personal_message");
+    snapshot.signing_method = agent_q::AgentQSigningMethod::sui_sign_personal_message;
+    copy_field(snapshot.account_address, sizeof(snapshot.account_address),
+               "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    copy_field(snapshot.message_preview, sizeof(snapshot.message_preview), "Agent-Q personal message");
+    snapshot.signable_payload_size = 24;
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
+           "valid personal-message snapshot builds review model");
+    expect(strcmp(model.title, "Review Sui message") == 0,
+           "personal-message model title names review action");
+    expect(model.row_count == 5,
+           "personal-message model uses bounded message rows");
+    expect(strcmp(row_value(model, "Chain"), "sui") == 0,
+           "personal-message chain row included");
+    expect(strcmp(row_value(model, "Method"), "sign_personal_message") == 0,
+           "personal-message method row included");
+    expect(strcmp(row_value(model, "Account"),
+                  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0,
+           "personal-message account row included");
+    expect(strcmp(row_value(model, "Preview"), "Agent-Q personal message") == 0,
+           "personal-message preview row included");
+    expect(strcmp(row_value(model, "Payload digest"),
+                  "sha256:1111111111111111111111111111111111111111111111111111111111111111") == 0,
+           "personal-message payload digest row included");
+
+    snapshot = valid_snapshot();
     snapshot.active = false;
-    expect(agent_q::sign_transaction_user_review_view_model_build(snapshot, &model) == Result::inactive,
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::inactive,
            "inactive snapshot is rejected");
     expect(model.row_count == 0, "inactive failure clears output");
 
     snapshot = valid_snapshot();
-    snapshot.stage = agent_q::AgentQSignTransactionUserStage::pin_entry;
-    expect(agent_q::sign_transaction_user_review_view_model_build(snapshot, &model) == Result::wrong_stage,
+    snapshot.stage = agent_q::AgentQUserSigningStage::pin_entry;
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::wrong_stage,
            "non-reviewing snapshot is rejected");
 
     snapshot = valid_snapshot();
     snapshot.sui_transfer.amount[0] = '\0';
-    expect(agent_q::sign_transaction_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "missing amount is rejected");
 
     snapshot = valid_snapshot();
     snapshot.sui_transfer.gas_budget[0] = '\0';
-    expect(agent_q::sign_transaction_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "missing gas budget is rejected");
 
     snapshot = valid_snapshot();
     snapshot.signable_payload_available = false;
-    expect(agent_q::sign_transaction_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unavailable signable payload is rejected");
 
     snapshot = valid_snapshot();
     snapshot.payload_digest[0] = '\0';
-    expect(agent_q::sign_transaction_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "missing payload digest is rejected");
 
     snapshot = valid_snapshot();
-    copy_field(snapshot.method, sizeof(snapshot.method), "sign_personal_message");
-    expect(agent_q::sign_transaction_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
-           "unsupported method is rejected");
-
-    snapshot = valid_snapshot();
     memset(snapshot.chain, 's', sizeof(snapshot.chain));
-    expect(agent_q::sign_transaction_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
-           "unterminated chain is rejected instead of overread");
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
+           "review model uses verified method enum instead of raw snapshot chain");
+    expect(strcmp(row_value(model, "Chain"), "sui") == 0,
+           "chain row is derived from method enum");
 
     snapshot = valid_snapshot();
     memset(snapshot.method, 'm', sizeof(snapshot.method));
-    expect(agent_q::sign_transaction_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
-           "unterminated method is rejected instead of overread");
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
+           "review model uses verified method enum instead of raw snapshot method");
+    expect(strcmp(row_value(model, "Method"), "sign_transaction") == 0,
+           "method row is derived from method enum");
+
+    snapshot = valid_snapshot();
+    copy_field(snapshot.method, sizeof(snapshot.method), "sign_unknown");
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
+           "raw method metadata does not drive review branching");
+
+    snapshot = valid_snapshot();
+    snapshot.signing_method = agent_q::AgentQSigningMethod::unsupported;
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+           "unsupported method enum is rejected instead of falling through");
 
     snapshot = valid_snapshot();
     memset(snapshot.network, 'd', sizeof(snapshot.network));
-    expect(agent_q::sign_transaction_user_review_view_model_build(snapshot, &model) == Result::ok,
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
            "host-supplied network is ignored by the clear-signing view model");
 
     snapshot = valid_snapshot();
     memset(snapshot.sui_transfer.asset, 'S', sizeof(snapshot.sui_transfer.asset));
-    expect(agent_q::sign_transaction_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unterminated asset is rejected instead of overread");
 
     snapshot = valid_snapshot();
     memset(snapshot.sui_transfer.recipient, 'b', sizeof(snapshot.sui_transfer.recipient));
-    expect(agent_q::sign_transaction_user_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unterminated overlong recipient is rejected instead of truncated");
 
-    expect(strcmp(agent_q::sign_transaction_user_review_view_model_build_result_name(Result::ok), "ok") == 0,
+    expect(strcmp(agent_q::user_signing_review_view_model_build_result_name(Result::ok), "ok") == 0,
            "result name exposes ok");
-    expect(strcmp(agent_q::sign_transaction_user_review_view_model_build_result_name(Result::wrong_stage),
+    expect(strcmp(agent_q::user_signing_review_view_model_build_result_name(Result::wrong_stage),
                   "wrong_stage") == 0,
            "result name exposes wrong_stage");
 
     if (failures != 0) {
-        fprintf(stderr, "%d sign_transaction_user review view-model checks failed\n", failures);
+        fprintf(stderr, "%d user_signing review view-model checks failed\n", failures);
         return 1;
     }
     return 0;
@@ -217,8 +253,8 @@ CPP
   -I"${TMP_DIR}" \
   -I"${AGENT_Q_DIR}" \
   -I"${REPO_ROOT}/firmware/src/common" \
-  "${TMP_DIR}/sign_transaction_user_review_view_model_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_review_view_model.cpp" \
-  -o "${TMP_DIR}/sign_transaction_user_review_view_model_test"
+  "${TMP_DIR}/user_signing_review_view_model_test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_user_signing_review_view_model.cpp" \
+  -o "${TMP_DIR}/user_signing_review_view_model_test"
 
-"${TMP_DIR}/sign_transaction_user_review_view_model_test"
+"${TMP_DIR}/user_signing_review_view_model_test"

@@ -58,12 +58,12 @@ Authorization is not selected by the request, Gateway, MCP, provider, Admin
 Page, dapp, or CLI caller. Firmware reads its device-local signing
 authorization mode and chooses one Firmware-owned signing gate:
 
-- `authorization: "policy"` means Firmware evaluates the active policy for the
-  bounded transaction request. Policy authorization is sufficient for signing,
-  this path does not require device-local confirmation for each signing
-  request, and policy rejection must not fall back to asking the user.
+- `authorization: "policy"` means Firmware evaluates the active policy for an
+  implemented bounded signing request. Policy authorization is sufficient for
+  signing, this path does not require device-local confirmation for each
+  signing request, and policy rejection must not fall back to asking the user.
 - `authorization: "user"` means Firmware uses device-local clear-signing review
-  and local PIN confirmation for the bounded transaction request. User
+  and local PIN confirmation for an implemented bounded signing request. User
   rejection or timeout is terminal and must not fall back to policy-only
   signing.
 
@@ -204,16 +204,18 @@ Flow rules:
 
 Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
 `get_capabilities`, `get_accounts`, `policy_get`, `get_approval_history`,
-`policy_propose`, `sign_transaction`, explicit local
+`policy_propose`, `sign_transaction`, `sign_personal_message`, explicit local
 Gateway device selection, and local Gateway caching of discovered devices. The
-current `sign_transaction` runtime enforces state and session gates, keeps
-unknown methods rejected, recognizes bounded restricted SUI transfer request
-inputs for Sui `sign_transaction`, records required approval-history metadata,
-and returns `sign_result`. In policy authorization mode, the active policy can
-reject the request or authorize signing through a bounded `sign` rule. In user
-authorization mode, Firmware uses device-local clear-signing review and local
-PIN confirmation. Product-active status for the current tree still depends on
-target implementation status and hardware evidence in
+current signing runtime enforces state and session gates, keeps unknown methods
+rejected, recognizes bounded restricted SUI transfer request inputs for Sui
+`sign_transaction`, recognizes bounded Sui personal-message bytes for
+`sign_personal_message`, records required approval-history metadata, and
+returns `sign_result`. In policy authorization mode, the active policy can
+reject `sign_transaction` or authorize signing through a bounded `sign` rule.
+`sign_personal_message` is user-mode only and fails closed in policy mode. In
+user authorization mode, Firmware uses device-local clear-signing review and
+local PIN confirmation. Product-active status for the current tree still
+depends on target implementation status and hardware evidence in
 `docs/IMPLEMENTATION_STATUS.md`.
 
 Provisioning and material reset transitions are not USB protocol requests in the
@@ -1135,7 +1137,74 @@ User authorization mode:
   section in the same successful transition. A session loss after the write
   succeeds must not downgrade the request to pre-signing cleanup.
 
-Signed response:
+## Personal Message Signing Request
+
+`sign_personal_message` is the shared protocol request for Sui personal-message
+signing. The request shape does not contain an authorization selector. The
+current implementation supports this method only in device-local `user`
+authorization mode because policy facts and policy rules for personal-message
+contents are not implemented.
+
+Request shape:
+
+```json
+{
+  "id": "req_sign_msg_001",
+  "version": 1,
+  "type": "sign_personal_message",
+  "sessionId": "session_001",
+  "chain": "sui",
+  "method": "sign_personal_message",
+  "params": {
+    "network": "devnet",
+    "message": "base64-message-bytes"
+  }
+}
+```
+
+Rules for the first implementation:
+
+- `sign_personal_message` is valid only in material-backed `provisioned` state
+  with a matching active session.
+- Request fields may not include `authorization`, `timeoutMs`,
+  `approvalTimeoutMs`, `durationMs`, raw session tokens beyond the envelope
+  `sessionId`, or signing material.
+- The first implementation is limited to `chain: "sui"` and
+  `method: "sign_personal_message"` with canonical base64 `params.message`
+  bytes inside the current target's bounded message-size limit.
+- `params.network` is required and must be one of `mainnet`, `testnet`,
+  `devnet`, or `localnet`. Current Sui personal-message bytes do not carry
+  network identity, so Firmware validates this only as request context and does
+  not expose it as a policy fact or message-derived history proof.
+- Firmware must derive the signing account from stored device material and show
+  a bounded clear-signing review derived from the exact message bytes that will
+  be signed. Full message display may be replaced by bounded preview plus digest
+  metadata, but callers must not supply independent review facts.
+- Firmware must build the Sui PersonalMessage intent digest by BCS-serializing
+  the message as a byte vector, applying the Sui PersonalMessage intent, and
+  signing that digest. It must not reuse the Sui transaction-intent signing path
+  for this method.
+- Firmware must not call the signing service before the required local-PIN
+  confirmation history record is durable. If a required history write fails,
+  Firmware returns top-level `history_error` and must not claim the corresponding
+  terminal result.
+- If the device-local signing authorization mode is `policy`, Firmware returns
+  a fail-closed `unsupported_method` error. It must not fall back to user
+  confirmation.
+- `get_capabilities.methods` does not advertise signing. Signing availability
+  is advertised only through top-level `signing.authorization` and
+  `signing.methods`. `sign_personal_message` appears only when the current
+  Firmware-local signing authorization mode is `user`.
+- `sign_result` for a signed personal message includes `authorization: "user"`,
+  `chain: "sui"`, `method: "sign_personal_message"`, `signature`, and
+  `messageBytes`, where `messageBytes` is the canonical base64 message bytes
+  that Firmware signed. Non-signed terminal responses do not include
+  `messageBytes`.
+- History must not store or return raw full message bytes, session ids, raw
+  request ids, mnemonic text, seed, private key material, PINs, or device-local
+  UI state.
+
+Signed transaction response:
 
 ```json
 {
@@ -1146,6 +1215,22 @@ Signed response:
   "status": "signed",
   "chain": "sui",
   "method": "sign_transaction",
+  "signature": "base64-sui-ed25519-signature-envelope"
+}
+```
+
+Signed personal-message response:
+
+```json
+{
+  "id": "req_sign_msg_001",
+  "version": 1,
+  "type": "sign_result",
+  "authorization": "user",
+  "status": "signed",
+  "chain": "sui",
+  "method": "sign_personal_message",
+  "messageBytes": "base64-message-bytes",
   "signature": "base64-sui-ed25519-signature-envelope"
 }
 ```
@@ -1188,8 +1273,10 @@ Terminal error mapping:
 | `user_timed_out` | `user_timed_out` | `The signing request timed out on the device.` |
 | `signing_failed` | `signing_failed` | `The device could not produce a signature.` |
 
-`signed` responses may contain only `authorization`, `chain`, `method`, and
-`signature` as method-specific output. Non-signed terminal responses may contain
+`signed` transaction responses may contain only `authorization`, `chain`,
+`method`, and `signature` as method-specific output. `signed`
+personal-message responses also include canonical base64 `messageBytes` for the
+message bytes that Firmware signed. Non-signed terminal responses may contain
 only `authorization` and `error` beyond the shared envelope fields. A
 `policy_rejected` response also includes `policyHash` and `ruleRef`. No
 `sign_result` response may contain raw `txBytes`, decoded transaction

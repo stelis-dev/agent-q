@@ -4,9 +4,10 @@
 package.
 
 It exposes current device discovery, device selection, connection, read-only
-Sui account/capability data, and Sui `sign_transaction` transport through a
-small provider object. It also exposes an app-imported Sui Wallet Standard
-registration adapter for `sui:signTransaction`.
+Sui account/capability data, and Sui `sign_transaction` /
+`sign_personal_message` transport through a small provider object. It also
+exposes an app-imported Sui Wallet Standard registration adapter for the
+currently supported Sui signing features.
 
 The Sui provider does not store signing keys and does not make policy
 decisions. Agent-Q Firmware remains the authority for keys, policy evaluation,
@@ -57,6 +58,7 @@ policy evaluation, signing, persistence, and cleanup.
 - `getCapabilities`
 - `getAccounts`
 - `signTransaction`
+- `signPersonalMessage`
 
 The dapp-facing provider object does not include policy update proposals,
 active policy summaries, approval history, or any host-selected signing
@@ -64,29 +66,36 @@ authorization API.
 Those APIs remain on broader client, MCP, or Admin surfaces. This is API
 projection for the provider audience, not a security claim that the same
 application cannot import the client/Admin package directly. Provider-facing
-signing uses only `signTransaction`, which passes a bounded request to
-Firmware. Firmware uses its device-local signing mode to select the policy or
-user authorization gate, records required history, and signs or rejects. The
-provider does not decide whether signing is allowed and cannot select the
-authorization mode.
+signing uses `signTransaction` for transaction bytes and `signPersonalMessage`
+for bounded Sui personal-message bytes. Firmware uses its device-local signing
+mode to select the policy or user authorization gate for transaction signing,
+and personal-message signing is user-mode only. Firmware records required
+history and signs or rejects. The provider does not decide whether signing is
+allowed and cannot select the authorization mode.
 
-The current signing method is Sui `sign_transaction` only. Sui personal-message
-signing and transaction execution are not implemented and must not be
-advertised until their protocol, history, UI, and tests are defined.
+The current signing methods are Sui `sign_transaction` and user-confirmed Sui
+`sign_personal_message`. Transaction execution and policy-authorized personal
+message signing are not implemented and must not be advertised.
 
 ## Wallet Standard
 
 The Wallet Standard adapter exposes the current Agent-Q-supported wallet
-features only:
+methods only:
 
 - `standard:connect`
 - `standard:events`
 - `standard:disconnect`
 - `sui:signTransaction`
+- `sui:signPersonalMessage`
 
-It does not expose `sui:signPersonalMessage`,
-`sui:signAndExecuteTransaction`, Admin, policy update, policy reads,
-approval-history reads, or a host-selected authorization API.
+Connected Wallet Standard accounts advertise only the features supported by
+the live Firmware capability response for the current signing mode.
+`sui:signPersonalMessage` is therefore an account feature only when Firmware
+reports user-mode support for `sign_personal_message`.
+
+It does not expose `sui:signAndExecuteTransaction`, deprecated
+`sui:signMessage`, Admin, policy update, policy reads, approval-history reads,
+or a host-selected authorization API.
 
 Apps can register the wallet directly:
 
@@ -127,11 +136,13 @@ export const dAppKit = createDAppKit({
 });
 ```
 
-The wallet signs through provider-sui `signTransaction`, which sends
-`sign_transaction` to Firmware. Firmware remains responsible for selecting the
-policy or user signing gate from its local signing mode, active policy
+The wallet signs through provider-sui `signTransaction` and
+`signPersonalMessage`, which send `sign_transaction` and
+`sign_personal_message` to Firmware. Firmware remains responsible for selecting
+the policy or user signing gate from its local signing mode, active policy
 evaluation in policy mode, device-local user confirmation in user mode, history,
-signing, and cleanup.
+signing, and cleanup. Personal-message signing is user-mode only in the current
+implementation.
 
 See `packages/example-sui-dapp-kit/` for a minimal dapp-kit integration
 skeleton. The example intentionally does not create a fake provider; it
@@ -145,8 +156,10 @@ provider factory:
 
 - `connectDevice`
 - `disconnectDevice`
+- `getCapabilities`
 - `getAccounts`
 - `signTransaction`
+- `signPersonalMessage`
 
 The injected browser provider contract contains only the methods above. It must
 not include Admin, policy update, active-policy reads, approval-history reads,

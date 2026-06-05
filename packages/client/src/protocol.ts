@@ -122,6 +122,11 @@ export interface SignTransactionParams {
   txBytes: string;
 }
 
+export interface SignPersonalMessageParams {
+  network: SuiSignTransactionNetwork;
+  message: string;
+}
+
 export interface SignTransactionRequest {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -130,6 +135,16 @@ export interface SignTransactionRequest {
   chain: typeof SUI_CHAIN_ID;
   method: typeof SUI_SIGN_TRANSACTION_METHOD;
   params: SignTransactionParams;
+}
+
+export interface SignPersonalMessageRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD;
+  sessionId: string;
+  chain: typeof SUI_CHAIN_ID;
+  method: typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD;
+  params: SignPersonalMessageParams;
 }
 
 export type ProtocolRequest =
@@ -142,7 +157,8 @@ export type ProtocolRequest =
   | PolicyGetRequest
   | GetApprovalHistoryRequest
   | PolicyProposeRequest
-  | SignTransactionRequest;
+  | SignTransactionRequest
+  | SignPersonalMessageRequest;
 
 export interface StatusResponse {
   id: string;
@@ -204,7 +220,7 @@ export interface CapabilityChain {
 
 export interface SigningCapabilityEntry {
   chain: typeof SUI_CHAIN_ID;
-  method: typeof SUI_SIGN_TRANSACTION_METHOD;
+  method: SuiSignMethod;
 }
 
 export interface SigningCapabilities {
@@ -346,7 +362,7 @@ export type SignResultStatus =
 
 export type SignResultAuthorization = "user" | "policy";
 
-export interface SignResultSignedResponse {
+export interface SignTransactionSignedResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
   type: "sign_result";
@@ -356,6 +372,22 @@ export interface SignResultSignedResponse {
   method: typeof SUI_SIGN_TRANSACTION_METHOD;
   signature: string;
 }
+
+export interface SignPersonalMessageSignedResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "sign_result";
+  authorization: "user";
+  status: "signed";
+  chain: typeof SUI_CHAIN_ID;
+  method: typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD;
+  signature: string;
+  messageBytes: string;
+}
+
+export type SignResultSignedResponse =
+  | SignTransactionSignedResponse
+  | SignPersonalMessageSignedResponse;
 
 export interface SignResultUserRejectedResponse {
   id: string;
@@ -613,6 +645,38 @@ export function makeSignTransactionRequest(
   return request;
 }
 
+export function makeSignPersonalMessageRequest(
+  sessionId: string,
+  chain: unknown,
+  method: unknown,
+  params: unknown,
+  id = createRequestId(),
+): SignPersonalMessageRequest {
+  validateRequestId(id);
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  const normalizedParams = validateSignPersonalMessageRequestInput(
+    chain,
+    method,
+    params,
+    SUI_SIGN_PERSONAL_MESSAGE_METHOD,
+  );
+  const request: SignPersonalMessageRequest = {
+    id,
+    version: PROTOCOL_VERSION,
+    type: SUI_SIGN_PERSONAL_MESSAGE_METHOD,
+    sessionId,
+    chain: SUI_CHAIN_ID,
+    method: SUI_SIGN_PERSONAL_MESSAGE_METHOD,
+    params: normalizedParams,
+  };
+  if (Buffer.byteLength(JSON.stringify(request), "utf8") > MAX_RAW_PROTOCOL_JSON_BYTES) {
+    throw new ProtocolError("invalid_params", "sign_personal_message request is too large for the runtime.");
+  }
+  return request;
+}
+
 export function validatePolicyProposeRequestInput(
   sessionId: string,
   policy: Record<string, unknown>,
@@ -641,6 +705,30 @@ export function validateSignRequestInput(
   return {
     network: validateSuiSignTransactionNetwork(params.network),
     txBytes: validateSuiSignTransactionTxBytes(params.txBytes),
+  };
+}
+
+export function validateSignPersonalMessageRequestInput(
+  chain: unknown,
+  method: unknown,
+  params: unknown,
+  requestType = "sign_personal_message",
+): SignPersonalMessageParams {
+  if (!isRecord(params) || Array.isArray(params)) {
+    throw new ProtocolError("invalid_params", `${requestType} params must be an object.`);
+  }
+  if (hasSecretPayloadKey(params)) {
+    throw new ProtocolError("invalid_params", `${requestType} params must not include secret material.`);
+  }
+  if (!hasOnlyObjectKeys(params, ["network", "message"])) {
+    throw new ProtocolError("invalid_params", `${requestType} params contain unsupported fields.`);
+  }
+  if (chain !== SUI_CHAIN_ID || method !== SUI_SIGN_PERSONAL_MESSAGE_METHOD) {
+    throw new ProtocolError("invalid_method", `${requestType} method is unsupported.`);
+  }
+  return {
+    network: validateSuiSignTransactionNetwork(params.network),
+    message: validateSuiSignPersonalMessage(params.message),
   };
 }
 
@@ -1110,7 +1198,7 @@ export const SUI_ED25519_SIGNATURE_BASE64_PATTERN = /^[A-Za-z0-9+/]{130}==$/;
 export const SUI_DERIVATION_PATH = "m/44'/784'/0'/0'/0'";
 export const MAX_CAPABILITY_CHAINS = 1;
 export const MAX_CAPABILITY_ACCOUNTS_PER_CHAIN = 1;
-export const MAX_SIGNING_CAPABILITIES = 1;
+export const MAX_SIGNING_CAPABILITIES = 2;
 // The current target implements exactly one account (Sui Ed25519 account 0). Bound
 // the accounts array so a buggy or spoofed device cannot inflate the MCP result or
 // imply multi-account support that does not exist. Raise this as more accounts or
@@ -1157,10 +1245,16 @@ export const MAX_RAW_PROTOCOL_JSON_BYTES = 4096;
 export const MAX_POLICY_UPDATE_REQUEST_JSON_BYTES = 4096;
 export const SUI_CHAIN_ID = "sui";
 export const SUI_SIGN_TRANSACTION_METHOD = "sign_transaction";
+export const SUI_SIGN_PERSONAL_MESSAGE_METHOD = "sign_personal_message";
+export type SuiSignMethod =
+  | typeof SUI_SIGN_TRANSACTION_METHOD
+  | typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD;
 export const SUI_SIGN_TRANSACTION_NETWORKS = ["mainnet", "testnet", "devnet", "localnet"] as const;
 export type SuiSignTransactionNetwork = (typeof SUI_SIGN_TRANSACTION_NETWORKS)[number];
 export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES = 384;
 export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS = 512;
+export const MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES = 256;
+export const MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS = 344;
 const BASE64_CANONICAL_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 export const UNSUPPORTED_METHOD_MESSAGE = "Method is not supported.";
 export const SIGN_RESULT_ERROR_MESSAGES = {
@@ -1393,12 +1487,16 @@ function sanitizeSigningCapabilityEntry(value: unknown): SigningCapabilityEntry 
   if (!hasOnlyObjectKeys(value, ["chain", "method"])) {
     throw new ProtocolError("protocol_error", "Signing capability entry contains unsupported fields.");
   }
-  if (value.chain !== SUI_CHAIN_ID || value.method !== SUI_SIGN_TRANSACTION_METHOD) {
+  if (
+    value.chain !== SUI_CHAIN_ID ||
+    (value.method !== SUI_SIGN_TRANSACTION_METHOD &&
+      value.method !== SUI_SIGN_PERSONAL_MESSAGE_METHOD)
+  ) {
     throw new ProtocolError("protocol_error", "Signing capability is unsupported.");
   }
   return {
     chain: SUI_CHAIN_ID,
-    method: SUI_SIGN_TRANSACTION_METHOD,
+    method: value.method,
   };
 }
 
@@ -1418,12 +1516,28 @@ function sanitizeSigningCapabilities(value: unknown): SigningCapabilities | unde
   if (!Array.isArray(value.methods)) {
     throw new ProtocolError("protocol_error", "Signing capabilities are malformed.");
   }
-  if (value.methods.length !== MAX_SIGNING_CAPABILITIES) {
+  if (value.methods.length === 0 || value.methods.length > MAX_SIGNING_CAPABILITIES) {
     throw new ProtocolError("protocol_error", "Signing capability count is unsupported.");
+  }
+  const methods = value.methods.map((entry) => sanitizeSigningCapabilityEntry(entry));
+  const methodNames = new Set(methods.map((entry) => entry.method));
+  if (methodNames.size !== methods.length) {
+    throw new ProtocolError("protocol_error", "Signing capability is duplicated.");
+  }
+  if (value.authorization === "policy") {
+    if (methods.length !== 1 || !methodNames.has(SUI_SIGN_TRANSACTION_METHOD)) {
+      throw new ProtocolError("protocol_error", "Signing capability is unsupported.");
+    }
+  } else if (
+    methods.length !== 2 ||
+    !methodNames.has(SUI_SIGN_TRANSACTION_METHOD) ||
+    !methodNames.has(SUI_SIGN_PERSONAL_MESSAGE_METHOD)
+  ) {
+    throw new ProtocolError("protocol_error", "Signing capability is unsupported.");
   }
   return {
     authorization: value.authorization,
-    methods: value.methods.map((entry) => sanitizeSigningCapabilityEntry(entry)),
+    methods,
   };
 }
 
@@ -1745,6 +1859,28 @@ function validateSuiSignTransactionTxBytes(value: unknown): string {
   return value;
 }
 
+function validateSuiSignPersonalMessage(value: unknown, errorCode = "invalid_params"): string {
+  if (typeof value !== "string") {
+    throw new ProtocolError(errorCode, "sui/sign_personal_message message must be base64.");
+  }
+  if (
+    value.length === 0 ||
+    value.length > MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS ||
+    !BASE64_CANONICAL_PATTERN.test(value)
+  ) {
+    throw new ProtocolError(errorCode, "sui/sign_personal_message message must be canonical base64.");
+  }
+  const decoded = Buffer.from(value, "base64");
+  if (
+    decoded.length === 0 ||
+    decoded.length > MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES ||
+    decoded.toString("base64") !== value
+  ) {
+    throw new ProtocolError(errorCode, "sui/sign_personal_message message is outside the supported size.");
+  }
+  return value;
+}
+
 function signResultErrorMessage(code: unknown): string | undefined {
   if (typeof code !== "string" || !(code in SIGN_RESULT_ERROR_MESSAGES)) {
     return undefined;
@@ -1761,28 +1897,50 @@ function sanitizeSignResultResponse(value: Record<string, unknown>): SignResultR
   }
 
   if (value.status === "signed") {
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "authorization", "status", "chain", "method", "signature"])) {
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "authorization", "status", "chain", "method", "signature", "messageBytes"])) {
       throw new ProtocolError("protocol_error", "Sign result response contains unsupported fields.");
     }
     if (
       (value.authorization !== "user" && value.authorization !== "policy") ||
       value.chain !== SUI_CHAIN_ID ||
-      value.method !== SUI_SIGN_TRANSACTION_METHOD ||
       typeof value.signature !== "string" ||
       !SUI_ED25519_SIGNATURE_BASE64_PATTERN.test(value.signature)
     ) {
       throw new ProtocolError("protocol_error", "Sign result response is malformed.");
     }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "sign_result",
-      authorization: value.authorization,
-      status: "signed",
-      chain: SUI_CHAIN_ID,
-      method: SUI_SIGN_TRANSACTION_METHOD,
-      signature: value.signature,
-    };
+    if (value.method === SUI_SIGN_TRANSACTION_METHOD) {
+      if (value.messageBytes !== undefined) {
+        throw new ProtocolError("protocol_error", "Sign result response is malformed.");
+      }
+      return {
+        id: value.id,
+        version: PROTOCOL_VERSION,
+        type: "sign_result",
+        authorization: value.authorization,
+        status: "signed",
+        chain: SUI_CHAIN_ID,
+        method: SUI_SIGN_TRANSACTION_METHOD,
+        signature: value.signature,
+      };
+    }
+    if (value.method === SUI_SIGN_PERSONAL_MESSAGE_METHOD) {
+      if (value.authorization !== "user") {
+        throw new ProtocolError("protocol_error", "Sign result response is malformed.");
+      }
+      const messageBytes = validateSuiSignPersonalMessage(value.messageBytes, "protocol_error");
+      return {
+        id: value.id,
+        version: PROTOCOL_VERSION,
+        type: "sign_result",
+        authorization: "user",
+        status: "signed",
+        chain: SUI_CHAIN_ID,
+        method: SUI_SIGN_PERSONAL_MESSAGE_METHOD,
+        signature: value.signature,
+        messageBytes,
+      };
+    }
+    throw new ProtocolError("protocol_error", "Sign result response is malformed.");
   }
 
   if (value.status === "user_rejected" || value.status === "user_timed_out") {

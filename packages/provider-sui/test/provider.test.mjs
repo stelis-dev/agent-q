@@ -8,6 +8,7 @@ import {
   StandardConnect,
   StandardDisconnect,
   StandardEvents,
+  SuiSignPersonalMessage,
   SuiSignTransaction,
 } from "@mysten/wallet-standard";
 import { createAgentQSuiProvider, AgentQSuiProvider } from "../dist/provider-sui.js";
@@ -22,6 +23,7 @@ import { FORBIDDEN_SECRET_FIELD_NAMES, SIGN_RESULT_ERROR_MESSAGES, SUI_DERIVATIO
 const SUI_ADDRESS = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
 const SUI_PUBLIC_KEY = "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=";
 const SUI_SIGNATURE = Buffer.alloc(97, 1).toString("base64");
+const PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q personal message").toString("base64");
 
 function assertNoSecretFields(value) {
   const text = JSON.stringify(value).toLowerCase();
@@ -87,7 +89,10 @@ function createFakeCore() {
         ],
         signing: {
           authorization: "user",
-          methods: [{ chain: "sui", method: "sign_transaction" }],
+          methods: [
+            { chain: "sui", method: "sign_transaction" },
+            { chain: "sui", method: "sign_personal_message" },
+          ],
         },
       };
     },
@@ -107,6 +112,18 @@ function createFakeCore() {
       };
     },
     async signTransaction() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        status: "user_rejected",
+        authorization: "user",
+        error: {
+          code: "user_rejected",
+          message: "The signing request was rejected on the device.",
+        },
+      };
+    },
+    async signPersonalMessage() {
       return {
         source: "live",
         deviceId: "device-1",
@@ -139,6 +156,19 @@ function createSigningCore() {
           signature: SUI_SIGNATURE,
         };
       },
+      async signPersonalMessage(input) {
+        calls.push(input);
+        return {
+          source: "live",
+          deviceId: "device-1",
+          status: "signed",
+          authorization: "user",
+          chain: "sui",
+          method: "sign_personal_message",
+          signature: SUI_SIGNATURE,
+          messageBytes: input.message,
+        };
+      },
     },
   };
 }
@@ -160,6 +190,63 @@ async function createResolvedTransactionJson(sender = SUI_ADDRESS) {
 
 function fakeClient() {
   return {};
+}
+
+function validSignedTransactionResult() {
+  return {
+    source: "live",
+    deviceId: "device-1",
+    status: "signed",
+    authorization: "user",
+    chain: "sui",
+    method: "sign_transaction",
+    signature: SUI_SIGNATURE,
+  };
+}
+
+function validSignedPersonalMessageResult(messageBytes = PERSONAL_MESSAGE_BYTES) {
+  return {
+    source: "live",
+    deviceId: "device-1",
+    status: "signed",
+    authorization: "user",
+    chain: "sui",
+    method: "sign_personal_message",
+    signature: SUI_SIGNATURE,
+    messageBytes,
+  };
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function validCapabilitiesResult({
+  authorization = "user",
+  methods = authorization === "user"
+    ? [
+      { chain: "sui", method: "sign_transaction" },
+      { chain: "sui", method: "sign_personal_message" },
+    ]
+    : [
+      { chain: "sui", method: "sign_transaction" },
+    ],
+} = {}) {
+  return {
+    source: "live",
+    deviceId: "device-1",
+    capabilities: [
+      {
+        id: "sui",
+        accounts: [{ keyScheme: "ed25519", derivationPath: SUI_DERIVATION_PATH }],
+        methods: [],
+      },
+    ],
+    signing: {
+      authorization,
+      methods,
+    },
+  };
 }
 
 test("provider-sui package metadata exposes only Sui provider and Wallet Standard entrypoints", async () => {
@@ -215,7 +302,7 @@ test("Wallet Standard entrypoint stays separated from Node device transport", as
   assert.doesNotMatch(types, /\.\/provider-sui\.js/);
 });
 
-test("provider object presents the Sui dapp-facing adapter API including signTransaction", () => {
+test("provider object presents the Sui dapp-facing adapter API including signing methods", () => {
   const provider = createAgentQSuiProvider({ core: createFakeCore() });
   const methodNames = Object.getOwnPropertyNames(Object.getPrototypeOf(provider))
     .filter((name) => name !== "constructor")
@@ -230,9 +317,11 @@ test("provider object presents the Sui dapp-facing adapter API including signTra
     "listDevices",
     "scanDevices",
     "selectDevice",
+    "signPersonalMessage",
     "signTransaction",
   ]);
   assert.equal(typeof provider.signTransaction, "function");
+  assert.equal(typeof provider.signPersonalMessage, "function");
   assert.equal(provider.signByUser, undefined);
   assert.equal(provider.signByPolicy, undefined);
   assert.equal(provider.policyPropose, undefined);
@@ -240,7 +329,7 @@ test("provider object presents the Sui dapp-facing adapter API including signTra
   assert.equal(provider.getApprovalHistory, undefined);
 });
 
-test("provider delegates current methods and signTransaction without exposing session ids or secrets", async () => {
+test("provider delegates current methods and signing methods without exposing session ids or secrets", async () => {
   const provider = createAgentQSuiProvider({ core: createFakeCore() });
   const outputs = [
     await provider.scanDevices(),
@@ -258,6 +347,13 @@ test("provider delegates current methods and signTransaction without exposing se
       network: "devnet",
       txBytes: "AQID",
     }),
+    await provider.signPersonalMessage({
+      deviceId: "device-1",
+      chain: "sui",
+      method: "sign_personal_message",
+      network: "devnet",
+      message: PERSONAL_MESSAGE_BYTES,
+    }),
   ];
   for (const output of outputs) {
     assertNoSecretFields(output);
@@ -265,7 +361,10 @@ test("provider delegates current methods and signTransaction without exposing se
   const capabilities = outputs[6];
   assert.deepEqual(capabilities.signing, {
     authorization: "user",
-    methods: [{ chain: "sui", method: "sign_transaction" }],
+    methods: [
+      { chain: "sui", method: "sign_transaction" },
+      { chain: "sui", method: "sign_personal_message" },
+    ],
   });
   assert.equal(JSON.stringify(capabilities).includes('"signByPolicy"'), false);
 });
@@ -314,6 +413,13 @@ test("provider applies output boundary to every custom core method", async () =>
       network: "devnet",
       txBytes: "AQID",
     })],
+    ["signPersonalMessage", (provider) => provider.signPersonalMessage({
+      deviceId: "device-1",
+      chain: "sui",
+      method: "sign_personal_message",
+      network: "devnet",
+      message: PERSONAL_MESSAGE_BYTES,
+    })],
   ];
 
   for (const [methodName, callProvider] of calls) {
@@ -331,6 +437,71 @@ test("provider applies output boundary to every custom core method", async () =>
       /forbidden output field/,
       `${methodName} must reject forbidden custom-core output fields`,
     );
+  }
+});
+
+test("provider output boundary rejects malformed signing and account projections", async () => {
+  {
+    const provider = createAgentQSuiProvider({
+      core: {
+        ...createFakeCore(),
+        async getAccounts() {
+          const output = await createFakeCore().getAccounts();
+          return {
+            ...output,
+            accounts: [
+              {
+                ...output.accounts[0],
+                label: "unexpected-account-metadata",
+              },
+            ],
+          };
+        },
+      },
+    });
+    await assert.rejects(() => provider.getAccounts({ deviceId: "device-1" }));
+  }
+
+  {
+    const provider = createAgentQSuiProvider({
+      core: {
+        ...createFakeCore(),
+        async signTransaction() {
+          return {
+            ...validSignedTransactionResult(),
+            messageBytes: PERSONAL_MESSAGE_BYTES,
+          };
+        },
+      },
+    });
+    await assert.rejects(() => provider.signTransaction({
+      deviceId: "device-1",
+      chain: "sui",
+      method: "sign_transaction",
+      network: "devnet",
+      txBytes: "AQID",
+    }));
+  }
+
+  {
+    const provider = createAgentQSuiProvider({
+      core: {
+        ...createFakeCore(),
+        async signPersonalMessage() {
+          return {
+            ...validSignedPersonalMessageResult(),
+            txBytes: "AQID",
+          };
+        },
+      },
+    });
+    await assert.rejects(() => provider.signPersonalMessage({
+      deviceId: "device-1",
+      chain: "sui",
+      method: "sign_personal_message",
+      network: "devnet",
+      message: PERSONAL_MESSAGE_BYTES,
+    }));
   }
 });
 
@@ -373,6 +544,7 @@ test("provider object omits policy signing and Admin management entrypoints", ()
   assert.equal(provider.policyGet, undefined);
   assert.equal(provider.getApprovalHistory, undefined);
   assert.equal(typeof provider.signTransaction, "function");
+  assert.equal(typeof provider.signPersonalMessage, "function");
 });
 
 test("Wallet Standard adapter advertises only current Agent-Q Sui signing features", () => {
@@ -389,9 +561,11 @@ test("Wallet Standard adapter advertises only current Agent-Q Sui signing featur
     "standard:connect",
     "standard:disconnect",
     "standard:events",
+    "sui:signPersonalMessage",
     "sui:signTransaction",
   ]);
-  assert.equal(wallet.features["sui:signPersonalMessage"], undefined);
+  assert.equal(typeof wallet.features["sui:signPersonalMessage"].signPersonalMessage, "function");
+  assert.equal(wallet.features["sui:signMessage"], undefined);
   assert.equal(wallet.features["sui:signAndExecuteTransaction"], undefined);
   assert.equal(wallet.features["sui:signTransactionBlock"], undefined);
 });
@@ -449,7 +623,7 @@ test("Wallet Standard connect and disconnect delegate through provider-sui witho
   assert.equal(connected.accounts.length, 1);
   assert.equal(connected.accounts[0].address, SUI_ADDRESS);
   assert.deepEqual(connected.accounts[0].chains, ["sui:devnet"]);
-  assert.deepEqual(connected.accounts[0].features, [SuiSignTransaction]);
+  assert.deepEqual(connected.accounts[0].features, [SuiSignTransaction, SuiSignPersonalMessage]);
   assertNoSecretFields(connected);
   assert.equal(wallet.policyGet, undefined);
   assert.equal(wallet.getApprovalHistory, undefined);
@@ -459,6 +633,221 @@ test("Wallet Standard connect and disconnect delegate through provider-sui witho
   assert.equal(wallet.accounts.length, 0);
   assert.equal(changes.length, 2);
   assert.deepEqual(changes.map((change) => change.accounts.length), [1, 0]);
+});
+
+test("Wallet Standard account features follow Firmware signing capability", async () => {
+  const core = {
+    ...createFakeCore(),
+    async getCapabilities() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        capabilities: [
+          {
+            id: "sui",
+            accounts: [{ keyScheme: "ed25519", derivationPath: SUI_DERIVATION_PATH }],
+            methods: [],
+          },
+        ],
+        signing: {
+          authorization: "policy",
+          methods: [
+            { chain: "sui", method: "sign_transaction" },
+          ],
+        },
+      };
+    },
+  };
+  const wallet = createAgentQSuiWallet({
+    provider: createAgentQSuiProvider({ core }),
+    getClient: fakeClient,
+    chains: ["sui:devnet"],
+  });
+  const { accounts } = await wallet.features[StandardConnect].connect();
+  assert.deepEqual(accounts[0].features, [SuiSignTransaction]);
+  await assert.rejects(
+    () => wallet.features[SuiSignPersonalMessage].signPersonalMessage({
+      account: accounts[0],
+      chain: "sui:devnet",
+      message: new TextEncoder().encode("hello Agent-Q"),
+    }),
+    /does not support/,
+  );
+});
+
+test("Wallet Standard direct capabilities exact validator maps current signing matrices", async () => {
+  const cases = [
+    {
+      output: validCapabilitiesResult(),
+      expectedFeatures: [SuiSignTransaction, SuiSignPersonalMessage],
+      label: "user mode",
+    },
+    {
+      output: validCapabilitiesResult({ authorization: "policy" }),
+      expectedFeatures: [SuiSignTransaction],
+      label: "policy mode",
+    },
+  ];
+  for (const { output, expectedFeatures, label } of cases) {
+    const wallet = createAgentQSuiWallet({
+      provider: {
+        ...createFakeCore(),
+        async getCapabilities() {
+          return output;
+        },
+      },
+      getClient: fakeClient,
+      chains: ["sui:devnet"],
+    });
+    const connected = await wallet.features[StandardConnect].connect();
+    assert.deepEqual(connected.accounts[0].features, expectedFeatures, label);
+  }
+});
+
+test("Wallet Standard direct capabilities exact validator rejects malformed provider output", async () => {
+  const mutate = (fn) => {
+    const output = cloneJson(validCapabilitiesResult());
+    fn(output);
+    return output;
+  };
+  const cases = [
+    {
+      output: mutate((output) => {
+        delete output.deviceId;
+      }),
+      label: "missing deviceId",
+    },
+    {
+      output: mutate((output) => {
+        output.deviceId = "device id with spaces";
+      }),
+      label: "malformed deviceId",
+    },
+    {
+      output: mutate((output) => {
+        delete output.capabilities;
+      }),
+      label: "missing capabilities",
+    },
+    {
+      output: mutate((output) => {
+        delete output.signing;
+      }),
+      label: "missing signing capability",
+    },
+    {
+      output: mutate((output) => {
+        output.sessionId = "session_should_not_leak";
+      }),
+      label: "top-level extra field",
+    },
+    {
+      output: mutate((output) => {
+        output.source = "cached";
+      }),
+      label: "invalid source",
+    },
+    {
+      output: mutate((output) => {
+        output.capabilities[0].id = "solana";
+      }),
+      label: "unsupported chain id",
+    },
+    {
+      output: mutate((output) => {
+        output.capabilities.push(cloneJson(output.capabilities[0]));
+      }),
+      label: "multiple chains",
+    },
+    {
+      output: mutate((output) => {
+        output.capabilities[0].network = "devnet";
+      }),
+      label: "chain extra field",
+    },
+    {
+      output: mutate((output) => {
+        output.capabilities[0].methods = ["sign_transaction"];
+      }),
+      label: "non-empty chain methods",
+    },
+    {
+      output: mutate((output) => {
+        output.capabilities[0].accounts[0].keyScheme = "secp256k1";
+      }),
+      label: "wrong capability account key scheme",
+    },
+    {
+      output: mutate((output) => {
+        output.capabilities[0].accounts[0].derivationPath = "m/44'/784'/1'/0'/0'";
+      }),
+      label: "wrong capability account derivation path",
+    },
+    {
+      output: mutate((output) => {
+        output.capabilities[0].accounts[0].label = "unexpected";
+      }),
+      label: "capability account extra field",
+    },
+    {
+      output: mutate((output) => {
+        output.signing.methods.push({ chain: "sui", method: "sign_transaction" });
+      }),
+      label: "duplicate signing method",
+    },
+    {
+      output: mutate((output) => {
+        output.signing.methods = [{ chain: "sui", method: "sign_transaction" }];
+      }),
+      label: "user mode missing personal-message signing",
+    },
+    {
+      output: validCapabilitiesResult({
+        authorization: "policy",
+        methods: [
+          { chain: "sui", method: "sign_transaction" },
+          { chain: "sui", method: "sign_personal_message" },
+        ],
+      }),
+      label: "policy mode must not advertise personal-message signing",
+    },
+    {
+      output: mutate((output) => {
+        output.signing.maxBatchSize = 1;
+      }),
+      label: "signing extra field",
+    },
+    {
+      output: mutate((output) => {
+        output.signing.methods[0].label = "transaction";
+      }),
+      label: "signing method entry extra field",
+    },
+  ];
+  for (const { output, label } of cases) {
+    let disconnectCalls = 0;
+    const wallet = createAgentQSuiWallet({
+      provider: {
+        ...createFakeCore(),
+        async disconnectDevice() {
+          disconnectCalls += 1;
+          return createFakeCore().disconnectDevice();
+        },
+        async getCapabilities() {
+          return output;
+        },
+      },
+      getClient: fakeClient,
+      chains: ["sui:devnet"],
+    });
+    await assert.rejects(
+      () => wallet.features[StandardConnect].connect(),
+      /supported signing methods/,
+      label,
+    );
+    assert.equal(wallet.accounts.length, 0, label);
+    assert.equal(disconnectCalls, 1, label);
+  }
 });
 
 test("Wallet Standard connect fails closed when provider-sui returns no Sui account", async () => {
@@ -486,8 +875,14 @@ test("Wallet Standard connect fails closed when provider-sui returns no Sui acco
         ],
       };
     },
+    async getCapabilities() {
+      return createFakeCore().getCapabilities();
+    },
     async signTransaction() {
       return createFakeCore().signTransaction();
+    },
+    async signPersonalMessage() {
+      return createFakeCore().signPersonalMessage();
     },
   };
   const wallet = createAgentQSuiWallet({
@@ -501,6 +896,99 @@ test("Wallet Standard connect fails closed when provider-sui returns no Sui acco
   );
   assert.equal(wallet.accounts.length, 0);
   assert.equal(disconnectCalls, 1);
+});
+
+test("Wallet Standard connect exact-validates directly injected Sui accounts", async () => {
+  const validAccount = (await createFakeCore().getAccounts()).accounts[0];
+  const cases = [
+    {
+      label: "top-level account output extra field",
+      output: {
+        source: "live",
+        deviceId: "device-1",
+        accounts: [validAccount],
+        sessionId: "session_should_not_leak",
+      },
+    },
+    {
+      label: "account extra field",
+      output: {
+        source: "live",
+        deviceId: "device-1",
+        accounts: [
+          {
+            ...validAccount,
+            label: "unexpected",
+          },
+        ],
+      },
+    },
+    {
+      label: "address/publicKey mismatch",
+      output: {
+        source: "live",
+        deviceId: "device-1",
+        accounts: [
+          {
+            ...validAccount,
+            address: "0x0000000000000000000000000000000000000000000000000000000000000000",
+          },
+        ],
+      },
+    },
+    {
+      label: "short Ed25519 public key",
+      output: {
+        source: "live",
+        deviceId: "device-1",
+        accounts: [
+          {
+            ...validAccount,
+            publicKey: Buffer.alloc(31, 1).toString("base64"),
+          },
+        ],
+      },
+    },
+    {
+      label: "wrong key scheme",
+      output: {
+        source: "live",
+        deviceId: "device-1",
+        accounts: [
+          {
+            ...validAccount,
+            keyScheme: "secp256k1",
+          },
+        ],
+      },
+    },
+  ];
+
+  for (const { label, output } of cases) {
+    let disconnectCalls = 0;
+    const provider = {
+      ...createFakeCore(),
+      async disconnectDevice() {
+        disconnectCalls += 1;
+        return createFakeCore().disconnectDevice();
+      },
+      async getAccounts() {
+        return output;
+      },
+    };
+    const wallet = createAgentQSuiWallet({
+      provider,
+      getClient: fakeClient,
+      chains: ["sui:devnet"],
+    });
+    await assert.rejects(
+      () => wallet.features[StandardConnect].connect(),
+      /could not read a connected Sui account/,
+      label,
+    );
+    assert.equal(wallet.accounts.length, 0, label);
+    assert.equal(disconnectCalls, 1, label);
+  }
 });
 
 test("Wallet Standard signTransaction builds bytes and delegates to signTransaction only", async () => {
@@ -529,6 +1017,38 @@ test("Wallet Standard signTransaction builds bytes and delegates to signTransact
       method: "sign_transaction",
       network: "devnet",
       txBytes: signed.bytes,
+    },
+  ]);
+  assertNoSecretFields(signed);
+});
+
+test("Wallet Standard signPersonalMessage delegates to signPersonalMessage only", async () => {
+  const { core, calls } = createSigningCore();
+  const wallet = createAgentQSuiWallet({
+    provider: createAgentQSuiProvider({ core }),
+    getClient: fakeClient,
+    chains: ["sui:devnet"],
+    deviceId: "device-1",
+    purpose: "sui-dapp",
+  });
+  const { accounts } = await wallet.features[StandardConnect].connect();
+  calls.length = 0;
+  const message = new TextEncoder().encode("hello Agent-Q");
+  const signed = await wallet.features[SuiSignPersonalMessage].signPersonalMessage({
+    account: accounts[0],
+    chain: "sui:devnet",
+    message,
+  });
+  assert.equal(signed.signature, SUI_SIGNATURE);
+  assert.equal(signed.bytes, Buffer.from(message).toString("base64"));
+  assert.deepEqual(calls, [
+    {
+      deviceId: "device-1",
+      purpose: "sui-dapp",
+      chain: "sui",
+      method: "sign_personal_message",
+      network: "devnet",
+      message: signed.bytes,
     },
   ]);
   assertNoSecretFields(signed);
@@ -677,6 +1197,152 @@ test("Wallet Standard signTransaction bounds unknown injected provider result la
         assert.doesNotMatch(error.message, /sessionId|rootEntropy|secret_should_not_leak/);
         return true;
       },
+    );
+  }
+});
+
+test("Wallet Standard signTransaction exact-validates directly injected signed results", async () => {
+  const malformedResults = [
+    {
+      label: "missing method",
+      result: (() => {
+        const { method, ...rest } = validSignedTransactionResult();
+        return rest;
+      })(),
+    },
+    {
+      label: "missing authorization",
+      result: (() => {
+        const { authorization, ...rest } = validSignedTransactionResult();
+        return rest;
+      })(),
+    },
+    {
+      label: "missing chain",
+      result: (() => {
+        const { chain, ...rest } = validSignedTransactionResult();
+        return rest;
+      })(),
+    },
+    {
+      label: "personal-message method",
+      result: {
+        ...validSignedTransactionResult(),
+        method: "sign_personal_message",
+      },
+    },
+    {
+      label: "messageBytes on transaction result",
+      result: {
+        ...validSignedTransactionResult(),
+        messageBytes: PERSONAL_MESSAGE_BYTES,
+      },
+    },
+    {
+      label: "txBytes on transaction result",
+      result: {
+        ...validSignedTransactionResult(),
+        txBytes: "AQID",
+      },
+    },
+  ];
+
+  for (const { label, result } of malformedResults) {
+    const provider = {
+      ...createFakeCore(),
+      async signTransaction() {
+        return result;
+      },
+    };
+    const wallet = createAgentQSuiWallet({
+      provider,
+      getClient: fakeClient,
+      chains: ["sui:devnet"],
+    });
+    const { accounts } = await wallet.features[StandardConnect].connect();
+    const transactionJson = await createResolvedTransactionJson();
+    await assert.rejects(
+      () => wallet.features[SuiSignTransaction].signTransaction({
+        account: accounts[0],
+        chain: "sui:devnet",
+        transaction: { toJSON: async () => transactionJson },
+      }),
+      (error) => {
+        assert.equal(error.message, "Agent-Q signTransaction did not return a signed result.");
+        return true;
+      },
+      label,
+    );
+  }
+});
+
+test("Wallet Standard signPersonalMessage exact-validates directly injected signed results", async () => {
+  const malformedResults = [
+    {
+      label: "missing authorization",
+      result: (() => {
+        const { authorization, ...rest } = validSignedPersonalMessageResult();
+        return rest;
+      })(),
+    },
+    {
+      label: "missing chain",
+      result: (() => {
+        const { chain, ...rest } = validSignedPersonalMessageResult();
+        return rest;
+      })(),
+    },
+    {
+      label: "policy authorization",
+      result: {
+        ...validSignedPersonalMessageResult(),
+        authorization: "policy",
+      },
+    },
+    {
+      label: "transaction method",
+      result: {
+        ...validSignedPersonalMessageResult(),
+        method: "sign_transaction",
+      },
+    },
+    {
+      label: "wrong messageBytes echo",
+      result: validSignedPersonalMessageResult(Buffer.from("different").toString("base64")),
+    },
+    {
+      label: "txBytes on personal-message result",
+      result: {
+        ...validSignedPersonalMessageResult(),
+        txBytes: "AQID",
+      },
+    },
+  ];
+
+  for (const { label, result } of malformedResults) {
+    const provider = {
+      ...createFakeCore(),
+      async signPersonalMessage() {
+        return result;
+      },
+    };
+    const wallet = createAgentQSuiWallet({
+      provider,
+      getClient: fakeClient,
+      chains: ["sui:devnet"],
+    });
+    const { accounts } = await wallet.features[StandardConnect].connect();
+    await assert.rejects(
+      () => wallet.features[SuiSignPersonalMessage].signPersonalMessage({
+        account: accounts[0],
+        chain: "sui:devnet",
+        message: Buffer.from("Agent-Q personal message"),
+      }),
+      (error) => {
+        assert.equal(error.message, "Agent-Q signPersonalMessage did not return a signed result.");
+        return true;
+      },
+      label,
     );
   }
 });

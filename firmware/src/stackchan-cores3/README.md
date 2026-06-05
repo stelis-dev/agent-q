@@ -44,12 +44,20 @@ The current implementation includes:
   authorizes the bounded request, while user mode shows clear-signing review
   and requires local PIN confirmation without applying active policy as an
   additional filter. It returns `signed` only after required history is durable
-  and signing succeeds. Sponsored gas,
-  arbitrary Sui transactions, Sui personal-message signing, caller-selected
-  authorization, caller-controlled timing fields, and chain-specific top-level
-  signing APIs are not implemented. Current-tree positive/reject/timeout smoke
-  and session-loss smoke for the new Sign API wire name remain pending, so
-  product-active status is not claimed.
+  and signing succeeds. Sponsored gas, arbitrary Sui transactions,
+  caller-selected authorization, caller-controlled timing fields, and
+  chain-specific top-level signing APIs are not implemented. Current-tree
+  positive/reject/timeout smoke and session-loss smoke for the new Sign API
+  wire name remain pending, so product-active status is not claimed.
+- a USB JSONL `sign_personal_message` path. It requires material-backed
+  `provisioned` state plus a matching active session, validates bounded Sui
+  personal-message bytes, and is available only when the device-local signing
+  authorization mode is `user`. User mode shows clear-signing review and
+  requires local PIN confirmation before signing the Sui PersonalMessage intent
+  digest. Policy mode fails closed with `unsupported_method`; policy facts and
+  rules for personal-message signing are not implemented. Current-tree hardware
+  smoke and LVGL visual evidence remain pending, so product-active status is
+  not claimed.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
   Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
   RAM, displays only the up-to-4-letter word prefixes on device in a 3-column
@@ -177,13 +185,15 @@ firmware/tools/stackchan-cores3/test_prepare_sync.sh
 firmware/tools/stackchan-cores3/test_persistent_material.sh
 firmware/tools/stackchan-cores3/test_provisioning_state_store.sh
 firmware/tools/stackchan-cores3/test_provisioning_runtime_state.sh
-firmware/tools/stackchan-cores3/test_sign_transaction_user_confirmation.sh
-firmware/tools/stackchan-cores3/test_sign_transaction_user_flow.sh
+firmware/tools/stackchan-cores3/test_user_signing_confirmation.sh
+firmware/tools/stackchan-cores3/test_user_signing_flow.sh
 firmware/tools/stackchan-cores3/test_sign_transaction_user_ingress.sh
+firmware/tools/stackchan-cores3/test_sign_personal_message_user_ingress.sh
 firmware/tools/stackchan-cores3/test_sign_api_activation_boundary.sh
-firmware/tools/stackchan-cores3/test_sign_transaction_user_review_view_model.sh
-firmware/tools/stackchan-cores3/test_sign_transaction_user_signing.sh
+firmware/tools/stackchan-cores3/test_user_signing_review_view_model.sh
+firmware/tools/stackchan-cores3/test_user_signing_critical_section.sh
 firmware/tools/stackchan-cores3/test_sign_transaction_user_validation.sh
+firmware/tools/stackchan-cores3/test_sign_personal_message_user_validation.sh
 firmware/tools/stackchan-cores3/test_local_auth.sh
 firmware/tools/stackchan-cores3/test_local_auth_worker.sh
 firmware/tools/stackchan-cores3/test_local_pin_auth.sh

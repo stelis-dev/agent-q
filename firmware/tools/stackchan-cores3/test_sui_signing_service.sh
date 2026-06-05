@@ -68,6 +68,14 @@ constexpr const char* kMnemonic =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 constexpr const char* kExpectedSignatureBase64 =
     "APVIJpnz3mvPY6JfCEYG16jOFZVV2IT+kaoNTGPkTZasc/989+xjNylO5SNNA0xdxFtWgRvufBM3WVLu185V0gGQC02B7s6j3y90sUIAxPTPP0mvrKemNP/Sz2/4K9rs8g==";
+constexpr const uint8_t kPersonalMessage[] =
+    "Agent-Q personal message test";
+constexpr const uint8_t kExpectedPersonalMessageDigest[32] = {
+    0xe5, 0x97, 0xf5, 0x26, 0xaa, 0xc7, 0x11, 0x68,
+    0xe3, 0x13, 0x2b, 0x78, 0x5f, 0xa2, 0xb7, 0x9a,
+    0xac, 0xa5, 0xd1, 0x96, 0xdb, 0x19, 0xf9, 0x62,
+    0x40, 0xd3, 0x80, 0xc2, 0x34, 0x27, 0x37, 0x2b,
+};
 
 int failures = 0;
 bool g_root_available = true;
@@ -187,6 +195,29 @@ int main(int argc, char** argv)
         sui_signing_verify_signature_ed25519(
             signature, tx_bytes.data(), tx_bytes.size()) == 0,
         "signature verifies against tx bytes and Sui intent");
+
+    uint8_t personal_digest[32] = {};
+    expect(
+        agent_q::build_sui_personal_message_intent_digest(
+            kPersonalMessage,
+            sizeof(kPersonalMessage) - 1,
+            personal_digest),
+        "personal-message intent digest builds");
+    expect(
+        memcmp(personal_digest, kExpectedPersonalMessageDigest, sizeof(personal_digest)) == 0,
+        "personal-message digest matches Sui SDK vector");
+
+    uint8_t personal_signature[agent_q::kSuiEd25519SignatureBytes] = {};
+    expect(
+        agent_q::sign_sui_ed25519_personal_message_from_stored_root(
+            kPersonalMessage,
+            sizeof(kPersonalMessage) - 1,
+            personal_signature) == agent_q::SuiTransactionSigningResult::ok,
+        "stored-root personal-message signing succeeds");
+    expect(personal_signature[0] == 0x00, "Sui personal-message signature uses Ed25519 scheme byte");
+    expect(
+        sui_signing_verify_signature_ed25519_from_digest(personal_signature, personal_digest) == 0,
+        "personal-message signature verifies against Sui SDK digest vector");
 
     char signature_base64[agent_q::kSuiEd25519SignatureBase64Chars + 1] = {};
     expect(

@@ -16,7 +16,7 @@ enum class AgentQLocalPinAuthPurpose {
     settings_signing_mode,
     settings_change_pin,
     policy_update,
-    sign_transaction_user,
+    user_signing,
 };
 
 enum class AgentQLocalPinAuthStage {

@@ -12,6 +12,7 @@ import type {
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
+  SignPersonalMessageResult,
   SignTransactionResult,
   ScanDevicesResult,
   SelectDeviceResult,
@@ -28,6 +29,7 @@ export type {
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
+  SignPersonalMessageResult,
   SignTransactionResult,
   ScanDevicesResult,
   SelectDeviceResult,
@@ -73,6 +75,14 @@ export interface DeviceClientCore {
     network: "mainnet" | "testnet" | "devnet" | "localnet";
     txBytes: string;
   }): Promise<SignTransactionResult>;
+  signPersonalMessage(input: {
+    deviceId?: string;
+    purpose?: string;
+    chain: "sui";
+    method: "sign_personal_message";
+    network: "mainnet" | "testnet" | "devnet" | "localnet";
+    message: string;
+  }): Promise<SignPersonalMessageResult>;
 }
 
 function deviceClientFromCore(core: GatewayCore): DeviceClientCore {
@@ -88,6 +98,7 @@ function deviceClientFromCore(core: GatewayCore): DeviceClientCore {
     policyGet: (input = {}) => core.policyGet(input),
     getApprovalHistory: (input = {}) => core.getApprovalHistory(input),
     signTransaction: (input) => core.signTransaction(input),
+    signPersonalMessage: (input) => core.signPersonalMessage(input),
   };
 }
 

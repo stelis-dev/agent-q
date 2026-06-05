@@ -111,7 +111,10 @@ function defaultDriver(overrides = {}) {
         ],
         signing: {
           authorization: "user",
-          methods: [{ chain: "sui", method: "sign_transaction" }],
+          methods: [
+            { chain: "sui", method: "sign_transaction" },
+            { chain: "sui", method: "sign_personal_message" },
+          ],
         },
       };
     },
@@ -1202,7 +1205,10 @@ test("getCapabilities returns Firmware-authored account identity and keeps the s
     assert.equal(result.capabilities[0].accounts[0].keyScheme, "ed25519");
     assert.deepEqual(result.capabilities[0].methods, []);
     assert.equal(result.signing.authorization, "user");
-    assert.deepEqual(result.signing.methods, [{ chain: "sui", method: "sign_transaction" }]);
+    assert.deepEqual(result.signing.methods, [
+      { chain: "sui", method: "sign_transaction" },
+      { chain: "sui", method: "sign_personal_message" },
+    ]);
 
     // Read-only: the session is retained after get_capabilities.
     const listed = await core.listDevices();
@@ -1703,7 +1709,10 @@ test("signTransaction forwards a bounded provider signing request with internal 
             ],
             signing: {
               authorization: "user",
-              methods: [{ chain: "sui", method: "sign_transaction" }],
+              methods: [
+                { chain: "sui", method: "sign_transaction" },
+                { chain: "sui", method: "sign_personal_message" },
+              ],
             },
           };
         },
@@ -1728,7 +1737,10 @@ test("signTransaction forwards a bounded provider signing request with internal 
 
     const capabilities = await core.getCapabilities({});
     assert.equal(capabilities.signing.authorization, "user");
-    assert.deepEqual(capabilities.signing.methods, [{ chain: "sui", method: "sign_transaction" }]);
+    assert.deepEqual(capabilities.signing.methods, [
+      { chain: "sui", method: "sign_transaction" },
+      { chain: "sui", method: "sign_personal_message" },
+    ]);
 
     const result = await core.signTransaction({
       chain: "sui",

@@ -49,7 +49,7 @@ stateDiagram-v2
     Provisioning: device-local cancel
     Provisioned: get_status, identify_device, connect, disconnect
     Provisioned: get_capabilities, get_accounts, policy_get, get_approval_history (read-only, session-scoped)
-    Provisioned: sign_transaction runtime; Firmware-local signing mode selects policy authorization or user confirmation
+    Provisioned: Sign API runtime; Firmware-local signing mode selects supported signing gate
 ```
 
 Current StackChan CoreS3 persistent root material flow starts from
@@ -138,6 +138,7 @@ Rejected:
 - `policy_get`
 - `get_approval_history`
 - `sign_transaction`
+- `sign_personal_message`
 - USB provisioning/reset/diagnostic requests
 - policy read/write
 - signing
@@ -166,6 +167,7 @@ Rejected:
 - `policy_get`
 - `get_approval_history`
 - `sign_transaction`
+- `sign_personal_message`
 - policy read/write
 - signing
 - external evidence or price fetch
@@ -234,6 +236,10 @@ session-scoped `sign_transaction` runtime. `sign_transaction` has
 `source-wired-not-product-active` status for the bounded Sui `sign_transaction`
 shape: the public request exists in source, but current-tree hardware smoke and
 LVGL visual evidence remain pending, so product-active status is not claimed.
+`sign_personal_message` also has `source-wired-not-product-active` status for
+bounded Sui personal-message bytes in user authorization mode only; policy mode
+fails closed because policy facts and rules for personal-message signing are not
+implemented.
 Gateway must not evaluate policy. A corrupt, unreadable, missing,
 or invalid current active policy is a persistent-material consistency
 error, not a normal `provisioned` state. Provisioned DEV_PROFILE devices that
@@ -243,16 +249,18 @@ or development reflash workflow.
 
 #### Request Authority Paths
 
-`sign_transaction` is one shared protocol request. It is not a policy action,
-request-authority flag, compatibility fallback, or host-selected authorization
-mode. Firmware reads the device-local signing authorization mode and chooses
-one Firmware-owned signing gate:
+The Sign API is not a policy action, request-authority flag, compatibility
+fallback, or host-selected authorization mode. Firmware reads the device-local
+signing authorization mode and chooses the supported Firmware-owned signing gate
+for the requested method:
 
 - policy mode evaluates the active policy, treats policy authorization as
-  sufficient for signing, shows speech-bubble status notifications, and does
-  not fall back to user confirmation on reject;
+  sufficient for `sign_transaction`, shows speech-bubble status notifications,
+  and does not fall back to user confirmation on reject. `sign_personal_message`
+  is unsupported in policy mode and fails closed;
 - user mode shows the bounded request on the device and requires
-  Firmware-owned local confirmation/PIN before signing.
+  Firmware-owned local confirmation/PIN before signing `sign_transaction` or
+  `sign_personal_message`.
 
 Neither mode proves the upstream user, dapp, provider, host, or agent intent
 that produced the request. The source state must be material-backed
@@ -287,6 +295,7 @@ Rejected while a device-confirmed signing request is pending:
 - nested signing requests;
 - policy update proposals;
 - nested `sign_transaction` requests;
+- nested `sign_personal_message` requests;
 - host-triggered reset, debug, setup, recovery, PIN entry, or confirmation
   shortcuts.
 
@@ -309,9 +318,9 @@ Failure requirements for a device-confirmed signing request:
   distinguish signature generation, signed terminal proof, and Gateway receipt;
 - every terminal path must wipe signable payload and signature scratch.
 
-The user-mode `sign_transaction` runtime models local PIN confirmation. The
-connect-only `pin_on_connect` setting does not apply to signing. Terminal stages
-for user-mode signing are:
+The user-mode signing runtime models local PIN confirmation for implemented
+device-confirmed signing methods. The connect-only `pin_on_connect` setting
+does not apply to signing. Terminal stages for user-mode signing are:
 
 - `reviewing`: parsed summary is displayed; no PIN or signing is active.
 - `pin_entry`: local PIN input is active for this request.
@@ -387,8 +396,9 @@ Allowed while pending:
 Rejected while pending:
 
 - nested policy updates;
-- `sign_transaction`, because request evaluation must not race an uncommitted active
-  policy replacement;
+- `sign_transaction` and `sign_personal_message`, because request evaluation
+  must not race an uncommitted active policy replacement or sensitive pending
+  write;
 - host-triggered reset, debug, import, or state-changing shortcuts.
 
 The pending state may be displayed by UI, but UI object lifetime is not the
@@ -426,6 +436,7 @@ Rejected:
 - `policy_get`
 - `get_approval_history`
 - `sign_transaction`
+- `sign_personal_message`
 - policy update
 - signing
 
@@ -469,6 +480,7 @@ This state is reserved until an unlock model is implemented.
 | `policy_get` | X | X | O | X | X | Firmware |
 | `get_approval_history` | X | X | O | X | X | Firmware |
 | `sign_transaction` | X | X | O (source-wired-not-product-active; product-active pending hardware smoke and LVGL visual evidence) | X | X | Firmware |
+| `sign_personal_message` | X | X | O (source-wired-not-product-active; user authorization mode only; product-active pending hardware smoke and LVGL visual evidence) | X | X | Firmware |
 | policy read | X | X | O | X | X | Firmware |
 | policy update | X | X | O (validated proposal + device-local approval) | X | X | Firmware |
 

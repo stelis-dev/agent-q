@@ -26,6 +26,7 @@ import {
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
   makePolicyProposeRequest,
+  makeSignPersonalMessageRequest,
   makeSignTransactionRequest,
   MAX_SESSION_TTL_MS,
   parseProtocolResponse,
@@ -368,6 +369,48 @@ test("makeSignTransactionRequest builds bounded signing params without caller-se
   );
 });
 
+test("makeSignPersonalMessageRequest builds bounded personal-message params without caller-selected authorization", () => {
+  const params = { network: "devnet", message: Buffer.from("hello Agent-Q").toString("base64") };
+  const request = makeSignPersonalMessageRequest(
+    "session_abcdef0123456789",
+    "sui",
+    "sign_personal_message",
+    params,
+    "req_sign_message_1",
+  );
+  assert.deepEqual(request, {
+    id: "req_sign_message_1",
+    version: 1,
+    type: "sign_personal_message",
+    sessionId: "session_abcdef0123456789",
+    chain: "sui",
+    method: "sign_personal_message",
+    params,
+  });
+
+  assert.throws(() => makeSignPersonalMessageRequest("not_a_session", "sui", "sign_personal_message", params), /sessionId/);
+  assert.throws(
+    () => makeSignPersonalMessageRequest("session_abcdef0123456789", "sui", "sign_transaction", params),
+    /unsupported/,
+  );
+  assert.throws(
+    () => makeSignPersonalMessageRequest("session_abcdef0123456789", "sui", "sign_personal_message", { ...params, timeoutMs: 30000 }),
+    /unsupported fields/,
+  );
+  assert.throws(
+    () => makeSignPersonalMessageRequest("session_abcdef0123456789", "sui", "sign_personal_message", { ...params, authorization: "user" }),
+    /unsupported fields/,
+  );
+  assert.throws(
+    () => makeSignPersonalMessageRequest("session_abcdef0123456789", "sui", "sign_personal_message", { ...params, seed: "must-not-forward" }),
+    /secret material/,
+  );
+  assert.throws(
+    () => makeSignPersonalMessageRequest("session_abcdef0123456789", "sui", "sign_personal_message", { network: "devnet", message: Buffer.alloc(257, 1).toString("base64") }),
+    /outside the supported size/,
+  );
+});
+
 test("makePolicyProposeRequest builds admin proposal requests without chain authority", () => {
   const policy = {
     schema: "agentq.policy.v0",
@@ -451,28 +494,34 @@ const capabilitiesLine = (chainOverrides = {}, accountOverrides = {}, responseOv
   });
 
 test("parseProtocolResponse accepts a valid capabilities response with signing metadata", () => {
-  const response = assertCapabilitiesResponse(
-    parseProtocolResponse(
-      capabilitiesLine({}, {}, {
-        signing: {
-          authorization: "policy",
-          methods: [{ chain: "sui", method: "sign_transaction" }],
-        },
-      }),
-      "req_capabilities",
-    ),
-  );
-  assert.equal(response.type, "capabilities");
-  assert.equal(response.chains.length, 1);
-  assert.equal(response.chains[0].id, "sui");
-  assert.equal(response.chains[0].accounts.length, 1);
-  assert.equal(response.chains[0].accounts[0].keyScheme, "ed25519");
-  assert.equal(response.chains[0].accounts[0].derivationPath, "m/44'/784'/0'/0'/0'");
-  assert.deepEqual(response.chains[0].methods, []);
-  assert.deepEqual(response.signing, {
-    authorization: "policy",
-    methods: [{ chain: "sui", method: "sign_transaction" }],
-  });
+  for (const signing of [
+    {
+      authorization: "policy",
+      methods: [{ chain: "sui", method: "sign_transaction" }],
+    },
+    {
+      authorization: "user",
+      methods: [
+        { chain: "sui", method: "sign_transaction" },
+        { chain: "sui", method: "sign_personal_message" },
+      ],
+    },
+  ]) {
+    const response = assertCapabilitiesResponse(
+      parseProtocolResponse(
+        capabilitiesLine({}, {}, { signing }),
+        "req_capabilities",
+      ),
+    );
+    assert.equal(response.type, "capabilities");
+    assert.equal(response.chains.length, 1);
+    assert.equal(response.chains[0].id, "sui");
+    assert.equal(response.chains[0].accounts.length, 1);
+    assert.equal(response.chains[0].accounts[0].keyScheme, "ed25519");
+    assert.equal(response.chains[0].accounts[0].derivationPath, "m/44'/784'/0'/0'/0'");
+    assert.deepEqual(response.chains[0].methods, []);
+    assert.deepEqual(response.signing, signing);
+  }
 });
 
 test("parseProtocolResponse rejects unsupported capabilities", () => {
@@ -1101,6 +1150,28 @@ test("parseProtocolResponse accepts signed sign_result responses for user and po
     assert.equal(signed.authorization, authorization);
     assert.equal(signed.signature, signature);
   }
+
+  const messageBytes = Buffer.from("hello Agent-Q").toString("base64");
+  const personalMessageSignature = Buffer.alloc(97, 3).toString("base64");
+  const personalMessageSigned = assertSignResultResponse(
+    parseProtocolResponse(
+      signResultLine({
+        authorization: "user",
+        status: "signed",
+        chain: "sui",
+        method: "sign_personal_message",
+        signature: personalMessageSignature,
+        messageBytes,
+        error: undefined,
+      }),
+      "req_sign",
+    ),
+  );
+  assert.equal(personalMessageSigned.status, "signed");
+  assert.equal(personalMessageSigned.authorization, "user");
+  assert.equal(personalMessageSigned.method, "sign_personal_message");
+  assert.equal(personalMessageSigned.signature, personalMessageSignature);
+  assert.equal(personalMessageSigned.messageBytes, messageBytes);
 });
 
 test("parseProtocolResponse accepts bounded sign_result terminal outcomes", () => {
@@ -1186,6 +1257,51 @@ test("parseProtocolResponse rejects sign_result leaks and inconsistent terminal 
           chain: "sui",
           method: "sign_transaction",
           signature: Buffer.alloc(96, 1).toString("base64"),
+          error: undefined,
+        }),
+        "req_sign",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        signResultLine({
+          status: "signed",
+          chain: "sui",
+          method: "sign_transaction",
+          signature: Buffer.alloc(97, 1).toString("base64"),
+          messageBytes: Buffer.from("hello").toString("base64"),
+          error: undefined,
+        }),
+        "req_sign",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        signResultLine({
+          authorization: "policy",
+          status: "signed",
+          chain: "sui",
+          method: "sign_personal_message",
+          signature: Buffer.alloc(97, 1).toString("base64"),
+          messageBytes: Buffer.from("hello").toString("base64"),
+          error: undefined,
+        }),
+        "req_sign",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        signResultLine({
+          status: "signed",
+          chain: "sui",
+          method: "sign_personal_message",
+          signature: Buffer.alloc(97, 1).toString("base64"),
           error: undefined,
         }),
         "req_sign",

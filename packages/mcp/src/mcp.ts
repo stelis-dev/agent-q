@@ -14,6 +14,7 @@ import {
   type PolicyGetResult,
   type PolicyProposeResult,
   type SetDeviceMetadataResult,
+  type SignPersonalMessageResult,
   type SignTransactionResult,
 } from "@stelis/agent-q-client/admin";
 import {
@@ -50,6 +51,8 @@ import {
   selectDeviceToolOutputShape,
   setDeviceMetadataSuccessOutputShape,
   setDeviceMetadataToolOutputShape,
+  signPersonalMessageSuccessOutputShape,
+  signPersonalMessageToolOutputShape,
   signTransactionSuccessOutputShape,
   signTransactionToolOutputShape,
   isValidLabel,
@@ -228,6 +231,22 @@ export const gatewayToolDefinitions = {
     },
     outputSchema: signTransactionToolOutputShape,
     successOutputSchema: signTransactionSuccessOutputShape,
+  },
+  signPersonalMessage: {
+    name: "sign_personal_message",
+    title: "Sign personal message",
+    description:
+      "Request a Firmware-owned Sui personal-message signature over an approved session. Gateway and MCP do not store keys, choose authorization, or make signing decisions. The current Firmware implementation signs this method only in user-confirmed authorization mode; policy authorization mode fails closed.",
+    inputSchema: {
+      deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
+      purpose: purposeSchema.optional(),
+      chain: z.literal("sui"),
+      method: z.literal("sign_personal_message"),
+      network: z.enum(["mainnet", "testnet", "devnet", "localnet"]),
+      message: z.string(),
+    },
+    outputSchema: signPersonalMessageToolOutputShape,
+    successOutputSchema: signPersonalMessageSuccessOutputShape,
   },
   policyPropose: {
     name: "policy_propose",
@@ -475,6 +494,29 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
   );
 
   server.registerTool(
+    gatewayToolDefinitions.signPersonalMessage.name,
+    {
+      title: gatewayToolDefinitions.signPersonalMessage.title,
+      description: gatewayToolDefinitions.signPersonalMessage.description,
+      inputSchema: gatewayToolDefinitions.signPersonalMessage.inputSchema,
+      // Success is a discriminated union (live | not_connected | session_ended),
+      // which the SDK outputSchema model cannot represent; it is sanitized at the
+      // run() boundary below instead.
+    },
+    async ({ deviceId, purpose, chain, method, network, message }) =>
+      run(gatewayToolDefinitions.signPersonalMessage.successOutputSchema, () =>
+        core.signPersonalMessage({
+          deviceId,
+          purpose,
+          chain: chain as "sui",
+          method: method as "sign_personal_message",
+          network,
+          message,
+        }),
+      ),
+  );
+
+  server.registerTool(
     gatewayToolDefinitions.policyPropose.name,
     {
       title: gatewayToolDefinitions.policyPropose.title,
@@ -584,6 +626,7 @@ type StructuredToolResult =
   | SetDeviceMetadataResult
   | ConnectDeviceResult
   | SignTransactionResult
+  | SignPersonalMessageResult
   | DisconnectDeviceResult
   | GetAccountsResult
   | GetApprovalHistoryResult

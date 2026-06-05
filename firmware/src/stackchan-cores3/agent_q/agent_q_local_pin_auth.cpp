@@ -214,7 +214,7 @@ void local_pin_auth_begin_policy_update(TickType_t deadline)
     g_state.deadline = deadline;
 }
 
-bool local_pin_auth_begin_sign_transaction_user(
+bool local_pin_auth_begin_user_signing(
     const AgentQLocalPinAuthSignatureBinding& binding,
     TickType_t deadline)
 {
@@ -223,18 +223,18 @@ bool local_pin_auth_begin_sign_transaction_user(
         binding.token == 0) {
         return false;
     }
-    g_state.purpose = AgentQLocalPinAuthPurpose::sign_transaction_user;
+    g_state.purpose = AgentQLocalPinAuthPurpose::user_signing;
     g_state.stage = AgentQLocalPinAuthStage::pin_entry;
     g_state.deadline = deadline;
     g_state.signature_binding = binding;
     return true;
 }
 
-bool local_pin_auth_sign_transaction_user_matches(
+bool local_pin_auth_user_signing_matches(
     const AgentQLocalPinAuthSignatureBinding& binding)
 {
     return g_state.flow_active() &&
-           g_state.purpose == AgentQLocalPinAuthPurpose::sign_transaction_user &&
+           g_state.purpose == AgentQLocalPinAuthPurpose::user_signing &&
            binding.token != 0 &&
            g_state.signature_binding.token == binding.token;
 }
@@ -385,7 +385,7 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
         result.operation != AgentQLocalAuthWorkerOperation::verify_pin) {
         return AgentQLocalPinAuthVerifyResult::not_ready;
     }
-    if (g_state.purpose == AgentQLocalPinAuthPurpose::sign_transaction_user) {
+    if (g_state.purpose == AgentQLocalPinAuthPurpose::user_signing) {
         return AgentQLocalPinAuthVerifyResult::not_ready;
     }
     if (local_pin_auth_processing_deadline_expired(xTaskGetTickCount())) {
@@ -434,13 +434,13 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
     return AgentQLocalPinAuthVerifyResult::verified_connect;
 }
 
-AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_sign_transaction_user_verify_job(
+AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_user_signing_verify_job(
     const AgentQLocalAuthWorkerResult& result,
     TickType_t retry_deadline,
     TickType_t lockout_until)
 {
     if (!g_state.flow_active() ||
-        g_state.purpose != AgentQLocalPinAuthPurpose::sign_transaction_user ||
+        g_state.purpose != AgentQLocalPinAuthPurpose::user_signing ||
         g_state.stage != AgentQLocalPinAuthStage::pin_verifying ||
         g_state.auth_job_id == 0 ||
         result.job_id != g_state.auth_job_id ||
