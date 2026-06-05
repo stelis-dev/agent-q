@@ -24,6 +24,10 @@
       "types": "./dist/wallet-standard.d.ts",
       "import": "./dist/wallet-standard.js"
     },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

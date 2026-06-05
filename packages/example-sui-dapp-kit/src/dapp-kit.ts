@@ -1,14 +1,14 @@
 import { createDAppKit } from "@mysten/dapp-kit-react";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import { createAgentQSuiWalletInitializer } from "@stelis/agent-q-provider-sui/wallet-standard";
-import { getInjectedAgentQProvider } from "./provider";
+import { createAgentQProvider } from "./provider";
 
 const NETWORKS = ["testnet"] as const;
 const GRPC_URLS: Record<(typeof NETWORKS)[number], string> = {
   testnet: "https://fullnode.testnet.sui.io:443",
 };
 
-const provider = getInjectedAgentQProvider();
+const provider = createAgentQProvider();
 
 export const agentQProviderAvailable = provider !== null;
 

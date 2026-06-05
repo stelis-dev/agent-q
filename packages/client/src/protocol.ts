@@ -1,5 +1,3 @@
-import { Buffer } from "node:buffer";
-import { randomBytes } from "node:crypto";
 import {
   IDENTIFICATION_CODE_PATTERN,
   MAX_FIRMWARE_NAME_LENGTH,
@@ -15,17 +13,181 @@ import {
   type DeviceState,
   type ProvisioningState,
 } from "./safe-text.js";
+import {
+  makeConnectRequest as makeProviderConnectRequest,
+  makeDisconnectRequest as makeProviderDisconnectRequest,
+  makeGetAccountsRequest as makeProviderGetAccountsRequest,
+  makeGetCapabilitiesRequest as makeProviderGetCapabilitiesRequest,
+  makeSignPersonalMessageRequest as makeProviderSignPersonalMessageRequest,
+  makeSignTransactionRequest as makeProviderSignTransactionRequest,
+  parseProviderProtocolResponse as parseProviderProtocolResponseCore,
+  validateSignPersonalMessageInput as validateProviderSignPersonalMessageInput,
+  validateSignTransactionInput as validateProviderSignTransactionInput,
+  type Account,
+  type AccountsResponse,
+  type CapabilitiesResponse,
+  type CapabilityAccount,
+  type CapabilityChain,
+  type ConnectApprovedResponse,
+  type ConnectRejectedResponse,
+  type ConnectRequest,
+  type ConnectResponse,
+  type DisconnectRequest,
+  type DisconnectResponse,
+  type GetAccountsRequest,
+  type GetCapabilitiesRequest,
+  type ProtocolErrorResponse,
+  type SignPersonalMessageParams,
+  type SignPersonalMessageRequest,
+  type SignPersonalMessageSignedResponse,
+  type SignResultAuthorization,
+  type SignResultPolicyRejectedResponse,
+  type SignResultResponse,
+  type SignResultSignedResponse,
+  type SignResultSigningFailedResponse,
+  type SignResultStatus,
+  type SignResultUserRejectedResponse,
+  type SignTransactionParams,
+  type SignTransactionRequest,
+  type SignTransactionSignedResponse,
+  type SigningCapabilities,
+  type SigningCapabilityEntry,
+} from "./provider-protocol.js";
+import { ProtocolError } from "./protocol-error.js";
+import {
+  AGENT_Q_POLICY_SCHEMA,
+  APPROVAL_HISTORY_HIGHEST_ACTIONS,
+  APPROVAL_HISTORY_POLICY_UPDATE_RESULTS,
+  APPROVAL_HISTORY_REASON_CODE_PATTERN,
+  APPROVAL_HISTORY_RULE_REF_PATTERN,
+  MAX_APPROVAL_HISTORY_RECORDS,
+  MAX_POLICY_RULE_COUNT,
+  MAX_POLICY_UPDATE_REQUEST_JSON_BYTES,
+  POLICY_ID_PATTERN,
+  POLICY_PROPOSE_RESULT_STATUSES,
+  SIGNING_HISTORY_RECORD_KINDS,
+  SIGNING_HISTORY_TERMINAL_RESULTS,
+  SIGN_CHAIN_PATTERN,
+  SIGN_METHOD_PATTERN,
+  UINT_DECIMAL_STRING_PATTERN,
+} from "./protocol-management-primitives.js";
+import {
+  ED25519_PUBLIC_KEY_BASE64_PATTERN,
+  FORBIDDEN_SECRET_FIELD_NAMES,
+  MAX_ACCOUNTS_PER_RESPONSE,
+  MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
+  MAX_CAPABILITY_CHAINS,
+  MAX_PROTOCOL_RESPONSE_LINE_BYTES,
+  MAX_RAW_PROTOCOL_JSON_BYTES,
+  MAX_SESSION_TTL_MS,
+  MAX_SIGNING_CAPABILITIES,
+  MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS,
+  MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
+  MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
+  MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS,
+  PROTOCOL_VERSION,
+  SIGN_RESULT_ERROR_MESSAGES,
+  SUI_ADDRESS_PATTERN,
+  SUI_CHAIN_ID,
+  SUI_DERIVATION_PATH,
+  SUI_ED25519_SIGNATURE_BASE64_PATTERN,
+  SUI_SIGN_PERSONAL_MESSAGE_METHOD,
+  SUI_SIGN_TRANSACTION_METHOD,
+  SUI_SIGN_TRANSACTION_NETWORKS,
+  UNSUPPORTED_METHOD_MESSAGE,
+  consumeProtocolResponseChunk,
+  createRequestId,
+  hasOnlyObjectKeys,
+  hasSecretPayloadKey,
+  isRecord,
+  isSuiAddressForPublicKey,
+  randomBytesPortable,
+  utf8ByteLength,
+  type SignResultErrorCode,
+  type SuiSignMethod,
+  type SuiSignTransactionNetwork,
+} from "./protocol-primitives.js";
 
 // These boundary helpers are defined once in safe-text.ts (the single source of
 // truth) and re-exported here because protocol.ts is the wire-ingress boundary
 // that applies them; existing importers and tests resolve them via protocol.ts.
 export { isGatewayName, isSafeDeviceId, isSafeRequestId, isSessionId, sanitizeDisplayText };
-export type { DeviceState, ProvisioningState };
-
-export const PROTOCOL_VERSION = 1;
-// sessionTtlMs is uint32 wire metadata. Gateway does not use it as the session
-// authority; it is bounded here only to reject malformed Firmware responses.
-export const MAX_SESSION_TTL_MS = 4_294_967_295;
+export {
+  AGENT_Q_POLICY_SCHEMA,
+  APPROVAL_HISTORY_HIGHEST_ACTIONS,
+  APPROVAL_HISTORY_POLICY_UPDATE_RESULTS,
+  APPROVAL_HISTORY_REASON_CODE_PATTERN,
+  APPROVAL_HISTORY_RULE_REF_PATTERN,
+  ED25519_PUBLIC_KEY_BASE64_PATTERN,
+  FORBIDDEN_SECRET_FIELD_NAMES,
+  MAX_ACCOUNTS_PER_RESPONSE,
+  MAX_APPROVAL_HISTORY_RECORDS,
+  MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
+  MAX_CAPABILITY_CHAINS,
+  MAX_POLICY_RULE_COUNT,
+  MAX_POLICY_UPDATE_REQUEST_JSON_BYTES,
+  MAX_PROTOCOL_RESPONSE_LINE_BYTES,
+  MAX_RAW_PROTOCOL_JSON_BYTES,
+  MAX_SESSION_TTL_MS,
+  MAX_SIGNING_CAPABILITIES,
+  MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS,
+  MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
+  MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
+  MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS,
+  POLICY_ID_PATTERN,
+  POLICY_PROPOSE_RESULT_STATUSES,
+  PROTOCOL_VERSION,
+  SIGNING_HISTORY_RECORD_KINDS,
+  SIGNING_HISTORY_TERMINAL_RESULTS,
+  SIGN_CHAIN_PATTERN,
+  SIGN_METHOD_PATTERN,
+  SIGN_RESULT_ERROR_MESSAGES,
+  SUI_ADDRESS_PATTERN,
+  SUI_CHAIN_ID,
+  SUI_DERIVATION_PATH,
+  SUI_ED25519_SIGNATURE_BASE64_PATTERN,
+  SUI_SIGN_PERSONAL_MESSAGE_METHOD,
+  SUI_SIGN_TRANSACTION_METHOD,
+  SUI_SIGN_TRANSACTION_NETWORKS,
+  UINT_DECIMAL_STRING_PATTERN,
+  UNSUPPORTED_METHOD_MESSAGE,
+  consumeProtocolResponseChunk,
+  createRequestId,
+  isSuiAddressForPublicKey,
+};
+export { ProtocolError };
+export type { DeviceState, ProvisioningState, SignResultErrorCode, SuiSignMethod, SuiSignTransactionNetwork };
+export type {
+  Account,
+  AccountsResponse,
+  CapabilitiesResponse,
+  CapabilityAccount,
+  CapabilityChain,
+  ConnectApprovedResponse,
+  ConnectRejectedResponse,
+  ConnectRequest,
+  ConnectResponse,
+  DisconnectRequest,
+  DisconnectResponse,
+  GetAccountsRequest,
+  GetCapabilitiesRequest,
+  ProtocolErrorResponse,
+  SignPersonalMessageParams,
+  SignPersonalMessageRequest,
+  SignPersonalMessageSignedResponse,
+  SignResultAuthorization,
+  SignResultPolicyRejectedResponse,
+  SignResultResponse,
+  SignResultSignedResponse,
+  SignResultSigningFailedResponse,
+  SignResultStatus,
+  SignResultUserRejectedResponse,
+  SignTransactionParams,
+  SignTransactionRequest,
+  SignTransactionSignedResponse,
+  SigningCapabilities,
+  SigningCapabilityEntry,
+} from "./provider-protocol.js";
 
 export interface DeviceStatus {
   deviceId: string;
@@ -59,36 +221,6 @@ export interface IdentifyDeviceRequest {
   };
 }
 
-export interface ConnectRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "connect";
-  params: {
-    gatewayName: string;
-  };
-}
-
-export interface DisconnectRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "disconnect";
-  sessionId: string;
-}
-
-export interface GetCapabilitiesRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "get_capabilities";
-  sessionId: string;
-}
-
-export interface GetAccountsRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "get_accounts";
-  sessionId: string;
-}
-
 export interface PolicyGetRequest {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -115,36 +247,6 @@ export interface PolicyProposeRequest {
   params: {
     policy: Record<string, unknown>;
   };
-}
-
-export interface SignTransactionParams {
-  network: SuiSignTransactionNetwork;
-  txBytes: string;
-}
-
-export interface SignPersonalMessageParams {
-  network: SuiSignTransactionNetwork;
-  message: string;
-}
-
-export interface SignTransactionRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: typeof SUI_SIGN_TRANSACTION_METHOD;
-  sessionId: string;
-  chain: typeof SUI_CHAIN_ID;
-  method: typeof SUI_SIGN_TRANSACTION_METHOD;
-  params: SignTransactionParams;
-}
-
-export interface SignPersonalMessageRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD;
-  sessionId: string;
-  chain: typeof SUI_CHAIN_ID;
-  method: typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD;
-  params: SignPersonalMessageParams;
 }
 
 export type ProtocolRequest =
@@ -175,84 +277,6 @@ export interface IdentifyDeviceResponse {
   status: "displayed";
   code: string;
   device: DeviceStatus;
-}
-
-export interface ConnectApprovedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "connect_result";
-  status: "approved";
-  sessionId: string;
-  sessionTtlMs: number;
-  device: DeviceStatus;
-}
-
-export interface ConnectRejectedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "connect_result";
-  status: "rejected";
-  error: {
-    code: string;
-    message: string;
-  };
-}
-
-export type ConnectResponse = ConnectApprovedResponse | ConnectRejectedResponse;
-
-export interface DisconnectResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "disconnect_result";
-  status: "disconnected";
-}
-
-export interface CapabilityAccount {
-  keyScheme: string;
-  derivationPath: string;
-}
-
-export interface CapabilityChain {
-  id: string;
-  accounts: CapabilityAccount[];
-  methods: string[];
-}
-
-export interface SigningCapabilityEntry {
-  chain: typeof SUI_CHAIN_ID;
-  method: SuiSignMethod;
-}
-
-export interface SigningCapabilities {
-  authorization: SignResultAuthorization;
-  methods: SigningCapabilityEntry[];
-}
-
-export interface CapabilitiesResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "capabilities";
-  chains: CapabilityChain[];
-  signing?: SigningCapabilities;
-}
-
-// Public account identity only. Never carries mnemonic, seed, entropy, or any
-// private/signing key material. publicKey is the raw 32-byte Ed25519 key as
-// base64; the scheme is reported separately as keyScheme. The shape is
-// chain-agnostic so additional chains use additional accounts[] entries.
-export interface Account {
-  chain: string;
-  address: string;
-  publicKey: string;
-  keyScheme: string;
-  derivationPath: string;
-}
-
-export interface AccountsResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "accounts";
-  accounts: Account[];
 }
 
 export interface PolicySummary {
@@ -353,96 +377,6 @@ export interface PolicyProposeResultResponse {
   policy?: PolicyProposeResultPolicySummary;
 }
 
-export type SignResultStatus =
-  | "signed"
-  | "user_rejected"
-  | "user_timed_out"
-  | "policy_rejected"
-  | "signing_failed";
-
-export type SignResultAuthorization = "user" | "policy";
-
-export interface SignTransactionSignedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "sign_result";
-  authorization: SignResultAuthorization;
-  status: "signed";
-  chain: typeof SUI_CHAIN_ID;
-  method: typeof SUI_SIGN_TRANSACTION_METHOD;
-  signature: string;
-}
-
-export interface SignPersonalMessageSignedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "sign_result";
-  authorization: "user";
-  status: "signed";
-  chain: typeof SUI_CHAIN_ID;
-  method: typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD;
-  signature: string;
-  messageBytes: string;
-}
-
-export type SignResultSignedResponse =
-  | SignTransactionSignedResponse
-  | SignPersonalMessageSignedResponse;
-
-export interface SignResultUserRejectedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "sign_result";
-  authorization: "user";
-  status: "user_rejected" | "user_timed_out";
-  error: {
-    code: "user_rejected" | "user_timed_out";
-    message: string;
-  };
-}
-
-export interface SignResultPolicyRejectedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "sign_result";
-  authorization: "policy";
-  status: "policy_rejected";
-  policyHash: string;
-  ruleRef: string;
-  error: {
-    code: "policy_rejected";
-    message: string;
-  };
-}
-
-export interface SignResultSigningFailedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "sign_result";
-  authorization: SignResultAuthorization;
-  status: "signing_failed";
-  error: {
-    code: "signing_failed";
-    message: string;
-  };
-}
-
-export type SignResultResponse =
-  | SignResultSignedResponse
-  | SignResultUserRejectedResponse
-  | SignResultPolicyRejectedResponse
-  | SignResultSigningFailedResponse;
-
-export interface ProtocolErrorResponse {
-  id?: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "error";
-  error: {
-    code: string;
-    message: string;
-  };
-}
-
 export type ProtocolResponse =
   | StatusResponse
   | IdentifyDeviceResponse
@@ -455,20 +389,6 @@ export type ProtocolResponse =
   | PolicyProposeResultResponse
   | SignResultResponse
   | ProtocolErrorResponse;
-
-export class ProtocolError extends Error {
-  readonly code: string;
-
-  constructor(code: string, message: string) {
-    super(message);
-    this.name = "ProtocolError";
-    this.code = code;
-  }
-}
-
-export function createRequestId(): string {
-  return `req_${randomBytes(12).toString("hex")}`;
-}
 
 export function makeGetStatusRequest(id = createRequestId()): GetStatusRequest {
   validateRequestId(id);
@@ -495,71 +415,14 @@ export function makeIdentifyDeviceRequest(code: string, id = createRequestId()):
 }
 
 export function createIdentificationCode(): string {
-  return (randomBytes(2).readUInt16BE(0) % 10000).toString().padStart(4, "0");
+  const bytes = randomBytesPortable(2);
+  return ((((bytes[0] ?? 0) << 8) | (bytes[1] ?? 0)) % 10000).toString().padStart(4, "0");
 }
 
-export function makeConnectRequest(
-  gatewayName: string,
-  id = createRequestId(),
-): ConnectRequest {
-  validateRequestId(id);
-  if (!isGatewayName(gatewayName)) {
-    throw new ProtocolError(
-      "invalid_gateway_name",
-      "gatewayName must be 1-64 printable ASCII characters.",
-    );
-  }
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "connect",
-    params: {
-      gatewayName,
-    },
-  };
-}
-
-export function makeDisconnectRequest(sessionId: string, id = createRequestId()): DisconnectRequest {
-  validateRequestId(id);
-  if (!isSessionId(sessionId)) {
-    throw new ProtocolError("invalid_session", "Invalid sessionId.");
-  }
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "disconnect",
-    sessionId,
-  };
-}
-
-export function makeGetCapabilitiesRequest(
-  sessionId: string,
-  id = createRequestId(),
-): GetCapabilitiesRequest {
-  validateRequestId(id);
-  if (!isSessionId(sessionId)) {
-    throw new ProtocolError("invalid_session", "Invalid sessionId.");
-  }
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "get_capabilities",
-    sessionId,
-  };
-}
-
-export function makeGetAccountsRequest(sessionId: string, id = createRequestId()): GetAccountsRequest {
-  validateRequestId(id);
-  if (!isSessionId(sessionId)) {
-    throw new ProtocolError("invalid_session", "Invalid sessionId.");
-  }
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "get_accounts",
-    sessionId,
-  };
-}
+export const makeConnectRequest = makeProviderConnectRequest;
+export const makeDisconnectRequest = makeProviderDisconnectRequest;
+export const makeGetCapabilitiesRequest = makeProviderGetCapabilitiesRequest;
+export const makeGetAccountsRequest = makeProviderGetAccountsRequest;
 
 export function makePolicyGetRequest(sessionId: string, id = createRequestId()): PolicyGetRequest {
   validateRequestId(id);
@@ -612,70 +475,14 @@ export function makePolicyProposeRequest(
       policy,
     },
   };
-  if (Buffer.byteLength(JSON.stringify(request), "utf8") > MAX_POLICY_UPDATE_REQUEST_JSON_BYTES) {
+  if (utf8ByteLength(JSON.stringify(request)) > MAX_POLICY_UPDATE_REQUEST_JSON_BYTES) {
     throw new ProtocolError("invalid_params", "policy_propose request is too large for the runtime.");
   }
   return request;
 }
 
-export function makeSignTransactionRequest(
-  sessionId: string,
-  chain: unknown,
-  method: unknown,
-  params: unknown,
-  id = createRequestId(),
-): SignTransactionRequest {
-  validateRequestId(id);
-  if (!isSessionId(sessionId)) {
-    throw new ProtocolError("invalid_session", "Invalid sessionId.");
-  }
-  const normalizedParams = validateSignRequestInput(chain, method, params, SUI_SIGN_TRANSACTION_METHOD);
-  const request: SignTransactionRequest = {
-    id,
-    version: PROTOCOL_VERSION,
-    type: SUI_SIGN_TRANSACTION_METHOD,
-    sessionId,
-    chain: SUI_CHAIN_ID,
-    method: SUI_SIGN_TRANSACTION_METHOD,
-    params: normalizedParams,
-  };
-  if (Buffer.byteLength(JSON.stringify(request), "utf8") > MAX_RAW_PROTOCOL_JSON_BYTES) {
-    throw new ProtocolError("invalid_params", "sign_transaction request is too large for the runtime.");
-  }
-  return request;
-}
-
-export function makeSignPersonalMessageRequest(
-  sessionId: string,
-  chain: unknown,
-  method: unknown,
-  params: unknown,
-  id = createRequestId(),
-): SignPersonalMessageRequest {
-  validateRequestId(id);
-  if (!isSessionId(sessionId)) {
-    throw new ProtocolError("invalid_session", "Invalid sessionId.");
-  }
-  const normalizedParams = validateSignPersonalMessageRequestInput(
-    chain,
-    method,
-    params,
-    SUI_SIGN_PERSONAL_MESSAGE_METHOD,
-  );
-  const request: SignPersonalMessageRequest = {
-    id,
-    version: PROTOCOL_VERSION,
-    type: SUI_SIGN_PERSONAL_MESSAGE_METHOD,
-    sessionId,
-    chain: SUI_CHAIN_ID,
-    method: SUI_SIGN_PERSONAL_MESSAGE_METHOD,
-    params: normalizedParams,
-  };
-  if (Buffer.byteLength(JSON.stringify(request), "utf8") > MAX_RAW_PROTOCOL_JSON_BYTES) {
-    throw new ProtocolError("invalid_params", "sign_personal_message request is too large for the runtime.");
-  }
-  return request;
-}
+export const makeSignTransactionRequest = makeProviderSignTransactionRequest;
+export const makeSignPersonalMessageRequest = makeProviderSignPersonalMessageRequest;
 
 export function validatePolicyProposeRequestInput(
   sessionId: string,
@@ -690,22 +497,7 @@ export function validateSignRequestInput(
   params: unknown,
   requestType = "sign",
 ): SignTransactionParams {
-  if (!isRecord(params) || Array.isArray(params)) {
-    throw new ProtocolError("invalid_params", `${requestType} params must be an object.`);
-  }
-  if (hasSecretPayloadKey(params)) {
-    throw new ProtocolError("invalid_params", `${requestType} params must not include secret material.`);
-  }
-  if (!hasOnlyObjectKeys(params, ["network", "txBytes"])) {
-    throw new ProtocolError("invalid_params", `${requestType} params contain unsupported fields.`);
-  }
-  if (chain !== SUI_CHAIN_ID || method !== SUI_SIGN_TRANSACTION_METHOD) {
-    throw new ProtocolError("invalid_method", `${requestType} method is unsupported.`);
-  }
-  return {
-    network: validateSuiSignTransactionNetwork(params.network),
-    txBytes: validateSuiSignTransactionTxBytes(params.txBytes),
-  };
+  return validateProviderSignTransactionInput(chain, method, params, requestType);
 }
 
 export function validateSignPersonalMessageRequestInput(
@@ -714,22 +506,7 @@ export function validateSignPersonalMessageRequestInput(
   params: unknown,
   requestType = "sign_personal_message",
 ): SignPersonalMessageParams {
-  if (!isRecord(params) || Array.isArray(params)) {
-    throw new ProtocolError("invalid_params", `${requestType} params must be an object.`);
-  }
-  if (hasSecretPayloadKey(params)) {
-    throw new ProtocolError("invalid_params", `${requestType} params must not include secret material.`);
-  }
-  if (!hasOnlyObjectKeys(params, ["network", "message"])) {
-    throw new ProtocolError("invalid_params", `${requestType} params contain unsupported fields.`);
-  }
-  if (chain !== SUI_CHAIN_ID || method !== SUI_SIGN_PERSONAL_MESSAGE_METHOD) {
-    throw new ProtocolError("invalid_method", `${requestType} method is unsupported.`);
-  }
-  return {
-    network: validateSuiSignTransactionNetwork(params.network),
-    message: validateSuiSignPersonalMessage(params.message),
-  };
+  return validateProviderSignPersonalMessageInput(chain, method, params, requestType);
 }
 
 export function validatePolicyProposeInput(policy: unknown): asserts policy is Record<string, unknown> {
@@ -789,23 +566,16 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     throw new ProtocolError("protocol_error", "Protocol response id does not match request id.");
   }
 
-  if (value.type === "error") {
-    const error = value.error;
-    if (!isRecord(error) || typeof error.code !== "string" || typeof error.message !== "string") {
-      throw new ProtocolError("protocol_error", "Protocol error response is malformed.");
-    }
-    return {
-      id: typeof value.id === "string" ? value.id : undefined,
-      version: PROTOCOL_VERSION,
-      type: "error",
-      error: {
-        code: error.code,
-        message: error.message,
-      },
-    };
+  if (isProviderProtocolResponseType(value.type)) {
+    return parseProviderProtocolResponse(line, expectedId);
   }
 
   if (value.type === "status") {
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "device", "provisioning"])) {
+      throw new ProtocolError("protocol_error", "Status response contains unsupported fields.");
+    }
+    requireWireDeviceStatusShape(value.device, "Status response device object");
+    requireWireProvisioningStatusShape(value.provisioning, "Status response provisioning object");
     const device = sanitizeDeviceStatus(value.device);
     if (device === null) {
       throw new ProtocolError("protocol_error", "Status response device object is malformed.");
@@ -828,6 +598,10 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
   }
 
   if (value.type === "identify_device_result") {
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "code", "device"])) {
+      throw new ProtocolError("protocol_error", "Identify response contains unsupported fields.");
+    }
+    requireWireDeviceStatusShape(value.device, "Identify response device object");
     const device = sanitizeDeviceStatus(value.device);
     if (device === null) {
       throw new ProtocolError("protocol_error", "Identify response device object is malformed.");
@@ -843,120 +617,6 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
       status: "displayed",
       code: value.code,
       device,
-    };
-  }
-
-  if (value.type === "connect_result") {
-    if (typeof value.id !== "string") {
-      throw new ProtocolError("protocol_error", "Connect response id is malformed.");
-    }
-
-    if (value.status === "approved") {
-      const device = sanitizeDeviceStatus(value.device);
-      if (device === null) {
-        throw new ProtocolError("protocol_error", "Connect response device object is malformed.");
-      }
-      if (!isSessionId(value.sessionId)) {
-        throw new ProtocolError("protocol_error", "Connect response sessionId is malformed.");
-      }
-      if (
-        typeof value.sessionTtlMs !== "number" ||
-        !Number.isInteger(value.sessionTtlMs) ||
-        value.sessionTtlMs <= 0 ||
-        value.sessionTtlMs > MAX_SESSION_TTL_MS
-      ) {
-        throw new ProtocolError("protocol_error", "Connect response sessionTtlMs is malformed.");
-      }
-      return {
-        id: value.id,
-        version: PROTOCOL_VERSION,
-        type: "connect_result",
-        status: "approved",
-        sessionId: value.sessionId,
-        sessionTtlMs: value.sessionTtlMs,
-        device,
-      };
-    }
-
-    if (value.status === "rejected") {
-      const error = value.error;
-      if (!isRecord(error) || typeof error.code !== "string" || typeof error.message !== "string") {
-        throw new ProtocolError("protocol_error", "Connect rejected response error object is malformed.");
-      }
-      return {
-        id: value.id,
-        version: PROTOCOL_VERSION,
-        type: "connect_result",
-        status: "rejected",
-        error: {
-          code: error.code,
-          message: error.message,
-        },
-      };
-    }
-
-    throw new ProtocolError("protocol_error", "Connect response status is unsupported.");
-  }
-
-  if (value.type === "disconnect_result") {
-    if (typeof value.id !== "string" || value.status !== "disconnected") {
-      throw new ProtocolError("protocol_error", "Disconnect response is malformed.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "disconnect_result",
-      status: "disconnected",
-    };
-  }
-
-  if (value.type === "capabilities") {
-    if (typeof value.id !== "string") {
-      throw new ProtocolError("protocol_error", "Capabilities response id is malformed.");
-    }
-    if (hasSecretPayloadKey(value)) {
-      throw new ProtocolError("protocol_error", "Capabilities response must not include secret material.");
-    }
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "chains", "signing"])) {
-      throw new ProtocolError("protocol_error", "Capabilities response contains unsupported fields.");
-    }
-    if (!Array.isArray(value.chains)) {
-      throw new ProtocolError("protocol_error", "Capabilities response chains must be an array.");
-    }
-    if (value.chains.length !== MAX_CAPABILITY_CHAINS) {
-      throw new ProtocolError("protocol_error", "Capabilities response has an unsupported chain count.");
-    }
-    const signing = sanitizeSigningCapabilities(value.signing);
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "capabilities",
-      chains: value.chains.map((entry) => sanitizeCapabilityChain(entry)),
-      ...(signing === undefined ? {} : { signing }),
-    };
-  }
-
-  if (value.type === "accounts") {
-    if (typeof value.id !== "string") {
-      throw new ProtocolError("protocol_error", "Accounts response id is malformed.");
-    }
-    if (hasSecretPayloadKey(value)) {
-      throw new ProtocolError("protocol_error", "Accounts response must not include secret material.");
-    }
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "accounts"])) {
-      throw new ProtocolError("protocol_error", "Accounts response contains unsupported fields.");
-    }
-    if (!Array.isArray(value.accounts)) {
-      throw new ProtocolError("protocol_error", "Accounts response accounts must be an array.");
-    }
-    if (value.accounts.length !== MAX_ACCOUNTS_PER_RESPONSE) {
-      throw new ProtocolError("protocol_error", "Accounts response has an unsupported account count.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "accounts",
-      accounts: value.accounts.map((entry) => sanitizeAccount(entry)),
     };
   }
 
@@ -1042,11 +702,22 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
-  if (value.type === "sign_result") {
-    return sanitizeSignResultResponse(value);
-  }
-
   throw new ProtocolError("protocol_error", "Protocol response type is unsupported.");
+}
+
+export function parseProviderProtocolResponse(line: string, expectedId?: string): ProtocolResponse {
+  return parseProviderProtocolResponseCore(line, expectedId) as ProtocolResponse;
+}
+
+function isProviderProtocolResponseType(value: unknown): boolean {
+  return (
+    value === "error" ||
+    value === "connect_result" ||
+    value === "disconnect_result" ||
+    value === "capabilities" ||
+    value === "accounts" ||
+    value === "sign_result"
+  );
 }
 
 export function assertStatusResponse(response: ProtocolResponse): StatusResponse {
@@ -1190,397 +861,7 @@ export function isUint64DecimalString(value: unknown): value is string {
     (value.length === UINT64_MAX_DECIMAL.length && value <= UINT64_MAX_DECIMAL);
 }
 
-export const SUI_ADDRESS_PATTERN = /^0x[0-9a-f]{64}$/;
-// Raw 32-byte Ed25519 public key as base64 is exactly 43 payload chars + one "=".
-export const ED25519_PUBLIC_KEY_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
-// Sui Ed25519 signatures are scheme flag + 64-byte signature + 32-byte public key.
-export const SUI_ED25519_SIGNATURE_BASE64_PATTERN = /^[A-Za-z0-9+/]{130}==$/;
-export const SUI_DERIVATION_PATH = "m/44'/784'/0'/0'/0'";
-export const MAX_CAPABILITY_CHAINS = 1;
-export const MAX_CAPABILITY_ACCOUNTS_PER_CHAIN = 1;
-export const MAX_SIGNING_CAPABILITIES = 2;
-// The current target implements exactly one account (Sui Ed25519 account 0). Bound
-// the accounts array so a buggy or spoofed device cannot inflate the MCP result or
-// imply multi-account support that does not exist. Raise this as more accounts or
-// chains are actually implemented.
-export const MAX_ACCOUNTS_PER_RESPONSE = 1;
-export const AGENT_Q_POLICY_SCHEMA = "agentq.policy.v0";
-export const POLICY_ID_PATTERN = /^sha256:[0-9a-f]{64}$/;
-export const MAX_POLICY_RULE_COUNT = 16;
-export const MAX_APPROVAL_HISTORY_RECORDS = 4;
-export const UINT_DECIMAL_STRING_PATTERN = /^(0|[1-9][0-9]{0,19})$/;
 const UINT64_MAX_DECIMAL = "18446744073709551615";
-export const APPROVAL_HISTORY_REASON_CODE_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
-export const APPROVAL_HISTORY_RULE_REF_PATTERN = /^[a-z][a-z0-9_.:/-]{0,31}$/;
-export const SIGNING_HISTORY_RECORD_KINDS = [
-  "confirmation",
-  "terminal",
-] as const;
-export const SIGNING_HISTORY_TERMINAL_RESULTS = [
-  "signed",
-  "user_rejected",
-  "user_timed_out",
-  "policy_rejected",
-  "signing_failed",
-] as const;
-export const APPROVAL_HISTORY_POLICY_UPDATE_RESULTS = [
-  "applied",
-  "rejected",
-  "timed_out",
-  "storage_error",
-] as const;
-export const APPROVAL_HISTORY_HIGHEST_ACTIONS = ["reject", "sign"] as const;
-export const POLICY_PROPOSE_RESULT_STATUSES = [
-  "applied",
-  "rejected",
-  "timed_out",
-  "invalid_policy",
-  "ui_error",
-  "storage_error",
-  "consistency_error",
-] as const;
-export const SIGN_CHAIN_PATTERN = /^[a-z][a-z0-9_.-]{0,31}$/;
-export const SIGN_METHOD_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
-export const MAX_RAW_PROTOCOL_JSON_BYTES = 4096;
-export const MAX_POLICY_UPDATE_REQUEST_JSON_BYTES = 4096;
-export const SUI_CHAIN_ID = "sui";
-export const SUI_SIGN_TRANSACTION_METHOD = "sign_transaction";
-export const SUI_SIGN_PERSONAL_MESSAGE_METHOD = "sign_personal_message";
-export type SuiSignMethod =
-  | typeof SUI_SIGN_TRANSACTION_METHOD
-  | typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD;
-export const SUI_SIGN_TRANSACTION_NETWORKS = ["mainnet", "testnet", "devnet", "localnet"] as const;
-export type SuiSignTransactionNetwork = (typeof SUI_SIGN_TRANSACTION_NETWORKS)[number];
-export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES = 384;
-export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS = 512;
-export const MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES = 256;
-export const MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS = 344;
-const BASE64_CANONICAL_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
-export const UNSUPPORTED_METHOD_MESSAGE = "Method is not supported.";
-export const SIGN_RESULT_ERROR_MESSAGES = {
-  user_rejected: "The signing request was rejected on the device.",
-  user_timed_out: "The signing request timed out on the device.",
-  policy_rejected: "The signing request was rejected by device policy.",
-  signing_failed: "The device could not produce a signature.",
-} as const;
-export type SignResultErrorCode = keyof typeof SIGN_RESULT_ERROR_MESSAGES;
-export const FORBIDDEN_SECRET_FIELD_NAMES = [
-  "entropy",
-  "mnemonic",
-  "phrase",
-  "prefixes",
-  "privateKey",
-  "private_key",
-  "privateMaterial",
-  "private_material",
-  "recoveryPhrase",
-  "recovery_phrase",
-  "rootEntropy",
-  "root_entropy",
-  "rootMaterial",
-  "root_material",
-  "secret",
-  "seed",
-  "signingKey",
-  "signing_key",
-  "words",
-] as const;
-const FORBIDDEN_SECRET_FIELD_NAME_SET = new Set(
-  FORBIDDEN_SECRET_FIELD_NAMES.map((fieldName) => fieldName.toLowerCase()),
-);
-
-const U64_MASK = (1n << 64n) - 1n;
-const BLAKE2B_BLOCK_BYTES = 128;
-const BLAKE2B_256_BYTES = 32;
-const BLAKE2B_IV = [
-  0x6a09e667f3bcc908n,
-  0xbb67ae8584caa73bn,
-  0x3c6ef372fe94f82bn,
-  0xa54ff53a5f1d36f1n,
-  0x510e527fade682d1n,
-  0x9b05688c2b3e6c1fn,
-  0x1f83d9abfb41bd6bn,
-  0x5be0cd19137e2179n,
-] as const;
-const BLAKE2B_SIGMA = [
-  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-  [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
-  [11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4],
-  [7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8],
-  [9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13],
-  [2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9],
-  [12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11],
-  [13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10],
-  [6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5],
-  [10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0],
-] as const;
-
-function add64(...values: bigint[]): bigint {
-  return values.reduce((sum, value) => (sum + value) & U64_MASK, 0n);
-}
-
-function rotr64(value: bigint, shift: number): bigint {
-  return ((value >> BigInt(shift)) | (value << BigInt(64 - shift))) & U64_MASK;
-}
-
-function readU64Le(input: Uint8Array, offset: number): bigint {
-  let value = 0n;
-  for (let index = 0; index < 8; ++index) {
-    value |= BigInt(input[offset + index] ?? 0) << BigInt(index * 8);
-  }
-  return value;
-}
-
-function writeU64Le(output: Uint8Array, offset: number, value: bigint): void {
-  for (let index = 0; index < 8; ++index) {
-    output[offset + index] = Number((value >> BigInt(index * 8)) & 0xffn);
-  }
-}
-
-function blake2bCompress(h: bigint[], block: Uint8Array, bytesCompressed: bigint, isLast: boolean): void {
-  const m = Array.from({ length: 16 }, (_, index) => readU64Le(block, index * 8));
-  const v = [...h, ...BLAKE2B_IV];
-  v[12] ^= bytesCompressed & U64_MASK;
-  v[13] ^= bytesCompressed >> 64n;
-  if (isLast) {
-    v[14] ^= U64_MASK;
-  }
-
-  const g = (a: number, b: number, c: number, d: number, x: number, y: number) => {
-    v[a] = add64(v[a], v[b], m[x]);
-    v[d] = rotr64(v[d] ^ v[a], 32);
-    v[c] = add64(v[c], v[d]);
-    v[b] = rotr64(v[b] ^ v[c], 24);
-    v[a] = add64(v[a], v[b], m[y]);
-    v[d] = rotr64(v[d] ^ v[a], 16);
-    v[c] = add64(v[c], v[d]);
-    v[b] = rotr64(v[b] ^ v[c], 63);
-  };
-
-  for (let round = 0; round < 12; ++round) {
-    const sigma = BLAKE2B_SIGMA[round % BLAKE2B_SIGMA.length];
-    g(0, 4, 8, 12, sigma[0], sigma[1]);
-    g(1, 5, 9, 13, sigma[2], sigma[3]);
-    g(2, 6, 10, 14, sigma[4], sigma[5]);
-    g(3, 7, 11, 15, sigma[6], sigma[7]);
-    g(0, 5, 10, 15, sigma[8], sigma[9]);
-    g(1, 6, 11, 12, sigma[10], sigma[11]);
-    g(2, 7, 8, 13, sigma[12], sigma[13]);
-    g(3, 4, 9, 14, sigma[14], sigma[15]);
-  }
-
-  for (let index = 0; index < h.length; ++index) {
-    h[index] = (h[index] ^ v[index] ^ v[index + 8]) & U64_MASK;
-  }
-}
-
-function blake2b256(input: Uint8Array): Uint8Array {
-  const h = [...BLAKE2B_IV];
-  h[0] ^= 0x01010000n ^ BigInt(BLAKE2B_256_BYTES);
-
-  let offset = 0;
-  let bytesCompressed = 0n;
-  while (offset + BLAKE2B_BLOCK_BYTES < input.length) {
-    bytesCompressed += BigInt(BLAKE2B_BLOCK_BYTES);
-    blake2bCompress(h, input.subarray(offset, offset + BLAKE2B_BLOCK_BYTES), bytesCompressed, false);
-    offset += BLAKE2B_BLOCK_BYTES;
-  }
-
-  const finalBlock = new Uint8Array(BLAKE2B_BLOCK_BYTES);
-  const remaining = input.subarray(offset);
-  finalBlock.set(remaining);
-  bytesCompressed += BigInt(remaining.length);
-  blake2bCompress(h, finalBlock, bytesCompressed, true);
-
-  const digest = new Uint8Array(BLAKE2B_256_BYTES);
-  for (let index = 0; index < BLAKE2B_256_BYTES / 8; ++index) {
-    writeU64Le(digest, index * 8, h[index]);
-  }
-  return digest;
-}
-
-function hexLower(bytes: Uint8Array): string {
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function deriveSuiAddressFromPublicKey(publicKeyBase64: string): string | null {
-  const publicKey = Buffer.from(publicKeyBase64, "base64");
-  if (publicKey.length !== 32 || publicKey.toString("base64") !== publicKeyBase64) {
-    return null;
-  }
-
-  const addressInput = new Uint8Array(33);
-  addressInput[0] = 0x00; // Sui Ed25519 scheme flag.
-  addressInput.set(publicKey, 1);
-  return `0x${hexLower(blake2b256(addressInput))}`;
-}
-
-export function isSuiAddressForPublicKey(address: string, publicKeyBase64: string): boolean {
-  if (!SUI_ADDRESS_PATTERN.test(address) || !ED25519_PUBLIC_KEY_BASE64_PATTERN.test(publicKeyBase64)) {
-    return false;
-  }
-  const expectedAddress = deriveSuiAddressFromPublicKey(publicKeyBase64);
-  return expectedAddress !== null && address === expectedAddress;
-}
-
-function sanitizeCapabilityAccount(value: unknown): CapabilityAccount {
-  if (!isRecord(value)) {
-    throw new ProtocolError("protocol_error", "Capability account entry is malformed.");
-  }
-  if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Capability account entry must not include secret material.");
-  }
-  if (!hasOnlyObjectKeys(value, ["keyScheme", "derivationPath"])) {
-    throw new ProtocolError("protocol_error", "Capability account entry contains unsupported fields.");
-  }
-  if (value.keyScheme !== "ed25519") {
-    throw new ProtocolError("protocol_error", "Capability account keyScheme is unsupported.");
-  }
-  if (value.derivationPath !== SUI_DERIVATION_PATH) {
-    throw new ProtocolError("protocol_error", "Capability account derivationPath is unsupported.");
-  }
-  return {
-    keyScheme: value.keyScheme,
-    derivationPath: value.derivationPath,
-  };
-}
-
-function sanitizeCapabilityChain(value: unknown): CapabilityChain {
-  if (!isRecord(value)) {
-    throw new ProtocolError("protocol_error", "Capability chain entry is malformed.");
-  }
-  if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Capability chain entry must not include secret material.");
-  }
-  if (!hasOnlyObjectKeys(value, ["id", "accounts", "methods"])) {
-    throw new ProtocolError("protocol_error", "Capability chain entry contains unsupported fields.");
-  }
-  if (value.id !== "sui") {
-    throw new ProtocolError("protocol_error", "Capability chain is unsupported.");
-  }
-  if (!Array.isArray(value.accounts)) {
-    throw new ProtocolError("protocol_error", "Capability accounts must be an array.");
-  }
-  if (value.accounts.length !== MAX_CAPABILITY_ACCOUNTS_PER_CHAIN) {
-    throw new ProtocolError("protocol_error", "Capability account count is unsupported.");
-  }
-  if (!Array.isArray(value.methods)) {
-    throw new ProtocolError("protocol_error", "Capability methods must be an array.");
-  }
-  if (value.methods.length !== 0) {
-    throw new ProtocolError("protocol_error", "Capability method is unsupported.");
-  }
-  return {
-    id: "sui",
-    accounts: value.accounts.map((entry) => sanitizeCapabilityAccount(entry)),
-    methods: [],
-  };
-}
-
-function sanitizeSigningCapabilityEntry(value: unknown): SigningCapabilityEntry {
-  if (!isRecord(value)) {
-    throw new ProtocolError("protocol_error", "Signing capability entry is malformed.");
-  }
-  if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Signing capability entry must not include secret material.");
-  }
-  if (!hasOnlyObjectKeys(value, ["chain", "method"])) {
-    throw new ProtocolError("protocol_error", "Signing capability entry contains unsupported fields.");
-  }
-  if (
-    value.chain !== SUI_CHAIN_ID ||
-    (value.method !== SUI_SIGN_TRANSACTION_METHOD &&
-      value.method !== SUI_SIGN_PERSONAL_MESSAGE_METHOD)
-  ) {
-    throw new ProtocolError("protocol_error", "Signing capability is unsupported.");
-  }
-  return {
-    chain: SUI_CHAIN_ID,
-    method: value.method,
-  };
-}
-
-function sanitizeSigningCapabilities(value: unknown): SigningCapabilities | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!isRecord(value)) {
-    throw new ProtocolError("protocol_error", "Signing capabilities are malformed.");
-  }
-  if (!hasOnlyObjectKeys(value, ["authorization", "methods"])) {
-    throw new ProtocolError("protocol_error", "Signing capabilities contain unsupported fields.");
-  }
-  if (value.authorization !== "user" && value.authorization !== "policy") {
-    throw new ProtocolError("protocol_error", "Signing authorization is unsupported.");
-  }
-  if (!Array.isArray(value.methods)) {
-    throw new ProtocolError("protocol_error", "Signing capabilities are malformed.");
-  }
-  if (value.methods.length === 0 || value.methods.length > MAX_SIGNING_CAPABILITIES) {
-    throw new ProtocolError("protocol_error", "Signing capability count is unsupported.");
-  }
-  const methods = value.methods.map((entry) => sanitizeSigningCapabilityEntry(entry));
-  const methodNames = new Set(methods.map((entry) => entry.method));
-  if (methodNames.size !== methods.length) {
-    throw new ProtocolError("protocol_error", "Signing capability is duplicated.");
-  }
-  if (value.authorization === "policy") {
-    if (methods.length !== 1 || !methodNames.has(SUI_SIGN_TRANSACTION_METHOD)) {
-      throw new ProtocolError("protocol_error", "Signing capability is unsupported.");
-    }
-  } else if (
-    methods.length !== 2 ||
-    !methodNames.has(SUI_SIGN_TRANSACTION_METHOD) ||
-    !methodNames.has(SUI_SIGN_PERSONAL_MESSAGE_METHOD)
-  ) {
-    throw new ProtocolError("protocol_error", "Signing capability is unsupported.");
-  }
-  return {
-    authorization: value.authorization,
-    methods,
-  };
-}
-
-// Reduce an untrusted account entry to a safe Account or throw. Enforces the Sui
-// Ed25519 account-0 shape, rejects any secret-like or unexpected field, and
-// rejects unknown chains rather than passing them through, so an unsupported
-// chain never looks supported. Extend per chain as more chains are implemented.
-function sanitizeAccount(value: unknown): Account {
-  if (!isRecord(value)) {
-    throw new ProtocolError("protocol_error", "Account entry is malformed.");
-  }
-  if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Account entry must not include secret material.");
-  }
-  if (!hasOnlyObjectKeys(value, ["chain", "address", "publicKey", "keyScheme", "derivationPath"])) {
-    throw new ProtocolError("protocol_error", "Account entry contains unsupported fields.");
-  }
-  if (value.chain !== "sui") {
-    throw new ProtocolError("protocol_error", "Account chain is unsupported.");
-  }
-  if (typeof value.address !== "string" || !SUI_ADDRESS_PATTERN.test(value.address)) {
-    throw new ProtocolError("protocol_error", "Account address is malformed.");
-  }
-  if (typeof value.publicKey !== "string" || !ED25519_PUBLIC_KEY_BASE64_PATTERN.test(value.publicKey)) {
-    throw new ProtocolError("protocol_error", "Account publicKey is malformed.");
-  }
-  if (!isSuiAddressForPublicKey(value.address, value.publicKey)) {
-    throw new ProtocolError("protocol_error", "Account address does not match publicKey.");
-  }
-  if (value.keyScheme !== "ed25519") {
-    throw new ProtocolError("protocol_error", "Account keyScheme is unsupported.");
-  }
-  if (value.derivationPath !== SUI_DERIVATION_PATH) {
-    throw new ProtocolError("protocol_error", "Account derivationPath is unsupported.");
-  }
-  return {
-    chain: value.chain,
-    address: value.address,
-    publicKey: value.publicKey,
-    keyScheme: value.keyScheme,
-    derivationPath: value.derivationPath,
-  };
-}
 
 function sanitizePolicySummary(value: unknown): PolicySummary | null {
   if (!isRecord(value)) {
@@ -1830,214 +1111,6 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
   throw new ProtocolError("protocol_error", "Approval history record is malformed.");
 }
 
-function validateSuiSignTransactionNetwork(value: unknown): SuiSignTransactionNetwork {
-  if (!SUI_SIGN_TRANSACTION_NETWORKS.includes(value as SuiSignTransactionNetwork)) {
-    throw new ProtocolError("invalid_params", "sui/sign_transaction network is unsupported.");
-  }
-  return value as SuiSignTransactionNetwork;
-}
-
-function validateSuiSignTransactionTxBytes(value: unknown): string {
-  if (typeof value !== "string") {
-    throw new ProtocolError("invalid_params", "sui/sign_transaction txBytes must be base64.");
-  }
-  if (
-    value.length === 0 ||
-    value.length > MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS ||
-    !BASE64_CANONICAL_PATTERN.test(value)
-  ) {
-    throw new ProtocolError("invalid_params", "sui/sign_transaction txBytes must be canonical base64.");
-  }
-  const decoded = Buffer.from(value, "base64");
-  if (
-    decoded.length === 0 ||
-    decoded.length > MAX_SUI_SIGN_TRANSACTION_TX_BYTES ||
-    decoded.toString("base64") !== value
-  ) {
-    throw new ProtocolError("invalid_params", "sui/sign_transaction txBytes are outside the supported size.");
-  }
-  return value;
-}
-
-function validateSuiSignPersonalMessage(value: unknown, errorCode = "invalid_params"): string {
-  if (typeof value !== "string") {
-    throw new ProtocolError(errorCode, "sui/sign_personal_message message must be base64.");
-  }
-  if (
-    value.length === 0 ||
-    value.length > MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS ||
-    !BASE64_CANONICAL_PATTERN.test(value)
-  ) {
-    throw new ProtocolError(errorCode, "sui/sign_personal_message message must be canonical base64.");
-  }
-  const decoded = Buffer.from(value, "base64");
-  if (
-    decoded.length === 0 ||
-    decoded.length > MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES ||
-    decoded.toString("base64") !== value
-  ) {
-    throw new ProtocolError(errorCode, "sui/sign_personal_message message is outside the supported size.");
-  }
-  return value;
-}
-
-function signResultErrorMessage(code: unknown): string | undefined {
-  if (typeof code !== "string" || !(code in SIGN_RESULT_ERROR_MESSAGES)) {
-    return undefined;
-  }
-  return SIGN_RESULT_ERROR_MESSAGES[code as SignResultErrorCode];
-}
-
-function sanitizeSignResultResponse(value: Record<string, unknown>): SignResultResponse {
-  if (typeof value.id !== "string" || typeof value.status !== "string") {
-    throw new ProtocolError("protocol_error", "Sign result response is malformed.");
-  }
-  if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Sign result response must not include secret material.");
-  }
-
-  if (value.status === "signed") {
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "authorization", "status", "chain", "method", "signature", "messageBytes"])) {
-      throw new ProtocolError("protocol_error", "Sign result response contains unsupported fields.");
-    }
-    if (
-      (value.authorization !== "user" && value.authorization !== "policy") ||
-      value.chain !== SUI_CHAIN_ID ||
-      typeof value.signature !== "string" ||
-      !SUI_ED25519_SIGNATURE_BASE64_PATTERN.test(value.signature)
-    ) {
-      throw new ProtocolError("protocol_error", "Sign result response is malformed.");
-    }
-    if (value.method === SUI_SIGN_TRANSACTION_METHOD) {
-      if (value.messageBytes !== undefined) {
-        throw new ProtocolError("protocol_error", "Sign result response is malformed.");
-      }
-      return {
-        id: value.id,
-        version: PROTOCOL_VERSION,
-        type: "sign_result",
-        authorization: value.authorization,
-        status: "signed",
-        chain: SUI_CHAIN_ID,
-        method: SUI_SIGN_TRANSACTION_METHOD,
-        signature: value.signature,
-      };
-    }
-    if (value.method === SUI_SIGN_PERSONAL_MESSAGE_METHOD) {
-      if (value.authorization !== "user") {
-        throw new ProtocolError("protocol_error", "Sign result response is malformed.");
-      }
-      const messageBytes = validateSuiSignPersonalMessage(value.messageBytes, "protocol_error");
-      return {
-        id: value.id,
-        version: PROTOCOL_VERSION,
-        type: "sign_result",
-        authorization: "user",
-        status: "signed",
-        chain: SUI_CHAIN_ID,
-        method: SUI_SIGN_PERSONAL_MESSAGE_METHOD,
-        signature: value.signature,
-        messageBytes,
-      };
-    }
-    throw new ProtocolError("protocol_error", "Sign result response is malformed.");
-  }
-
-  if (value.status === "user_rejected" || value.status === "user_timed_out") {
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "authorization", "status", "error"])) {
-      throw new ProtocolError("protocol_error", "Sign result response contains unsupported fields.");
-    }
-    const error = value.error;
-    if (!isRecord(error) || !hasOnlyObjectKeys(error, ["code", "message"])) {
-      throw new ProtocolError("protocol_error", "Sign result error is malformed.");
-    }
-    const expectedCode = value.status;
-    const expectedMessage = SIGN_RESULT_ERROR_MESSAGES[expectedCode];
-    if (
-      value.authorization !== "user" ||
-      error.code !== expectedCode ||
-      error.message !== expectedMessage
-    ) {
-      throw new ProtocolError("protocol_error", "Sign result error is malformed.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "sign_result",
-      authorization: "user",
-      status: value.status,
-      error: {
-        code: expectedCode,
-        message: expectedMessage,
-      },
-    };
-  }
-
-  if (value.status === "policy_rejected") {
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "authorization", "status", "policyHash", "ruleRef", "error"])) {
-      throw new ProtocolError("protocol_error", "Sign result response contains unsupported fields.");
-    }
-    const error = value.error;
-    const message = SIGN_RESULT_ERROR_MESSAGES.policy_rejected;
-    if (
-      value.authorization !== "policy" ||
-      typeof value.policyHash !== "string" ||
-      !POLICY_ID_PATTERN.test(value.policyHash) ||
-      typeof value.ruleRef !== "string" ||
-      !APPROVAL_HISTORY_RULE_REF_PATTERN.test(value.ruleRef) ||
-      !isRecord(error) ||
-      !hasOnlyObjectKeys(error, ["code", "message"]) ||
-      error.code !== "policy_rejected" ||
-      error.message !== message
-    ) {
-      throw new ProtocolError("protocol_error", "Sign result error is malformed.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "sign_result",
-      authorization: "policy",
-      status: "policy_rejected",
-      policyHash: value.policyHash,
-      ruleRef: value.ruleRef,
-      error: {
-        code: "policy_rejected",
-        message,
-      },
-    };
-  }
-
-  if (value.status === "signing_failed") {
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "authorization", "status", "error"])) {
-      throw new ProtocolError("protocol_error", "Sign result response contains unsupported fields.");
-    }
-    const error = value.error;
-    const message = SIGN_RESULT_ERROR_MESSAGES.signing_failed;
-    if (
-      (value.authorization !== "user" && value.authorization !== "policy") ||
-      !isRecord(error) ||
-      !hasOnlyObjectKeys(error, ["code", "message"]) ||
-      error.code !== "signing_failed" ||
-      error.message !== message
-    ) {
-      throw new ProtocolError("protocol_error", "Sign result error is malformed.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "sign_result",
-      authorization: value.authorization,
-      status: "signing_failed",
-      error: {
-        code: "signing_failed",
-        message,
-      },
-    };
-  }
-
-  throw new ProtocolError("protocol_error", "Sign result status is unsupported.");
-}
-
 export function sanitizeDeviceStatusSnapshot(value: unknown): DeviceStatusSnapshot | null {
   if (!isRecord(value)) {
     return null;
@@ -2060,28 +1133,17 @@ function validateRequestId(id: string): void {
   }
 }
 
-function hasSecretPayloadKey(value: unknown): boolean {
-  if (Array.isArray(value)) {
-    return value.some((item) => hasSecretPayloadKey(item));
+function requireWireDeviceStatusShape(value: unknown, label: string): void {
+  if (
+    !isRecord(value) ||
+    !hasOnlyObjectKeys(value, ["deviceId", "state", "firmwareName", "hardware", "firmwareVersion"])
+  ) {
+    throw new ProtocolError("protocol_error", `${label} contains unsupported fields.`);
   }
-  if (!isRecord(value)) {
-    return false;
-  }
-  for (const [key, child] of Object.entries(value)) {
-    if (FORBIDDEN_SECRET_FIELD_NAME_SET.has(key.toLowerCase())) {
-      return true;
-    }
-    if (hasSecretPayloadKey(child)) {
-      return true;
-    }
-  }
-  return false;
 }
 
-function hasOnlyObjectKeys(value: Record<string, unknown>, allowedKeys: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowedKeys.includes(key));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function requireWireProvisioningStatusShape(value: unknown, label: string): void {
+  if (!isRecord(value) || !hasOnlyObjectKeys(value, ["state"])) {
+    throw new ProtocolError("protocol_error", `${label} contains unsupported fields.`);
+  }
 }

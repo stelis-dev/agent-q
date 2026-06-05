@@ -250,6 +250,7 @@ test("package metadata exposes the current client entrypoints", async () => {
     "./client",
     "./package.json",
     "./protocol",
+    "./provider-protocol",
   ]);
   assert.deepEqual(packageJson.exports["."], {
     types: "./dist/client.d.ts",
@@ -275,6 +276,7 @@ test("package self-reference resolves only client entrypoints", async () => {
   const adapterInternal = await import("@stelis/agent-q-client/adapter-internal");
   const client = await import("@stelis/agent-q-client/client");
   const protocol = await import("@stelis/agent-q-client/protocol");
+  const providerProtocol = await import("@stelis/agent-q-client/provider-protocol");
   assert.equal(typeof root.createDefaultDeviceClientCore, "function");
   assert.equal(root.createDefaultGatewayCore, undefined);
   assert.equal(typeof admin.createDefaultGatewayCore, "function");
@@ -282,6 +284,24 @@ test("package self-reference resolves only client entrypoints", async () => {
   assert.equal(typeof client.createDefaultDeviceClientCore, "function");
   assert.equal(typeof protocol.makeGetStatusRequest, "function");
   assert.equal(typeof protocol.makeSignTransactionRequest, "function");
+  assert.equal(providerProtocol.makeGetStatusRequest, undefined);
+  assert.equal(providerProtocol.makePolicyGetRequest, undefined);
+  assert.equal(providerProtocol.makePolicyProposeRequest, undefined);
+  assert.equal(providerProtocol.makeGetApprovalHistoryRequest, undefined);
+  assert.equal(providerProtocol.AGENT_Q_POLICY_SCHEMA, undefined);
+  assert.equal(providerProtocol.MAX_POLICY_RULE_COUNT, undefined);
+  assert.equal(providerProtocol.MAX_APPROVAL_HISTORY_RECORDS, undefined);
+  assert.equal(providerProtocol.POLICY_PROPOSE_RESULT_STATUSES, undefined);
+  assert.equal(providerProtocol.serializeRequest, undefined);
+  assert.equal(typeof providerProtocol.serializeProviderProtocolRequest, "function");
+  assert.equal(providerProtocol.INTERNAL_CONNECT_DEADLINE_MS, 185000);
+  assert.equal(providerProtocol.INTERNAL_SIGN_TRANSACTION_DEADLINE_MS, 185000);
+  assert.equal(providerProtocol.INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS, 185000);
+  assert.equal(typeof providerProtocol.makeConnectRequest, "function");
+  assert.equal(typeof providerProtocol.makeGetCapabilitiesRequest, "function");
+  assert.equal(typeof providerProtocol.makeGetAccountsRequest, "function");
+  assert.equal(typeof providerProtocol.makeSignTransactionRequest, "function");
+  assert.equal(typeof providerProtocol.makeSignPersonalMessageRequest, "function");
   assert.equal(typeof admin.SerialPortUsbDriver, "function");
   for (const subpath of ["config", "core", "errors", "gateway-output-schema", "public-error", "safe-text", "usb"]) {
     await assert.rejects(() => import(`@stelis/agent-q-client/${subpath}`), {
@@ -294,6 +314,139 @@ test("package self-reference resolves only client entrypoints", async () => {
   await assert.rejects(() => import("@stelis/agent-q-client/provider"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
   });
+});
+
+test("provider-protocol declaration stays type-bounded to provider requests", async () => {
+  const typesPath = fileURLToPath(new URL("../dist/provider-protocol.d.ts", import.meta.url));
+  const types = await readFile(typesPath, "utf8");
+  assert.match(types, /serializeProviderProtocolRequest\(request: ProviderProtocolRequest\): string/);
+  assert.doesNotMatch(types, /serializeRequest/);
+  assert.doesNotMatch(types, /\bProtocolRequest\b/);
+  assert.doesNotMatch(types, /PolicyGetRequest/);
+  assert.doesNotMatch(types, /PolicyProposeRequest/);
+  assert.doesNotMatch(types, /GetApprovalHistoryRequest/);
+  assert.doesNotMatch(types, /AGENT_Q_POLICY_SCHEMA/);
+  assert.doesNotMatch(types, /MAX_POLICY_RULE_COUNT/);
+  assert.doesNotMatch(types, /MAX_APPROVAL_HISTORY_RECORDS/);
+  assert.doesNotMatch(types, /POLICY_PROPOSE_RESULT_STATUSES/);
+});
+
+test("provider-protocol serializer rejects non-provider requests at runtime", async () => {
+  const providerProtocol = await import("@stelis/agent-q-client/provider-protocol");
+  const blockedRequests = [
+    {
+      id: "req_policy_get",
+      version: 1,
+      type: "policy_get",
+      sessionId: "session_abcdef0123456789",
+    },
+    {
+      id: "req_policy_propose",
+      version: 1,
+      type: "policy_propose",
+      sessionId: "session_abcdef0123456789",
+      params: { policy: {} },
+    },
+    {
+      id: "req_history",
+      version: 1,
+      type: "get_approval_history",
+      sessionId: "session_abcdef0123456789",
+      params: { limit: 1 },
+    },
+  ];
+  for (const request of blockedRequests) {
+    assert.throws(
+      () => providerProtocol.serializeProviderProtocolRequest(request),
+      { code: "invalid_method" },
+      `${request.type} must not serialize through provider-protocol`,
+    );
+  }
+});
+
+test("provider-protocol serializer exact-validates provider requests at runtime", async () => {
+  const providerProtocol = await import("@stelis/agent-q-client/provider-protocol");
+  const requestId = "req_1234567890abcdef12345678";
+  const sessionId = "session_abcdef0123456789";
+
+  const validRequest = providerProtocol.makeSignTransactionRequest(
+    sessionId,
+    "sui",
+    "sign_transaction",
+    { network: "testnet", txBytes: "AQID" },
+    requestId,
+  );
+  assert.equal(
+    providerProtocol.serializeProviderProtocolRequest(validRequest),
+    `${JSON.stringify(validRequest)}\n`,
+  );
+
+  const forgedRequests = [
+    {
+      id: requestId,
+      version: 1,
+      type: "connect",
+      params: { gatewayName: "Agent-Q Browser" },
+      policy_get: true,
+    },
+    {
+      id: requestId,
+      version: 1,
+      type: "connect",
+      params: { gatewayName: "Agent-Q Browser", sessionId: "session_should_not_pass" },
+    },
+    {
+      id: requestId,
+      version: 1,
+      type: "get_accounts",
+      sessionId,
+      timeoutMs: 30000,
+    },
+    {
+      id: requestId,
+      version: 1,
+      type: "sign_transaction",
+      sessionId,
+      chain: "sui",
+      method: "sign_transaction",
+      params: { network: "testnet", txBytes: "AQID" },
+      timeoutMs: 30000,
+    },
+    {
+      id: requestId,
+      version: 1,
+      type: "sign_transaction",
+      sessionId,
+      chain: "sui",
+      method: "sign_transaction",
+      params: { network: "testnet", txBytes: "AQID", authorization: "policy" },
+    },
+    {
+      id: requestId,
+      version: 1,
+      type: "sign_transaction",
+      sessionId,
+      chain: "evm",
+      method: "sign_transaction",
+      params: { network: "testnet", txBytes: "AQID" },
+    },
+    {
+      id: requestId,
+      version: 1,
+      type: "sign_personal_message",
+      sessionId,
+      chain: "sui",
+      method: "sign_personal_message",
+      params: { network: "testnet", message: "AQID", txBytes: "AQID" },
+    },
+  ];
+  for (const request of forgedRequests) {
+    assert.throws(
+      () => providerProtocol.serializeProviderProtocolRequest(request),
+      /unsupported|Invalid|invalid|must/,
+      `${request.type} forged provider request must not serialize`,
+    );
+  }
 });
 
 test("adapter output schema keeps signing method result shapes exact", () => {

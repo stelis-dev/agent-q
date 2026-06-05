@@ -22,16 +22,19 @@ package and register the wallet during app initialization.
 The Wallet Standard entrypoint requires an injected provider implementation and
 does not create a default provider internally. The repository's
 `createAgentQSuiProvider()` factory is Node/Gateway-local and uses the device
-client transport. Ordinary browser dapps need a provider-only browser runtime
-that implements `AgentQSuiWalletProvider` before a runtime dapp-kit demo can be
-considered product-real. Do not use the Wallet Standard adapter as evidence
-that browser hardware signing has been verified.
+client transport. Browser dapps can use the `./browser` subpath for a Web
+Serial-based runtime that implements `AgentQSuiWalletProvider`. Do not use the
+Wallet Standard adapter or Web Serial runtime as evidence that browser hardware
+signing has been verified; product-active status still requires current-tree
+hardware smoke and LVGL visual evidence.
 
 The current package still depends on `@stelis/agent-q-client` because the root
-provider factory is Node/Gateway-local. The `./wallet-standard` subpath must
-remain runtime-separated from that Node transport. A future browser-safe
-provider runtime must be injected into the Wallet Standard adapter and must
-expose only the dapp-facing methods described below.
+provider factory is Node/Gateway-local. The `./wallet-standard` subpath remains
+runtime-separated from that Node transport, and the `./browser` subpath uses the
+client package's provider protocol projection needed to satisfy
+`AgentQSuiWalletProvider` over Web Serial. That projection exact-validates
+provider requests at runtime and does not expose Admin, policy read/update, or
+approval-history request builders.
 
 This package narrows the dapp-facing API it presents. That is not a security
 boundary against an application that deliberately imports
@@ -46,6 +49,8 @@ policy evaluation, signing, persistence, and cleanup.
   entrypoint.
 - `@stelis/agent-q-provider-sui/wallet-standard` exposes the Wallet Standard
   wallet object, registration helper, and dapp-kit initializer helper.
+- `@stelis/agent-q-provider-sui/browser` exposes the browser-only Web
+  Serial runtime that implements `AgentQSuiWalletProvider`.
 
 ## Current API
 
@@ -145,8 +150,9 @@ signing, and cleanup. Personal-message signing is user-mode only in the current
 implementation.
 
 See `packages/example-sui-dapp-kit/` for a minimal dapp-kit integration
-skeleton. The example intentionally does not create a fake provider; it
-registers Agent-Q only when a browser-safe provider is injected by the host page.
+example. The example intentionally does not create a fake provider; it uses an
+already injected provider when present, otherwise it creates the Web
+Serial-based browser runtime when the browser supports Web Serial.
 
 ### Browser-Safe Provider Boundary
 
@@ -165,14 +171,27 @@ The injected browser provider contract contains only the methods above. It must
 not include Admin, policy update, active-policy reads, approval-history reads,
 host-selected authorization controls, raw session tokens, secrets, or
 caller-controlled timing fields. That keeps the Wallet Standard adapter
-dapp-facing; Firmware remains the security authority. Any future browser
-runtime must implement this provider-only injection contract instead of reusing
-broader management surfaces.
+dapp-facing; Firmware remains the security authority. "No policy surface" means
+no policy management, policy reads, approval-history reads, Admin, MCP, or
+policy editor surface. It does not mean policy authorization is impossible:
+`sign_transaction` may still use Firmware's policy gate when the device-local
+signing mode is `policy`. The provider and browser runtime cannot read, set, or
+override that mode.
 
-Provider requests do not accept caller-controlled timing fields. Firmware-owned
-device-local physical-input windows remain 30 seconds; Gateway uses fixed
-internal transport budgets for PIN retry/lockout handling plus a
-non-configurable margin.
+The `./browser` runtime is Web Serial based and browser-only. It can be created
+before dapp-kit initializes so the Wallet Standard wallet can be registered
+early, but it does not select a USB device or request Web Serial permission at
+initialization time. Actual port selection happens inside `connectDevice()`,
+where the browser can require a user gesture. If Web Serial is unavailable,
+reads/signing fail closed as `unavailable`. If Web Serial exists but no device
+session is connected, they fail closed as `not_connected`.
+
+Provider requests do not accept caller-controlled timing fields, custom serial
+ports, raw transport injection, or baud-rate configuration. Firmware-owned
+device-local physical-input windows remain 30 seconds. The browser runtime uses
+the same fixed internal connect/signing budgets as the client core for PIN
+retry/lockout handling plus a non-configurable margin, and keeps shorter
+internal budgets for read/disconnect requests.
 
 ## Development
 

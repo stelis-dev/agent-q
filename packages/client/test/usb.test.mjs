@@ -10,7 +10,12 @@ import {
   tryParseMatchingResponseLine,
   validateInternalDeadlineMs,
 } from "../dist/usb.js";
-import { assertPolicyProposeResultResponse, assertStatusResponse } from "../dist/protocol.js";
+import {
+  assertPolicyProposeResultResponse,
+  assertStatusResponse,
+  consumeProtocolResponseChunk,
+  MAX_PROTOCOL_RESPONSE_LINE_BYTES,
+} from "../dist/protocol.js";
 import { GatewayError } from "../dist/errors.js";
 
 const status = {
@@ -154,6 +159,15 @@ test("ignores terminal responses for a different in-flight request id", () => {
       ),
     {
       code: "invalid_session",
+    },
+  );
+});
+
+test("rejects oversized protocol response lines before parsing", () => {
+  assert.throws(
+    () => consumeProtocolResponseChunk("", `${"x".repeat(MAX_PROTOCOL_RESPONSE_LINE_BYTES + 1)}\n`),
+    {
+      code: "protocol_error",
     },
   );
 });

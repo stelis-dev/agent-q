@@ -32,6 +32,10 @@
       "types": "./dist/protocol.d.ts",
       "import": "./dist/protocol.js"
     },
+    "./provider-protocol": {
+      "types": "./dist/provider-protocol.d.ts",
+      "import": "./dist/provider-protocol.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

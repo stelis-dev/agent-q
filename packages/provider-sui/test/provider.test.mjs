@@ -18,6 +18,11 @@ import {
   createAgentQSuiWalletInitializer,
   registerAgentQSuiWallet,
 } from "../dist/wallet-standard.js";
+import {
+  AgentQSuiBrowserProvider,
+  createAgentQSuiBrowserProvider,
+  isAgentQSuiBrowserProviderAvailable,
+} from "../dist/browser.js";
 import { FORBIDDEN_SECRET_FIELD_NAMES, SIGN_RESULT_ERROR_MESSAGES, SUI_DERIVATION_PATH } from "@stelis/agent-q-client/protocol";
 
 const SUI_ADDRESS = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
@@ -249,11 +254,163 @@ function validCapabilitiesResult({
   };
 }
 
+class FakeBrowserSerialPort {
+  requests = [];
+  readable = null;
+  writable = null;
+  #controller = null;
+  #responseForRequest;
+
+  constructor(responseForRequest) {
+    this.#responseForRequest = responseForRequest;
+  }
+
+  async open() {
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    this.readable = new ReadableStream({
+      start: (controller) => {
+        this.#controller = controller;
+      },
+      cancel: () => {
+        this.#controller = null;
+      },
+    });
+    this.writable = new WritableStream({
+      write: async (chunk) => {
+        const text = decoder.decode(chunk);
+        for (const rawLine of text.split("\n")) {
+          const line = rawLine.trim();
+          if (line.length === 0) {
+            continue;
+          }
+          const request = JSON.parse(line);
+          this.requests.push(request);
+          const response = this.#responseForRequest(request);
+          if (response === null) {
+            this.#controller?.close();
+            continue;
+          }
+          this.#controller?.enqueue(encoder.encode(typeof response === "string" ? response : `${JSON.stringify(response)}\n`));
+        }
+      },
+    });
+  }
+
+  async close() {
+    try {
+      this.#controller?.close();
+    } catch {
+      // The reader may already have cancelled the stream.
+    }
+    this.#controller = null;
+    this.readable = null;
+    this.writable = null;
+  }
+}
+
+function createFakeBrowserProtocolResponse(request) {
+  const device = {
+    deviceId: "device-1",
+    state: "idle",
+    firmwareName: "Agent-Q Firmware",
+    hardware: "stackchan-cores3",
+    firmwareVersion: "0.0.0",
+  };
+  switch (request.type) {
+    case "connect":
+      return {
+        id: request.id,
+        version: 1,
+        type: "connect_result",
+        status: "approved",
+        sessionId: "session_abcdef0123456789",
+        sessionTtlMs: 60000,
+        device,
+      };
+    case "disconnect":
+      return {
+        id: request.id,
+        version: 1,
+        type: "disconnect_result",
+        status: "disconnected",
+      };
+    case "get_capabilities":
+      return {
+        id: request.id,
+        version: 1,
+        type: "capabilities",
+        chains: [
+          {
+            id: "sui",
+            accounts: [{ keyScheme: "ed25519", derivationPath: SUI_DERIVATION_PATH }],
+            methods: [],
+          },
+        ],
+        signing: {
+          authorization: "user",
+          methods: [
+            { chain: "sui", method: "sign_transaction" },
+            { chain: "sui", method: "sign_personal_message" },
+          ],
+        },
+      };
+    case "get_accounts":
+      return {
+        id: request.id,
+        version: 1,
+        type: "accounts",
+        accounts: [
+          {
+            chain: "sui",
+            address: SUI_ADDRESS,
+            publicKey: SUI_PUBLIC_KEY,
+            keyScheme: "ed25519",
+            derivationPath: SUI_DERIVATION_PATH,
+          },
+        ],
+      };
+    case "sign_transaction":
+      return {
+        id: request.id,
+        version: 1,
+        type: "sign_result",
+        status: "signed",
+        authorization: "user",
+        chain: "sui",
+        method: "sign_transaction",
+        signature: SUI_SIGNATURE,
+      };
+    case "sign_personal_message":
+      return {
+        id: request.id,
+        version: 1,
+        type: "sign_result",
+        status: "signed",
+        authorization: "user",
+        chain: "sui",
+        method: "sign_personal_message",
+        signature: SUI_SIGNATURE,
+        messageBytes: request.params.message,
+      };
+    default:
+      return {
+        id: request.id,
+        version: 1,
+        type: "error",
+        error: {
+          code: "unsupported_method",
+          message: "Unsupported request type.",
+        },
+      };
+  }
+}
+
 test("provider-sui package metadata exposes only Sui provider and Wallet Standard entrypoints", async () => {
   const packagePath = fileURLToPath(new URL("../package.json", import.meta.url));
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
   assert.equal(packageJson.name, "@stelis/agent-q-provider-sui");
-  assert.deepEqual(Object.keys(packageJson.exports).sort(), [".", "./package.json", "./provider-sui", "./wallet-standard"]);
+  assert.deepEqual(Object.keys(packageJson.exports).sort(), [".", "./browser", "./package.json", "./provider-sui", "./wallet-standard"]);
   assert.equal(packageJson.dependencies["@stelis/agent-q-client"], "0.0.0");
   assert.equal(packageJson.dependencies["@mysten/wallet-standard"], "^0.20.3");
   assert.equal(packageJson.dependencies["@mysten/sui"], "^2.17.0");
@@ -265,11 +422,14 @@ test("provider-sui package self-reference resolves Sui provider only", async () 
   const root = await import("@stelis/agent-q-provider-sui");
   const provider = await import("@stelis/agent-q-provider-sui/provider-sui");
   const walletStandard = await import("@stelis/agent-q-provider-sui/wallet-standard");
+  const browser = await import("@stelis/agent-q-provider-sui/browser");
   assert.equal(typeof root.createAgentQSuiProvider, "function");
   assert.equal(typeof provider.AgentQSuiProvider, "function");
   assert.equal(typeof walletStandard.createAgentQSuiWallet, "function");
   assert.equal(typeof walletStandard.registerAgentQSuiWallet, "function");
   assert.equal(typeof walletStandard.createAgentQSuiWalletInitializer, "function");
+  assert.equal(typeof browser.createAgentQSuiBrowserProvider, "function");
+  assert.equal(typeof browser.isAgentQSuiBrowserProviderAvailable, "function");
   await assert.rejects(() => import("@stelis/agent-q-provider-sui/provider"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
   });
@@ -300,6 +460,326 @@ test("Wallet Standard entrypoint stays separated from Node device transport", as
   const types = await readFile(walletStandardTypesPath, "utf8");
   assert.doesNotMatch(types, /@stelis\/agent-q-client/);
   assert.doesNotMatch(types, /\.\/provider-sui\.js/);
+});
+
+test("browser provider runtime stays separated from Admin, MCP, and Node serial transports", async () => {
+  const browserPath = fileURLToPath(new URL("../dist/browser.js", import.meta.url));
+  const source = await readFile(browserPath, "utf8");
+  assert.match(source, /@stelis\/agent-q-client\/provider-protocol/);
+  assert.doesNotMatch(source, /@stelis\/agent-q-client\/protocol/);
+  assert.doesNotMatch(source, /@stelis\/agent-q-client\/admin/);
+  assert.doesNotMatch(source, /@stelis\/agent-q-mcp/);
+  assert.doesNotMatch(source, /adapter-internal/);
+  assert.doesNotMatch(source, /serialport/);
+  assert.doesNotMatch(source, /node:/);
+  assert.doesNotMatch(source, /policy_get/);
+  assert.doesNotMatch(source, /policy_propose/);
+  assert.doesNotMatch(source, /get_approval_history/);
+  assert.match(source, /serializeProviderProtocolRequest/);
+  assert.doesNotMatch(source, /serializeRequest/);
+
+  const browserTypesPath = fileURLToPath(new URL("../dist/browser.d.ts", import.meta.url));
+  const types = await readFile(browserTypesPath, "utf8");
+  assert.doesNotMatch(types, /@stelis\/agent-q-client\/admin/);
+  assert.doesNotMatch(types, /@stelis\/agent-q-mcp/);
+  assert.doesNotMatch(types, /requestTimeoutMs/);
+  assert.doesNotMatch(types, /requestPort/);
+  assert.doesNotMatch(types, /serial\?/);
+  assert.doesNotMatch(types, /baudRate/);
+  assert.doesNotMatch(types, /adapter-internal/);
+  assert.doesNotMatch(types, /serialport/);
+  assert.doesNotMatch(types, /node:/);
+});
+
+test("browser provider runtime defers Web Serial port selection until connectDevice", async () => {
+  let requestPortCalls = 0;
+  const port = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {},
+    });
+    assert.equal(isAgentQSuiBrowserProviderAvailable(), false);
+
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        serial: {
+          requestPort: async () => {
+            requestPortCalls += 1;
+            return port;
+          },
+        },
+      },
+    });
+    const provider = createAgentQSuiBrowserProvider({ gatewayName: "Agent-Q Sui dapp-kit Example" });
+    assert.equal(provider instanceof AgentQSuiBrowserProvider, true);
+    assert.equal(isAgentQSuiBrowserProviderAvailable(), true);
+    assert.equal(requestPortCalls, 0);
+
+    const notConnected = await provider.getCapabilities();
+    assert.deepEqual(notConnected, {
+      source: "not_connected",
+      deviceId: "browser",
+      reason: "not_connected",
+    });
+    assert.equal(requestPortCalls, 0);
+    assert.deepEqual(port.requests, []);
+
+    const connected = await provider.connectDevice();
+    assert.equal(requestPortCalls, 1);
+    assert.equal(connected.source, "connected");
+    assert.equal(connected.deviceId, "device-1");
+    assertNoSecretFields(connected);
+
+    const capabilities = await provider.getCapabilities();
+    assert.equal(capabilities.source, "live");
+    assert.equal(capabilities.deviceId, "device-1");
+    assert.deepEqual(capabilities.signing.methods, [
+      { chain: "sui", method: "sign_transaction" },
+      { chain: "sui", method: "sign_personal_message" },
+    ]);
+
+    const accounts = await provider.getAccounts();
+    assert.equal(accounts.source, "live");
+    assert.equal(accounts.accounts[0].address, SUI_ADDRESS);
+    assertNoSecretFields(accounts);
+
+    const transactionResult = await provider.signTransaction({
+      chain: "sui",
+      method: "sign_transaction",
+      network: "devnet",
+      txBytes: "AQID",
+    });
+    assert.deepEqual(transactionResult, validSignedTransactionResult());
+
+    const personalMessageResult = await provider.signPersonalMessage({
+      chain: "sui",
+      method: "sign_personal_message",
+      network: "devnet",
+      message: PERSONAL_MESSAGE_BYTES,
+    });
+    assert.deepEqual(personalMessageResult, validSignedPersonalMessageResult(PERSONAL_MESSAGE_BYTES));
+
+    const disconnected = await provider.disconnectDevice();
+    assert.deepEqual(disconnected, {
+      source: "disconnected",
+      deviceId: "device-1",
+      reason: "firmware_confirmed",
+    });
+    assert.deepEqual(port.requests.map((request) => request.type), [
+      "connect",
+      "get_capabilities",
+      "get_accounts",
+      "sign_transaction",
+      "sign_personal_message",
+      "disconnect",
+    ]);
+    assert.equal(port.requests.some((request) => request.type === "policy_get" || request.type === "policy_propose"), false);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider disconnects approved sessions that fail requested device matching", async () => {
+  let requestPortCalls = 0;
+  const mismatchedPort = new FakeBrowserSerialPort((request) => {
+    if (request.type === "connect") {
+      return {
+        ...createFakeBrowserProtocolResponse(request),
+        device: {
+          ...createFakeBrowserProtocolResponse(request).device,
+          deviceId: "other-device",
+        },
+      };
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const matchedPort = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        serial: {
+          requestPort: async () => {
+            requestPortCalls += 1;
+            return requestPortCalls === 1 ? mismatchedPort : matchedPort;
+          },
+        },
+      },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    await assert.rejects(
+      () => provider.connectDevice({ deviceId: "device-1" }),
+      { code: "device_mismatch" },
+    );
+    assert.equal(requestPortCalls, 1);
+    assert.deepEqual(mismatchedPort.requests.map((request) => request.type), ["connect", "disconnect"]);
+    assert.equal(mismatchedPort.requests[1].sessionId, "session_abcdef0123456789");
+    assert.deepEqual(await provider.getCapabilities({ deviceId: "device-1" }), {
+      source: "not_connected",
+      deviceId: "device-1",
+      reason: "not_connected",
+    });
+    const connected = await provider.connectDevice({ deviceId: "device-1" });
+    assert.equal(requestPortCalls, 2);
+    assert.equal(connected.source, "connected");
+    assert.deepEqual(matchedPort.requests.map((request) => request.type), ["connect"]);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider clears stale port after session-ended responses", async () => {
+  let requestPortCalls = 0;
+  const staleSessionPort = new FakeBrowserSerialPort((request) => {
+    if (request.type === "get_capabilities") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "error",
+        error: {
+          code: "invalid_session",
+          message: "Session is not active.",
+        },
+      };
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const freshPort = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        serial: {
+          requestPort: async () => {
+            requestPortCalls += 1;
+            return requestPortCalls === 1 ? staleSessionPort : freshPort;
+          },
+        },
+      },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+    assert.deepEqual(await provider.getCapabilities(), {
+      source: "session_ended",
+      deviceId: "device-1",
+      reason: "invalid_session",
+    });
+    assert.deepEqual(staleSessionPort.requests.map((request) => request.type), ["connect", "get_capabilities"]);
+
+    const reconnected = await provider.connectDevice();
+    assert.equal(requestPortCalls, 2);
+    assert.equal(reconnected.source, "connected");
+    assert.deepEqual(freshPort.requests.map((request) => request.type), ["connect"]);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider clears stale port after connect transport failure", async () => {
+  let requestPortCalls = 0;
+  const closedPort = new FakeBrowserSerialPort((request) => request.type === "connect" ? null : createFakeBrowserProtocolResponse(request));
+  const freshPort = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        serial: {
+          requestPort: async () => {
+            requestPortCalls += 1;
+            return requestPortCalls === 1 ? closedPort : freshPort;
+          },
+        },
+      },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    await assert.rejects(
+      () => provider.connectDevice(),
+      { code: "transport_closed" },
+    );
+    assert.deepEqual(closedPort.requests.map((request) => request.type), ["connect"]);
+
+    const connected = await provider.connectDevice();
+    assert.equal(requestPortCalls, 2);
+    assert.equal(connected.source, "connected");
+    assert.deepEqual(freshPort.requests.map((request) => request.type), ["connect"]);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider connect fails closed when Web Serial is unavailable", async () => {
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {},
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.deepEqual(await provider.getCapabilities({ deviceId: "device-1" }), {
+      source: "unavailable",
+      deviceId: "device-1",
+      reason: "unsupported_transport",
+    });
+    await assert.rejects(
+      () => provider.connectDevice({ deviceId: "device-1" }),
+      { code: "unsupported_transport" },
+    );
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider rejects oversized Web Serial response lines", async () => {
+  const { MAX_PROTOCOL_RESPONSE_LINE_BYTES } = await import("@stelis/agent-q-client/provider-protocol");
+  const port = new FakeBrowserSerialPort(() => `{"${"x".repeat(MAX_PROTOCOL_RESPONSE_LINE_BYTES)}":0}\n`);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        serial: {
+          requestPort: async () => port,
+        },
+      },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    await assert.rejects(
+      () => provider.connectDevice(),
+      { code: "protocol_error" },
+    );
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
 });
 
 test("provider object presents the Sui dapp-facing adapter API including signing methods", () => {

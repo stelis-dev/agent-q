@@ -56,6 +56,7 @@ export type AgentQSuiWalletSuiAccount = {
 
 export type AgentQSuiWalletGetAccountsResult = {
   source: string;
+  deviceId?: unknown;
   accounts?: AgentQSuiWalletSuiAccount[];
 };
 

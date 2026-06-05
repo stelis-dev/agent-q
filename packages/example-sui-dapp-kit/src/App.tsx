@@ -13,8 +13,9 @@ function WalletStatus() {
       <section className="panel warning">
         <h2>Agent-Q provider unavailable</h2>
         <p>
-          This example does not create a fake provider. Inject a browser-safe
-          Agent-Q provider before app startup to register the Agent-Q wallet.
+          This example does not create a fake provider. Use a browser with Web
+          Serial support, or inject a browser-safe Agent-Q provider before app
+          startup.
         </p>
       </section>
     );

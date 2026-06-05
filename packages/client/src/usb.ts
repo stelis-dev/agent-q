@@ -23,6 +23,7 @@ import {
   makeIdentifyDeviceRequest,
   makePolicyGetRequest,
   makeGetStatusRequest,
+  consumeProtocolResponseChunk,
   parseJsonLine,
   parseProtocolResponse,
   ProtocolError,
@@ -42,10 +43,14 @@ import {
   type SignTransactionParams,
   type StatusResponse,
 } from "./protocol.js";
+import {
+  AGENT_Q_USB_PRODUCT_ID,
+  AGENT_Q_USB_VENDOR_ID,
+  DEFAULT_AGENT_Q_USB_BAUD_RATE,
+  INTERNAL_USB_DEADLINE_MS,
+} from "./transport-invariants.js";
 
-export const INTERNAL_USB_DEADLINE_MS = 30000;
-export const AGENT_Q_USB_VENDOR_ID = "303a";
-export const AGENT_Q_USB_PRODUCT_ID = "1001";
+export { AGENT_Q_USB_PRODUCT_ID, AGENT_Q_USB_VENDOR_ID, INTERNAL_USB_DEADLINE_MS };
 
 export type UnavailableReason =
   | "timeout"
@@ -605,7 +610,7 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
 ): Promise<TResponse> {
   const port = new SerialPort({
     path: portPath,
-    baudRate: 115200,
+    baudRate: DEFAULT_AGENT_Q_USB_BAUD_RATE,
     autoOpen: false,
   });
 
@@ -638,11 +643,18 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
       };
 
       const onData = (chunk: Buffer): void => {
-        buffer += chunk.toString("utf8");
-        while (buffer.includes("\n")) {
-          const index = buffer.indexOf("\n");
-          const line = buffer.slice(0, index).trim();
-          buffer = buffer.slice(index + 1);
+        let lines: string[];
+        try {
+          const consumed = consumeProtocolResponseChunk(buffer, chunk.toString("utf8"));
+          buffer = consumed.buffer;
+          lines = consumed.lines;
+        } catch (error) {
+          settle(() => reject(toGatewayProtocolError(error)));
+          return;
+        }
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
           if (line.length === 0 || !line.startsWith("{")) {
             continue;
           }
@@ -678,6 +690,13 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
   } finally {
     await closePort(port);
   }
+}
+
+function toGatewayProtocolError(error: unknown): unknown {
+  if (error instanceof ProtocolError) {
+    return new GatewayError(error.code, error.message, error.code === "timeout");
+  }
+  return error;
 }
 
 /** @internal Exported for focused protocol-line tests; not part of Gateway's public API. */

@@ -215,13 +215,17 @@ Implemented:
   read-only Sui account/capability data, `signTransaction` transport, and
   user-confirmed `signPersonalMessage` transport. The provider also exposes a
   Wallet Standard registration adapter for `sui:signTransaction` and
-  `sui:signPersonalMessage`. Its dapp-facing provider object and Wallet
-  Standard adapter do not include active policy summaries, approval history,
-  policy update, policy signing, key storage, signing decisions, or
-  `sui:signAndExecuteTransaction`. Personal-message signing is source-wired for
-  user authorization mode only and fails closed in policy mode. This is
-  adapter API projection, not a security boundary against direct imports of
-  broader client/Admin package entrypoints.
+  `sui:signPersonalMessage`, plus a Web Serial browser runtime that implements
+  only the injected provider contract for browser dapps. Its dapp-facing
+  provider object, browser runtime, and Wallet Standard adapter do not include
+  active policy summaries, approval history, policy update, policy signing, key
+  storage, signing decisions, or `sui:signAndExecuteTransaction`.
+  Personal-message signing is source-wired for user authorization mode only and
+  fails closed in policy mode. `signTransaction` may still use Firmware policy
+  authorization when the device-local signing mode is `policy`; the provider
+  cannot read, set, or override that mode. This is adapter API projection, not
+  a security boundary against direct imports of broader client/Admin package
+  entrypoints.
 - A common host-tested policy evaluator and default-reject runtime boundary.
 
 Under current-source verification:

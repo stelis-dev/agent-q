@@ -18,6 +18,12 @@ and active policy commits.
   and the local Admin Page.
 - `@stelis/agent-q-client/protocol` exposes the shared protocol builders,
   parsers, constants, and response types.
+- `@stelis/agent-q-client/provider-protocol` exposes the browser-safe provider
+  protocol projection used by official dapp-facing adapters. It includes
+  provider request builders, an exact provider request serializer, provider
+  response parsers, bounded response-line handling, USB identifiers, and fixed
+  internal deadline constants; it does not expose Admin, policy read/update,
+  approval-history, or full-protocol request serialization.
 - `@stelis/agent-q-client/adapter-internal` exposes support APIs for official
   Agent-Q adapters, including bounded output schemas, public error mapping, safe
   text validation, and the local Gateway device registry. It is not the

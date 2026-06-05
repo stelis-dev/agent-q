@@ -10,6 +10,13 @@ import { GatewayError, toGatewayError } from "./errors.js";
 import { isGatewayName, isSafeDeviceId, sanitizePortHint } from "./safe-text.js";
 import { normalizeErrorCode, toPublicError } from "./public-error.js";
 import {
+  INTERNAL_CONNECT_DEADLINE_MS,
+  INTERNAL_DISCONNECT_DEADLINE_MS,
+  INTERNAL_POLICY_UPDATE_DEADLINE_MS,
+  INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS,
+  INTERNAL_SIGN_TRANSACTION_DEADLINE_MS,
+} from "./transport-invariants.js";
+import {
   createIdentificationCode,
   type Account,
   type ApprovalHistoryRecord,
@@ -290,20 +297,6 @@ export type SignPersonalMessageResult =
   | { source: "session_ended"; deviceId: string; reason: SignPersonalMessageSessionEndedReason };
 
 export const DEFAULT_GATEWAY_NAME = "Agent-Q Gateway";
-const INTERNAL_PIN_INPUT_WINDOW_MS = 30000;
-const INTERNAL_WRONG_PIN_ATTEMPTS_BEFORE_LOCKOUT = 5;
-const INTERNAL_PIN_LOCKOUT_MS = 30000;
-const INTERNAL_TRANSPORT_MARGIN_MS = 5000;
-const INTERNAL_REQUEST_WINDOW_MS = INTERNAL_PIN_INPUT_WINDOW_MS;
-const INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS =
-  INTERNAL_WRONG_PIN_ATTEMPTS_BEFORE_LOCKOUT * INTERNAL_PIN_INPUT_WINDOW_MS +
-  INTERNAL_PIN_LOCKOUT_MS +
-  INTERNAL_TRANSPORT_MARGIN_MS;
-const INTERNAL_DISCONNECT_DEADLINE_MS = INTERNAL_REQUEST_WINDOW_MS;
-const INTERNAL_POLICY_UPDATE_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
-const INTERNAL_SIGN_TRANSACTION_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
-const INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
-const INTERNAL_CONNECT_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
 
 export class GatewayCore {
   private readonly runtimeSessions = new Map<string, RuntimeSession>();

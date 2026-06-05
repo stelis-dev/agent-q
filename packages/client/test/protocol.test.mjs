@@ -35,6 +35,13 @@ import {
 } from "../dist/protocol.js";
 
 const CANONICAL_TX_BYTES_BASE64 = "AQID";
+const VALID_DEVICE_STATUS = {
+  deviceId: "a508d833-5c83-4680-88bb-18aee976881e",
+  state: "idle",
+  firmwareName: "Agent-Q Firmware",
+  hardware: "hardware-id",
+  firmwareVersion: "0.0.0",
+};
 
 test("creates safe request ids and get_status requests", () => {
   const id = createRequestId();
@@ -122,6 +129,115 @@ test("preserves Firmware protocol error codes", () => {
     assert.throws(() => assertStatusResponse(response), {
       code,
     });
+  }
+});
+
+test("parseProtocolResponse rejects unsupported fields in canonical response envelopes", () => {
+  const rejectedResponses = [
+    {
+      id: "req_error",
+      version: 1,
+      type: "error",
+      sessionId: "session_should_not_pass",
+      error: {
+        code: "invalid_session",
+        message: "Invalid session.",
+      },
+    },
+    {
+      id: "req_error",
+      version: 1,
+      type: "error",
+      error: {
+        code: "invalid_session",
+        message: "Invalid session.",
+        sessionId: "session_should_not_pass",
+      },
+    },
+    {
+      id: "req_status",
+      version: 1,
+      type: "status",
+      device: VALID_DEVICE_STATUS,
+      provisioning: { state: "provisioned" },
+      sessionId: "session_should_not_pass",
+    },
+    {
+      id: "req_status",
+      version: 1,
+      type: "status",
+      device: { ...VALID_DEVICE_STATUS, sessionId: "session_should_not_pass" },
+      provisioning: { state: "provisioned" },
+    },
+    {
+      id: "req_status",
+      version: 1,
+      type: "status",
+      device: VALID_DEVICE_STATUS,
+      provisioning: { state: "provisioned", sessionId: "session_should_not_pass" },
+    },
+    {
+      id: "req_identify",
+      version: 1,
+      type: "identify_device_result",
+      status: "displayed",
+      code: "1234",
+      device: VALID_DEVICE_STATUS,
+      sessionId: "session_should_not_pass",
+    },
+    {
+      id: "req_identify",
+      version: 1,
+      type: "identify_device_result",
+      status: "displayed",
+      code: "1234",
+      device: { ...VALID_DEVICE_STATUS, sessionId: "session_should_not_pass" },
+    },
+    {
+      id: "req_connect",
+      version: 1,
+      type: "connect_result",
+      status: "approved",
+      sessionId: "session_abcdef0123456789",
+      sessionTtlMs: 30000,
+      device: VALID_DEVICE_STATUS,
+      privateKey: "must-not-pass",
+    },
+    {
+      id: "req_connect",
+      version: 1,
+      type: "connect_result",
+      status: "approved",
+      sessionId: "session_abcdef0123456789",
+      sessionTtlMs: 30000,
+      device: { ...VALID_DEVICE_STATUS, privateKey: "must-not-pass" },
+    },
+    {
+      id: "req_connect",
+      version: 1,
+      type: "connect_result",
+      status: "rejected",
+      error: {
+        code: "rejected",
+        message: "Rejected.",
+        sessionId: "session_should_not_pass",
+      },
+    },
+    {
+      id: "req_disconnect",
+      version: 1,
+      type: "disconnect_result",
+      status: "disconnected",
+      sessionId: "session_should_not_pass",
+    },
+  ];
+
+  for (const response of rejectedResponses) {
+    assert.throws(
+      () => parseProtocolResponse(JSON.stringify(response), response.id),
+      { code: "protocol_error" },
+      `${response.type} with unsupported fields must fail closed`,
+    );
   }
 });
 
