@@ -48,7 +48,7 @@ stateDiagram-v2
     Provisioning: get_status
     Provisioning: device-local cancel
     Provisioned: get_status, identify_device, connect, disconnect
-    Provisioned: get_capabilities, get_accounts, get_policy, get_approval_history (read-only, session-scoped)
+    Provisioned: get_capabilities, get_accounts, policy_get, get_approval_history (read-only, session-scoped)
     Provisioned: sign_by_policy policy-authorized signing runtime
 ```
 
@@ -134,7 +134,7 @@ Rejected:
   device is `provisioned`
 - `get_capabilities`
 - `get_accounts`
-- `get_policy`
+- `policy_get`
 - `get_approval_history`
 - `sign_by_policy`
 - USB provisioning/reset/diagnostic requests
@@ -162,7 +162,7 @@ Rejected:
 
 - `get_capabilities`
 - `get_accounts`
-- `get_policy`
+- `policy_get`
 - `get_approval_history`
 - `sign_by_policy`
 - policy read/write
@@ -193,7 +193,7 @@ binary BIP-39 entropy blob, a canonical active policy record, and a local
 `provisioned`; the normal product flow installs the default-reject policy, while
 read-only Sui account derivation, read-only active policy summary,
 source-level local reset/material wipe, and the Firmware-owned
-`propose_policy_update` proposal flow for current-schema reject policies and at
+`policy_propose` proposal flow for current-schema reject policies and at
 most one single-recipient bounded sign rule are implemented. USER_PROFILE secure
 storage gates are still separate work.
 
@@ -205,7 +205,7 @@ Allowed:
 - `disconnect`
 - `get_capabilities` (read-only, session-scoped)
 - `get_accounts` (read-only, session-scoped)
-- `get_policy` (read-only, session-scoped)
+- `policy_get` (read-only, session-scoped)
 - `get_approval_history` (read-only, session-scoped)
 - `sign_by_policy` (session-scoped; unknown methods reject; Sui
   `sign_transaction` validates bounded restricted SUI transfer request inputs
@@ -218,7 +218,7 @@ Allowed:
   decision records or an incomplete policy-update terminal state
 - device-local settings toggle for whether USB `connect` requires local PIN;
   changing the toggle requires stored PIN verification
-- policy update through the Firmware-owned `propose_policy_update` proposal
+- policy update through the Firmware-owned `policy_propose` proposal
   flow, which requires an active session, Firmware validation, and device-local
   approval; the pending approval remains tied to the same session and cannot
   commit after that session ends, disconnects, or no longer matches
@@ -228,7 +228,7 @@ implementation, `provisioned` enables `connect`, `disconnect`, read-only
 `get_capabilities` for Sui account identity with no delegated public methods
 and provider-facing `signing`, read-only `get_accounts` (Sui Ed25519
 account 0),
-read-only `get_policy` for the committed active policy summary, read-only
+read-only `policy_get` for the committed active policy summary, read-only
 `get_approval_history` for Firmware-owned persistent decision metadata, and the
 session-scoped `sign_by_policy` policy-authorized signing runtime. The separate
 provider-facing `sign_by_user` path has
@@ -376,7 +376,7 @@ Allowed while pending:
 - `get_status`;
 - read-only session APIs only if they do not dismiss, overwrite, or mutate the
   pending proposal;
-- `get_policy`, if allowed, reports only the committed active policy and not the
+- `policy_get`, if allowed, reports only the committed active policy and not the
   pending proposal;
 - `disconnect` as session cleanup except during the commit critical section,
   where Firmware may return `busy`.
@@ -420,7 +420,7 @@ Rejected:
 - `connect`
 - `get_capabilities`
 - `get_accounts`
-- `get_policy`
+- `policy_get`
 - `get_approval_history`
 - `sign_by_policy`
 - policy update
@@ -444,7 +444,7 @@ Allowed:
 Rejected until unlocked:
 
 - `get_accounts`
-- `get_policy`
+- `policy_get`
 - `sign_by_policy`
 - policy read
 - policy update
@@ -463,7 +463,7 @@ This state is reserved until an unlock model is implemented.
 | USB provisioning/reset/diagnostic requests | X | X | X | X | X | Firmware |
 | `get_capabilities` | X | X | O | X | X | Firmware |
 | `get_accounts` | X | X | O | X | X | Firmware |
-| `get_policy` | X | X | O | X | X | Firmware |
+| `policy_get` | X | X | O | X | X | Firmware |
 | `get_approval_history` | X | X | O | X | X | Firmware |
 | `sign_by_policy` | X | X | O | X | X | Firmware |
 | `sign_by_user` | X | X | O (provider-exposed-not-product-active; product-active pending LVGL visual evidence) | X | X | Firmware |

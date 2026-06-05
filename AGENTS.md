@@ -412,20 +412,20 @@ get_status
   -> connect
     -> get_capabilities
     -> get_accounts
-    -> get_policy
+    -> policy_get
     -> get_approval_history
     -> sign_by_policy*
     -> sign_by_user*
   -> disconnect
 ```
 
-`sign_by_policy*` means zero or more MCP-facing policy-authorized signing
-requests during an active session.
-`sign_by_user*` means zero or more provider-facing device-confirmed signing
-requests during an active session. It is not an MCP signing tool and must not
-be exposed through MCP. Do not describe either signing path as product-complete
-until tracked implementation status and target hardware-smoke evidence for the
-current tree both say it is verified.
+`sign_by_policy*` means zero or more policy-authorized signing requests during
+an active session.
+`sign_by_user*` means zero or more device-confirmed signing requests during an
+active session. Current adapters may project different subsets for their
+audiences, but adapter projection is not the security boundary. Do not describe
+either signing path as product-complete until tracked implementation status and
+target hardware-smoke evidence for the current tree both say it is verified.
 
 Current intended structure:
 

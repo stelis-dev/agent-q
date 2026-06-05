@@ -31,7 +31,10 @@ and active policy commits.
 - Labels and purpose names are local Gateway metadata. They are not Firmware
   policy and are not authorization facts.
 - Policy update proposals are available only through the explicit admin-capable
-  entrypoint. They are not part of the provider-facing device client facade.
+  entrypoint. They are not part of the admin-disabled device client facade.
+  This is API surface separation, not a security barrier against code that
+  deliberately imports the admin entrypoint. Firmware remains responsible for
+  validating and approving sensitive writes.
 - Current StackChan CoreS3 capabilities report Sui account identity and no
   delegated signing methods in `chains[].methods`. Provider-facing
   device-confirmed signing availability is advertised through top-level

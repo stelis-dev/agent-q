@@ -131,7 +131,7 @@ function defaultDriver(overrides = {}) {
         ],
       };
     },
-    async getPolicy() {
+    async policyGet() {
       return {
         id: "req_policy",
         version: 1,
@@ -184,11 +184,11 @@ function defaultDriver(overrides = {}) {
         },
       };
     },
-    async proposePolicyUpdate() {
+    async policyPropose() {
       return {
-        id: "req_policy_update",
+        id: "req_policy_propose",
         version: 1,
-        type: "policy_update_result",
+        type: "policy_propose_result",
         status: "applied",
         reasonCode: "device_confirmed",
         policy: {
@@ -1253,45 +1253,45 @@ test("getAccounts clears the local session when Firmware reports invalid_session
   });
 });
 
-test("getPolicy without a runtime session returns not_connected", async () => {
+test("policyGet without a runtime session returns not_connected", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
-    const result = await core.getPolicy({});
+    const result = await core.policyGet({});
     assert.equal(result.source, "not_connected");
     assert.equal(result.reason, "not_connected");
     assert.equal(result.policy, undefined);
   });
 });
 
-test("getPolicy returns the active Firmware policy summary and keeps the session", async () => {
+test("policyGet returns the active Firmware policy summary and keeps the session", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
-    const result = await core.getPolicy({});
+    const result = await core.policyGet({});
     assert.equal(result.source, "live");
     assert.equal(result.policy.schema, "agentq.policy.v0");
     assert.equal(result.policy.policyId, "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3");
     assert.equal(result.policy.defaultAction, "reject");
     assert.equal(result.policy.ruleCount, 0);
 
-    // Read-only: the session is retained after get_policy.
+    // Read-only: the session is retained after policy_get.
     const listed = await core.listDevices();
     assert.notEqual(listed.devices[0].runtimeSession, null);
   });
 });
 
-test("getPolicy clears the local session when Firmware reports invalid_session", async () => {
+test("policyGet clears the local session when Firmware reports invalid_session", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(
       store,
       defaultDriver({
-        async getPolicy() {
+        async policyGet() {
           throw new GatewayError("invalid_session", "Session is unknown or already ended.", false);
         },
       }),
@@ -1300,7 +1300,7 @@ test("getPolicy clears the local session when Firmware reports invalid_session",
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
-    const result = await core.getPolicy({});
+    const result = await core.policyGet({});
     assert.equal(result.source, "session_ended");
     assert.equal(result.reason, "invalid_session");
     const listed = await core.listDevices();
@@ -1862,13 +1862,13 @@ test("signByUser clears the local session when Firmware reports invalid_session"
   });
 });
 
-test("proposePolicyUpdate returns not_connected before validating policy payload", async () => {
+test("policyPropose returns not_connected before validating policy payload", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
-    const result = await core.proposePolicyUpdate({
+    const result = await core.policyPropose({
       policy: { seed: "must-not-forward" },
     });
     assert.deepEqual(result, {
@@ -1879,7 +1879,7 @@ test("proposePolicyUpdate returns not_connected before validating policy payload
   });
 });
 
-test("proposePolicyUpdate forwards a bounded proposal and returns Firmware terminal metadata", async () => {
+test("policyPropose forwards a bounded proposal and returns Firmware terminal metadata", async () => {
   await withStore(async (store) => {
     let observed = null;
     const policy = {
@@ -1898,12 +1898,12 @@ test("proposePolicyUpdate forwards a bounded proposal and returns Firmware termi
     const core = new GatewayCore(
       store,
       defaultDriver({
-        async proposePolicyUpdate(portPath, sessionId, submittedPolicy, deadlineMs) {
+        async policyPropose(portPath, sessionId, submittedPolicy, deadlineMs) {
           observed = { portPath, sessionId, submittedPolicy, deadlineMs };
           return {
-            id: "req_policy_update",
+            id: "req_policy_propose",
             version: 1,
-            type: "policy_update_result",
+            type: "policy_propose_result",
             status: "applied",
             reasonCode: "device_confirmed",
             policy: {
@@ -1919,7 +1919,7 @@ test("proposePolicyUpdate forwards a bounded proposal and returns Firmware termi
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
-    const result = await core.proposePolicyUpdate({ policy });
+    const result = await core.policyPropose({ policy });
     assert.equal(result.source, "live");
     assert.equal(result.status, "applied");
     assert.equal(result.reasonCode, "device_confirmed");
@@ -1933,7 +1933,7 @@ test("proposePolicyUpdate forwards a bounded proposal and returns Firmware termi
   });
 });
 
-test("proposePolicyUpdate validates proposals before live-port probing", async () => {
+test("policyPropose validates proposals before live-port probing", async () => {
   await withStore(async (store) => {
     let listPortsCalls = 0;
     let requestStatusCalls = 0;
@@ -1956,7 +1956,7 @@ test("proposePolicyUpdate validates proposals before live-port probing", async (
           requestStatusCalls += 1;
           return status;
         },
-        async proposePolicyUpdate() {
+        async policyPropose() {
           proposeCalls += 1;
           throw new Error("proposal should not reach USB");
         },
@@ -1970,7 +1970,7 @@ test("proposePolicyUpdate validates proposals before live-port probing", async (
     requestStatusCalls = 0;
 
     await assert.rejects(
-      () => core.proposePolicyUpdate({ policy: { privateKey: "must-not-forward" } }),
+      () => core.policyPropose({ policy: { privateKey: "must-not-forward" } }),
       { code: "invalid_params" },
     );
     assert.equal(listPortsCalls, 0);
@@ -1978,7 +1978,7 @@ test("proposePolicyUpdate validates proposals before live-port probing", async (
     assert.equal(proposeCalls, 0);
 
     await assert.rejects(
-      () => core.proposePolicyUpdate({
+      () => core.policyPropose({
         policy: {
           schema: "agentq.policy.v0",
           defaultAction: "reject",
@@ -1993,7 +1993,7 @@ test("proposePolicyUpdate validates proposals before live-port probing", async (
     assert.equal(proposeCalls, 0);
 
     await assert.rejects(
-      () => core.proposePolicyUpdate({ policy: { schema: "agentq.policy.v0" }, extra: true }),
+      () => core.policyPropose({ policy: { schema: "agentq.policy.v0" }, extra: true }),
       { code: "invalid_params" },
     );
     assert.equal(listPortsCalls, 0);
@@ -2002,12 +2002,12 @@ test("proposePolicyUpdate validates proposals before live-port probing", async (
   });
 });
 
-test("proposePolicyUpdate clears the local session when Firmware reports invalid_session", async () => {
+test("policyPropose clears the local session when Firmware reports invalid_session", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(
       store,
       defaultDriver({
-        async proposePolicyUpdate() {
+        async policyPropose() {
           throw new GatewayError("invalid_session", "Session is unknown or already ended.", false);
         },
       }),
@@ -2016,7 +2016,7 @@ test("proposePolicyUpdate clears the local session when Firmware reports invalid
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
-    const result = await core.proposePolicyUpdate({
+    const result = await core.policyPropose({
       policy: {
         schema: "agentq.policy.v0",
         defaultAction: "reject",
@@ -2030,16 +2030,16 @@ test("proposePolicyUpdate clears the local session when Firmware reports invalid
   });
 });
 
-test("proposePolicyUpdate clears the local session when Firmware reports consistency_error", async () => {
+test("policyPropose clears the local session when Firmware reports consistency_error", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(
       store,
       defaultDriver({
-        async proposePolicyUpdate() {
+        async policyPropose() {
           return {
-            id: "req_policy_update",
+            id: "req_policy_propose",
             version: 1,
-            type: "policy_update_result",
+            type: "policy_propose_result",
             status: "consistency_error",
             reasonCode: "consistency_error",
             policy: {
@@ -2055,7 +2055,7 @@ test("proposePolicyUpdate clears the local session when Firmware reports consist
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
-    const result = await core.proposePolicyUpdate({
+    const result = await core.policyPropose({
       policy: {
         schema: "agentq.policy.v0",
         defaultAction: "reject",

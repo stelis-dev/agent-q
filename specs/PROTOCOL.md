@@ -65,9 +65,13 @@ Provider-facing device-confirmed signing uses the shared `sign_by_user` request
 defined below, not a `sign_by_policy` mode or request-authority flag. A
 device-confirmed request means Firmware shows and confirms a bounded request on
 the device; it does not prove that the host, dapp, provider, agent, or upstream
-user intent was trustworthy. Provider-facing APIs may expose only this
-device-confirmed path for application signing. MCP agent-facing signing uses
-`sign_by_policy` only and must not expose `sign_by_user`.
+user intent was trustworthy. The current provider-facing adapter API contains
+only this device-confirmed path for application signing, while the current MCP
+tool surface contains policy-authorized `sign_by_policy`. These are adapter
+surface projections, not security boundaries against direct imports of broader
+client/Admin package entrypoints. Firmware remains responsible for enforcing
+the request type, active policy, device-local confirmation, signing,
+persistence, and cleanup.
 
 Policy documents may use only actions accepted by the current schema and
 enforceable by the current runtime. Any other action value is invalid input and
@@ -160,20 +164,19 @@ get_status
   -> connect
     -> get_capabilities
     -> get_accounts
-    -> get_policy
+    -> policy_get
     -> get_approval_history
     -> sign_by_policy*
   -> disconnect
 ```
 
-Provider-facing device-confirmed signing uses a separate session-scoped
-`sign_by_user` request. In the current source tree the provider/client and
-StackChan CoreS3 USB surfaces are wired for this path, and provider-facing
-availability is advertised through `signing`. MCP exposes the separate
-policy-authorized `sign_by_policy` tool and must not expose provider-facing
-user-confirmed signing. Product-active status depends on target implementation
-status and current-tree hardware evidence; do not infer that status from this
-protocol shape alone.
+Device-confirmed signing uses a separate session-scoped `sign_by_user` request.
+In the current source tree the provider/client and StackChan CoreS3 USB surfaces
+are wired for this path, and provider-facing availability is advertised through
+`signing`. The current MCP adapter exposes policy-authorized `sign_by_policy`
+only, but adapter projection is not the security boundary. Product-active status
+depends on target implementation status and current-tree hardware evidence; do
+not infer that status from this protocol shape alone.
 
 Flow rules:
 
@@ -190,7 +193,7 @@ Flow rules:
   Firmware-owned device-local approval. Hardware targets may implement that
   approval as a physical confirm or as local PIN verification, but PIN entry
   must never be a USB protocol request.
-- `get_capabilities`, `get_accounts`, `get_policy`, `get_approval_history`,
+- `get_capabilities`, `get_accounts`, `policy_get`, `get_approval_history`,
   `sign_by_policy`, and `sign_by_user` require `sessionId`.
 - `disconnect` ends the session.
 - Firmware should reject session-scoped requests with an unknown or inactive
@@ -202,8 +205,8 @@ Flow rules:
   from keeping a session it can no longer confirm.
 
 Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
-`get_capabilities`, `get_accounts`, `get_policy`, `get_approval_history`,
-`propose_policy_update`, `sign_by_policy`, `sign_by_user`, explicit local
+`get_capabilities`, `get_accounts`, `policy_get`, `get_approval_history`,
+`policy_propose`, `sign_by_policy`, `sign_by_user`, explicit local
 Gateway device selection, and local Gateway caching of discovered devices. The
 current `sign_by_policy` runtime enforces state and session gates, keeps unknown
 methods rejected, recognizes bounded restricted SUI transfer request inputs for
@@ -242,7 +245,7 @@ must not expose provider-facing `signing.user` metadata as an agent-facing
 signing capability.
 `get_accounts` is implemented as a read-only, session-scoped identity request
 for the Sui Ed25519 account at index 0 in the `provisioned` state.
-`get_policy` is implemented as a read-only, session-scoped summary of the
+`policy_get` is implemented as a read-only, session-scoped summary of the
 committed active policy; it is metadata only and not a policy update surface.
 The normal product flow still installs the DEV_PROFILE default-reject policy.
 `get_approval_history` is implemented as a read-only, session-scoped
@@ -251,7 +254,7 @@ a session-scoped runtime path: unknown methods are rejected, while Sui
 `sign_transaction` validates bounded restricted SUI transfer request inputs,
 evaluates active policy, and returns `sign_result` with `authorization:
 "policy"`. Hardware verification remains required for product-active claims
-after changes to the `get_policy`, `get_approval_history`, and policy-store
+after changes to the `policy_get`, `get_approval_history`, and policy-store
 backed `sign_by_policy` paths.
 
 ## Device Discovery And Selection
@@ -368,7 +371,7 @@ mnemonic recovery entry, persistent root material, active policy storage, local
 PIN verifier storage, local reset, and read-only `get_accounts` Sui account
 derivation are implemented. USB/Gateway/MCP mnemonic import is not implemented.
 Policy updates are available only through the Firmware-owned
-`propose_policy_update` proposal flow for current-schema reject policies and at
+`policy_propose` proposal flow for current-schema reject policies and at
 most one single-recipient bounded sign rule.
 
 If a target boots with `prov_state = provisioned` but missing, unreadable, or
@@ -710,7 +713,7 @@ Disconnect rules:
 - A pending policy-update approval is session-bound rather than generic local
   UI. A matching `disconnect` cancels that pending proposal and clears the
   session unless Firmware is already inside the policy commit critical section.
-  The canceled `propose_policy_update` request is terminated with
+  The canceled `policy_propose` request is terminated with
   `invalid_session`; the `disconnect` request receives `disconnect_result`.
 - Firmware validates only the session lifecycle for `disconnect`; persistent
   material readiness is not a prerequisite. If material inconsistency already
@@ -880,7 +883,7 @@ Rules:
 
 ## Policy Summary
 
-`get_policy` is a session-scoped read-only request that returns public metadata
+`policy_get` is a session-scoped read-only request that returns public metadata
 for the active Firmware-owned policy provider used by `sign_by_policy`. It does not
 return policy secrets, signing material, or an editable policy document.
 
@@ -890,7 +893,7 @@ Request:
 {
   "id": "req_policy",
   "version": 1,
-  "type": "get_policy",
+  "type": "policy_get",
   "sessionId": "session_001"
 }
 ```
@@ -925,11 +928,11 @@ Rules:
 - The current StackChan CoreS3 target supports only `agentq.policy.v0`,
   `defaultAction: "reject"`, and a bounded `ruleCount` summary. The normal
   product flow installs `ruleCount: 0`; custom current-schema policy records may become
-  active only through the Firmware-owned `propose_policy_update` proposal flow.
+  active only through the Firmware-owned `policy_propose` proposal flow.
   Full policy content exposure is not implemented.
 - Gateway validates the response strictly, rejects secret-like fields and any
   unexpected `sessionId`, and does not evaluate policy.
-- The Gateway MCP `get_policy` tool never exposes the session id.
+- The Gateway MCP `policy_get` tool never exposes the session id.
 
 ## Approval History
 
@@ -1009,7 +1012,7 @@ Rules:
   time.
 - Current StackChan CoreS3 source records required signing confirmation and
   terminal metadata plus recordable terminal metadata from
-  `propose_policy_update`. Invalid parameter, malformed transaction,
+  `policy_propose`. Invalid parameter, malformed transaction,
   unsupported-method, and unsupported policy-action errors are not persisted as
   approval history.
 - Approval-history persistence is part of the terminal decision contract for
@@ -1284,7 +1287,9 @@ only `authorization` and `error` beyond the shared envelope fields. A
 internals, session id, request id beyond the envelope id, account private
 material, seed, mnemonic, PIN, policy scratch, or device-local UI state.
 Client, provider, and MCP parsers must fail closed on extra or secret-like
-fields. MCP must not expose `sign_by_user`.
+fields. Current adapter projections may expose only a subset of signing paths,
+but Firmware remains responsible for rejecting unavailable or invalid signing
+requests.
 
 Response delivery and provider boundary:
 
@@ -1314,8 +1319,11 @@ Response delivery and provider boundary:
   product outcomes, not provider exceptions. Provider promise rejection is
   reserved for local adapter/programmer errors; Gateway or transport failures
   use the same structured public-error style as the current provider methods.
-- The provider must not expose Admin, policy-update, or `sign_by_policy`
-  methods through `signByUser`, and MCP must not gain `sign_by_user`.
+- The provider `signByUser` API must not combine Admin, policy proposal, or
+  `sign_by_policy` behavior into the same provider method, and the current MCP
+  `sign_by_policy` tool must not silently behave as `sign_by_user`. Those
+  adapter projections clarify caller audience, while Firmware remains the
+  authority for security-relevant enforcement.
 
 Approval-history contract:
 
@@ -1340,17 +1348,17 @@ Approval-history contract:
 ## Policy Update Proposal
 
 Admin is a Gateway capability, not a separate product protocol. The current
-policy-write path is the top-level `propose_policy_update` request. It is not a
+policy-write path is the top-level `policy_propose` request. It is not a
 signing method, it must not use `chain` or `method`, and it must not route
 through `sign_by_policy`.
 
-### `propose_policy_update`
+### `policy_propose`
 
-`propose_policy_update` is a policy-write proposal request. StackChan CoreS3
+`policy_propose` is a policy-write proposal request. StackChan CoreS3
 Firmware and Gateway/MCP implement the first supported path: a session-scoped
 proposal is validated by Firmware, shown on device for local PIN approval,
 committed through the canonical active-policy store, and reported as
-`policy_update_result`. The Gateway-served local Admin Page can submit the
+`policy_propose_result`. The Gateway-served local Admin Page can submit the
 current policy proposal template; full policy editing is not implemented.
 MCP/API callers can submit bounded current-schema policy proposals.
 
@@ -1366,9 +1374,9 @@ Request shape:
 
 ```json
 {
-  "id": "req_policy_update",
+  "id": "req_policy_propose",
   "version": 1,
-  "type": "propose_policy_update",
+  "type": "policy_propose",
   "sessionId": "session_001",
   "params": {
     "policy": {
@@ -1465,7 +1473,7 @@ State and authorization rules:
   if they do not dismiss or mutate the pending state. `sign_by_policy` and nested
   policy updates must return `busy` while a policy update is pending or
   committing.
-- `get_policy` returns the committed active policy only. It must not include or
+- `policy_get` returns the committed active policy only. It must not include or
   imply the pending proposal.
 - `disconnect` may perform session cleanup except during the commit critical
   section, where Firmware may return `busy`.
@@ -1506,7 +1514,7 @@ Storage and rollback rules:
 
 Response shape:
 
-`propose_policy_update` returns `policy_update_result` only after Firmware has
+`policy_propose` returns `policy_propose_result` only after Firmware has
 accepted the protocol envelope, authenticated the active session, and classified
 the policy proposal path. Envelope, version, request id, session, state, busy,
 and oversized raw-message failures remain top-level protocol errors.
@@ -1515,9 +1523,9 @@ When Firmware has a canonical policy proposal, `policy` is required:
 
 ```json
 {
-  "id": "req_policy_update",
+  "id": "req_policy_propose",
   "version": 1,
-  "type": "policy_update_result",
+  "type": "policy_propose_result",
   "status": "applied",
   "reasonCode": "device_confirmed",
   "policy": {
@@ -1533,9 +1541,9 @@ canonical policy hash, rule count, or highest action:
 
 ```json
 {
-  "id": "req_policy_update",
+  "id": "req_policy_propose",
   "version": 1,
-  "type": "policy_update_result",
+  "type": "policy_propose_result",
   "status": "invalid_policy",
   "reasonCode": "invalid_policy"
 }
@@ -1565,7 +1573,7 @@ Response outcomes:
 
 `busy` is a top-level protocol error for a request that cannot enter the policy
 update flow because another sensitive local flow or policy update is active. It
-is not a `policy_update_result` status and is not stored as policy-update
+is not a `policy_propose_result` status and is not stored as policy-update
 history.
 
 Policy update history:

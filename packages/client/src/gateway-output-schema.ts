@@ -5,8 +5,8 @@ import {
   GET_ACCOUNTS_SESSION_ENDED_REASONS,
   GET_APPROVAL_HISTORY_SESSION_ENDED_REASONS,
   GET_CAPABILITIES_SESSION_ENDED_REASONS,
-  GET_POLICY_SESSION_ENDED_REASONS,
-  PROPOSE_POLICY_UPDATE_SESSION_ENDED_REASONS,
+  POLICY_PROPOSE_SESSION_ENDED_REASONS,
+  POLICY_GET_SESSION_ENDED_REASONS,
   SIGN_BY_POLICY_SESSION_ENDED_REASONS,
   SIGN_BY_USER_SESSION_ENDED_REASONS,
 } from "./core.js";
@@ -24,7 +24,7 @@ import {
   MAX_CAPABILITY_CHAINS,
   MAX_POLICY_RULE_COUNT,
   POLICY_ID_PATTERN,
-  POLICY_UPDATE_RESULT_STATUSES,
+  POLICY_PROPOSE_RESULT_STATUSES,
   SIGN_CHAIN_PATTERN,
   SIGN_METHOD_PATTERN,
   SIGNING_HISTORY_TERMINAL_RESULTS,
@@ -402,14 +402,14 @@ const notConnectedPolicyOutputShape = z.object({
 const sessionEndedPolicyOutputShape = z.object({
   source: z.literal("session_ended"),
   deviceId: safeDeviceIdShape,
-  reason: z.enum(GET_POLICY_SESSION_ENDED_REASONS),
+  reason: z.enum(POLICY_GET_SESSION_ENDED_REASONS),
 });
-export const getPolicySuccessOutputShape = z.discriminatedUnion("source", [
+export const policyGetSuccessOutputShape = z.discriminatedUnion("source", [
   livePolicyOutputShape,
   notConnectedPolicyOutputShape,
   sessionEndedPolicyOutputShape,
 ]);
-export const getPolicyToolOutputShape = z.discriminatedUnion("source", [
+export const policyGetToolOutputShape = z.discriminatedUnion("source", [
   livePolicyOutputShape,
   notConnectedPolicyOutputShape,
   sessionEndedPolicyOutputShape,
@@ -618,41 +618,41 @@ export const signByPolicyToolOutputShape = z.union([
   errorToolResultShape,
 ]);
 
-const policyUpdateResultPolicyShape = z.object({
+const policyProposeResultPolicyShape = z.object({
   policyHash: z.string().regex(POLICY_ID_PATTERN),
   ruleCount: z.number().int().min(0).max(MAX_POLICY_RULE_COUNT),
   highestAction: z.enum(APPROVAL_HISTORY_HIGHEST_ACTIONS),
 });
-const liveProposePolicyUpdateOutputShape = z
+const livePolicyProposeOutputShape = z
   .object({
     source: z.literal("live"),
     deviceId: safeDeviceIdShape,
-    status: z.enum(POLICY_UPDATE_RESULT_STATUSES),
+    status: z.enum(POLICY_PROPOSE_RESULT_STATUSES),
     reasonCode: z.string().regex(APPROVAL_HISTORY_REASON_CODE_PATTERN),
-    policy: policyUpdateResultPolicyShape.optional(),
+    policy: policyProposeResultPolicyShape.optional(),
   })
   .refine((value) => (value.status === "invalid_policy") === (value.policy === undefined), {
-    message: "invalid_policy omits policy metadata; other policy update results include it",
+    message: "invalid_policy omits policy metadata; other policy_propose_result statuses include it",
   });
-const notConnectedProposePolicyUpdateOutputShape = z.object({
+const notConnectedPolicyProposeOutputShape = z.object({
   source: z.literal("not_connected"),
   deviceId: safeDeviceIdShape,
   reason: z.literal("not_connected"),
 });
-const sessionEndedProposePolicyUpdateOutputShape = z.object({
+const sessionEndedPolicyProposeOutputShape = z.object({
   source: z.literal("session_ended"),
   deviceId: safeDeviceIdShape,
-  reason: z.enum(PROPOSE_POLICY_UPDATE_SESSION_ENDED_REASONS),
+  reason: z.enum(POLICY_PROPOSE_SESSION_ENDED_REASONS),
 });
-export const proposePolicyUpdateSuccessOutputShape = z.discriminatedUnion("source", [
-  liveProposePolicyUpdateOutputShape,
-  notConnectedProposePolicyUpdateOutputShape,
-  sessionEndedProposePolicyUpdateOutputShape,
+export const policyProposeSuccessOutputShape = z.discriminatedUnion("source", [
+  livePolicyProposeOutputShape,
+  notConnectedPolicyProposeOutputShape,
+  sessionEndedPolicyProposeOutputShape,
 ]);
-export const proposePolicyUpdateToolOutputShape = z.discriminatedUnion("source", [
-  liveProposePolicyUpdateOutputShape,
-  notConnectedProposePolicyUpdateOutputShape,
-  sessionEndedProposePolicyUpdateOutputShape,
+export const policyProposeToolOutputShape = z.discriminatedUnion("source", [
+  livePolicyProposeOutputShape,
+  notConnectedPolicyProposeOutputShape,
+  sessionEndedPolicyProposeOutputShape,
   errorToolResultShape,
 ]);
 
@@ -688,9 +688,9 @@ export const gatewaySuccessOutputSchemas = {
   disconnectDevice: disconnectDeviceSuccessOutputShape,
   getCapabilities: getCapabilitiesSuccessOutputShape,
   getAccounts: getAccountsSuccessOutputShape,
-  getPolicy: getPolicySuccessOutputShape,
+  policyGet: policyGetSuccessOutputShape,
   getApprovalHistory: getApprovalHistorySuccessOutputShape,
   signByUser: signByUserSuccessOutputShape,
   signByPolicy: signByPolicySuccessOutputShape,
-  proposePolicyUpdate: proposePolicyUpdateSuccessOutputShape,
+  policyPropose: policyProposeSuccessOutputShape,
 } as const;

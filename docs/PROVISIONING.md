@@ -195,7 +195,7 @@ stateDiagram-v2
 
     Unprovisioned: no root signing material, active policy, or local PIN verifier
     Unprovisioned: optional volatile mnemonic/root/PIN setup scratch only
-    Provisioned: root material, active policy, and local PIN verifier stored; read-only get_accounts/get_policy available; sign_by_policy evaluates bounded policy-authorized signing
+    Provisioned: root material, active policy, and local PIN verifier stored; read-only get_accounts/policy_get available; sign_by_policy evaluates bounded policy-authorized signing
 ```
 
 The current runtime does not expose USB requests for provisioning start,
@@ -330,7 +330,7 @@ reset-state changes.
 
 Provisioning is not signing readiness. The current dependency order is: keep
 the policy facts / method adapter boundary stable, use the Firmware-owned
-`propose_policy_update` flow for current-schema active policy changes, keep
+`policy_propose` flow for current-schema active policy changes, keep
 MCP policy-authorized signing on `sign_by_policy`, and keep provider-facing
 device-confirmed signing on the separate `sign_by_user` path. Policy update
 remains a proposal flow, not a direct state setter: Gateway/Admin may submit a

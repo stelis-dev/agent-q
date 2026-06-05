@@ -68,7 +68,7 @@ function defaultCore(overrides = {}) {
     async disconnectDevice() {
       return { source: "disconnected", deviceId, reason: "firmware_confirmed" };
     },
-    async getPolicy() {
+    async policyGet() {
       return {
         source: "live",
         deviceId,
@@ -83,7 +83,7 @@ function defaultCore(overrides = {}) {
     async getApprovalHistory() {
       return { source: "live", deviceId, records: [], hasMore: false };
     },
-    async proposePolicyUpdate() {
+    async policyPropose() {
       return {
         source: "live",
         deviceId,
@@ -171,7 +171,7 @@ test("Admin API rejects cross-origin or non-JSON POST before core dispatch", asy
   let called = false;
   await withAdminServer(
     defaultCore({
-      async proposePolicyUpdate() {
+      async policyPropose() {
         called = true;
         return {};
       },
@@ -179,7 +179,7 @@ test("Admin API rejects cross-origin or non-JSON POST before core dispatch", asy
     async (baseUrl) => {
       const textPlain = await postRaw(
         baseUrl,
-        "/api/propose_reject_policy",
+        "/api/policy_propose_reject",
         { "Content-Type": "text/plain" },
         JSON.stringify({}),
       );
@@ -189,7 +189,7 @@ test("Admin API rejects cross-origin or non-JSON POST before core dispatch", asy
 
       const crossOrigin = await postRaw(
         baseUrl,
-        "/api/propose_reject_policy",
+        "/api/policy_propose_reject",
         {
           "Content-Type": "application/json",
           Origin: "https://example.invalid",
@@ -276,7 +276,7 @@ test("Admin propose path forwards a server-built proposal through Gateway core",
   let submitted;
   await withAdminServer(
     defaultCore({
-      async proposePolicyUpdate(input) {
+      async policyPropose(input) {
         submitted = input;
         return {
           source: "live",
@@ -292,7 +292,7 @@ test("Admin propose path forwards a server-built proposal through Gateway core",
       },
     }),
     async (baseUrl) => {
-      const response = await postJson(baseUrl, "/api/propose_reject_policy", {
+      const response = await postJson(baseUrl, "/api/policy_propose_reject", {
         deviceId,
       });
       assert.equal(response.status, 200);
@@ -368,7 +368,7 @@ async function waitForExit(child) {
 
 test("Admin API rejects unsupported fields instead of silently ignoring them", async () => {
   await withAdminServer(defaultCore(), async (baseUrl) => {
-    const response = await postJson(baseUrl, "/api/propose_reject_policy", {
+    const response = await postJson(baseUrl, "/api/policy_propose_reject", {
       privateKey: "must-not-forward",
     });
     assert.equal(response.status, 400);
@@ -380,7 +380,7 @@ test("Admin API rejects unsupported fields instead of silently ignoring them", a
 
 test("Admin API rejects an explicit invalid deviceId instead of using the default device", async () => {
   await withAdminServer(defaultCore(), async (baseUrl) => {
-    const response = await postJson(baseUrl, "/api/get_policy", {
+    const response = await postJson(baseUrl, "/api/policy_get", {
       deviceId: "../unsafe",
     });
     assert.equal(response.status, 400);

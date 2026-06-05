@@ -8,7 +8,7 @@ import type {
   GetAccountsResult,
   GetApprovalHistoryResult,
   GetCapabilitiesResult,
-  GetPolicyResult,
+  PolicyGetResult,
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
@@ -24,7 +24,7 @@ export type {
   GetAccountsResult,
   GetApprovalHistoryResult,
   GetCapabilitiesResult,
-  GetPolicyResult,
+  PolicyGetResult,
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
@@ -55,10 +55,10 @@ export interface DeviceClientCore {
     deviceId?: string;
     purpose?: string;
   }): Promise<GetAccountsResult>;
-  getPolicy(input?: {
+  policyGet(input?: {
     deviceId?: string;
     purpose?: string;
-  }): Promise<GetPolicyResult>;
+  }): Promise<PolicyGetResult>;
   getApprovalHistory(input?: {
     deviceId?: string;
     purpose?: string;
@@ -85,7 +85,7 @@ function deviceClientFromCore(core: GatewayCore): DeviceClientCore {
     disconnectDevice: (input = {}) => core.disconnectDevice(input),
     getCapabilities: (input = {}) => core.getCapabilities(input),
     getAccounts: (input = {}) => core.getAccounts(input),
-    getPolicy: (input = {}) => core.getPolicy(input),
+    policyGet: (input = {}) => core.policyGet(input),
     getApprovalHistory: (input = {}) => core.getApprovalHistory(input),
     signByUser: (input) => core.signByUser(input),
   };

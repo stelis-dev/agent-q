@@ -716,7 +716,7 @@ bool write_approval_history_response(const char* id, uint64_t before_sequence, s
     return agent_q::usb_response_write_json(response);
 }
 
-bool write_policy_update_result_response(
+bool write_policy_propose_result_response(
     const char* id,
     const char* status,
     const char* reason_code,
@@ -725,7 +725,7 @@ bool write_policy_update_result_response(
     JsonDocument response;
     response["id"] = id;
     response["version"] = kProtocolVersion;
-    response["type"] = "policy_update_result";
+    response["type"] = "policy_propose_result";
     response["status"] = status;
     response["reasonCode"] = reason_code;
     if (include_policy) {
@@ -2775,19 +2775,19 @@ void clear_policy_update_terminal_state()
     agent_q::protocol_pin_approval_clear();
 }
 
-void finish_policy_update_result_terminal(
+void finish_policy_propose_result_terminal(
     const char* request_id,
     agent_q::AgentQPolicyUpdateFlowTerminalResult result,
     const char* display_message,
     AgentQMessageKind display_kind,
     bool refresh_material_consistency = false)
 {
-    if (!write_policy_update_result_response(
+    if (!write_policy_propose_result_response(
             request_id,
             agent_q::policy_update_flow_terminal_status(result),
             agent_q::policy_update_flow_terminal_reason(result),
             true)) {
-        log_response_write_failure("policy_update_result", request_id);
+        log_response_write_failure("policy_propose_result", request_id);
     }
     clear_policy_update_terminal_state();
     if (refresh_material_consistency) {
@@ -2826,42 +2826,42 @@ void finish_policy_update_terminal(
 
     switch (result) {
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::applied:
-            finish_policy_update_result_terminal(
+            finish_policy_propose_result_terminal(
                 request_id,
                 result,
                 "Policy updated",
                 AgentQMessageKind::success);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::rejected:
-            finish_policy_update_result_terminal(
+            finish_policy_propose_result_terminal(
                 request_id,
                 result,
                 "Policy rejected",
                 AgentQMessageKind::rejected);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::timed_out:
-            finish_policy_update_result_terminal(
+            finish_policy_propose_result_terminal(
                 request_id,
                 result,
                 "Policy timed out",
                 AgentQMessageKind::timeout);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::ui_error:
-            finish_policy_update_result_terminal(
+            finish_policy_propose_result_terminal(
                 request_id,
                 result,
                 "Display error",
                 AgentQMessageKind::error);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::storage_error:
-            finish_policy_update_result_terminal(
+            finish_policy_propose_result_terminal(
                 request_id,
                 result,
                 "Policy failed",
                 AgentQMessageKind::error);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::consistency_error:
-            finish_policy_update_result_terminal(
+            finish_policy_propose_result_terminal(
                 request_id,
                 result,
                 "Policy error",
@@ -3686,8 +3686,8 @@ void handle_local_pin_auth_verify_worker_result(
             wipe_local_pin_auth_scratch("local PIN authorization verifier unavailable");
             clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
             if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
-                if (!write_policy_update_result_response(request_id, "consistency_error", "consistency_error", true)) {
-                    log_response_write_failure("policy_update_result", request_id);
+                if (!write_policy_propose_result_response(request_id, "consistency_error", "consistency_error", true)) {
+                    log_response_write_failure("policy_propose_result", request_id);
                 }
                 agent_q::policy_update_flow_clear();
                 agent_q::protocol_pin_approval_clear();
@@ -3929,8 +3929,8 @@ void clear_local_pin_auth_if_needed()
                 agent_q::AgentQPersistentMaterialRuntimeFailure::local_pin_auth_unavailable,
                 persistent_material_ops());
             if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
-                if (!write_policy_update_result_response(request_id, "consistency_error", "consistency_error", true)) {
-                    log_response_write_failure("policy_update_result", request_id);
+                if (!write_policy_propose_result_response(request_id, "consistency_error", "consistency_error", true)) {
+                    log_response_write_failure("policy_propose_result", request_id);
                 }
                 agent_q::policy_update_flow_clear();
                 agent_q::protocol_pin_approval_clear();
@@ -4980,8 +4980,8 @@ void handle_line(const char* line)
         return;
     }
 
-    if (strcmp(type, "get_policy") == 0) {
-        // get_policy is a session-scoped read-only request. Firmware returns
+    if (strcmp(type, "policy_get") == 0) {
+        // policy_get is a session-scoped read-only request. Firmware returns
         // metadata for the active policy document it will use for method
         // decisions; Gateway must not infer policy state from local defaults.
         if (!provisioned_material_ready()) {
@@ -5006,10 +5006,10 @@ void handle_line(const char* line)
                 agent_q::AgentQPersistentMaterialRuntimeFailure::active_policy_unavailable,
                 persistent_material_ops());
             write_error_response(id, "policy_error", "Active policy is unavailable.");
-            ESP_LOGW(kTag, "get_policy active policy unavailable: id=%s", id);
+            ESP_LOGW(kTag, "policy_get active policy unavailable: id=%s", id);
             return;
         }
-        ESP_LOGI(kTag, "get_policy: id=%s", id);
+        ESP_LOGI(kTag, "policy_get: id=%s", id);
         return;
     }
 
@@ -5051,7 +5051,7 @@ void handle_line(const char* line)
         return;
     }
 
-    if (strcmp(type, "propose_policy_update") == 0) {
+    if (strcmp(type, "policy_propose") == 0) {
         if (!provisioned_material_ready()) {
             write_error_response(id, "invalid_state", "Policy update is available only after provisioning is complete.");
             return;
@@ -5091,12 +5091,12 @@ void handle_line(const char* line)
         const agent_q::AgentQPolicyUpdateFlowBeginResult begin_result =
             agent_q::policy_update_flow_begin(params_object["policy"]);
         if (begin_result != agent_q::AgentQPolicyUpdateFlowBeginResult::ok) {
-            if (!write_policy_update_result_response(
+            if (!write_policy_propose_result_response(
                     id,
                     "invalid_policy",
                     agent_q::policy_update_flow_begin_result_reason(begin_result),
                     false)) {
-                log_response_write_failure("policy_update_result", id);
+                log_response_write_failure("policy_propose_result", id);
             }
             return;
         }

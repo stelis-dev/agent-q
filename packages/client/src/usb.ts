@@ -5,7 +5,7 @@ import {
   assertAccountsResponse,
   assertApprovalHistoryResponse,
   assertCapabilitiesResponse,
-  assertPolicyUpdateResultResponse,
+  assertPolicyProposeResultResponse,
   assertPolicyResponse,
   assertSignResultResponse,
   assertConnectResponse,
@@ -17,11 +17,11 @@ import {
   makeGetCapabilitiesRequest,
   makeGetAccountsRequest,
   makeGetApprovalHistoryRequest,
-  makeProposePolicyUpdateRequest,
+  makePolicyProposeRequest,
   makeSignByPolicyRequest,
   makeSignByUserRequest,
   makeIdentifyDeviceRequest,
-  makeGetPolicyRequest,
+  makePolicyGetRequest,
   makeGetStatusRequest,
   parseJsonLine,
   parseProtocolResponse,
@@ -33,7 +33,7 @@ import {
   type ConnectResponse,
   type DisconnectResponse,
   type IdentifyDeviceResponse,
-  type PolicyUpdateResultResponse,
+  type PolicyProposeResultResponse,
   type PolicyResponse,
   type ProtocolRequest,
   type ProtocolResponse,
@@ -115,7 +115,7 @@ export interface UsbSerialDriver {
     sessionId: string,
     deadlineMs: number,
   ): Promise<AccountsResponse>;
-  getPolicy(
+  policyGet(
     portPath: string,
     sessionId: string,
     deadlineMs: number,
@@ -126,12 +126,12 @@ export interface UsbSerialDriver {
     params: { limit?: number; beforeSeq?: string },
     deadlineMs: number,
   ): Promise<ApprovalHistoryResponse>;
-  proposePolicyUpdate(
+  policyPropose(
     portPath: string,
     sessionId: string,
     policy: Record<string, unknown>,
     deadlineMs: number,
-  ): Promise<PolicyUpdateResultResponse>;
+  ): Promise<PolicyProposeResultResponse>;
   signByUser(
     portPath: string,
     sessionId: string,
@@ -202,12 +202,12 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     return getAccountsOverSerial(portPath, sessionId, deadlineMs);
   }
 
-  async getPolicy(
+  async policyGet(
     portPath: string,
     sessionId: string,
     deadlineMs: number,
   ): Promise<PolicyResponse> {
-    return getPolicyOverSerial(portPath, sessionId, deadlineMs);
+    return policyGetOverSerial(portPath, sessionId, deadlineMs);
   }
 
   async getApprovalHistory(
@@ -219,13 +219,13 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     return getApprovalHistoryOverSerial(portPath, sessionId, params, deadlineMs);
   }
 
-  async proposePolicyUpdate(
+  async policyPropose(
     portPath: string,
     sessionId: string,
     policy: Record<string, unknown>,
     deadlineMs: number,
-  ): Promise<PolicyUpdateResultResponse> {
-    return proposePolicyUpdateOverSerial(portPath, sessionId, policy, deadlineMs);
+  ): Promise<PolicyProposeResultResponse> {
+    return policyProposeOverSerial(portPath, sessionId, policy, deadlineMs);
   }
 
   async signByUser(
@@ -370,11 +370,11 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         deadlineMs,
         "USB get accounts exceeded its timeout.",
       ),
-    getPolicy: (portPath, sessionId, deadlineMs) =>
+    policyGet: (portPath, sessionId, deadlineMs) =>
       raceDeadline(
-        driver.getPolicy(portPath, sessionId, deadlineMs),
+        driver.policyGet(portPath, sessionId, deadlineMs),
         deadlineMs,
-        "USB get policy exceeded its timeout.",
+        "USB policy_get exceeded its timeout.",
       ),
     getApprovalHistory: (portPath, sessionId, params, deadlineMs) =>
       raceDeadline(
@@ -382,11 +382,11 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         deadlineMs,
         "USB get approval history exceeded its timeout.",
       ),
-    proposePolicyUpdate: (portPath, sessionId, policy, deadlineMs) =>
+    policyPropose: (portPath, sessionId, policy, deadlineMs) =>
       raceDeadline(
-        driver.proposePolicyUpdate(portPath, sessionId, policy, deadlineMs),
+        driver.policyPropose(portPath, sessionId, policy, deadlineMs),
         deadlineMs,
-        "USB policy update proposal exceeded its timeout.",
+        "USB policy_propose exceeded its timeout.",
       ),
     signByUser: (portPath, sessionId, chain, method, params, deadlineMs) =>
       raceDeadline(
@@ -543,12 +543,12 @@ async function getAccountsOverSerial(
   return requestOverSerial(portPath, request, deadlineMs, (response) => assertAccountsResponse(response));
 }
 
-async function getPolicyOverSerial(
+async function policyGetOverSerial(
   portPath: string,
   sessionId: string,
   deadlineMs: number,
 ): Promise<PolicyResponse> {
-  const request = makeGetPolicyRequest(sessionId);
+  const request = makePolicyGetRequest(sessionId);
   return requestOverSerial(portPath, request, deadlineMs, (response) => assertPolicyResponse(response));
 }
 
@@ -562,14 +562,14 @@ async function getApprovalHistoryOverSerial(
   return requestOverSerial(portPath, request, deadlineMs, (response) => assertApprovalHistoryResponse(response));
 }
 
-async function proposePolicyUpdateOverSerial(
+async function policyProposeOverSerial(
   portPath: string,
   sessionId: string,
   policy: Record<string, unknown>,
   deadlineMs: number,
-): Promise<PolicyUpdateResultResponse> {
-  const request = makeProposePolicyUpdateRequest(sessionId, policy);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertPolicyUpdateResultResponse(response));
+): Promise<PolicyProposeResultResponse> {
+  const request = makePolicyProposeRequest(sessionId, policy);
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertPolicyProposeResultResponse(response));
 }
 
 async function signByUserOverSerial(

@@ -15,10 +15,10 @@ const expectedToolNames = [
   "get_approval_history",
   "get_capabilities",
   "get_device_status",
-  "get_policy",
   "identify_devices",
   "list_devices",
-  "propose_policy_update",
+  "policy_get",
+  "policy_propose",
   "scan_devices",
   "select_device",
   "set_device_metadata",
@@ -146,7 +146,7 @@ const noOpCore = {
       ],
     };
   },
-  async getPolicy() {
+  async policyGet() {
     return {
       source: "live",
       deviceId: "device-1",
@@ -196,7 +196,7 @@ const noOpCore = {
       },
     };
   },
-  async proposePolicyUpdate() {
+  async policyPropose() {
     return {
       source: "live",
       deviceId: "device-1",
@@ -358,7 +358,7 @@ test("tool input schemas expose only current request fields", () => {
     "purpose",
     "txBytes",
   ]);
-  assert.deepEqual(Object.keys(gatewayToolDefinitions.proposePolicyUpdate.inputSchema).sort(), [
+  assert.deepEqual(Object.keys(gatewayToolDefinitions.policyPropose.inputSchema).sort(), [
     "deviceId",
     "policy",
     "purpose",
@@ -443,11 +443,11 @@ const dispatchCases = [
   { name: "disconnect_device", arguments: {} },
   { name: "get_capabilities", arguments: {} },
   { name: "get_accounts", arguments: {} },
-  { name: "get_policy", arguments: {} },
+  { name: "policy_get", arguments: {} },
   { name: "get_approval_history", arguments: {} },
   { name: "sign_by_policy", arguments: { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" } },
   {
-    name: "propose_policy_update",
+    name: "policy_propose",
     arguments: {
       policy: {
         schema: "agentq.policy.v0",
@@ -514,9 +514,9 @@ test("get_accounts dispatch returns the public Sui account without a session tok
   });
 });
 
-test("get_policy dispatch returns the active policy summary without a session token", async () => {
+test("policy_get dispatch returns the active policy summary without a session token", async () => {
   await withConnectedClient(async (client) => {
-    const result = await client.callTool({ name: "get_policy", arguments: {} });
+    const result = await client.callTool({ name: "policy_get", arguments: {} });
     assert.equal(result.structuredContent.source, "live");
     assert.equal(result.structuredContent.policy.schema, "agentq.policy.v0");
     assert.equal(
@@ -630,10 +630,10 @@ test("sign_by_policy dispatch returns a policy result without a session token", 
   });
 });
 
-test("propose_policy_update dispatch returns Firmware-authored terminal metadata without a session token", async () => {
+test("policy_propose dispatch returns Firmware-authored terminal metadata without a session token", async () => {
   await withConnectedClient(async (client) => {
     const result = await client.callTool({
-      name: "propose_policy_update",
+      name: "policy_propose",
       arguments: {
         policy: {
           schema: "agentq.policy.v0",
@@ -802,7 +802,7 @@ const leakyCore = {
       ...SECRET_EXTRAS,
     };
   },
-  async getPolicy() {
+  async policyGet() {
     return {
       source: "live",
       deviceId: "device-1",
@@ -856,7 +856,7 @@ const leakyCore = {
       ...SECRET_EXTRAS,
     };
   },
-  async proposePolicyUpdate() {
+  async policyPropose() {
     return {
       source: "live",
       deviceId: "device-1",
@@ -920,24 +920,24 @@ test("get_accounts unreachable shape (live without accounts) cannot leak out as 
   }, malformedCore);
 });
 
-test("get_policy unreachable shape (live without policy) cannot leak out as a success", async () => {
+test("policy_get unreachable shape (live without policy) cannot leak out as a success", async () => {
   const malformedCore = {
     ...noOpCore,
-    async getPolicy() {
+    async policyGet() {
       return { source: "live", deviceId: "device-1" };
     },
   };
   await withConnectedClient(async (client) => {
-    const result = await client.callTool({ name: "get_policy", arguments: {} });
+    const result = await client.callTool({ name: "policy_get", arguments: {} });
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.error.code, "internal_output_error");
   }, malformedCore);
 });
 
-test("get_policy rejects unsupported live policy shapes", async () => {
+test("policy_get rejects unsupported live policy shapes", async () => {
   const malformedCore = {
     ...noOpCore,
-    async getPolicy() {
+    async policyGet() {
       return {
         source: "live",
         deviceId: "device-1",
@@ -951,7 +951,7 @@ test("get_policy rejects unsupported live policy shapes", async () => {
     },
   };
   await withConnectedClient(async (client) => {
-    const result = await client.callTool({ name: "get_policy", arguments: {} });
+    const result = await client.callTool({ name: "policy_get", arguments: {} });
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.error.code, "internal_output_error");
   }, malformedCore);
@@ -1086,7 +1086,7 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
     },
     {
-      name: "get_policy",
+      name: "policy_get",
       result: { source: "not_connected", deviceId: "device-1", reason: "firmware_confirmed" },
     },
     {
@@ -1106,7 +1106,7 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
     {
-      name: "get_policy",
+      name: "policy_get",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
     {
@@ -1118,7 +1118,7 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
     {
-      name: "propose_policy_update",
+      name: "policy_propose",
       result: { source: "session_ended", deviceId: "device-1", reason: "not_connected" },
     },
   ];
@@ -1135,7 +1135,7 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       async getCapabilities() {
         return testCase.result;
       },
-      async getPolicy() {
+      async policyGet() {
         return testCase.result;
       },
       async getApprovalHistory() {
@@ -1144,14 +1144,14 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
       async signByPolicy() {
         return testCase.result;
       },
-      async proposePolicyUpdate() {
+      async policyPropose() {
         return testCase.result;
       },
     };
     await withConnectedClient(async (client) => {
       const args = testCase.name === "sign_by_policy"
         ? { chain: "sui", method: "sign_transaction", network: "devnet", txBytes: "AQID" }
-        : testCase.name === "propose_policy_update"
+        : testCase.name === "policy_propose"
           ? { policy: { schema: "agentq.policy.v0", defaultAction: "reject", rules: [] } }
           : {};
       const result = await client.callTool({ name: testCase.name, arguments: args });

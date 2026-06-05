@@ -33,6 +33,12 @@ remain runtime-separated from that Node transport. A future browser-safe
 provider runtime must be injected into the Wallet Standard adapter and must
 expose only the provider-facing methods described below.
 
+This package narrows the dapp-facing API it presents. That is not a security
+boundary against an application that deliberately imports
+`@stelis/agent-q-client` or `@stelis/agent-q-client/admin` directly. Firmware
+remains the authority that enforces state gates, device-local confirmation,
+policy evaluation, signing, persistence, and cleanup.
+
 ## Entrypoints
 
 - `@stelis/agent-q-provider-sui` exposes the Sui provider factory and class.
@@ -53,13 +59,14 @@ expose only the provider-facing methods described below.
 - `getAccounts`
 - `signByUser`
 
-Policy update proposals and raw delegated `signByPolicy` access are not exposed
-by this provider. Active policy summaries and approval history are also not
-exposed through this dapp-facing provider surface; they remain on client,
-MCP, and Admin management surfaces. Provider-facing signing uses only
-`signByUser`, which passes a bounded request to Firmware for device-local
-review, local PIN confirmation, required history, and signing. The provider
-does not decide whether signing is allowed.
+The dapp-facing provider object does not include policy update proposals, raw
+delegated `signByPolicy` access, active policy summaries, or approval history.
+Those APIs remain on broader client, MCP, or Admin surfaces. This is API
+projection for the provider audience, not a security claim that the same
+application cannot import the client/Admin package directly. Provider-facing
+signing uses only `signByUser`, which passes a bounded request to Firmware for
+device-local review, local PIN confirmation, required history, and signing. The
+provider does not decide whether signing is allowed.
 
 The current signing method is Sui `sign_transaction` only. Sui personal-message
 signing and transaction execution are not implemented and must not be
@@ -137,11 +144,13 @@ provider factory:
 - `getAccounts`
 - `signByUser`
 
-It must not expose Admin, policy update, active-policy reads,
-approval-history reads, `signByPolicy`, `sign_by_policy`, raw session tokens,
-secrets, or caller-controlled timing fields. Any future browser runtime must
-implement this provider-only injection contract instead of reusing broader
-management surfaces.
+The injected browser provider contract contains only the methods above. It must
+not include Admin, policy update, active-policy reads, approval-history reads,
+`signByPolicy`, `sign_by_policy`, raw session tokens, secrets, or
+caller-controlled timing fields. That keeps the Wallet Standard adapter
+provider-facing; Firmware remains the security authority. Any future browser
+runtime must implement this provider-only injection contract instead of reusing
+broader management surfaces.
 
 Provider requests do not accept caller-controlled timing fields. Firmware-owned
 device-local physical-input windows remain 30 seconds; Gateway uses fixed

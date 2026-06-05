@@ -215,7 +215,7 @@ test("Wallet Standard entrypoint stays separated from Node device transport", as
   assert.doesNotMatch(types, /\.\/provider-sui\.js/);
 });
 
-test("provider exposes the Sui dapp-facing adapter API including signByUser", () => {
+test("provider object presents the Sui dapp-facing adapter API including signByUser", () => {
   const provider = createAgentQSuiProvider({ core: createFakeCore() });
   const methodNames = Object.getOwnPropertyNames(Object.getPrototypeOf(provider))
     .filter((name) => name !== "constructor")
@@ -234,8 +234,8 @@ test("provider exposes the Sui dapp-facing adapter API including signByUser", ()
   ]);
   assert.equal(typeof provider.signByUser, "function");
   assert.equal(provider.signByPolicy, undefined);
-  assert.equal(provider.proposePolicyUpdate, undefined);
-  assert.equal(provider.getPolicy, undefined);
+  assert.equal(provider.policyPropose, undefined);
+  assert.equal(provider.policyGet, undefined);
   assert.equal(provider.getApprovalHistory, undefined);
 });
 
@@ -360,11 +360,11 @@ test("provider signByUser rejects non-user signing results from custom cores", a
   }));
 });
 
-test("provider does not expose raw method or Admin policy update entrypoints", () => {
+test("provider object omits policy signing and Admin management entrypoints", () => {
   const provider = createAgentQSuiProvider({ core: createFakeCore() });
   assert.equal(provider.signByPolicy, undefined);
-  assert.equal(provider.proposePolicyUpdate, undefined);
-  assert.equal(provider.getPolicy, undefined);
+  assert.equal(provider.policyPropose, undefined);
+  assert.equal(provider.policyGet, undefined);
   assert.equal(provider.getApprovalHistory, undefined);
   assert.equal(typeof provider.signByUser, "function");
 });
@@ -445,7 +445,7 @@ test("Wallet Standard connect and disconnect delegate through provider-sui witho
   assert.deepEqual(connected.accounts[0].chains, ["sui:devnet"]);
   assert.deepEqual(connected.accounts[0].features, [SuiSignTransaction]);
   assertNoSecretFields(connected);
-  assert.equal(wallet.getPolicy, undefined);
+  assert.equal(wallet.policyGet, undefined);
   assert.equal(wallet.getApprovalHistory, undefined);
   assert.equal(wallet.signByPolicy, undefined);
   await wallet.features[StandardDisconnect].disconnect();

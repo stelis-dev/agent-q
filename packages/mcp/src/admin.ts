@@ -19,9 +19,9 @@ export type AdminGatewayCore = Pick<
   | "scanDevices"
   | "connectDevice"
   | "disconnectDevice"
-  | "getPolicy"
+  | "policyGet"
   | "getApprovalHistory"
-  | "proposePolicyUpdate"
+  | "policyPropose"
 >;
 
 export interface StartedAdminGateway {
@@ -136,12 +136,12 @@ async function handleAdminRequest(
           await core.disconnectDevice(deviceScopedInput(body)),
         );
         return;
-      case "/api/get_policy":
+      case "/api/policy_get":
         expectKeys(body, ["deviceId"]);
         sendSanitizedSuccess(
           response,
-          gatewaySuccessOutputSchemas.getPolicy,
-          await core.getPolicy(deviceScopedInput(body)),
+          gatewaySuccessOutputSchemas.policyGet,
+          await core.policyGet(deviceScopedInput(body)),
         );
         return;
       case "/api/get_approval_history":
@@ -156,13 +156,13 @@ async function handleAdminRequest(
         expectKeys(body, []);
         sendJson(response, 200, { ok: true, result: { policy: buildRejectOnlySuiPolicy() } });
         return;
-      case "/api/propose_reject_policy": {
+      case "/api/policy_propose_reject": {
         expectKeys(body, ["deviceId"]);
         const policy = buildRejectOnlySuiPolicy();
         sendSanitizedSuccess(
           response,
-          gatewaySuccessOutputSchemas.proposePolicyUpdate,
-          await core.proposePolicyUpdate({
+          gatewaySuccessOutputSchemas.policyPropose,
+          await core.policyPropose({
             ...deviceScopedInput(body),
             policy,
           }),
@@ -646,11 +646,11 @@ async function submitProposal() {
   setBusy(true);
   show(el.resultOutput, "Waiting for device-local approval.");
   try {
-    const result = await api("/api/propose_reject_policy", {
+    const result = await api("/api/policy_propose_reject", {
       ...selectedDeviceInput(),
     });
     show(el.resultOutput, result);
-    show(el.policyOutput, await api("/api/get_policy", selectedDeviceInput()));
+    show(el.policyOutput, await api("/api/policy_get", selectedDeviceInput()));
     show(el.historyOutput, await api("/api/get_approval_history", selectedDeviceInput()));
   } catch (error) {
     showError(el.resultOutput, error);
@@ -663,7 +663,7 @@ el.refreshButton.addEventListener("click", refreshDevices);
 el.scanButton.addEventListener("click", scanDevices);
 el.connectButton.addEventListener("click", () => run("/api/connect", el.resultOutput));
 el.disconnectButton.addEventListener("click", () => run("/api/disconnect", el.resultOutput));
-el.policyButton.addEventListener("click", () => run("/api/get_policy", el.policyOutput));
+el.policyButton.addEventListener("click", () => run("/api/policy_get", el.policyOutput));
 el.historyButton.addEventListener("click", () => run("/api/get_approval_history", el.historyOutput));
 el.proposalButton.addEventListener("click", submitProposal);
 el.deviceSelect.addEventListener("change", () => {

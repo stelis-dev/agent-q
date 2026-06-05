@@ -33,8 +33,9 @@ Without an injected provider, the page shows Agent-Q as unavailable. A future
 browser-safe provider runtime should set `window.agentQSuiProvider` before this
 app imports `src/dapp-kit.ts`. That runtime must implement only the
 `AgentQSuiWalletProvider` contract; broader management APIs are not part of this
-dapp-facing example.
+dapp-facing example. That is example/provider API projection, not a security
+barrier against direct imports of broader client/Admin entrypoints.
 
-The example intentionally does not expose Admin, policy update, policy reads,
-approval-history reads, `sign_by_policy`, `sui:signPersonalMessage`, or
-`sui:signAndExecuteTransaction`.
+The example's Wallet Standard registration path does not include Admin, policy
+update, policy reads, approval-history reads, `sign_by_policy`,
+`sui:signPersonalMessage`, or `sui:signAndExecuteTransaction`.

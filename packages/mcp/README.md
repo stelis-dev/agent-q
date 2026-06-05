@@ -11,6 +11,11 @@ The MCP package is an adapter. It does not store signing keys, does not make
 signing or policy decisions, and does not apply policy. Firmware remains the
 authority for keys, policies, device-local approval, and policy commits.
 
+MCP narrows the tool surface it offers to agents. That tool surface is not a
+security boundary against code that deliberately imports broader client/Admin
+entrypoints. Firmware must enforce all security-relevant state gates, policy
+decisions, signing, persistence, and cleanup.
+
 ## MCP Tools
 
 - `scan_devices`
@@ -23,19 +28,20 @@ authority for keys, policies, device-local approval, and policy commits.
 - `disconnect_device`
 - `get_capabilities`
 - `get_accounts`
-- `get_policy`
+- `policy_get`
 - `get_approval_history`
 - `sign_by_policy`
-- `propose_policy_update`
+- `policy_propose`
 
-`propose_policy_update` is a proposal path. MCP does not decide or commit
+`policy_propose` is a proposal path. MCP does not decide or commit
 policy; Firmware validates the proposal, requires device-local approval, and
 commits only supported policy records.
 
-MCP exposes policy-authorized signing through `sign_by_policy`. It does not
-expose user-confirmed provider signing. Provider-facing user signing capability
-metadata is removed from MCP `get_capabilities` runtime output; the exported
-MCP tool output schema accepts policy-authorized signing capability only.
+MCP exposes policy-authorized signing through the `sign_by_policy` tool. Its
+tool set does not include provider-facing user-confirmed signing. Provider-facing
+user signing capability metadata is removed from MCP `get_capabilities` runtime
+output; the exported MCP tool output schema accepts policy-authorized signing
+capability only. This is MCP adapter projection, not signing authority.
 
 MCP tool inputs do not expose caller-controlled timing fields. Firmware-owned
 device-local physical-input windows remain 30 seconds; Gateway uses fixed

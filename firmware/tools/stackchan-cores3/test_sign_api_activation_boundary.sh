@@ -8,7 +8,7 @@ Usage: firmware/tools/stackchan-cores3/test_sign_api_activation_boundary.sh
 Checks the Sign API activation boundary:
 Firmware USB and Gateway client expose sign_by_user/sign_by_policy through the
 shared Sign API, provider exposes only signByUser, and MCP exposes only
-sign_by_policy plus propose_policy_update.
+sign_by_policy plus policy_propose.
 EOF
 }
 
@@ -103,12 +103,12 @@ expect_tree_present "${CLIENT_SOURCE}" 'signByUser|signByPolicy|sign_by_user|sig
   "Gateway client source must expose the new Sign API"
 expect_present "${PROVIDER_SOURCE}" 'signByUser' \
   "Provider must expose signByUser"
-expect_absent "${PROVIDER_SOURCE}" 'signByPolicy|proposePolicyUpdate' \
+expect_absent "${PROVIDER_SOURCE}" 'signByPolicy|policyPropose' \
   "Provider must not expose policy signing or Admin policy update"
 expect_present "${MCP_SOURCE}" '"sign_by_policy"' \
   "MCP must expose sign_by_policy"
-expect_present "${MCP_SOURCE}" '"propose_policy_update"' \
-  "MCP must expose top-level propose_policy_update"
+expect_present "${MCP_SOURCE}" '"policy_propose"' \
+  "MCP must expose top-level policy_propose"
 expect_absent "${MCP_SOURCE}" 'signByUser|"sign_by_user"' \
   "MCP source must not expose user-confirmed provider signing"
 

@@ -31,7 +31,7 @@ The current implementation includes:
   approved session. It is read-only, stores no raw requests or secrets, and
   records validated `sign_by_policy` policy confirmation records only after
   policy approval, policy terminal signing records for signed/failed/rejected
-  outcomes, and recordable `propose_policy_update` terminal results.
+  outcomes, and recordable `policy_propose` terminal results.
   `provider-exposed-not-product-active` `sign_by_user` creates user
   confirmation and terminal signing records. Current-tree provider
   positive/reject/timeout/session-loss smoke for the new Sign API wire names
@@ -110,7 +110,7 @@ restricted transfer shape after local PIN and required history. Current-tree
 provider positive/reject/timeout/session-loss smoke for the new Sign API wire
 names remains pending, so product-active status is not claimed.
 
-This target also implements the Firmware-owned `propose_policy_update` request
+This target also implements the Firmware-owned `policy_propose` request
 for bounded current-schema policy proposals over an active session, local PIN approval, canonical
 active-policy commit, and required policy-update terminal history. It does not
 expose MCP
@@ -124,7 +124,7 @@ pending-write marker, a policy-update terminal marker, a DEV_PROFILE local PIN
 verifier, the optional connect-PIN setting, and the approval-history ring
 buffer. The normal provisioning flow still installs only the default-reject
 policy; custom policies enter only through the session-scoped
-`propose_policy_update` proposal path.
+`policy_propose` proposal path.
 
 The active policy store treats commit metadata write as the commit point. The
 write path classifies terminal state as applied, previous policy proven
@@ -240,7 +240,7 @@ provider behavior, missing/invalid policy provider rejection, malformed policy
 rejection, and unsupported-facts rejection. StackChan CoreS3 consumes the
 committed active policy for restricted Sui `sign_transaction` policy evaluation
 and signing decisions. Custom policy updates enter separately through the
-Firmware-owned `propose_policy_update` proposal flow.
+Firmware-owned `policy_propose` proposal flow.
 
 The StackChan policy-store test is target-specific. It compiles the tracked
 `agent_q_policy_store.cpp` provider with ESP-IDF mbedTLS SHA-256 sources and

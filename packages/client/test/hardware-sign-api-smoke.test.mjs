@@ -553,7 +553,7 @@ test(
 );
 
 test(
-  "hardware: client core proposePolicyUpdate terminal path",
+  "hardware: client core policyPropose terminal path",
   { skip: policyUpdateSkipReason() },
   async () => {
     await withSmokeCore("agent-q-client-policy-update-", async (core) => {
@@ -600,7 +600,7 @@ test(
         };
 
         console.log("[client-policy-update-smoke] proposing reject-only policy — enter the device PIN within 30s...");
-        const update = await core.proposePolicyUpdate({
+        const update = await core.policyPropose({
           deviceId,
           purpose: "client-policy-update-smoke",
           policy: proposal,
@@ -614,7 +614,7 @@ test(
         assertNoSmokeOutputLeak(update);
 
         console.log("[client-policy-update-smoke] verifying committed policy summary...");
-        const policy = await core.getPolicy({ deviceId, purpose: "client-policy-update-smoke" });
+        const policy = await core.policyGet({ deviceId, purpose: "client-policy-update-smoke" });
         assert.equal(policy.source, "live");
         assert.equal(policy.policy.schema, "agentq.policy.v0");
         assert.equal(policy.policy.policyId, update.policy.policyHash);

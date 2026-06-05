@@ -87,6 +87,22 @@ application-facing adapter for current device, session, read-only Sui
 capabilities, provider-facing user-confirmed Sui signing, and an app-imported
 Sui Wallet Standard registration adapter for `sui:signTransaction`.
 
+Current package roles and dependencies:
+
+| Package | Role | Depends on | Uses client how |
+| --- | --- | --- | --- |
+| `@stelis/agent-q-client` | Device-facing SDK for hardware discovery, USB transport, runtime sessions, protocol builders/parsers, and output schemas. | Firmware protocol / USB transport. | Owns the direct Firmware protocol boundary. |
+| `@stelis/agent-q-mcp` | Local Gateway adapter: stdio MCP server, CLI binary, and local Admin Page. | `@stelis/agent-q-client`. | Uses the admin-capable client entrypoint for MCP tools and Admin Page requests. |
+| `@stelis/agent-q-provider-sui` | Sui dapp-facing provider and Wallet Standard adapter for `sui:signTransaction`. | `@stelis/agent-q-client` and Sui SDK packages. | Uses the device client facade for dapp-facing discovery, connection, account reads, capabilities, and `signByUser`. |
+| `packages/example-sui-dapp-kit` | Private workspace example for dapp-kit integration. | `@stelis/agent-q-provider-sui` and dapp-kit dependencies. | Uses the provider-sui Wallet Standard adapter with an injected provider runtime. |
+
+MCP and provider packages narrow the API surface they present to their audience,
+but that package-level projection is not a hard security barrier. Code running
+in the same host application can deliberately import broader client entrypoints,
+including `@stelis/agent-q-client/admin`. Firmware remains the authority that
+enforces state gates, policy evaluation, device-local confirmation, signing,
+persistence, and cleanup.
+
 Gateway does not store keys and does not make signing or policy decisions. It
 may relay requests, validate protocol shapes, and display summaries, but
 Firmware owns the device-authorized policy boundary.
@@ -102,9 +118,9 @@ Provider-facing device-confirmed signing for the current bounded Sui
 `sign_transaction` transfer shape has `provider-exposed-not-product-active`
 status through `sign_by_user`.
 Current-tree provider positive/reject/timeout/session-loss smoke for the new
-Sign API wire names remains pending; product-active status is not claimed. MCP exposes
-policy-authorized signing through `sign_by_policy`; it does not expose
-user-confirmed provider signing.
+Sign API wire names remains pending; product-active status is not claimed. The
+MCP tool surface includes policy-authorized signing through `sign_by_policy`;
+it does not include user-confirmed provider signing.
 
 Firmware source is organized by hardware under `firmware/src/`.
 
@@ -127,7 +143,7 @@ get_status
   -> connect
     -> get_capabilities
     -> get_accounts
-    -> get_policy
+    -> policy_get
     -> get_approval_history
     -> sign_by_policy*
   -> disconnect
@@ -191,9 +207,12 @@ Implemented:
 - A Sui application-facing provider package for device discovery, connection,
   read-only Sui account/capability data, and provider-facing `signByUser`
   transport. The provider also exposes a Wallet Standard registration adapter
-  for `sui:signTransaction`. It does not expose active policy summaries,
-  approval history, policy update, policy signing, key storage, signing
-  decisions, `sui:signPersonalMessage`, or `sui:signAndExecuteTransaction`.
+  for `sui:signTransaction`. Its dapp-facing provider object and Wallet
+  Standard adapter do not include active policy summaries, approval history,
+  policy update, policy signing, key storage, signing decisions,
+  `sui:signPersonalMessage`, or `sui:signAndExecuteTransaction`. This is
+  adapter API projection, not a security boundary against direct imports of
+  broader client/Admin package entrypoints.
 - A common host-tested policy evaluator and default-reject runtime boundary.
 
 Under current-source verification:

@@ -17,7 +17,7 @@ import {
   type ConnectResponse,
   type DeviceStatusSnapshot,
   type IdentifyDeviceResponse,
-  type PolicyUpdateResultResponse,
+  type PolicyProposeResultResponse,
   type PolicySummary,
   ProtocolError,
   type SignResultResponse,
@@ -25,8 +25,8 @@ import {
   type SigningCapabilities,
   type StatusResponse,
   validateApprovalHistoryInput,
-  validatePolicyUpdateProposalInput,
-  validateProposePolicyUpdateRequestInput,
+  validatePolicyProposeInput,
+  validatePolicyProposeRequestInput,
   validateSignRequestInput,
 } from "./protocol.js";
 import {
@@ -179,12 +179,12 @@ export type GetAccountsSessionEndedReason = (typeof GET_ACCOUNTS_SESSION_ENDED_R
 
 export const GET_CAPABILITIES_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
 export type GetCapabilitiesSessionEndedReason = GetAccountsSessionEndedReason;
-export const GET_POLICY_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
-export type GetPolicySessionEndedReason = GetAccountsSessionEndedReason;
+export const POLICY_GET_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
+export type PolicyGetSessionEndedReason = GetAccountsSessionEndedReason;
 export const GET_APPROVAL_HISTORY_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
 export type GetApprovalHistorySessionEndedReason = GetAccountsSessionEndedReason;
-export const PROPOSE_POLICY_UPDATE_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
-export type ProposePolicyUpdateSessionEndedReason = GetAccountsSessionEndedReason;
+export const POLICY_PROPOSE_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
+export type PolicyProposeSessionEndedReason = GetAccountsSessionEndedReason;
 export const SIGN_BY_USER_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
 export type SignByUserSessionEndedReason = GetAccountsSessionEndedReason;
 export const SIGN_BY_POLICY_SESSION_ENDED_REASONS = GET_ACCOUNTS_SESSION_ENDED_REASONS;
@@ -216,12 +216,12 @@ export type GetAccountsResult =
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: GetAccountsSessionEndedReason };
 
-// get_policy is read-only and session-scoped. The policy summary is
+// policy_get is read-only and session-scoped. The policy summary is
 // Firmware-authored metadata for the active policy provider used by sign_by_policy.
-export type GetPolicyResult =
+export type PolicyGetResult =
   | { source: "live"; deviceId: string; policy: PolicySummary }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
-  | { source: "session_ended"; deviceId: string; reason: GetPolicySessionEndedReason };
+  | { source: "session_ended"; deviceId: string; reason: PolicyGetSessionEndedReason };
 
 // get_approval_history is read-only and session-scoped. Firmware owns the
 // stored decision records; Gateway validates and transports only bounded pages.
@@ -230,16 +230,16 @@ export type GetApprovalHistoryResult =
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: GetApprovalHistorySessionEndedReason };
 
-export type ProposePolicyUpdateResult =
+export type PolicyProposeResult =
   | {
       source: "live";
       deviceId: string;
-      status: PolicyUpdateResultResponse["status"];
-      reasonCode: PolicyUpdateResultResponse["reasonCode"];
-      policy?: PolicyUpdateResultResponse["policy"];
+      status: PolicyProposeResultResponse["status"];
+      reasonCode: PolicyProposeResultResponse["reasonCode"];
+      policy?: PolicyProposeResultResponse["policy"];
     }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
-  | { source: "session_ended"; deviceId: string; reason: ProposePolicyUpdateSessionEndedReason };
+  | { source: "session_ended"; deviceId: string; reason: PolicyProposeSessionEndedReason };
 
 type SignTerminalResponse = Extract<
   SignResultResponse,
@@ -701,11 +701,11 @@ export class GatewayCore {
     }
   }
 
-  async getPolicy(input: {
+  async policyGet(input: {
     deviceId?: string;
     purpose?: string;
-  } = {}): Promise<GetPolicyResult> {
-    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "getPolicy");
+  } = {}): Promise<PolicyGetResult> {
+    rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "policyGet");
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
 
@@ -726,7 +726,7 @@ export class GatewayCore {
     }
 
     try {
-      const response = await this.usbDriver.getPolicy(
+      const response = await this.usbDriver.policyGet(
         matchingPort.portPath,
         session.sessionId,
         scanDeadlineMs,
@@ -793,11 +793,11 @@ export class GatewayCore {
     }
   }
 
-  async proposePolicyUpdate(input: {
+  async policyPropose(input: {
     deviceId?: string;
     purpose?: string;
     policy: Record<string, unknown>;
-  }): Promise<ProposePolicyUpdateResult> {
+  }): Promise<PolicyProposeResult> {
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
     const policyUpdateDeadlineMs = INTERNAL_POLICY_UPDATE_DEADLINE_MS;
@@ -807,9 +807,9 @@ export class GatewayCore {
       return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
     }
 
-    rejectUnsupportedInputFields(input, PROPOSE_POLICY_UPDATE_INPUT_KEYS, "proposePolicyUpdate");
-    validatePolicyUpdateProposalInput(input.policy);
-    validateProposePolicyUpdateRequestInput(session.sessionId, input.policy);
+    rejectUnsupportedInputFields(input, POLICY_PROPOSE_INPUT_KEYS, "policyPropose");
+    validatePolicyProposeInput(input.policy);
+    validatePolicyProposeRequestInput(session.sessionId, input.policy);
 
     let matchingPort: UsbStatusResult | undefined;
     try {
@@ -823,7 +823,7 @@ export class GatewayCore {
     }
 
     try {
-      const response = await this.usbDriver.proposePolicyUpdate(
+      const response = await this.usbDriver.policyPropose(
         matchingPort.portPath,
         session.sessionId,
         input.policy,
@@ -1251,7 +1251,7 @@ const DEVICE_SCOPED_INPUT_KEYS = new Set(["deviceId", "purpose"]);
 const CONNECT_DEVICE_INPUT_KEYS = new Set(["deviceId", "purpose", "gatewayName"]);
 const SET_DEVICE_METADATA_INPUT_KEYS = new Set(["deviceId", "label"]);
 const GET_APPROVAL_HISTORY_INPUT_KEYS = new Set(["deviceId", "purpose", "limit", "beforeSeq"]);
-const PROPOSE_POLICY_UPDATE_INPUT_KEYS = new Set(["deviceId", "purpose", "policy"]);
+const POLICY_PROPOSE_INPUT_KEYS = new Set(["deviceId", "purpose", "policy"]);
 const SIGN_BY_USER_INPUT_KEYS = new Set(["deviceId", "purpose", "chain", "method", "network", "txBytes"]);
 const SIGN_BY_POLICY_INPUT_KEYS = SIGN_BY_USER_INPUT_KEYS;
 

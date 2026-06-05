@@ -10,7 +10,7 @@ import {
   tryParseMatchingResponseLine,
   validateInternalDeadlineMs,
 } from "../dist/usb.js";
-import { assertPolicyUpdateResultResponse, assertStatusResponse } from "../dist/protocol.js";
+import { assertPolicyProposeResultResponse, assertStatusResponse } from "../dist/protocol.js";
 import { GatewayError } from "../dist/errors.js";
 
 const status = {
@@ -131,8 +131,8 @@ test("surfaces id-less Firmware error responses for the in-flight request", () =
 });
 
 test("ignores terminal responses for a different in-flight request id", () => {
-  const canceledPolicyUpdate = JSON.stringify({
-    id: "req_policy_update",
+  const policyProposeError = JSON.stringify({
+    id: "req_policy_propose",
     version: 1,
     type: "error",
     error: {
@@ -142,15 +142,15 @@ test("ignores terminal responses for a different in-flight request id", () => {
   });
 
   assert.equal(
-    tryParseMatchingResponseLine(canceledPolicyUpdate, "req_disconnect", assertStatusResponse),
+    tryParseMatchingResponseLine(policyProposeError, "req_disconnect", assertStatusResponse),
     undefined,
   );
   assert.throws(
     () =>
       tryParseMatchingResponseLine(
-        canceledPolicyUpdate,
-        "req_policy_update",
-        assertPolicyUpdateResultResponse,
+        policyProposeError,
+        "req_policy_propose",
+        assertPolicyProposeResultResponse,
       ),
     {
       code: "invalid_session",

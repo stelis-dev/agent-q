@@ -5,7 +5,7 @@ import {
   assertApprovalHistoryResponse,
   assertCapabilitiesResponse,
   assertPolicyResponse,
-  assertPolicyUpdateResultResponse,
+  assertPolicyProposeResultResponse,
   assertSignResultResponse,
   assertConnectResponse,
   assertDisconnectResponse,
@@ -22,10 +22,10 @@ import {
   makeGetCapabilitiesRequest,
   makeGetAccountsRequest,
   makeGetApprovalHistoryRequest,
-  makeGetPolicyRequest,
+  makePolicyGetRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
-  makeProposePolicyUpdateRequest,
+  makePolicyProposeRequest,
   makeSignByPolicyRequest,
   makeSignByUserRequest,
   MAX_SESSION_TTL_MS,
@@ -284,17 +284,17 @@ test("makeGetAccountsRequest validates sessionId", () => {
   assert.throws(() => makeGetAccountsRequest("session_"), /Invalid sessionId/);
 });
 
-test("makeGetPolicyRequest validates sessionId", () => {
-  const request = makeGetPolicyRequest("session_abcdef0123456789", "req_get_policy_1");
+test("makePolicyGetRequest validates sessionId", () => {
+  const request = makePolicyGetRequest("session_abcdef0123456789", "req_policy_get_1");
   assert.deepEqual(request, {
-    id: "req_get_policy_1",
+    id: "req_policy_get_1",
     version: 1,
-    type: "get_policy",
+    type: "policy_get",
     sessionId: "session_abcdef0123456789",
   });
 
-  assert.throws(() => makeGetPolicyRequest("not_a_session"), /Invalid sessionId/);
-  assert.throws(() => makeGetPolicyRequest("session_"), /Invalid sessionId/);
+  assert.throws(() => makePolicyGetRequest("not_a_session"), /Invalid sessionId/);
+  assert.throws(() => makePolicyGetRequest("session_"), /Invalid sessionId/);
 });
 
 test("makeGetApprovalHistoryRequest validates session and pagination params", () => {
@@ -381,7 +381,7 @@ test("makeSignByUserRequest and makeSignByPolicyRequest build identical signing 
   );
 });
 
-test("makeProposePolicyUpdateRequest builds admin proposal requests without chain authority", () => {
+test("makePolicyProposeRequest builds admin proposal requests without chain authority", () => {
   const policy = {
     schema: "agentq.policy.v0",
     defaultAction: "reject",
@@ -395,15 +395,15 @@ test("makeProposePolicyUpdateRequest builds admin proposal requests without chai
       },
     ],
   };
-  const request = makeProposePolicyUpdateRequest(
+  const request = makePolicyProposeRequest(
     "session_abcdef0123456789",
     policy,
-    "req_policy_update_1",
+    "req_policy_propose_1",
   );
   assert.deepEqual(request, {
-    id: "req_policy_update_1",
+    id: "req_policy_propose_1",
     version: 1,
-    type: "propose_policy_update",
+    type: "policy_propose",
     sessionId: "session_abcdef0123456789",
     params: { policy },
   });
@@ -411,19 +411,19 @@ test("makeProposePolicyUpdateRequest builds admin proposal requests without chai
   assert.ok(Buffer.byteLength(serializeRequest(request), "utf8") <= 4097);
 
   assert.throws(
-    () => makeProposePolicyUpdateRequest("not_a_session", policy),
+    () => makePolicyProposeRequest("not_a_session", policy),
     /sessionId/,
   );
   assert.throws(
-    () => makeProposePolicyUpdateRequest("session_abcdef0123456789", []),
-    /proposal/,
+    () => makePolicyProposeRequest("session_abcdef0123456789", []),
+    /policy_propose/,
   );
   assert.throws(
-    () => makeProposePolicyUpdateRequest("session_abcdef0123456789", { seed: "must-not-forward" }),
+    () => makePolicyProposeRequest("session_abcdef0123456789", { seed: "must-not-forward" }),
     /secret material/,
   );
   assert.throws(
-    () => makeProposePolicyUpdateRequest("session_abcdef0123456789", { data: "x".repeat(5000) }),
+    () => makePolicyProposeRequest("session_abcdef0123456789", { data: "x".repeat(5000) }),
     /too large/,
   );
 });
@@ -878,7 +878,7 @@ test("parseProtocolResponse accepts signing approval history records", () => {
   assert.equal(terminal.records[0].payloadDigest, APPROVAL_DIGEST);
 });
 
-test("parseProtocolResponse rejects non-recordable policy update results", () => {
+test("parseProtocolResponse rejects non-recordable policy_propose_result statuses", () => {
   for (const result of ["history_error", "consistency_error", "invalid_policy"]) {
     assert.throws(
       () => parseProtocolResponse(approvalHistoryPolicyUpdateLine({ result }), "req_approval_history"),
@@ -997,30 +997,30 @@ test("parseProtocolResponse rejects unsupported approval history response shape"
   );
 });
 
-const policyUpdateResultPolicy = (overrides = {}) => ({
+const policyProposeResultPolicy = (overrides = {}) => ({
   policyHash: APPROVAL_DIGEST,
   ruleCount: 1,
   highestAction: "reject",
   ...overrides,
 });
 
-const policyUpdateResultLine = (overrides = {}, policyOverrides = undefined) =>
+const policyProposeResultLine = (overrides = {}, policyOverrides = undefined) =>
   JSON.stringify({
-    id: "req_policy_update",
+    id: "req_policy_propose",
     version: 1,
-    type: "policy_update_result",
+    type: "policy_propose_result",
     status: "applied",
     reasonCode: "device_confirmed",
-    policy: policyOverrides === null ? undefined : policyUpdateResultPolicy(policyOverrides),
+    policy: policyOverrides === null ? undefined : policyProposeResultPolicy(policyOverrides),
     ...overrides,
   });
 
-test("parseProtocolResponse accepts policy_update_result terminal outcomes", () => {
+test("parseProtocolResponse accepts policy_propose_result terminal outcomes", () => {
   for (const status of ["applied", "rejected", "timed_out", "ui_error", "storage_error", "consistency_error"]) {
-    const response = assertPolicyUpdateResultResponse(
-      parseProtocolResponse(policyUpdateResultLine({ status }), "req_policy_update"),
+    const response = assertPolicyProposeResultResponse(
+      parseProtocolResponse(policyProposeResultLine({ status }), "req_policy_propose"),
     );
-    assert.equal(response.type, "policy_update_result");
+    assert.equal(response.type, "policy_propose_result");
     assert.equal(response.status, status);
     assert.equal(response.reasonCode, "device_confirmed");
     assert.equal(response.policy.policyHash, APPROVAL_DIGEST);
@@ -1028,17 +1028,17 @@ test("parseProtocolResponse accepts policy_update_result terminal outcomes", () 
     assert.equal(response.policy.highestAction, "reject");
   }
 
-  const invalid = assertPolicyUpdateResultResponse(
+  const invalid = assertPolicyProposeResultResponse(
     parseProtocolResponse(
-      policyUpdateResultLine({ status: "invalid_policy", reasonCode: "invalid_policy" }, null),
-      "req_policy_update",
+      policyProposeResultLine({ status: "invalid_policy", reasonCode: "invalid_policy" }, null),
+      "req_policy_propose",
     ),
   );
   assert.equal(invalid.status, "invalid_policy");
   assert.equal(invalid.policy, undefined);
 });
 
-test("parseProtocolResponse rejects malformed policy_update_result responses", () => {
+test("parseProtocolResponse rejects malformed policy_propose_result responses", () => {
   for (const override of [
     { status: "busy" },
     { status: "history_error" },
@@ -1048,9 +1048,9 @@ test("parseProtocolResponse rejects malformed policy_update_result responses", (
     { sessionId: "session_abcdef0123456789" },
   ]) {
     assert.throws(
-      () => parseProtocolResponse(policyUpdateResultLine(override), "req_policy_update"),
+      () => parseProtocolResponse(policyProposeResultLine(override), "req_policy_propose"),
       { code: "protocol_error" },
-      `policy_update_result override should be rejected: ${JSON.stringify(override)}`,
+      `policy_propose_result override should be rejected: ${JSON.stringify(override)}`,
     );
   }
 
@@ -1063,9 +1063,9 @@ test("parseProtocolResponse rejects malformed policy_update_result responses", (
     { sessionId: "session_abcdef0123456789" },
   ]) {
     assert.throws(
-      () => parseProtocolResponse(policyUpdateResultLine({}, policyOverride), "req_policy_update"),
+      () => parseProtocolResponse(policyProposeResultLine({}, policyOverride), "req_policy_propose"),
       { code: "protocol_error" },
-      `policy_update_result policy override should be rejected: ${JSON.stringify(policyOverride)}`,
+      `policy_propose_result policy override should be rejected: ${JSON.stringify(policyOverride)}`,
     );
   }
 });

@@ -11,8 +11,8 @@ import {
   type GetAccountsResult,
   type GetApprovalHistoryResult,
   type GetCapabilitiesResult,
-  type GetPolicyResult,
-  type ProposePolicyUpdateResult,
+  type PolicyGetResult,
+  type PolicyProposeResult,
   type SetDeviceMetadataResult,
   type SignByPolicyResult,
 } from "@stelis/agent-q-client/admin";
@@ -36,14 +36,14 @@ import {
   mcpGetCapabilitiesToolOutputShape,
   getDeviceStatusSuccessOutputShape,
   getDeviceStatusToolOutputShape,
-  getPolicySuccessOutputShape,
-  getPolicyToolOutputShape,
+  policyGetSuccessOutputShape,
+  policyGetToolOutputShape,
   identifyDevicesSuccessOutputShape,
   identifyDevicesToolOutputShape,
   listDevicesSuccessOutputShape,
   listDevicesToolOutputShape,
-  proposePolicyUpdateSuccessOutputShape,
-  proposePolicyUpdateToolOutputShape,
+  policyProposeSuccessOutputShape,
+  policyProposeToolOutputShape,
   scanDevicesSuccessOutputShape,
   scanDevicesToolOutputShape,
   selectDeviceSuccessOutputShape,
@@ -187,8 +187,8 @@ export const gatewayToolDefinitions = {
     outputSchema: getAccountsToolOutputShape,
     successOutputSchema: getAccountsSuccessOutputShape,
   },
-  getPolicy: {
-    name: "get_policy",
+  policyGet: {
+    name: "policy_get",
     title: "Get policy",
     description:
       "Read the Firmware-owned active policy summary over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Read-only: no policy update, no signing, no private material, and no session id is ever returned.",
@@ -196,8 +196,8 @@ export const gatewayToolDefinitions = {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
     },
-    outputSchema: getPolicyToolOutputShape,
-    successOutputSchema: getPolicySuccessOutputShape,
+    outputSchema: policyGetToolOutputShape,
+    successOutputSchema: policyGetSuccessOutputShape,
   },
   getApprovalHistory: {
     name: "get_approval_history",
@@ -229,18 +229,18 @@ export const gatewayToolDefinitions = {
     outputSchema: signByPolicyToolOutputShape,
     successOutputSchema: signByPolicySuccessOutputShape,
   },
-  proposePolicyUpdate: {
-    name: "propose_policy_update",
+  policyPropose: {
+    name: "policy_propose",
     title: "Propose policy update",
     description:
-      "Submit a bounded active-policy proposal to Agent-Q Firmware for device-local PIN approval. This is a request path only: Gateway and MCP do not store, apply, or decide policy, and Firmware returns the terminal policy_update_result.",
+      "Submit a bounded active-policy proposal to Agent-Q Firmware for device-local PIN approval. This is a request path only: Gateway and MCP do not store, apply, or decide policy, and Firmware returns the terminal policy_propose_result.",
     inputSchema: {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
       policy: z.object({}).passthrough(),
     },
-    outputSchema: proposePolicyUpdateToolOutputShape,
-    successOutputSchema: proposePolicyUpdateSuccessOutputShape,
+    outputSchema: policyProposeToolOutputShape,
+    successOutputSchema: policyProposeSuccessOutputShape,
   },
 } as const;
 
@@ -427,18 +427,18 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
   );
 
   server.registerTool(
-    gatewayToolDefinitions.getPolicy.name,
+    gatewayToolDefinitions.policyGet.name,
     {
-      title: gatewayToolDefinitions.getPolicy.title,
-      description: gatewayToolDefinitions.getPolicy.description,
-      inputSchema: gatewayToolDefinitions.getPolicy.inputSchema,
+      title: gatewayToolDefinitions.policyGet.title,
+      description: gatewayToolDefinitions.policyGet.description,
+      inputSchema: gatewayToolDefinitions.policyGet.inputSchema,
       // Success is a discriminated union (live | not_connected | session_ended),
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
     async ({ deviceId, purpose }) =>
-      run(gatewayToolDefinitions.getPolicy.successOutputSchema, () =>
-        core.getPolicy({ deviceId, purpose }),
+      run(gatewayToolDefinitions.policyGet.successOutputSchema, () =>
+        core.policyGet({ deviceId, purpose }),
       ),
   );
 
@@ -475,18 +475,18 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
   );
 
   server.registerTool(
-    gatewayToolDefinitions.proposePolicyUpdate.name,
+    gatewayToolDefinitions.policyPropose.name,
     {
-      title: gatewayToolDefinitions.proposePolicyUpdate.title,
-      description: gatewayToolDefinitions.proposePolicyUpdate.description,
-      inputSchema: gatewayToolDefinitions.proposePolicyUpdate.inputSchema,
+      title: gatewayToolDefinitions.policyPropose.title,
+      description: gatewayToolDefinitions.policyPropose.description,
+      inputSchema: gatewayToolDefinitions.policyPropose.inputSchema,
       // Success is a discriminated union (live | not_connected | session_ended),
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
     async ({ deviceId, purpose, policy }) =>
-      run(gatewayToolDefinitions.proposePolicyUpdate.successOutputSchema, () =>
-        core.proposePolicyUpdate({ deviceId, purpose, policy }),
+      run(gatewayToolDefinitions.policyPropose.successOutputSchema, () =>
+        core.policyPropose({ deviceId, purpose, policy }),
       ),
   );
 
@@ -606,7 +606,7 @@ type StructuredToolResult =
   | GetAccountsResult
   | GetApprovalHistoryResult
   | GetCapabilitiesResult
-  | GetPolicyResult;
+  | PolicyGetResult;
 
 // Must only ever receive an already-sanitized success result or a public error
 // result. Both structuredContent and the text mirror are derived from the same

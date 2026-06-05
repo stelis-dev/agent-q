@@ -84,11 +84,11 @@ Implemented today:
   while the target stores the committed active policy as a canonical binary
   record in ordinary NVS and can load canonical current-schema policy records
   through its internal storage boundary. Firmware reads a public summary through
-  `get_policy`, consumes that active policy for Sui `sign_transaction`
+  `policy_get`, consumes that active policy for Sui `sign_transaction`
   policy-authorized signing, rejects broad, multi-rule, and multi-recipient sign
   policies that the current device-local policy review cannot show clearly, and
   exposes policy update authorization only through the Firmware-owned
-  `propose_policy_update` proposal flow. Policy actions do not authorize the
+  `policy_propose` proposal flow. Policy actions do not authorize the
   separate device-confirmed signing path.
 - A Gateway-served local Admin Page for read-only device metadata and the
   current policy proposal template. It uses the same Gateway core
@@ -96,7 +96,7 @@ Implemented today:
 - A bounded persistent approval-history read path. The current StackChan CoreS3
   target stores Firmware-authored signing confirmation/terminal metadata for
   `sign_by_policy` and `sign_by_user`, plus recordable terminal metadata from
-  `propose_policy_update`. History does not store raw txBytes,
+  `policy_propose`. History does not store raw txBytes,
   decoded transactions, raw policy documents, full rule content, session ids,
   request ids, gateway names, PINs, secret material, or full policy documents.
   Local reset and error-state erase recovery wipe the history.
@@ -107,9 +107,10 @@ Implemented today:
   material, models local PIN confirmation, requires history before signing,
   emits terminal metadata, and owns cleanup. The current public USB dispatcher,
   client/provider parser/API, `sign_result` writer, and provider-facing
-  `signing` capability are wired in source. MCP exposes only
-  policy-authorized `sign_by_policy` and fails closed on provider-facing
-  user-confirmed signing metadata. Current-tree
+  `signing` capability are wired in source. The MCP adapter projects this to
+  policy-authorized `sign_by_policy` only and fails closed on provider-facing
+  user-confirmed signing metadata. That projection is not a security boundary;
+  Firmware still owns signing authorization. Current-tree
   positive/reject/timeout/session-loss hardware smoke for the new Sign API wire
   names remains pending; product-active status is not claimed.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
@@ -221,9 +222,11 @@ Signing requests have two separate authority models:
   `sign_by_user` protocol request and must require Firmware-owned
   device-local confirmation for a bounded signing request. The confirmation
   does not prove the request came from a trustworthy host, dapp, provider,
-  agent, or upstream user intent. Provider-facing signing must use this model,
-  while MCP agent-facing signing is limited to the delegated `sign_by_policy`
-  path. The `provider-exposed-not-product-active` runtime
+  agent, or upstream user intent. The provider-sui adapter presents this model
+  through its dapp-facing API, while the MCP adapter presents delegated
+  `sign_by_policy` through its agent-facing tool surface. That package-level
+  projection is not a hard security barrier against direct imports of broader
+  client/Admin entrypoints. The `provider-exposed-not-product-active` runtime
   models local PIN confirmation and does not reuse the connect-only PIN setting
   as the signing confirmation policy.
 
@@ -500,7 +503,7 @@ Allowed direction:
 - A policy write requires Firmware-side authorization (section 8).
 - Firmware update accepts signed images only.
 - Policy update proposals use a dedicated Admin/update method such as
-  `propose_policy_update`; they must not be exposed as `set_policy`,
+  `policy_propose`; they must not be exposed as `set_policy`,
   `force_policy`, `clear_policy`, or another direct state-changing setter.
 
 Enforcement today:
@@ -509,15 +512,16 @@ Enforcement today:
   registered tools must equal a fixed set, both at definition and over the live
   transport. A new tool such as `export_key` cannot be added without failing
   those tests.
-- MCP policy-authorized signing is exposed only through `sign_by_policy` and
-  remains bounded by Firmware state gates, the Sui restricted-transfer adapter,
-  and the active policy. Provider-facing device-confirmed signing is exposed
-  only through the separate `sign_by_user` path for the bounded restricted
-  transfer shape; it is not an MCP signing tool. Arbitrary Sui transactions,
-  personal-message signing, and other chains are not implemented. The top-level
-  tool allowlist does not grant authority to method names carried inside
-  `sign_by_policy`; Firmware method adapters and active policy validation remain
-  the method boundary for delegated policy requests.
+- The MCP adapter exposes policy-authorized signing through `sign_by_policy`,
+  which remains bounded by Firmware state gates, the Sui restricted-transfer
+  adapter, and the active policy. The provider-sui adapter exposes
+  device-confirmed signing through `sign_by_user` for the bounded restricted
+  transfer shape. These adapter surfaces clarify caller audience; they are not
+  the signing authority. Arbitrary Sui transactions, personal-message signing,
+  and other chains are not implemented. The top-level tool allowlist does not
+  grant authority to method names carried inside `sign_by_policy`; Firmware
+  method adapters and active policy validation remain the method boundary for
+  delegated policy requests.
 
 ## 12. Device Capability Tiers
 

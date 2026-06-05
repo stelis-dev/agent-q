@@ -10,7 +10,7 @@ test("client entrypoint constructs an admin-disabled device core facade", () => 
   assert.equal(typeof core.scanDevices, "function");
   assert.equal(core.signByPolicy, undefined);
   assert.equal(typeof core.signByUser, "function");
-  assert.equal(core.proposePolicyUpdate, undefined);
+  assert.equal(core.policyPropose, undefined);
 });
 
 test("admin entrypoint constructs the admin-capable Gateway core", () => {
