@@ -867,6 +867,23 @@ bool json_object_fields_supported(
     return true;
 }
 
+bool write_invalid_params_if_unsupported_request_fields(
+    const char* id,
+    JsonDocument& request,
+    const char* const* allowed_keys,
+    size_t allowed_key_count,
+    const char* message)
+{
+    if (json_object_fields_supported(
+            request.as<JsonVariantConst>(),
+            allowed_keys,
+            allowed_key_count)) {
+        return false;
+    }
+    write_error_response(id, "invalid_params", message);
+    return true;
+}
+
 void clear_active_session()
 {
     agent_q::session_clear();
@@ -4969,8 +4986,12 @@ void handle_sign_transaction_policy_mode(const char* id, JsonDocument& request)
     }
 
     const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "chain", "method", "params"};
-    if (!json_object_fields_supported(request.as<JsonVariantConst>(), allowed_request_fields, 7)) {
-        write_error_response(id, "invalid_params", "sign_transaction request contains unsupported fields.");
+    if (write_invalid_params_if_unsupported_request_fields(
+            id,
+            request,
+            allowed_request_fields,
+            7,
+            "sign_transaction request contains unsupported fields.")) {
         return;
     }
 
@@ -5115,6 +5136,15 @@ void handle_line(const char* line)
         return;
     }
     if (strcmp(type, "get_status") == 0) {
+        const char* const allowed_request_fields[] = {"id", "version", "type"};
+        if (write_invalid_params_if_unsupported_request_fields(
+                id,
+                request,
+                allowed_request_fields,
+                3,
+                "get_status request contains unsupported fields.")) {
+            return;
+        }
         if (!write_status_response(id)) {
             log_response_write_failure("status", id);
         }
@@ -5123,6 +5153,15 @@ void handle_line(const char* line)
 
     if (strcmp(type, "identify_device") == 0) {
         if (write_busy_if_pending_or_local_flow_active(id)) {
+            return;
+        }
+        const char* const allowed_request_fields[] = {"id", "version", "type", "params"};
+        if (write_invalid_params_if_unsupported_request_fields(
+                id,
+                request,
+                allowed_request_fields,
+                4,
+                "identify_device request contains unsupported fields.")) {
             return;
         }
         const char* const allowed_identify_params[] = {"code"};
@@ -5156,6 +5195,15 @@ void handle_line(const char* line)
             return;
         }
         if (write_busy_if_pending_or_local_flow_active(id)) {
+            return;
+        }
+        const char* const allowed_request_fields[] = {"id", "version", "type", "params"};
+        if (write_invalid_params_if_unsupported_request_fields(
+                id,
+                request,
+                allowed_request_fields,
+                4,
+                "connect request contains unsupported fields.")) {
             return;
         }
         const char* const allowed_connect_params[] = {"gatewayName"};
@@ -5206,6 +5254,16 @@ void handle_line(const char* line)
             return;
         }
         if (!require_active_matching_session(id, session_id)) {
+            return;
+        }
+
+        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "chain", "method", "params"};
+        if (write_invalid_params_if_unsupported_request_fields(
+                id,
+                request,
+                allowed_request_fields,
+                7,
+                "sign_transaction request contains unsupported fields.")) {
             return;
         }
 
@@ -5308,6 +5366,16 @@ void handle_line(const char* line)
             return;
         }
 
+        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "chain", "method", "params"};
+        if (write_invalid_params_if_unsupported_request_fields(
+                id,
+                request,
+                allowed_request_fields,
+                7,
+                "sign_personal_message request contains unsupported fields.")) {
+            return;
+        }
+
         agent_q::AgentQSigningAuthorizationMode signing_mode =
             agent_q::AgentQSigningAuthorizationMode::user;
         if (!agent_q::read_signing_authorization_mode(&signing_mode)) {
@@ -5399,6 +5467,15 @@ void handle_line(const char* line)
         if (!require_active_matching_session(id, session_id)) {
             return;
         }
+        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
+        if (write_invalid_params_if_unsupported_request_fields(
+                id,
+                request,
+                allowed_request_fields,
+                4,
+                "disconnect request contains unsupported fields.")) {
+            return;
+        }
         if (disconnect_pending_policy_update_for_session(id, session_id)) {
             return;
         }
@@ -5434,6 +5511,16 @@ void handle_line(const char* line)
             return;
         }
         if (!require_active_matching_session(id, session_id)) {
+            return;
+        }
+
+        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
+        if (write_invalid_params_if_unsupported_request_fields(
+                id,
+                request,
+                allowed_request_fields,
+                4,
+                "get_capabilities request contains unsupported fields.")) {
             return;
         }
 
@@ -5473,6 +5560,16 @@ void handle_line(const char* line)
             return;
         }
 
+        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
+        if (write_invalid_params_if_unsupported_request_fields(
+                id,
+                request,
+                allowed_request_fields,
+                4,
+                "get_accounts request contains unsupported fields.")) {
+            return;
+        }
+
         if (!write_accounts_response(id)) {
             write_error_response(id, "account_error", "Could not derive accounts.");
             ESP_LOGW(kTag, "get_accounts derivation failed: id=%s", id);
@@ -5500,6 +5597,16 @@ void handle_line(const char* line)
             return;
         }
         if (!require_active_matching_session(id, session_id)) {
+            return;
+        }
+
+        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
+        if (write_invalid_params_if_unsupported_request_fields(
+                id,
+                request,
+                allowed_request_fields,
+                4,
+                "policy_get request contains unsupported fields.")) {
             return;
         }
 
@@ -5534,6 +5641,16 @@ void handle_line(const char* line)
             return;
         }
         if (!require_active_matching_session(id, session_id)) {
+            return;
+        }
+
+        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "params"};
+        if (write_invalid_params_if_unsupported_request_fields(
+                id,
+                request,
+                allowed_request_fields,
+                5,
+                "get_approval_history request contains unsupported fields.")) {
             return;
         }
 
@@ -5572,8 +5689,12 @@ void handle_line(const char* line)
         }
 
         const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "params"};
-        if (!json_object_fields_supported(request.as<JsonVariantConst>(), allowed_request_fields, 5)) {
-            write_error_response(id, "invalid_params", "Policy update request contains unsupported fields.");
+        if (write_invalid_params_if_unsupported_request_fields(
+                id,
+                request,
+                allowed_request_fields,
+                5,
+                "policy_propose request contains unsupported fields.")) {
             return;
         }
 

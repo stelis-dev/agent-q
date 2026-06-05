@@ -142,6 +142,10 @@ expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'write_busy_if_pending_or_loca
   "USB request server must check busy state before reading signing mode"
 expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'require_active_matching_session' 'read_signing_authorization_mode' \
   "USB request server must check active session before reading signing mode"
+expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'require_active_matching_session' 'write_invalid_params_if_unsupported_request_fields' \
+  "USB request server must check active session before sign_transaction request exactness"
+expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'write_invalid_params_if_unsupported_request_fields' 'read_signing_authorization_mode' \
+  "USB request server must check sign_transaction request exactness before reading signing mode"
 
 SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET="${TMP_DIR}/sign-personal-message-branch.cpp"
 awk '
@@ -157,6 +161,10 @@ expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'write_busy_if_pending_or
   "sign_personal_message must check busy state before reading signing mode"
 expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'require_active_matching_session' 'read_signing_authorization_mode' \
   "sign_personal_message must check active session before reading signing mode"
+expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'require_active_matching_session' 'write_invalid_params_if_unsupported_request_fields' \
+  "sign_personal_message must check active session before request exactness"
+expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'write_invalid_params_if_unsupported_request_fields' 'read_signing_authorization_mode' \
+  "sign_personal_message must check request exactness before reading signing mode"
 expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'AgentQSigningAuthorizationMode::policy' \
   "sign_personal_message branch must explicitly handle policy mode"
 expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'unsupported_method' \
@@ -197,6 +205,22 @@ expect_present "${USER_BRANCH_SNIPPET}" 'user_signing_flow_begin' \
   "USB request server user branch snippet must be captured"
 expect_absent "${USER_BRANCH_SNIPPET}" 'evaluate_sign_transaction_policy|write_policy_signing_confirmation_history' \
   "USB request server user branch must not apply or record policy authorization"
+
+for request_name in \
+  get_status \
+  identify_device \
+  connect \
+  disconnect \
+  get_capabilities \
+  get_accounts \
+  policy_get \
+  get_approval_history \
+  policy_propose \
+  sign_transaction \
+  sign_personal_message; do
+  expect_present "${USB_SERVER}" "${request_name} request contains unsupported fields" \
+    "USB request server must exact-check ${request_name} top-level request fields"
+done
 
 expect_tree_present "${CLIENT_SOURCE}" 'signTransaction|sign_transaction|sign_result' \
   "Gateway client source must expose the new Sign API"
