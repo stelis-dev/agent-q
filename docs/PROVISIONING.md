@@ -107,15 +107,17 @@ setup source also records a DEV_PROFILE local PIN verifier before reporting
 `provisioned`, and initializes device-local signing authorization mode to
 `user`. Source/build tests cover the provisioned Gateway/MCP session path
 through `get_accounts`, policy-decision rejection, restricted SUI transfer
-request validation, and the current `sign_transaction` policy/user gate split.
+request validation, the current `sign_transaction` policy/user gate split, and
+the user-mode `sign_personal_message` source path.
 Hardware smoke coverage exists for StackChan CoreS3 local setup and PIN entry.
 Targeted hardware verification remains required after setup UI or state changes.
 Source-level local settings
 reset/material wipe now exists for provisioned StackChan CoreS3 devices, with
 hardware smoke coverage for local reset.
 Device-local Recover is implemented for DEV_PROFILE. USB/Gateway/MCP mnemonic
-import, host-assisted import, arbitrary transaction signing, and automatic
-signing are not implemented.
+import, host-assisted import, and arbitrary transaction signing are not
+implemented. Automatic signing outside the bounded policy-authorized
+`sign_transaction` path is not implemented.
 
 ## Chain Accounts
 
@@ -132,16 +134,18 @@ Rules:
 
 - Gateway must not derive private keys.
 - Firmware returns public key/address data through `get_accounts`.
-- The unified `sign_transaction` path has `source-wired-not-product-active`
-  status for only the bounded Sui `sign_transaction` transfer shape.
+- The current Sign API source paths have `source-wired-not-product-active`
+  status for the bounded Sui `sign_transaction` transfer shape and user-mode
+  Sui `sign_personal_message`.
   Firmware reads its local signing authorization mode and selects one gate:
   policy mode evaluates active policy and signs with speech-bubble status
   notifications when policy authorizes the bounded request, while user mode uses
   device-local clear-signing review and local PIN confirmation. Requests cannot
-  choose this mode.
+  choose this mode. Personal-message signing is user-mode only and fails closed
+  in policy mode.
   Current-tree
-  positive/reject/timeout/session-loss hardware smoke for the new Sign API wire
-  name remains pending, so product-active status is not claimed.
+  positive/reject/timeout/session-loss hardware smoke coverage for the current
+  Sign API wire names remains pending, so product-active status is not claimed.
 - Agent-Q must not add chain-specific top-level MCP tools.
 
 The first implementation target is Sui Ed25519.
@@ -176,9 +180,10 @@ not keep reporting `provisioned` while rejecting all session APIs.
 
 The current DEV_PROFILE runtime does not import or export root signing material.
 Read-only public Sui account derivation is available via `get_accounts`.
-The `sign_transaction` source path exists for the bounded Sui
-`sign_transaction` shape, but product-active claims still depend on the target
-evidence tracked in `docs/IMPLEMENTATION_STATUS.md`.
+The current Sign API source paths exist for bounded Sui `sign_transaction`
+transaction bytes and user-mode `sign_personal_message` personal-message bytes,
+but product-active claims still depend on the target evidence tracked in
+`docs/IMPLEMENTATION_STATUS.md`.
 Current StackChan CoreS3 source can generate a BIP-39 recovery
 phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
 3-column by 4-row grid, and wipe scratch on confirm, cancel, timeout, failure,
@@ -201,7 +206,7 @@ stateDiagram-v2
 
     Unprovisioned: no root signing material, active policy, local PIN verifier, or signing mode
     Unprovisioned: optional volatile mnemonic/root/PIN setup scratch only
-    Provisioned: root material, active policy, local PIN verifier, and signing mode stored; read-only get_accounts/policy_get available; sign_transaction can run after session approval
+    Provisioned: root material, active policy, local PIN verifier, and signing mode stored; read-only get_accounts/policy_get available; Sign API requests can run after session approval
 ```
 
 The current runtime does not expose USB requests for provisioning start,
@@ -348,8 +353,8 @@ personal-message signing are not implemented. Arbitrary Sui transaction signing
 outside the restricted transfer shape, full Admin policy editing beyond the
 current policy proposal template, and USER_PROFILE secure provisioning are not
 implemented. Provider-facing
-`sign_transaction` product-active status still requires LVGL visual evidence for
-the current source tree.
+Sign API product-active status still requires LVGL visual evidence for the
+current source tree.
 
 ## Completion Criteria
 

@@ -141,13 +141,18 @@ Protocol error codes:
 - `invalid_state`
 - `invalid_method`
 - `invalid_params`
+- `protocol_error`
 - `unsupported_version`
 - `unsupported_type`
+- `unsupported_method`
+- `unsupported_transaction`
 - `busy`
 - `rejected`
 - `timeout`
 - `policy_error`
 - `history_error`
+- `auth_unavailable`
+- `ui_error`
 - `rng_error`
 - `account_error`
 
@@ -168,6 +173,7 @@ get_status
     -> policy_get
     -> get_approval_history
     -> sign_transaction*
+    -> sign_personal_message*
   -> disconnect
 ```
 
@@ -192,7 +198,8 @@ Flow rules:
   approval as a physical confirm or as local PIN verification, but PIN entry
   must never be a USB protocol request.
 - `get_capabilities`, `get_accounts`, `policy_get`, `get_approval_history`,
-  `sign_transaction`, and `policy_propose` require `sessionId`.
+  `sign_transaction`, `sign_personal_message`, and `policy_propose` require
+  `sessionId`.
 - `disconnect` ends the session.
 - Firmware should reject session-scoped requests with an unknown or inactive
   `sessionId`.
@@ -1204,11 +1211,17 @@ Rules for the first implementation:
   request ids, mnemonic text, seed, private key material, PINs, or device-local
   UI state.
 
+## Sign Result Response Examples
+
+The following examples apply to the signing requests above. Signed transaction
+responses do not include `messageBytes`; signed personal-message responses
+include the canonical base64 message bytes that Firmware signed.
+
 Signed transaction response:
 
 ```json
 {
-  "id": "req_signature_001",
+  "id": "req_sign_tx_001",
   "version": 1,
   "type": "sign_result",
   "authorization": "user",
@@ -1235,11 +1248,11 @@ Signed personal-message response:
 }
 ```
 
-Rejected response:
+User rejected response:
 
 ```json
 {
-  "id": "req_signature_001",
+  "id": "req_sign_tx_001",
   "version": 1,
   "type": "sign_result",
   "authorization": "user",
@@ -1287,7 +1300,7 @@ fields. Current adapter projections may expose only a subset of signing paths,
 but Firmware remains responsible for rejecting unavailable or invalid signing
 requests.
 
-Response delivery and provider boundary:
+## Response Delivery And Provider Boundary
 
 - Firmware signature generation, terminal history persistence, USB response
   delivery, Gateway receipt, provider return, and application use of a

@@ -32,9 +32,10 @@ The current implementation includes:
   records validated `sign_transaction` policy confirmation records only after
   policy approval, user confirmation records only after device-local approval,
   terminal signing records for signed/failed/rejected/timed-out outcomes as
-  applicable, and recordable `policy_propose` terminal results. Current-tree
-  positive/reject/timeout/session-loss smoke for the new Sign API wire name
-  remains pending, so product-active status is not claimed.
+  applicable, user-mode `sign_personal_message` confirmation/terminal metadata,
+  and recordable `policy_propose` terminal results. Current-tree
+  positive/reject/timeout/session-loss smoke coverage for the current Sign API
+  wire names remains pending, so product-active status is not claimed.
 - a USB JSONL `sign_transaction` path. It requires material-backed `provisioned`
   state plus a matching active session, keeps unknown methods rejected with
   `unsupported_method`, and validates Sui `sign_transaction` restricted SUI
@@ -109,8 +110,13 @@ user mode performs device confirmation for the bounded restricted transfer
 shape after clear-signing review, local PIN, and required history. It rejects
 unsupported transactions and returns `signed`, `policy_rejected`,
 `user_rejected`, `user_timed_out`, or `signing_failed` through `sign_result` as
-applicable. Current-tree positive/reject/timeout/session-loss smoke for the new
-Sign API wire name remains pending, so product-active status is not claimed.
+applicable. Current-tree positive/reject/timeout/session-loss smoke for the
+`sign_transaction` wire name remains pending, so product-active status is not
+claimed.
+The target also exposes user-mode `sign_personal_message` for bounded Sui
+personal-message bytes; policy mode fails closed for that method until matching
+policy facts and rules are implemented. Current-tree hardware smoke and LVGL
+visual evidence for personal-message signing remain pending.
 
 This target also implements the Firmware-owned `policy_propose` request
 for bounded current-schema policy proposals over an active session, local PIN approval, canonical

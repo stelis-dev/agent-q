@@ -85,8 +85,9 @@ registry, USB transport, runtime session mirror, and protocol parsing and
 building. `@stelis/agent-q-mcp` provides the stdio MCP server, CLI binary, and
 local Admin Page. `@stelis/agent-q-provider-sui` provides the Sui
 application-facing adapter for current device, session, read-only Sui
-capabilities, Sui `signTransaction`, and an app-imported Sui Wallet Standard
-registration adapter for `sui:signTransaction`.
+capabilities, Sui `signTransaction`, user-confirmed `signPersonalMessage`, and
+an app-imported Sui Wallet Standard registration adapter for
+`sui:signTransaction` and `sui:signPersonalMessage`.
 
 Current package roles and dependencies:
 
@@ -94,7 +95,7 @@ Current package roles and dependencies:
 | --- | --- | --- | --- |
 | `@stelis/agent-q-client` | Device-facing SDK for hardware discovery, USB transport, runtime sessions, protocol builders/parsers, and output schemas. | Firmware protocol / USB transport. | Owns the direct Firmware protocol boundary. |
 | `@stelis/agent-q-mcp` | Local Gateway adapter: stdio MCP server, CLI binary, and local Admin Page. | `@stelis/agent-q-client`. | Uses the admin-capable client entrypoint for MCP tools and Admin Page requests. |
-| `@stelis/agent-q-provider-sui` | Sui dapp-facing provider and Wallet Standard adapter for `sui:signTransaction`. | `@stelis/agent-q-client` and Sui SDK packages. | Uses the device client facade for dapp-facing discovery, connection, account reads, capabilities, and `signTransaction`. |
+| `@stelis/agent-q-provider-sui` | Sui dapp-facing provider and Wallet Standard adapter for `sui:signTransaction` and `sui:signPersonalMessage`. | `@stelis/agent-q-client` and Sui SDK packages. | Uses the device client facade for dapp-facing discovery, connection, account reads, capabilities, `signTransaction`, and user-confirmed `signPersonalMessage`. |
 | `packages/example-sui-dapp-kit` | Private workspace example for dapp-kit integration. | `@stelis/agent-q-provider-sui` and dapp-kit dependencies. | Uses the provider-sui Wallet Standard adapter with an injected provider runtime. |
 
 MCP and provider packages narrow the API surface they present to their audience,
@@ -115,13 +116,13 @@ Agent-Q Firmware is installed on hardware.
 Firmware is the authority component: it stores device-held key material and
 policies, evaluates requests locally, handles device-local approval for
 implemented sensitive flows, and returns Firmware-authored results to Gateway.
-The current bounded Sui `sign_transaction` transfer shape is source-wired
-through Firmware, client, MCP, provider-sui, and Wallet Standard surfaces.
-Firmware reads its device-local signing authorization mode, then chooses either
-the policy signing gate or the user-confirmed signing gate; requests do not
-choose it. Current-tree positive/reject/timeout/session-loss smoke and LVGL
-visual evidence remain pending, so product-active signing status is not
-claimed.
+The current bounded Sui Sign API source surface includes `sign_transaction` for
+restricted-transfer transaction bytes and user-mode-only `sign_personal_message`
+for bounded personal-message bytes. Firmware reads its device-local signing
+authorization mode for transaction signing, then chooses either the policy
+signing gate or the user-confirmed signing gate; requests do not choose it.
+Current-tree positive/reject/timeout/session-loss smoke and LVGL visual
+evidence remain pending, so product-active signing status is not claimed.
 
 Firmware source is organized by hardware under `firmware/src/`.
 
@@ -147,6 +148,7 @@ get_status
     -> policy_get
     -> get_approval_history
     -> sign_transaction*
+    -> sign_personal_message*
   -> disconnect
 ```
 
@@ -157,6 +159,9 @@ the bounded request, while user mode uses device-local clear-signing
 confirmation and local PIN for the bounded request. Product-active status still
 requires current-tree firmware build, flash, target hardware smoke, and visual
 review evidence for the same contract.
+`sign_personal_message` is a user-mode-only Sui personal-message signing
+request in the same active session; policy mode fails closed until a bounded
+policy model for personal-message signing is designed.
 
 Chains, transports, and hardware targets must fit this protocol instead of
 creating separate product-level APIs.

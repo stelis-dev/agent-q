@@ -6,10 +6,12 @@ Firmware is the signing authority. It stores keys and policies, evaluates
 requests, and handles device-local approval according to target policy. Current
 public methods expose account, session, policy, approval-history, and policy
 proposal behavior plus the bounded Sign API source paths documented in
-`specs/PROTOCOL.md`. `sign_transaction` exists for the current bounded Sui
-`sign_transaction` shape. Firmware chooses policy or user authorization from
-its device-local signing mode, but current-tree target hardware smoke and
-visual evidence remain pending before any product-active signing claim.
+`specs/PROTOCOL.md`. Current source includes `sign_transaction` for the bounded
+Sui restricted-transfer shape and user-mode-only `sign_personal_message` for
+bounded Sui personal-message bytes. Firmware chooses policy or user
+authorization for transaction signing from its device-local signing mode, but
+current-tree target hardware smoke and visual evidence remain pending before
+any product-active signing claim.
 
 ## Folder Policy
 

@@ -31,17 +31,20 @@ decisions, signing, persistence, and cleanup.
 - `policy_get`
 - `get_approval_history`
 - `sign_transaction`
+- `sign_personal_message`
 - `policy_propose`
 
 `policy_propose` is a proposal path. MCP does not decide or commit
 policy; Firmware validates the proposal, requires device-local approval, and
 commits only supported policy records.
 
-MCP exposes transaction signing through the `sign_transaction` tool. Firmware
+MCP exposes transaction signing through the `sign_transaction` tool and
+user-mode personal-message signing through `sign_personal_message`. Firmware
 uses its device-local signing mode to select the policy or user authorization
-gate: policy mode evaluates active policy and signs after policy authorization,
-while user mode requires device-local confirmation. The tool returns the
-Firmware-authored `sign_result`.
+gate for transaction signing: policy mode evaluates active policy and signs
+after policy authorization, while user mode requires device-local confirmation.
+Personal-message signing is user-mode only and fails closed in policy mode. The
+tools return Firmware-authored `sign_result` values.
 `get_capabilities`
 reports the read-only current signing authorization mode for UX/display only;
 the request never selects it. This is MCP adapter projection, not signing

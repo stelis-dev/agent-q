@@ -38,11 +38,12 @@ and active policy commits.
 - Current StackChan CoreS3 capabilities report Sui account identity and no
   delegated signing methods in `chains[].methods`. Signing availability is
   advertised through top-level `signing.authorization` and `signing.methods`,
-  and the device client facade exposes `signTransaction`. The client parser
-  accepts Firmware-authored `sign_result` values for both policy and user
-  authorization outcomes. It rejects
-  raw transaction bytes in results, decoded internals, session ids, request ids,
-  and secret-like fields.
+  and the device client facade exposes `signTransaction` and
+  `signPersonalMessage`. The client parser accepts Firmware-authored
+  `sign_result` values for transaction policy/user outcomes and user-mode
+  personal-message outcomes. It accepts `messageBytes` only for signed
+  personal-message results and rejects raw transaction bytes in results, decoded
+  internals, session ids, request ids, and secret-like fields.
 - External client inputs do not accept caller-controlled timing fields. Gateway
   uses fixed internal transport budgets. Firmware-owned device-local approval
   windows remain 30 seconds; Gateway waits with a non-configurable transport

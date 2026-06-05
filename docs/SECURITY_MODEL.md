@@ -96,8 +96,8 @@ Implemented today:
   boundary as MCP and is not a policy authority.
 - A bounded persistent approval-history read path. The current StackChan CoreS3
   target stores Firmware-authored signing confirmation/terminal metadata for
-  `sign_transaction`, plus recordable terminal metadata from
-  `policy_propose`. History does not store raw txBytes,
+  `sign_transaction` and user-mode `sign_personal_message`, plus recordable
+  terminal metadata from `policy_propose`. History does not store raw txBytes,
   decoded transactions, raw policy documents, full rule content, session ids,
   request ids, gateway names, PINs, secret material, or full policy documents.
   Local reset and error-state erase recovery wipe the history.
@@ -110,9 +110,14 @@ Implemented today:
   speech-bubble status notifications; user mode shows clear-signing review and
   requires local PIN confirmation. Requests cannot choose the authorization
   mode.
-  Current-tree positive/reject/timeout/
-  session-loss hardware smoke for the new Sign API wire name remains pending;
-  product-active status is not claimed.
+  Current-tree transaction positive/reject/timeout/session-loss hardware smoke
+  remains pending; product-active status is not claimed.
+- The `sign_personal_message` path has `source-wired-not-product-active` status
+  for bounded Sui personal-message bytes. Firmware accepts it only in user
+  authorization mode, uses clear-signing review and local PIN confirmation, and
+  fails closed in policy mode because policy facts and rules for this method are
+  not implemented. Current-tree personal-message hardware smoke and LVGL visual
+  evidence remain pending; product-active status is not claimed.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
@@ -180,9 +185,11 @@ Agent-Q also does not verify the meaning or origin of a request:
 - It cannot observe what happened inside an agent, application, or host before a
   request was created.
 
-Firmware policy constrains risk through explicit rules (allowlists, spending and
-rate limits, required approval, rejection), but it cannot judge why a request was
-created. This restates a non-negotiable boundary from
+Firmware policy constrains risk through explicit automatic rules such as
+allowlists, spending or rate limits when their facts are implemented, and
+rejection, but it cannot judge why a request was created. Device-local
+confirmation is a separate Firmware-owned gate, not a policy action or policy
+escalation path. This restates a non-negotiable boundary from
 [../AGENTS.md](../AGENTS.md).
 
 ## 5. Trust Boundaries
@@ -229,6 +236,12 @@ requests, adapters, and host callers cannot choose it.
   host, dapp, provider, agent, or upstream user intent. The runtime models local
   PIN confirmation and does not reuse the connect-only PIN setting as the
   signing confirmation policy.
+
+`sign_personal_message` is a separate Sign API method for bounded Sui
+personal-message bytes. Current source accepts it only in user authorization
+mode, where Firmware performs clear-signing review and local PIN confirmation.
+Policy authorization mode fails closed for this method because policy facts and
+rules for personal-message signing are not implemented.
 
 Policy actions must not bridge these models. A policy document may use only
 action values accepted by the current schema. Any other action value is invalid
@@ -298,7 +311,8 @@ Device-generated key (preferred):
   active.
 - The private key never existed outside the device.
 - The first target chain signs with Ed25519 (Sui); the protocol stays
-  chain-agnostic through `sign_transaction`.
+  chain-agnostic through shared Sign API methods such as `sign_transaction` and
+  `sign_personal_message`.
 
 Imported key (weaker):
 
@@ -512,16 +526,16 @@ Enforcement today:
   registered tools must equal a fixed set, both at definition and over the live
   transport. A new tool such as `export_key` cannot be added without failing
   those tests.
-- MCP and provider-sui expose `sign_transaction` through different package
-  interfaces for their audiences, but those adapter surfaces are not the
-  signing authority. Firmware state gates, the Sui restricted-transfer adapter,
-  the device-local signing authorization mode, active policy evaluation in
-  policy mode, and local confirmation in user mode remain the boundaries.
-  Arbitrary Sui transactions, policy-authorized personal-message signing, and
-  other chains are not implemented.
-  The top-level tool allowlist does not grant authority to method names carried
-  inside `sign_transaction`; Firmware method adapters and active policy
-  validation remain the method boundary.
+- MCP and provider-sui expose the current Sign API through different package
+  interfaces for their audiences, including transaction signing and user-mode
+  personal-message signing. Those adapter surfaces are not the signing
+  authority. Firmware state gates, method adapters, the device-local signing
+  authorization mode, active policy evaluation in policy mode, and local
+  confirmation in user mode remain the boundaries. Arbitrary Sui transactions,
+  policy-authorized personal-message signing, and other chains are not
+  implemented. The top-level tool allowlist does not grant authority to method
+  names carried inside Sign API requests; Firmware method adapters and active
+  policy validation remain the method boundary.
 
 ## 12. Device Capability Tiers
 
@@ -539,7 +553,7 @@ Display Approval Device:
 
 - Can show a summary for flows that explicitly require local approval, such as
   connection establishment, policy update proposals, or user-mode
-  `sign_transaction` signing.
+  `sign_transaction` and `sign_personal_message` signing.
 
 The current StackChan CoreS3 target has a display and touch, so it is closest to
 the Display Approval tier. "Minimal Device" describes a non-current hardware
@@ -623,7 +637,8 @@ API boundary:
 
 - No `export_key`, `raw_sign`, `read_memory`, or `debug_command`.
 - The MCP top-level exact-allowlist test passes.
-- `sign_transaction` allowlist and negative tests cover every shipped signing method.
+- Sign API method allowlist and negative tests cover every shipped signing
+  method.
 
 Key and policy:
 
