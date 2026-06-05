@@ -611,7 +611,8 @@ Current verification expectations for this target:
   signed/rejected outcomes, `sign_personal_message` user-mode
   signed/rejected/timeout outcomes plus policy-mode fail-closed behavior, USB
   detach/reconnect cleanup, newest approval history, and no client output leak
-  of session ids, raw `txBytes`, raw message bytes, PINs, or secret-like fields;
+  of session ids, raw `txBytes`, PINs, secret-like fields, or raw message bytes
+  outside the intended signed personal-message `messageBytes` echo;
 - capture LVGL clear-signing visual evidence on current firmware before
   claiming product-active status;
 - smoke-test local settings reset from `provisioned`: wrong PIN leaves

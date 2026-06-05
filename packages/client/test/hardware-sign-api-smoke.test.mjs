@@ -18,6 +18,15 @@
 //   AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO=rejected \
 //   node --test packages/client/test/hardware-sign-api-smoke.test.mjs
 //
+// User-authorized sign_personal_message smoke:
+//   AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER=1 \
+//   AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_SCENARIO=positive \
+//   node --test packages/client/test/hardware-sign-api-smoke.test.mjs
+//
+// Policy-mode sign_personal_message fail-closed smoke:
+//   AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY=1 \
+//   node --test packages/client/test/hardware-sign-api-smoke.test.mjs
+//
 // Policy update smoke mutates the active policy on the device:
 //   AGENTQ_HW_CLIENT_POLICY_UPDATE=1 \
 //   node --test packages/client/test/hardware-sign-api-smoke.test.mjs
@@ -36,6 +45,15 @@ import {
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
 } from "../dist/protocol.js";
 
+const USER_SIGNING_METHODS = Object.freeze([
+  { chain: "sui", method: "sign_transaction" },
+  { chain: "sui", method: "sign_personal_message" },
+]);
+const POLICY_SIGNING_METHODS = Object.freeze([
+  { chain: "sui", method: "sign_transaction" },
+]);
+const DEFAULT_PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q client sign_personal_message smoke").toString("base64");
+
 const userSigningEnabled = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER === "1";
 const userSigningScenario = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO ?? "";
 const userSigningDeviceId = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_DEVICE_ID ?? "";
@@ -47,6 +65,20 @@ const policySigningScenario = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLI
 const policySigningDeviceId = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_DEVICE_ID ?? "";
 const policySigningTxBytes = (process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_TX_BYTES ?? "").replace(/\s+/g, "");
 const policySigningScenarios = new Set(["signed", "rejected"]);
+
+const userPersonalMessageEnabled = process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER === "1";
+const userPersonalMessageScenario = process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_SCENARIO ?? "";
+const userPersonalMessageDeviceId = process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_DEVICE_ID ?? "";
+const userPersonalMessageBytes = (
+  process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_MESSAGE ?? DEFAULT_PERSONAL_MESSAGE_BYTES
+).replace(/\s+/g, "");
+const userPersonalMessageScenarios = new Set(["positive", "reject", "timeout", "disconnect"]);
+
+const policyPersonalMessageEnabled = process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY === "1";
+const policyPersonalMessageDeviceId = process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_DEVICE_ID ?? "";
+const policyPersonalMessageBytes = (
+  process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_MESSAGE ?? DEFAULT_PERSONAL_MESSAGE_BYTES
+).replace(/\s+/g, "");
 
 const policyUpdateEnabled = process.env.AGENTQ_HW_CLIENT_POLICY_UPDATE === "1";
 const policyUpdateDeviceId = process.env.AGENTQ_HW_CLIENT_POLICY_UPDATE_DEVICE_ID ?? "";
@@ -89,6 +121,29 @@ function policySigningSkipReason() {
   return false;
 }
 
+function userPersonalMessageSkipReason() {
+  if (!userPersonalMessageEnabled) {
+    return "set AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER=1 with a provisioned development device in user signing mode";
+  }
+  if (!userPersonalMessageScenarios.has(userPersonalMessageScenario)) {
+    return "set AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_SCENARIO=positive, reject, timeout, or disconnect";
+  }
+  if (!isCanonicalBase64(userPersonalMessageBytes)) {
+    return "set AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_MESSAGE to canonical base64 message bytes";
+  }
+  return false;
+}
+
+function policyPersonalMessageSkipReason() {
+  if (!policyPersonalMessageEnabled) {
+    return "set AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY=1 with a provisioned development device in policy signing mode";
+  }
+  if (!isCanonicalBase64(policyPersonalMessageBytes)) {
+    return "set AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_MESSAGE to canonical base64 message bytes";
+  }
+  return false;
+}
+
 function policyUpdateSkipReason() {
   return policyUpdateEnabled
     ? false
@@ -127,19 +182,32 @@ function topSeq(history) {
   return record === undefined ? null : BigInt(record.seq);
 }
 
-function assertNoSmokeOutputLeak(value, txBytes = "") {
+function forbiddenPayload(label, value) {
+  return { label, value };
+}
+
+function assertNoSmokeOutputLeak(value, forbiddenPayloads = []) {
   const text = JSON.stringify(value);
   const lower = text.toLowerCase();
   for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
     assert.equal(lower.includes(fieldName.toLowerCase()), false, `${fieldName} must not appear in client output`);
   }
   assert.equal(lower.includes("sessionid"), false, "sessionId must not appear in client output");
-  if (txBytes.length > 0) {
-    assert.equal(text.includes(txBytes), false, "raw txBytes must not appear in client output");
+  const payloads = Array.isArray(forbiddenPayloads) ? forbiddenPayloads : [forbiddenPayloads];
+  for (const payload of payloads) {
+    if (payload.value.length > 0) {
+      assert.equal(text.includes(payload.value), false, `${payload.label} must not appear in this client output`);
+    }
   }
 }
 
-function assertNewestSigningTerminal(history, previousTopSeq, expectedAuthorization, expectedTerminalResult) {
+function assertNewestSigningTerminal(
+  history,
+  previousTopSeq,
+  expectedAuthorization,
+  expectedTerminalResult,
+  expectedMethod = "sign_transaction",
+) {
   assert.equal(history.source, "live");
   assert.ok(history.records.length > 0, "expected at least one approval-history record");
   const topRecord = history.records[0];
@@ -152,7 +220,7 @@ function assertNewestSigningTerminal(history, previousTopSeq, expectedAuthorizat
   assert.equal(topRecord.authorization, expectedAuthorization);
   assert.equal(topRecord.terminalResult, expectedTerminalResult);
   assert.equal(topRecord.chain, "sui");
-  assert.equal(topRecord.method, "sign_transaction");
+  assert.equal(topRecord.method, expectedMethod);
   assert.match(topRecord.payloadDigest, /^sha256:[0-9a-f]{64}$/);
   if (expectedAuthorization === "policy") {
     assert.match(topRecord.policyHash, /^sha256:[0-9a-f]{64}$/);
@@ -163,7 +231,7 @@ function assertNewestSigningTerminal(history, previousTopSeq, expectedAuthorizat
   }
 }
 
-function assertRecentUserConfirmation(history, previousTopSeq) {
+function assertRecentUserConfirmation(history, previousTopSeq, expectedMethod = "sign_transaction") {
   const confirmation = history.records.find((record) => {
     return (
       record.eventKind === "signing" &&
@@ -174,7 +242,7 @@ function assertRecentUserConfirmation(history, previousTopSeq) {
   });
   assert.ok(confirmation, "expected a newer local-PIN confirmation history record");
   assert.equal(confirmation.chain, "sui");
-  assert.equal(confirmation.method, "sign_transaction");
+  assert.equal(confirmation.method, expectedMethod);
   assert.match(confirmation.payloadDigest, /^sha256:[0-9a-f]{64}$/);
 }
 
@@ -189,7 +257,7 @@ function assertNoNewSigningHistory(history, previousTopSeq) {
   assert.equal(
     unexpected,
     undefined,
-    "disconnect before confirmation must not create signature confirmation or terminal history",
+    "expected no newer signing confirmation or terminal history",
   );
 }
 
@@ -332,7 +400,7 @@ test("client hardware smoke policy-update proof requires the newest record from 
 });
 
 test(
-  "hardware: client core signTransaction terminal path",
+  "hardware: client core signTransaction user terminal path",
   { skip: userSigningSkipReason() },
   async () => {
     await withSmokeCore("agent-q-client-sign-transaction-user-", async (core) => {
@@ -361,13 +429,13 @@ test(
         const capabilities = await core.getCapabilities({ deviceId, purpose: "client-sign-transaction-user-smoke" });
         assert.equal(capabilities.source, "live");
         assert.equal(capabilities.signing?.authorization, "user");
-        assert.deepEqual(capabilities.signing?.methods, [{ chain: "sui", method: "sign_transaction" }]);
+        assert.deepEqual(capabilities.signing?.methods, USER_SIGNING_METHODS);
         assert.equal(
           capabilities.capabilities.some((chain) => chain.methods.includes("sign_transaction")),
           false,
           "delegated chain methods must not advertise signing",
         );
-        assertNoSmokeOutputLeak(capabilities, userSigningTxBytes);
+        assertNoSmokeOutputLeak(capabilities, forbiddenPayload("raw txBytes", userSigningTxBytes));
 
         const beforeHistory = await core.getApprovalHistory({
           deviceId,
@@ -395,7 +463,7 @@ test(
           network: "devnet",
           txBytes: userSigningTxBytes,
         });
-        assertNoSmokeOutputLeak(result, userSigningTxBytes);
+        assertNoSmokeOutputLeak(result, forbiddenPayload("raw txBytes", userSigningTxBytes));
 
         if (userSigningScenario === "disconnect") {
           assert.equal(result.source, "session_ended");
@@ -425,14 +493,14 @@ test(
           });
           assert.equal(recoveredCapabilities.source, "live");
           assert.equal(recoveredCapabilities.signing?.authorization, "user");
-          assert.deepEqual(recoveredCapabilities.signing?.methods, [{ chain: "sui", method: "sign_transaction" }]);
+          assert.deepEqual(recoveredCapabilities.signing?.methods, USER_SIGNING_METHODS);
 
           const afterReconnectHistory = await core.getApprovalHistory({
             deviceId,
             purpose: "client-sign-transaction-user-smoke",
             limit: 4,
           });
-          assertNoSmokeOutputLeak(afterReconnectHistory, userSigningTxBytes);
+          assertNoSmokeOutputLeak(afterReconnectHistory, forbiddenPayload("raw txBytes", userSigningTxBytes));
           assertNoNewSigningHistory(afterReconnectHistory, previousTopSeq);
           return;
         }
@@ -444,7 +512,7 @@ test(
           purpose: "client-sign-transaction-user-smoke",
           limit: 4,
         });
-        assertNoSmokeOutputLeak(afterHistory, userSigningTxBytes);
+        assertNoSmokeOutputLeak(afterHistory, forbiddenPayload("raw txBytes", userSigningTxBytes));
 
         if (userSigningScenario === "positive") {
           assert.equal(result.status, "signed");
@@ -474,7 +542,7 @@ test(
 );
 
 test(
-  "hardware: client core signTransaction terminal path",
+  "hardware: client core signTransaction policy terminal path",
   { skip: policySigningSkipReason() },
   async () => {
     await withSmokeCore("agent-q-client-sign-transaction-policy-", async (core) => {
@@ -503,8 +571,8 @@ test(
         const capabilities = await core.getCapabilities({ deviceId, purpose: "client-sign-transaction-policy-smoke" });
         assert.equal(capabilities.source, "live");
         assert.equal(capabilities.signing?.authorization, "policy");
-        assert.deepEqual(capabilities.signing?.methods, [{ chain: "sui", method: "sign_transaction" }]);
-        assertNoSmokeOutputLeak(capabilities, txBytes);
+        assert.deepEqual(capabilities.signing?.methods, POLICY_SIGNING_METHODS);
+        assertNoSmokeOutputLeak(capabilities, forbiddenPayload("raw txBytes", txBytes));
 
         const beforeHistory = await core.getApprovalHistory({
           deviceId,
@@ -523,7 +591,7 @@ test(
           network: "devnet",
           txBytes,
         });
-        assertNoSmokeOutputLeak(result, txBytes);
+        assertNoSmokeOutputLeak(result, forbiddenPayload("raw txBytes", txBytes));
         assert.equal(result.source, "live");
         assert.equal(result.authorization, "policy");
 
@@ -532,7 +600,7 @@ test(
           purpose: "client-sign-transaction-policy-smoke",
           limit: 4,
         });
-        assertNoSmokeOutputLeak(afterHistory, txBytes);
+        assertNoSmokeOutputLeak(afterHistory, forbiddenPayload("raw txBytes", txBytes));
 
         if (policySigningScenario === "signed") {
           assert.equal(result.status, "signed");
@@ -550,6 +618,224 @@ test(
       } finally {
         console.log("[client-sign-transaction-policy-smoke] disconnecting...");
         await core.disconnectDevice({ deviceId, purpose: "client-sign-transaction-policy-smoke" }).catch(() => {});
+      }
+    });
+  },
+);
+
+test(
+  "hardware: client core signPersonalMessage terminal path",
+  { skip: userPersonalMessageSkipReason() },
+  async () => {
+    await withSmokeCore("agent-q-client-sign-personal-message-user-", async (core) => {
+      console.log("[client-sign-personal-message-user-smoke] scanning devices...");
+      const scan = await core.scanDevices();
+      const deviceId = selectSmokeDeviceId(
+        scan.devices,
+        userPersonalMessageDeviceId,
+        "AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_DEVICE_ID",
+        "AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER",
+      );
+
+      try {
+        console.log("[client-sign-personal-message-user-smoke] selecting device...");
+        await core.selectDevice({ deviceId, purpose: "client-sign-personal-message-user-smoke" });
+
+        console.log("[client-sign-personal-message-user-smoke] approve connect on device...");
+        const connect = await core.connectDevice({
+          deviceId,
+          purpose: "client-sign-personal-message-user-smoke",
+          gatewayName: "Agent-Q client sign_personal_message smoke",
+        });
+        assert.equal(connect.source, "connected");
+
+        console.log("[client-sign-personal-message-user-smoke] checking raw client signing capability...");
+        const capabilities = await core.getCapabilities({
+          deviceId,
+          purpose: "client-sign-personal-message-user-smoke",
+        });
+        assert.equal(capabilities.source, "live");
+        assert.equal(capabilities.signing?.authorization, "user");
+        assert.deepEqual(capabilities.signing?.methods, USER_SIGNING_METHODS);
+        assert.equal(
+          capabilities.capabilities.some((chain) => chain.methods.includes("sign_personal_message")),
+          false,
+          "delegated chain methods must not advertise signing",
+        );
+        assertNoSmokeOutputLeak(capabilities, forbiddenPayload("raw message bytes", userPersonalMessageBytes));
+
+        const beforeHistory = await core.getApprovalHistory({
+          deviceId,
+          purpose: "client-sign-personal-message-user-smoke",
+          limit: 4,
+        });
+        assert.equal(beforeHistory.source, "live");
+        const previousTopSeq = topSeq(beforeHistory);
+
+        if (userPersonalMessageScenario === "positive") {
+          console.log("[client-sign-personal-message-user-smoke] approve review and enter local PIN on device...");
+        } else if (userPersonalMessageScenario === "reject") {
+          console.log("[client-sign-personal-message-user-smoke] reject the signing review on device...");
+        } else if (userPersonalMessageScenario === "disconnect") {
+          console.log("[client-sign-personal-message-user-smoke] unplug USB while the signing review is visible, then reconnect...");
+        } else {
+          console.log("[client-sign-personal-message-user-smoke] leave the signing review untouched until device timeout...");
+        }
+
+        const result = await core.signPersonalMessage({
+          deviceId,
+          purpose: "client-sign-personal-message-user-smoke",
+          chain: "sui",
+          method: "sign_personal_message",
+          network: "devnet",
+          message: userPersonalMessageBytes,
+        });
+
+        if (userPersonalMessageScenario === "disconnect") {
+          assertNoSmokeOutputLeak(result, forbiddenPayload("raw message bytes", userPersonalMessageBytes));
+          assert.equal(result.source, "session_ended");
+          assert.ok(
+            ["transport_unavailable", "timeout"].includes(result.reason),
+            `expected transport session end, got ${result.reason}`,
+          );
+          console.log("[client-sign-personal-message-user-smoke] verifying post-reconnect cleanup...");
+          const recoveryScan = await core.scanDevices();
+          const recoveredDevice = recoveryScan.devices.find((device) => scanDeviceId(device) === deviceId);
+          assert.ok(recoveredDevice, "expected the same device after USB reconnect");
+          assert.equal(recoveredDevice.protocolResponse.device.state, "idle");
+          assert.equal(recoveredDevice.protocolResponse.provisioning.state, "provisioned");
+
+          await core.selectDevice({ deviceId, purpose: "client-sign-personal-message-user-smoke" });
+          console.log("[client-sign-personal-message-user-smoke] approve reconnect after USB session loss...");
+          const reconnect = await core.connectDevice({
+            deviceId,
+            purpose: "client-sign-personal-message-user-smoke",
+            gatewayName: "Agent-Q client sign_personal_message smoke",
+          });
+          assert.equal(reconnect.source, "connected");
+
+          const recoveredCapabilities = await core.getCapabilities({
+            deviceId,
+            purpose: "client-sign-personal-message-user-smoke",
+          });
+          assert.equal(recoveredCapabilities.source, "live");
+          assert.equal(recoveredCapabilities.signing?.authorization, "user");
+          assert.deepEqual(recoveredCapabilities.signing?.methods, USER_SIGNING_METHODS);
+
+          const afterReconnectHistory = await core.getApprovalHistory({
+            deviceId,
+            purpose: "client-sign-personal-message-user-smoke",
+            limit: 4,
+          });
+          assertNoSmokeOutputLeak(afterReconnectHistory, forbiddenPayload("raw message bytes", userPersonalMessageBytes));
+          assertNoNewSigningHistory(afterReconnectHistory, previousTopSeq);
+          return;
+        }
+
+        assert.equal(result.source, "live");
+
+        const afterHistory = await core.getApprovalHistory({
+          deviceId,
+          purpose: "client-sign-personal-message-user-smoke",
+          limit: 4,
+        });
+        assertNoSmokeOutputLeak(afterHistory, forbiddenPayload("raw message bytes", userPersonalMessageBytes));
+
+        if (userPersonalMessageScenario === "positive") {
+          assertNoSmokeOutputLeak(result);
+          assert.equal(result.status, "signed");
+          assert.equal(result.authorization, "user");
+          assert.equal(result.chain, "sui");
+          assert.equal(result.method, "sign_personal_message");
+          assert.match(result.signature, SUI_ED25519_SIGNATURE_BASE64_PATTERN);
+          assert.equal(result.messageBytes, userPersonalMessageBytes);
+          assertNewestSigningTerminal(afterHistory, previousTopSeq, "user", "signed", "sign_personal_message");
+          assertRecentUserConfirmation(afterHistory, previousTopSeq, "sign_personal_message");
+        } else if (userPersonalMessageScenario === "reject") {
+          assertNoSmokeOutputLeak(result, forbiddenPayload("raw message bytes", userPersonalMessageBytes));
+          assert.equal(result.status, "user_rejected");
+          assert.equal(result.authorization, "user");
+          assert.equal(result.error.code, "user_rejected");
+          assertNewestSigningTerminal(afterHistory, previousTopSeq, "user", "user_rejected", "sign_personal_message");
+        } else {
+          assertNoSmokeOutputLeak(result, forbiddenPayload("raw message bytes", userPersonalMessageBytes));
+          assert.equal(result.status, "user_timed_out");
+          assert.equal(result.authorization, "user");
+          assert.equal(result.error.code, "user_timed_out");
+          assertNewestSigningTerminal(afterHistory, previousTopSeq, "user", "user_timed_out", "sign_personal_message");
+        }
+      } finally {
+        console.log("[client-sign-personal-message-user-smoke] disconnecting...");
+        await core.disconnectDevice({ deviceId, purpose: "client-sign-personal-message-user-smoke" }).catch(() => {});
+      }
+    });
+  },
+);
+
+test(
+  "hardware: client core signPersonalMessage fails closed in policy mode",
+  { skip: policyPersonalMessageSkipReason() },
+  async () => {
+    await withSmokeCore("agent-q-client-sign-personal-message-policy-", async (core) => {
+      console.log("[client-sign-personal-message-policy-smoke] scanning devices...");
+      const scan = await core.scanDevices();
+      const deviceId = selectSmokeDeviceId(
+        scan.devices,
+        policyPersonalMessageDeviceId,
+        "AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_DEVICE_ID",
+        "AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY",
+      );
+
+      try {
+        await core.selectDevice({ deviceId, purpose: "client-sign-personal-message-policy-smoke" });
+        console.log("[client-sign-personal-message-policy-smoke] approve connect on device...");
+        const connect = await core.connectDevice({
+          deviceId,
+          purpose: "client-sign-personal-message-policy-smoke",
+          gatewayName: "Agent-Q client sign_personal_message policy-mode smoke",
+        });
+        assert.equal(connect.source, "connected");
+
+        const capabilities = await core.getCapabilities({
+          deviceId,
+          purpose: "client-sign-personal-message-policy-smoke",
+        });
+        assert.equal(capabilities.source, "live");
+        assert.equal(capabilities.signing?.authorization, "policy");
+        assert.deepEqual(capabilities.signing?.methods, POLICY_SIGNING_METHODS);
+        assertNoSmokeOutputLeak(capabilities, forbiddenPayload("raw message bytes", policyPersonalMessageBytes));
+
+        const beforeHistory = await core.getApprovalHistory({
+          deviceId,
+          purpose: "client-sign-personal-message-policy-smoke",
+          limit: 4,
+        });
+        assert.equal(beforeHistory.source, "live");
+        const previousTopSeq = topSeq(beforeHistory);
+
+        console.log("[client-sign-personal-message-policy-smoke] sending policy-mode Sui sign_personal_message...");
+        await assert.rejects(
+          () => core.signPersonalMessage({
+            deviceId,
+            purpose: "client-sign-personal-message-policy-smoke",
+            chain: "sui",
+            method: "sign_personal_message",
+            network: "devnet",
+            message: policyPersonalMessageBytes,
+          }),
+          { code: "unsupported_method" },
+        );
+
+        const afterHistory = await core.getApprovalHistory({
+          deviceId,
+          purpose: "client-sign-personal-message-policy-smoke",
+          limit: 4,
+        });
+        assertNoSmokeOutputLeak(afterHistory, forbiddenPayload("raw message bytes", policyPersonalMessageBytes));
+        assertNoNewSigningHistory(afterHistory, previousTopSeq);
+      } finally {
+        console.log("[client-sign-personal-message-policy-smoke] disconnecting...");
+        await core.disconnectDevice({ deviceId, purpose: "client-sign-personal-message-policy-smoke" }).catch(() => {});
       }
     });
   },
