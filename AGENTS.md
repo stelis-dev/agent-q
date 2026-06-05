@@ -134,6 +134,15 @@ behavior, changes product-boundary docs, creates package structure, affects
 public commands, follows an accepted plan, revisits incomplete work, or responds
 to a previous incorrect completion claim.
 
+When a task has an accepted work name, treat that name as the stable handle for
+the objective. Use the same work name in plans, working notes, reviews, commit
+planning, final summaries, and handoff prompts. Do not rename the work because a
+subtask, implementation detail, discovered blocker, or verification step becomes
+the current focus. Put those items under the original work name. If the work name
+no longer describes the product outcome, stop and explicitly decide whether the
+original work is complete, blocked, or being replaced before starting a newly
+named work item.
+
 For non-trivial work:
 
 1. State the current task goal.
