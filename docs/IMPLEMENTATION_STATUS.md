@@ -90,6 +90,10 @@ This document tracks implementation status only. The wire protocol is defined in
 
 Current MCP tools:
 
+MCP package tests cover tool projection, output schemas, and fail-closed
+adapter boundaries. Direct USB/Firmware hardware smoke is client-owned so that
+adapter tests do not become the source of truth for the device protocol path.
+
 | Tool | Status | Notes |
 |---|---:|---|
 | `scan_devices` | O | USB discovery returns confirmed devices and sanitized candidate failure reasons for likely Agent-Q USB serial ports. |
@@ -103,9 +107,9 @@ Current MCP tools:
 | `get_capabilities` | O | Gateway parser accepts Firmware-authored Sui Ed25519 account identity capability over an active runtime session with `chains[].methods: []` and top-level `signing` for Sign API use. MCP never exposes the session id and fails closed if user-confirmed provider signing reaches the MCP output boundary. |
 | `get_accounts` | O | Gateway tool and protocol parser exist for public accounts over an active runtime session; the parser strictly re-validates the account shape, recomputes the Sui address/public-key relationship, rejects secret-like fields, and MCP never exposes the session id. |
 | `get_policy` | △ | Gateway tool and protocol parser exist for the read-only active policy summary. The parser accepts only `agentq.policy.v0`, lowercase `sha256:` policy ids, `defaultAction: "reject"`, bounded rule counts, no session id, and no secret-like fields. MCP never exposes the session id. Hardware smoke coverage exists for idle-Settings read access. |
-| `get_approval_history` | △ | Gateway tool and protocol parser exist for read-only persistent Firmware approval history over an active runtime session. The parser accepts bounded signing and policy-update records, preserves sequence and uptime as strings, rejects session ids and secret-like fields, and MCP never exposes the session id. Current-tree hardware smoke for the new Sign API wire names is pending. Opt-in policy-update hardware smoke coverage exists for newest policy-update terminal history over MCP. |
+| `get_approval_history` | △ | Gateway tool and protocol parser exist for read-only persistent Firmware approval history over an active runtime session. The parser accepts bounded signing and policy-update records, preserves sequence and uptime as strings, rejects session ids and secret-like fields, and MCP never exposes the session id. Current-tree hardware smoke for the new Sign API wire names is pending; that hardware evidence is collected through client-owned direct USB/Firmware smoke, not MCP adapter smoke. |
 | `sign_by_policy` | △ | Gateway tool and protocol parser exist for the policy-authorized signing path. MCP can request bounded Sui `sign_transaction`; Firmware evaluates the active policy and returns `signed`, `policy_rejected`, or `signing_failed` through `sign_result`. Current-tree hardware smoke for policy signed/rejected remains pending. |
-| `propose_policy_update` | △ | Gateway tool and protocol parser exist for the Firmware-owned policy update proposal path. MCP clients may submit a bounded policy proposal, but Gateway/MCP do not store, apply, or decide policy. Firmware returns `policy_update_result` only after validation, device-local approval, active-policy commit, and required terminal-history handling. Opt-in policy-update hardware smoke coverage exists for the proposal path over MCP. |
+| `propose_policy_update` | △ | Gateway tool and protocol parser exist for the Firmware-owned policy update proposal path. MCP clients may submit a bounded policy proposal, but Gateway/MCP do not store, apply, or decide policy. Firmware returns `policy_update_result` only after validation, device-local approval, active-policy commit, and required terminal-history handling. Opt-in direct USB/Firmware smoke for this proposal path is owned by the client package. |
 
 ## Firmware Targets
 

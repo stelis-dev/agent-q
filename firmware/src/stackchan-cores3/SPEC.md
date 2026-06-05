@@ -598,10 +598,10 @@ Current verification expectations for this target:
   `propose_policy_update` attempts, verifying that the previously committed
   active policy is still reported by `get_policy`; do not count the positive
   `applied` smoke as coverage for those terminal paths;
-- run tracked provider signing smoke for the `provider-exposed-not-product-active`
+- run tracked client-owned signing smoke for the `provider-exposed-not-product-active`
   `sign_by_user` path: positive signed result, device-local reject, review
   timeout, USB detach/reconnect cleanup, newest approval history, and no
-  provider output leak of session ids, raw `txBytes`, PINs, or secret-like
+  client output leak of session ids, raw `txBytes`, PINs, or secret-like
   fields;
 - capture LVGL clear-signing visual evidence on current firmware before
   claiming product-active status;

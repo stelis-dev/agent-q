@@ -116,18 +116,19 @@ npm --workspace @stelis/agent-q-provider-sui test
 ```
 
 The current source tree tracks an opt-in hardware smoke test for
-`provider-exposed-not-product-active` provider signing:
+`provider-exposed-not-product-active` signing in the client package, where the
+direct USB/Firmware boundary lives:
 
 ```sh
-AGENTQ_HW_PROVIDER_SIGNATURE=1 \
-AGENTQ_HW_PROVIDER_SIGNATURE_SCENARIO=positive \
-AGENTQ_HW_PROVIDER_SIGNATURE_TX_BYTES=<base64> \
-node --test test/hardware-provider-signature-smoke.test.mjs
+AGENTQ_HW_CLIENT_SIGN_BY_USER=1 \
+AGENTQ_HW_CLIENT_SIGN_BY_USER_SCENARIO=positive \
+AGENTQ_HW_CLIENT_SIGN_BY_USER_TX_BYTES=<base64> \
+node --test packages/client/test/hardware-sign-api-smoke.test.mjs
 ```
 
 Supported scenarios are `positive`, `reject`, `timeout`, and `disconnect`.
 The `disconnect` scenario verifies transport session end, post-reconnect idle
 status, fresh connection, capability recovery, and absence of new signature
-confirmation or terminal history. The smoke harness reads approval history
-through its shared device client core for test evidence only; approval history
-is not a provider-sui API.
+confirmation or terminal history. Provider-sui package tests cover the
+dapp-facing provider and Wallet Standard boundaries; approval history is not a
+provider-sui API.

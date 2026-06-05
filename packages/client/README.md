@@ -55,3 +55,27 @@ From the repository root:
 npm --workspace @stelis/agent-q-client run build
 npm --workspace @stelis/agent-q-client test
 ```
+
+Direct USB/Firmware hardware smoke tests live in this package and are opt-in.
+They are skipped unless their `AGENTQ_HW_CLIENT_*` environment gates are set:
+
+```sh
+npm --workspace @stelis/agent-q-client run build
+
+AGENTQ_HW_CLIENT_SIGN_BY_USER=1 \
+AGENTQ_HW_CLIENT_SIGN_BY_USER_SCENARIO=positive \
+AGENTQ_HW_CLIENT_SIGN_BY_USER_TX_BYTES=<base64> \
+node --test packages/client/test/hardware-sign-api-smoke.test.mjs
+
+AGENTQ_HW_CLIENT_SIGN_BY_POLICY=1 \
+AGENTQ_HW_CLIENT_SIGN_BY_POLICY_SCENARIO=rejected \
+node --test packages/client/test/hardware-sign-api-smoke.test.mjs
+
+AGENTQ_HW_CLIENT_POLICY_UPDATE=1 \
+node --test packages/client/test/hardware-sign-api-smoke.test.mjs
+```
+
+Adapter packages keep their tests focused on adapter projection and public API
+boundaries. Hardware smoke evidence must still record target hardware, commit,
+build/flash command, manual steps, observed result, and unchecked paths before
+implementation status is raised.
