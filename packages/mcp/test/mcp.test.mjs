@@ -238,7 +238,7 @@ test("registers the full device tool set", () => {
 test("tool input schemas do not expose secret fields", () => {
   const schemaKeys = new Set();
   for (const tool of Object.values(gatewayToolDefinitions)) {
-    for (const key of Object.keys(tool.inputSchema)) {
+    for (const key of inputSchemaKeys(tool)) {
       schemaKeys.add(key.toLowerCase());
     }
   }
@@ -360,14 +360,14 @@ test("exported output schema rejects raw error text and unknown firmware codes",
 });
 
 test("tool input schemas expose only current request fields", () => {
-  assert.deepEqual(Object.keys(gatewayToolDefinitions.scanDevices.inputSchema).sort(), []);
-  assert.deepEqual(Object.keys(gatewayToolDefinitions.identifyDevices.inputSchema).sort(), []);
-  assert.deepEqual(Object.keys(gatewayToolDefinitions.connectDevice.inputSchema).sort(), [
+  assert.deepEqual(inputSchemaKeys(gatewayToolDefinitions.scanDevices), []);
+  assert.deepEqual(inputSchemaKeys(gatewayToolDefinitions.identifyDevices), []);
+  assert.deepEqual(inputSchemaKeys(gatewayToolDefinitions.connectDevice), [
     "deviceId",
     "gatewayName",
     "purpose",
   ]);
-  assert.deepEqual(Object.keys(gatewayToolDefinitions.signTransaction.inputSchema).sort(), [
+  assert.deepEqual(inputSchemaKeys(gatewayToolDefinitions.signTransaction), [
     "chain",
     "deviceId",
     "method",
@@ -375,7 +375,7 @@ test("tool input schemas expose only current request fields", () => {
     "purpose",
     "txBytes",
   ]);
-  assert.deepEqual(Object.keys(gatewayToolDefinitions.signPersonalMessage.inputSchema).sort(), [
+  assert.deepEqual(inputSchemaKeys(gatewayToolDefinitions.signPersonalMessage), [
     "chain",
     "deviceId",
     "message",
@@ -383,7 +383,7 @@ test("tool input schemas expose only current request fields", () => {
     "network",
     "purpose",
   ]);
-  assert.deepEqual(Object.keys(gatewayToolDefinitions.policyPropose.inputSchema).sort(), [
+  assert.deepEqual(inputSchemaKeys(gatewayToolDefinitions.policyPropose), [
     "deviceId",
     "policy",
     "purpose",
@@ -391,7 +391,7 @@ test("tool input schemas expose only current request fields", () => {
 });
 
 test("select_device input accepts purpose but rejects reserved 'default'", () => {
-  const inputSchema = gatewayToolDefinitions.selectDevice.inputSchema.purpose;
+  const inputSchema = gatewayToolDefinitions.selectDevice.inputSchema.shape.purpose;
   assert.equal(inputSchema.safeParse("payment").success, true);
   assert.equal(inputSchema.safeParse("default").success, false);
   assert.equal(inputSchema.safeParse("has space").success, false);
@@ -453,6 +453,10 @@ function assertNoSecretFields(result, toolName) {
       `${toolName}: '${forbidden}' must not appear in the dispatched result`,
     );
   }
+}
+
+function inputSchemaKeys(tool) {
+  return Object.keys(tool.inputSchema.shape).sort();
 }
 
 // Minimal valid arguments to drive each tool through the SDK input-schema and
@@ -524,6 +528,131 @@ test("every MCP tool dispatches cleanly with structured content and no secrets",
       assertNoSecretFields(result, dispatchCase.name);
     }
   });
+});
+
+test("MCP tool inputs reject unknown fields before core dispatch", async () => {
+  const cases = [
+    {
+      name: "scan_devices",
+      coreMethod: "scanDevices",
+      arguments: { privateKey: "must-not-strip" },
+    },
+    {
+      name: "list_devices",
+      coreMethod: "listDevices",
+      arguments: { sessionId: "must-not-strip" },
+    },
+    {
+      name: "connect_device",
+      coreMethod: "connectDevice",
+      arguments: { timeoutMs: 1 },
+    },
+    {
+      name: "get_capabilities",
+      coreMethod: "getCapabilities",
+      arguments: { authorization: "policy" },
+    },
+    {
+      name: "get_approval_history",
+      coreMethod: "getApprovalHistory",
+      arguments: { durationMs: 1 },
+    },
+    {
+      name: "sign_transaction",
+      coreMethod: "signTransaction",
+      arguments: {
+        chain: "sui",
+        method: "sign_transaction",
+        network: "devnet",
+        txBytes: "AQID",
+        authorization: "policy",
+      },
+    },
+    {
+      name: "sign_transaction",
+      coreMethod: "signTransaction",
+      arguments: {
+        chain: "sui",
+        method: "sign_transaction",
+        network: "devnet",
+        txBytes: "AQID",
+        timeoutMs: 1,
+      },
+    },
+    {
+      name: "sign_personal_message",
+      coreMethod: "signPersonalMessage",
+      arguments: {
+        chain: "sui",
+        method: "sign_personal_message",
+        network: "devnet",
+        message: Buffer.from("Agent-Q personal message").toString("base64"),
+        approvalTimeoutMs: 1,
+      },
+    },
+    {
+      name: "policy_propose",
+      coreMethod: "policyPropose",
+      arguments: {
+        privateKey: "must-not-strip",
+        policy: {
+          schema: "agentq.policy.v0",
+          defaultAction: "reject",
+          rules: [],
+        },
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    let calls = 0;
+    const core = {
+      ...noOpCore,
+      async [testCase.coreMethod](...args) {
+        calls += 1;
+        return noOpCore[testCase.coreMethod](...args);
+      },
+    };
+
+    await withConnectedClient(async (client) => {
+      const result = await client.callTool({ name: testCase.name, arguments: testCase.arguments });
+      assert.equal(result.isError, true, `${testCase.name}: unknown input fields must fail`);
+      assert.doesNotMatch(
+        JSON.stringify(result),
+        /must-not-strip/,
+        `${testCase.name}: unknown field values must not be mirrored in validation errors`,
+      );
+    }, core);
+    assert.equal(calls, 0, `${testCase.name}: core must not receive invalid tool input`);
+  }
+});
+
+test("policy_propose input strictness leaves policy payload validation to core", async () => {
+  let calls = 0;
+  const core = {
+    ...noOpCore,
+    async policyPropose(input) {
+      calls += 1;
+      assert.equal(input.policy.policyValidatorOwnedField, "kept-for-core-validation");
+      return noOpCore.policyPropose(input);
+    },
+  };
+
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({
+      name: "policy_propose",
+      arguments: {
+        policy: {
+          schema: "agentq.policy.v0",
+          defaultAction: "reject",
+          rules: [],
+          policyValidatorOwnedField: "kept-for-core-validation",
+        },
+      },
+    });
+    assert.equal(result.structuredContent.source, "live");
+  }, core);
+  assert.equal(calls, 1);
 });
 
 test("connect_device dispatch returns a connected result without a session token", async () => {

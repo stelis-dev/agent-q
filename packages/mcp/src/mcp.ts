@@ -74,13 +74,17 @@ const purposeSchema = z.string().regex(PURPOSE_PATTERN).refine((value) => isVali
   message: "purpose must be 1-32 characters of [A-Za-z0-9_.-] and not a reserved or prototype-sensitive name.",
 });
 
+function strictInputSchema<Shape extends z.ZodRawShape>(shape: Shape) {
+  return z.object(shape).strict();
+}
+
 export const gatewayToolDefinitions = {
   scanDevices: {
     name: "scan_devices",
     title: "Scan devices",
     description:
       "Find USB-connected Agent-Q Firmware devices by writing a status handshake to candidate USB serial ports, and report sanitized candidate failure reasons.",
-    inputSchema: {},
+    inputSchema: strictInputSchema({}),
     outputSchema: scanDevicesToolOutputShape,
     successOutputSchema: scanDevicesSuccessOutputShape,
   },
@@ -89,7 +93,7 @@ export const gatewayToolDefinitions = {
     title: "Identify devices",
     description:
       "Ask discovered Agent-Q Firmware devices to display short identification codes. Writes a status handshake to candidate USB serial ports before sending the identify request.",
-    inputSchema: {},
+    inputSchema: strictInputSchema({}),
     outputSchema: identifyDevicesToolOutputShape,
     successOutputSchema: identifyDevicesSuccessOutputShape,
   },
@@ -98,10 +102,10 @@ export const gatewayToolDefinitions = {
     title: "Select device",
     description:
       "Set a previously discovered Agent-Q Firmware device as the default active device, or as the active device for a named routing purpose. 'purpose' is local Gateway routing metadata, not security policy. Updates local Gateway state only; does not contact Firmware.",
-    inputSchema: {
+    inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN),
       purpose: purposeSchema.optional(),
-    },
+    }),
     outputSchema: selectDeviceToolOutputShape,
     successOutputSchema: selectDeviceSuccessOutputShape,
   },
@@ -110,10 +114,10 @@ export const gatewayToolDefinitions = {
     title: "Get device status",
     description:
       "Read live or cached status for a known Agent-Q Firmware device by writing a status handshake to candidate USB serial ports. Resolves the device by deviceId, by purpose, or by the default active device.",
-    inputSchema: {
+    inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
-    },
+    }),
     // outputSchema (full union) is for Gateway-side tests only; it is not
     // registered with the SDK. successOutputSchema (live | cached) is the
     // runtime sanitize boundary used by run().
@@ -125,7 +129,7 @@ export const gatewayToolDefinitions = {
     title: "List devices",
     description:
       "List Agent-Q Firmware devices known to Gateway, including Gateway-local label, purpose routing assignments, and any in-memory connection session metadata. Reads from local Gateway state only; does not contact Firmware.",
-    inputSchema: {},
+    inputSchema: strictInputSchema({}),
     outputSchema: listDevicesToolOutputShape,
     successOutputSchema: listDevicesSuccessOutputShape,
   },
@@ -134,10 +138,10 @@ export const gatewayToolDefinitions = {
     title: "Set device metadata",
     description:
       "Set Gateway-local metadata for a known Agent-Q Firmware device. 'label' is human-readable Gateway-local metadata, not a security boundary and not device authority. Pass null to clear the label. Updates local Gateway state only; does not contact Firmware.",
-    inputSchema: {
+    inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN),
       label: z.union([z.string().max(MAX_LABEL_LENGTH).refine((value) => isValidLabel(value)), z.null()]),
-    },
+    }),
     outputSchema: setDeviceMetadataToolOutputShape,
     successOutputSchema: setDeviceMetadataSuccessOutputShape,
   },
@@ -146,11 +150,11 @@ export const gatewayToolDefinitions = {
     title: "Connect device",
     description:
       "Open a communication session with a known Agent-Q Firmware device. Resolves the target device by deviceId, by purpose, or by the default active device. Sends a connect request that requires Firmware-owned device-local approval. Writes a status handshake to candidate USB serial ports while locating the device. Connect is not signing approval and does not authorize signing. Session is held in Gateway memory only.",
-    inputSchema: {
+    inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
       gatewayName: z.string().regex(GATEWAY_NAME_PATTERN).optional(),
-    },
+    }),
     outputSchema: connectDeviceToolOutputShape,
     successOutputSchema: connectDeviceSuccessOutputShape,
   },
@@ -159,10 +163,10 @@ export const gatewayToolDefinitions = {
     title: "Disconnect device",
     description:
       "End a previously approved Agent-Q Firmware session. Resolves the target device by deviceId, by purpose, or by the default active device. Returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Writes a status handshake to candidate USB serial ports when locating the device. Disconnect does not require physical approval.",
-    inputSchema: {
+    inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
-    },
+    }),
     outputSchema: disconnectDeviceToolOutputShape,
     successOutputSchema: disconnectDeviceSuccessOutputShape,
   },
@@ -171,10 +175,10 @@ export const gatewayToolDefinitions = {
     title: "Get capabilities",
     description:
       "Read Firmware-authored supported chains, public account schemes, and supported signing methods over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. signing.authorization is Firmware-authored read-only state and is not a request option.",
-    inputSchema: {
+    inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
-    },
+    }),
     outputSchema: mcpGetCapabilitiesToolOutputShape,
     successOutputSchema: mcpGetCapabilitiesSuccessOutputShape,
   },
@@ -183,10 +187,10 @@ export const gatewayToolDefinitions = {
     title: "Get accounts",
     description:
       "List the public accounts (chain, address, public key) held by a provisioned Agent-Q Firmware device over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Read-only: no signing, no private material, and no session id is ever returned.",
-    inputSchema: {
+    inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
-    },
+    }),
     outputSchema: getAccountsToolOutputShape,
     successOutputSchema: getAccountsSuccessOutputShape,
   },
@@ -195,10 +199,10 @@ export const gatewayToolDefinitions = {
     title: "Get policy",
     description:
       "Read the Firmware-owned active policy summary over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Read-only: no policy update, no signing, no private material, and no session id is ever returned.",
-    inputSchema: {
+    inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
-    },
+    }),
     outputSchema: policyGetToolOutputShape,
     successOutputSchema: policyGetSuccessOutputShape,
   },
@@ -207,12 +211,12 @@ export const gatewayToolDefinitions = {
     title: "Get approval history",
     description:
       "Read a bounded page of Firmware-owned approval history over an approved session. This is not on-chain history and is read-only: no raw requests, session ids, private material, PINs, gateway names, or full policy documents are returned.",
-    inputSchema: {
+    inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
       limit: z.number().int().positive().max(MAX_APPROVAL_HISTORY_RECORDS).optional(),
       beforeSeq: z.string().regex(UINT_DECIMAL_STRING_PATTERN).refine((value) => isUint64DecimalString(value)).optional(),
-    },
+    }),
     outputSchema: getApprovalHistoryToolOutputShape,
     successOutputSchema: getApprovalHistorySuccessOutputShape,
   },
@@ -221,14 +225,14 @@ export const gatewayToolDefinitions = {
     title: "Sign transaction",
     description:
       "Request a Firmware-owned transaction signature over an approved session. Gateway and MCP do not store keys, choose authorization, or make signing decisions; Firmware uses its local signing authorization mode to select policy authorization or user confirmation and returns sign_result.",
-    inputSchema: {
+    inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
       chain: z.literal("sui"),
       method: z.literal("sign_transaction"),
       network: z.enum(["mainnet", "testnet", "devnet", "localnet"]),
       txBytes: z.string(),
-    },
+    }),
     outputSchema: signTransactionToolOutputShape,
     successOutputSchema: signTransactionSuccessOutputShape,
   },
@@ -237,14 +241,14 @@ export const gatewayToolDefinitions = {
     title: "Sign personal message",
     description:
       "Request a Firmware-owned Sui personal-message signature over an approved session. Gateway and MCP do not store keys, choose authorization, or make signing decisions. The current Firmware implementation signs this method only in user-confirmed authorization mode; policy authorization mode fails closed.",
-    inputSchema: {
+    inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
       chain: z.literal("sui"),
       method: z.literal("sign_personal_message"),
       network: z.enum(["mainnet", "testnet", "devnet", "localnet"]),
       message: z.string(),
-    },
+    }),
     outputSchema: signPersonalMessageToolOutputShape,
     successOutputSchema: signPersonalMessageSuccessOutputShape,
   },
@@ -253,11 +257,11 @@ export const gatewayToolDefinitions = {
     title: "Propose policy update",
     description:
       "Submit a bounded active-policy proposal to Agent-Q Firmware for device-local PIN approval. This is a request path only: Gateway and MCP do not store, apply, or decide policy, and Firmware returns the terminal policy_propose_result.",
-    inputSchema: {
+    inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
       policy: z.object({}).passthrough(),
-    },
+    }),
     outputSchema: policyProposeToolOutputShape,
     successOutputSchema: policyProposeSuccessOutputShape,
   },
