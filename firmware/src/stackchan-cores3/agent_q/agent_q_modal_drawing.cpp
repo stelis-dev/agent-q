@@ -29,9 +29,26 @@ constexpr int kScreenWidth = 320;
 constexpr int kDecisionStripHeight = 34;
 constexpr int kTimeoutTimerBarHeight = 4;
 constexpr int kTimeoutTimerBarTrackInset = 8;
-constexpr int kDecisionPanelHeight = kDecisionStripHeight + kTimeoutTimerBarHeight;
-constexpr int kDecisionButtonWidth = kScreenWidth / 2;
+constexpr int kDecisionButtonTimerGap = 8;
+constexpr int kDecisionPanelHeight =
+    kDecisionStripHeight + kDecisionButtonTimerGap + kTimeoutTimerBarHeight;
 constexpr int kDecisionCornerRadius = 10;
+constexpr int kDecisionActionButtonGap = 0;
+constexpr int kScreenBottomActionButtonX = kTimeoutTimerBarTrackInset;
+constexpr int kScreenBottomActionButtonWidth =
+    (kScreenWidth - 2 * kTimeoutTimerBarTrackInset - kDecisionActionButtonGap) / 2;
+constexpr int kScreenBottomActionButtonRightX =
+    kScreenBottomActionButtonX + kScreenBottomActionButtonWidth + kDecisionActionButtonGap;
+constexpr int kInsetPanelWidth = kScreenWidth - 16;
+constexpr int kPanelGridLeft = 17;
+constexpr int kPanelGridCellWidth = 90;
+constexpr int kPanelGridWidth = 3 * kPanelGridCellWidth;
+constexpr int kPanelActionButtonGap = 8;
+constexpr int kPanelActionButtonLeftX = kPanelGridLeft;
+constexpr int kPanelActionButtonWidth =
+    (kPanelGridWidth - kPanelActionButtonGap) / 2;
+constexpr int kPanelActionButtonRightX =
+    kPanelActionButtonLeftX + kPanelActionButtonWidth + kPanelActionButtonGap;
 constexpr int kRecoveryPhraseButtonHeight = 28;
 constexpr int kRecoveryPhraseButtonRadius = 7;
 constexpr int kRecoveryPhraseButtonWidth = 142;
@@ -43,8 +60,8 @@ constexpr int kSetupActionButtonY =
     kScreenHeight - 16 - kRecoveryPhraseButtonHeight - kRecoveryPhraseButtonBottomMargin;
 constexpr int kPinPanelButtonRadius = 6;
 constexpr int kPinPanelButtonHeight = 22;
-constexpr int kPinKeypadButtonWidth = 90;
-constexpr int kPinKeypadGridLeft = 17;
+constexpr int kPinKeypadButtonWidth = kPanelGridCellWidth;
+constexpr int kPinKeypadGridLeft = kPanelGridLeft;
 constexpr int kPinKeypadGridTop = 78;
 constexpr int kPinKeypadRowHeight = 25;
 constexpr int kSettingsMenuButtonCenterX = (kScreenWidth - 16 - kRecoveryPhraseButtonWidth) / 2;
@@ -62,11 +79,15 @@ constexpr int kUserSigningReviewRowTop = 34;
 constexpr int kUserSigningReviewRowWidth = 206;
 constexpr int kUserSigningReviewNormalRowHeight = 16;
 constexpr int kUserSigningReviewRecipientRowHeight = 34;
+constexpr int kPolicyUpdateReviewRowTop = 50;
+constexpr int kPolicyUpdateReviewRowHeight = 16;
+constexpr int kPolicyUpdateReviewRowWidth = kInsetPanelWidth - 36;
+constexpr int kPolicyUpdateReviewSummaryTop = 132;
 constexpr int kSetupMenuGenerateButtonY = 78;
 constexpr int kSetupMenuRecoverButtonY = 114;
-constexpr int kMnemonicWordCellWidth = 90;
+constexpr int kMnemonicWordCellWidth = kPanelGridCellWidth;
 constexpr int kMnemonicWordCellHeight = 22;
-constexpr int kMnemonicWordCellLeft = 17;
+constexpr int kMnemonicWordCellLeft = kPanelGridLeft;
 constexpr int kMnemonicWordIndexWidth = 22;
 constexpr int kMnemonicWordPrefixLeft = 30;
 constexpr int kMnemonicWordPrefixWidth = 54;
@@ -103,6 +124,7 @@ enum class SetupButtonKind {
 
 AgentQModalDrawingCallbacks g_callbacks;
 lv_obj_t* g_pin_processing_overlay = nullptr;
+lv_obj_t* g_screen_bottom_timeout_timer_bar = nullptr;
 
 void on_pin_processing_overlay_deleted(lv_event_t* event)
 {
@@ -121,6 +143,25 @@ void clear_pin_processing_overlay_locked()
         lv_obj_delete(g_pin_processing_overlay);
     }
     g_pin_processing_overlay = nullptr;
+}
+
+void on_screen_bottom_timeout_timer_bar_deleted(lv_event_t* event)
+{
+    lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(event));
+    if (target == g_screen_bottom_timeout_timer_bar) {
+        g_screen_bottom_timeout_timer_bar = nullptr;
+    }
+}
+
+void clear_screen_bottom_timeout_timer_bar_locked()
+{
+    if (g_screen_bottom_timeout_timer_bar == nullptr) {
+        return;
+    }
+    if (lv_obj_is_valid(g_screen_bottom_timeout_timer_bar)) {
+        lv_obj_delete(g_screen_bottom_timeout_timer_bar);
+    }
+    g_screen_bottom_timeout_timer_bar = nullptr;
 }
 uint16_t g_recover_candidate_event_indices[kBip39WordCount] = {};
 
@@ -168,13 +209,20 @@ static void make_decision_button_corner_fill(lv_obj_t* button, lv_align_t align,
     lv_obj_add_event_cb(fill, callback, LV_EVENT_CLICKED, nullptr);
 }
 
-static void make_decision_button(lv_obj_t* parent, const char* text, int x, lv_color_t color, lv_event_cb_t callback)
+static void make_decision_button(
+    lv_obj_t* parent,
+    const char* text,
+    int x,
+    int width,
+    bool left_button,
+    lv_color_t color,
+    lv_event_cb_t callback)
 {
     // A plain clickable object avoids themed button shadows/scrollbars that can
     // show up as stray vertical lines over the avatar.
     lv_obj_t* button = lv_obj_create(parent);
     lv_obj_remove_style_all(button);
-    lv_obj_set_size(button, kDecisionButtonWidth, kDecisionStripHeight);
+    lv_obj_set_size(button, width, kDecisionStripHeight);
     lv_obj_align(button, LV_ALIGN_TOP_LEFT, x, 0);
     lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
@@ -187,14 +235,12 @@ static void make_decision_button(lv_obj_t* parent, const char* text, int x, lv_c
     lv_obj_set_style_bg_color(button, color, 0);
     lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
     lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, nullptr);
-    if (x == 0) {
+    if (left_button) {
         make_decision_button_corner_fill(button, LV_ALIGN_TOP_RIGHT, color, callback);
-        make_decision_button_corner_fill(button, LV_ALIGN_BOTTOM_LEFT, color, callback);
         make_decision_button_corner_fill(button, LV_ALIGN_BOTTOM_RIGHT, color, callback);
     } else {
         make_decision_button_corner_fill(button, LV_ALIGN_TOP_LEFT, color, callback);
         make_decision_button_corner_fill(button, LV_ALIGN_BOTTOM_LEFT, color, callback);
-        make_decision_button_corner_fill(button, LV_ALIGN_BOTTOM_RIGHT, color, callback);
     }
     make_button_label_with_font(button, text, &lv_font_montserrat_14, callback);
 }
@@ -473,6 +519,51 @@ static bool make_user_signing_review_row(
     return true;
 }
 
+static bool make_policy_update_review_row(
+    lv_obj_t* parent,
+    const char* label_text,
+    const char* value_text,
+    int y)
+{
+    char row_text[160] = {};
+    snprintf(
+        row_text,
+        sizeof(row_text),
+        "%s: %s",
+        label_text != nullptr ? label_text : "",
+        value_text != nullptr && value_text[0] != '\0' ? value_text : "none");
+
+    lv_obj_t* row = lv_label_create(parent);
+    if (row == nullptr) {
+        return false;
+    }
+    lv_label_set_text(row, row_text);
+    lv_label_set_long_mode(row, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(row, kPolicyUpdateReviewRowWidth);
+    lv_obj_set_style_text_align(row, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_font(row, &lv_font_unscii_8, 0);
+    lv_obj_set_style_text_color(row, lv_color_hex(0x111827), 0);
+    lv_obj_align(row, LV_ALIGN_TOP_LEFT, 18, y + 2);
+    return true;
+}
+
+static void format_policy_hash_prefix(const char* policy_hash, char* output, size_t output_size)
+{
+    if (output_size == 0) {
+        return;
+    }
+    output[0] = '\0';
+    if (policy_hash == nullptr || policy_hash[0] == '\0') {
+        snprintf(output, output_size, "none");
+        return;
+    }
+    if (strncmp(policy_hash, "sha256:", 7) == 0 && strlen(policy_hash) >= 15) {
+        snprintf(output, output_size, "sha256:%.8s", policy_hash + 7);
+        return;
+    }
+    snprintf(output, output_size, "%.15s", policy_hash);
+}
+
 static void rotate_processing_arc(void* obj, int32_t rotation)
 {
     lv_arc_set_rotation(static_cast<lv_obj_t*>(obj), rotation);
@@ -480,6 +571,8 @@ static void rotate_processing_arc(void* obj, int32_t rotation)
 
 static bool make_pin_processing_overlay(lv_obj_t* parent)
 {
+    clear_screen_bottom_timeout_timer_bar_locked();
+
     if (g_pin_processing_overlay != nullptr &&
         lv_obj_is_valid(g_pin_processing_overlay) &&
         lv_obj_get_parent(g_pin_processing_overlay) == parent) {
@@ -606,7 +699,7 @@ bool modal_draw_decision_panel(AgentQTimeoutWindow timeout_window)
         if (!make_timeout_timer_bar(
                 panel,
                 kTimeoutTimerBarTrackInset,
-                kDecisionStripHeight,
+                kDecisionStripHeight + kDecisionButtonTimerGap,
                 kScreenWidth - 2 * kTimeoutTimerBarTrackInset,
                 timeout_window,
                 xTaskGetTickCount())) {
@@ -614,8 +707,22 @@ bool modal_draw_decision_panel(AgentQTimeoutWindow timeout_window)
             return false;
         }
 
-        make_decision_button(panel, "Cancel", 0, lv_color_hex(0xA53B3B), g_callbacks.on_no_clicked);
-        make_decision_button(panel, "Confirm", kDecisionButtonWidth, lv_color_hex(0x24875A), g_callbacks.on_yes_clicked);
+        make_decision_button(
+            panel,
+            "Cancel",
+            kScreenBottomActionButtonX,
+            kScreenBottomActionButtonWidth,
+            true,
+            lv_color_hex(0xA53B3B),
+            g_callbacks.on_no_clicked);
+        make_decision_button(
+            panel,
+            "Confirm",
+            kScreenBottomActionButtonRightX,
+            kScreenBottomActionButtonWidth,
+            false,
+            lv_color_hex(0x24875A),
+            g_callbacks.on_yes_clicked);
 
         drawing_surface_move_panel_foreground_locked();
     }
@@ -937,6 +1044,7 @@ static bool make_screen_bottom_timeout_timer_bar(
     if (!timeout_window_active(timeout_window)) {
         return true;
     }
+    clear_screen_bottom_timeout_timer_bar_locked();
     lv_obj_t* track = nullptr;
     if (!make_timeout_timer_bar(
             lv_screen_active(),
@@ -952,6 +1060,12 @@ static bool make_screen_bottom_timeout_timer_bar(
         return true;
     }
     lv_obj_add_flag(track, LV_OBJ_FLAG_FLOATING);
+    g_screen_bottom_timeout_timer_bar = track;
+    lv_obj_add_event_cb(
+        track,
+        on_screen_bottom_timeout_timer_bar_deleted,
+        LV_EVENT_DELETE,
+        nullptr);
     lv_obj_add_event_cb(owner_panel, delete_linked_timeout_timer_bar, LV_EVENT_DELETE, track);
     lv_obj_move_foreground(track);
     return true;
@@ -1187,9 +1301,9 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
     if (!make_setup_button(
             panel,
             "Cancel",
-            kRecoveryPhraseButtonLeftX,
+            kPanelActionButtonLeftX,
             kSetupActionButtonY,
-            kRecoveryPhraseButtonWidth,
+            kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(0xA53B3B),
@@ -1197,9 +1311,9 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
         !make_setup_button(
             panel,
             "Confirm",
-            kRecoveryPhraseButtonRightX,
+            kPanelActionButtonRightX,
             kSetupActionButtonY,
-            kRecoveryPhraseButtonWidth,
+            kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(0x24875A),
@@ -1295,9 +1409,9 @@ bool modal_draw_pin_setup_panel(const char* notice)
     if (!make_setup_button(
             panel,
             "Cancel",
-            kRecoveryPhraseButtonLeftX,
+            kPanelActionButtonLeftX,
             kSetupActionButtonY,
-            kRecoveryPhraseButtonWidth,
+            kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(0xA53B3B),
@@ -1307,9 +1421,9 @@ bool modal_draw_pin_setup_panel(const char* notice)
         !make_setup_button(
             panel,
             "Confirm",
-            kRecoveryPhraseButtonRightX,
+            kPanelActionButtonRightX,
             kSetupActionButtonY,
-            kRecoveryPhraseButtonWidth,
+            kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(0x24875A),
@@ -1517,9 +1631,9 @@ bool modal_draw_error_recovery_panel(bool confirm)
         if (!make_setup_button(
                 panel,
                 "Cancel",
-                kRecoveryPhraseButtonLeftX,
+                kPanelActionButtonLeftX,
                 kSetupActionButtonY,
-                kRecoveryPhraseButtonWidth,
+                kPanelActionButtonWidth,
                 kRecoveryPhraseButtonHeight,
                 SetupButtonKind::outlined_keypad,
                 lv_color_hex(0xA53B3B),
@@ -1527,9 +1641,9 @@ bool modal_draw_error_recovery_panel(bool confirm)
             !make_setup_button(
                 panel,
                 "Erase",
-                kRecoveryPhraseButtonRightX,
+                kPanelActionButtonRightX,
                 kSetupActionButtonY,
-                kRecoveryPhraseButtonWidth,
+                kPanelActionButtonWidth,
                 kRecoveryPhraseButtonHeight,
                 SetupButtonKind::solid_action,
                 lv_color_hex(0xA53B3B),
@@ -1644,9 +1758,9 @@ bool modal_draw_reset_pin_panel(const char* notice)
     if (!make_setup_button(
             panel,
             "Cancel",
-            kRecoveryPhraseButtonLeftX,
+            kPanelActionButtonLeftX,
             kSetupActionButtonY,
-            kRecoveryPhraseButtonWidth,
+            kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(0x667085),
@@ -1656,9 +1770,9 @@ bool modal_draw_reset_pin_panel(const char* notice)
         !make_setup_button(
             panel,
             "Reset",
-            kRecoveryPhraseButtonRightX,
+            kPanelActionButtonRightX,
             kSetupActionButtonY,
-            kRecoveryPhraseButtonWidth,
+            kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(0xA53B3B),
@@ -1697,11 +1811,7 @@ static const char* local_pin_auth_default_message(
         return "Enter local PIN to connect.";
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::policy_update) {
-        const AgentQPolicyUpdateFlowSnapshot update = policy_update_flow_snapshot();
-        if (update.review_summary != nullptr && update.review_summary[0] != '\0') {
-            return update.review_summary;
-        }
-        return "Approve policy update.";
+        return "Enter PIN to apply policy change.";
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::user_signing) {
         return "Confirm signing with local PIN.";
@@ -1748,6 +1858,134 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
         return "Change PIN";
     }
     return "Settings PIN";
+}
+
+bool modal_draw_policy_update_review_panel(
+    const AgentQPolicyUpdateReviewViewModel& model,
+    AgentQTimeoutWindow timeout_window)
+{
+    if (model.policy_hash == nullptr || model.policy_hash[0] == '\0' ||
+        model.default_action == nullptr ||
+        model.highest_action == nullptr ||
+        model.method_summary == nullptr ||
+        model.review_summary == nullptr || model.review_summary[0] == '\0') {
+        return false;
+    }
+
+    avatar_overlay_clear();
+
+    LvglLockGuard lock;
+    request_display_power_wake();
+    drawing_surface_clear_panel_locked();
+
+    lv_obj_t* panel = drawing_surface_create_panel_locked(AgentQUiPanelKind::policy_update_review);
+    if (panel == nullptr) {
+        return false;
+    }
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_radius(panel, 8, 0);
+    lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(panel, 0, 0);
+
+    lv_obj_t* title = lv_label_create(panel);
+    if (title == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(title, "Review policy update");
+    lv_label_set_long_mode(title, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(title, kScreenWidth - 44);
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    lv_obj_t* subtitle = lv_label_create(panel);
+    if (subtitle == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(subtitle, "Confirm on device before PIN.");
+    lv_label_set_long_mode(subtitle, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(subtitle, kScreenWidth - 44);
+    lv_obj_set_style_text_align(subtitle, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(subtitle, &lv_font_unscii_8, 0);
+    lv_obj_set_style_text_color(subtitle, lv_color_hex(0x475467), 0);
+    lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 30);
+
+    char rule_count[16] = {};
+    char policy_hash_prefix[24] = {};
+    char action_summary[32] = {};
+    snprintf(rule_count, sizeof(rule_count), "%u", static_cast<unsigned>(model.rule_count));
+    format_policy_hash_prefix(model.policy_hash, policy_hash_prefix, sizeof(policy_hash_prefix));
+    snprintf(
+        action_summary,
+        sizeof(action_summary),
+        "%s -> %s",
+        model.default_action,
+        model.highest_action);
+    int row_y = kPolicyUpdateReviewRowTop;
+    if (!make_policy_update_review_row(panel, "Hash", policy_hash_prefix, row_y) ||
+        !make_policy_update_review_row(panel, "Rules", rule_count, row_y + kPolicyUpdateReviewRowHeight) ||
+        !make_policy_update_review_row(panel, "Action", action_summary, row_y + 2 * kPolicyUpdateReviewRowHeight) ||
+        !make_policy_update_review_row(panel, "Method", model.method_summary, row_y + 3 * kPolicyUpdateReviewRowHeight)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    lv_obj_t* summary = lv_label_create(panel);
+    if (summary == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(summary, "Continue opens PIN entry to apply this policy.");
+    lv_label_set_long_mode(summary, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(summary, kPolicyUpdateReviewRowWidth);
+    lv_obj_set_style_text_align(summary, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_font(summary, &lv_font_unscii_8, 0);
+    lv_obj_set_style_text_color(summary, lv_color_hex(0x3A2B00), 0);
+    lv_obj_align(summary, LV_ALIGN_TOP_LEFT, 18, kPolicyUpdateReviewSummaryTop);
+
+    if (!make_screen_bottom_timeout_timer_bar(
+            panel,
+            timeout_window,
+            xTaskGetTickCount())) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    if (!make_setup_button(
+            panel,
+            "Reject",
+            kPanelActionButtonLeftX,
+            kSetupActionButtonY,
+            kPanelActionButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0xA53B3B),
+            g_callbacks.on_policy_update_review_reject_clicked) ||
+        !make_setup_button(
+            panel,
+            "Continue",
+            kPanelActionButtonRightX,
+            kSetupActionButtonY,
+            kPanelActionButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0x24875A),
+            g_callbacks.on_policy_update_review_continue_clicked)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    drawing_surface_move_panel_foreground_locked();
+    return true;
 }
 
 bool modal_draw_user_signing_review_panel(
@@ -1817,9 +2055,9 @@ bool modal_draw_user_signing_review_panel(
     if (!make_setup_button(
             panel,
             "Reject",
-            kRecoveryPhraseButtonLeftX,
+            kPanelActionButtonLeftX,
             kSetupActionButtonY,
-            kRecoveryPhraseButtonWidth,
+            kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(0xA53B3B),
@@ -1827,9 +2065,9 @@ bool modal_draw_user_signing_review_panel(
         !make_setup_button(
             panel,
             "Sign",
-            kRecoveryPhraseButtonRightX,
+            kPanelActionButtonRightX,
             kSetupActionButtonY,
-            kRecoveryPhraseButtonWidth,
+            kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(0x24875A),
@@ -1915,11 +2153,7 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
     lv_label_set_text(pin_label, pin_text);
     lv_obj_set_style_text_font(pin_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(pin_label, lv_color_hex(0x111827), 0);
-    lv_obj_align(
-        pin_label,
-        LV_ALIGN_TOP_MID,
-        0,
-        snapshot.purpose == AgentQLocalPinAuthPurpose::policy_update ? 84 : 58);
+    lv_obj_align(pin_label, LV_ALIGN_TOP_MID, 0, 58);
 
     if (!make_pin_keypad_buttons(panel, buttons_enabled)) {
         drawing_surface_clear_panel_locked();
@@ -1937,10 +2171,13 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
 
     if (!make_setup_button(
             panel,
-            "Cancel",
-            kRecoveryPhraseButtonLeftX,
+            snapshot.purpose == AgentQLocalPinAuthPurpose::policy_update ||
+                    snapshot.purpose == AgentQLocalPinAuthPurpose::user_signing
+                ? "Back"
+                : "Cancel",
+            kPanelActionButtonLeftX,
             kSetupActionButtonY,
-            kRecoveryPhraseButtonWidth,
+            kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(0x667085),
@@ -1950,9 +2187,9 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
         !make_setup_button(
             panel,
             "Confirm",
-            kRecoveryPhraseButtonRightX,
+            kPanelActionButtonRightX,
             kSetupActionButtonY,
-            kRecoveryPhraseButtonWidth,
+            kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(0x24875A),

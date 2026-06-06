@@ -28,7 +28,7 @@ check_usb_server_deadline_order() {
 
   deadline_line="$(awk '
     /void clear_local_pin_auth_if_needed\(\)/ { in_fn = 1 }
-    in_fn && /request_backed_local_pin_deadline_reached/ { print NR; exit }
+    in_fn && /request_backed_local_pin_input_deadline_reached/ { print NR; exit }
   ' "${USB_SERVER}")"
   lockout_line="$(awk '
     /void clear_local_pin_auth_if_needed\(\)/ { in_fn = 1 }
@@ -36,7 +36,7 @@ check_usb_server_deadline_order() {
   ' "${USB_SERVER}")"
 
   if [[ -z "${deadline_line}" || -z "${lockout_line}" || "${deadline_line}" -ge "${lockout_line}" ]]; then
-    echo "FAILED: protocol-backed PIN deadline must be handled before lockout retry UI recovery" >&2
+    echo "FAILED: protocol-backed PIN input timeout must be handled before lockout retry UI recovery" >&2
     echo "deadline_line=${deadline_line:-missing} lockout_line=${lockout_line:-missing}" >&2
     exit 1
   fi
@@ -56,7 +56,7 @@ check_local_pin_ui_handler_timeout_order() {
     in_fn && /^}/ { exit }
   ' "${USB_SERVER}" >"${snippet}"
 
-  timeout_line="$(grep -En 'finish_request_backed_local_pin_timeout_if_reached' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  timeout_line="$(grep -En 'finish_request_backed_local_pin_input_timeout_if_reached' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
   second_line="$(grep -En "${second_pattern}" "${snippet}" | head -n 1 | cut -d: -f1 || true)"
 
   if [[ -z "${timeout_line}" || -z "${second_line}" || "${timeout_line}" -ge "${second_line}" ]]; then
@@ -78,10 +78,10 @@ check_local_pin_worker_timeout_order() {
   ' "${USB_SERVER}" >"${snippet}"
 
   complete_line="$(grep -En 'agent_q::local_pin_auth_complete_verify_job\(' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
-  timeout_line="$(grep -En 'finish_request_backed_local_pin_timeout_if_reached' "${snippet}" | awk -F: -v complete="${complete_line:-0}" '$1 < complete { line = $1 } END { print line }')"
+  timeout_line="$(grep -En 'finish_request_backed_local_pin_input_timeout_if_reached' "${snippet}" | awk -F: -v complete="${complete_line:-0}" '$1 < complete { line = $1 } END { print line }')"
 
   if [[ -z "${timeout_line}" || -z "${complete_line}" || "${timeout_line}" -ge "${complete_line}" ]]; then
-    echo "FAILED: protocol-backed PIN worker completion must timeout before local PIN verify result" >&2
+    echo "FAILED: protocol-backed PIN worker completion must check input timeout before local PIN verify result" >&2
     echo "timeout_line=${timeout_line:-missing} complete_line=${complete_line:-missing}" >&2
     exit 1
   fi
@@ -197,39 +197,46 @@ int main()
                LocalPurpose::connect,
                100),
            "deadline reached at deadline");
-    expect(agent_q::protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
-               LocalPurpose::connect,
-               90,
-               agent_q::timeout_window_from_deadline(90, 130)),
-           "connect local PIN retry refresh is accepted");
-    snapshot = agent_q::protocol_pin_approval_snapshot();
-    expect(snapshot.request_window.deadline == 100, "connect request deadline is immutable");
-    expect(snapshot.pin_input_window.started_at == 90 &&
-               snapshot.pin_input_window.deadline == 100,
-           "connect retry is capped by request deadline with real retry start");
-    expect(!agent_q::protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
-               LocalPurpose::connect,
-               100,
-               agent_q::timeout_window_from_deadline(90, 130)),
-           "connect retry refresh at request deadline is rejected even with stale retry start");
-    snapshot = agent_q::protocol_pin_approval_snapshot();
-    expect(snapshot.pin_input_window.started_at == 90 &&
-               snapshot.pin_input_window.deadline == 100,
-           "rejected expired retry refresh leaves existing window intact");
-    expect(agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
-               LocalPurpose::connect,
-               100),
-           "capped retry cannot extend connect request deadline");
     expect(agent_q::protocol_pin_approval_pause_deadline_for_local_pin_purpose(
-               LocalPurpose::connect),
-           "connect local PIN verification pauses only PIN input deadline");
+               LocalPurpose::connect,
+               90),
+           "connect local PIN verification pauses PIN input deadline");
     snapshot = agent_q::protocol_pin_approval_snapshot();
-    expect(snapshot.request_window.deadline == 100, "connect request deadline remains while PIN verifies");
-    expect(snapshot.pin_input_window.deadline == 0, "connect paused PIN input deadline stored");
-    expect(agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
+    expect(snapshot.request_window.deadline == 100, "connect request admission window remains recorded while PIN verifies");
+    expect(snapshot.pin_input_window.started_at == 0 &&
+               snapshot.pin_input_window.deadline == 0,
+           "connect PIN input deadline is hidden while verification runs");
+    expect(!agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
                LocalPurpose::connect,
                1000),
-           "paused connect PIN input deadline does not pause request deadline");
+           "paused connect PIN input deadline does not keep request deadline running");
+    expect(agent_q::protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
+               LocalPurpose::connect,
+               120),
+           "connect local PIN retry resumes after processing");
+    snapshot = agent_q::protocol_pin_approval_snapshot();
+    expect(snapshot.pin_input_window.started_at == 40 &&
+               snapshot.pin_input_window.deadline == 130,
+           "connect retry resumes remaining time without resetting timer fill");
+    expect(!agent_q::protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
+               LocalPurpose::connect,
+               121),
+           "connect retry cannot resume twice without a new pause");
+    expect(agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
+               LocalPurpose::connect,
+               130),
+           "resumed connect retry expires after remaining input time");
+    expect(agent_q::protocol_pin_approval_pause_deadline_for_local_pin_purpose(
+               LocalPurpose::connect,
+               125),
+           "connect local PIN verification can pause a resumed input window");
+    snapshot = agent_q::protocol_pin_approval_snapshot();
+    expect(snapshot.request_window.deadline == 100, "connect request window remains immutable");
+    expect(snapshot.pin_input_window.deadline == 0, "connect paused PIN input deadline stored");
+    expect(!agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
+               LocalPurpose::connect,
+               1000),
+           "paused connect PIN input deadline stays paused after resumed retry");
 
     char too_long[agent_q::kAgentQProtocolPinRequestIdSize + 4] = {};
     memset(too_long, 'a', sizeof(too_long) - 1);
@@ -334,6 +341,6 @@ check_local_pin_ui_handler_timeout_order \
   "request-backed PIN submit handler must timeout before verification start"
 check_local_pin_ui_handler_timeout_order \
   cancel_local_pin_auth_from_ui \
-  'policy_update_flow_record_rejected|write_connect_rejected_response|user_signing_confirmation_record_device_rejected' \
-  "request-backed PIN cancel handler must timeout before rejection terminal"
+  'policy_update_flow_return_to_review|write_connect_rejected_response|user_signing_confirmation_return_to_review_from_pin' \
+  "request-backed PIN cancel handler must timeout before cancel/back action"
 check_local_pin_worker_timeout_order

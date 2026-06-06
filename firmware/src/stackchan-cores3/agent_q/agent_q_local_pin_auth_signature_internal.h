@@ -27,7 +27,6 @@ bool local_pin_auth_user_signing_matches(
     const AgentQLocalPinAuthSignatureBinding& binding);
 AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_user_signing_verify_job(
     const AgentQLocalAuthWorkerResult& result,
-    AgentQTimeoutWindow retry_window,
     TickType_t lockout_until);
 
 }  // namespace agent_q

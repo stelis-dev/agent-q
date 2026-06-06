@@ -199,7 +199,6 @@ AgentQUserSigningConfirmationResult
 user_signing_confirmation_complete_pin_verify_job_and_write_history(
     const AgentQLocalAuthWorkerResult& worker_result,
     TickType_t now,
-    AgentQTimeoutWindow retry_window,
     TickType_t lockout_until,
     AgentQUserSigningHistoryWriteFn write_fn,
     void* context)
@@ -223,16 +222,9 @@ user_signing_confirmation_complete_pin_verify_job_and_write_history(
                    : map_transition(timeout);
     }
 
-    if (timeout_window_valid(retry_window)) {
-        const TickType_t capped_retry_deadline =
-            timeout_window_cap_deadline(expected.request_window, retry_window.deadline);
-        retry_window =
-            timeout_window_from_deadline(retry_window.started_at, capped_retry_deadline);
-    }
     const AgentQLocalPinAuthSignatureVerifyResult result =
         local_pin_auth_complete_user_signing_verify_job(
             worker_result,
-            retry_window,
             lockout_until);
     switch (result) {
         case AgentQLocalPinAuthSignatureVerifyResult::verified:
@@ -242,18 +234,11 @@ user_signing_confirmation_complete_pin_verify_job_and_write_history(
         case AgentQLocalPinAuthSignatureVerifyResult::auth_unavailable:
             clear_expected_flow_and_pin(expected);
             return AgentQUserSigningConfirmationResult::auth_unavailable;
-        case AgentQLocalPinAuthSignatureVerifyResult::locked: {
-            const AgentQUserSigningTransitionResult refresh =
-                user_signing_flow_refresh_pin_deadline(now, retry_window);
-            if (refresh != AgentQUserSigningTransitionResult::ok) {
-                clear_signature_pin_if_active();
-                return map_transition(refresh);
-            }
+        case AgentQLocalPinAuthSignatureVerifyResult::locked:
             return AgentQUserSigningConfirmationResult::locked;
-        }
         case AgentQLocalPinAuthSignatureVerifyResult::wrong_pin: {
             const AgentQUserSigningTransitionResult refresh =
-                user_signing_flow_refresh_pin_deadline(now, retry_window);
+                user_signing_flow_refresh_pin_deadline(now);
             if (refresh != AgentQUserSigningTransitionResult::ok) {
                 clear_signature_pin_if_active();
                 return map_transition(refresh);
@@ -265,21 +250,44 @@ user_signing_confirmation_complete_pin_verify_job_and_write_history(
 }
 
 AgentQUserSigningConfirmationResult
-user_signing_confirmation_mark_pin_verification_started()
+user_signing_confirmation_mark_pin_verification_started(TickType_t now)
 {
     if (!signature_pin_bound_to_flow(
             AgentQLocalPinAuthStage::pin_verifying,
             AgentQUserSigningStage::pin_entry)) {
         return AgentQUserSigningConfirmationResult::wrong_stage;
     }
-    return map_transition(user_signing_flow_pause_pin_deadline());
+    return map_transition(user_signing_flow_pause_pin_deadline(now));
+}
+
+AgentQUserSigningConfirmationResult user_signing_confirmation_return_to_review_from_pin(
+    TickType_t now,
+    AgentQTimeoutWindow review_window)
+{
+    if (!signature_pin_bound_to_flow(
+            AgentQLocalPinAuthStage::pin_entry,
+            AgentQUserSigningStage::pin_entry)) {
+        return AgentQUserSigningConfirmationResult::wrong_stage;
+    }
+    const AgentQUserSigningTransitionResult result =
+        user_signing_flow_return_to_review(now, review_window);
+    if (result == AgentQUserSigningTransitionResult::ok ||
+        result == AgentQUserSigningTransitionResult::invalid_session ||
+        result == AgentQUserSigningTransitionResult::deadline_expired) {
+        clear_signature_pin_if_active();
+    }
+    return map_transition(result);
 }
 
 AgentQUserSigningConfirmationResult
 user_signing_confirmation_record_device_rejected()
 {
-    clear_signature_pin_if_active();
-    return map_transition(user_signing_flow_record_device_rejected());
+    const AgentQUserSigningTransitionResult result =
+        user_signing_flow_record_device_rejected();
+    if (result == AgentQUserSigningTransitionResult::ok) {
+        clear_signature_pin_if_active();
+    }
+    return map_transition(result);
 }
 
 AgentQUserSigningConfirmationResult

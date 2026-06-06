@@ -68,7 +68,7 @@ Legend:
 | Boot/sleep posture | O | Centers yaw and raises pitch when the default avatar is attached at boot or the screen wakes. Moves to centered yaw and lowered pitch before screen-off or power-off. |
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
 | Sui transaction signing substrate | △ | Source can derive the Sui account 0 signing seed from stored DEV_PROFILE root material, sign Sui transaction bytes with the pinned MicroSui Ed25519 transaction-intent routine, return only a Sui signature envelope to internal callers, and wipe root/mnemonic/seed scratch. Host tests cover a deterministic signature vector, verification, invalid-input output wiping, and missing-root failure. The substrate is not exposed as a public signing API. |
-| `sign_transaction` | △ | Source is wired for Sui `sign_transaction` over the bounded restricted-transfer shape. The public USB dispatcher, `sign_result` writer, client/MCP/provider parser/API, Wallet Standard adapter, and raw `signing` capability are present in source. Host tests cover bounded request metadata parsed from `txBytes`, signable payload scratch, payload digest, policy runtime, review/PIN/history/signing stages, session ownership, terminal cleanup, review view-model rows derived from `txBytes`, host-supplied `network` handling, required history writes, signing-critical handoff, response boundaries, and payload/signature scratch wiping. Firmware reads device-local signing authorization mode and selects one gate: policy mode evaluates active policy and signs after policy authorization with speech-bubble notifications, while user mode requires clear-signing review and local PIN confirmation without applying active policy as an additional filter. Sponsored gas, arbitrary Sui transactions, and caller-controlled timing fields are not supported; Firmware-owned review/PIN input windows use a fixed internal 30-second window, submitting a complete PIN stops the input timer while stored-PIN cryptographic verification runs, the original signing confirmation deadline remains enforceable, the internal local-auth worker watchdog still fails closed as authentication unavailable, and wrong PIN results open a fresh input window capped by the original confirmation deadline unless the shared lockout is active. Detailed hardware evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; LVGL visual evidence remains pending, so product-active status is not claimed. |
+| `sign_transaction` | △ | Source is wired for Sui `sign_transaction` over the bounded restricted-transfer shape. The public USB dispatcher, `sign_result` writer, client/MCP/provider parser/API, Wallet Standard adapter, and raw `signing` capability are present in source. Host tests cover bounded request metadata parsed from `txBytes`, signable payload scratch, payload digest, policy runtime, review/PIN/history/signing stages, session ownership, terminal cleanup, review view-model rows derived from `txBytes`, host-supplied `network` handling, required history writes, signing-critical handoff, response boundaries, and payload/signature scratch wiping. Firmware reads device-local signing authorization mode and selects one gate: policy mode evaluates active policy and signs after policy authorization with speech-bubble notifications, while user mode requires clear-signing review and local PIN confirmation without applying active policy as an additional filter. Sponsored gas, arbitrary Sui transactions, and caller-controlled timing fields are not supported; Firmware-owned review/PIN input windows use a fixed internal 30-second window. Submitting a complete PIN pauses the input timer while stored-PIN cryptographic verification runs; the signing confirmation window is the review/PIN-entry admission boundary and is not the terminal timeout authority during stored-PIN processing after submit. The internal local-auth worker watchdog still fails closed as authentication unavailable, and wrong PIN results resume the remaining paused input window unless the shared lockout is active. Detailed hardware evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; LVGL visual evidence remains pending, so product-active status is not claimed. |
 | `get_capabilities` | O | Source reports Sui Ed25519 account identity capability for account 0 and no delegated public methods over an approved session while material-backed `provisioned`. Top-level `signing` reports read-only Firmware signing authorization mode and supported signing methods. |
 | `get_accounts` | O | Source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is verified against Sui SDK address vectors on host; hardware smoke coverage exists for this path while idle Settings is open, after Change PIN on the same session, and after reconnect. |
 | `policy_get` | △ | Source implements a session-scoped read-only summary of the committed active `agentq.policy.v0` policy record. The current product flow installs the DEV_PROFILE default-reject policy, and the target active-policy store can load canonical current-schema policy records through its internal storage boundary. Corrupt/unreadable active policy or missing policy under `provisioned` fails closed. Gateway/MCP parser tests, target policy-store host tests, and hardware smoke coverage for idle-Settings read access cover this path. |
@@ -78,7 +78,7 @@ Legend:
 | Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat stores root entropy, initializes the active default-reject policy, stores the local PIN verifier, and initializes signing authorization mode. Public account derivation is implemented via `get_accounts`; USER_PROFILE secure provisioning is not implemented. |
 | Policy evaluation | △ | Links the common host-tested policy evaluator, stored-policy provider boundary, and Sui restricted-transfer method adapter. The common evaluator matches allowlisted namespace/field facts and owns only shared `common.*` fields; chain-specific field identifiers, descriptors, and transaction semantics stay in the method adapter. Sui `sign_transaction` consumes the committed active policy in policy authorization mode. Current active policy records may contain `reject` rules and at most one single-recipient bounded `sign` rule; broad, multi-rule, and multi-recipient sign policies are invalid. |
 | Policy storage/read | △ | Stores the active policy as canonical `agentq.policy.v0` binary records in two bounded NVS slots plus commit metadata and a pending-write marker, exposes a read-only `policy_get` summary, preserves the old committed policy only for interrupted writes identified by that pending marker, treats metadata flip as the commit point, classifies each write as applied, unchanged failure, or consistency error, tolerates stale pending markers that exactly match the selected committed policy, removes stale commit metadata before slot reuse, and treats corrupt/unreadable committed records, invalid commit metadata without a matching pending marker, or pending targets that overlap active material without exactly matching it as a material-consistency error. The current product flow installs the DEV_PROFILE default-reject policy; current-schema policy records enter through the Firmware-owned `policy_propose` proposal path. |
-| Policy update | △ | Source implements a Firmware-owned `policy_propose` flow for active sessions: bounded proposal validation, broad, multi-rule, and multi-recipient sign rejection, device-local local-PIN approval with an on-device summary, canonical active-policy commit, required terminal history recording, and no direct policy setter. The target accepts current-schema reject policies and at most one single-recipient bounded sign rule. The flow uses the two-slot active-policy store plus a persistent policy-update terminal marker that makes an incomplete post-commit terminal sequence a material-consistency error on reboot. Gateway/MCP request/parser surface exists, and Gateway has a local Admin Page for the current policy proposal template. |
+| Policy update | △ | Source implements a Firmware-owned `policy_propose` flow for active sessions: bounded proposal validation, broad, multi-rule, and multi-recipient sign rejection, a device-local policy summary review, local-PIN approval only after device-local Continue, canonical active-policy commit, required terminal history recording, and no direct policy setter. The target accepts current-schema reject policies and at most one single-recipient bounded sign rule. The flow uses the two-slot active-policy store plus a persistent policy-update terminal marker that makes an incomplete post-commit terminal sequence a material-consistency error on reboot. Gateway/MCP request/parser surface exists, and Gateway has a local Admin Page for the current policy proposal template. |
 | Secure user profile | X | Not implemented. |
 
 ## Chain And Method Support
@@ -431,18 +431,19 @@ active RAM session.
 Wrong PIN, timeout, or cancel leaves root material, active policy, PIN verifier,
 signing authorization mode, the local connect setting, and `provisioned` state
 intact.
-Submitting a complete PIN stops the input deadline while stored-PIN
-cryptographic verification runs. A wrong PIN result returns to PIN entry with a
-fresh input window unless the shared wrong-PIN lockout is active. For
-protocol-backed connect, policy-update, and device-confirmed signing PIN
-purposes, their state owner also keeps an immutable outer request deadline. A
-successful PIN verification result is not timed out by the prior PIN input
-window only while that request deadline remains open, and a wrong PIN
-verification result starts a new fixed internal input window capped by that
-request deadline. The
+Submitting a complete PIN pauses the input deadline while stored-PIN
+cryptographic verification runs. A wrong PIN result returns to the same PIN
+entry state by resuming the remaining paused input window unless the shared
+wrong-PIN lockout is active. For protocol-backed connect, policy-update, and
+device-confirmed signing PIN purposes, their state owner also keeps an
+immutable outer request window. That request window is the admission boundary
+for review/PIN entry and caps PIN input before submit; it is not the terminal
+timeout authority for stored-PIN cryptographic processing after submit. The
 local-auth worker still has a separate internal watchdog; if the worker stalls
 or its result is lost, the flow fails closed as an authentication error instead
-of remaining in verification.
+of remaining in verification. For device-confirmed signing, PIN Back returns
+to the clear-signing review and wipes only PIN scratch; review Reject is the
+terminal `user_rejected` action.
 After Reset PIN confirm, the target keeps the reset PIN panel active and adds a
 non-interactive processing overlay before PIN verification. Correct PIN
 verification advances to destructive wipe while keeping the processing overlay
@@ -520,8 +521,8 @@ Current verification expectations for this target:
   6-digit PIN verifier storage, verification, fresh salt, wipe, and fail-closed
   behavior against host NVS/RNG stubs and pinned Monocypher;
 - run `firmware/tools/stackchan-cores3/test_local_pin_auth.sh` to check local
-  PIN authorization state transitions, including lockout release and retry
-  deadline refresh;
+  PIN authorization state transitions, including lockout release and paused
+  input-window resume;
 - run `firmware/tools/stackchan-cores3/test_connect_approval.sh` to check
   physical connect approval request/gateway/deadline/choice state ownership;
 - run `firmware/tools/stackchan-cores3/test_protocol_pin_approval.sh` to check
@@ -598,10 +599,15 @@ Current verification expectations for this target:
   unknown or inactive session id;
 - smoke-test `policy_propose` on a development device whose active
   policy may be changed: submit a bounded current-schema policy over an approved
-  session, enter the device-local PIN approval, verify `policy_propose_result`
-  reports `applied`, verify `policy_get` reflects the committed policy hash and
-  rule count, and verify `get_approval_history` returns a newest policy-update
+  session, verify the device-local summary review appears, use device-local
+  Continue to enter local PIN approval, verify `policy_propose_result` reports
+  `applied`, verify `policy_get` reflects the committed policy hash and rule
+  count, and verify `get_approval_history` returns a newest policy-update
   terminal record whose sequence advanced during this smoke run;
+- smoke-test the policy-update review subpaths separately when that evidence is
+  required: review Back from PIN returns to the same summary and wipes only PIN
+  scratch, review Reject returns terminal `rejected` without committing, and
+  review timeout returns terminal `timed_out` without committing;
 - track separate follow-up smoke coverage for invalid, rejected, and timed-out
   `policy_propose` attempts, verifying that the previously committed
   active policy is still reported by `policy_get`; do not count the positive

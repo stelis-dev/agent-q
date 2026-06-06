@@ -637,15 +637,17 @@ Connect rules:
   PIN, and reset lock the local PIN UI for 30 seconds in RAM. Canceling and
   reopening the PIN UI must not clear the lockout. Power cycling clears it.
 - Device-local PIN entry uses a Firmware-owned input window. Submitting a
-  complete PIN stops that input timeout while Firmware performs stored-PIN
+  complete PIN pauses that input timeout while Firmware performs stored-PIN
   verification. This pause does not disable Firmware's internal local-auth
   worker watchdog; a stalled or lost worker result fails closed as local
-  authentication unavailable, not as a wrong PIN. A correct PIN result proceeds
-  after verification even if the prior input window would have expired during
-  the cryptographic work, but only while the original connect request deadline
-  remains open. If the submitted PIN is wrong, Firmware opens a fresh internal
-  input window for the next attempt, capped by that original request deadline
-  and subject to the shared wrong-PIN lockout.
+  authentication unavailable, not as a wrong PIN. The original connect request
+  window is the admission boundary and caps PIN entry before the PIN is
+  submitted; it is not the terminal timeout authority for stored-PIN
+  cryptographic processing after submit. A correct PIN result may proceed after
+  verification even if the prior input window would have expired during the
+  cryptographic work. If the submitted PIN is wrong, Firmware returns to the
+  same PIN-entry state by resuming the remaining paused input window, subject
+  to the shared wrong-PIN lockout.
 - When `requirePinOnConnect` is OFF, the target uses the existing physical
   Confirm approval path.
 - PIN is never submitted over USB. There is no protocol request or parameter for
@@ -1141,12 +1143,17 @@ User authorization mode:
   `pin_on_connect` setting does not control signing confirmation.
 - Firmware owns fixed internal `30000` millisecond physical-input windows for
   review confirmation and PIN entry. The host cannot set or negotiate them
-  through the protocol. Submitting a complete PIN stops the input timer while
-  stored-PIN cryptographic verification runs. A wrong PIN result returns to PIN
-  entry with a fresh internal input window capped by the original signing
-  confirmation deadline unless the shared wrong-PIN lockout is active. The
-  internal local-auth worker watchdog still fails closed as authentication
-  unavailable.
+  through the protocol. Submitting a complete PIN pauses the input timer while
+  stored-PIN cryptographic verification runs. The original signing confirmation
+  window is the review/PIN-entry admission boundary and caps PIN entry before
+  submit; it is not the terminal timeout authority for stored-PIN
+  cryptographic processing after submit. A wrong PIN result returns to the same
+  PIN-entry state by resuming the remaining paused input window unless the
+  shared wrong-PIN lockout is active. The internal local-auth worker watchdog
+  still fails closed as authentication unavailable.
+- Review Reject is the terminal `user_rejected` action. Back from the PIN
+  screen wipes only PIN scratch and returns to the clear-signing review; it
+  must not be reported as `user_rejected` or written as a terminal rejection.
 - The state owner must validate the session immediately before performing the
   required confirmation history write and must enter the signing critical
   section in the same successful transition. A session loss after the write
@@ -1195,6 +1202,9 @@ Rules for the first implementation:
   a bounded clear-signing review derived from the exact message bytes that will
   be signed. Full message display may be replaced by bounded preview plus digest
   metadata, but callers must not supply independent review facts.
+- Review Reject is the terminal `user_rejected` action. Back from the PIN
+  screen wipes only PIN scratch and returns to the clear-signing review; it
+  must not be reported as `user_rejected` or written as a terminal rejection.
 - Firmware must build the Sui PersonalMessage intent digest by BCS-serializing
   the message as a byte vector, applying the Sui PersonalMessage intent, and
   signing that digest. It must not reuse the Sui transaction-intent signing path
@@ -1371,7 +1381,8 @@ through `sign_transaction`.
 
 `policy_propose` is a policy-write proposal request. StackChan CoreS3
 Firmware and Gateway/MCP implement the first supported path: a session-scoped
-proposal is validated by Firmware, shown on device for local PIN approval,
+proposal is validated by Firmware, shown on device as a policy-update summary
+review, advanced to local PIN approval only after device-local Continue,
 committed through the canonical active-policy store, and reported as
 `policy_propose_result`. The Gateway-served local Admin Page can submit the
 current policy proposal template; full policy editing is not implemented.
@@ -1480,10 +1491,14 @@ State and authorization rules:
   lifetime.
 - A second policy update proposal while one is pending is rejected with `busy`.
 - Device-local approval is required before commit. For the current display
-  target, the approval model is local PIN verification plus an on-device summary
-  showing a bounded policy hash prefix, rule count, default action, affected
-  chain/method, highest action, and the current-schema action summary. This
-  implementation does not rely on host-only confirmation.
+  target, approval is a two-step device flow: first a summary review showing a
+  bounded policy hash prefix, rule count, default action, affected chain/method,
+  highest action, and the current-schema action summary; then local PIN entry
+  after device-local Continue. Rejecting or timing out on the summary review
+  terminates the proposal without starting PIN state. Back from the PIN screen
+  returns to the summary review and wipes only the PIN scratch; review Reject is
+  the terminal rejected action. This implementation does not rely on host-only
+  confirmation.
 - During pending approval, read-only session methods may remain available only
   if they do not dismiss or mutate the pending state. `sign_transaction` and nested
   policy updates must return `busy` while a policy update is pending or

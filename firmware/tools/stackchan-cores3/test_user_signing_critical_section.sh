@@ -267,7 +267,7 @@ void enter_critical_section(const char* request_id)
     expect(agent_q::user_signing_flow_accept_review(50, pin_window(50, 90)) ==
                agent_q::AgentQUserSigningTransitionResult::ok,
            "review accepted");
-    expect(agent_q::user_signing_flow_pause_pin_deadline() ==
+    expect(agent_q::user_signing_flow_pause_pin_deadline(55) ==
                agent_q::AgentQUserSigningTransitionResult::ok,
            "PIN submit pauses input deadline");
     expect(agent_q::user_signing_flow_record_pin_verified_and_write_confirmation_history(55,
@@ -285,7 +285,7 @@ void enter_personal_message_critical_section(const char* request_id)
     expect(agent_q::user_signing_flow_accept_review(50, pin_window(50, 90)) ==
                agent_q::AgentQUserSigningTransitionResult::ok,
            "personal-message review accepted");
-    expect(agent_q::user_signing_flow_pause_pin_deadline() ==
+    expect(agent_q::user_signing_flow_pause_pin_deadline(55) ==
                agent_q::AgentQUserSigningTransitionResult::ok,
            "personal-message PIN submit pauses input deadline");
     expect(agent_q::user_signing_flow_record_pin_verified_and_write_confirmation_history(55,

@@ -45,10 +45,10 @@ bool protocol_pin_approval_request_id_for_local_pin_purpose(
     size_t output_size);
 bool protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
     AgentQLocalPinAuthPurpose purpose,
-    TickType_t now,
-    AgentQTimeoutWindow pin_input_window);
+    TickType_t now);
 bool protocol_pin_approval_pause_deadline_for_local_pin_purpose(
-    AgentQLocalPinAuthPurpose purpose);
+    AgentQLocalPinAuthPurpose purpose,
+    TickType_t now);
 bool protocol_pin_approval_deadline_reached_for_local_pin_purpose(
     AgentQLocalPinAuthPurpose purpose,
     TickType_t now);

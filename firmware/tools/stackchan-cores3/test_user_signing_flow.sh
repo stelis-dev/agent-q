@@ -275,12 +275,17 @@ bool write_confirmation_history(
 agent_q::AgentQUserSigningTransitionResult record_verified_pin_and_write_confirmation_history(
     agent_q::AgentQUserSigningHistoryWriteFn write_fn,
     void* context,
-    TickType_t now = 100)
+    TickType_t now = 100,
+    TickType_t pause_at = 100)
 {
-    const agent_q::AgentQUserSigningTransitionResult pause =
-        agent_q::user_signing_flow_pause_pin_deadline();
-    if (pause != agent_q::AgentQUserSigningTransitionResult::ok) {
-        return pause;
+    const agent_q::AgentQUserSigningFlowSnapshot snapshot =
+        agent_q::user_signing_flow_snapshot();
+    if (agent_q::timeout_window_active(snapshot.pin_input_window)) {
+        const agent_q::AgentQUserSigningTransitionResult pause =
+            agent_q::user_signing_flow_pause_pin_deadline(pause_at);
+        if (pause != agent_q::AgentQUserSigningTransitionResult::ok) {
+            return pause;
+        }
     }
     return agent_q::user_signing_flow_record_pin_verified_and_write_confirmation_history(
         now,
@@ -550,6 +555,26 @@ int main()
            "rejected terminal mapping");
 
     agent_q::user_signing_flow_clear();
+    expect(begin_valid_flow("req_pin_back"), "begin before PIN Back");
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok,
+           "review acceptance before PIN Back");
+    expect(agent_q::user_signing_flow_record_device_rejected() == Transition::wrong_stage,
+           "PIN entry cannot be recorded as device rejection");
+    expect(agent_q::user_signing_flow_return_to_review(110, pin_window(110, 160)) == Transition::ok,
+           "PIN Back returns to review");
+    snapshot = agent_q::user_signing_flow_snapshot();
+    expect(snapshot.stage == Stage::reviewing &&
+               snapshot.signable_payload_available &&
+               strcmp(snapshot.request_id, "req_pin_back") == 0,
+           "PIN Back preserves the signable request in review");
+    expect(agent_q::user_signing_flow_record_device_rejected() == Transition::ok,
+           "review Reject after PIN Back terminalizes request");
+    snapshot = agent_q::user_signing_flow_snapshot();
+    expect(snapshot.stage == Stage::terminal &&
+               snapshot.terminal_result == Terminal::rejected,
+           "review Reject after PIN Back records user_rejected terminal");
+
+    agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_timeout"), "begin before timeout");
     expect(agent_q::user_signing_flow_record_timeout(300) == Transition::ok,
            "deadline timeout terminalizes");
@@ -651,7 +676,7 @@ int main()
            "begin before expired PIN");
     expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok,
            "review accepted before PIN expiry test");
-    expect(agent_q::user_signing_flow_pause_pin_deadline() == Transition::ok,
+    expect(agent_q::user_signing_flow_pause_pin_deadline(100) == Transition::ok,
            "PIN verification pauses only local input deadline");
     expect(record_verified_pin_and_write_confirmation_history(write_confirmation_history,
                nullptr,
@@ -671,24 +696,26 @@ int main()
            "begin before late verified PIN");
     expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 120)) == Transition::ok,
            "review accepted before late verified PIN");
-    expect(agent_q::user_signing_flow_pause_pin_deadline() == Transition::ok,
+    expect(agent_q::user_signing_flow_pause_pin_deadline(119) == Transition::ok,
            "PIN submit pauses the local input deadline");
     snapshot = agent_q::user_signing_flow_snapshot();
     expect(snapshot.request_window.deadline == 130 &&
                snapshot.pin_input_window.started_at == 0 &&
                snapshot.pin_input_window.deadline == 0,
            "PIN verification pauses only local input deadline");
-    expect(agent_q::user_signing_flow_deadline_reached(130),
-           "original request deadline still runs while PIN verification runs");
+    expect(!agent_q::user_signing_flow_deadline_reached(130),
+           "request admission window does not reject while PIN verification runs");
     expect(record_verified_pin_and_write_confirmation_history(write_confirmation_history,
                nullptr,
-               130) == Transition::deadline_expired,
-           "direct flow helper enforces original request deadline");
+               130,
+               119) == Transition::ok,
+           "direct flow helper accepts verified PIN after request admission window while worker is valid");
     snapshot = agent_q::user_signing_flow_snapshot();
-    expect(snapshot.stage == Stage::terminal &&
-               snapshot.terminal_result == Terminal::timed_out &&
-               !snapshot.signable_payload_available,
-           "late verified PIN after request deadline times out");
+    expect(snapshot.stage == Stage::signing_critical_section &&
+               snapshot.signable_payload_available,
+           "late verified PIN after request deadline enters critical section");
+    expect(agent_q::user_signing_flow_record_signing_failed() == Transition::ok,
+           "late verified PIN request cleanup closes critical section");
 
     agent_q::user_signing_flow_clear();
     expect(agent_q::user_signing_flow_begin(
@@ -697,14 +724,18 @@ int main()
            "begin before late PIN refresh");
     expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 140)) == Transition::ok,
            "review accepted before late PIN refresh");
-    expect(agent_q::user_signing_flow_refresh_pin_deadline(130, pin_window(130, 160)) ==
-               Transition::deadline_expired,
-           "PIN retry refresh after request deadline terminalizes as timeout");
+    expect(agent_q::user_signing_flow_pause_pin_deadline(120) == Transition::ok,
+           "PIN retry refresh test pauses input before request admission window closes");
+    expect(!agent_q::user_signing_flow_deadline_reached(130),
+           "paused PIN retry does not timeout at request admission window");
+    expect(agent_q::user_signing_flow_refresh_pin_deadline(150) ==
+               Transition::ok,
+           "PIN retry refresh after request deadline resumes remaining input time");
     snapshot = agent_q::user_signing_flow_snapshot();
-    expect(snapshot.stage == Stage::terminal &&
-               snapshot.terminal_result == Terminal::timed_out &&
-               !snapshot.signable_payload_available,
-           "late PIN refresh after request deadline wipes payload");
+    expect(snapshot.stage == Stage::pin_entry &&
+               snapshot.pin_input_window.started_at == 129 &&
+               snapshot.pin_input_window.deadline == 160,
+           "late PIN refresh after request deadline resumes remaining time without resetting timer fill");
 
     agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_expired_pin_deadline"), "begin before expired PIN deadline handoff");

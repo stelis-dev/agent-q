@@ -20,22 +20,24 @@ AgentQUsbSessionLossPlan usb_session_loss_plan(const AgentQUsbSessionLossInput& 
     const bool cancel_user_signing =
         input.user_signing_active && !input.user_signing_critical;
 
-    return AgentQUsbSessionLossPlan{
-        input.session_active ||
-            input.connect_approval_active ||
-            protocol_session_bound ||
-            local_session_bound ||
-            input.user_signing_active,
-        input.session_active,
-        input.connect_approval_active,
-        protocol_session_bound,
-        local_session_bound,
-        protocol_policy_update || local_policy_update,
-        cancel_user_signing,
-        input.connect_approval_active,
-        local_session_bound,
-        cancel_user_signing,
-    };
+	    return AgentQUsbSessionLossPlan{
+	        input.session_active ||
+	            input.connect_approval_active ||
+	            protocol_session_bound ||
+	            local_session_bound ||
+	            input.policy_update_active ||
+	            input.user_signing_active,
+	        input.session_active,
+	        input.connect_approval_active,
+	        protocol_session_bound,
+	        local_session_bound,
+	        input.policy_update_active || protocol_policy_update || local_policy_update,
+	        cancel_user_signing,
+	        input.connect_approval_active,
+	        local_session_bound,
+	        input.policy_update_active && !local_policy_update,
+	        cancel_user_signing,
+	    };
 }
 
 }  // namespace agent_q

@@ -37,13 +37,15 @@ AgentQUserSigningConfirmationResult
 user_signing_confirmation_complete_pin_verify_job_and_write_history(
     const AgentQLocalAuthWorkerResult& worker_result,
     TickType_t now,
-    AgentQTimeoutWindow retry_window,
     TickType_t lockout_until,
     AgentQUserSigningHistoryWriteFn write_fn,
     void* context);
 AgentQUserSigningConfirmationResult
-user_signing_confirmation_mark_pin_verification_started();
+user_signing_confirmation_mark_pin_verification_started(TickType_t now);
 
+AgentQUserSigningConfirmationResult user_signing_confirmation_return_to_review_from_pin(
+    TickType_t now,
+    AgentQTimeoutWindow review_window);
 AgentQUserSigningConfirmationResult
 user_signing_confirmation_record_device_rejected();
 AgentQUserSigningConfirmationResult

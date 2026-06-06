@@ -17,6 +17,10 @@ constexpr size_t kPolicyUpdateMethodDescriptorCount = 1;
 
 struct AgentQPolicyUpdateFlowState {
     bool active = false;
+    AgentQPolicyUpdateFlowStage stage = AgentQPolicyUpdateFlowStage::idle;
+    char request_id[kAgentQRequestIdSize] = {};
+    char session_id[kAgentQSessionIdSize] = {};
+    AgentQTimeoutWindow review_window = kAgentQTimeoutWindowNone;
     AgentQParsedPolicyProposal parsed = {};
     AgentQPolicyCanonicalDocument canonical = {};
     uint8_t record[kAgentQPolicyMaxCanonicalRecordBytes] = {};
@@ -30,11 +34,25 @@ struct AgentQPolicyUpdateFlowState {
     void clear()
     {
         memset(this, 0, sizeof(*this));
+        stage = AgentQPolicyUpdateFlowStage::idle;
         highest_action = AgentQPolicyUpdateHighestAction::reject;
     }
 };
 
 AgentQPolicyUpdateFlowState g_state;
+
+bool copy_non_empty_bounded(const char* input, char* output, size_t output_size)
+{
+    if (input == nullptr || output == nullptr || output_size == 0) {
+        return false;
+    }
+    const size_t length = strlen(input);
+    if (length == 0 || length >= output_size) {
+        return false;
+    }
+    memcpy(output, input, length + 1);
+    return true;
+}
 
 AgentQPolicyMethodDescriptor method_descriptor()
 {
@@ -314,6 +332,10 @@ AgentQPolicyUpdateFlowSnapshot policy_update_flow_snapshot()
 {
     return AgentQPolicyUpdateFlowSnapshot{
         g_state.active,
+        g_state.stage,
+        g_state.request_id,
+        g_state.session_id,
+        g_state.review_window,
         g_state.policy_hash,
         g_state.parsed.document.rule_count,
         highest_action_name(g_state.highest_action),
@@ -323,9 +345,22 @@ AgentQPolicyUpdateFlowSnapshot policy_update_flow_snapshot()
     };
 }
 
-AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(JsonVariantConst policy)
+AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(
+    JsonVariantConst policy,
+    const char* request_id,
+    const char* session_id,
+    AgentQTimeoutWindow review_window)
 {
     g_state.clear();
+    if (!copy_non_empty_bounded(request_id, g_state.request_id, sizeof(g_state.request_id)) ||
+        !copy_non_empty_bounded(session_id, g_state.session_id, sizeof(g_state.session_id))) {
+        g_state.clear();
+        return AgentQPolicyUpdateFlowBeginResult::invalid_argument;
+    }
+    if (!timeout_window_valid(review_window)) {
+        g_state.clear();
+        return AgentQPolicyUpdateFlowBeginResult::invalid_argument;
+    }
 
     const AgentQPolicyMethodDescriptor descriptors[kPolicyUpdateMethodDescriptorCount] = {
         method_descriptor(),
@@ -397,12 +432,84 @@ AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(JsonVariantConst poli
         g_state.clear();
         return AgentQPolicyUpdateFlowBeginResult::invalid_policy;
     }
+    g_state.review_window = review_window;
+    g_state.stage = AgentQPolicyUpdateFlowStage::reviewing;
     g_state.active = true;
     return AgentQPolicyUpdateFlowBeginResult::ok;
 }
 
+AgentQPolicyUpdateFlowTransitionResult policy_update_flow_continue_to_pin(TickType_t now)
+{
+    if (!g_state.active) {
+        return AgentQPolicyUpdateFlowTransitionResult::inactive;
+    }
+    if (g_state.stage != AgentQPolicyUpdateFlowStage::reviewing) {
+        return AgentQPolicyUpdateFlowTransitionResult::wrong_stage;
+    }
+    if (!timeout_window_valid(g_state.review_window)) {
+        return AgentQPolicyUpdateFlowTransitionResult::invalid_deadline;
+    }
+    if (timeout_window_reached(g_state.review_window, now)) {
+        return AgentQPolicyUpdateFlowTransitionResult::timed_out;
+    }
+    g_state.review_window = kAgentQTimeoutWindowNone;
+    g_state.stage = AgentQPolicyUpdateFlowStage::pin_entry;
+    return AgentQPolicyUpdateFlowTransitionResult::ok;
+}
+
+AgentQPolicyUpdateFlowTransitionResult policy_update_flow_return_to_review(
+    AgentQTimeoutWindow review_window)
+{
+    if (!g_state.active) {
+        return AgentQPolicyUpdateFlowTransitionResult::inactive;
+    }
+    if (g_state.stage != AgentQPolicyUpdateFlowStage::pin_entry) {
+        return AgentQPolicyUpdateFlowTransitionResult::wrong_stage;
+    }
+    if (!timeout_window_valid(review_window)) {
+        return AgentQPolicyUpdateFlowTransitionResult::invalid_deadline;
+    }
+    g_state.review_window = review_window;
+    g_state.stage = AgentQPolicyUpdateFlowStage::reviewing;
+    return AgentQPolicyUpdateFlowTransitionResult::ok;
+}
+
+AgentQPolicyUpdateFlowTransitionResult policy_update_flow_mark_pin_verifying()
+{
+    if (!g_state.active) {
+        return AgentQPolicyUpdateFlowTransitionResult::inactive;
+    }
+    if (g_state.stage != AgentQPolicyUpdateFlowStage::pin_entry) {
+        return AgentQPolicyUpdateFlowTransitionResult::wrong_stage;
+    }
+    g_state.stage = AgentQPolicyUpdateFlowStage::pin_verifying;
+    return AgentQPolicyUpdateFlowTransitionResult::ok;
+}
+
+AgentQPolicyUpdateFlowTransitionResult policy_update_flow_return_to_pin_entry()
+{
+    if (!g_state.active) {
+        return AgentQPolicyUpdateFlowTransitionResult::inactive;
+    }
+    if (g_state.stage != AgentQPolicyUpdateFlowStage::pin_verifying) {
+        return AgentQPolicyUpdateFlowTransitionResult::wrong_stage;
+    }
+    g_state.stage = AgentQPolicyUpdateFlowStage::pin_entry;
+    return AgentQPolicyUpdateFlowTransitionResult::ok;
+}
+
+bool policy_update_flow_review_deadline_reached(TickType_t now)
+{
+    return g_state.active &&
+           g_state.stage == AgentQPolicyUpdateFlowStage::reviewing &&
+           timeout_window_reached(g_state.review_window, now);
+}
+
 AgentQPolicyUpdateFlowTerminalResult policy_update_flow_record_rejected(uint64_t uptime_ms)
 {
+    if (!g_state.active || g_state.stage != AgentQPolicyUpdateFlowStage::reviewing) {
+        return AgentQPolicyUpdateFlowTerminalResult::invalid_state;
+    }
     return record_terminal_without_commit(
         "rejected",
         "device_rejected",
@@ -412,6 +519,11 @@ AgentQPolicyUpdateFlowTerminalResult policy_update_flow_record_rejected(uint64_t
 
 AgentQPolicyUpdateFlowTerminalResult policy_update_flow_record_timed_out(uint64_t uptime_ms)
 {
+    if (!g_state.active ||
+        (g_state.stage != AgentQPolicyUpdateFlowStage::reviewing &&
+         g_state.stage != AgentQPolicyUpdateFlowStage::pin_entry)) {
+        return AgentQPolicyUpdateFlowTerminalResult::invalid_state;
+    }
     return record_terminal_without_commit(
         "timed_out",
         "timeout",
@@ -432,6 +544,10 @@ AgentQPolicyUpdateFlowTerminalResult policy_update_flow_commit(uint64_t uptime_m
     if (!g_state.active) {
         return AgentQPolicyUpdateFlowTerminalResult::invalid_state;
     }
+    if (g_state.stage != AgentQPolicyUpdateFlowStage::pin_verifying) {
+        return AgentQPolicyUpdateFlowTerminalResult::invalid_state;
+    }
+    g_state.stage = AgentQPolicyUpdateFlowStage::committing;
 
     const AgentQPolicyUpdateMarkerBeginResult marker_result =
         policy_update_marker_begin(
@@ -472,6 +588,42 @@ AgentQPolicyUpdateFlowTerminalResult policy_update_flow_commit(uint64_t uptime_m
         default:
             return AgentQPolicyUpdateFlowTerminalResult::consistency_error;
     }
+}
+
+const char* policy_update_flow_stage_name(AgentQPolicyUpdateFlowStage stage)
+{
+    switch (stage) {
+        case AgentQPolicyUpdateFlowStage::idle:
+            return "idle";
+        case AgentQPolicyUpdateFlowStage::reviewing:
+            return "reviewing";
+        case AgentQPolicyUpdateFlowStage::pin_entry:
+            return "pin_entry";
+        case AgentQPolicyUpdateFlowStage::pin_verifying:
+            return "pin_verifying";
+        case AgentQPolicyUpdateFlowStage::committing:
+            return "committing";
+    }
+    return "";
+}
+
+const char* policy_update_flow_transition_reason(AgentQPolicyUpdateFlowTransitionResult result)
+{
+    switch (result) {
+        case AgentQPolicyUpdateFlowTransitionResult::ok:
+            return "ok";
+        case AgentQPolicyUpdateFlowTransitionResult::inactive:
+            return "inactive";
+        case AgentQPolicyUpdateFlowTransitionResult::wrong_stage:
+            return "wrong_stage";
+        case AgentQPolicyUpdateFlowTransitionResult::timed_out:
+            return "timeout";
+        case AgentQPolicyUpdateFlowTransitionResult::invalid_argument:
+            return "invalid_argument";
+        case AgentQPolicyUpdateFlowTransitionResult::invalid_deadline:
+            return "invalid_deadline";
+    }
+    return "invalid_state";
 }
 
 const char* policy_update_flow_begin_result_reason(AgentQPolicyUpdateFlowBeginResult result)

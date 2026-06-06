@@ -30,6 +30,7 @@ bool provisioning_panel_for_kind(
         case AgentQUiPanelKind::reset_pin_entry:
         case AgentQUiPanelKind::error_recovery:
         case AgentQUiPanelKind::local_pin_auth:
+        case AgentQUiPanelKind::policy_update_review:
         case AgentQUiPanelKind::user_signing_review:
             return false;
     }
@@ -43,6 +44,7 @@ AgentQUiPanelCleanupPlan ui_panel_cleanup_plan(const AgentQUiPanelCleanupInput& 
     AgentQUiPanelCleanupPlan plan{
         false,
         AgentQProvisioningFlowPanel::setup_choice,
+        false,
         false,
         false,
         false,
@@ -79,6 +81,12 @@ AgentQUiPanelCleanupPlan ui_panel_cleanup_plan(const AgentQUiPanelCleanupInput& 
             plan.recover_user_signing_review_panel = true;
         } else if (input.user_signing_review_stage_matches) {
             plan.wipe_user_signing = true;
+        }
+    }
+
+    if (input.panel_kind == AgentQUiPanelKind::policy_update_review) {
+        if (input.event == AgentQUiPanelCleanupEvent::external_delete) {
+            plan.recover_policy_update_review_panel = true;
         }
     }
 

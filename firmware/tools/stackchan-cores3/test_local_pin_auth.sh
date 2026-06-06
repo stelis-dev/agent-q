@@ -260,6 +260,7 @@ cat >"${TMP_DIR}/local_pin_auth_test.cpp" <<'CPP'
 #include <stdio.h>
 
 #include "agent_q_local_pin_auth.h"
+#include "agent_q_pin_attempt.h"
 #include "freertos/task.h"
 
 namespace agent_q {
@@ -287,7 +288,7 @@ agent_q::AgentQTimeoutWindow pin_window(TickType_t started_at, TickType_t deadli
     return agent_q::timeout_window_from_deadline(started_at, deadline);
 }
 
-agent_q::AgentQTimeoutWindow retry_window(TickType_t deadline)
+agent_q::AgentQTimeoutWindow test_input_window(TickType_t deadline)
 {
     return pin_window(xTaskGetTickCount(), deadline);
 }
@@ -337,18 +338,18 @@ agent_q::AgentQLocalAuthWorkerResult make_prepare_result(const char* pin)
 
 agent_q::AgentQLocalPinAuthVerifyResult submit_and_verify_wrong_pin(
     TickType_t now,
-    TickType_t retry_deadline,
+    TickType_t input_deadline,
     TickType_t lockout_until)
 {
     agent_q::test_set_tick(now);
     enter_pin("000000");
-    expect(agent_q::local_pin_auth_submit(now, 0, retry_window(retry_deadline), now + 10) ==
+    expect(agent_q::local_pin_auth_submit(now, 0, test_input_window(input_deadline), now + 10) ==
                agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
            "wrong PIN starts verification");
     agent_q::AgentQLocalAuthWorkerResult worker_result = make_verify_result(false);
     return agent_q::local_pin_auth_complete_verify_job(
         worker_result,
-        pin_window(now, retry_deadline),
+        pin_window(now, input_deadline),
         lockout_until,
         0);
 }
@@ -359,39 +360,39 @@ int main()
 {
     {
         constexpr TickType_t start = 100;
-        constexpr TickType_t stale_retry_deadline = 160;
+        constexpr TickType_t original_input_deadline = 160;
         constexpr TickType_t lockout_until = 130;
-        constexpr TickType_t refreshed_retry_deadline = 190;
+        constexpr TickType_t resumed_input_deadline = 190;
 
-        expect(agent_q::local_pin_auth_begin_connect(pin_window(start, stale_retry_deadline)),
+        expect(agent_q::local_pin_auth_begin_connect(pin_window(start, original_input_deadline)),
                "connect PIN auth begins before lockout test");
 
         for (int attempt = 0; attempt < 4; ++attempt) {
-            expect(submit_and_verify_wrong_pin(start, stale_retry_deadline, lockout_until) ==
+            expect(submit_and_verify_wrong_pin(start, original_input_deadline, lockout_until) ==
                        agent_q::AgentQLocalPinAuthVerifyResult::wrong_pin,
                    "wrong PIN before lockout");
         }
-        expect(submit_and_verify_wrong_pin(start, stale_retry_deadline, lockout_until) ==
+        expect(submit_and_verify_wrong_pin(start, original_input_deadline, lockout_until) ==
                    agent_q::AgentQLocalPinAuthVerifyResult::locked,
                "fifth wrong PIN locks the flow");
         expect(agent_q::local_pin_auth_snapshot(start).lockout_active,
                "snapshot reports active lockout");
 
-        expect(agent_q::local_pin_auth_release_lockout_if_elapsed(
-                   lockout_until, pin_window(lockout_until, refreshed_retry_deadline)),
+        expect(agent_q::local_pin_auth_release_lockout_if_elapsed(lockout_until) ==
+                   agent_q::AgentQLocalPinAuthLockoutReleaseResult::released,
                "lockout release reported");
         expect(!agent_q::local_pin_auth_snapshot(lockout_until).lockout_active,
                "snapshot reports released lockout");
         expect(agent_q::local_pin_auth_snapshot(lockout_until).input_window.deadline ==
-                   refreshed_retry_deadline,
-               "snapshot exposes refreshed PIN input deadline for UI");
+                   resumed_input_deadline,
+               "snapshot resumes the paused PIN input deadline for UI");
         expect(agent_q::local_pin_auth_snapshot(lockout_until).input_window.started_at ==
                    lockout_until,
-               "snapshot exposes refreshed PIN input start for UI");
-        expect(!agent_q::local_pin_auth_deadline_expired(refreshed_retry_deadline - 1),
-               "released lockout receives a fresh retry window");
-        expect(agent_q::local_pin_auth_deadline_expired(refreshed_retry_deadline),
-               "fresh retry window still expires");
+               "snapshot exposes lockout-release resume start for UI");
+        expect(!agent_q::local_pin_auth_deadline_expired(resumed_input_deadline - 1),
+               "released lockout receives the paused remaining input window");
+        expect(agent_q::local_pin_auth_deadline_expired(resumed_input_deadline),
+               "resumed retry window still expires");
 
         agent_q::local_pin_auth_clear_flow();
     }
@@ -442,7 +443,7 @@ int main()
         expect(agent_q::local_pin_auth_add_digit('1') ==
                    agent_q::AgentQLocalPinAuthInputResult::inactive,
                "digit input after deadline is rejected by owner");
-        expect(agent_q::local_pin_auth_submit(262, 0, retry_window(500), 300) ==
+        expect(agent_q::local_pin_auth_submit(262, 0, test_input_window(500), 300) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::unavailable_stage,
                "submit after deadline does not start verification");
         agent_q::local_pin_auth_clear_flow();
@@ -453,7 +454,7 @@ int main()
         expect(agent_q::local_pin_auth_begin_connect_setting(false, pin_window(300, 360)),
                "connect setting PIN auth begins");
         enter_pin("123456");
-        expect(agent_q::local_pin_auth_submit(301, 0, retry_window(360), 330) ==
+        expect(agent_q::local_pin_auth_submit(301, 0, test_input_window(360), 330) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "settings toggle starts current-PIN verification");
         agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
@@ -477,7 +478,7 @@ int main()
         expect(agent_q::local_pin_auth_begin_connect_setting(false, pin_window(320, 360)),
                "connect setting PIN auth begins before wrong PIN");
         enter_pin("000000");
-        expect(agent_q::local_pin_auth_submit(321, 0, retry_window(350), 340) ==
+        expect(agent_q::local_pin_auth_submit(321, 0, test_input_window(350), 340) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "connect setting wrong PIN starts verification");
         agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(false);
@@ -490,9 +491,9 @@ int main()
                    snapshot.purpose == agent_q::AgentQLocalPinAuthPurpose::settings_connect_pin &&
                    snapshot.stage == agent_q::AgentQLocalPinAuthStage::pin_entry,
                "connect setting wrong PIN remains settings-owned");
-        expect(snapshot.input_window.started_at == 321 &&
-                   snapshot.input_window.deadline == 350,
-               "connect setting wrong PIN stores caller retry window");
+        expect(snapshot.input_window.started_at == 320 &&
+                   snapshot.input_window.deadline == 360,
+               "connect setting wrong PIN resumes remaining input window");
         agent_q::local_pin_auth_clear_flow();
     }
 
@@ -503,7 +504,7 @@ int main()
                    pin_window(330, 360)),
                "signing mode setting PIN auth begins before wrong PIN");
         enter_pin("000000");
-        expect(agent_q::local_pin_auth_submit(331, 0, retry_window(350), 340) ==
+        expect(agent_q::local_pin_auth_submit(331, 0, test_input_window(350), 340) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "signing mode setting wrong PIN starts verification");
         agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(false);
@@ -522,7 +523,7 @@ int main()
         expect(agent_q::local_pin_auth_begin_change_pin(pin_window(340, 370)),
                "change PIN auth begins before current-PIN wrong PIN");
         enter_pin("000000");
-        expect(agent_q::local_pin_auth_submit(341, 0, retry_window(360), 350) ==
+        expect(agent_q::local_pin_auth_submit(341, 0, test_input_window(360), 350) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "change PIN current wrong PIN starts verification");
         agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(false);
@@ -541,35 +542,43 @@ int main()
         expect(agent_q::local_pin_auth_begin_policy_update(pin_window(360, 420)),
                "policy update PIN auth begins before capped retry test");
         enter_pin("000000");
-        expect(agent_q::local_pin_auth_submit(361, 0, retry_window(390), 380) ==
+        expect(agent_q::local_pin_auth_submit(361, 0, test_input_window(390), 380) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "policy update wrong PIN starts verification");
         agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(false);
         expect(agent_q::local_pin_auth_complete_verify_job(verify_result, pin_window(361, 390), 0, 0) ==
                    agent_q::AgentQLocalPinAuthVerifyResult::wrong_pin,
-               "policy update wrong PIN stores caller-capped retry window");
+               "policy update wrong PIN resumes remaining input window");
         agent_q::AgentQLocalPinAuthSnapshot snapshot =
             agent_q::local_pin_auth_snapshot(361);
-        expect(snapshot.input_window.started_at == 361 &&
-                   snapshot.input_window.deadline == 390,
-               "policy update retry window does not exceed caller cap");
+        expect(snapshot.input_window.started_at == 360 &&
+                   snapshot.input_window.deadline == 420,
+               "policy update retry window preserves the paused request-backed window");
         agent_q::local_pin_auth_clear_flow();
     }
 
     {
+        agent_q::pin_attempt_clear();
         agent_q::test_set_tick(370);
         expect(agent_q::local_pin_auth_begin_connect(pin_window(370, 420)),
-               "connect PIN auth begins before expired retry test");
+               "connect PIN auth begins before late wrong-PIN result test");
         enter_pin("000000");
-        expect(agent_q::local_pin_auth_submit(371, 0, retry_window(390), 380) ==
+        agent_q::test_set_tick(371);
+        expect(agent_q::local_pin_auth_submit(371, 0, test_input_window(390), 500) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
-               "connect expired retry test starts verification");
+               "connect late wrong-PIN result test starts verification");
+        agent_q::test_set_tick(430);
         agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(false);
         expect(agent_q::local_pin_auth_complete_verify_job(verify_result, pin_window(390, 390), 0, 0) ==
-                   agent_q::AgentQLocalPinAuthVerifyResult::auth_unavailable,
-               "expired retry window fails closed");
-        expect(!agent_q::local_pin_auth_snapshot(390).flow_active,
-               "expired retry window clears local PIN flow");
+                   agent_q::AgentQLocalPinAuthVerifyResult::wrong_pin,
+               "wrong PIN result after input deadline resumes paused input window");
+        agent_q::AgentQLocalPinAuthSnapshot snapshot =
+            agent_q::local_pin_auth_snapshot(430);
+        expect(snapshot.flow_active &&
+                   snapshot.input_window.started_at == 429 &&
+                   snapshot.input_window.deadline == 479,
+               "late wrong PIN resumes remaining time without resetting timer fill");
+        agent_q::local_pin_auth_clear_flow();
     }
 
     {
@@ -577,7 +586,7 @@ int main()
         expect(agent_q::local_pin_auth_begin_policy_update(pin_window(400, 460)),
                "policy update PIN auth begins");
         enter_pin("123456");
-        expect(agent_q::local_pin_auth_submit(401, 0, retry_window(460), 430) ==
+        expect(agent_q::local_pin_auth_submit(401, 0, test_input_window(460), 430) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "policy update starts current-PIN verification");
         agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
@@ -596,7 +605,7 @@ int main()
         expect(agent_q::local_pin_auth_begin_change_pin(pin_window(400, 460)),
                "change PIN auth begins");
         enter_pin("123456");
-        expect(agent_q::local_pin_auth_submit(401, 0, retry_window(460), 430) ==
+        expect(agent_q::local_pin_auth_submit(401, 0, test_input_window(460), 430) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "change PIN starts current-PIN verification");
         agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
@@ -609,7 +618,7 @@ int main()
             "change PIN new-entry stage");
 
         enter_pin("654321");
-        expect(agent_q::local_pin_auth_submit(402, 0, retry_window(460), 430) ==
+        expect(agent_q::local_pin_auth_submit(402, 0, test_input_window(460), 430) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::advanced_to_repeat_pin,
                "change PIN advances to repeat entry");
         expect_stage(
@@ -618,7 +627,7 @@ int main()
             "change PIN repeat-entry stage");
 
         enter_pin("111111");
-        expect(agent_q::local_pin_auth_submit(403, 0, retry_window(460), 430) ==
+        expect(agent_q::local_pin_auth_submit(403, 0, test_input_window(460), 430) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::mismatch_restart,
                "change PIN mismatch restarts new PIN entry");
         expect_stage(
@@ -627,11 +636,11 @@ int main()
             "change PIN mismatch restart stage");
 
         enter_pin("654321");
-        expect(agent_q::local_pin_auth_submit(404, 0, retry_window(460), 430) ==
+        expect(agent_q::local_pin_auth_submit(404, 0, test_input_window(460), 430) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::advanced_to_repeat_pin,
                "change PIN second new PIN advances");
         enter_pin("654321");
-        expect(agent_q::local_pin_auth_submit(0, 405, retry_window(460), 430) ==
+        expect(agent_q::local_pin_auth_submit(0, 405, test_input_window(460), 430) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_pin_change_commit,
                "change PIN matching repeat starts commit");
         agent_q::AgentQLocalAuthWorkerResult prepare_result = make_prepare_result("654321");
@@ -649,11 +658,12 @@ int main()
         expect(agent_q::local_pin_auth_begin_connect(pin_window(500, 560)),
                "connect PIN auth begins before processing test");
         enter_pin("654321");
-        expect(agent_q::local_pin_auth_submit(501, 0, retry_window(560), 620) ==
+        expect(agent_q::local_pin_auth_submit(501, 0, test_input_window(560), 620) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "connect PIN starts verification");
         expect(!agent_q::local_pin_auth_fail_processing_if_expired(560),
                "connect PIN verification is not stopped by the input deadline");
+        agent_q::test_set_tick(570);
         agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
         expect(agent_q::local_pin_auth_complete_verify_job(verify_result, pin_window(560, 660), 0, 0) ==
                    agent_q::AgentQLocalPinAuthVerifyResult::verified_connect,
@@ -666,7 +676,7 @@ int main()
         expect(agent_q::local_pin_auth_begin_connect(pin_window(620, 680)),
                "connect PIN auth begins before worker-timeout test");
         enter_pin("654321");
-        expect(agent_q::local_pin_auth_submit(621, 0, retry_window(680), 650) ==
+        expect(agent_q::local_pin_auth_submit(621, 0, test_input_window(680), 650) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "connect PIN worker-timeout test starts verification");
         expect(!agent_q::local_pin_auth_fail_processing_if_expired(649),
@@ -685,7 +695,7 @@ int main()
         expect(agent_q::local_pin_auth_begin_connect(pin_window(700, 760)),
                "connect PIN auth begins before late-result test");
         enter_pin("654321");
-        expect(agent_q::local_pin_auth_submit(701, 0, retry_window(760), 720) ==
+        expect(agent_q::local_pin_auth_submit(701, 0, test_input_window(760), 720) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "connect PIN late-result test starts verification");
         agent_q::test_set_tick(721);
@@ -702,7 +712,7 @@ int main()
         expect(agent_q::local_pin_auth_begin_change_pin(pin_window(600, 660)),
                "change PIN auth begins before commit-timeout test");
         enter_pin("654321");
-        expect(agent_q::local_pin_auth_submit(601, 0, retry_window(660), 620) ==
+        expect(agent_q::local_pin_auth_submit(601, 0, test_input_window(660), 620) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "change PIN current-PIN verification starts");
         agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
@@ -710,11 +720,11 @@ int main()
                    agent_q::AgentQLocalPinAuthVerifyResult::advanced_to_change_pin,
                "change PIN advances to new PIN before commit timeout test");
         enter_pin("123456");
-        expect(agent_q::local_pin_auth_submit(602, 0, retry_window(660), 620) ==
+        expect(agent_q::local_pin_auth_submit(602, 0, test_input_window(660), 620) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::advanced_to_repeat_pin,
                "change PIN timeout test advances to repeat");
         enter_pin("123456");
-        expect(agent_q::local_pin_auth_submit(0, 605, retry_window(660), 620) ==
+        expect(agent_q::local_pin_auth_submit(0, 605, test_input_window(660), 620) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_pin_change_commit,
                "change PIN commit starts before commit timeout");
         expect(!agent_q::local_pin_auth_fail_processing_if_expired(619),

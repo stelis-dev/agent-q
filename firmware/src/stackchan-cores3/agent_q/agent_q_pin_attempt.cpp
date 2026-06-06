@@ -22,10 +22,14 @@ bool pin_attempt_locked_at(TickType_t now)
     return g_pin_attempt.lockout_until != 0 && !tick_reached(g_pin_attempt.lockout_until, now);
 }
 
+bool pin_attempt_lockout_elapsed_at(TickType_t now)
+{
+    return g_pin_attempt.lockout_until != 0 && tick_reached(g_pin_attempt.lockout_until, now);
+}
+
 bool pin_attempt_release_if_elapsed(TickType_t now)
 {
-    if (g_pin_attempt.lockout_until == 0 ||
-        !tick_reached(g_pin_attempt.lockout_until, now)) {
+    if (!pin_attempt_lockout_elapsed_at(now)) {
         return false;
     }
 

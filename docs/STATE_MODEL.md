@@ -105,7 +105,7 @@ hardware and must be documented in each target's `SPEC.md`.
 | Volatile sensitive scratch | generated recovery phrase, setup entropy, pending backup confirmation, typed PIN digits | Firmware | Yes |
 | Local PIN authorization state | connect/settings/policy-update/reset PIN entry purpose, verification stage, Firmware-owned input deadline, RAM-only lockout | Firmware | Yes |
 | Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or connect PIN approval; Firmware-owned deadline; requested action | Firmware | Yes |
-| Pending policy update state | validated policy proposal summary, policy hash, commit stage | Firmware | Yes |
+| Pending policy update state | validated policy proposal summary, policy hash, review/PIN/commit stage, review deadline | Firmware | Yes |
 | Runtime session state | active protocol session id and link-bound cleanup state | Firmware; Gateway mirrors its own client session state in RAM and clears that mirror when Firmware rejects it or live USB scan no longer observes the device | Yes |
 | Target-local display state | screen on/off, brightness, screensaver replacement | Firmware target display module | No |
 | Target-local posture state | servo position, haptics, LEDs, temporary expression feedback | Firmware target UI/motion module | No |
@@ -348,6 +348,12 @@ does not apply to signing. Terminal stages for user-mode signing are:
   must still be displayed distinctly from signing failure or USB response
   delivery failure.
 
+For device-confirmed signing, review Reject is the terminal
+`user_rejected` action. Back from the PIN screen is not a terminal reject: it
+wipes only PIN scratch and returns to the clear-signing review with the
+signable request still owned by the signing state owner. If the user rejects
+from that review, the request then records terminal `user_rejected`.
+
 History records for this path use `eventKind: "signing"`. The
 required pre-signing record uses `recordKind: "confirmation"` and
 `confirmationKind: "local_pin"` after device confirmation succeeds. Terminal
@@ -369,8 +375,9 @@ Transition:
 provisioned
 -> valid session-scoped policy proposal
 -> Firmware validates bounded policy document
--> pending policy update approval on device
--> local approval + canonical policy commit
+-> pending policy update summary review on device
+-> local PIN approval after device-local Continue
+-> canonical policy commit
 -> required policy-update history record
 -> provisioned with new active policy
 ```
@@ -381,6 +388,8 @@ Failure behavior:
   the previous active policy unchanged;
 - user rejection, timeout, cancellation, or approval UI failure returns to
   `provisioned` with the previous active policy unchanged;
+- review Reject is the terminal rejected action; PIN Back wipes only PIN scratch
+  and returns to policy update summary review;
 - required-history failure before the active-slot flip returns a top-level
   `history_error`, clears the pending proposal, and leaves the previous active
   policy unchanged;
@@ -511,24 +520,28 @@ internal device-confirmed signing verifier purpose), `stage`
 (`pin_entry`, `pin_verifying`, `new_pin_entry`, `repeat_pin_entry`,
 `committing_setting`, or `committing_pin_change`), typed PIN scratch, new-PIN
 scratch where applicable, input deadline, and the RAM-only stored-PIN attempt
-budget shared with reset PIN verification. Submitting a complete PIN stops the
-input deadline while stored-PIN verification runs; wrong PIN results reopen a
-fresh input window subject to the shared lockout. The input pause does not
-pause the local-auth worker watchdog; a stalled or lost worker result fails
-closed as local authentication unavailable. Protocol-backed PIN purposes
-(`connect`, `policy_update`, and device-confirmed signing) also have an
-immutable outer request deadline owned by their protocol state owner. Fresh PIN
-input windows are capped by that request deadline. A successful PIN
-verification result may proceed after the prior PIN input window has expired
-only while the outer request deadline is still open; successful or wrong PIN
-results after that request deadline fail closed as a timeout. For policy updates,
+budget shared with reset PIN verification. Submitting a complete PIN pauses
+the input deadline while stored-PIN verification runs. A wrong PIN result
+returns to the same PIN-entry state by resuming the remaining paused input
+window, unless the shared lockout is active. The input pause does not pause the
+local-auth worker watchdog; a stalled or lost worker result fails closed as
+local authentication unavailable. Protocol-backed PIN purposes (`connect`,
+`policy_update`, and device-confirmed signing) also have an immutable outer
+request window owned by their protocol state owner. That request window is the
+admission boundary for review/PIN entry and caps PIN input windows before the
+PIN is submitted. After a complete PIN has been submitted, the request window
+is not the terminal timeout authority for stored-PIN cryptographic processing;
+the local-auth worker watchdog, session/material checks, and the next state
+guards remain authoritative. For policy updates,
 `local_pin_auth` owns
 only PIN verification; the pending proposal summary, policy hash, commit stage,
 and terminal result remain owned by the policy-update flow. For
 device-confirmed signing, `local_pin_auth` is only a verifier input; the
 request identity, signable payload scratch, history-write transition, and
 terminal cleanup remain owned by the user-signing state owner and confirmation
-coordinator. The internal signing PIN purpose is not a protocol
+coordinator. Signing PIN Back returns to the clear-signing review instead of
+writing a terminal rejection; only review Reject is recorded as
+`user_rejected`. The internal signing PIN purpose is not a protocol
 request, signing API, or capability advertisement. The UI panel may display
 that state, but panel existence is not the source of truth. The target must not
 expose a USB/Gateway/MCP PIN submit request.

@@ -69,6 +69,12 @@ enum class AgentQLocalPinAuthCommitResult {
     pin_change_auth_unavailable,
 };
 
+enum class AgentQLocalPinAuthLockoutReleaseResult {
+    not_released,
+    released,
+    failed,
+};
+
 struct AgentQLocalPinAuthSnapshot {
     AgentQLocalPinAuthPurpose purpose;
     AgentQLocalPinAuthStage stage;
@@ -88,9 +94,7 @@ bool local_pin_auth_accepts_keypad_input();
 bool local_pin_auth_deadline_expired(TickType_t now);
 bool local_pin_auth_processing_deadline_expired(TickType_t now);
 bool local_pin_auth_fail_processing_if_expired(TickType_t now);
-bool local_pin_auth_release_lockout_if_elapsed(
-    TickType_t now,
-    AgentQTimeoutWindow retry_window);
+AgentQLocalPinAuthLockoutReleaseResult local_pin_auth_release_lockout_if_elapsed(TickType_t now);
 
 void local_pin_auth_clear_flow();
 bool local_pin_auth_begin_connect(AgentQTimeoutWindow input_window);
@@ -109,11 +113,11 @@ bool local_pin_auth_backspace_pin();
 AgentQLocalPinAuthSubmitResult local_pin_auth_submit(
     TickType_t verify_ready_at,
     TickType_t commit_ready_at,
-    AgentQTimeoutWindow retry_window,
+    AgentQTimeoutWindow next_input_window,
     TickType_t worker_deadline);
 AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
     const AgentQLocalAuthWorkerResult& result,
-    AgentQTimeoutWindow retry_window,
+    AgentQTimeoutWindow next_input_window,
     TickType_t lockout_until,
     TickType_t setting_commit_ready_at);
 AgentQLocalPinAuthCommitResult local_pin_auth_complete_pin_change_job(

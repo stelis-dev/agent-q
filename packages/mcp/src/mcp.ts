@@ -256,7 +256,7 @@ export const gatewayToolDefinitions = {
     name: "policy_propose",
     title: "Propose policy update",
     description:
-      "Submit a bounded active-policy proposal to Agent-Q Firmware for device-local PIN approval. This is a request path only: Gateway and MCP do not store, apply, or decide policy, and Firmware returns the terminal policy_propose_result.",
+      "Submit a bounded active-policy proposal to Agent-Q Firmware. Firmware validates the proposal, shows a device-local policy summary review, starts local PIN approval only after device-local Continue, and returns the terminal policy_propose_result. This is a request path only: Gateway and MCP do not store, apply, or decide policy.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),

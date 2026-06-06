@@ -56,6 +56,7 @@ cat >"${TMP_DIR}/user_signing_confirmation_test.cpp" <<'CPP'
 #include "agent_q_local_auth.h"
 #include "agent_q_local_auth_worker.h"
 #include "agent_q_local_pin_auth.h"
+#include "agent_q_pin_attempt.h"
 #include "agent_q_user_signing_confirmation.h"
 #include "agent_q_sui_account_store.h"
 #include "freertos/FreeRTOS.h"
@@ -260,6 +261,7 @@ void reset_all()
     }
     agent_q::user_signing_flow_clear();
     agent_q::session_clear();
+    agent_q::pin_attempt_clear();
     g_now = 1;
     g_history_write_calls = 0;
     g_history_write_result = true;
@@ -498,14 +500,15 @@ int main()
                "request flow moved to pin_entry");
 
         enter_pin("123456");
+        g_now = 101;
         expect(agent_q::local_pin_auth_submit(101, 0, pin_window(101, 200), 150) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "signing PIN submit starts verification");
-        expect(agent_q::user_signing_confirmation_mark_pin_verification_started() ==
+        expect(agent_q::user_signing_confirmation_mark_pin_verification_started(101) ==
                    Confirm::ok,
                "signing PIN submit pauses only PIN input deadline");
         expect(agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, pin_window(120, 200), 0, nullptr, nullptr) ==
+                   make_verify_result(true), 120, 0, nullptr, nullptr) ==
                    Confirm::invalid_argument,
                "missing history writer fails closed");
         expect(g_history_write_calls == 0,
@@ -522,14 +525,15 @@ int main()
                    Confirm::ok,
                "review acceptance starts request-bound signing PIN retry");
         enter_pin("123456");
+        g_now = 101;
         expect(agent_q::local_pin_auth_submit(101, 0, pin_window(101, 200), 150) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "signing PIN retry submit starts verification");
-        expect(agent_q::user_signing_confirmation_mark_pin_verification_started() ==
+        expect(agent_q::user_signing_confirmation_mark_pin_verification_started(101) ==
                    Confirm::ok,
                "signing PIN retry submit pauses only PIN input deadline");
         expect(agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, pin_window(120, 200), 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 120, 0, write_confirmation_history, nullptr) ==
                    Confirm::ok,
                "verified PIN completion writes history and enters critical section");
         expect(g_history_write_calls == 1, "history writer called once");
@@ -544,10 +548,11 @@ int main()
                    Confirm::ok,
                "review acceptance starts short signing PIN window");
         enter_pin("123456");
+        g_now = 119;
         expect(agent_q::local_pin_auth_submit(119, 0, pin_window(119, 120), 125) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "PIN submit starts verification before input window closes");
-        expect(agent_q::user_signing_confirmation_mark_pin_verification_started() ==
+        expect(agent_q::user_signing_confirmation_mark_pin_verification_started(119) ==
                    Confirm::ok,
                "PIN verification start pauses only signing PIN input deadline");
         expect(agent_q::user_signing_flow_snapshot().pin_input_window.deadline == 0 &&
@@ -555,7 +560,7 @@ int main()
                    agent_q::user_signing_flow_snapshot().request_window.deadline == 300,
                "only signing PIN input deadline is paused during verification");
         expect(agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 170, pin_window(170, 170), 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 170, 0, write_confirmation_history, nullptr) ==
                    Confirm::ok,
                "verified PIN after input deadline still enters critical section");
         expect(agent_q::user_signing_flow_in_signing_critical_section(),
@@ -570,10 +575,11 @@ int main()
                    Confirm::ok,
                "review acceptance starts short signing PIN window");
         enter_pin("123456");
+        g_now = 119;
         expect(agent_q::local_pin_auth_submit(119, 0, pin_window(119, 120), 125) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "PIN submit starts verification before input window closes");
-        expect(agent_q::user_signing_confirmation_mark_pin_verification_started() ==
+        expect(agent_q::user_signing_confirmation_mark_pin_verification_started(119) ==
                    Confirm::ok,
                "PIN verification start pauses the signing input deadline");
         expect(agent_q::user_signing_flow_snapshot().pin_input_window.deadline == 0 &&
@@ -581,16 +587,15 @@ int main()
                    agent_q::user_signing_flow_snapshot().request_window.deadline == 130,
                "only signing PIN input deadline is paused while verification runs");
         expect(agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 170, pin_window(170, 170), 0, write_confirmation_history, nullptr) ==
-                   Confirm::deadline_expired,
-               "verified PIN after original request deadline times out");
+                   make_verify_result(true), 170, 0, write_confirmation_history, nullptr) ==
+                   Confirm::ok,
+               "verified PIN after request admission window still enters critical section");
         expect(!agent_q::user_signing_confirmation_pin_active(),
-               "expired verified PIN clears signing PIN");
-        expect(agent_q::user_signing_flow_snapshot().terminal_result ==
-                   agent_q::AgentQUserSigningTerminalResult::timed_out,
-               "expired verified PIN records timeout");
-        expect(g_history_write_calls == 0,
-               "expired verified PIN does not write confirmation history");
+               "verified PIN after request admission window clears signing PIN");
+        expect(agent_q::user_signing_flow_in_signing_critical_section(),
+               "verified PIN after request admission window reaches critical section");
+        expect(g_history_write_calls == 1,
+               "verified PIN after request admission window writes confirmation history");
     }
 
     {
@@ -600,24 +605,25 @@ int main()
                    Confirm::ok,
                "review acceptance before wrong PIN");
         enter_pin("000000");
+        g_now = 119;
         expect(agent_q::local_pin_auth_submit(119, 0, pin_window(119, 120), 125) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "wrong signing PIN starts verification");
-        expect(agent_q::user_signing_confirmation_mark_pin_verification_started() ==
+        expect(agent_q::user_signing_confirmation_mark_pin_verification_started(119) ==
                    Confirm::ok,
                "wrong PIN verification start pauses only signing PIN input deadline");
         expect(agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(false), 170, pin_window(170, 220), 300, write_confirmation_history, nullptr) ==
+                   make_verify_result(false), 170, 300, write_confirmation_history, nullptr) ==
                    Confirm::wrong_pin,
-               "wrong signing PIN after input deadline starts a fresh retry window");
+               "wrong signing PIN after input deadline resumes remaining input window");
         expect(agent_q::user_signing_confirmation_pin_active(),
                "wrong signing PIN keeps local PIN active");
         expect(agent_q::user_signing_flow_snapshot().stage == FlowStage::pin_entry,
                "wrong signing PIN does not write history");
         expect(agent_q::user_signing_flow_snapshot().request_window.deadline == 300 &&
-                   agent_q::user_signing_flow_snapshot().pin_input_window.started_at == 170 &&
-                   agent_q::user_signing_flow_snapshot().pin_input_window.deadline == 220,
-               "wrong signing PIN refreshes only PIN input deadline");
+                   agent_q::user_signing_flow_snapshot().pin_input_window.started_at == 150 &&
+                   agent_q::user_signing_flow_snapshot().pin_input_window.deadline == 171,
+               "wrong signing PIN resumes remaining time without resetting timer fill");
         expect(g_history_write_calls == 0, "wrong signing PIN does not call history writer");
     }
 
@@ -629,23 +635,90 @@ int main()
                    Confirm::ok,
                "review acceptance before wrong PIN");
         enter_pin("000000");
+        g_now = 119;
         expect(agent_q::local_pin_auth_submit(119, 0, pin_window(119, 120), 125) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "wrong PIN starts verification before input window closes");
-        expect(agent_q::user_signing_confirmation_mark_pin_verification_started() ==
+        expect(agent_q::user_signing_confirmation_mark_pin_verification_started(119) ==
                    Confirm::ok,
                "wrong PIN verification start pauses the input deadline");
         expect(agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(false), 170, pin_window(170, 170), 300, write_confirmation_history, nullptr) ==
-                   Confirm::deadline_expired,
-               "wrong PIN after original request deadline times out");
-        expect(!agent_q::user_signing_confirmation_pin_active(),
-               "expired wrong PIN clears local PIN");
-        expect(agent_q::user_signing_flow_snapshot().terminal_result ==
-                   agent_q::AgentQUserSigningTerminalResult::timed_out,
-               "expired wrong PIN records timeout");
+                   make_verify_result(false), 170, 300, write_confirmation_history, nullptr) ==
+                   Confirm::wrong_pin,
+               "wrong PIN after request admission window resumes remaining input window");
+        expect(agent_q::user_signing_confirmation_pin_active(),
+               "wrong PIN after request admission window keeps local PIN active");
+        expect(agent_q::user_signing_flow_snapshot().stage == FlowStage::pin_entry &&
+                   agent_q::user_signing_flow_snapshot().pin_input_window.started_at == 150 &&
+                   agent_q::user_signing_flow_snapshot().pin_input_window.deadline == 171,
+               "wrong PIN after request admission window resumes remaining time without resetting timer fill");
         expect(g_history_write_calls == 0,
                "wrong PIN does not write history");
+    }
+
+    {
+        reset_all();
+        expect(begin_valid_flow("req_lockout"), "begin before signing PIN lockout");
+        expect(agent_q::user_signing_confirmation_accept_review_and_begin_pin(99, pin_window(99, 260)) ==
+                   Confirm::ok,
+               "review acceptance before signing PIN lockout");
+
+        for (uint8_t attempt = 0; attempt < agent_q::kAgentQMaxWrongPinAttempts; ++attempt) {
+            const TickType_t submit_at = static_cast<TickType_t>(101 + attempt * 3);
+            const TickType_t verify_at = static_cast<TickType_t>(submit_at + 1);
+            g_now = submit_at;
+            enter_pin("000000");
+            expect(agent_q::local_pin_auth_submit(submit_at, 0, pin_window(submit_at, 260), 200) ==
+                       agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+                   "wrong signing PIN attempt starts verification before lockout");
+            expect(agent_q::user_signing_confirmation_mark_pin_verification_started(submit_at) ==
+                       Confirm::ok,
+                   "wrong signing PIN attempt pauses signing input before lockout");
+            g_now = verify_at;
+            const Confirm result =
+                agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
+                    make_verify_result(false), verify_at, 240, write_confirmation_history, nullptr);
+            expect(result ==
+                       (attempt + 1 == agent_q::kAgentQMaxWrongPinAttempts
+                            ? Confirm::locked
+                            : Confirm::wrong_pin),
+                   "signing PIN lockout is distinct from wrong-PIN retry");
+        }
+
+        const agent_q::AgentQLocalPinAuthSnapshot locked_pin =
+            agent_q::local_pin_auth_snapshot(120);
+        const agent_q::AgentQUserSigningFlowSnapshot locked_flow =
+            agent_q::user_signing_flow_snapshot();
+        expect(agent_q::user_signing_confirmation_pin_active(),
+               "signing PIN lockout keeps bound PIN flow active");
+        expect(locked_pin.lockout_active,
+               "signing PIN lockout is visible to local PIN owner");
+        expect(locked_pin.input_window.deadline == 0 &&
+                   locked_pin.input_window.started_at == 0,
+               "signing PIN lockout keeps local input window paused");
+        expect(locked_flow.stage == FlowStage::pin_entry &&
+                   locked_flow.pin_input_window.deadline == 0 &&
+                   locked_flow.pin_input_window.started_at == 0,
+               "signing PIN lockout keeps signing input window paused");
+        expect(g_history_write_calls == 0,
+               "signing PIN lockout does not write confirmation history");
+
+        expect(agent_q::local_pin_auth_release_lockout_if_elapsed(240) ==
+                   agent_q::AgentQLocalPinAuthLockoutReleaseResult::released,
+               "signing PIN lockout release resumes local PIN owner");
+        expect(agent_q::user_signing_flow_refresh_pin_deadline(240) ==
+                   agent_q::AgentQUserSigningTransitionResult::ok,
+               "signing PIN lockout release resumes signing owner");
+        const agent_q::AgentQLocalPinAuthSnapshot resumed_pin =
+            agent_q::local_pin_auth_snapshot(240);
+        const agent_q::AgentQUserSigningFlowSnapshot resumed_flow =
+            agent_q::user_signing_flow_snapshot();
+        expect(agent_q::timeout_window_active(resumed_pin.input_window) &&
+                   agent_q::timeout_window_active(resumed_flow.pin_input_window),
+               "signing PIN lockout release restores active input windows");
+        expect(resumed_pin.input_window.started_at == resumed_flow.pin_input_window.started_at &&
+                   resumed_pin.input_window.deadline == resumed_flow.pin_input_window.deadline,
+               "signing PIN lockout release keeps local and signing windows synchronized");
     }
 
     {
@@ -655,16 +728,17 @@ int main()
                    Confirm::ok,
                "review acceptance before auth unavailable");
         enter_pin("123456");
+        g_now = 101;
         expect(agent_q::local_pin_auth_submit(101, 0, pin_window(101, 200), 150) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "PIN submit before auth unavailable");
-        expect(agent_q::user_signing_confirmation_mark_pin_verification_started() ==
+        expect(agent_q::user_signing_confirmation_mark_pin_verification_started(101) ==
                    Confirm::ok,
                "auth unavailable submit pauses only PIN input deadline");
         agent_q::AgentQLocalAuthWorkerResult worker_result = make_verify_result(true);
         worker_result.status = agent_q::AgentQLocalAuthWorkerStatus::auth_unavailable;
         expect(agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   worker_result, 120, pin_window(120, 200), 0, write_confirmation_history, nullptr) ==
+                   worker_result, 120, 0, write_confirmation_history, nullptr) ==
                    Confirm::auth_unavailable,
                "auth unavailable fails closed");
         expect(!agent_q::user_signing_confirmation_pin_active(),
@@ -685,10 +759,11 @@ int main()
         char session_copy[agent_q::kAgentQSessionIdSize] = {};
         snprintf(session_copy, sizeof(session_copy), "%s", agent_q::session_id());
         enter_pin("123456");
+        g_now = 101;
         expect(agent_q::local_pin_auth_submit(101, 0, pin_window(101, 200), 150) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "PIN submit before same-id stale PIN");
-        expect(agent_q::user_signing_confirmation_mark_pin_verification_started() ==
+        expect(agent_q::user_signing_confirmation_mark_pin_verification_started(101) ==
                    Confirm::ok,
                "same-id stale PIN submit pauses only PIN input deadline");
         expect(agent_q::user_signing_flow_clear() ==
@@ -703,7 +778,7 @@ int main()
                    agent_q::AgentQUserSigningTransitionResult::ok,
                "misuse moves same-id replacement flow to pin_entry without coordinator");
         expect(agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, pin_window(120, 220), 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 120, 0, write_confirmation_history, nullptr) ==
                    Confirm::wrong_stage,
                "old PIN cannot verify same-id replacement request");
         expect(g_history_write_calls == 0, "same-id stale PIN does not write history");
@@ -716,15 +791,16 @@ int main()
                    Confirm::ok,
                "review acceptance before history failure");
         enter_pin("123456");
+        g_now = 101;
         expect(agent_q::local_pin_auth_submit(101, 0, pin_window(101, 200), 150) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "PIN submit before history failure");
-        expect(agent_q::user_signing_confirmation_mark_pin_verification_started() ==
+        expect(agent_q::user_signing_confirmation_mark_pin_verification_started(101) ==
                    Confirm::ok,
                "history failure submit pauses only PIN input deadline");
         g_history_write_result = false;
         expect(agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, pin_window(120, 200), 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 120, 0, write_confirmation_history, nullptr) ==
                    Confirm::history_error,
                "history failure terminalizes request");
         expect(!agent_q::user_signing_confirmation_pin_active(),
@@ -741,15 +817,16 @@ int main()
                    Confirm::ok,
                "review acceptance before session loss");
         enter_pin("123456");
+        g_now = 101;
         expect(agent_q::local_pin_auth_submit(101, 0, pin_window(101, 200), 150) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "PIN submit before session loss");
-        expect(agent_q::user_signing_confirmation_mark_pin_verification_started() ==
+        expect(agent_q::user_signing_confirmation_mark_pin_verification_started(101) ==
                    Confirm::ok,
                "session-loss submit pauses only PIN input deadline");
         agent_q::session_clear();
         expect(agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, pin_window(120, 200), 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 120, 0, write_confirmation_history, nullptr) ==
                    Confirm::invalid_session,
                "session loss before history write cancels the active confirmation");
         expect(!agent_q::user_signing_confirmation_pin_active(),
@@ -764,10 +841,11 @@ int main()
                    Confirm::ok,
                "review acceptance before stale PIN misuse");
         enter_pin("123456");
+        g_now = 101;
         expect(agent_q::local_pin_auth_submit(101, 0, pin_window(101, 200), 150) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "PIN submit before stale PIN misuse");
-        expect(agent_q::user_signing_confirmation_mark_pin_verification_started() ==
+        expect(agent_q::user_signing_confirmation_mark_pin_verification_started(101) ==
                    Confirm::ok,
                "stale PIN submit pauses only PIN input deadline");
         expect(agent_q::user_signing_flow_clear() ==
@@ -778,7 +856,7 @@ int main()
                    agent_q::AgentQUserSigningTransitionResult::ok,
                "misuse moves replacement flow to pin_entry without coordinator");
         expect(agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, pin_window(120, 220), 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 120, 0, write_confirmation_history, nullptr) ==
                    Confirm::wrong_stage,
                "old PIN cannot verify replacement request");
         expect(g_history_write_calls == 0, "stale PIN does not write history");
@@ -788,18 +866,29 @@ int main()
 
     {
         reset_all();
-        expect(begin_valid_flow("req_reject"), "begin before reject");
+        expect(begin_valid_flow("req_pin_back"), "begin before PIN Back");
         expect(agent_q::user_signing_confirmation_accept_review_and_begin_pin(99, pin_window(99, 200)) ==
                    Confirm::ok,
-               "review acceptance before reject");
+               "review acceptance before PIN Back");
+        expect(agent_q::user_signing_confirmation_record_device_rejected() ==
+                   Confirm::wrong_stage,
+               "PIN entry cannot be recorded as device rejection");
+        expect(agent_q::user_signing_confirmation_return_to_review_from_pin(110, pin_window(110, 170)) ==
+                   Confirm::ok,
+               "PIN Back returns to review");
+        expect(!agent_q::user_signing_confirmation_pin_active(),
+               "PIN Back clears signing PIN scratch");
+        expect(agent_q::user_signing_flow_snapshot().stage ==
+                   agent_q::AgentQUserSigningStage::reviewing,
+               "PIN Back restores signing review");
+        expect(agent_q::user_signing_flow_snapshot().signable_payload_available,
+               "PIN Back preserves signable payload");
         expect(agent_q::user_signing_confirmation_record_device_rejected() ==
                    Confirm::ok,
-               "device rejection clears request");
-        expect(!agent_q::user_signing_confirmation_pin_active(),
-               "device rejection clears signing PIN");
+               "review rejection after PIN Back clears request");
         expect(agent_q::user_signing_flow_snapshot().terminal_result ==
                    agent_q::AgentQUserSigningTerminalResult::rejected,
-               "device rejection terminal result recorded");
+               "review rejection terminal result recorded");
     }
 
     {
@@ -809,15 +898,16 @@ int main()
                    Confirm::ok,
                "review acceptance before callback clear");
         enter_pin("123456");
+        g_now = 101;
         expect(agent_q::local_pin_auth_submit(101, 0, pin_window(101, 200), 150) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "PIN submit before callback clear");
-        expect(agent_q::user_signing_confirmation_mark_pin_verification_started() ==
+        expect(agent_q::user_signing_confirmation_mark_pin_verification_started(101) ==
                    Confirm::ok,
                "callback clear submit pauses only PIN input deadline");
         g_history_write_clears_flow = true;
         expect(agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, pin_window(120, 200), 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 120, 0, write_confirmation_history, nullptr) ==
                    Confirm::stale_state,
                "callback clear cannot enter critical section");
         expect(!agent_q::user_signing_confirmation_pin_active(),

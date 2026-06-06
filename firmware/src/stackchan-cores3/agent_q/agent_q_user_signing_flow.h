@@ -128,10 +128,11 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin_personal_message(
 AgentQUserSigningTransitionResult user_signing_flow_accept_review(
     TickType_t now,
     AgentQTimeoutWindow pin_input_window);
-AgentQUserSigningTransitionResult user_signing_flow_refresh_pin_deadline(
+AgentQUserSigningTransitionResult user_signing_flow_return_to_review(
     TickType_t now,
-    AgentQTimeoutWindow pin_input_window);
-AgentQUserSigningTransitionResult user_signing_flow_pause_pin_deadline();
+    AgentQTimeoutWindow review_window);
+AgentQUserSigningTransitionResult user_signing_flow_refresh_pin_deadline(TickType_t now);
+AgentQUserSigningTransitionResult user_signing_flow_pause_pin_deadline(TickType_t now);
 bool user_signing_flow_deadline_reached(TickType_t now);
 AgentQUserSigningTransitionResult
 user_signing_flow_record_pin_verified_and_write_confirmation_history(

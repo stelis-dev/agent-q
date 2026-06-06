@@ -36,6 +36,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { ConfigStore } from "../dist/adapter-internal.js";
 import { GatewayCore, SerialPortUsbDriver } from "../dist/admin.js";
 import {
@@ -52,7 +53,7 @@ const USER_SIGNING_METHODS = Object.freeze([
 const POLICY_SIGNING_METHODS = Object.freeze([
   { chain: "sui", method: "sign_transaction" },
 ]);
-const DEFAULT_PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q client sign_personal_message smoke").toString("base64");
+const DEFAULT_PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q personal message check").toString("base64");
 
 const userSigningEnabled = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER === "1";
 const userSigningScenario = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO ?? "";
@@ -88,6 +89,9 @@ const SIGN_TRANSACTION_POLICY_PURPOSE = "hw.sign_tx.policy";
 const SIGN_PERSONAL_MESSAGE_USER_PURPOSE = "hw.sign_msg.user";
 const SIGN_PERSONAL_MESSAGE_POLICY_PURPOSE = "hw.sign_msg.policy";
 const POLICY_UPDATE_PURPOSE = "client-policy-update-smoke";
+const DEVICE_VISIBLE_GATEWAY_NAME = "Agent-Q Gateway";
+const RECONNECT_SCAN_ATTEMPTS = 20;
+const RECONNECT_SCAN_INTERVAL_MS = 1000;
 
 function isCanonicalBase64(value) {
   if (value.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
@@ -181,6 +185,35 @@ function selectSmokeDeviceId(devices, requestedDeviceId, envVarName, smokeName) 
   assert.equal(typeof deviceId, "string", "expected scanned device to include a deviceId");
   assert.notEqual(deviceId.length, 0, "expected scanned device to include a non-empty deviceId");
   return deviceId;
+}
+
+async function waitForRecoveredSmokeDevice(core, deviceId) {
+  let lastScan = null;
+  for (let attempt = 0; attempt < RECONNECT_SCAN_ATTEMPTS; attempt += 1) {
+    lastScan = await core.scanDevices();
+    const recoveredDevice = lastScan.devices.find((device) => scanDeviceId(device) === deviceId);
+    if (recoveredDevice !== undefined) {
+      return recoveredDevice;
+    }
+    await sleep(RECONNECT_SCAN_INTERVAL_MS);
+  }
+  assert.fail(
+    `expected the same device after USB reconnect; last scan=${JSON.stringify(lastScan)}`,
+  );
+}
+
+async function waitForSmokeScanDevices(core) {
+  let lastScan = null;
+  for (let attempt = 0; attempt < RECONNECT_SCAN_ATTEMPTS; attempt += 1) {
+    lastScan = await core.scanDevices();
+    if (lastScan.devices.length > 0) {
+      return lastScan.devices;
+    }
+    await sleep(RECONNECT_SCAN_INTERVAL_MS);
+  }
+  assert.fail(
+    `expected at least one connected Agent-Q device; last scan=${JSON.stringify(lastScan)}`,
+  );
 }
 
 function topSeq(history) {
@@ -411,9 +444,8 @@ test(
   async () => {
     await withSmokeCore("agent-q-client-sign-transaction-user-", async (core) => {
       console.log("[client-sign-transaction-user-smoke] scanning devices...");
-      const scan = await core.scanDevices();
       const deviceId = selectSmokeDeviceId(
-        scan.devices,
+        await waitForSmokeScanDevices(core),
         userSigningDeviceId,
         "AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_DEVICE_ID",
         "AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER",
@@ -427,7 +459,7 @@ test(
         const connect = await core.connectDevice({
           deviceId,
           purpose: SIGN_TRANSACTION_USER_PURPOSE,
-          gatewayName: "Agent-Q client sign_transaction smoke",
+          gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
         });
         assert.equal(connect.source, "connected");
 
@@ -478,9 +510,7 @@ test(
             `expected transport session end, got ${result.reason}`,
           );
           console.log("[client-sign-transaction-user-smoke] verifying post-reconnect cleanup...");
-          const recoveryScan = await core.scanDevices();
-          const recoveredDevice = recoveryScan.devices.find((device) => scanDeviceId(device) === deviceId);
-          assert.ok(recoveredDevice, "expected the same device after USB reconnect");
+          const recoveredDevice = await waitForRecoveredSmokeDevice(core, deviceId);
           assert.equal(recoveredDevice.protocolResponse.device.state, "idle");
           assert.equal(recoveredDevice.protocolResponse.provisioning.state, "provisioned");
 
@@ -489,7 +519,7 @@ test(
           const reconnect = await core.connectDevice({
             deviceId,
             purpose: SIGN_TRANSACTION_USER_PURPOSE,
-            gatewayName: "Agent-Q client sign_transaction smoke",
+            gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
           });
           assert.equal(reconnect.source, "connected");
 
@@ -553,9 +583,8 @@ test(
   async () => {
     await withSmokeCore("agent-q-client-sign-transaction-policy-", async (core) => {
       console.log("[client-sign-transaction-policy-smoke] scanning devices...");
-      const scan = await core.scanDevices();
       const deviceId = selectSmokeDeviceId(
-        scan.devices,
+        await waitForSmokeScanDevices(core),
         policySigningDeviceId,
         "AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_DEVICE_ID",
         "AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY",
@@ -570,7 +599,7 @@ test(
         const connect = await core.connectDevice({
           deviceId,
           purpose: SIGN_TRANSACTION_POLICY_PURPOSE,
-          gatewayName: "Agent-Q client sign_transaction smoke",
+          gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
         });
         assert.equal(connect.source, "connected");
 
@@ -635,9 +664,8 @@ test(
   async () => {
     await withSmokeCore("agent-q-client-sign-personal-message-user-", async (core) => {
       console.log("[client-sign-personal-message-user-smoke] scanning devices...");
-      const scan = await core.scanDevices();
       const deviceId = selectSmokeDeviceId(
-        scan.devices,
+        await waitForSmokeScanDevices(core),
         userPersonalMessageDeviceId,
         "AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_DEVICE_ID",
         "AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER",
@@ -651,7 +679,7 @@ test(
         const connect = await core.connectDevice({
           deviceId,
           purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE,
-          gatewayName: "Agent-Q client sign_personal_message smoke",
+          gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
         });
         assert.equal(connect.source, "connected");
 
@@ -705,9 +733,7 @@ test(
             `expected transport session end, got ${result.reason}`,
           );
           console.log("[client-sign-personal-message-user-smoke] verifying post-reconnect cleanup...");
-          const recoveryScan = await core.scanDevices();
-          const recoveredDevice = recoveryScan.devices.find((device) => scanDeviceId(device) === deviceId);
-          assert.ok(recoveredDevice, "expected the same device after USB reconnect");
+          const recoveredDevice = await waitForRecoveredSmokeDevice(core, deviceId);
           assert.equal(recoveredDevice.protocolResponse.device.state, "idle");
           assert.equal(recoveredDevice.protocolResponse.provisioning.state, "provisioned");
 
@@ -716,7 +742,7 @@ test(
           const reconnect = await core.connectDevice({
             deviceId,
             purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE,
-            gatewayName: "Agent-Q client sign_personal_message smoke",
+            gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
           });
           assert.equal(reconnect.source, "connected");
 
@@ -784,9 +810,8 @@ test(
   async () => {
     await withSmokeCore("agent-q-client-sign-personal-message-policy-", async (core) => {
       console.log("[client-sign-personal-message-policy-smoke] scanning devices...");
-      const scan = await core.scanDevices();
       const deviceId = selectSmokeDeviceId(
-        scan.devices,
+        await waitForSmokeScanDevices(core),
         policyPersonalMessageDeviceId,
         "AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_DEVICE_ID",
         "AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY",
@@ -798,7 +823,7 @@ test(
         const connect = await core.connectDevice({
           deviceId,
           purpose: SIGN_PERSONAL_MESSAGE_POLICY_PURPOSE,
-          gatewayName: "Agent-Q client sign_personal_message policy-mode smoke",
+          gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
         });
         assert.equal(connect.source, "connected");
 
@@ -853,9 +878,8 @@ test(
   async () => {
     await withSmokeCore("agent-q-client-policy-update-", async (core) => {
       console.log("[client-policy-update-smoke] scanning devices...");
-      const scan = await core.scanDevices();
       const deviceId = selectSmokeDeviceId(
-        scan.devices,
+        await waitForSmokeScanDevices(core),
         policyUpdateDeviceId,
         "AGENTQ_HW_CLIENT_POLICY_UPDATE_DEVICE_ID",
         "AGENTQ_HW_CLIENT_POLICY_UPDATE",
@@ -867,7 +891,7 @@ test(
         const connect = await core.connectDevice({
           deviceId,
           purpose: POLICY_UPDATE_PURPOSE,
-          gatewayName: "Agent-Q client policy update smoke",
+          gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
         });
         assert.equal(connect.source, "connected");
 

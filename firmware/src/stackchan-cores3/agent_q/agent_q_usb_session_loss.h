@@ -22,6 +22,7 @@ struct AgentQUsbSessionLossInput {
     bool connect_approval_active;
     AgentQUsbSessionLossProtocolPinPurpose protocol_pin;
     AgentQUsbSessionLossLocalPinPurpose local_pin;
+    bool policy_update_active;
     bool user_signing_active;
     bool user_signing_critical;
 };
@@ -36,6 +37,7 @@ struct AgentQUsbSessionLossPlan {
     bool cancel_user_signing;
     bool clear_decision_panel;
     bool clear_local_pin_panel;
+    bool clear_policy_update_review_panel;
     bool clear_user_signing_review_panel;
 };
 

@@ -19,6 +19,7 @@ struct LocalResetState {
     AgentQLocalResetStage stage = AgentQLocalResetStage::none;
     uint32_t auth_job_id = 0;
     AgentQTimeoutWindow input_window = kAgentQTimeoutWindowNone;
+    AgentQPausedTimeoutWindow paused_input_window = kAgentQPausedTimeoutWindowNone;
     TickType_t verify_ready_at = 0;
     TickType_t wipe_ready_at = 0;
     TickType_t worker_deadline = 0;
@@ -38,6 +39,7 @@ struct LocalResetState {
         pin_entry_length = 0;
         auth_job_id = 0;
         input_window = kAgentQTimeoutWindowNone;
+        paused_input_window = kAgentQPausedTimeoutWindowNone;
         verify_ready_at = 0;
         wipe_ready_at = 0;
         worker_deadline = 0;
@@ -46,6 +48,28 @@ struct LocalResetState {
     void clear_lockout()
     {
         pin_attempt_clear();
+    }
+
+    bool pause_input_window(TickType_t now)
+    {
+        AgentQPausedTimeoutWindow paused = timeout_window_pause_at(input_window, now);
+        if (!timeout_paused_window_valid(paused)) {
+            return false;
+        }
+        input_window = kAgentQTimeoutWindowNone;
+        paused_input_window = paused;
+        return true;
+    }
+
+    bool resume_paused_input_window(TickType_t now)
+    {
+        AgentQTimeoutWindow resumed = timeout_window_resume_at(paused_input_window, now);
+        if (!timeout_window_valid(resumed)) {
+            return false;
+        }
+        input_window = resumed;
+        paused_input_window = kAgentQPausedTimeoutWindowNone;
+        return true;
     }
 };
 
@@ -199,16 +223,29 @@ bool local_reset_fail_processing_if_expired(TickType_t now)
     return true;
 }
 
-bool local_reset_release_lockout_if_elapsed(TickType_t now)
+AgentQLocalResetLockoutReleaseResult local_reset_release_lockout_if_elapsed(TickType_t now)
 {
     if (g_local_reset.stage != AgentQLocalResetStage::pin_entry ||
-        !pin_attempt_release_if_elapsed(now)) {
-        return false;
+        !pin_attempt_lockout_elapsed_at(now)) {
+        return AgentQLocalResetLockoutReleaseResult::not_released;
     }
 
-    g_local_reset.input_window =
-        timeout_window_from_deadline(now, now + pdMS_TO_TICKS(kAgentQLocalResetEntryMs));
-    return true;
+    if (timeout_paused_window_valid(g_local_reset.paused_input_window)) {
+        if (!g_local_reset.resume_paused_input_window(now)) {
+            g_local_reset.wipe();
+            pin_attempt_clear();
+            return AgentQLocalResetLockoutReleaseResult::failed;
+        }
+        pin_attempt_clear();
+        return AgentQLocalResetLockoutReleaseResult::released;
+    }
+    if (timeout_window_valid(g_local_reset.input_window)) {
+        pin_attempt_clear();
+        return AgentQLocalResetLockoutReleaseResult::released;
+    }
+    g_local_reset.wipe();
+    pin_attempt_clear();
+    return AgentQLocalResetLockoutReleaseResult::failed;
 }
 
 bool local_reset_wipe_ready(TickType_t now)
@@ -316,7 +353,6 @@ bool local_reset_backspace_pin()
 
 AgentQLocalResetPinSubmitResult local_reset_submit_pin_for_verification(
     TickType_t verify_ready_at,
-    AgentQTimeoutWindow invalid_window,
     TickType_t worker_deadline)
 {
     const TickType_t now = xTaskGetTickCount();
@@ -331,16 +367,18 @@ AgentQLocalResetPinSubmitResult local_reset_submit_pin_for_verification(
     }
     if (g_local_reset.pin_entry_length != kLocalPinDigits ||
         !is_valid_local_pin(g_local_reset.pin_entry)) {
-        (void)invalid_window;
         return AgentQLocalResetPinSubmitResult::invalid_pin;
     }
 
     uint32_t job_id = 0;
+    if (!g_local_reset.pause_input_window(now)) {
+        return AgentQLocalResetPinSubmitResult::unavailable_stage;
+    }
     if (!local_auth_worker_submit_verify(
             AgentQLocalAuthWorkerOwner::local_reset,
             g_local_reset.pin_entry,
             &job_id)) {
-        (void)invalid_window;
+        g_local_reset.resume_paused_input_window(now);
         return AgentQLocalResetPinSubmitResult::worker_unavailable;
     }
 
@@ -357,7 +395,6 @@ AgentQLocalResetPinSubmitResult local_reset_submit_pin_for_verification(
 
 AgentQLocalResetPinVerifyResult local_reset_complete_pin_verify_job(
     const AgentQLocalAuthWorkerResult& result,
-    AgentQTimeoutWindow retry_window,
     TickType_t lockout_until,
     TickType_t wipe_ready_at)
 {
@@ -382,16 +419,16 @@ AgentQLocalResetPinVerifyResult local_reset_complete_pin_verify_job(
     }
 
     if (!result.verified) {
-        if (!timeout_window_valid(retry_window)) {
-            g_local_reset.wipe();
-            return AgentQLocalResetPinVerifyResult::auth_unavailable;
-        }
+        const TickType_t now = xTaskGetTickCount();
         g_local_reset.stage = AgentQLocalResetStage::pin_entry;
         wipe_sensitive_buffer(g_local_reset.pin_entry, sizeof(g_local_reset.pin_entry));
         g_local_reset.pin_entry_length = 0;
-        g_local_reset.input_window = retry_window;
         if (pin_attempt_record_failure(lockout_until)) {
             return AgentQLocalResetPinVerifyResult::locked;
+        }
+        if (!g_local_reset.resume_paused_input_window(now)) {
+            g_local_reset.wipe();
+            return AgentQLocalResetPinVerifyResult::auth_unavailable;
         }
         return AgentQLocalResetPinVerifyResult::wrong_pin;
     }

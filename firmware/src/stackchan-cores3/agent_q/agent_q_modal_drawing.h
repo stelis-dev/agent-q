@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stddef.h>
+
 #include "agent_q_drawing_surface.h"
 #include "agent_q_timeout_window.h"
 #include "agent_q_user_signing_review_view_model.h"
@@ -35,8 +37,19 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_recover_previous_clicked = nullptr;
     lv_event_cb_t on_recover_next_clicked = nullptr;
     lv_event_cb_t on_recover_cancel_clicked = nullptr;
+    lv_event_cb_t on_policy_update_review_continue_clicked = nullptr;
+    lv_event_cb_t on_policy_update_review_reject_clicked = nullptr;
     lv_event_cb_t on_user_signing_review_accept_clicked = nullptr;
     lv_event_cb_t on_user_signing_review_reject_clicked = nullptr;
+};
+
+struct AgentQPolicyUpdateReviewViewModel {
+    const char* policy_hash = nullptr;
+    size_t rule_count = 0;
+    const char* default_action = nullptr;
+    const char* highest_action = nullptr;
+    const char* method_summary = nullptr;
+    const char* review_summary = nullptr;
 };
 
 void modal_drawing_set_callbacks(const AgentQModalDrawingCallbacks& callbacks);
@@ -50,6 +63,9 @@ bool modal_draw_settings_menu_panel();
 bool modal_draw_error_recovery_panel(bool confirm);
 bool modal_draw_reset_pin_panel(const char* notice = nullptr);
 bool modal_draw_local_pin_auth_panel(const char* notice = nullptr);
+bool modal_draw_policy_update_review_panel(
+    const AgentQPolicyUpdateReviewViewModel& model,
+    AgentQTimeoutWindow timeout_window);
 bool modal_draw_user_signing_review_panel(
     const AgentQUserSigningReviewViewModel& model,
     AgentQTimeoutWindow timeout_window);

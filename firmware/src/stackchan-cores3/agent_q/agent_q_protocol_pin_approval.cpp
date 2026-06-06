@@ -13,6 +13,7 @@ struct ProtocolPinApprovalState {
     char session_id[kAgentQSessionIdSize] = {};
     AgentQTimeoutWindow request_window = kAgentQTimeoutWindowNone;
     AgentQTimeoutWindow pin_input_window = kAgentQTimeoutWindowNone;
+    AgentQPausedTimeoutWindow paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
 
     void clear()
     {
@@ -22,6 +23,7 @@ struct ProtocolPinApprovalState {
         session_id[0] = '\0';
         request_window = kAgentQTimeoutWindowNone;
         pin_input_window = kAgentQTimeoutWindowNone;
+        paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
     }
 };
 
@@ -136,34 +138,37 @@ bool protocol_pin_approval_request_id_for_local_pin_purpose(
 
 bool protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
     AgentQLocalPinAuthPurpose purpose,
-    TickType_t now,
-    AgentQTimeoutWindow pin_input_window)
+    TickType_t now)
 {
     if (!g_state.active ||
-        !timeout_window_valid(pin_input_window) ||
         !local_pin_purpose_matches(g_state.purpose, purpose)) {
         return false;
     }
-    const TickType_t capped_deadline = timeout_window_cap_deadline(
-        g_state.request_window,
-        pin_input_window.deadline);
-    if (timeout_window_tick_reached(now, capped_deadline)) {
+    const AgentQTimeoutWindow resumed =
+        timeout_window_resume_at(g_state.paused_pin_input_window, now);
+    if (!timeout_window_valid(resumed)) {
         return false;
     }
-    g_state.pin_input_window =
-        timeout_window_from_deadline(pin_input_window.started_at, capped_deadline);
-    if (!timeout_window_valid(g_state.pin_input_window)) {
-        g_state.pin_input_window = kAgentQTimeoutWindowNone;
-        return false;
-    }
+    g_state.pin_input_window = resumed;
+    g_state.paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
     return true;
 }
 
 bool protocol_pin_approval_pause_deadline_for_local_pin_purpose(
-    AgentQLocalPinAuthPurpose purpose)
+    AgentQLocalPinAuthPurpose purpose,
+    TickType_t now)
 {
     if (!g_state.active ||
         !local_pin_purpose_matches(g_state.purpose, purpose)) {
+        return false;
+    }
+    if (timeout_window_reached(g_state.pin_input_window, now)) {
+        return false;
+    }
+    g_state.paused_pin_input_window =
+        timeout_window_pause_at(g_state.pin_input_window, now);
+    if (!timeout_paused_window_valid(g_state.paused_pin_input_window)) {
+        g_state.paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
         return false;
     }
     g_state.pin_input_window = kAgentQTimeoutWindowNone;
@@ -177,8 +182,7 @@ bool protocol_pin_approval_deadline_reached_for_local_pin_purpose(
     if (!g_state.active || !local_pin_purpose_matches(g_state.purpose, purpose)) {
         return false;
     }
-    return timeout_window_reached(g_state.request_window, now) ||
-           timeout_window_reached(g_state.pin_input_window, now);
+    return timeout_window_reached(g_state.pin_input_window, now);
 }
 
 bool protocol_pin_approval_policy_update_session_matches(const char* session_id)

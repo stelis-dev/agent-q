@@ -122,8 +122,10 @@ policy facts and rules are implemented. Detailed hardware evidence status is
 tracked in `docs/IMPLEMENTATION_STATUS.md`.
 
 This target also implements the Firmware-owned `policy_propose` request
-for bounded current-schema policy proposals over an active session, local PIN approval, canonical
-active-policy commit, and required policy-update terminal history. It does not
+for bounded current-schema policy proposals over an active session, a
+device-local policy summary review, local PIN approval after device-local
+Continue, canonical active-policy commit, and required policy-update terminal
+history. It does not
 expose MCP
 directly; Gateway/MCP only submit requests and parse Firmware responses. It
 does persist bounded approval-history metadata for signing and policy

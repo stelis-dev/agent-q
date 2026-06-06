@@ -55,6 +55,12 @@ enum class AgentQLocalResetPinVerifyResult {
     auth_unavailable,
 };
 
+enum class AgentQLocalResetLockoutReleaseResult {
+    not_released,
+    released,
+    failed,
+};
+
 struct AgentQLocalResetSnapshot {
     AgentQLocalResetStage stage;
     size_t pin_entry_length;
@@ -74,7 +80,7 @@ bool local_reset_persistent_material_exists();
 bool local_reset_deadline_expired(TickType_t now);
 bool local_reset_processing_deadline_expired(TickType_t now);
 bool local_reset_fail_processing_if_expired(TickType_t now);
-bool local_reset_release_lockout_if_elapsed(TickType_t now);
+AgentQLocalResetLockoutReleaseResult local_reset_release_lockout_if_elapsed(TickType_t now);
 bool local_reset_wipe_ready(TickType_t now);
 
 void local_reset_wipe();
@@ -87,11 +93,9 @@ bool local_reset_clear_pin();
 bool local_reset_backspace_pin();
 AgentQLocalResetPinSubmitResult local_reset_submit_pin_for_verification(
     TickType_t verify_ready_at,
-    AgentQTimeoutWindow invalid_window,
     TickType_t worker_deadline);
 AgentQLocalResetPinVerifyResult local_reset_complete_pin_verify_job(
     const AgentQLocalAuthWorkerResult& result,
-    AgentQTimeoutWindow retry_window,
     TickType_t lockout_until,
     TickType_t wipe_ready_at);
 

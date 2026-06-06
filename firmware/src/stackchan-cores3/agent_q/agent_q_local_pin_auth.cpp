@@ -23,6 +23,7 @@ struct AgentQLocalPinAuthState {
     AgentQSigningAuthorizationMode target_signing_authorization_mode = AgentQSigningAuthorizationMode::user;
     uint32_t auth_job_id = 0;
     AgentQTimeoutWindow input_window = kAgentQTimeoutWindowNone;
+    AgentQPausedTimeoutWindow paused_input_window = kAgentQPausedTimeoutWindowNone;
     TickType_t verify_ready_at = 0;
     TickType_t commit_ready_at = 0;
     TickType_t worker_deadline = 0;
@@ -67,6 +68,7 @@ struct AgentQLocalPinAuthState {
         target_signing_authorization_mode = AgentQSigningAuthorizationMode::user;
         auth_job_id = 0;
         input_window = kAgentQTimeoutWindowNone;
+        paused_input_window = kAgentQPausedTimeoutWindowNone;
         verify_ready_at = 0;
         commit_ready_at = 0;
         worker_deadline = 0;
@@ -76,6 +78,28 @@ struct AgentQLocalPinAuthState {
     void set_input_window(AgentQTimeoutWindow window)
     {
         input_window = window;
+        paused_input_window = kAgentQPausedTimeoutWindowNone;
+    }
+
+    bool pause_input_window(TickType_t now)
+    {
+        AgentQPausedTimeoutWindow paused = timeout_window_pause_at(input_window, now);
+        if (!timeout_paused_window_valid(paused)) {
+            return false;
+        }
+        input_window = kAgentQTimeoutWindowNone;
+        paused_input_window = paused;
+        return true;
+    }
+
+    bool resume_paused_input_window(TickType_t now)
+    {
+        AgentQTimeoutWindow resumed = timeout_window_resume_at(paused_input_window, now);
+        if (!timeout_window_valid(resumed)) {
+            return false;
+        }
+        set_input_window(resumed);
+        return true;
     }
 };
 
@@ -95,15 +119,34 @@ bool timeout_bound_processing_stage(AgentQLocalPinAuthStage stage)
            stage == AgentQLocalPinAuthStage::committing_pin_change;
 }
 
-bool release_lockout_if_elapsed(TickType_t now, AgentQTimeoutWindow retry_window)
+AgentQLocalPinAuthLockoutReleaseResult release_lockout_if_elapsed(TickType_t now)
 {
-    if (!pin_attempt_release_if_elapsed(now)) {
+    if (!pin_attempt_lockout_elapsed_at(now)) {
+        return AgentQLocalPinAuthLockoutReleaseResult::not_released;
+    }
+    if (timeout_paused_window_valid(g_state.paused_input_window)) {
+        if (!g_state.resume_paused_input_window(now)) {
+            g_state.clear_flow();
+            pin_attempt_clear();
+            return AgentQLocalPinAuthLockoutReleaseResult::failed;
+        }
+        pin_attempt_clear();
+        return AgentQLocalPinAuthLockoutReleaseResult::released;
+    }
+    if (timeout_window_valid(g_state.input_window)) {
+        pin_attempt_clear();
+        return AgentQLocalPinAuthLockoutReleaseResult::released;
+    }
+    g_state.clear_flow();
+    pin_attempt_clear();
+    return AgentQLocalPinAuthLockoutReleaseResult::failed;
+}
+
+bool resume_after_wrong_pin(TickType_t now)
+{
+    if (!g_state.resume_paused_input_window(now)) {
         return false;
     }
-    if (!timeout_window_valid(retry_window)) {
-        return false;
-    }
-    g_state.set_input_window(retry_window);
     return true;
 }
 
@@ -164,9 +207,9 @@ bool local_pin_auth_fail_processing_if_expired(TickType_t now)
     return true;
 }
 
-bool local_pin_auth_release_lockout_if_elapsed(TickType_t now, AgentQTimeoutWindow retry_window)
+AgentQLocalPinAuthLockoutReleaseResult local_pin_auth_release_lockout_if_elapsed(TickType_t now)
 {
-    return release_lockout_if_elapsed(now, retry_window);
+    return release_lockout_if_elapsed(now);
 }
 
 void local_pin_auth_clear_flow()
@@ -320,11 +363,15 @@ bool local_pin_auth_backspace_pin()
 AgentQLocalPinAuthSubmitResult local_pin_auth_submit(
     TickType_t verify_ready_at,
     TickType_t commit_ready_at,
-    AgentQTimeoutWindow retry_window,
+    AgentQTimeoutWindow next_input_window,
     TickType_t worker_deadline)
 {
     const TickType_t now = xTaskGetTickCount();
-    release_lockout_if_elapsed(now, retry_window);
+    const AgentQLocalPinAuthLockoutReleaseResult release_result =
+        release_lockout_if_elapsed(now);
+    if (release_result == AgentQLocalPinAuthLockoutReleaseResult::failed) {
+        return AgentQLocalPinAuthSubmitResult::unavailable_stage;
+    }
     if (!local_pin_auth_accepts_keypad_input()) {
         return AgentQLocalPinAuthSubmitResult::unavailable_stage;
     }
@@ -345,11 +392,11 @@ AgentQLocalPinAuthSubmitResult local_pin_auth_submit(
         g_state.new_pin[sizeof(g_state.new_pin) - 1] = '\0';
         g_state.clear_pin_only();
         g_state.stage = AgentQLocalPinAuthStage::repeat_pin_entry;
-        if (!timeout_window_valid(retry_window)) {
+        if (!timeout_window_valid(next_input_window)) {
             g_state.clear_flow();
             return AgentQLocalPinAuthSubmitResult::unavailable_stage;
         }
-        g_state.set_input_window(retry_window);
+        g_state.set_input_window(next_input_window);
         return AgentQLocalPinAuthSubmitResult::advanced_to_repeat_pin;
     }
 
@@ -359,11 +406,11 @@ AgentQLocalPinAuthSubmitResult local_pin_auth_submit(
             g_state.clear_new_pin();
             g_state.clear_pin_only();
             g_state.stage = AgentQLocalPinAuthStage::new_pin_entry;
-            if (!timeout_window_valid(retry_window)) {
+            if (!timeout_window_valid(next_input_window)) {
                 g_state.clear_flow();
                 return AgentQLocalPinAuthSubmitResult::unavailable_stage;
             }
-            g_state.set_input_window(retry_window);
+            g_state.set_input_window(next_input_window);
             return AgentQLocalPinAuthSubmitResult::mismatch_restart;
         }
 
@@ -375,11 +422,11 @@ AgentQLocalPinAuthSubmitResult local_pin_auth_submit(
             g_state.clear_new_pin();
             g_state.clear_pin_only();
             g_state.stage = AgentQLocalPinAuthStage::new_pin_entry;
-            if (!timeout_window_valid(retry_window)) {
+            if (!timeout_window_valid(next_input_window)) {
                 g_state.clear_flow();
                 return AgentQLocalPinAuthSubmitResult::unavailable_stage;
             }
-            g_state.set_input_window(retry_window);
+            g_state.set_input_window(next_input_window);
             return AgentQLocalPinAuthSubmitResult::worker_unavailable;
         }
         g_state.clear_new_pin();
@@ -393,10 +440,14 @@ AgentQLocalPinAuthSubmitResult local_pin_auth_submit(
     }
 
     uint32_t job_id = 0;
+    if (!g_state.pause_input_window(now)) {
+        return AgentQLocalPinAuthSubmitResult::unavailable_stage;
+    }
     if (!local_auth_worker_submit_verify(
             AgentQLocalAuthWorkerOwner::local_pin_auth,
             g_state.pin_entry,
             &job_id)) {
+        g_state.resume_paused_input_window(now);
         return AgentQLocalPinAuthSubmitResult::worker_unavailable;
     }
     g_state.clear_pin_only();
@@ -404,13 +455,12 @@ AgentQLocalPinAuthSubmitResult local_pin_auth_submit(
     g_state.auth_job_id = job_id;
     g_state.verify_ready_at = verify_ready_at;
     g_state.worker_deadline = worker_deadline;
-    g_state.set_input_window(kAgentQTimeoutWindowNone);
     return AgentQLocalPinAuthSubmitResult::started_verification;
 }
 
 AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
     const AgentQLocalAuthWorkerResult& result,
-    AgentQTimeoutWindow retry_window,
+    AgentQTimeoutWindow next_input_window,
     TickType_t lockout_until,
     TickType_t setting_commit_ready_at)
 {
@@ -442,14 +492,15 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
     if (!result.verified) {
         g_state.clear_pin_only();
         g_state.stage = AgentQLocalPinAuthStage::pin_entry;
-        if (!timeout_window_valid(retry_window)) {
+        const bool locked = pin_attempt_record_failure(lockout_until);
+        if (locked) {
+            return AgentQLocalPinAuthVerifyResult::locked;
+        }
+        if (!resume_after_wrong_pin(now)) {
             g_state.clear_flow();
             return AgentQLocalPinAuthVerifyResult::auth_unavailable;
         }
-        g_state.set_input_window(retry_window);
-        const bool locked = pin_attempt_record_failure(lockout_until);
-        return locked ? AgentQLocalPinAuthVerifyResult::locked
-                      : AgentQLocalPinAuthVerifyResult::wrong_pin;
+        return AgentQLocalPinAuthVerifyResult::wrong_pin;
     }
 
     g_state.clear_pin_only();
@@ -457,11 +508,11 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
 
     if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         g_state.stage = AgentQLocalPinAuthStage::new_pin_entry;
-        if (!timeout_window_valid(retry_window)) {
+        if (!timeout_window_valid(next_input_window)) {
             g_state.clear_flow();
             return AgentQLocalPinAuthVerifyResult::auth_unavailable;
         }
-        g_state.set_input_window(retry_window);
+        g_state.set_input_window(next_input_window);
         return AgentQLocalPinAuthVerifyResult::advanced_to_change_pin;
     }
 
@@ -482,7 +533,6 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
 
 AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_user_signing_verify_job(
     const AgentQLocalAuthWorkerResult& result,
-    AgentQTimeoutWindow retry_window,
     TickType_t lockout_until)
 {
     if (!g_state.flow_active() ||
@@ -511,14 +561,15 @@ AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_user_signing_ver
     if (!result.verified) {
         g_state.clear_pin_only();
         g_state.stage = AgentQLocalPinAuthStage::pin_entry;
-        if (!timeout_window_valid(retry_window)) {
+        const bool locked = pin_attempt_record_failure(lockout_until);
+        if (locked) {
+            return AgentQLocalPinAuthSignatureVerifyResult::locked;
+        }
+        if (!resume_after_wrong_pin(now)) {
             g_state.clear_flow();
             return AgentQLocalPinAuthSignatureVerifyResult::auth_unavailable;
         }
-        g_state.set_input_window(retry_window);
-        const bool locked = pin_attempt_record_failure(lockout_until);
-        return locked ? AgentQLocalPinAuthSignatureVerifyResult::locked
-                      : AgentQLocalPinAuthSignatureVerifyResult::wrong_pin;
+        return AgentQLocalPinAuthSignatureVerifyResult::wrong_pin;
     }
 
     g_state.clear_flow();

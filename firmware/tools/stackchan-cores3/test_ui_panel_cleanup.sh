@@ -70,18 +70,20 @@ void expect(bool condition, const char* label)
 
 agent_q::AgentQUiPanelCleanupPlan plan(
     agent_q::AgentQUiPanelKind kind,
-    agent_q::AgentQUiPanelCleanupEvent event,
-    bool reset_matches = false,
-    bool pin_matches = false,
-    bool user_signing_review_matches = false)
+	    agent_q::AgentQUiPanelCleanupEvent event,
+	    bool reset_matches = false,
+	    bool pin_matches = false,
+	    bool policy_update_review_matches = false,
+	    bool user_signing_review_matches = false)
 {
     return agent_q::ui_panel_cleanup_plan(agent_q::AgentQUiPanelCleanupInput{
         kind,
         event,
-        reset_matches,
-        pin_matches,
-        user_signing_review_matches,
-    });
+	        reset_matches,
+	        pin_matches,
+	        policy_update_review_matches,
+	        user_signing_review_matches,
+	    });
 }
 
 }  // namespace
@@ -137,26 +139,33 @@ int main()
     expect(p.recover_user_signing_review_panel, "external user_signing review delete requests state-loop recovery");
     expect(!p.wipe_user_signing, "external user_signing review delete does not wipe directly");
 
-    p = plan(Panel::user_signing_review, Event::explicit_clear, false, false, true);
-    expect(p.wipe_user_signing, "explicit user_signing review clear wipes matching signing owner");
-    expect(!p.recover_user_signing_review_panel, "explicit user_signing review clear does not request recovery");
+	    p = plan(Panel::policy_update_review, Event::external_delete);
+	    expect(p.recover_policy_update_review_panel, "external policy update review delete requests state-loop recovery");
+	    expect(!p.wipe_local_pin_auth && !p.wipe_user_signing,
+	           "external policy update review delete does not wipe unrelated owners");
+
+	    p = plan(Panel::user_signing_review, Event::explicit_clear, false, false, false, true);
+	    expect(p.wipe_user_signing, "explicit user_signing review clear wipes matching signing owner");
+	    expect(!p.recover_user_signing_review_panel, "explicit user_signing review clear does not request recovery");
 
     p = plan(Panel::user_signing_review, Event::explicit_clear, false, false, false);
     expect(!p.wipe_user_signing && !p.recover_user_signing_review_panel,
            "explicit user_signing review clear without owner match is no-op");
 
-    p = plan(Panel::settings_menu, Event::external_delete);
-    expect(!p.route_provisioning_panel_deleted && !p.wipe_setup_if_unhandled &&
-               !p.wipe_local_reset && !p.wipe_local_pin_auth &&
-               !p.recover_local_pin_auth_panel && !p.wipe_user_signing &&
-               !p.recover_user_signing_review_panel,
-           "idle settings panel delete has no state cleanup");
+	    p = plan(Panel::settings_menu, Event::external_delete);
+	    expect(!p.route_provisioning_panel_deleted && !p.wipe_setup_if_unhandled &&
+	               !p.wipe_local_reset && !p.wipe_local_pin_auth &&
+	               !p.recover_local_pin_auth_panel &&
+	               !p.recover_policy_update_review_panel && !p.wipe_user_signing &&
+	               !p.recover_user_signing_review_panel,
+	           "idle settings panel delete has no state cleanup");
 
-    p = plan(Panel::decision_strip, Event::external_delete);
-    expect(!p.route_provisioning_panel_deleted && !p.wipe_local_reset &&
-               !p.wipe_local_pin_auth && !p.recover_local_pin_auth_panel &&
-               !p.wipe_user_signing && !p.recover_user_signing_review_panel,
-           "decision strip delete does not decide or cancel");
+	    p = plan(Panel::decision_strip, Event::external_delete);
+	    expect(!p.route_provisioning_panel_deleted && !p.wipe_local_reset &&
+	               !p.wipe_local_pin_auth && !p.recover_local_pin_auth_panel &&
+	               !p.recover_policy_update_review_panel &&
+	               !p.wipe_user_signing && !p.recover_user_signing_review_panel,
+	           "decision strip delete does not decide or cancel");
 
     if (failures != 0) {
         fprintf(stderr, "%d UI panel cleanup test(s) failed\n", failures);
