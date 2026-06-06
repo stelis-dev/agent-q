@@ -143,8 +143,9 @@ Rules:
   device-local clear-signing review and local PIN confirmation. Requests cannot
   choose this mode. Personal-message signing is user-mode only and fails closed
   in policy mode.
-  Current-tree direct USB/Firmware hardware smoke has passed for the implemented
-  Sign API outcomes. LVGL clear-signing visual evidence remains pending, so
+  Detailed hardware evidence status is tracked in
+  `docs/IMPLEMENTATION_STATUS.md`. The full current-tree Sign API hardware
+  matrix and LVGL clear-signing visual evidence remain pending, so
   product-active status is not claimed.
 - Agent-Q must not add chain-specific top-level MCP tools.
 

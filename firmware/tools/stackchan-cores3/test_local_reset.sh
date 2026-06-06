@@ -136,6 +136,11 @@ void expect(bool condition, const char* label)
     }
 }
 
+agent_q::AgentQTimeoutWindow pin_window(TickType_t started_at, TickType_t deadline)
+{
+    return agent_q::timeout_window_from_deadline(started_at, deadline);
+}
+
 void reset_stubs()
 {
     g_now = 0;
@@ -431,7 +436,7 @@ int main()
     using Commit = agent_q::AgentQLocalResetCommitResult;
 
     reset_stubs();
-    agent_q::local_reset_begin_error_recovery_confirm(100);
+    agent_q::local_reset_begin_error_recovery_confirm(pin_window(1, 100));
     expect(agent_q::local_reset_snapshot(0).stage == Stage::error_recovery_confirm,
            "error recovery enters confirmation stage");
     expect(!agent_q::local_reset_wipe_ready(99), "error recovery not ready before erase");
@@ -450,7 +455,7 @@ int main()
 
     reset_stubs();
     g_marker_write_fails = true;
-    agent_q::local_reset_begin_error_recovery_confirm(100);
+    agent_q::local_reset_begin_error_recovery_confirm(pin_window(1, 100));
     expect(agent_q::local_reset_begin_error_recovery_wipe(100), "marker failure path enters wiping");
     expect(agent_q::local_reset_commit_material(ops()) == Commit::reset_marker_storage_error,
            "marker failure aborts before wiping");
@@ -461,7 +466,7 @@ int main()
 
     reset_stubs();
     g_root_wipe_fails = true;
-    agent_q::local_reset_begin_error_recovery_confirm(100);
+    agent_q::local_reset_begin_error_recovery_confirm(pin_window(1, 100));
     expect(agent_q::local_reset_begin_error_recovery_wipe(100), "root failure path enters wiping");
     expect(agent_q::local_reset_commit_material(ops()) == Commit::root_wipe_error,
            "root wipe failure reports error");
@@ -469,7 +474,7 @@ int main()
 
     reset_stubs();
     g_policy_update_marker_wipe_fails = true;
-    agent_q::local_reset_begin_error_recovery_confirm(100);
+    agent_q::local_reset_begin_error_recovery_confirm(pin_window(1, 100));
     expect(agent_q::local_reset_begin_error_recovery_wipe(100), "policy update marker failure path enters wiping");
     expect(agent_q::local_reset_commit_material(ops()) == Commit::policy_update_marker_wipe_error,
            "policy update marker wipe failure reports error");
@@ -492,28 +497,29 @@ int main()
            "error recovery wipe cannot start without confirmation state");
 
     reset_stubs();
-    agent_q::local_pin_auth_begin_connect(100);
+    expect(agent_q::local_pin_auth_begin_connect(pin_window(1, 100)),
+           "shared attempt setup starts connect PIN auth");
     for (int attempt = 0; attempt < 5; ++attempt) {
         g_now = 10 + attempt;
-        expect(agent_q::local_pin_auth_add_digit('0', 100) ==
+        expect(agent_q::local_pin_auth_add_digit('0') ==
                    agent_q::AgentQLocalPinAuthInputResult::accepted,
                "shared attempt setup digit 1 accepted");
-        expect(agent_q::local_pin_auth_add_digit('0', 100) ==
+        expect(agent_q::local_pin_auth_add_digit('0') ==
                    agent_q::AgentQLocalPinAuthInputResult::accepted,
                "shared attempt setup digit 2 accepted");
-        expect(agent_q::local_pin_auth_add_digit('0', 100) ==
+        expect(agent_q::local_pin_auth_add_digit('0') ==
                    agent_q::AgentQLocalPinAuthInputResult::accepted,
                "shared attempt setup digit 3 accepted");
-        expect(agent_q::local_pin_auth_add_digit('0', 100) ==
+        expect(agent_q::local_pin_auth_add_digit('0') ==
                    agent_q::AgentQLocalPinAuthInputResult::accepted,
                "shared attempt setup digit 4 accepted");
-        expect(agent_q::local_pin_auth_add_digit('0', 100) ==
+        expect(agent_q::local_pin_auth_add_digit('0') ==
                    agent_q::AgentQLocalPinAuthInputResult::accepted,
                "shared attempt setup digit 5 accepted");
-        expect(agent_q::local_pin_auth_add_digit('0', 100) ==
+        expect(agent_q::local_pin_auth_add_digit('0') ==
                    agent_q::AgentQLocalPinAuthInputResult::accepted,
                "shared attempt setup digit 6 accepted");
-        expect(agent_q::local_pin_auth_submit(g_now, 0, 100, 90) ==
+        expect(agent_q::local_pin_auth_submit(g_now, 0, pin_window(g_now, 100), 90) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
                "shared attempt wrong connect PIN starts verification");
         agent_q::AgentQLocalAuthWorkerResult worker_result = {};
@@ -523,18 +529,22 @@ int main()
         worker_result.status = agent_q::AgentQLocalAuthWorkerStatus::ok;
         worker_result.verified = false;
         const agent_q::AgentQLocalPinAuthVerifyResult result =
-            agent_q::local_pin_auth_complete_verify_job(worker_result, 100, 80, 0);
+            agent_q::local_pin_auth_complete_verify_job(
+                worker_result,
+                pin_window(g_now, 100),
+                80,
+                0);
         expect(attempt == 4
                    ? result == agent_q::AgentQLocalPinAuthVerifyResult::locked
                    : result == agent_q::AgentQLocalPinAuthVerifyResult::wrong_pin,
                "connect PIN failures drive shared lockout");
     }
     agent_q::local_pin_auth_clear_flow();
-    agent_q::local_reset_begin_settings(120);
-    expect(agent_q::local_reset_begin_pin_entry(120), "reset PIN entry starts after connect failures");
+    agent_q::local_reset_begin_settings(pin_window(20, 120));
+    expect(agent_q::local_reset_begin_pin_entry(pin_window(20, 120)), "reset PIN entry starts after connect failures");
     expect(agent_q::local_reset_snapshot(20).lockout_active,
            "reset PIN sees shared lockout from connect PIN failures");
-    expect(agent_q::local_reset_submit_pin_for_verification(20, 120, 90) ==
+    expect(agent_q::local_reset_submit_pin_for_verification(20, pin_window(20, 120), 90) ==
                agent_q::AgentQLocalResetPinSubmitResult::locked,
            "reset PIN submit is locked by shared attempt budget");
     expect(agent_q::local_reset_release_lockout_if_elapsed(80),
@@ -545,8 +555,8 @@ int main()
 
     reset_stubs();
     g_now = 90;
-    agent_q::local_reset_begin_settings(140);
-    expect(agent_q::local_reset_begin_pin_entry(140), "reset PIN entry starts before input deadline test");
+    agent_q::local_reset_begin_settings(pin_window(90, 140));
+    expect(agent_q::local_reset_begin_pin_entry(pin_window(90, 140)), "reset PIN entry starts before input deadline test");
     expect(agent_q::local_reset_add_pin_digit('1'), "reset digit accepted before deadline");
     expect(agent_q::local_reset_backspace_pin(), "reset backspace accepted before deadline");
     expect(agent_q::local_reset_clear_pin(), "reset clear accepted before deadline");
@@ -555,20 +565,20 @@ int main()
     g_now = 141;
     expect(!agent_q::local_reset_add_pin_digit('1'),
            "reset digit after deadline is rejected by owner");
-    expect(agent_q::local_reset_submit_pin_for_verification(141, 300, 200) ==
+    expect(agent_q::local_reset_submit_pin_for_verification(141, pin_window(141, 300), 200) ==
                agent_q::AgentQLocalResetPinSubmitResult::unavailable_stage,
            "reset submit after deadline does not start verification");
     agent_q::local_reset_wipe();
 
     reset_stubs();
-    agent_q::local_reset_begin_settings(200);
-    expect(agent_q::local_reset_begin_pin_entry(200), "reset PIN entry starts before verification");
+    agent_q::local_reset_begin_settings(pin_window(100, 200));
+    expect(agent_q::local_reset_begin_pin_entry(pin_window(100, 200)), "reset PIN entry starts before verification");
     const char reset_verify_pin[] = "123456";
     for (size_t index = 0; reset_verify_pin[index] != '\0'; ++index) {
         const char digit = reset_verify_pin[index];
         expect(agent_q::local_reset_add_pin_digit(digit), "reset verification PIN digit accepted");
     }
-    expect(agent_q::local_reset_submit_pin_for_verification(110, 200, 150) ==
+    expect(agent_q::local_reset_submit_pin_for_verification(110, pin_window(110, 200), 150) ==
                agent_q::AgentQLocalResetPinSubmitResult::started_verification,
            "reset PIN verification starts");
     expect(agent_q::local_reset_snapshot(130).stage == agent_q::AgentQLocalResetStage::pin_verifying,
@@ -580,20 +590,20 @@ int main()
     reset_worker_result.operation = agent_q::AgentQLocalAuthWorkerOperation::verify_pin;
     reset_worker_result.status = agent_q::AgentQLocalAuthWorkerStatus::ok;
     reset_worker_result.verified = false;
-    expect(agent_q::local_reset_complete_pin_verify_job(reset_worker_result, 160, 180, 0) ==
+    expect(agent_q::local_reset_complete_pin_verify_job(reset_worker_result, pin_window(149, 160), 180, 0) ==
                agent_q::AgentQLocalResetPinVerifyResult::wrong_pin,
            "reset wrong PIN result before worker deadline opens retry state");
     expect(agent_q::local_reset_snapshot(161).stage == agent_q::AgentQLocalResetStage::pin_entry,
            "reset wrong PIN returns to PIN entry");
 
     reset_stubs();
-    agent_q::local_reset_begin_settings(300);
-    expect(agent_q::local_reset_begin_pin_entry(300), "reset PIN entry starts before worker timeout test");
+    agent_q::local_reset_begin_settings(pin_window(200, 300));
+    expect(agent_q::local_reset_begin_pin_entry(pin_window(200, 300)), "reset PIN entry starts before worker timeout test");
     for (size_t index = 0; reset_verify_pin[index] != '\0'; ++index) {
         const char digit = reset_verify_pin[index];
         expect(agent_q::local_reset_add_pin_digit(digit), "reset timeout PIN digit accepted");
     }
-    expect(agent_q::local_reset_submit_pin_for_verification(210, 300, 250) ==
+    expect(agent_q::local_reset_submit_pin_for_verification(210, pin_window(210, 300), 250) ==
                agent_q::AgentQLocalResetPinSubmitResult::started_verification,
            "reset PIN worker-timeout test starts verification");
     expect(!agent_q::local_reset_fail_processing_if_expired(249),
@@ -606,13 +616,13 @@ int main()
            "reset PIN verification worker timeout leaves no active reset flow");
 
     reset_stubs();
-    agent_q::local_reset_begin_settings(400);
-    expect(agent_q::local_reset_begin_pin_entry(400), "reset PIN entry starts before late-result test");
+    agent_q::local_reset_begin_settings(pin_window(300, 400));
+    expect(agent_q::local_reset_begin_pin_entry(pin_window(300, 400)), "reset PIN entry starts before late-result test");
     for (size_t index = 0; reset_verify_pin[index] != '\0'; ++index) {
         const char digit = reset_verify_pin[index];
         expect(agent_q::local_reset_add_pin_digit(digit), "reset late-result PIN digit accepted");
     }
-    expect(agent_q::local_reset_submit_pin_for_verification(310, 400, 350) ==
+    expect(agent_q::local_reset_submit_pin_for_verification(310, pin_window(310, 400), 350) ==
                agent_q::AgentQLocalResetPinSubmitResult::started_verification,
            "reset PIN late-result test starts verification");
     g_now = 351;
@@ -622,7 +632,7 @@ int main()
     reset_worker_result.operation = agent_q::AgentQLocalAuthWorkerOperation::verify_pin;
     reset_worker_result.status = agent_q::AgentQLocalAuthWorkerStatus::ok;
     reset_worker_result.verified = true;
-    expect(agent_q::local_reset_complete_pin_verify_job(reset_worker_result, 400, 430, 0) ==
+    expect(agent_q::local_reset_complete_pin_verify_job(reset_worker_result, pin_window(351, 400), 430, 0) ==
                agent_q::AgentQLocalResetPinVerifyResult::auth_unavailable,
            "late reset PIN verification result fails closed");
     expect(agent_q::local_reset_snapshot(351).stage == agent_q::AgentQLocalResetStage::none,

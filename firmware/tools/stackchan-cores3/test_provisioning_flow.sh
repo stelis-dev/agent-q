@@ -202,10 +202,15 @@ void expect(bool condition, const char* label)
     }
 }
 
-void enter_pin(const char* pin, TickType_t deadline)
+agent_q::AgentQTimeoutWindow pin_window(TickType_t started_at, TickType_t deadline)
+{
+    return agent_q::timeout_window_from_deadline(started_at, deadline);
+}
+
+void enter_pin(const char* pin, agent_q::AgentQTimeoutWindow input_window)
 {
     for (size_t index = 0; pin[index] != '\0'; ++index) {
-        expect(agent_q::provisioning_flow_add_pin_digit(pin[index], deadline), "PIN digit accepted");
+        expect(agent_q::provisioning_flow_add_pin_digit(pin[index], input_window), "PIN digit accepted");
     }
 }
 
@@ -218,31 +223,31 @@ int main()
     using GenerateResult = agent_q::AgentQProvisioningFlowGenerateResult;
     using PinSubmitResult = agent_q::AgentQProvisioningFlowPinSubmitResult;
 
-    agent_q::provisioning_flow_begin_setup_choice(100);
+    agent_q::provisioning_flow_begin_setup_choice(pin_window(1, 100));
     expect(agent_q::provisioning_flow_setup_choice_action_allowed(50), "setup choice active before deadline");
     expect(!agent_q::provisioning_flow_setup_choice_action_allowed(100), "setup choice expires at deadline");
 
-    expect(agent_q::provisioning_flow_begin_generate(200) == GenerateResult::ok, "generate starts phrase display");
+    expect(agent_q::provisioning_flow_begin_generate(pin_window(100, 200)) == GenerateResult::ok, "generate starts phrase display");
     expect(agent_q::provisioning_flow_stage_is(Stage::recovery_phrase_displayed), "phrase stage");
     expect(strcmp(agent_q::provisioning_flow_recovery_phrase_prefix_cell(0), "aban") == 0, "prefix cell 1");
     expect(strcmp(agent_q::provisioning_flow_recovery_phrase_prefix_cell(11), "acci") == 0, "prefix cell 12");
-    expect(agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(300), "confirm enters PIN setup");
+    expect(agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(pin_window(200, 300)), "confirm enters PIN setup");
     expect(agent_q::provisioning_flow_stage_is(Stage::pin_first_entry), "first PIN stage");
     expect(agent_q::provisioning_flow_recovery_phrase()[0] == '\0', "phrase text wiped before PIN");
 
-    enter_pin("123456", 310);
-    expect(agent_q::provisioning_flow_submit_pin(320, 400, 420) == PinSubmitResult::advanced_to_repeat,
+    enter_pin("123456", pin_window(300, 310));
+    expect(agent_q::provisioning_flow_submit_pin(pin_window(310, 320), 400, 420) == PinSubmitResult::advanced_to_repeat,
            "first PIN advances to repeat");
-    enter_pin("000000", 330);
-    expect(agent_q::provisioning_flow_submit_pin(340, 400, 420) == PinSubmitResult::mismatch_restart,
+    enter_pin("000000", pin_window(320, 330));
+    expect(agent_q::provisioning_flow_submit_pin(pin_window(330, 340), 400, 420) == PinSubmitResult::mismatch_restart,
            "mismatch restarts first PIN");
     expect(agent_q::provisioning_flow_stage_is(Stage::pin_first_entry), "mismatch stage");
 
-    enter_pin("123456", 350);
-    expect(agent_q::provisioning_flow_submit_pin(360, 450, 480) == PinSubmitResult::advanced_to_repeat,
+    enter_pin("123456", pin_window(340, 350));
+    expect(agent_q::provisioning_flow_submit_pin(pin_window(350, 360), 450, 480) == PinSubmitResult::advanced_to_repeat,
            "first PIN accepted after mismatch");
-    enter_pin("123456", 370);
-    expect(agent_q::provisioning_flow_submit_pin(380, 450, 480) == PinSubmitResult::commit_started,
+    enter_pin("123456", pin_window(360, 370));
+    expect(agent_q::provisioning_flow_submit_pin(pin_window(370, 380), 450, 480) == PinSubmitResult::commit_started,
            "matching repeat starts commit");
     expect(agent_q::provisioning_flow_commit_job_active(1), "commit waits for worker result");
     const uint8_t* root = nullptr;
@@ -262,14 +267,14 @@ int main()
     expect(root != nullptr && root_size == agent_q::kBip39EntropyBytes, "root input shape");
 
     agent_q::provisioning_flow_wipe();
-    expect(agent_q::provisioning_flow_begin_generate(500) == GenerateResult::ok, "generate before worker busy");
-    expect(agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(510), "confirm before worker busy");
-    enter_pin("123456", 520);
-    expect(agent_q::provisioning_flow_submit_pin(530, 540, 590) == PinSubmitResult::advanced_to_repeat,
+    expect(agent_q::provisioning_flow_begin_generate(pin_window(400, 500)) == GenerateResult::ok, "generate before worker busy");
+    expect(agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(pin_window(500, 510)), "confirm before worker busy");
+    enter_pin("123456", pin_window(510, 520));
+    expect(agent_q::provisioning_flow_submit_pin(pin_window(520, 530), 540, 590) == PinSubmitResult::advanced_to_repeat,
            "first PIN accepted before worker busy");
-    enter_pin("123456", 550);
+    enter_pin("123456", pin_window(540, 550));
     agent_q::g_test_worker_accepts_jobs = false;
-    expect(agent_q::provisioning_flow_submit_pin(560, 570, 590) == PinSubmitResult::worker_unavailable,
+    expect(agent_q::provisioning_flow_submit_pin(pin_window(550, 560), 570, 590) == PinSubmitResult::worker_unavailable,
            "worker failure is not reported as invalid PIN");
     expect(agent_q::provisioning_flow_stage_is(Stage::pin_repeat_entry),
            "worker failure keeps repeat stage for retry");
@@ -277,15 +282,15 @@ int main()
     expect(prepared != nullptr, "prepared auth input shape");
     agent_q::provisioning_flow_wipe();
 
-    expect(agent_q::provisioning_flow_begin_generate(600) == GenerateResult::ok,
+    expect(agent_q::provisioning_flow_begin_generate(pin_window(500, 600)) == GenerateResult::ok,
            "generate before commit panel loss");
-    expect(agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(610),
+    expect(agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(pin_window(600, 610)),
            "confirm before commit panel loss");
-    enter_pin("123456", 620);
-    expect(agent_q::provisioning_flow_submit_pin(630, 640, 690) == PinSubmitResult::advanced_to_repeat,
+    enter_pin("123456", pin_window(610, 620));
+    expect(agent_q::provisioning_flow_submit_pin(pin_window(620, 630), 640, 690) == PinSubmitResult::advanced_to_repeat,
            "first PIN accepted before commit panel loss");
-    enter_pin("123456", 650);
-    expect(agent_q::provisioning_flow_submit_pin(660, 670, 690) == PinSubmitResult::commit_started,
+    enter_pin("123456", pin_window(640, 650));
+    expect(agent_q::provisioning_flow_submit_pin(pin_window(650, 660), 670, 690) == PinSubmitResult::commit_started,
            "matching repeat starts commit before panel loss");
     expect(agent_q::provisioning_flow_stage_is(Stage::pin_committing),
            "panel loss scenario reaches commit stage");
@@ -302,15 +307,15 @@ int main()
                &prepared),
            "stale PIN commit worker result ignored after panel delete");
 
-    expect(agent_q::provisioning_flow_begin_generate(700) == GenerateResult::ok,
+    expect(agent_q::provisioning_flow_begin_generate(pin_window(600, 700)) == GenerateResult::ok,
            "generate before commit timeout");
-    expect(agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(710),
+    expect(agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(pin_window(700, 710)),
            "confirm before commit timeout");
-    enter_pin("123456", 720);
-    expect(agent_q::provisioning_flow_submit_pin(730, 740, 760) == PinSubmitResult::advanced_to_repeat,
+    enter_pin("123456", pin_window(710, 720));
+    expect(agent_q::provisioning_flow_submit_pin(pin_window(720, 730), 740, 760) == PinSubmitResult::advanced_to_repeat,
            "first PIN accepted before commit timeout");
-    enter_pin("123456", 750);
-    expect(agent_q::provisioning_flow_submit_pin(755, 780, 790) == PinSubmitResult::commit_started,
+    enter_pin("123456", pin_window(740, 750));
+    expect(agent_q::provisioning_flow_submit_pin(pin_window(750, 755), 780, 790) == PinSubmitResult::commit_started,
            "matching repeat starts commit before timeout");
     expect(!agent_q::provisioning_flow_fail_pin_commit_if_expired(789),
            "PIN commit stays active before worker deadline");
@@ -321,28 +326,28 @@ int main()
     expect(!agent_q::provisioning_flow_active(),
            "PIN commit timeout clears provisioning flow");
 
-    agent_q::provisioning_flow_begin_recover(500);
+    agent_q::provisioning_flow_begin_recover(pin_window(400, 500));
     expect(agent_q::provisioning_flow_stage_is(Stage::recover_word_entry), "recover stage");
     expect(!agent_q::provisioning_flow_recover_current_page_complete(), "empty page incomplete");
     for (uint16_t word = 0; word < 3; ++word) {
-        expect(agent_q::provisioning_flow_recover_select_slot(word, 510), "slot select");
-        expect(agent_q::provisioning_flow_recover_add_letter('a', 520), "letter entry");
-        expect(agent_q::provisioning_flow_recover_select_candidate(word, 530), "candidate select");
+        expect(agent_q::provisioning_flow_recover_select_slot(word, pin_window(500, 510)), "slot select");
+        expect(agent_q::provisioning_flow_recover_add_letter('a', pin_window(510, 520)), "letter entry");
+        expect(agent_q::provisioning_flow_recover_select_candidate(word, pin_window(520, 530)), "candidate select");
     }
     expect(agent_q::provisioning_flow_recover_current_page_complete(), "page complete");
-    expect(agent_q::provisioning_flow_recover_next_page(540), "next page");
+    expect(agent_q::provisioning_flow_recover_next_page(pin_window(530, 540)), "next page");
     for (uint16_t word = 3; word < 12; ++word) {
-        expect(agent_q::provisioning_flow_recover_select_slot((word - 3) % 3, 550), "slot select later");
-        expect(agent_q::provisioning_flow_recover_select_candidate(word, 560), "candidate select later");
+        expect(agent_q::provisioning_flow_recover_select_slot((word - 3) % 3, pin_window(540, 550)), "slot select later");
+        expect(agent_q::provisioning_flow_recover_select_candidate(word, pin_window(550, 560)), "candidate select later");
         if ((word + 1) % 3 == 0 && word + 1 < 12) {
-            expect(agent_q::provisioning_flow_recover_next_page(570), "next later page");
+            expect(agent_q::provisioning_flow_recover_next_page(pin_window(560, 570)), "next later page");
         }
     }
     expect(agent_q::provisioning_flow_recover_all_words_complete(), "all words complete");
     expect(agent_q::provisioning_flow_recover_entropy_from_words() ==
                agent_q::Bip39EntropyRecoveryResult::ok,
            "recover entropy");
-    agent_q::provisioning_flow_begin_pin_setup_after_recovery(600);
+    agent_q::provisioning_flow_begin_pin_setup_after_recovery(pin_window(570, 600));
     expect(agent_q::provisioning_flow_stage_is(Stage::pin_first_entry), "recovery enters PIN setup");
     expect(agent_q::provisioning_flow_handle_panel_deleted(Panel::pin_entry), "panel delete wipes setup PIN");
     expect(!agent_q::provisioning_flow_active(), "panel delete clears flow");

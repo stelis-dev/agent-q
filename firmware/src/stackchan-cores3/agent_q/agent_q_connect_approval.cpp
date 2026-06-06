@@ -10,7 +10,7 @@ struct ConnectApprovalState {
     bool active = false;
     char request_id[kAgentQConnectApprovalRequestIdSize] = {};
     char gateway_name[kAgentQConnectApprovalGatewayNameSize] = {};
-    TickType_t deadline = 0;
+    AgentQTimeoutWindow approval_window = kAgentQTimeoutWindowNone;
     AgentQConnectApprovalChoice choice = AgentQConnectApprovalChoice::none;
 
     void clear()
@@ -18,7 +18,7 @@ struct ConnectApprovalState {
         active = false;
         request_id[0] = '\0';
         gateway_name[0] = '\0';
-        deadline = 0;
+        approval_window = kAgentQTimeoutWindowNone;
         choice = AgentQConnectApprovalChoice::none;
     }
 };
@@ -41,12 +41,6 @@ bool copy_nonempty_c_string(const char* input, char* output, size_t output_size)
     }
     output[index] = '\0';
     return true;
-}
-
-bool tick_reached(TickType_t now, TickType_t deadline)
-{
-    return deadline != 0 &&
-           static_cast<int32_t>(now - deadline) >= 0;
 }
 
 }  // namespace
@@ -72,7 +66,7 @@ AgentQConnectApprovalSnapshot connect_approval_snapshot()
         g_state.active,
         g_state.request_id,
         g_state.gateway_name,
-        g_state.deadline,
+        g_state.approval_window,
         g_state.choice,
     };
 }
@@ -80,18 +74,21 @@ AgentQConnectApprovalSnapshot connect_approval_snapshot()
 bool connect_approval_begin(
     const char* request_id,
     const char* gateway_name,
-    TickType_t deadline)
+    AgentQTimeoutWindow approval_window)
 {
     if (g_state.active) {
         return false;
     }
     ConnectApprovalState next = {};
+    if (!timeout_window_valid(approval_window)) {
+        return false;
+    }
     if (!copy_nonempty_c_string(request_id, next.request_id, sizeof(next.request_id)) ||
         !copy_nonempty_c_string(gateway_name, next.gateway_name, sizeof(next.gateway_name))) {
         return false;
     }
     next.active = true;
-    next.deadline = deadline;
+    next.approval_window = approval_window;
     g_state = next;
     return true;
 }
@@ -108,7 +105,7 @@ bool connect_approval_choose(AgentQConnectApprovalChoice choice)
 
 bool connect_approval_deadline_reached(TickType_t now)
 {
-    return g_state.active && tick_reached(now, g_state.deadline);
+    return g_state.active && timeout_window_reached(g_state.approval_window, now);
 }
 
 bool connect_approval_request_id(char* output, size_t output_size)

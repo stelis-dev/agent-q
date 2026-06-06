@@ -13,6 +13,7 @@
 #include "agent_q_policy_update_flow.h"
 #include "agent_q_provisioning_flow.h"
 #include "agent_q_signing_mode.h"
+#include "freertos/task.h"
 #include "hal/hal.h"
 
 namespace agent_q {
@@ -26,7 +27,9 @@ constexpr size_t kRecoverPageCount = kProvisioningFlowRecoverPageCount;
 constexpr int kScreenHeight = 240;
 constexpr int kScreenWidth = 320;
 constexpr int kDecisionStripHeight = 34;
-constexpr int kDecisionPanelHeight = kDecisionStripHeight;
+constexpr int kTimeoutTimerBarHeight = 4;
+constexpr int kTimeoutTimerBarTrackInset = 8;
+constexpr int kDecisionPanelHeight = kDecisionStripHeight + kTimeoutTimerBarHeight;
 constexpr int kDecisionButtonWidth = kScreenWidth / 2;
 constexpr int kDecisionCornerRadius = 10;
 constexpr int kRecoveryPhraseButtonHeight = 28;
@@ -87,6 +90,7 @@ constexpr int kPinProcessingOverlayY =
 constexpr int kPinProcessingSpinnerSize = 34;
 constexpr int kPinProcessingArcDegrees = 112;
 constexpr int kPinProcessingSpinMs = 650;
+constexpr int kTimeoutTimerMinAnimationMs = 1;
 constexpr uint32_t kSetupCellBorderColor = 0xB7E4C7;
 constexpr uint32_t kSetupInputPressedColor = 0x1D4ED8;
 constexpr uint32_t kDisabledControlTextColor = 0x98A2B3;
@@ -193,6 +197,87 @@ static void make_decision_button(lv_obj_t* parent, const char* text, int x, lv_c
         make_decision_button_corner_fill(button, LV_ALIGN_BOTTOM_RIGHT, color, callback);
     }
     make_button_label_with_font(button, text, &lv_font_montserrat_14, callback);
+}
+
+static void set_timeout_timer_width(void* obj, int32_t width)
+{
+    lv_obj_set_width(static_cast<lv_obj_t*>(obj), width);
+}
+
+static void delete_linked_timeout_timer_bar(lv_event_t* event)
+{
+    lv_obj_t* track = static_cast<lv_obj_t*>(lv_event_get_user_data(event));
+    if (track != nullptr && lv_obj_is_valid(track)) {
+        lv_obj_delete(track);
+    }
+}
+
+static bool make_timeout_timer_bar(
+    lv_obj_t* parent,
+    int x,
+    int y,
+    int width,
+    AgentQTimeoutWindow timeout_window,
+    TickType_t now,
+    lv_obj_t** out_track = nullptr)
+{
+    if (!timeout_window_active(timeout_window) || width <= 0) {
+        return true;
+    }
+
+    lv_obj_t* track = lv_obj_create(parent);
+    if (track == nullptr) {
+        return false;
+    }
+    if (out_track != nullptr) {
+        *out_track = track;
+    }
+    lv_obj_remove_style_all(track);
+    lv_obj_set_size(track, width, kTimeoutTimerBarHeight);
+    lv_obj_align(track, LV_ALIGN_TOP_LEFT, x, y);
+    lv_obj_remove_flag(track, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(track, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_scrollbar_mode(track, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_radius(track, kTimeoutTimerBarHeight / 2, 0);
+    lv_obj_set_style_bg_color(track, lv_color_hex(0xD0D5DD), 0);
+    lv_obj_set_style_bg_opa(track, LV_OPA_COVER, 0);
+
+    lv_obj_t* fill = lv_obj_create(track);
+    if (fill == nullptr) {
+        lv_obj_delete(track);
+        if (out_track != nullptr) {
+            *out_track = nullptr;
+        }
+        return false;
+    }
+    lv_obj_remove_style_all(fill);
+    lv_obj_set_height(fill, kTimeoutTimerBarHeight);
+    lv_obj_align(fill, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_remove_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(fill, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_scrollbar_mode(fill, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_radius(fill, kTimeoutTimerBarHeight / 2, 0);
+    lv_obj_set_style_bg_color(fill, lv_color_hex(0x24875A), 0);
+    lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
+
+    if (timeout_window_reached(timeout_window, now)) {
+        lv_obj_set_width(fill, 0);
+        return true;
+    }
+
+    const TickType_t remaining_ticks = timeout_window_remaining_ticks(timeout_window, now);
+    const int32_t current_width = timeout_window_fill_width(timeout_window, now, width);
+    lv_obj_set_width(fill, current_width);
+    const uint32_t remaining_ms = pdTICKS_TO_MS(remaining_ticks);
+    lv_anim_t animation;
+    lv_anim_init(&animation);
+    lv_anim_set_var(&animation, fill);
+    lv_anim_set_values(&animation, current_width, 0);
+    lv_anim_set_duration(&animation, remaining_ms > 0 ? remaining_ms : kTimeoutTimerMinAnimationMs);
+    lv_anim_set_path_cb(&animation, lv_anim_path_linear);
+    lv_anim_set_exec_cb(&animation, set_timeout_timer_width);
+    lv_anim_start(&animation);
+    return true;
 }
 
 static bool make_setup_button(
@@ -488,8 +573,13 @@ bool modal_draw_processing_overlay_on_current_panel(AgentQUiPanelKind expected_k
     return make_pin_processing_overlay(panel);
 }
 
+static bool make_screen_bottom_timeout_timer_bar(
+    lv_obj_t* owner_panel,
+    AgentQTimeoutWindow timeout_window,
+    TickType_t now);
 
-bool modal_draw_decision_panel()
+
+bool modal_draw_decision_panel(AgentQTimeoutWindow timeout_window)
 {
     {
         LvglLockGuard lock;
@@ -513,6 +603,17 @@ bool modal_draw_decision_panel()
         lv_obj_set_style_bg_opa(panel, LV_OPA_TRANSP, 0);
         lv_obj_set_style_pad_all(panel, 0, 0);
 
+        if (!make_timeout_timer_bar(
+                panel,
+                kTimeoutTimerBarTrackInset,
+                kDecisionStripHeight,
+                kScreenWidth - 2 * kTimeoutTimerBarTrackInset,
+                timeout_window,
+                xTaskGetTickCount())) {
+            drawing_surface_clear_panel_locked();
+            return false;
+        }
+
         make_decision_button(panel, "Cancel", 0, lv_color_hex(0xA53B3B), g_callbacks.on_no_clicked);
         make_decision_button(panel, "Confirm", kDecisionButtonWidth, lv_color_hex(0x24875A), g_callbacks.on_yes_clicked);
 
@@ -524,6 +625,9 @@ bool modal_draw_decision_panel()
 
 bool modal_draw_setup_choice_panel()
 {
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQProvisioningFlowSnapshot flow =
+        agent_q::provisioning_flow_snapshot();
     avatar_overlay_clear();
 
     LvglLockGuard lock;
@@ -584,6 +688,11 @@ bool modal_draw_setup_choice_panel()
             SetupButtonKind::solid_action,
             lv_color_hex(0x667085),
             g_callbacks.on_setup_cancel_clicked)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    if (!make_screen_bottom_timeout_timer_bar(panel, flow.input_window, now)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
@@ -820,6 +929,34 @@ static bool make_recover_candidate_area(lv_obj_t* parent)
     return true;
 }
 
+static bool make_screen_bottom_timeout_timer_bar(
+    lv_obj_t* owner_panel,
+    AgentQTimeoutWindow timeout_window,
+    TickType_t now)
+{
+    if (!timeout_window_active(timeout_window)) {
+        return true;
+    }
+    lv_obj_t* track = nullptr;
+    if (!make_timeout_timer_bar(
+            lv_screen_active(),
+            kTimeoutTimerBarTrackInset,
+            kScreenHeight - kTimeoutTimerBarHeight,
+            kScreenWidth - 2 * kTimeoutTimerBarTrackInset,
+            timeout_window,
+            now,
+            &track)) {
+        return false;
+    }
+    if (track == nullptr) {
+        return true;
+    }
+    lv_obj_add_flag(track, LV_OBJ_FLAG_FLOATING);
+    lv_obj_add_event_cb(owner_panel, delete_linked_timeout_timer_bar, LV_EVENT_DELETE, track);
+    lv_obj_move_foreground(track);
+    return true;
+}
+
 bool modal_draw_recover_word_entry_panel(const char* notice)
 {
     avatar_overlay_clear();
@@ -934,6 +1071,11 @@ bool modal_draw_recover_word_entry_panel(const char* notice)
         return false;
     }
 
+    if (!make_screen_bottom_timeout_timer_bar(panel, flow.input_window, xTaskGetTickCount())) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
     drawing_surface_move_panel_foreground_locked();
     return true;
 }
@@ -945,6 +1087,9 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
     }
 
     avatar_overlay_clear();
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQProvisioningFlowSnapshot flow =
+        agent_q::provisioning_flow_snapshot();
 
     LvglLockGuard lock;
     drawing_surface_clear_panel_locked();
@@ -1063,6 +1208,11 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
         return false;
     }
 
+    if (!make_screen_bottom_timeout_timer_bar(panel, flow.input_window, now)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
     drawing_surface_move_panel_foreground_locked();
     return true;
 }
@@ -1175,12 +1325,21 @@ bool modal_draw_pin_setup_panel(const char* notice)
         return false;
     }
 
+    if (!committing_stage &&
+        !make_screen_bottom_timeout_timer_bar(panel, flow.input_window, xTaskGetTickCount())) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
     drawing_surface_move_panel_foreground_locked();
     return true;
 }
 
 bool modal_draw_settings_menu_panel()
 {
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(now);
     avatar_overlay_clear();
 
     LvglLockGuard lock;
@@ -1284,15 +1443,22 @@ bool modal_draw_settings_menu_panel()
         return false;
     }
 
+    if (!make_screen_bottom_timeout_timer_bar(panel, reset.input_window, now)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
     drawing_surface_move_panel_foreground_locked();
     return true;
 }
 
 bool modal_draw_error_recovery_panel(bool confirm)
 {
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(now);
     const bool wiping =
-        agent_q::local_reset_snapshot(xTaskGetTickCount()).stage ==
-        agent_q::AgentQLocalResetStage::wiping;
+        reset.stage == agent_q::AgentQLocalResetStage::wiping;
     avatar_overlay_clear();
 
     LvglLockGuard lock;
@@ -1385,14 +1551,21 @@ bool modal_draw_error_recovery_panel(bool confirm)
         return false;
     }
 
+    if (confirm && !wiping &&
+        !make_screen_bottom_timeout_timer_bar(panel, reset.input_window, now)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
     drawing_surface_move_panel_foreground_locked();
     return true;
 }
 
 bool modal_draw_reset_pin_panel(const char* notice)
 {
+    const TickType_t now = xTaskGetTickCount();
     const agent_q::AgentQLocalResetSnapshot reset =
-        agent_q::local_reset_snapshot(xTaskGetTickCount());
+        agent_q::local_reset_snapshot(now);
     avatar_overlay_clear();
 
     LvglLockGuard lock;
@@ -1501,6 +1674,12 @@ bool modal_draw_reset_pin_panel(const char* notice)
         return false;
     }
 
+    if (!processing_stage &&
+        !make_screen_bottom_timeout_timer_bar(panel, reset.input_window, now)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
     drawing_surface_move_panel_foreground_locked();
     return true;
 }
@@ -1572,7 +1751,8 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
 }
 
 bool modal_draw_user_signing_review_panel(
-    const AgentQUserSigningReviewViewModel& model)
+    const AgentQUserSigningReviewViewModel& model,
+    AgentQTimeoutWindow timeout_window)
 {
     if (model.title[0] == '\0' ||
         model.row_count == 0 ||
@@ -1624,6 +1804,14 @@ bool modal_draw_user_signing_review_panel(
         row_y += recipient_row
             ? kUserSigningReviewRecipientRowHeight
             : kUserSigningReviewNormalRowHeight;
+    }
+
+    if (!make_screen_bottom_timeout_timer_bar(
+            panel,
+            timeout_window,
+            xTaskGetTickCount())) {
+        drawing_surface_clear_panel_locked();
+        return false;
     }
 
     if (!make_setup_button(
@@ -1734,6 +1922,15 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
         snapshot.purpose == AgentQLocalPinAuthPurpose::policy_update ? 84 : 58);
 
     if (!make_pin_keypad_buttons(panel, buttons_enabled)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    if (snapshot.accepts_keypad_input &&
+        !make_screen_bottom_timeout_timer_bar(
+            panel,
+            snapshot.input_window,
+            now)) {
         drawing_surface_clear_panel_locked();
         return false;
     }

@@ -8,6 +8,7 @@
 #include "agent_q_sign_transaction_limits.h"
 #include "agent_q_signing_method.h"
 #include "agent_q_session.h"
+#include "agent_q_timeout_window.h"
 #include "agent_q_user_signing_limits.h"
 #include "agent_q_sui_account.h"
 #include "agent_q_common/sui/agent_q_sui_transaction_facts.h"
@@ -76,7 +77,7 @@ struct AgentQUserSigningTransactionBeginInput {
     const char* network;
     const uint8_t* signable_payload;
     size_t signable_payload_size;
-    TickType_t request_deadline;
+    AgentQTimeoutWindow request_window;
 };
 
 struct AgentQUserSigningPersonalMessageBeginInput {
@@ -87,7 +88,7 @@ struct AgentQUserSigningPersonalMessageBeginInput {
     const char* network;
     const uint8_t* message;
     size_t message_size;
-    TickType_t request_deadline;
+    AgentQTimeoutWindow request_window;
 };
 
 struct AgentQUserSigningFlowSnapshot {
@@ -101,8 +102,8 @@ struct AgentQUserSigningFlowSnapshot {
     char method[kAgentQUserSigningMethodSize];
     char network[kAgentQUserSigningNetworkSize];
     char payload_digest[kAgentQApprovalHistoryDigestSize];
-    TickType_t request_deadline;
-    TickType_t pin_input_deadline;
+    AgentQTimeoutWindow request_window;
+    AgentQTimeoutWindow pin_input_window;
     size_t signable_payload_size;
     bool signable_payload_available;
     SuiTransferFacts sui_transfer;
@@ -126,9 +127,10 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin_personal_message(
     const AgentQUserSigningPersonalMessageBeginInput& input);
 AgentQUserSigningTransitionResult user_signing_flow_accept_review(
     TickType_t now,
-    TickType_t pin_deadline);
+    AgentQTimeoutWindow pin_input_window);
 AgentQUserSigningTransitionResult user_signing_flow_refresh_pin_deadline(
-    TickType_t pin_deadline);
+    TickType_t now,
+    AgentQTimeoutWindow pin_input_window);
 AgentQUserSigningTransitionResult user_signing_flow_pause_pin_deadline();
 bool user_signing_flow_deadline_reached(TickType_t now);
 AgentQUserSigningTransitionResult

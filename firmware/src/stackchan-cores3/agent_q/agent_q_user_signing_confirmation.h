@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent_q_local_auth_worker.h"
+#include "agent_q_timeout_window.h"
 #include "agent_q_user_signing_flow.h"
 #include "freertos/FreeRTOS.h"
 
@@ -30,13 +31,13 @@ enum class AgentQUserSigningConfirmationResult {
 AgentQUserSigningConfirmationResult
 user_signing_confirmation_accept_review_and_begin_pin(
     TickType_t now,
-    TickType_t pin_deadline);
+    AgentQTimeoutWindow pin_input_window);
 
 AgentQUserSigningConfirmationResult
 user_signing_confirmation_complete_pin_verify_job_and_write_history(
     const AgentQLocalAuthWorkerResult& worker_result,
     TickType_t now,
-    TickType_t retry_deadline,
+    AgentQTimeoutWindow retry_window,
     TickType_t lockout_until,
     AgentQUserSigningHistoryWriteFn write_fn,
     void* context);

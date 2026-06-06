@@ -240,14 +240,14 @@ read-only `policy_get` for the committed active policy summary, read-only
 `get_approval_history` for Firmware-owned persistent decision metadata, and the
 session-scoped Sign API runtime. `sign_transaction` has
 `source-wired-not-product-active` status for the bounded Sui `sign_transaction`
-shape: the public request exists in source, and current-tree direct
-USB/Firmware hardware smoke has passed for the implemented transaction outcomes.
-LVGL visual evidence remains pending, so product-active status is not claimed.
+shape: the public request exists in source, but product-active evidence is not
+complete. Detailed hardware evidence status is tracked in
+`docs/IMPLEMENTATION_STATUS.md`.
 `sign_personal_message` also has `source-wired-not-product-active` status for
 bounded Sui personal-message bytes in user authorization mode only; policy mode
 fails closed because policy facts and rules for personal-message signing are not
-implemented. Current-tree direct USB/Firmware hardware smoke has also passed
-for the implemented personal-message outcomes.
+implemented. It also remains below product-active status until the tracked
+current-tree hardware matrix and LVGL visual evidence are complete.
 Gateway must not evaluate policy. A corrupt, unreadable, missing,
 or invalid current active policy is a persistent-material consistency
 error, not a normal `provisioned` state. Provisioned DEV_PROFILE devices that
@@ -487,8 +487,8 @@ This state is reserved until an unlock model is implemented.
 | `get_accounts` | X | X | O | X | X | Firmware |
 | `policy_get` | X | X | O | X | X | Firmware |
 | `get_approval_history` | X | X | O | X | X | Firmware |
-| `sign_transaction` | X | X | O (source-wired-not-product-active; current-tree direct USB/Firmware smoke passed; product-active pending LVGL visual evidence) | X | X | Firmware |
-| `sign_personal_message` | X | X | O (source-wired-not-product-active; user authorization mode only; current-tree direct USB/Firmware smoke passed; product-active pending LVGL visual evidence) | X | X | Firmware |
+| `sign_transaction` | X | X | O (source-wired-not-product-active; product-active evidence pending) | X | X | Firmware |
+| `sign_personal_message` | X | X | O (source-wired-not-product-active; user authorization mode only; product-active evidence pending) | X | X | Firmware |
 | policy read | X | X | O | X | X | Firmware |
 | policy update | X | X | O (validated proposal + device-local approval) | X | X | Firmware |
 

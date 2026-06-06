@@ -5,6 +5,7 @@
 
 #include "agent_q_bip39.h"
 #include "agent_q_local_auth_worker.h"
+#include "agent_q_timeout_window.h"
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
@@ -60,6 +61,7 @@ struct AgentQProvisioningFlowSnapshot {
     bool recovery_phrase_confirmation_ready;
     bool recover_current_page_complete;
     bool recover_all_words_complete;
+    AgentQTimeoutWindow input_window;
 };
 
 AgentQProvisioningFlowSnapshot provisioning_flow_snapshot();
@@ -74,10 +76,10 @@ void provisioning_flow_wipe();
 void provisioning_flow_wipe_displayed_phrase_text();
 bool provisioning_flow_handle_panel_deleted(AgentQProvisioningFlowPanel panel);
 
-void provisioning_flow_begin_setup_choice(TickType_t deadline);
+void provisioning_flow_begin_setup_choice(AgentQTimeoutWindow input_window);
 bool provisioning_flow_setup_choice_action_allowed(TickType_t now);
-AgentQProvisioningFlowGenerateResult provisioning_flow_begin_generate(TickType_t deadline);
-void provisioning_flow_begin_recover(TickType_t deadline);
+AgentQProvisioningFlowGenerateResult provisioning_flow_begin_generate(AgentQTimeoutWindow input_window);
+void provisioning_flow_begin_recover(AgentQTimeoutWindow input_window);
 
 const char* provisioning_flow_recovery_phrase();
 const char* provisioning_flow_recovery_phrase_prefix_cell(size_t index);
@@ -90,22 +92,22 @@ bool provisioning_flow_recover_current_page_complete();
 bool provisioning_flow_recover_all_words_complete();
 bool provisioning_flow_word_starts_with_prefix(const char* word, const char* prefix);
 
-bool provisioning_flow_recover_select_slot(uint8_t slot, TickType_t deadline);
-bool provisioning_flow_recover_add_letter(char letter, TickType_t deadline);
-bool provisioning_flow_recover_clear_active(TickType_t deadline);
-bool provisioning_flow_recover_select_candidate(uint16_t word_index, TickType_t deadline);
-bool provisioning_flow_recover_previous_page(TickType_t deadline);
-bool provisioning_flow_recover_next_page(TickType_t deadline);
-bool provisioning_flow_recover_refresh_deadline(TickType_t deadline);
+bool provisioning_flow_recover_select_slot(uint8_t slot, AgentQTimeoutWindow input_window);
+bool provisioning_flow_recover_add_letter(char letter, AgentQTimeoutWindow input_window);
+bool provisioning_flow_recover_clear_active(AgentQTimeoutWindow input_window);
+bool provisioning_flow_recover_select_candidate(uint16_t word_index, AgentQTimeoutWindow input_window);
+bool provisioning_flow_recover_previous_page(AgentQTimeoutWindow input_window);
+bool provisioning_flow_recover_next_page(AgentQTimeoutWindow input_window);
+bool provisioning_flow_recover_refresh_deadline(AgentQTimeoutWindow input_window);
 Bip39EntropyRecoveryResult provisioning_flow_recover_entropy_from_words();
 
-bool provisioning_flow_begin_pin_setup_from_displayed_phrase(TickType_t deadline);
-void provisioning_flow_begin_pin_setup_after_recovery(TickType_t deadline);
-bool provisioning_flow_add_pin_digit(char digit, TickType_t deadline);
-bool provisioning_flow_clear_pin_entry(TickType_t deadline);
-bool provisioning_flow_backspace_pin(TickType_t deadline);
+bool provisioning_flow_begin_pin_setup_from_displayed_phrase(AgentQTimeoutWindow input_window);
+void provisioning_flow_begin_pin_setup_after_recovery(AgentQTimeoutWindow input_window);
+bool provisioning_flow_add_pin_digit(char digit, AgentQTimeoutWindow input_window);
+bool provisioning_flow_clear_pin_entry(AgentQTimeoutWindow input_window);
+bool provisioning_flow_backspace_pin(AgentQTimeoutWindow input_window);
 AgentQProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
-    TickType_t retry_deadline,
+    AgentQTimeoutWindow retry_window,
     TickType_t commit_ready_at,
     TickType_t worker_deadline);
 

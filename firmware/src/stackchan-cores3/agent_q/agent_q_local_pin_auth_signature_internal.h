@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "agent_q_local_auth_worker.h"
+#include "agent_q_timeout_window.h"
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
@@ -21,12 +22,12 @@ struct AgentQLocalPinAuthSignatureBinding {
 
 bool local_pin_auth_begin_user_signing(
     const AgentQLocalPinAuthSignatureBinding& binding,
-    TickType_t deadline);
+    AgentQTimeoutWindow input_window);
 bool local_pin_auth_user_signing_matches(
     const AgentQLocalPinAuthSignatureBinding& binding);
 AgentQLocalPinAuthSignatureVerifyResult local_pin_auth_complete_user_signing_verify_job(
     const AgentQLocalAuthWorkerResult& result,
-    TickType_t retry_deadline,
+    AgentQTimeoutWindow retry_window,
     TickType_t lockout_until);
 
 }  // namespace agent_q

@@ -26,10 +26,10 @@ struct ProvisioningFlowState {
     uint8_t recover_page = 0;
     uint8_t recover_active_slot = 0;
     AgentQProvisioningFlowStage stage = AgentQProvisioningFlowStage::none;
-    TickType_t setup_choice_deadline = 0;
-    TickType_t recovery_phrase_deadline = 0;
-    TickType_t recover_word_deadline = 0;
-    TickType_t pin_deadline = 0;
+    AgentQTimeoutWindow setup_choice_window = kAgentQTimeoutWindowNone;
+    AgentQTimeoutWindow recovery_phrase_window = kAgentQTimeoutWindowNone;
+    AgentQTimeoutWindow recover_word_window = kAgentQTimeoutWindowNone;
+    AgentQTimeoutWindow pin_window = kAgentQTimeoutWindowNone;
     TickType_t pin_commit_ready_at = 0;
     TickType_t pin_commit_deadline = 0;
 
@@ -42,7 +42,7 @@ struct ProvisioningFlowState {
         wipe_sensitive_buffer(pin_entry, sizeof(pin_entry));
         pin_entry_length = 0;
         pin_commit_job_id = 0;
-        pin_deadline = 0;
+        pin_window = kAgentQTimeoutWindowNone;
         pin_commit_ready_at = 0;
         pin_commit_deadline = 0;
     }
@@ -62,7 +62,7 @@ struct ProvisioningFlowState {
         wipe_sensitive_buffer(recover_prefixes, sizeof(recover_prefixes));
         recover_page = 0;
         recover_active_slot = 0;
-        recover_word_deadline = 0;
+        recover_word_window = kAgentQTimeoutWindowNone;
     }
 
     void wipe()
@@ -72,8 +72,8 @@ struct ProvisioningFlowState {
         wipe_recover_word_entry();
         wipe_pin_only();
         stage = AgentQProvisioningFlowStage::none;
-        setup_choice_deadline = 0;
-        recovery_phrase_deadline = 0;
+        setup_choice_window = kAgentQTimeoutWindowNone;
+        recovery_phrase_window = kAgentQTimeoutWindowNone;
     }
 };
 
@@ -82,6 +82,25 @@ ProvisioningFlowState g_state;
 bool deadline_reached(TickType_t now, TickType_t deadline)
 {
     return deadline != 0 && static_cast<int32_t>(now - deadline) >= 0;
+}
+
+AgentQTimeoutWindow current_input_window()
+{
+    switch (g_state.stage) {
+        case AgentQProvisioningFlowStage::setup_choice:
+            return g_state.setup_choice_window;
+        case AgentQProvisioningFlowStage::recovery_phrase_displayed:
+            return g_state.recovery_phrase_window;
+        case AgentQProvisioningFlowStage::recover_word_entry:
+            return g_state.recover_word_window;
+        case AgentQProvisioningFlowStage::pin_first_entry:
+        case AgentQProvisioningFlowStage::pin_repeat_entry:
+            return g_state.pin_window;
+        case AgentQProvisioningFlowStage::none:
+        case AgentQProvisioningFlowStage::pin_committing:
+            return kAgentQTimeoutWindowNone;
+    }
+    return kAgentQTimeoutWindowNone;
 }
 
 void wipe_recovery_phrase_prefix_cells(
@@ -149,11 +168,11 @@ bool pin_setup_stage()
            g_state.stage == AgentQProvisioningFlowStage::pin_repeat_entry;
 }
 
-void reset_pin_entry(TickType_t deadline)
+void reset_pin_entry(AgentQTimeoutWindow input_window)
 {
     wipe_sensitive_buffer(g_state.pin_entry, sizeof(g_state.pin_entry));
     g_state.pin_entry_length = 0;
-    g_state.pin_deadline = deadline;
+    g_state.pin_window = input_window;
 }
 
 void write_selected_word_prefix(size_t global_slot, uint16_t word_index)
@@ -189,6 +208,7 @@ AgentQProvisioningFlowSnapshot provisioning_flow_snapshot()
         g_state.stage == AgentQProvisioningFlowStage::recovery_phrase_displayed,
         provisioning_flow_recover_current_page_complete(),
         provisioning_flow_recover_all_words_complete(),
+        current_input_window(),
     };
 }
 
@@ -211,14 +231,14 @@ bool provisioning_flow_stage_expired(TickType_t now)
 {
     switch (g_state.stage) {
         case AgentQProvisioningFlowStage::setup_choice:
-            return deadline_reached(now, g_state.setup_choice_deadline);
+            return timeout_window_reached(g_state.setup_choice_window, now);
         case AgentQProvisioningFlowStage::recovery_phrase_displayed:
-            return deadline_reached(now, g_state.recovery_phrase_deadline);
+            return timeout_window_reached(g_state.recovery_phrase_window, now);
         case AgentQProvisioningFlowStage::recover_word_entry:
-            return deadline_reached(now, g_state.recover_word_deadline);
+            return timeout_window_reached(g_state.recover_word_window, now);
         case AgentQProvisioningFlowStage::pin_first_entry:
         case AgentQProvisioningFlowStage::pin_repeat_entry:
-            return deadline_reached(now, g_state.pin_deadline);
+            return timeout_window_reached(g_state.pin_window, now);
         case AgentQProvisioningFlowStage::none:
         case AgentQProvisioningFlowStage::pin_committing:
             return false;
@@ -271,23 +291,29 @@ bool provisioning_flow_handle_panel_deleted(AgentQProvisioningFlowPanel panel)
     return true;
 }
 
-void provisioning_flow_begin_setup_choice(TickType_t deadline)
+void provisioning_flow_begin_setup_choice(AgentQTimeoutWindow input_window)
 {
     g_state.wipe();
+    if (!timeout_window_valid(input_window)) {
+        return;
+    }
     g_state.stage = AgentQProvisioningFlowStage::setup_choice;
-    g_state.setup_choice_deadline = deadline;
+    g_state.setup_choice_window = input_window;
 }
 
 bool provisioning_flow_setup_choice_action_allowed(TickType_t now)
 {
     return g_state.stage == AgentQProvisioningFlowStage::setup_choice &&
-           g_state.setup_choice_deadline != 0 &&
-           !deadline_reached(now, g_state.setup_choice_deadline);
+           timeout_window_open_at(g_state.setup_choice_window, now);
 }
 
-AgentQProvisioningFlowGenerateResult provisioning_flow_begin_generate(TickType_t deadline)
+AgentQProvisioningFlowGenerateResult provisioning_flow_begin_generate(AgentQTimeoutWindow input_window)
 {
     g_state.wipe();
+
+    if (!timeout_window_valid(input_window)) {
+        return AgentQProvisioningFlowGenerateResult::generation_error;
+    }
 
     if (!fill_secure_random(g_state.root_material, sizeof(g_state.root_material))) {
         g_state.wipe();
@@ -305,17 +331,20 @@ AgentQProvisioningFlowGenerateResult provisioning_flow_begin_generate(TickType_t
     }
 
     g_state.stage = AgentQProvisioningFlowStage::recovery_phrase_displayed;
-    g_state.recovery_phrase_deadline = deadline;
+    g_state.recovery_phrase_window = input_window;
     return AgentQProvisioningFlowGenerateResult::ok;
 }
 
-void provisioning_flow_begin_recover(TickType_t deadline)
+void provisioning_flow_begin_recover(AgentQTimeoutWindow input_window)
 {
     g_state.wipe();
+    if (!timeout_window_valid(input_window)) {
+        return;
+    }
     g_state.stage = AgentQProvisioningFlowStage::recover_word_entry;
     g_state.recover_page = 0;
     g_state.recover_active_slot = 0;
-    g_state.recover_word_deadline = deadline;
+    g_state.recover_word_window = input_window;
 }
 
 const char* provisioning_flow_recovery_phrase()
@@ -394,21 +423,23 @@ bool provisioning_flow_word_starts_with_prefix(const char* word, const char* pre
     return true;
 }
 
-bool provisioning_flow_recover_select_slot(uint8_t slot, TickType_t deadline)
+bool provisioning_flow_recover_select_slot(uint8_t slot, AgentQTimeoutWindow input_window)
 {
     if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
-        slot >= kProvisioningFlowRecoverWordsPerPage) {
+        slot >= kProvisioningFlowRecoverWordsPerPage ||
+        !timeout_window_valid(input_window)) {
         return false;
     }
     g_state.recover_active_slot = slot;
-    g_state.recover_word_deadline = deadline;
+    g_state.recover_word_window = input_window;
     return true;
 }
 
-bool provisioning_flow_recover_add_letter(char letter, TickType_t deadline)
+bool provisioning_flow_recover_add_letter(char letter, AgentQTimeoutWindow input_window)
 {
     if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
-        letter < 'a' || letter > 'z') {
+        letter < 'a' || letter > 'z' ||
+        !timeout_window_valid(input_window)) {
         return false;
     }
     const size_t global_slot = provisioning_flow_recover_global_word_slot();
@@ -418,20 +449,21 @@ bool provisioning_flow_recover_add_letter(char letter, TickType_t deadline)
     char* prefix = g_state.recover_prefixes[global_slot];
     size_t length = strlen(prefix);
     if (length >= kProvisioningFlowRecoverPrefixMaxChars) {
-        g_state.recover_word_deadline = deadline;
+        g_state.recover_word_window = input_window;
         return true;
     }
     prefix[length++] = letter;
     prefix[length] = '\0';
     g_state.recover_word_selected[global_slot] = false;
     g_state.recover_word_indices[global_slot] = 0;
-    g_state.recover_word_deadline = deadline;
+    g_state.recover_word_window = input_window;
     return true;
 }
 
-bool provisioning_flow_recover_clear_active(TickType_t deadline)
+bool provisioning_flow_recover_clear_active(AgentQTimeoutWindow input_window)
 {
-    if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry) {
+    if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
+        !timeout_window_valid(input_window)) {
         return false;
     }
     const size_t global_slot = provisioning_flow_recover_global_word_slot();
@@ -441,15 +473,16 @@ bool provisioning_flow_recover_clear_active(TickType_t deadline)
     wipe_sensitive_buffer(g_state.recover_prefixes[global_slot], kProvisioningFlowRecoverPrefixBufferSize);
     g_state.recover_word_selected[global_slot] = false;
     g_state.recover_word_indices[global_slot] = 0;
-    g_state.recover_word_deadline = deadline;
+    g_state.recover_word_window = input_window;
     return true;
 }
 
-bool provisioning_flow_recover_select_candidate(uint16_t word_index, TickType_t deadline)
+bool provisioning_flow_recover_select_candidate(uint16_t word_index, AgentQTimeoutWindow input_window)
 {
     if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
         word_index >= kBip39WordCount ||
-        bip39_english_word(word_index) == nullptr) {
+        bip39_english_word(word_index) == nullptr ||
+        !timeout_window_valid(input_window)) {
         return false;
     }
     const size_t global_slot = provisioning_flow_recover_global_word_slot();
@@ -462,26 +495,28 @@ bool provisioning_flow_recover_select_candidate(uint16_t word_index, TickType_t 
     if (g_state.recover_active_slot + 1 < kProvisioningFlowRecoverWordsPerPage) {
         ++g_state.recover_active_slot;
     }
-    g_state.recover_word_deadline = deadline;
+    g_state.recover_word_window = input_window;
     return true;
 }
 
-bool provisioning_flow_recover_previous_page(TickType_t deadline)
+bool provisioning_flow_recover_previous_page(AgentQTimeoutWindow input_window)
 {
     if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
-        g_state.recover_page == 0) {
+        g_state.recover_page == 0 ||
+        !timeout_window_valid(input_window)) {
         return false;
     }
     --g_state.recover_page;
     g_state.recover_active_slot = 0;
-    g_state.recover_word_deadline = deadline;
+    g_state.recover_word_window = input_window;
     return true;
 }
 
-bool provisioning_flow_recover_next_page(TickType_t deadline)
+bool provisioning_flow_recover_next_page(AgentQTimeoutWindow input_window)
 {
     if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
-        !provisioning_flow_recover_current_page_complete()) {
+        !provisioning_flow_recover_current_page_complete() ||
+        !timeout_window_valid(input_window)) {
         return false;
     }
     if (g_state.recover_page + 1 >= kProvisioningFlowRecoverPageCount) {
@@ -489,16 +524,17 @@ bool provisioning_flow_recover_next_page(TickType_t deadline)
     }
     ++g_state.recover_page;
     g_state.recover_active_slot = 0;
-    g_state.recover_word_deadline = deadline;
+    g_state.recover_word_window = input_window;
     return true;
 }
 
-bool provisioning_flow_recover_refresh_deadline(TickType_t deadline)
+bool provisioning_flow_recover_refresh_deadline(AgentQTimeoutWindow input_window)
 {
-    if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry) {
+    if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
+        !timeout_window_valid(input_window)) {
         return false;
     }
-    g_state.recover_word_deadline = deadline;
+    g_state.recover_word_window = input_window;
     return true;
 }
 
@@ -519,72 +555,81 @@ Bip39EntropyRecoveryResult provisioning_flow_recover_entropy_from_words()
     return result;
 }
 
-bool provisioning_flow_begin_pin_setup_from_displayed_phrase(TickType_t deadline)
+bool provisioning_flow_begin_pin_setup_from_displayed_phrase(AgentQTimeoutWindow input_window)
 {
-    if (g_state.stage != AgentQProvisioningFlowStage::recovery_phrase_displayed) {
+    if (g_state.stage != AgentQProvisioningFlowStage::recovery_phrase_displayed ||
+        !timeout_window_valid(input_window)) {
         return false;
     }
     g_state.stage = AgentQProvisioningFlowStage::pin_first_entry;
     g_state.wipe_pin_only();
-    g_state.pin_deadline = deadline;
+    g_state.pin_window = input_window;
     g_state.wipe_displayed_phrase_text();
     return true;
 }
 
-void provisioning_flow_begin_pin_setup_after_recovery(TickType_t deadline)
+void provisioning_flow_begin_pin_setup_after_recovery(AgentQTimeoutWindow input_window)
 {
+    if (!timeout_window_valid(input_window)) {
+        g_state.wipe();
+        return;
+    }
     g_state.stage = AgentQProvisioningFlowStage::pin_first_entry;
     g_state.wipe_recover_word_entry();
     g_state.wipe_pin_only();
-    g_state.pin_deadline = deadline;
+    g_state.pin_window = input_window;
 }
 
-bool provisioning_flow_add_pin_digit(char digit, TickType_t deadline)
+bool provisioning_flow_add_pin_digit(char digit, AgentQTimeoutWindow input_window)
 {
-    if (!pin_setup_stage() || digit < '0' || digit > '9') {
+    if (!pin_setup_stage() || digit < '0' || digit > '9' ||
+        !timeout_window_valid(input_window)) {
         return false;
     }
     if (g_state.pin_entry_length >= kLocalPinDigits) {
-        g_state.pin_deadline = deadline;
+        g_state.pin_window = input_window;
         return true;
     }
     g_state.pin_entry[g_state.pin_entry_length++] = digit;
     g_state.pin_entry[g_state.pin_entry_length] = '\0';
-    g_state.pin_deadline = deadline;
+    g_state.pin_window = input_window;
     return true;
 }
 
-bool provisioning_flow_clear_pin_entry(TickType_t deadline)
+bool provisioning_flow_clear_pin_entry(AgentQTimeoutWindow input_window)
 {
-    if (!pin_setup_stage()) {
+    if (!pin_setup_stage() || !timeout_window_valid(input_window)) {
         return false;
     }
-    reset_pin_entry(deadline);
+    reset_pin_entry(input_window);
     return true;
 }
 
-bool provisioning_flow_backspace_pin(TickType_t deadline)
+bool provisioning_flow_backspace_pin(AgentQTimeoutWindow input_window)
 {
-    if (!pin_setup_stage()) {
+    if (!pin_setup_stage() || !timeout_window_valid(input_window)) {
         return false;
     }
     if (g_state.pin_entry_length > 0) {
         g_state.pin_entry[--g_state.pin_entry_length] = '\0';
     }
-    g_state.pin_deadline = deadline;
+    g_state.pin_window = input_window;
     return true;
 }
 
 AgentQProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
-    TickType_t retry_deadline,
+    AgentQTimeoutWindow retry_window,
     TickType_t commit_ready_at,
     TickType_t worker_deadline)
 {
     if (!pin_setup_stage()) {
         return AgentQProvisioningFlowPinSubmitResult::inactive;
     }
+    if (!timeout_window_valid(retry_window)) {
+        return AgentQProvisioningFlowPinSubmitResult::inactive;
+    }
     if (g_state.pin_entry_length != kLocalPinDigits || !is_valid_local_pin(g_state.pin_entry)) {
-        g_state.pin_deadline = retry_deadline;
+        g_state.pin_window = retry_window;
         return AgentQProvisioningFlowPinSubmitResult::invalid_pin;
     }
 
@@ -593,7 +638,7 @@ AgentQProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
         wipe_sensitive_buffer(g_state.pin_entry, sizeof(g_state.pin_entry));
         g_state.pin_entry_length = 0;
         g_state.stage = AgentQProvisioningFlowStage::pin_repeat_entry;
-        g_state.pin_deadline = retry_deadline;
+        g_state.pin_window = retry_window;
         return AgentQProvisioningFlowPinSubmitResult::advanced_to_repeat;
     }
 
@@ -602,16 +647,16 @@ AgentQProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
         wipe_sensitive_buffer(g_state.pin_entry, sizeof(g_state.pin_entry));
         g_state.pin_entry_length = 0;
         g_state.stage = AgentQProvisioningFlowStage::pin_first_entry;
-        g_state.pin_deadline = retry_deadline;
+        g_state.pin_window = retry_window;
         return AgentQProvisioningFlowPinSubmitResult::mismatch_restart;
     }
 
     uint32_t job_id = 0;
     if (!local_auth_worker_submit_prepare_verifier(
             AgentQLocalAuthWorkerOwner::provisioning_setup,
-            g_state.pin_entry,
+                g_state.pin_entry,
             &job_id)) {
-        g_state.pin_deadline = retry_deadline;
+        g_state.pin_window = retry_window;
         return AgentQProvisioningFlowPinSubmitResult::worker_unavailable;
     }
 
@@ -619,6 +664,7 @@ AgentQProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     g_state.pin_commit_job_id = job_id;
     g_state.pin_commit_ready_at = commit_ready_at;
     g_state.pin_commit_deadline = worker_deadline;
+    g_state.pin_window = kAgentQTimeoutWindowNone;
     wipe_sensitive_buffer(g_state.pin_first, sizeof(g_state.pin_first));
     wipe_sensitive_buffer(g_state.pin_entry, sizeof(g_state.pin_entry));
     g_state.pin_entry_length = 0;

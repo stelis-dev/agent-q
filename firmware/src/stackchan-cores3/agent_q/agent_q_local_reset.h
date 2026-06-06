@@ -6,6 +6,7 @@
 #include "agent_q_persistent_material.h"
 #include "agent_q_local_auth_worker.h"
 #include "agent_q_pin_attempt.h"
+#include "agent_q_timeout_window.h"
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
@@ -57,6 +58,7 @@ enum class AgentQLocalResetPinVerifyResult {
 struct AgentQLocalResetSnapshot {
     AgentQLocalResetStage stage;
     size_t pin_entry_length;
+    AgentQTimeoutWindow input_window;
     bool lockout_active;
     bool flow_active;
 };
@@ -76,20 +78,20 @@ bool local_reset_release_lockout_if_elapsed(TickType_t now);
 bool local_reset_wipe_ready(TickType_t now);
 
 void local_reset_wipe();
-void local_reset_begin_settings(TickType_t deadline);
-void local_reset_begin_error_recovery_confirm(TickType_t deadline);
-bool local_reset_begin_pin_entry(TickType_t deadline);
+void local_reset_begin_settings(AgentQTimeoutWindow input_window);
+void local_reset_begin_error_recovery_confirm(AgentQTimeoutWindow input_window);
+bool local_reset_begin_pin_entry(AgentQTimeoutWindow input_window);
 bool local_reset_begin_error_recovery_wipe(TickType_t wipe_ready_at);
 bool local_reset_add_pin_digit(char digit);
 bool local_reset_clear_pin();
 bool local_reset_backspace_pin();
 AgentQLocalResetPinSubmitResult local_reset_submit_pin_for_verification(
     TickType_t verify_ready_at,
-    TickType_t invalid_deadline,
+    AgentQTimeoutWindow invalid_window,
     TickType_t worker_deadline);
 AgentQLocalResetPinVerifyResult local_reset_complete_pin_verify_job(
     const AgentQLocalAuthWorkerResult& result,
-    TickType_t retry_deadline,
+    AgentQTimeoutWindow retry_window,
     TickType_t lockout_until,
     TickType_t wipe_ready_at);
 

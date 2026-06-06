@@ -42,6 +42,51 @@ check_usb_server_deadline_order() {
   fi
 }
 
+check_local_pin_ui_handler_timeout_order() {
+  local function_name="$1"
+  local second_pattern="$2"
+  local label="$3"
+  local snippet="${TMP_DIR}/${function_name}.cpp"
+  local timeout_line
+  local second_line
+
+  awk -v fn="${function_name}" '
+    $0 ~ "void " fn "\\(" { in_fn = 1 }
+    in_fn { print }
+    in_fn && /^}/ { exit }
+  ' "${USB_SERVER}" >"${snippet}"
+
+  timeout_line="$(grep -En 'finish_request_backed_local_pin_timeout_if_reached' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  second_line="$(grep -En "${second_pattern}" "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+
+  if [[ -z "${timeout_line}" || -z "${second_line}" || "${timeout_line}" -ge "${second_line}" ]]; then
+    echo "FAILED: ${label}" >&2
+    echo "timeout_line=${timeout_line:-missing} second_line=${second_line:-missing}" >&2
+    exit 1
+  fi
+}
+
+check_local_pin_worker_timeout_order() {
+  local snippet="${TMP_DIR}/handle_local_pin_auth_verify_worker_result.cpp"
+  local timeout_line
+  local complete_line
+
+  awk '
+    /void handle_local_pin_auth_verify_worker_result\(/ { in_fn = 1 }
+    in_fn { print }
+    in_fn && /^}/ { exit }
+  ' "${USB_SERVER}" >"${snippet}"
+
+  complete_line="$(grep -En 'agent_q::local_pin_auth_complete_verify_job\(' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  timeout_line="$(grep -En 'finish_request_backed_local_pin_timeout_if_reached' "${snippet}" | awk -F: -v complete="${complete_line:-0}" '$1 < complete { line = $1 } END { print line }')"
+
+  if [[ -z "${timeout_line}" || -z "${complete_line}" || "${timeout_line}" -ge "${complete_line}" ]]; then
+    echo "FAILED: protocol-backed PIN worker completion must timeout before local PIN verify result" >&2
+    echo "timeout_line=${timeout_line:-missing} complete_line=${complete_line:-missing}" >&2
+    exit 1
+  fi
+}
+
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-protocol-pin-approval.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
@@ -83,6 +128,11 @@ bool random_bytes(void* output, size_t size, void*)
     return true;
 }
 
+agent_q::AgentQTimeoutWindow timeout_window(TickType_t started_at, TickType_t deadline)
+{
+    return agent_q::timeout_window_from_deadline(started_at, deadline);
+}
+
 }  // namespace
 
 namespace agent_q {
@@ -114,7 +164,7 @@ int main()
                sizeof(request_id)),
            "inactive state has no connect request id");
     expect(request_id[0] == '\0', "inactive request id output is cleared");
-    expect(agent_q::protocol_pin_approval_begin_connect("connect-1", 100),
+    expect(agent_q::protocol_pin_approval_begin_connect("connect-1", timeout_window(10, 100)),
            "connect protocol PIN approval begins");
     agent_q::AgentQProtocolPinApprovalSnapshot snapshot =
         agent_q::protocol_pin_approval_snapshot();
@@ -122,8 +172,12 @@ int main()
     expect(snapshot.purpose == Purpose::connect, "connect snapshot purpose");
     expect(strcmp(snapshot.request_id, "connect-1") == 0, "connect request id stored");
     expect(snapshot.session_id[0] == '\0', "connect stores no session id");
-    expect(snapshot.request_deadline == 100, "connect request deadline stored");
-    expect(snapshot.pin_input_deadline == 100, "connect PIN input deadline stored");
+    expect(snapshot.request_window.started_at == 10 &&
+               snapshot.request_window.deadline == 100,
+           "connect request window stored");
+    expect(snapshot.pin_input_window.started_at == 10 &&
+               snapshot.pin_input_window.deadline == 100,
+           "connect PIN input window stored");
     expect(agent_q::protocol_pin_approval_request_id_for_local_pin_purpose(
                LocalPurpose::connect,
                request_id,
@@ -145,11 +199,23 @@ int main()
            "deadline reached at deadline");
     expect(agent_q::protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
                LocalPurpose::connect,
-               130),
+               90,
+               agent_q::timeout_window_from_deadline(90, 130)),
            "connect local PIN retry refresh is accepted");
     snapshot = agent_q::protocol_pin_approval_snapshot();
-    expect(snapshot.request_deadline == 100, "connect request deadline is immutable");
-    expect(snapshot.pin_input_deadline == 100, "connect retry is capped by request deadline");
+    expect(snapshot.request_window.deadline == 100, "connect request deadline is immutable");
+    expect(snapshot.pin_input_window.started_at == 90 &&
+               snapshot.pin_input_window.deadline == 100,
+           "connect retry is capped by request deadline with real retry start");
+    expect(!agent_q::protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
+               LocalPurpose::connect,
+               100,
+               agent_q::timeout_window_from_deadline(90, 130)),
+           "connect retry refresh at request deadline is rejected even with stale retry start");
+    snapshot = agent_q::protocol_pin_approval_snapshot();
+    expect(snapshot.pin_input_window.started_at == 90 &&
+               snapshot.pin_input_window.deadline == 100,
+           "rejected expired retry refresh leaves existing window intact");
     expect(agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
                LocalPurpose::connect,
                100),
@@ -158,8 +224,8 @@ int main()
                LocalPurpose::connect),
            "connect local PIN verification pauses only PIN input deadline");
     snapshot = agent_q::protocol_pin_approval_snapshot();
-    expect(snapshot.request_deadline == 100, "connect request deadline remains while PIN verifies");
-    expect(snapshot.pin_input_deadline == 0, "connect paused PIN input deadline stored");
+    expect(snapshot.request_window.deadline == 100, "connect request deadline remains while PIN verifies");
+    expect(snapshot.pin_input_window.deadline == 0, "connect paused PIN input deadline stored");
     expect(agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
                LocalPurpose::connect,
                1000),
@@ -167,7 +233,7 @@ int main()
 
     char too_long[agent_q::kAgentQProtocolPinRequestIdSize + 4] = {};
     memset(too_long, 'a', sizeof(too_long) - 1);
-    expect(!agent_q::protocol_pin_approval_begin_connect(too_long, 200),
+    expect(!agent_q::protocol_pin_approval_begin_connect(too_long, timeout_window(20, 200)),
            "overlong request id is rejected");
     snapshot = agent_q::protocol_pin_approval_snapshot();
     expect(strcmp(snapshot.request_id, "connect-1") == 0,
@@ -175,7 +241,7 @@ int main()
     expect(!agent_q::protocol_pin_approval_begin_policy_update(
                "policy-overwrite",
                "session_aaaaaaaaaaaaaaaa",
-               225),
+               timeout_window(20, 225)),
            "active protocol PIN approval cannot be overwritten");
     snapshot = agent_q::protocol_pin_approval_snapshot();
     expect(snapshot.purpose == Purpose::connect &&
@@ -190,17 +256,19 @@ int main()
     expect(agent_q::protocol_pin_approval_begin_policy_update(
                "policy-1",
                session_id,
-               250),
+               timeout_window(20, 250)),
            "policy update protocol PIN approval begins");
     snapshot = agent_q::protocol_pin_approval_snapshot();
     expect(snapshot.active, "policy update snapshot is active");
     expect(snapshot.purpose == Purpose::policy_update, "policy update snapshot purpose");
     expect(strcmp(snapshot.request_id, "policy-1") == 0, "policy update request id stored");
     expect(strcmp(snapshot.session_id, session_id) == 0, "policy update session id stored");
-    expect(snapshot.request_deadline == 250,
-           "policy update stores request deadline");
-    expect(snapshot.pin_input_deadline == 250,
-           "policy update stores PIN input deadline");
+    expect(snapshot.request_window.started_at == 20 &&
+               snapshot.request_window.deadline == 250,
+           "policy update stores request window");
+    expect(snapshot.pin_input_window.started_at == 20 &&
+               snapshot.pin_input_window.deadline == 250,
+           "policy update stores PIN input window");
     expect(agent_q::protocol_pin_approval_policy_update_session_matches(session_id),
            "matching policy update session recognized");
     expect(!agent_q::protocol_pin_approval_policy_update_session_matches(
@@ -248,3 +316,24 @@ CPP
 
 "${TMP_DIR}/protocol_pin_approval_test"
 check_usb_server_deadline_order
+check_local_pin_ui_handler_timeout_order \
+  handle_local_pin_auth_digit_from_ui \
+  'local_pin_auth_add_digit' \
+  "request-backed PIN digit handler must timeout before local PIN mutation"
+check_local_pin_ui_handler_timeout_order \
+  handle_local_pin_auth_clear_from_ui \
+  'local_pin_auth_clear_pin' \
+  "request-backed PIN clear handler must timeout before local PIN mutation"
+check_local_pin_ui_handler_timeout_order \
+  handle_local_pin_auth_backspace_from_ui \
+  'local_pin_auth_backspace_pin' \
+  "request-backed PIN backspace handler must timeout before local PIN mutation"
+check_local_pin_ui_handler_timeout_order \
+  handle_local_pin_auth_submit_from_ui \
+  'agent_q::local_pin_auth_submit' \
+  "request-backed PIN submit handler must timeout before verification start"
+check_local_pin_ui_handler_timeout_order \
+  cancel_local_pin_auth_from_ui \
+  'policy_update_flow_record_rejected|write_connect_rejected_response|user_signing_confirmation_record_device_rejected' \
+  "request-backed PIN cancel handler must timeout before rejection terminal"
+check_local_pin_worker_timeout_order

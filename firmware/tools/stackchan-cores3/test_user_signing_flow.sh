@@ -64,6 +64,7 @@ bool g_history_write_clears_flow = false;
 bool g_history_write_restarts_flow = false;
 bool g_history_write_rejects_flow = false;
 int g_history_write_calls = 0;
+constexpr TickType_t kDefaultRequestWindowStart = 10;
 
 void expect(bool condition, const char* label)
 {
@@ -71,6 +72,11 @@ void expect(bool condition, const char* label)
         fprintf(stderr, "FAILED: %s\n", label);
         ++failures;
     }
+}
+
+agent_q::AgentQTimeoutWindow pin_window(TickType_t started_at, TickType_t deadline)
+{
+    return agent_q::timeout_window_from_deadline(started_at, deadline);
 }
 
 bool random_bytes(void* output, size_t size, void*)
@@ -163,6 +169,16 @@ const std::vector<uint8_t>& valid_payload()
 constexpr const char* kDefaultStoredSigner =
     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+agent_q::AgentQTimeoutWindow request_window(TickType_t deadline)
+{
+    return agent_q::timeout_window_from_deadline(kDefaultRequestWindowStart, deadline);
+}
+
+agent_q::AgentQTimeoutWindow timeout_window(TickType_t started_at, TickType_t deadline)
+{
+    return agent_q::timeout_window_from_deadline(started_at, deadline);
+}
+
 agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
     const char* request_id,
     const char* session_id,
@@ -178,7 +194,7 @@ agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
         "devnet",
         payload,
         payload_size,
-        deadline,
+        request_window(deadline),
     };
 }
 
@@ -197,7 +213,7 @@ agent_q::AgentQUserSigningPersonalMessageBeginInput make_valid_message_input(
         "devnet",
         message,
         message_size,
-        deadline,
+        request_window(deadline),
     };
 }
 
@@ -371,6 +387,8 @@ int main()
            "personal-message request id stored");
     expect(strcmp(personal_snapshot.method, "sign_personal_message") == 0,
            "personal-message method stored");
+    expect(personal_snapshot.request_window.started_at == kDefaultRequestWindowStart,
+           "personal-message request start stored");
     expect(strcmp(personal_snapshot.account_address, kDefaultStoredSigner) == 0,
            "personal-message account address stored");
     expect(strcmp(personal_snapshot.message_preview, "Agent-Q personal message") == 0,
@@ -402,9 +420,11 @@ int main()
     expect(strcmp(snapshot.network, "devnet") == 0, "network stored");
     expect(strcmp(snapshot.payload_digest, "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == 0,
            "payload digest stored");
-    expect(snapshot.request_deadline == 300,
+    expect(snapshot.request_window.deadline == 300,
            "request stores immutable confirmation deadline");
-    expect(snapshot.pin_input_deadline == 0,
+    expect(snapshot.request_window.started_at == kDefaultRequestWindowStart,
+           "request stores immutable confirmation start");
+    expect(snapshot.pin_input_window.deadline == 0,
            "request starts without a PIN input deadline");
     expect(snapshot.signable_payload_available, "payload initially available to owner");
     expect(snapshot.signable_payload_size == payload.size(), "payload size stored");
@@ -451,16 +471,17 @@ int main()
 
     expect(agent_q::user_signing_flow_record_timeout(99) == Transition::deadline_not_reached,
            "timeout before deadline is rejected");
-    expect(agent_q::user_signing_flow_accept_review(99, 0) == Transition::invalid_deadline,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 0)) == Transition::invalid_deadline,
            "zero PIN deadline is rejected");
     snapshot = agent_q::user_signing_flow_snapshot();
     expect(snapshot.stage == Stage::reviewing, "invalid PIN deadline leaves review active");
-    expect(agent_q::user_signing_flow_accept_review(99, 200) == Transition::ok,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok,
            "review acceptance moves to PIN entry");
     snapshot = agent_q::user_signing_flow_snapshot();
     expect(snapshot.stage == Stage::pin_entry &&
-               snapshot.request_deadline == 300 &&
-               snapshot.pin_input_deadline == 200,
+               snapshot.request_window.deadline == 300 &&
+               snapshot.pin_input_window.started_at == 99 &&
+               snapshot.pin_input_window.deadline == 200,
            "PIN entry stage stores local input deadline");
     expect(record_verified_pin_and_write_confirmation_history(nullptr,
                nullptr) == Transition::invalid_argument,
@@ -543,7 +564,7 @@ int main()
 
     agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_history_error"), "begin before history error");
-    expect(agent_q::user_signing_flow_accept_review(99, 200) == Transition::ok,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok,
            "review before history error");
     g_history_write_result = false;
     g_history_write_rejects_flow = true;
@@ -595,7 +616,7 @@ int main()
 
     agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_signing_failed"), "begin before signing failure");
-    expect(agent_q::user_signing_flow_accept_review(99, 200) == Transition::ok, "review before signing failure");
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok, "review before signing failure");
     expect(record_verified_pin_and_write_confirmation_history(write_confirmation_history,
                nullptr) == Transition::ok,
            "pin verification writes history before signing failure");
@@ -615,7 +636,7 @@ int main()
                make_valid_input("req_expired_review", agent_q::session_id(), payload.data(), payload.size(), 100)) ==
                Begin::ok,
            "begin before expired review");
-    expect(agent_q::user_signing_flow_accept_review(100, 200) == Transition::deadline_expired,
+    expect(agent_q::user_signing_flow_accept_review(100, pin_window(100, 200)) == Transition::deadline_expired,
            "accept review after review deadline terminalizes as timeout");
     snapshot = agent_q::user_signing_flow_snapshot();
     expect(snapshot.stage == Stage::terminal &&
@@ -628,7 +649,7 @@ int main()
                make_valid_input("req_expired_pin", agent_q::session_id(), payload.data(), payload.size(), 220)) ==
                Begin::ok,
            "begin before expired PIN");
-    expect(agent_q::user_signing_flow_accept_review(99, 200) == Transition::ok,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok,
            "review accepted before PIN expiry test");
     expect(agent_q::user_signing_flow_pause_pin_deadline() == Transition::ok,
            "PIN verification pauses only local input deadline");
@@ -648,13 +669,14 @@ int main()
                make_valid_input("req_late_verified_pin", agent_q::session_id(), payload.data(), payload.size(), 130)) ==
                Begin::ok,
            "begin before late verified PIN");
-    expect(agent_q::user_signing_flow_accept_review(99, 120) == Transition::ok,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 120)) == Transition::ok,
            "review accepted before late verified PIN");
     expect(agent_q::user_signing_flow_pause_pin_deadline() == Transition::ok,
            "PIN submit pauses the local input deadline");
     snapshot = agent_q::user_signing_flow_snapshot();
-    expect(snapshot.request_deadline == 130 &&
-               snapshot.pin_input_deadline == 0,
+    expect(snapshot.request_window.deadline == 130 &&
+               snapshot.pin_input_window.started_at == 0 &&
+               snapshot.pin_input_window.deadline == 0,
            "PIN verification pauses only local input deadline");
     expect(agent_q::user_signing_flow_deadline_reached(130),
            "original request deadline still runs while PIN verification runs");
@@ -669,8 +691,24 @@ int main()
            "late verified PIN after request deadline times out");
 
     agent_q::user_signing_flow_clear();
+    expect(agent_q::user_signing_flow_begin(
+               make_valid_input("req_late_pin_refresh", agent_q::session_id(), payload.data(), payload.size(), 130)) ==
+               Begin::ok,
+           "begin before late PIN refresh");
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 140)) == Transition::ok,
+           "review accepted before late PIN refresh");
+    expect(agent_q::user_signing_flow_refresh_pin_deadline(130, pin_window(130, 160)) ==
+               Transition::deadline_expired,
+           "PIN retry refresh after request deadline terminalizes as timeout");
+    snapshot = agent_q::user_signing_flow_snapshot();
+    expect(snapshot.stage == Stage::terminal &&
+               snapshot.terminal_result == Terminal::timed_out &&
+               !snapshot.signable_payload_available,
+           "late PIN refresh after request deadline wipes payload");
+
+    agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_expired_pin_deadline"), "begin before expired PIN deadline handoff");
-    expect(agent_q::user_signing_flow_accept_review(99, 99) == Transition::deadline_expired,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(98, 99)) == Transition::deadline_expired,
            "expired PIN deadline handoff terminalizes as timeout");
     snapshot = agent_q::user_signing_flow_snapshot();
     expect(snapshot.stage == Stage::terminal &&
@@ -693,7 +731,7 @@ int main()
            "test session restarts for mid-flow session loss");
     expect(begin_valid_flow("req_session_loss_review"), "begin before review session loss");
     agent_q::session_clear();
-    expect(agent_q::user_signing_flow_accept_review(99, 200) == Transition::invalid_session,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::invalid_session,
            "review acceptance revalidates session");
     snapshot = agent_q::user_signing_flow_snapshot();
     expect(snapshot.stage == Stage::terminal &&
@@ -706,7 +744,7 @@ int main()
            "test session restarts for PIN session loss");
     agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_session_loss_pin"), "begin before PIN session loss");
-    expect(agent_q::user_signing_flow_accept_review(99, 200) == Transition::ok,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok,
            "review accepted before PIN session loss");
     agent_q::session_clear();
     expect(record_verified_pin_and_write_confirmation_history(write_confirmation_history,
@@ -723,7 +761,7 @@ int main()
            "test session restarts for history session loss");
     agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_session_loss_history"), "begin before history session loss");
-    expect(agent_q::user_signing_flow_accept_review(99, 200) == Transition::ok,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok,
            "review accepted before history session loss");
     agent_q::session_clear();
     expect(record_verified_pin_and_write_confirmation_history(write_confirmation_history,
@@ -741,7 +779,7 @@ int main()
     agent_q::user_signing_flow_clear();
     reset_history_writer_stub();
     expect(begin_valid_flow("req_history_writer_clears_session"), "begin before writer clears session");
-    expect(agent_q::user_signing_flow_accept_review(99, 200) == Transition::ok,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok,
            "review accepted before writer clears session");
     g_history_write_clears_session = true;
     expect(record_verified_pin_and_write_confirmation_history(write_confirmation_history,
@@ -762,7 +800,7 @@ int main()
     agent_q::user_signing_flow_clear();
     reset_history_writer_stub();
     expect(begin_valid_flow("req_history_writer_clears_flow"), "begin before writer clears flow");
-    expect(agent_q::user_signing_flow_accept_review(99, 200) == Transition::ok,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok,
            "review accepted before writer clears flow");
     g_history_write_clears_flow = true;
     expect(record_verified_pin_and_write_confirmation_history(write_confirmation_history,
@@ -780,7 +818,7 @@ int main()
     agent_q::user_signing_flow_clear();
     reset_history_writer_stub();
     expect(begin_valid_flow("req_history_writer_restarts_flow"), "begin before writer restarts flow");
-    expect(agent_q::user_signing_flow_accept_review(99, 200) == Transition::ok,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok,
            "review accepted before writer restarts flow");
     g_history_write_restarts_flow = true;
     expect(record_verified_pin_and_write_confirmation_history(write_confirmation_history,
@@ -801,7 +839,7 @@ int main()
            "test session restarts for critical cancel");
     agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_critical_cancel"), "begin before critical cancel");
-    expect(agent_q::user_signing_flow_accept_review(99, 200) == Transition::ok,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok,
            "review accepted before critical cancel");
     expect(record_verified_pin_and_write_confirmation_history(write_confirmation_history,
                nullptr) == Transition::ok,
@@ -824,7 +862,7 @@ int main()
            "test session restarts for critical consume session loss");
     agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_session_loss_consume"), "begin before consume session loss");
-    expect(agent_q::user_signing_flow_accept_review(99, 200) == Transition::ok,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok,
            "review accepted before consume session loss");
     expect(record_verified_pin_and_write_confirmation_history(write_confirmation_history,
                nullptr) == Transition::ok,
@@ -845,7 +883,7 @@ int main()
            "test session restarts for signed-complete session loss");
     agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_session_loss_complete"), "begin before complete session loss");
-    expect(agent_q::user_signing_flow_accept_review(99, 200) == Transition::ok,
+    expect(agent_q::user_signing_flow_accept_review(99, pin_window(99, 200)) == Transition::ok,
            "review accepted before complete session loss");
     expect(record_verified_pin_and_write_confirmation_history(write_confirmation_history,
                nullptr) == Transition::ok,
@@ -875,10 +913,27 @@ int main()
 
     agent_q::AgentQUserSigningTransactionBeginInput invalid_deadline =
         make_valid_input("req_bad_deadline", agent_q::session_id(), payload.data(), payload.size());
-    invalid_deadline.request_deadline = 0;
+    invalid_deadline.request_window.deadline = 0;
     expect(agent_q::user_signing_flow_begin(invalid_deadline) == Begin::invalid_deadline,
            "zero review deadline rejected");
     expect(!agent_q::user_signing_flow_active(), "invalid deadline leaves flow inactive");
+    agent_q::AgentQUserSigningTransactionBeginInput expired_deadline =
+        make_valid_input("req_expired_deadline", agent_q::session_id(), payload.data(), payload.size());
+    expired_deadline.request_window = timeout_window(300, 300);
+    expect(agent_q::user_signing_flow_begin(expired_deadline) == Begin::invalid_deadline,
+           "already expired transaction review window rejected");
+    expect(!agent_q::user_signing_flow_active(), "expired transaction deadline leaves flow inactive");
+    agent_q::AgentQUserSigningPersonalMessageBeginInput expired_message_deadline =
+        make_valid_message_input(
+            "req_expired_message_deadline",
+            agent_q::session_id(),
+            message,
+            sizeof(message) - 1);
+    expired_message_deadline.request_window = timeout_window(300, 300);
+    expect(agent_q::user_signing_flow_begin_personal_message(expired_message_deadline) ==
+               Begin::invalid_deadline,
+           "already expired personal-message review window rejected");
+    expect(!agent_q::user_signing_flow_active(), "expired personal-message deadline leaves flow inactive");
 
     static const uint8_t unrelated_payload[] = {0x01, 0x02, 0x03, 0x04};
     expect(agent_q::user_signing_flow_begin(

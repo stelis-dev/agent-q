@@ -72,6 +72,11 @@ void expect(bool condition, const char* label)
     }
 }
 
+agent_q::AgentQTimeoutWindow pin_window(TickType_t started_at, TickType_t deadline)
+{
+    return agent_q::timeout_window_from_deadline(started_at, deadline);
+}
+
 bool random_bytes(void* output, size_t size, void*)
 {
     if (output == nullptr) {
@@ -159,6 +164,13 @@ const std::vector<uint8_t>& valid_payload()
     return payload;
 }
 
+constexpr TickType_t kDefaultRequestWindowStart = 10;
+
+agent_q::AgentQTimeoutWindow request_window(TickType_t deadline)
+{
+    return agent_q::timeout_window_from_deadline(kDefaultRequestWindowStart, deadline);
+}
+
 agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
     const char* request_id,
     const char* session_id)
@@ -172,7 +184,7 @@ agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
         "devnet",
         payload.data(),
         payload.size(),
-        100,
+        request_window(100),
     };
 }
 
@@ -198,7 +210,7 @@ agent_q::AgentQUserSigningPersonalMessageBeginInput make_valid_personal_message_
         "devnet",
         message.data(),
         message.size(),
-        100,
+        request_window(100),
     };
 }
 
@@ -252,7 +264,7 @@ void begin_personal_message_reviewing_request(const char* request_id)
 void enter_critical_section(const char* request_id)
 {
     begin_reviewing_request(request_id);
-    expect(agent_q::user_signing_flow_accept_review(50, 90) ==
+    expect(agent_q::user_signing_flow_accept_review(50, pin_window(50, 90)) ==
                agent_q::AgentQUserSigningTransitionResult::ok,
            "review accepted");
     expect(agent_q::user_signing_flow_pause_pin_deadline() ==
@@ -270,7 +282,7 @@ void enter_critical_section(const char* request_id)
 void enter_personal_message_critical_section(const char* request_id)
 {
     begin_personal_message_reviewing_request(request_id);
-    expect(agent_q::user_signing_flow_accept_review(50, 90) ==
+    expect(agent_q::user_signing_flow_accept_review(50, pin_window(50, 90)) ==
                agent_q::AgentQUserSigningTransitionResult::ok,
            "personal-message review accepted");
     expect(agent_q::user_signing_flow_pause_pin_deadline() ==

@@ -5,6 +5,7 @@
 #include "agent_q_local_pin_auth.h"
 #include "agent_q_request_id.h"
 #include "agent_q_session.h"
+#include "agent_q_timeout_window.h"
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
@@ -22,8 +23,8 @@ struct AgentQProtocolPinApprovalSnapshot {
     AgentQProtocolPinApprovalPurpose purpose;
     const char* request_id;
     const char* session_id;
-    TickType_t request_deadline;
-    TickType_t pin_input_deadline;
+    AgentQTimeoutWindow request_window;
+    AgentQTimeoutWindow pin_input_window;
 };
 
 void protocol_pin_approval_clear();
@@ -32,11 +33,11 @@ AgentQProtocolPinApprovalSnapshot protocol_pin_approval_snapshot();
 
 bool protocol_pin_approval_begin_connect(
     const char* request_id,
-    TickType_t deadline);
+    AgentQTimeoutWindow request_window);
 bool protocol_pin_approval_begin_policy_update(
     const char* request_id,
     const char* session_id,
-    TickType_t deadline);
+    AgentQTimeoutWindow request_window);
 
 bool protocol_pin_approval_request_id_for_local_pin_purpose(
     AgentQLocalPinAuthPurpose purpose,
@@ -44,7 +45,8 @@ bool protocol_pin_approval_request_id_for_local_pin_purpose(
     size_t output_size);
 bool protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
     AgentQLocalPinAuthPurpose purpose,
-    TickType_t deadline);
+    TickType_t now,
+    AgentQTimeoutWindow pin_input_window);
 bool protocol_pin_approval_pause_deadline_for_local_pin_purpose(
     AgentQLocalPinAuthPurpose purpose);
 bool protocol_pin_approval_deadline_reached_for_local_pin_purpose(

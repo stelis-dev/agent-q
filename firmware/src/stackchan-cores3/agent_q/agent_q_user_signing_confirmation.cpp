@@ -69,24 +69,6 @@ bool signature_pin_stage(AgentQLocalPinAuthStage stage)
            snapshot.stage == stage;
 }
 
-bool tick_reached(TickType_t deadline, TickType_t now)
-{
-    return deadline != 0 &&
-           static_cast<int32_t>(now - deadline) >= 0;
-}
-
-TickType_t cap_to_request_deadline(
-    TickType_t request_deadline,
-    TickType_t deadline)
-{
-    if (request_deadline == 0) {
-        return deadline;
-    }
-    return tick_reached(request_deadline, deadline)
-               ? request_deadline
-               : deadline;
-}
-
 uint32_t next_signature_pin_token()
 {
     const uint32_t token = g_next_signature_pin_token++;
@@ -171,7 +153,7 @@ record_verified_pin_and_write_history(
 AgentQUserSigningConfirmationResult
 user_signing_confirmation_accept_review_and_begin_pin(
     TickType_t now,
-    TickType_t pin_deadline)
+    AgentQTimeoutWindow pin_input_window)
 {
     const AgentQUserSigningFlowSnapshot flow =
         user_signing_flow_snapshot();
@@ -181,24 +163,30 @@ user_signing_confirmation_accept_review_and_begin_pin(
     if (flow.stage != AgentQUserSigningStage::reviewing) {
         return AgentQUserSigningConfirmationResult::wrong_stage;
     }
-    if (pin_deadline == 0) {
+    if (!timeout_window_valid(pin_input_window)) {
         return AgentQUserSigningConfirmationResult::invalid_deadline;
     }
     if (local_pin_auth_flow_active()) {
         return AgentQUserSigningConfirmationResult::local_pin_busy;
     }
     const TickType_t capped_pin_deadline =
-        cap_to_request_deadline(flow.request_deadline, pin_deadline);
+        timeout_window_cap_deadline(flow.request_window, pin_input_window.deadline);
+    pin_input_window =
+        timeout_window_from_deadline(pin_input_window.started_at, capped_pin_deadline);
+    if (!timeout_window_valid(pin_input_window) ||
+        timeout_window_reached(pin_input_window, now)) {
+        return AgentQUserSigningConfirmationResult::deadline_expired;
+    }
     SignaturePinBinding next_binding = {};
     next_binding.active = true;
     next_binding.pin.token = next_signature_pin_token();
     next_binding.flow = flow;
-    if (!local_pin_auth_begin_user_signing(next_binding.pin, capped_pin_deadline)) {
+    if (!local_pin_auth_begin_user_signing(next_binding.pin, pin_input_window)) {
         return AgentQUserSigningConfirmationResult::local_pin_unavailable;
     }
 
     const AgentQUserSigningTransitionResult accepted =
-        user_signing_flow_accept_review(now, capped_pin_deadline);
+        user_signing_flow_accept_review(now, pin_input_window);
     if (accepted != AgentQUserSigningTransitionResult::ok) {
         local_pin_auth_clear_flow();
         return map_transition(accepted);
@@ -211,7 +199,7 @@ AgentQUserSigningConfirmationResult
 user_signing_confirmation_complete_pin_verify_job_and_write_history(
     const AgentQLocalAuthWorkerResult& worker_result,
     TickType_t now,
-    TickType_t retry_deadline,
+    AgentQTimeoutWindow retry_window,
     TickType_t lockout_until,
     AgentQUserSigningHistoryWriteFn write_fn,
     void* context)
@@ -235,10 +223,16 @@ user_signing_confirmation_complete_pin_verify_job_and_write_history(
                    : map_transition(timeout);
     }
 
+    if (timeout_window_valid(retry_window)) {
+        const TickType_t capped_retry_deadline =
+            timeout_window_cap_deadline(expected.request_window, retry_window.deadline);
+        retry_window =
+            timeout_window_from_deadline(retry_window.started_at, capped_retry_deadline);
+    }
     const AgentQLocalPinAuthSignatureVerifyResult result =
         local_pin_auth_complete_user_signing_verify_job(
             worker_result,
-            cap_to_request_deadline(expected.request_deadline, retry_deadline),
+            retry_window,
             lockout_until);
     switch (result) {
         case AgentQLocalPinAuthSignatureVerifyResult::verified:
@@ -250,7 +244,7 @@ user_signing_confirmation_complete_pin_verify_job_and_write_history(
             return AgentQUserSigningConfirmationResult::auth_unavailable;
         case AgentQLocalPinAuthSignatureVerifyResult::locked: {
             const AgentQUserSigningTransitionResult refresh =
-                user_signing_flow_refresh_pin_deadline(retry_deadline);
+                user_signing_flow_refresh_pin_deadline(now, retry_window);
             if (refresh != AgentQUserSigningTransitionResult::ok) {
                 clear_signature_pin_if_active();
                 return map_transition(refresh);
@@ -259,7 +253,7 @@ user_signing_confirmation_complete_pin_verify_job_and_write_history(
         }
         case AgentQLocalPinAuthSignatureVerifyResult::wrong_pin: {
             const AgentQUserSigningTransitionResult refresh =
-                user_signing_flow_refresh_pin_deadline(retry_deadline);
+                user_signing_flow_refresh_pin_deadline(now, retry_window);
             if (refresh != AgentQUserSigningTransitionResult::ok) {
                 clear_signature_pin_if_active();
                 return map_transition(refresh);
