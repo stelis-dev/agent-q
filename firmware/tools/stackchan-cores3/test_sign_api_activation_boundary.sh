@@ -22,6 +22,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 USB_SERVER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_server.cpp"
+POLICY_SIGNING_EXECUTION_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_policy_signing_execution.cpp"
 USER_REVIEW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_review_view_model.cpp"
 USER_SIGNING_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_critical_section.cpp"
 USER_FLOW_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_flow.h"
@@ -123,6 +124,14 @@ expect_present "${USB_SERVER}" 'user_signing_(flow|confirmation)|user_signing_ex
   "USB request server must call user-confirmed authorization state owners"
 expect_present "${USB_SERVER}" 'evaluate_sign_transaction_policy' \
   "USB request server must call policy authorization runtime"
+expect_present "${USB_SERVER}" 'execute_policy_sign_transaction' \
+  "USB request server must delegate policy signing execution to the execution owner"
+expect_present "${POLICY_SIGNING_EXECUTION_SOURCE}" 'write_policy_signing_confirmation_history' \
+  "policy signing execution owner must own policy confirmation history writes"
+expect_present "${POLICY_SIGNING_EXECUTION_SOURCE}" 'sign_sui_ed25519_transaction_from_stored_root' \
+  "policy signing execution owner must own policy signing critical section"
+expect_absent "${USB_SERVER}" 'write_policy_signing_confirmation_history|write_policy_signing_terminal_history|sign_sui_ed25519_transaction_from_stored_root' \
+  "USB request server must not assemble policy signing history/signing directly"
 expect_present "${USB_SERVER}" 'read_signing_authorization_mode' \
   "USB request server must read Firmware-local signing authorization mode"
 expect_present "${USB_SERVER}" 'user_signing_flow_begin' \

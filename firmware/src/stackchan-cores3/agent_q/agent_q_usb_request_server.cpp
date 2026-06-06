@@ -34,6 +34,7 @@
 #include "agent_q_sign_personal_message_limits.h"
 #include "agent_q_sign_personal_message_user_ingress.h"
 #include "agent_q_sign_transaction_policy_runtime.h"
+#include "agent_q_policy_signing_execution.h"
 #include "agent_q_user_signing_confirmation.h"
 #include "agent_q_user_signing_flow.h"
 #include "agent_q_sign_transaction_user_ingress.h"
@@ -650,6 +651,36 @@ bool write_sign_result_signing_failed(
     return agent_q::usb_response_write_json(response);
 }
 
+bool write_policy_execution_response(
+    const char* id,
+    const agent_q::AgentQPolicySigningExecutionResult& result)
+{
+    switch (result.status) {
+        case agent_q::AgentQPolicySigningExecutionStatus::request_error:
+        case agent_q::AgentQPolicySigningExecutionStatus::history_error:
+        case agent_q::AgentQPolicySigningExecutionStatus::account_error:
+            return write_error_response(id, result.code, result.message);
+        case agent_q::AgentQPolicySigningExecutionStatus::policy_rejected:
+            return write_sign_result_policy_rejected(
+                id,
+                result.policy_hash,
+                result.rule_ref);
+        case agent_q::AgentQPolicySigningExecutionStatus::signing_failed:
+            return write_sign_result_signing_failed(id, "policy");
+        case agent_q::AgentQPolicySigningExecutionStatus::signed_success:
+            return write_sign_result_signed_fields(
+                id,
+                "policy",
+                result.signing_method,
+                result.signature,
+                result.signature_size,
+                nullptr,
+                0);
+        default:
+            return write_error_response(id, "protocol_error", "Policy signing request is invalid.");
+    }
+}
+
 bool write_capabilities_response(
     const char* id,
     agent_q::AgentQSigningAuthorizationMode signing_mode)
@@ -1045,64 +1076,6 @@ bool write_user_signing_terminal_history(
     return agent_q::approval_history_append_required_signing(
         input,
         static_cast<uint64_t>(esp_timer_get_time() / 1000LL));
-}
-
-bool write_policy_signing_history(
-    const agent_q::AgentQSignTransactionPolicyRuntimeResult& result,
-    agent_q::AgentQSigningHistoryRecordKind record_kind,
-    agent_q::AgentQSigningHistoryTerminalResult terminal_result,
-    const char* reason_code,
-    bool enforce_write_budget)
-{
-    if (result.chain[0] == '\0' ||
-        result.method[0] == '\0' ||
-        result.payload_digest[0] == '\0' ||
-        result.policy_hash[0] == '\0' ||
-        result.rule_ref[0] == '\0' ||
-        reason_code == nullptr ||
-        reason_code[0] == '\0') {
-        return false;
-    }
-    const agent_q::AgentQSigningHistoryAppendInput input{
-        record_kind,
-        agent_q::AgentQApprovalHistoryConfirmationKind::policy,
-        terminal_result,
-        result.chain,
-        result.method,
-        reason_code,
-        result.payload_digest,
-        result.policy_hash,
-        result.rule_ref,
-    };
-    const uint64_t uptime_ms = static_cast<uint64_t>(esp_timer_get_time() / 1000LL);
-    return enforce_write_budget
-               ? agent_q::approval_history_append_budgeted_signing(input, uptime_ms)
-               : agent_q::approval_history_append_required_signing(input, uptime_ms);
-}
-
-bool write_policy_signing_confirmation_history(
-    const agent_q::AgentQSignTransactionPolicyRuntimeResult& result)
-{
-    return write_policy_signing_history(
-        result,
-        agent_q::AgentQSigningHistoryRecordKind::confirmation,
-        agent_q::AgentQSigningHistoryTerminalResult::none,
-        "policy_authorized",
-        false);
-}
-
-bool write_policy_signing_terminal_history(
-    const agent_q::AgentQSignTransactionPolicyRuntimeResult& result,
-    agent_q::AgentQSigningHistoryTerminalResult terminal_result,
-    const char* reason_code,
-    bool enforce_write_budget)
-{
-    return write_policy_signing_history(
-        result,
-        agent_q::AgentQSigningHistoryRecordKind::terminal,
-        terminal_result,
-        reason_code,
-        enforce_write_budget);
 }
 
 void consume_user_signing_terminal_if_pending()
@@ -4911,61 +4884,6 @@ void show_policy_signing_notification(
         kAgentQResultDisplayMs);
 }
 
-bool handle_sign_transaction_policy_filter_result(
-    const char* id,
-    const agent_q::AgentQSignTransactionPolicyRuntimeResult& sign_result)
-{
-    if (sign_result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::invalid_params ||
-        sign_result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::unsupported_transaction ||
-        sign_result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::account_mismatch ||
-        sign_result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_error) {
-        if (sign_result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_error) {
-            agent_q::persistent_material_record_runtime_failure(
-                agent_q::AgentQPersistentMaterialRuntimeFailure::active_policy_unavailable,
-                persistent_material_ops());
-        }
-        write_error_response(id, sign_result.code, sign_result.message);
-        return true;
-    }
-    if (sign_result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::account_unavailable) {
-        agent_q::persistent_material_record_runtime_failure(
-            agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
-            persistent_material_ops());
-        write_error_response(id, "account_error", "Stored signing account is unavailable.");
-        return true;
-    }
-
-    if (sign_result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_rejected) {
-        if (!write_policy_signing_terminal_history(
-                sign_result,
-                agent_q::AgentQSigningHistoryTerminalResult::policy_rejected,
-                "policy_rejected",
-                true)) {
-            write_error_response(id, "history_error", "Could not record policy signing terminal result.");
-            return true;
-        }
-        if (write_sign_result_policy_rejected(id, sign_result.policy_hash, sign_result.rule_ref)) {
-            ESP_LOGI(kTag, "sign_transaction policy rejected: id=%s chain=%s method=%s rule=%s",
-                     id,
-                     sign_result.chain,
-                     sign_result.method,
-                     sign_result.rule_ref);
-            show_policy_signing_notification("Policy rejected", AgentQMessageKind::rejected);
-        } else {
-            log_response_write_failure("sign_result", id);
-            show_policy_signing_notification("Rejected; USB failed", AgentQMessageKind::error);
-        }
-        return true;
-    }
-
-    if (sign_result.status != agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized) {
-        write_error_response(id, "protocol_error", "Signing request is invalid.");
-        return true;
-    }
-
-    return false;
-}
-
 void handle_sign_transaction_policy_mode(const char* id, JsonDocument& request)
 {
     if (!provisioned_material_ready()) {
@@ -5005,98 +4923,55 @@ void handle_sign_transaction_policy_mode(const char* id, JsonDocument& request)
 
     agent_q::AgentQSignTransactionPolicyRuntimeResult sign_result =
         agent_q::evaluate_sign_transaction_policy(chain, method, request["params"]);
-    if (handle_sign_transaction_policy_filter_result(id, sign_result)) {
-        agent_q::clear_sign_transaction_policy_runtime_result(&sign_result);
-        return;
+    if (sign_result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized) {
+        show_policy_signing_notification("Policy signing", AgentQMessageKind::info);
     }
-
-    show_policy_signing_notification("Policy signing", AgentQMessageKind::info);
-
-    if (!write_policy_signing_confirmation_history(sign_result)) {
-        write_error_response(id, "history_error", "Could not record policy signing approval.");
-        agent_q::clear_sign_transaction_policy_runtime_result(&sign_result);
-        return;
-    }
-
-    uint8_t signature[agent_q::kSuiEd25519SignatureBytes] = {};
-    const agent_q::SuiTransactionSigningResult signing_result =
-        agent_q::sign_sui_ed25519_transaction_from_stored_root(
-            sign_result.tx_bytes,
-            sign_result.tx_bytes_size,
-            signature);
-    if (signing_result != agent_q::SuiTransactionSigningResult::ok) {
-        agent_q::wipe_sensitive_buffer(signature, sizeof(signature));
-        if (signing_result == agent_q::SuiTransactionSigningResult::root_material_unavailable) {
-            const bool terminal_recorded = write_policy_signing_terminal_history(
-                sign_result,
-                agent_q::AgentQSigningHistoryTerminalResult::signing_failed,
-                "root_material_unreadable",
-                false);
-            agent_q::persistent_material_record_runtime_failure(
-                agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
-                persistent_material_ops());
-            if (!terminal_recorded) {
-                write_error_response(id, "history_error", "Could not record policy signing terminal result.");
-                agent_q::clear_sign_transaction_policy_runtime_result(&sign_result);
-                return;
+    agent_q::AgentQPolicySigningExecutionResult execution_result =
+        agent_q::execute_policy_sign_transaction(sign_result, persistent_material_ops());
+    const bool wrote_response = write_policy_execution_response(id, execution_result);
+    switch (execution_result.status) {
+        case agent_q::AgentQPolicySigningExecutionStatus::policy_rejected:
+            if (wrote_response) {
+                ESP_LOGI(kTag, "sign_transaction policy rejected: id=%s chain=%s method=%s rule=%s",
+                         id,
+                         sign_result.chain,
+                         sign_result.method,
+                         sign_result.rule_ref);
+                show_policy_signing_notification("Policy rejected", AgentQMessageKind::rejected);
+            } else {
+                log_response_write_failure("sign_result", id);
+                show_policy_signing_notification("Rejected; USB failed", AgentQMessageKind::error);
             }
-            write_error_response(id, "account_error", "Stored signing account is unavailable.");
-            agent_q::clear_sign_transaction_policy_runtime_result(&sign_result);
-            return;
-        }
-        if (!write_policy_signing_terminal_history(
-                sign_result,
-                agent_q::AgentQSigningHistoryTerminalResult::signing_failed,
-                "signing_failed",
-                false)) {
-            write_error_response(id, "history_error", "Could not record policy signing terminal result.");
-            agent_q::clear_sign_transaction_policy_runtime_result(&sign_result);
-            return;
-        }
-        if (write_sign_result_signing_failed(id, "policy")) {
-            ESP_LOGW(kTag, "sign_transaction policy signing failed: id=%s chain=%s method=%s",
-                     id,
-                     sign_result.chain,
-                     sign_result.method);
-            show_policy_signing_notification("Signing failed", AgentQMessageKind::error);
-        } else {
-            log_response_write_failure("sign_result", id);
-            show_policy_signing_notification("Failure; USB failed", AgentQMessageKind::error);
-        }
-        agent_q::clear_sign_transaction_policy_runtime_result(&sign_result);
-        return;
+            break;
+        case agent_q::AgentQPolicySigningExecutionStatus::signing_failed:
+            if (wrote_response) {
+                ESP_LOGW(kTag, "sign_transaction policy signing failed: id=%s chain=%s method=%s",
+                         id,
+                         sign_result.chain,
+                         sign_result.method);
+                show_policy_signing_notification("Signing failed", AgentQMessageKind::error);
+            } else {
+                log_response_write_failure("sign_result", id);
+                show_policy_signing_notification("Failure; USB failed", AgentQMessageKind::error);
+            }
+            break;
+        case agent_q::AgentQPolicySigningExecutionStatus::signed_success:
+            if (wrote_response) {
+                ESP_LOGI(kTag, "sign_transaction policy signed: id=%s chain=%s method=%s rule=%s",
+                         id,
+                         sign_result.chain,
+                         sign_result.method,
+                         sign_result.rule_ref);
+                show_policy_signing_notification("Policy signed", AgentQMessageKind::success);
+            } else {
+                log_response_write_failure("sign_result", id);
+                show_policy_signing_notification("Signed; USB failed", AgentQMessageKind::error);
+            }
+            break;
+        default:
+            break;
     }
-
-    if (!write_policy_signing_terminal_history(
-            sign_result,
-            agent_q::AgentQSigningHistoryTerminalResult::signed_success,
-            "policy_signed",
-            false)) {
-        agent_q::wipe_sensitive_buffer(signature, sizeof(signature));
-        write_error_response(id, "history_error", "Could not record policy signing terminal result.");
-        agent_q::clear_sign_transaction_policy_runtime_result(&sign_result);
-        return;
-    }
-
-    if (write_sign_result_signed_fields(
-            id,
-            "policy",
-            agent_q::AgentQSigningMethod::sui_sign_transaction,
-            signature,
-            sizeof(signature),
-            nullptr,
-            0)) {
-        ESP_LOGI(kTag, "sign_transaction policy signed: id=%s chain=%s method=%s rule=%s",
-                 id,
-                 sign_result.chain,
-                 sign_result.method,
-                 sign_result.rule_ref);
-        show_policy_signing_notification("Policy signed", AgentQMessageKind::success);
-    } else {
-        log_response_write_failure("sign_result", id);
-        show_policy_signing_notification("Signed; USB failed", AgentQMessageKind::error);
-    }
-    agent_q::wipe_sensitive_buffer(signature, sizeof(signature));
+    agent_q::clear_policy_signing_execution_result(&execution_result);
     agent_q::clear_sign_transaction_policy_runtime_result(&sign_result);
 }
 

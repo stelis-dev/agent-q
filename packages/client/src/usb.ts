@@ -635,11 +635,16 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
         clearTimeout(timer);
         port.off("data", onData);
         port.off("error", onError);
+        port.off("close", onClose);
         complete();
       };
 
       const onError = (error: Error): void => {
         settle(() => reject(mapSerialOpenError(error)));
+      };
+
+      const onClose = (): void => {
+        settle(() => reject(new GatewayError("transport_closed", "USB serial transport closed.", true)));
       };
 
       const onData = (chunk: Buffer): void => {
@@ -675,6 +680,7 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
 
       port.on("data", onData);
       port.on("error", onError);
+      port.on("close", onClose);
       port.write(serializeRequest(request), (error) => {
         if (error) {
           settle(() => reject(mapSerialOpenError(error)));
