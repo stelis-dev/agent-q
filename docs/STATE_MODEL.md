@@ -246,8 +246,8 @@ complete. Detailed hardware evidence status is tracked in
 `sign_personal_message` also has `source-wired-not-product-active` status for
 bounded Sui personal-message bytes in user authorization mode only; policy mode
 fails closed because policy facts and rules for personal-message signing are not
-implemented. It also remains below product-active status until the tracked
-current-tree hardware matrix and LVGL visual evidence are complete.
+implemented. It also remains below product-active status until final
+current-tree hardware and visual evidence are complete.
 Gateway must not evaluate policy. A corrupt, unreadable, missing,
 or invalid current active policy is a persistent-material consistency
 error, not a normal `provisioned` state. Provisioned DEV_PROFILE devices that

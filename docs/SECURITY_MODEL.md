@@ -111,15 +111,15 @@ Implemented today:
   requires local PIN confirmation. Requests cannot choose the authorization
   mode.
   Detailed hardware evidence status is tracked in
-  `docs/IMPLEMENTATION_STATUS.md`. The full current-tree hardware matrix and
-  LVGL visual evidence remain pending, so product-active status is not claimed.
+  `docs/IMPLEMENTATION_STATUS.md`. Final current-tree hardware and visual
+  evidence remain pending, so product-active status is not claimed.
 - The `sign_personal_message` path has `source-wired-not-product-active` status
   for bounded Sui personal-message bytes. Firmware accepts it only in user
   authorization mode, uses clear-signing review and local PIN confirmation, and
   fails closed in policy mode because policy facts and rules for this method are
   not implemented. Detailed hardware evidence status is tracked in
-  `docs/IMPLEMENTATION_STATUS.md`. The full current-tree hardware matrix and
-  LVGL visual evidence remain pending, so product-active status is not claimed.
+  `docs/IMPLEMENTATION_STATUS.md`. Final current-tree hardware and visual
+  evidence remain pending, so product-active status is not claimed.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 

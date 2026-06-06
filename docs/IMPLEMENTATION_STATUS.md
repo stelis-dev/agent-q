@@ -35,14 +35,15 @@ source. Firmware chooses the `sign_transaction` authorization gate from the
 device-local signing authorization mode, while `sign_personal_message` is
 user-mode only and fails closed in policy mode. Earlier target
 positive/reject/timeout/session-loss smoke is historical evidence from the
-pre-cutover wire names only. Earlier direct USB/Firmware smoke also exists for
-the current Sign API matrix, but the current timeout/timer UI changes invalidate
-it as product-active evidence for this tree. On the current uncommitted
-timeout/timer follow-up tree, StackChan CoreS3 build/flash passed and
+pre-cutover wire names only. A later full direct USB/Firmware Sign API smoke
+matrix exists for an earlier Sign API baseline, but timeout/timer UI changes and
+the later request-backed PIN ownership normalization mean that evidence is not a
+current-tree `product-active` basis. On the timeout/timer follow-up baseline
+later committed as `1fe318e1`, StackChan CoreS3 build/flash passed and
 client-owned direct USB/Firmware smoke passed the user-mode terminal matrix for
 both `sign_transaction` and `sign_personal_message`: positive, reject, timeout,
 and USB session-loss cleanup. Client-owned `policy_propose` host-side smoke also
-passed on this tree for the applied two-step policy-update path: proposal
+passed on that baseline for the applied two-step policy-update path: proposal
 validation/canonicalization, device-local summary-review entry,
 Continue-to-PIN approval, active-policy commit, committed policy readback, and
 required terminal history. It committed the reject-only policy used by the smoke
@@ -53,9 +54,12 @@ clear-signing review/PIN/timer/result flows: bottom timer placement, PIN-entry
 countdown, no timer continuation or full reset during processing, wrong-PIN
 remaining-time resume, PIN Back review-return distinct from review Reject,
 clear review metadata, normal reject/timeout/success return, and no observed
-text overlap, clipping, or stale overlay. Policy-mode
-signing and policy-mode personal-message fail-closed remain pending before any
-`product-active` claim.
+text overlap, clipping, or stale overlay. The current tracked baseline
+`5d669069` adds internal request-backed PIN ownership normalization and has
+focused host-test coverage, but its Sign API product-active status still
+requires a final current-tree batched hardware/visual verification pass. Policy
+mode signing, policy-mode personal-message fail-closed, and policy-update
+negative/visual paths remain pending before any `product-active` claim.
 
 This document tracks implementation status only. The wire protocol is defined in
 `specs/PROTOCOL.md`. Target-specific details live under

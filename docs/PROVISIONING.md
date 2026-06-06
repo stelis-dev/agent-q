@@ -144,9 +144,8 @@ Rules:
   choose this mode. Personal-message signing is user-mode only and fails closed
   in policy mode.
   Detailed hardware evidence status is tracked in
-  `docs/IMPLEMENTATION_STATUS.md`. The full current-tree Sign API hardware
-  matrix and LVGL clear-signing visual evidence remain pending, so
-  product-active status is not claimed.
+  `docs/IMPLEMENTATION_STATUS.md`. Final current-tree Sign API hardware and
+  visual evidence remains pending, so product-active status is not claimed.
 - Agent-Q must not add chain-specific top-level MCP tools.
 
 The first implementation target is Sui Ed25519.
@@ -354,8 +353,8 @@ personal-message signing are not implemented. Arbitrary Sui transaction signing
 outside the restricted transfer shape, full Admin policy editing beyond the
 current policy proposal template, and USER_PROFILE secure provisioning are not
 implemented. Provider-facing
-Sign API product-active status still requires LVGL visual evidence for the
-current source tree.
+Sign API product-active status still requires final current-tree hardware and
+visual evidence.
 
 ## Completion Criteria
 

@@ -34,8 +34,8 @@ The current implementation includes:
   terminal signing records for signed/failed/rejected/timed-out outcomes as
   applicable, user-mode `sign_personal_message` confirmation/terminal metadata,
   and recordable `policy_propose` terminal results. Detailed hardware evidence
-  status is tracked in `docs/IMPLEMENTATION_STATUS.md`; the full current-tree
-  history matrix and LVGL visual evidence remain pending before product-active
+  status is tracked in `docs/IMPLEMENTATION_STATUS.md`; final current-tree
+  approval-history and visual evidence remain pending before product-active
   status.
 - a USB JSONL `sign_transaction` path. It requires material-backed `provisioned`
   state plus a matching active session, keeps unknown methods rejected with
@@ -50,8 +50,8 @@ The current implementation includes:
   caller-selected authorization, caller-controlled timing fields, and
   chain-specific top-level signing APIs are not implemented. Detailed hardware
   evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; the full
-  current-tree hardware matrix and LVGL visual evidence remain pending before
-  product-active status.
+  current-tree hardware and visual evidence remain pending before product-active
+  status.
 - a USB JSONL `sign_personal_message` path. It requires material-backed
   `provisioned` state plus a matching active session, validates bounded Sui
   personal-message bytes, and is available only when the device-local signing
@@ -60,8 +60,8 @@ The current implementation includes:
   digest. Policy mode fails closed with `unsupported_method`; policy facts and
   rules for personal-message signing are not implemented. Detailed hardware
   evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; the full
-  current-tree hardware matrix and LVGL visual evidence remain pending before
-  product-active status.
+  current-tree hardware and visual evidence remain pending before product-active
+  status.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
   Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
   RAM, displays only the up-to-4-letter word prefixes on device in a 3-column
@@ -114,8 +114,8 @@ shape after clear-signing review, local PIN, and required history. It rejects
 unsupported transactions and returns `signed`, `policy_rejected`,
 `user_rejected`, `user_timed_out`, or `signing_failed` through `sign_result` as
 applicable. Detailed hardware evidence status is recorded in
-`docs/IMPLEMENTATION_STATUS.md`; the full current-tree hardware matrix and LVGL
-visual evidence remain pending before product-active status.
+`docs/IMPLEMENTATION_STATUS.md`; final current-tree hardware and visual evidence
+remain pending before product-active status.
 The target also exposes user-mode `sign_personal_message` for bounded Sui
 personal-message bytes; policy mode fails closed for that method until matching
 policy facts and rules are implemented. Detailed hardware evidence status is

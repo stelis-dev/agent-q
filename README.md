@@ -122,9 +122,10 @@ for bounded personal-message bytes. Firmware reads its device-local signing
 authorization mode for transaction signing, then chooses either the policy
 signing gate or the user-confirmed signing gate; requests do not choose it.
 Detailed hardware evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`.
-The current Sign API paths remain `source-wired-not-product-active`: the full
-current-tree Sign API hardware matrix and LVGL clear-signing visual evidence
-remain pending, so product-active signing status is not claimed.
+The current Sign API paths remain `source-wired-not-product-active`: source
+paths and partial hardware/visual evidence exist, but the final current-tree
+Sign API hardware and visual evidence pass remains pending, so product-active
+signing status is not claimed.
 
 Firmware source is organized by hardware under `firmware/src/`.
 
@@ -238,9 +239,9 @@ Under current-source verification:
   PIN confirmation, required history, signing-critical handoff, terminal
   history, `sign_result`, provider `signTransaction`, client parser/builder,
   MCP tool, and `get_capabilities.signing` metadata. Hardware evidence status
-  is tracked in `docs/IMPLEMENTATION_STATUS.md`; the full current-tree hardware
-  matrix and LVGL visual evidence remain pending, so product-active status is
-  not claimed.
+  is tracked in `docs/IMPLEMENTATION_STATUS.md`; final current-tree
+  hardware/visual evidence remains pending, so product-active status is not
+  claimed.
 - `sign_personal_message` has source-wired but not product-active status for
   bounded Sui personal-message bytes. It uses user clear-signing review, local
   PIN confirmation, required history, the Sui PersonalMessage intent digest,
@@ -248,9 +249,9 @@ Under current-source verification:
   `sui:signPersonalMessage`, and user-mode `get_capabilities.signing`
   metadata. Policy mode is intentionally unsupported for this method until
   matching policy facts and rules are designed. Hardware evidence status is
-  tracked in `docs/IMPLEMENTATION_STATUS.md`; the full current-tree hardware
-  matrix and LVGL visual evidence remain pending, so product-active status is
-  not claimed.
+  tracked in `docs/IMPLEMENTATION_STATUS.md`; final current-tree
+  hardware/visual evidence remains pending, so product-active status is not
+  claimed.
 
 Not yet implemented: arbitrary Sui transaction signing, sponsored Sui
 transaction signing, policy-authorized Sui personal-message signing, spending
