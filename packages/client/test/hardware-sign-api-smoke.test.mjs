@@ -83,6 +83,12 @@ const policyPersonalMessageBytes = (
 const policyUpdateEnabled = process.env.AGENTQ_HW_CLIENT_POLICY_UPDATE === "1";
 const policyUpdateDeviceId = process.env.AGENTQ_HW_CLIENT_POLICY_UPDATE_DEVICE_ID ?? "";
 
+const SIGN_TRANSACTION_USER_PURPOSE = "hw.sign_tx.user";
+const SIGN_TRANSACTION_POLICY_PURPOSE = "hw.sign_tx.policy";
+const SIGN_PERSONAL_MESSAGE_USER_PURPOSE = "hw.sign_msg.user";
+const SIGN_PERSONAL_MESSAGE_POLICY_PURPOSE = "hw.sign_msg.policy";
+const POLICY_UPDATE_PURPOSE = "client-policy-update-smoke";
+
 function isCanonicalBase64(value) {
   if (value.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
     return false;
@@ -415,18 +421,18 @@ test(
 
       try {
         console.log("[client-sign-transaction-user-smoke] selecting device...");
-        await core.selectDevice({ deviceId, purpose: "client-sign-transaction-user-smoke" });
+        await core.selectDevice({ deviceId, purpose: SIGN_TRANSACTION_USER_PURPOSE });
 
         console.log("[client-sign-transaction-user-smoke] approve connect on device...");
         const connect = await core.connectDevice({
           deviceId,
-          purpose: "client-sign-transaction-user-smoke",
+          purpose: SIGN_TRANSACTION_USER_PURPOSE,
           gatewayName: "Agent-Q client sign_transaction smoke",
         });
         assert.equal(connect.source, "connected");
 
         console.log("[client-sign-transaction-user-smoke] checking raw client signing capability...");
-        const capabilities = await core.getCapabilities({ deviceId, purpose: "client-sign-transaction-user-smoke" });
+        const capabilities = await core.getCapabilities({ deviceId, purpose: SIGN_TRANSACTION_USER_PURPOSE });
         assert.equal(capabilities.source, "live");
         assert.equal(capabilities.signing?.authorization, "user");
         assert.deepEqual(capabilities.signing?.methods, USER_SIGNING_METHODS);
@@ -439,7 +445,7 @@ test(
 
         const beforeHistory = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-sign-transaction-user-smoke",
+          purpose: SIGN_TRANSACTION_USER_PURPOSE,
           limit: 4,
         });
         assert.equal(beforeHistory.source, "live");
@@ -457,7 +463,7 @@ test(
 
         const result = await core.signTransaction({
           deviceId,
-          purpose: "client-sign-transaction-user-smoke",
+          purpose: SIGN_TRANSACTION_USER_PURPOSE,
           chain: "sui",
           method: "sign_transaction",
           network: "devnet",
@@ -478,18 +484,18 @@ test(
           assert.equal(recoveredDevice.protocolResponse.device.state, "idle");
           assert.equal(recoveredDevice.protocolResponse.provisioning.state, "provisioned");
 
-          await core.selectDevice({ deviceId, purpose: "client-sign-transaction-user-smoke" });
+          await core.selectDevice({ deviceId, purpose: SIGN_TRANSACTION_USER_PURPOSE });
           console.log("[client-sign-transaction-user-smoke] approve reconnect after USB session loss...");
           const reconnect = await core.connectDevice({
             deviceId,
-            purpose: "client-sign-transaction-user-smoke",
+            purpose: SIGN_TRANSACTION_USER_PURPOSE,
             gatewayName: "Agent-Q client sign_transaction smoke",
           });
           assert.equal(reconnect.source, "connected");
 
           const recoveredCapabilities = await core.getCapabilities({
             deviceId,
-            purpose: "client-sign-transaction-user-smoke",
+            purpose: SIGN_TRANSACTION_USER_PURPOSE,
           });
           assert.equal(recoveredCapabilities.source, "live");
           assert.equal(recoveredCapabilities.signing?.authorization, "user");
@@ -497,7 +503,7 @@ test(
 
           const afterReconnectHistory = await core.getApprovalHistory({
             deviceId,
-            purpose: "client-sign-transaction-user-smoke",
+            purpose: SIGN_TRANSACTION_USER_PURPOSE,
             limit: 4,
           });
           assertNoSmokeOutputLeak(afterReconnectHistory, forbiddenPayload("raw txBytes", userSigningTxBytes));
@@ -509,7 +515,7 @@ test(
 
         const afterHistory = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-sign-transaction-user-smoke",
+          purpose: SIGN_TRANSACTION_USER_PURPOSE,
           limit: 4,
         });
         assertNoSmokeOutputLeak(afterHistory, forbiddenPayload("raw txBytes", userSigningTxBytes));
@@ -535,7 +541,7 @@ test(
         }
       } finally {
         console.log("[client-sign-transaction-user-smoke] disconnecting...");
-        await core.disconnectDevice({ deviceId, purpose: "client-sign-transaction-user-smoke" }).catch(() => {});
+        await core.disconnectDevice({ deviceId, purpose: SIGN_TRANSACTION_USER_PURPOSE }).catch(() => {});
       }
     });
   },
@@ -559,16 +565,16 @@ test(
         : await readDefaultSuiTransferTxBytes();
 
       try {
-        await core.selectDevice({ deviceId, purpose: "client-sign-transaction-policy-smoke" });
+        await core.selectDevice({ deviceId, purpose: SIGN_TRANSACTION_POLICY_PURPOSE });
         console.log("[client-sign-transaction-policy-smoke] approve connect on device...");
         const connect = await core.connectDevice({
           deviceId,
-          purpose: "client-sign-transaction-policy-smoke",
+          purpose: SIGN_TRANSACTION_POLICY_PURPOSE,
           gatewayName: "Agent-Q client sign_transaction smoke",
         });
         assert.equal(connect.source, "connected");
 
-        const capabilities = await core.getCapabilities({ deviceId, purpose: "client-sign-transaction-policy-smoke" });
+        const capabilities = await core.getCapabilities({ deviceId, purpose: SIGN_TRANSACTION_POLICY_PURPOSE });
         assert.equal(capabilities.source, "live");
         assert.equal(capabilities.signing?.authorization, "policy");
         assert.deepEqual(capabilities.signing?.methods, POLICY_SIGNING_METHODS);
@@ -576,7 +582,7 @@ test(
 
         const beforeHistory = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-sign-transaction-policy-smoke",
+          purpose: SIGN_TRANSACTION_POLICY_PURPOSE,
           limit: 4,
         });
         assert.equal(beforeHistory.source, "live");
@@ -585,7 +591,7 @@ test(
         console.log("[client-sign-transaction-policy-smoke] sending policy-authorized Sui sign_transaction...");
         const result = await core.signTransaction({
           deviceId,
-          purpose: "client-sign-transaction-policy-smoke",
+          purpose: SIGN_TRANSACTION_POLICY_PURPOSE,
           chain: "sui",
           method: "sign_transaction",
           network: "devnet",
@@ -597,7 +603,7 @@ test(
 
         const afterHistory = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-sign-transaction-policy-smoke",
+          purpose: SIGN_TRANSACTION_POLICY_PURPOSE,
           limit: 4,
         });
         assertNoSmokeOutputLeak(afterHistory, forbiddenPayload("raw txBytes", txBytes));
@@ -617,7 +623,7 @@ test(
         }
       } finally {
         console.log("[client-sign-transaction-policy-smoke] disconnecting...");
-        await core.disconnectDevice({ deviceId, purpose: "client-sign-transaction-policy-smoke" }).catch(() => {});
+        await core.disconnectDevice({ deviceId, purpose: SIGN_TRANSACTION_POLICY_PURPOSE }).catch(() => {});
       }
     });
   },
@@ -639,12 +645,12 @@ test(
 
       try {
         console.log("[client-sign-personal-message-user-smoke] selecting device...");
-        await core.selectDevice({ deviceId, purpose: "client-sign-personal-message-user-smoke" });
+        await core.selectDevice({ deviceId, purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE });
 
         console.log("[client-sign-personal-message-user-smoke] approve connect on device...");
         const connect = await core.connectDevice({
           deviceId,
-          purpose: "client-sign-personal-message-user-smoke",
+          purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE,
           gatewayName: "Agent-Q client sign_personal_message smoke",
         });
         assert.equal(connect.source, "connected");
@@ -652,7 +658,7 @@ test(
         console.log("[client-sign-personal-message-user-smoke] checking raw client signing capability...");
         const capabilities = await core.getCapabilities({
           deviceId,
-          purpose: "client-sign-personal-message-user-smoke",
+          purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE,
         });
         assert.equal(capabilities.source, "live");
         assert.equal(capabilities.signing?.authorization, "user");
@@ -666,7 +672,7 @@ test(
 
         const beforeHistory = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-sign-personal-message-user-smoke",
+          purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE,
           limit: 4,
         });
         assert.equal(beforeHistory.source, "live");
@@ -684,7 +690,7 @@ test(
 
         const result = await core.signPersonalMessage({
           deviceId,
-          purpose: "client-sign-personal-message-user-smoke",
+          purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE,
           chain: "sui",
           method: "sign_personal_message",
           network: "devnet",
@@ -705,18 +711,18 @@ test(
           assert.equal(recoveredDevice.protocolResponse.device.state, "idle");
           assert.equal(recoveredDevice.protocolResponse.provisioning.state, "provisioned");
 
-          await core.selectDevice({ deviceId, purpose: "client-sign-personal-message-user-smoke" });
+          await core.selectDevice({ deviceId, purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE });
           console.log("[client-sign-personal-message-user-smoke] approve reconnect after USB session loss...");
           const reconnect = await core.connectDevice({
             deviceId,
-            purpose: "client-sign-personal-message-user-smoke",
+            purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE,
             gatewayName: "Agent-Q client sign_personal_message smoke",
           });
           assert.equal(reconnect.source, "connected");
 
           const recoveredCapabilities = await core.getCapabilities({
             deviceId,
-            purpose: "client-sign-personal-message-user-smoke",
+            purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE,
           });
           assert.equal(recoveredCapabilities.source, "live");
           assert.equal(recoveredCapabilities.signing?.authorization, "user");
@@ -724,7 +730,7 @@ test(
 
           const afterReconnectHistory = await core.getApprovalHistory({
             deviceId,
-            purpose: "client-sign-personal-message-user-smoke",
+            purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE,
             limit: 4,
           });
           assertNoSmokeOutputLeak(afterReconnectHistory, forbiddenPayload("raw message bytes", userPersonalMessageBytes));
@@ -736,7 +742,7 @@ test(
 
         const afterHistory = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-sign-personal-message-user-smoke",
+          purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE,
           limit: 4,
         });
         assertNoSmokeOutputLeak(afterHistory, forbiddenPayload("raw message bytes", userPersonalMessageBytes));
@@ -766,7 +772,7 @@ test(
         }
       } finally {
         console.log("[client-sign-personal-message-user-smoke] disconnecting...");
-        await core.disconnectDevice({ deviceId, purpose: "client-sign-personal-message-user-smoke" }).catch(() => {});
+        await core.disconnectDevice({ deviceId, purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE }).catch(() => {});
       }
     });
   },
@@ -787,18 +793,18 @@ test(
       );
 
       try {
-        await core.selectDevice({ deviceId, purpose: "client-sign-personal-message-policy-smoke" });
+        await core.selectDevice({ deviceId, purpose: SIGN_PERSONAL_MESSAGE_POLICY_PURPOSE });
         console.log("[client-sign-personal-message-policy-smoke] approve connect on device...");
         const connect = await core.connectDevice({
           deviceId,
-          purpose: "client-sign-personal-message-policy-smoke",
+          purpose: SIGN_PERSONAL_MESSAGE_POLICY_PURPOSE,
           gatewayName: "Agent-Q client sign_personal_message policy-mode smoke",
         });
         assert.equal(connect.source, "connected");
 
         const capabilities = await core.getCapabilities({
           deviceId,
-          purpose: "client-sign-personal-message-policy-smoke",
+          purpose: SIGN_PERSONAL_MESSAGE_POLICY_PURPOSE,
         });
         assert.equal(capabilities.source, "live");
         assert.equal(capabilities.signing?.authorization, "policy");
@@ -807,7 +813,7 @@ test(
 
         const beforeHistory = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-sign-personal-message-policy-smoke",
+          purpose: SIGN_PERSONAL_MESSAGE_POLICY_PURPOSE,
           limit: 4,
         });
         assert.equal(beforeHistory.source, "live");
@@ -817,7 +823,7 @@ test(
         await assert.rejects(
           () => core.signPersonalMessage({
             deviceId,
-            purpose: "client-sign-personal-message-policy-smoke",
+            purpose: SIGN_PERSONAL_MESSAGE_POLICY_PURPOSE,
             chain: "sui",
             method: "sign_personal_message",
             network: "devnet",
@@ -828,14 +834,14 @@ test(
 
         const afterHistory = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-sign-personal-message-policy-smoke",
+          purpose: SIGN_PERSONAL_MESSAGE_POLICY_PURPOSE,
           limit: 4,
         });
         assertNoSmokeOutputLeak(afterHistory, forbiddenPayload("raw message bytes", policyPersonalMessageBytes));
         assertNoNewSigningHistory(afterHistory, previousTopSeq);
       } finally {
         console.log("[client-sign-personal-message-policy-smoke] disconnecting...");
-        await core.disconnectDevice({ deviceId, purpose: "client-sign-personal-message-policy-smoke" }).catch(() => {});
+        await core.disconnectDevice({ deviceId, purpose: SIGN_PERSONAL_MESSAGE_POLICY_PURPOSE }).catch(() => {});
       }
     });
   },
@@ -856,11 +862,11 @@ test(
       );
 
       try {
-        await core.selectDevice({ deviceId, purpose: "client-policy-update-smoke" });
+        await core.selectDevice({ deviceId, purpose: POLICY_UPDATE_PURPOSE });
         console.log("[client-policy-update-smoke] connecting — enter the device PIN within 30s...");
         const connect = await core.connectDevice({
           deviceId,
-          purpose: "client-policy-update-smoke",
+          purpose: POLICY_UPDATE_PURPOSE,
           gatewayName: "Agent-Q client policy update smoke",
         });
         assert.equal(connect.source, "connected");
@@ -868,7 +874,7 @@ test(
         console.log("[client-policy-update-smoke] reading newest approval-history seq before the proposal...");
         const historyBeforeUpdate = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-policy-update-smoke",
+          purpose: POLICY_UPDATE_PURPOSE,
           limit: 1,
         });
         assert.equal(historyBeforeUpdate.source, "live");
@@ -891,7 +897,7 @@ test(
         console.log("[client-policy-update-smoke] proposing reject-only policy — enter the device PIN within 30s...");
         const update = await core.policyPropose({
           deviceId,
-          purpose: "client-policy-update-smoke",
+          purpose: POLICY_UPDATE_PURPOSE,
           policy: proposal,
         });
         assert.equal(update.source, "live");
@@ -903,7 +909,7 @@ test(
         assertNoSmokeOutputLeak(update);
 
         console.log("[client-policy-update-smoke] verifying committed policy summary...");
-        const policy = await core.policyGet({ deviceId, purpose: "client-policy-update-smoke" });
+        const policy = await core.policyGet({ deviceId, purpose: POLICY_UPDATE_PURPOSE });
         assert.equal(policy.source, "live");
         assert.equal(policy.policy.schema, "agentq.policy.v0");
         assert.equal(policy.policy.policyId, update.policy.policyHash);
@@ -915,7 +921,7 @@ test(
         console.log("[client-policy-update-smoke] verifying policy-update approval-history record...");
         const history = await core.getApprovalHistory({
           deviceId,
-          purpose: "client-policy-update-smoke",
+          purpose: POLICY_UPDATE_PURPOSE,
           limit: MAX_APPROVAL_HISTORY_RECORDS,
         });
         assert.equal(history.source, "live");
@@ -923,7 +929,7 @@ test(
         assertNoSmokeOutputLeak(history);
       } finally {
         console.log("[client-policy-update-smoke] disconnecting...");
-        await core.disconnectDevice({ deviceId, purpose: "client-policy-update-smoke" }).catch(() => {});
+        await core.disconnectDevice({ deviceId, purpose: POLICY_UPDATE_PURPOSE }).catch(() => {});
       }
     });
   },

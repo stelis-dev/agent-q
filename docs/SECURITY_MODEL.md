@@ -110,14 +110,18 @@ Implemented today:
   speech-bubble status notifications; user mode shows clear-signing review and
   requires local PIN confirmation. Requests cannot choose the authorization
   mode.
-  Current-tree transaction positive/reject/timeout/session-loss hardware smoke
-  remains pending; product-active status is not claimed.
+  Current-tree direct USB/Firmware hardware smoke has passed for transaction
+  user positive/reject/timeout/session-loss and policy signed/rejected
+  outcomes. LVGL visual evidence remains pending, so product-active status is
+  not claimed.
 - The `sign_personal_message` path has `source-wired-not-product-active` status
   for bounded Sui personal-message bytes. Firmware accepts it only in user
   authorization mode, uses clear-signing review and local PIN confirmation, and
   fails closed in policy mode because policy facts and rules for this method are
-  not implemented. Current-tree personal-message hardware smoke and LVGL visual
-  evidence remain pending; product-active status is not claimed.
+  not implemented. Current-tree direct USB/Firmware hardware smoke has passed
+  for user signed/rejected/timeout/session-loss and policy-mode fail-closed
+  outcomes. LVGL visual evidence remains pending, so product-active status is
+  not claimed.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 

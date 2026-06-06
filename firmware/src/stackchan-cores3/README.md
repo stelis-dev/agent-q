@@ -33,9 +33,10 @@ The current implementation includes:
   policy approval, user confirmation records only after device-local approval,
   terminal signing records for signed/failed/rejected/timed-out outcomes as
   applicable, user-mode `sign_personal_message` confirmation/terminal metadata,
-  and recordable `policy_propose` terminal results. Current-tree
-  positive/reject/timeout/session-loss smoke coverage for the current Sign API
-  wire names remains pending, so product-active status is not claimed.
+  and recordable `policy_propose` terminal results. Current-tree direct
+  USB/Firmware Sign API smoke covered newest approval-history checks for the
+  implemented signing outcomes. LVGL visual evidence remains pending, so
+  product-active status is not claimed.
 - a USB JSONL `sign_transaction` path. It requires material-backed `provisioned`
   state plus a matching active session, keeps unknown methods rejected with
   `unsupported_method`, and validates Sui `sign_transaction` restricted SUI
@@ -48,17 +49,19 @@ The current implementation includes:
   and signing succeeds. Sponsored gas, arbitrary Sui transactions,
   caller-selected authorization, caller-controlled timing fields, and
   chain-specific top-level signing APIs are not implemented. Current-tree
-  positive/reject/timeout smoke and session-loss smoke for the new Sign API
-  wire name remain pending, so product-active status is not claimed.
+  direct USB/Firmware hardware smoke has passed for user positive/reject/
+  timeout/session-loss and policy signed/rejected outcomes. LVGL visual
+  evidence remains pending, so product-active status is not claimed.
 - a USB JSONL `sign_personal_message` path. It requires material-backed
   `provisioned` state plus a matching active session, validates bounded Sui
   personal-message bytes, and is available only when the device-local signing
   authorization mode is `user`. User mode shows clear-signing review and
   requires local PIN confirmation before signing the Sui PersonalMessage intent
   digest. Policy mode fails closed with `unsupported_method`; policy facts and
-  rules for personal-message signing are not implemented. Current-tree hardware
-  smoke and LVGL visual evidence remain pending, so product-active status is
-  not claimed.
+  rules for personal-message signing are not implemented. Current-tree direct
+  USB/Firmware hardware smoke has passed for user signed/rejected/timeout/
+  session-loss and policy-mode fail-closed outcomes. LVGL visual evidence
+  remains pending, so product-active status is not claimed.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
   Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
   RAM, displays only the up-to-4-letter word prefixes on device in a 3-column
@@ -110,13 +113,15 @@ user mode performs device confirmation for the bounded restricted transfer
 shape after clear-signing review, local PIN, and required history. It rejects
 unsupported transactions and returns `signed`, `policy_rejected`,
 `user_rejected`, `user_timed_out`, or `signing_failed` through `sign_result` as
-applicable. Current-tree positive/reject/timeout/session-loss smoke for the
-`sign_transaction` wire name remains pending, so product-active status is not
-claimed.
+applicable. Current-tree direct USB/Firmware hardware smoke for the
+`sign_transaction` wire name has passed for user positive/reject/timeout/
+session-loss and policy signed/rejected outcomes. LVGL visual evidence remains
+pending, so product-active status is not claimed.
 The target also exposes user-mode `sign_personal_message` for bounded Sui
 personal-message bytes; policy mode fails closed for that method until matching
-policy facts and rules are implemented. Current-tree hardware smoke and LVGL
-visual evidence for personal-message signing remain pending.
+policy facts and rules are implemented. Current-tree direct USB/Firmware
+hardware smoke has passed for implemented personal-message outcomes; LVGL visual
+evidence remains pending.
 
 This target also implements the Firmware-owned `policy_propose` request
 for bounded current-schema policy proposals over an active session, local PIN approval, canonical

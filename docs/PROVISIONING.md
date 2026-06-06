@@ -143,9 +143,9 @@ Rules:
   device-local clear-signing review and local PIN confirmation. Requests cannot
   choose this mode. Personal-message signing is user-mode only and fails closed
   in policy mode.
-  Current-tree
-  positive/reject/timeout/session-loss hardware smoke coverage for the current
-  Sign API wire names remains pending, so product-active status is not claimed.
+  Current-tree direct USB/Firmware hardware smoke has passed for the implemented
+  Sign API outcomes. LVGL clear-signing visual evidence remains pending, so
+  product-active status is not claimed.
 - Agent-Q must not add chain-specific top-level MCP tools.
 
 The first implementation target is Sui Ed25519.

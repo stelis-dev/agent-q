@@ -121,8 +121,9 @@ restricted-transfer transaction bytes and user-mode-only `sign_personal_message`
 for bounded personal-message bytes. Firmware reads its device-local signing
 authorization mode for transaction signing, then chooses either the policy
 signing gate or the user-confirmed signing gate; requests do not choose it.
-Current-tree positive/reject/timeout/session-loss smoke and LVGL visual
-evidence remain pending, so product-active signing status is not claimed.
+Current-tree direct USB/Firmware hardware smoke for the implemented Sign API
+outcomes has passed. LVGL clear-signing visual evidence remains pending, so
+product-active signing status is not claimed.
 
 Firmware source is organized by hardware under `firmware/src/`.
 
@@ -235,16 +236,20 @@ Under current-source verification:
   state-first ingress, policy authorization, user clear-signing review, local
   PIN confirmation, required history, signing-critical handoff, terminal
   history, `sign_result`, provider `signTransaction`, client parser/builder,
-  MCP tool, and `get_capabilities.signing` metadata. Current-tree hardware
-  smoke remains pending; product-active status is not claimed.
+  MCP tool, and `get_capabilities.signing` metadata. Current-tree direct
+  USB/Firmware hardware smoke has passed for user positive/reject/timeout/
+  session-loss and policy signed/rejected outcomes; LVGL visual evidence remains
+  pending, so product-active status is not claimed.
 - `sign_personal_message` has source-wired but not product-active status for
   bounded Sui personal-message bytes. It uses user clear-signing review, local
   PIN confirmation, required history, the Sui PersonalMessage intent digest,
   `sign_result`, client/MCP/provider parser/API, Wallet Standard
   `sui:signPersonalMessage`, and user-mode `get_capabilities.signing`
   metadata. Policy mode is intentionally unsupported for this method until
-  matching policy facts and rules are designed. Current-tree hardware smoke
-  remains pending; product-active status is not claimed.
+  matching policy facts and rules are designed. Current-tree direct USB/Firmware
+  hardware smoke has passed for user signed/rejected/timeout/session-loss and
+  policy-mode fail-closed outcomes; LVGL visual evidence remains pending, so
+  product-active status is not claimed.
 
 Not yet implemented: arbitrary Sui transaction signing, sponsored Sui
 transaction signing, policy-authorized Sui personal-message signing, spending
