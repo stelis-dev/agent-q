@@ -144,6 +144,7 @@ function defaultDriver(overrides = {}) {
           policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
           defaultAction: "reject",
           ruleCount: 0,
+          rules: [],
         },
       };
     },
@@ -1308,7 +1309,7 @@ test("policyGet without a runtime session returns not_connected", async () => {
   });
 });
 
-test("policyGet returns the active Firmware policy summary and keeps the session", async () => {
+test("policyGet returns the active Firmware policy document and keeps the session", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(store, defaultDriver());
     await core.scanDevices();
@@ -1321,6 +1322,7 @@ test("policyGet returns the active Firmware policy summary and keeps the session
     assert.equal(result.policy.policyId, "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3");
     assert.equal(result.policy.defaultAction, "reject");
     assert.equal(result.policy.ruleCount, 0);
+    assert.deepEqual(result.policy.rules, []);
 
     // Read-only: the session is retained after policy_get.
     const listed = await core.listDevices();

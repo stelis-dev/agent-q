@@ -17,6 +17,14 @@ struct AgentQStoredPolicySummary {
     size_t rule_count;
 };
 
+struct AgentQStoredPolicyDocument {
+    const char* schema;
+    char policy_id[kAgentQPolicyIdSize];
+    const char* default_action;
+    size_t rule_count;
+    const AgentQPolicyDocument* document;
+};
+
 enum class AgentQPolicyStoreStatus {
     active,
     missing,
@@ -40,5 +48,6 @@ AgentQPolicyStoreStatus active_policy_status();
 
 AgentQPolicyProvider active_policy_provider();
 bool read_active_policy_summary(AgentQStoredPolicySummary* out);
+bool read_active_policy_document(AgentQStoredPolicyDocument* out);
 
 }  // namespace agent_q

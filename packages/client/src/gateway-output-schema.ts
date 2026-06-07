@@ -14,7 +14,6 @@ import {
 import { PUBLIC_ERROR_MESSAGES } from "./public-error.js";
 import {
   ED25519_PUBLIC_KEY_BASE64_PATTERN,
-  AGENT_Q_POLICY_SCHEMA,
   APPROVAL_HISTORY_HIGHEST_ACTIONS,
   APPROVAL_HISTORY_POLICY_UPDATE_RESULTS,
   APPROVAL_HISTORY_REASON_CODE_PATTERN,
@@ -40,6 +39,7 @@ import {
   UINT_DECIMAL_STRING_PATTERN,
   isUint64DecimalString,
   isSuiAddressForPublicKey,
+  sanitizeCurrentPolicyDocument,
 } from "./protocol.js";
 import {
   DEVICE_ID_PATTERN,
@@ -400,16 +400,19 @@ export const getAccountsToolOutputShape = z.discriminatedUnion("source", [
   errorToolResultShape,
 ]);
 
-const policySummaryShape = z.object({
-  schema: z.literal(AGENT_Q_POLICY_SCHEMA),
-  policyId: z.string().regex(POLICY_ID_PATTERN),
-  defaultAction: z.literal("reject"),
-  ruleCount: z.number().int().min(0).max(MAX_POLICY_RULE_COUNT),
-}).strict();
+const policyDocumentShape = z.custom((value) => {
+  try {
+    return sanitizeCurrentPolicyDocument(value) !== null;
+  } catch {
+    return false;
+  }
+}, {
+  message: "policy must match the current active policy document schema",
+});
 const livePolicyOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
-  policy: policySummaryShape,
+  policy: policyDocumentShape,
 }).strict();
 const notConnectedPolicyOutputShape = z.object({
   source: z.literal("not_connected"),

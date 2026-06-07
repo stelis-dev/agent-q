@@ -160,6 +160,7 @@ const noOpCore = {
         policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
         defaultAction: "reject",
         ruleCount: 0,
+        rules: [],
       },
     };
   },
@@ -673,7 +674,7 @@ test("get_accounts dispatch returns the public Sui account without a session tok
   });
 });
 
-test("policy_get dispatch returns the active policy summary without a session token", async () => {
+test("policy_get dispatch returns the active policy document without a session token", async () => {
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "policy_get", arguments: {} });
     assert.equal(result.structuredContent.source, "live");
@@ -684,6 +685,7 @@ test("policy_get dispatch returns the active policy summary without a session to
     );
     assert.equal(result.structuredContent.policy.defaultAction, "reject");
     assert.equal(result.structuredContent.policy.ruleCount, 0);
+    assert.deepEqual(result.structuredContent.policy.rules, []);
     assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
   });
 });
@@ -1003,6 +1005,7 @@ const leakyCore = {
         policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
         defaultAction: "reject",
         ruleCount: 0,
+        rules: [],
       },
       ...SECRET_EXTRAS,
     };
@@ -1147,6 +1150,74 @@ test("policy_get rejects unsupported live policy shapes", async () => {
           policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
           defaultAction: "approve",
           ruleCount: 0,
+          rules: [],
+        },
+      };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "policy_get", arguments: {} });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, "internal_output_error");
+  }, malformedCore);
+});
+
+test("policy_get rejects semantically invalid active policy documents", async () => {
+  const malformedCore = {
+    ...noOpCore,
+    async policyGet() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        policy: {
+          schema: "agentq.policy.v0",
+          policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+          defaultAction: "reject",
+          ruleCount: 1,
+          rules: [
+            {
+              id: "allow_unbounded_transfer",
+              chain: "sui",
+              method: "sign_transaction",
+              action: "sign",
+              criteria: [
+                { field: "sui.command_shape", op: "eq", value: "restricted_transfer" },
+                { field: "sui.amount_raw", op: "lte", value: "500000000" },
+              ],
+            },
+          ],
+        },
+      };
+    },
+  };
+  await withConnectedClient(async (client) => {
+    const result = await client.callTool({ name: "policy_get", arguments: {} });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, "internal_output_error");
+  }, malformedCore);
+});
+
+test("policy_get rejects active policy documents with unsupported reject-rule methods", async () => {
+  const malformedCore = {
+    ...noOpCore,
+    async policyGet() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        policy: {
+          schema: "agentq.policy.v0",
+          policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+          defaultAction: "reject",
+          ruleCount: 1,
+          rules: [
+            {
+              id: "reject_unknown_method",
+              chain: "unknown",
+              method: "unknown_method",
+              action: "reject",
+              criteria: [],
+            },
+          ],
         },
       };
     },

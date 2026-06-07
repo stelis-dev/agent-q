@@ -61,10 +61,22 @@ import {
   APPROVAL_HISTORY_REASON_CODE_PATTERN,
   APPROVAL_HISTORY_RULE_REF_PATTERN,
   MAX_APPROVAL_HISTORY_RECORDS,
+  MAX_POLICY_CHAIN_ID_LENGTH,
+  MAX_POLICY_CRITERION_VALUES,
+  MAX_POLICY_FIELD_ID_LENGTH,
+  MAX_POLICY_METHOD_LENGTH,
+  MAX_POLICY_RULE_CRITERIA,
   MAX_POLICY_RULE_COUNT,
+  MAX_POLICY_RULE_ID_LENGTH,
   MAX_POLICY_UPDATE_REQUEST_JSON_BYTES,
+  MAX_POLICY_VALUE_LENGTH,
+  POLICY_ACTIONS,
+  POLICY_FIELD_ID_PATTERN,
   POLICY_ID_PATTERN,
+  POLICY_IDENTIFIER_PATTERN,
+  POLICY_OPERATORS,
   POLICY_PROPOSE_RESULT_STATUSES,
+  POLICY_RULE_ID_PATTERN,
   SIGNING_HISTORY_RECORD_KINDS,
   SIGNING_HISTORY_TERMINAL_RESULTS,
   SIGN_CHAIN_PATTERN,
@@ -124,8 +136,15 @@ export {
   MAX_APPROVAL_HISTORY_RECORDS,
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
+  MAX_POLICY_CHAIN_ID_LENGTH,
+  MAX_POLICY_CRITERION_VALUES,
+  MAX_POLICY_FIELD_ID_LENGTH,
+  MAX_POLICY_METHOD_LENGTH,
+  MAX_POLICY_RULE_CRITERIA,
   MAX_POLICY_RULE_COUNT,
+  MAX_POLICY_RULE_ID_LENGTH,
   MAX_POLICY_UPDATE_REQUEST_JSON_BYTES,
+  MAX_POLICY_VALUE_LENGTH,
   MAX_PROTOCOL_RESPONSE_LINE_BYTES,
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
@@ -134,8 +153,13 @@ export {
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS,
+  POLICY_ACTIONS,
+  POLICY_FIELD_ID_PATTERN,
   POLICY_ID_PATTERN,
+  POLICY_IDENTIFIER_PATTERN,
+  POLICY_OPERATORS,
   POLICY_PROPOSE_RESULT_STATUSES,
+  POLICY_RULE_ID_PATTERN,
   PROTOCOL_VERSION,
   SIGNING_HISTORY_RECORD_KINDS,
   SIGNING_HISTORY_TERMINAL_RESULTS,
@@ -279,21 +303,38 @@ export interface IdentifyDeviceResponse {
   device: DeviceStatus;
 }
 
-export interface PolicySummary {
+export type PolicyAction = "reject" | "sign";
+export type PolicyOperator = "eq" | "in" | "lte";
+
+export interface PolicyCriterion {
+  field: string;
+  op: PolicyOperator;
+  value?: string;
+  values?: string[];
+}
+
+export interface PolicyRule {
+  id: string;
+  chain: string;
+  method: string;
+  action: PolicyAction;
+  criteria: PolicyCriterion[];
+}
+
+export interface PolicyDocument {
   schema: string;
   policyId: string;
   defaultAction: PolicyAction;
   ruleCount: number;
+  rules: PolicyRule[];
 }
 
 export interface PolicyResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
   type: "policy";
-  policy: PolicySummary;
+  policy: PolicyDocument;
 }
-
-export type PolicyAction = "reject" | "sign";
 
 export type SigningHistoryRecordKind = "confirmation" | "terminal";
 
@@ -630,7 +671,7 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     if (!hasOnlyObjectKeys(value, ["id", "version", "type", "policy"])) {
       throw new ProtocolError("protocol_error", "Policy response contains unsupported fields.");
     }
-    const policy = sanitizePolicySummary(value.policy);
+    const policy = sanitizeCurrentPolicyDocument(value.policy);
     if (policy === null) {
       throw new ProtocolError("protocol_error", "Policy response policy object is malformed.");
     }
@@ -863,15 +904,238 @@ export function isUint64DecimalString(value: unknown): value is string {
 
 const UINT64_MAX_DECIMAL = "18446744073709551615";
 
-function sanitizePolicySummary(value: unknown): PolicySummary | null {
+function isBoundedPolicyString(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLength;
+}
+
+function isPolicyIdentifierString(value: unknown, maxLength: number): value is string {
+  return isBoundedPolicyString(value, maxLength) && POLICY_IDENTIFIER_PATTERN.test(value);
+}
+
+type PolicyValueType = "string" | "u64_decimal";
+
+interface PolicyFieldDescriptor {
+  type: PolicyValueType;
+  allowEq: boolean;
+  allowIn: boolean;
+  allowLte: boolean;
+}
+
+const COMMON_POLICY_FIELDS: Record<string, PolicyFieldDescriptor> = {
+  "common.chain": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "common.method": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "common.intent": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+};
+
+const SUI_SIGN_TRANSACTION_POLICY_FIELDS: Record<string, PolicyFieldDescriptor> = {
+  "sui.command_shape": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.sender_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.recipient_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.coin_type": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.amount_raw": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.gas_budget": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.gas_price": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+};
+
+function policyRuleHasSupportedMethod(rule: Pick<PolicyRule, "chain" | "method">): boolean {
+  return rule.chain === SUI_CHAIN_ID && rule.method === SUI_SIGN_TRANSACTION_METHOD;
+}
+
+function findPolicyFieldDescriptor(rule: Pick<PolicyRule, "chain" | "method">, field: string): PolicyFieldDescriptor | null {
+  if (!policyRuleHasSupportedMethod(rule)) {
+    return null;
+  }
+  return COMMON_POLICY_FIELDS[field] ?? SUI_SIGN_TRANSACTION_POLICY_FIELDS[field] ?? null;
+}
+
+function policyOperatorAllowed(descriptor: PolicyFieldDescriptor, op: PolicyOperator): boolean {
+  switch (op) {
+    case "eq":
+      return descriptor.allowEq;
+    case "in":
+      return descriptor.allowIn;
+    case "lte":
+      return descriptor.allowLte;
+  }
+}
+
+function policyCriterionMatchesDescriptor(
+  rule: Pick<PolicyRule, "chain" | "method">,
+  criterion: PolicyCriterion,
+): boolean {
+  const descriptor = findPolicyFieldDescriptor(rule, criterion.field);
+  if (descriptor === null || !policyOperatorAllowed(descriptor, criterion.op)) {
+    return false;
+  }
+  if (criterion.op === "in") {
+    if (criterion.values === undefined || criterion.value !== undefined) {
+      return false;
+    }
+    return descriptor.type !== "u64_decimal" ||
+      criterion.values.every((value) => isUint64DecimalString(value));
+  }
+  if (criterion.value === undefined || criterion.values !== undefined) {
+    return false;
+  }
+  return descriptor.type !== "u64_decimal" || isUint64DecimalString(criterion.value);
+}
+
+function policyCriterionEq(criterion: PolicyCriterion, field: string, value: string): boolean {
+  return criterion.field === field &&
+    criterion.op === "eq" &&
+    criterion.value === value;
+}
+
+function policyCriterionLte(criterion: PolicyCriterion, field: string): boolean {
+  return criterion.field === field &&
+    criterion.op === "lte" &&
+    criterion.value !== undefined &&
+    isUint64DecimalString(criterion.value);
+}
+
+function policyRecipientIsBounded(criterion: PolicyCriterion): boolean {
+  if (criterion.field !== "sui.recipient_address") {
+    return false;
+  }
+  if (criterion.op === "eq") {
+    return criterion.value !== undefined && criterion.value.length > 0;
+  }
+  return criterion.op === "in" &&
+    criterion.values !== undefined &&
+    criterion.values.length === 1;
+}
+
+function policySignRuleIsBounded(rule: PolicyRule): boolean {
+  if (rule.action !== "sign") {
+    return true;
+  }
+  if (rule.chain !== SUI_CHAIN_ID ||
+      rule.method !== SUI_SIGN_TRANSACTION_METHOD ||
+      rule.criteria.length === 0) {
+    return false;
+  }
+
+  let hasIntent = false;
+  let hasShape = false;
+  let hasAsset = false;
+  let hasRecipient = false;
+  let hasAmountBound = false;
+  let hasGasBudgetBound = false;
+  let hasGasPriceBound = false;
+  for (const criterion of rule.criteria) {
+    hasIntent = hasIntent || policyCriterionEq(criterion, "common.intent", "single_asset_transfer");
+    hasShape = hasShape || policyCriterionEq(criterion, "sui.command_shape", "restricted_transfer");
+    hasAsset = hasAsset || policyCriterionEq(criterion, "sui.coin_type", "0x2::sui::SUI");
+    hasRecipient = hasRecipient || policyRecipientIsBounded(criterion);
+    hasAmountBound = hasAmountBound || policyCriterionLte(criterion, "sui.amount_raw");
+    hasGasBudgetBound = hasGasBudgetBound || policyCriterionLte(criterion, "sui.gas_budget");
+    hasGasPriceBound = hasGasPriceBound || policyCriterionLte(criterion, "sui.gas_price");
+  }
+  return hasIntent &&
+    hasShape &&
+    hasAsset &&
+    hasRecipient &&
+    hasAmountBound &&
+    hasGasBudgetBound &&
+    hasGasPriceBound;
+}
+
+function sanitizePolicyCriterion(value: unknown): PolicyCriterion | null {
   if (!isRecord(value)) {
     return null;
   }
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Policy summary must not include secret material.");
+    throw new ProtocolError("protocol_error", "Policy criterion must not include secret material.");
   }
-  if (!hasOnlyObjectKeys(value, ["schema", "policyId", "defaultAction", "ruleCount"])) {
-    throw new ProtocolError("protocol_error", "Policy summary contains unsupported fields.");
+  if (!isBoundedPolicyString(value.field, MAX_POLICY_FIELD_ID_LENGTH) ||
+      !POLICY_FIELD_ID_PATTERN.test(value.field) ||
+      typeof value.op !== "string" ||
+      !POLICY_OPERATORS.includes(value.op as PolicyOperator)) {
+    return null;
+  }
+
+  const op = value.op as PolicyOperator;
+  if (op === "in") {
+    if (!hasOnlyObjectKeys(value, ["field", "op", "values"])) {
+      throw new ProtocolError("protocol_error", "Policy criterion contains unsupported fields.");
+    }
+    if (!Array.isArray(value.values) ||
+        value.values.length === 0 ||
+        value.values.length > MAX_POLICY_CRITERION_VALUES ||
+        !value.values.every((item) => isBoundedPolicyString(item, MAX_POLICY_VALUE_LENGTH))) {
+      return null;
+    }
+    return {
+      field: value.field,
+      op,
+      values: [...value.values],
+    };
+  }
+
+  if (!hasOnlyObjectKeys(value, ["field", "op", "value"])) {
+    throw new ProtocolError("protocol_error", "Policy criterion contains unsupported fields.");
+  }
+  if (!isBoundedPolicyString(value.value, MAX_POLICY_VALUE_LENGTH)) {
+    return null;
+  }
+  return {
+    field: value.field,
+    op,
+    value: value.value,
+  };
+}
+
+function sanitizePolicyRule(value: unknown): PolicyRule | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (hasSecretPayloadKey(value)) {
+    throw new ProtocolError("protocol_error", "Policy rule must not include secret material.");
+  }
+  if (!hasOnlyObjectKeys(value, ["id", "chain", "method", "action", "criteria"])) {
+    throw new ProtocolError("protocol_error", "Policy rule contains unsupported fields.");
+  }
+  if (
+    !isBoundedPolicyString(value.id, MAX_POLICY_RULE_ID_LENGTH) ||
+    !POLICY_RULE_ID_PATTERN.test(value.id) ||
+    !isPolicyIdentifierString(value.chain, MAX_POLICY_CHAIN_ID_LENGTH) ||
+    !isPolicyIdentifierString(value.method, MAX_POLICY_METHOD_LENGTH) ||
+    typeof value.action !== "string" ||
+    !POLICY_ACTIONS.includes(value.action as PolicyAction) ||
+    !Array.isArray(value.criteria) ||
+    value.criteria.length > MAX_POLICY_RULE_CRITERIA
+  ) {
+    return null;
+  }
+
+  const criteria = value.criteria.map((criterion) => sanitizePolicyCriterion(criterion));
+  if (criteria.some((criterion) => criterion === null)) {
+    return null;
+  }
+  const rule = {
+    id: value.id,
+    chain: value.chain,
+    method: value.method,
+    action: value.action as PolicyAction,
+    criteria: criteria as PolicyCriterion[],
+  };
+  if (!policyRuleHasSupportedMethod(rule) ||
+      !rule.criteria.every((criterion) => policyCriterionMatchesDescriptor(rule, criterion)) ||
+      !policySignRuleIsBounded(rule)) {
+    return null;
+  }
+  return rule;
+}
+
+export function sanitizeCurrentPolicyDocument(value: unknown): PolicyDocument | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (hasSecretPayloadKey(value)) {
+    throw new ProtocolError("protocol_error", "Policy document must not include secret material.");
+  }
+  if (!hasOnlyObjectKeys(value, ["schema", "policyId", "defaultAction", "ruleCount", "rules"])) {
+    throw new ProtocolError("protocol_error", "Policy document contains unsupported fields.");
   }
   if (
     value.schema !== AGENT_Q_POLICY_SCHEMA ||
@@ -881,8 +1145,18 @@ function sanitizePolicySummary(value: unknown): PolicySummary | null {
     typeof value.ruleCount !== "number" ||
     !Number.isInteger(value.ruleCount) ||
     value.ruleCount < 0 ||
-    value.ruleCount > MAX_POLICY_RULE_COUNT
+    value.ruleCount > MAX_POLICY_RULE_COUNT ||
+    !Array.isArray(value.rules) ||
+    value.rules.length !== value.ruleCount
   ) {
+    return null;
+  }
+  const rules = value.rules.map((rule) => sanitizePolicyRule(rule));
+  if (rules.some((rule) => rule === null)) {
+    return null;
+  }
+  const signRuleCount = rules.filter((rule) => rule?.action === "sign").length;
+  if (signRuleCount > 1) {
     return null;
   }
   return {
@@ -890,6 +1164,7 @@ function sanitizePolicySummary(value: unknown): PolicySummary | null {
     policyId: value.policyId,
     defaultAction: value.defaultAction,
     ruleCount: value.ruleCount,
+    rules: rules as PolicyRule[],
   };
 }
 

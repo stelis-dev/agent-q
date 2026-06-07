@@ -251,8 +251,8 @@ authorization mode; it is not a request option, setter, or security decision
 made by Gateway, MCP, provider, Admin Page, dapp, or CLI callers.
 `get_accounts` is implemented as a read-only, session-scoped identity request
 for the Sui Ed25519 account at index 0 in the `provisioned` state.
-`policy_get` is implemented as a read-only, session-scoped summary of the
-committed active policy; it is metadata only and not a policy update surface.
+`policy_get` is implemented as a read-only, session-scoped readback of the
+committed active policy document; it is not a policy update surface.
 The normal product flow still installs the DEV_PROFILE default-reject policy.
 `get_approval_history` is implemented as a read-only, session-scoped
 view of Firmware-owned persistent decision metadata. The current Sign API
@@ -899,11 +899,12 @@ Rules:
   including the Firmware-authored `authorization` mode and supported signing
   methods.
 
-## Policy Summary
+## Policy Readback
 
-`policy_get` is a session-scoped read-only request that returns public metadata
-for the active Firmware-owned policy provider used by `sign_transaction`. It does not
-return policy secrets, signing material, or an editable policy document.
+`policy_get` is a session-scoped read-only request that returns the committed
+active Firmware-owned policy document used by `sign_transaction`. It does not
+return policy secrets, signing material, pending policy proposals, approval
+history, or an editor surface.
 
 Request:
 
@@ -927,14 +928,15 @@ Response:
     "schema": "agentq.policy.v0",
     "policyId": "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
     "defaultAction": "reject",
-    "ruleCount": 0
+    "ruleCount": 0,
+    "rules": []
   }
 }
 ```
 
 Rules:
 
-- Firmware returns a policy summary only when `provisioning.state` is
+- Firmware returns the active policy document only when `provisioning.state` is
   `provisioned`, persistent material is consistent, a committed active policy
   record exists, and the request has a matching active session.
 - Corrupt, unreadable, missing, or unsupported current active policy material is a
@@ -944,10 +946,13 @@ Rules:
 - `policyId` is the lowercase SHA-256 identifier for the canonical stored
   policy record. It is metadata for drift detection, not an authorization token.
 - The current StackChan CoreS3 target supports only `agentq.policy.v0`,
-  `defaultAction: "reject"`, and a bounded `ruleCount` summary. The normal
-  product flow installs `ruleCount: 0`; custom current-schema policy records may become
+  `defaultAction: "reject"`, a bounded `ruleCount`, and bounded `rules[]`
+  matching the current policy proposal rule shape. The normal product flow
+  installs `ruleCount: 0`; custom current-schema policy records may become
   active only through the Firmware-owned `policy_propose` proposal flow.
-  Full policy content exposure is not implemented.
+- `ruleCount` must match `rules.length`. Each rule is bounded by the current
+  policy schema: `id`, `chain`, `method`, `action`, and `criteria[]`; each
+  criterion contains `field`, `op`, and either `value` or `values`.
 - Gateway validates the response strictly, rejects secret-like fields and any
   unexpected `sessionId`, and does not evaluate policy.
 - The Gateway MCP `policy_get` tool never exposes the session id.

@@ -24,8 +24,8 @@ import {
   type ConnectResponse,
   type DeviceStatusSnapshot,
   type IdentifyDeviceResponse,
+  type PolicyDocument,
   type PolicyProposeResultResponse,
-  type PolicySummary,
   ProtocolError,
   type SignPersonalMessageParams,
   type SignResultResponse,
@@ -225,10 +225,10 @@ export type GetAccountsResult =
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: GetAccountsSessionEndedReason };
 
-// policy_get is read-only and session-scoped. The policy summary is
-// Firmware-authored metadata for the active policy provider used by transaction signing.
+// policy_get is read-only and session-scoped. The policy document is
+// Firmware-authored active-policy readback, not an editor surface.
 export type PolicyGetResult =
-  | { source: "live"; deviceId: string; policy: PolicySummary }
+  | { source: "live"; deviceId: string; policy: PolicyDocument }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: PolicyGetSessionEndedReason };
 

@@ -52,12 +52,52 @@ function validLiveStatus() {
   };
 }
 
-function validPolicySummary() {
+function validPolicyDocument() {
   return {
     schema: "agentq.policy.v0",
     policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
     defaultAction: "reject",
     ruleCount: 0,
+    rules: [],
+  };
+}
+
+function invalidUnboundedSignPolicyDocument() {
+  return {
+    schema: "agentq.policy.v0",
+    policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+    defaultAction: "reject",
+    ruleCount: 1,
+    rules: [
+      {
+        id: "allow_unbounded_transfer",
+        chain: "sui",
+        method: "sign_transaction",
+        action: "sign",
+        criteria: [
+          { field: "sui.command_shape", op: "eq", value: "restricted_transfer" },
+          { field: "sui.amount_raw", op: "lte", value: "500000000" },
+        ],
+      },
+    ],
+  };
+}
+
+function invalidUnsupportedRejectPolicyDocument() {
+  return {
+    schema: "agentq.policy.v0",
+    policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+    defaultAction: "reject",
+    ruleCount: 1,
+    rules: [
+      {
+        id: "reject_unknown_method",
+        chain: "unknown",
+        method: "unknown_method",
+        action: "reject",
+        criteria: [],
+      },
+    ],
   };
 }
 
@@ -129,7 +169,7 @@ function validGatewaySuccessOutputSamples() {
       },
     },
     getAccounts: { source: "live", deviceId: DEVICE_ID, accounts: [validLiveAccount()] },
-    policyGet: { source: "live", deviceId: DEVICE_ID, policy: validPolicySummary() },
+    policyGet: { source: "live", deviceId: DEVICE_ID, policy: validPolicyDocument() },
     getApprovalHistory: { source: "live", deviceId: DEVICE_ID, records: [], hasMore: false },
     signTransaction: validSignTransactionSignedOutput(),
     signPersonalMessage: validSignPersonalMessageSignedOutput(),
@@ -213,6 +253,18 @@ test("gateway success output schemas reject unknown nested fields", () => {
   assert.throws(() => gatewaySuccessOutputSchemas.policyPropose.parse({
     ...samples.policyPropose,
     policy: { ...samples.policyPropose.policy, sessionId: "session_should_not_leak" },
+  }));
+});
+
+test("gateway success output schemas reject semantically invalid policy documents", () => {
+  const samples = validGatewaySuccessOutputSamples();
+  assert.throws(() => gatewaySuccessOutputSchemas.policyGet.parse({
+    ...samples.policyGet,
+    policy: invalidUnboundedSignPolicyDocument(),
+  }));
+  assert.throws(() => gatewaySuccessOutputSchemas.policyGet.parse({
+    ...samples.policyGet,
+    policy: invalidUnsupportedRejectPolicyDocument(),
   }));
 });
 

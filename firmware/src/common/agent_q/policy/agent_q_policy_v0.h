@@ -82,6 +82,7 @@ struct AgentQPolicyDecision {
 };
 
 const char* agent_q_policy_action_name(AgentQPolicyAction action);
+const char* agent_q_policy_operator_name(AgentQPolicyOperator op);
 const char* agent_q_policy_decision_reason_name(AgentQPolicyDecisionReason reason);
 
 AgentQPolicyDecision evaluate_agent_q_policy_v0(

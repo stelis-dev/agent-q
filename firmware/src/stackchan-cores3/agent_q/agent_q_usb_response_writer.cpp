@@ -12,7 +12,6 @@ namespace agent_q {
 namespace {
 
 constexpr const char* kTag = "UsbResponseWriter";
-constexpr size_t kResponseBufferSize = 4096;
 constexpr size_t kUsbSerialWriteChunkBytes = 512;
 constexpr uint32_t kUsbSerialWriteChunkTimeoutMs = 100;
 constexpr uint32_t kUsbSerialTxDoneTimeoutMs = 100;
@@ -47,31 +46,57 @@ bool write_usb_serial_bytes(const char* data, size_t length)
     return true;
 }
 
+class UsbSerialJsonWriter {
+public:
+    size_t write(uint8_t value)
+    {
+        return write(&value, 1);
+    }
+
+    size_t write(const uint8_t* data, size_t length)
+    {
+        if (failed_ || data == nullptr || length == 0) {
+            return 0;
+        }
+        if (!write_usb_serial_bytes(reinterpret_cast<const char*>(data), length)) {
+            failed_ = true;
+            return 0;
+        }
+        return length;
+    }
+
+    bool failed() const
+    {
+        return failed_;
+    }
+
+private:
+    bool failed_ = false;
+};
+
 }  // namespace
 
 bool usb_response_write_json(JsonDocument& response)
 {
-    static char buffer[kResponseBufferSize];
     if (response.overflowed()) {
         ESP_LOGW(kTag, "USB JSON response document overflowed");
         return false;
     }
     const size_t measured = measureJson(response);
-    if (measured == 0 || measured + 2 > sizeof(buffer)) {
+    if (measured == 0 || measured > kAgentQUsbResponseLineMaxBytes) {
         ESP_LOGW(kTag, "USB JSON response too large: bytes=%u",
                  static_cast<unsigned>(measured));
         return false;
     }
-    size_t len = serializeJson(response, buffer, sizeof(buffer) - 2);
-    if (len != measured || len + 2 > sizeof(buffer)) {
+    UsbSerialJsonWriter writer;
+    const size_t len = serializeJson(response, writer);
+    if (writer.failed() || len != measured) {
         ESP_LOGW(kTag, "USB JSON response serialization mismatch: measured=%u serialized=%u",
                  static_cast<unsigned>(measured),
                  static_cast<unsigned>(len));
         return false;
     }
-    buffer[len++] = '\n';
-    buffer[len] = '\0';
-    return write_usb_serial_bytes(buffer, len);
+    return write_usb_serial_bytes("\n", 1);
 }
 
 }  // namespace agent_q

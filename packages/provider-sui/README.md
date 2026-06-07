@@ -66,7 +66,7 @@ policy evaluation, signing, persistence, and cleanup.
 - `signPersonalMessage`
 
 The dapp-facing provider object does not include policy update proposals,
-active policy summaries, approval history, or any host-selected signing
+active policy readback, approval history, or any host-selected signing
 authorization API.
 Those APIs remain on broader client, MCP, or Admin surfaces. This is API
 projection for the provider audience, not a security claim that the same

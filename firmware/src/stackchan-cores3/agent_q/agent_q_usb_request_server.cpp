@@ -24,6 +24,7 @@
 #include "agent_q_local_reset.h"
 #include "agent_q_modal_drawing.h"
 #include "agent_q_persistent_material.h"
+#include "agent_q_policy_proposal_parser.h"
 #include "agent_q_policy_store.h"
 #include "agent_q_protocol_pin_approval.h"
 #include "agent_q_policy_update_flow.h"
@@ -104,6 +105,7 @@ constexpr uint32_t kUsbHostLinkCheckMs = 10;
 constexpr size_t kMaxRawJsonObjectBytes = 4096;
 constexpr size_t kLineBufferSize = kMaxRawJsonObjectBytes + 1;
 constexpr uint32_t kUsbRequestTaskStackBytes = 8192;
+constexpr size_t kPolicyReadbackEnvelopeReserveBytes = 1024;
 constexpr size_t kMaxRequestIdSize = agent_q::kAgentQRequestIdSize;
 constexpr size_t kDeviceIdSize = 37;
 constexpr size_t kIdentifyCodeSize = 5;
@@ -114,6 +116,11 @@ constexpr int kScreenWidth = 320;
 constexpr int kSettingsTouchEntryWidth = 64;
 constexpr int kSettingsTouchEntryHeight = 56;
 constexpr uint32_t kAgentQResultDisplayMs = 1800;
+
+static_assert(
+    agent_q::kAgentQPolicyProposalMaxSerializedObjectBytes + kPolicyReadbackEnvelopeReserveBytes <=
+        agent_q::kAgentQUsbResponseLineMaxBytes,
+    "policy_get readback for accepted policy proposals must fit within the USB response line cap");
 
 enum class AgentQUiEventKind {
     panel_deleted,
@@ -736,11 +743,17 @@ bool write_capabilities_response(
     return agent_q::usb_response_write_json(response);
 }
 
-bool write_policy_response(const char* id)
+enum class PolicyResponseWriteResult {
+    ok,
+    active_policy_unavailable,
+    response_write_failed,
+};
+
+PolicyResponseWriteResult write_policy_response(const char* id)
 {
-    agent_q::AgentQStoredPolicySummary policy = {};
-    if (!agent_q::read_active_policy_summary(&policy)) {
-        return false;
+    agent_q::AgentQStoredPolicyDocument policy = {};
+    if (!agent_q::read_active_policy_document(&policy) || policy.document == nullptr) {
+        return PolicyResponseWriteResult::active_policy_unavailable;
     }
 
     JsonDocument response;
@@ -752,7 +765,35 @@ bool write_policy_response(const char* id)
     policy_json["policyId"] = policy.policy_id;
     policy_json["defaultAction"] = policy.default_action;
     policy_json["ruleCount"] = policy.rule_count;
-    return agent_q::usb_response_write_json(response);
+    JsonArray rules = policy_json["rules"].to<JsonArray>();
+    const agent_q::AgentQPolicyDocument& document = *policy.document;
+    for (size_t rule_index = 0; rule_index < document.rule_count; ++rule_index) {
+        const agent_q::AgentQPolicyRule& source_rule = document.rules[rule_index];
+        JsonObject rule = rules.add<JsonObject>();
+        rule["id"] = source_rule.id;
+        rule["chain"] = source_rule.chain;
+        rule["method"] = source_rule.operation;
+        rule["action"] = agent_q::agent_q_policy_action_name(source_rule.action);
+        JsonArray criteria = rule["criteria"].to<JsonArray>();
+        for (size_t criterion_index = 0; criterion_index < source_rule.criterion_count; ++criterion_index) {
+            const agent_q::AgentQPolicyCriterion& source_criterion =
+                source_rule.criteria[criterion_index];
+            JsonObject criterion = criteria.add<JsonObject>();
+            criterion["field"] = source_criterion.field;
+            criterion["op"] = agent_q::agent_q_policy_operator_name(source_criterion.op);
+            if (source_criterion.op == agent_q::AgentQPolicyOperator::in) {
+                JsonArray values = criterion["values"].to<JsonArray>();
+                for (size_t value_index = 0; value_index < source_criterion.value_count; ++value_index) {
+                    values.add(source_criterion.values[value_index]);
+                }
+            } else {
+                criterion["value"] = source_criterion.value;
+            }
+        }
+    }
+    return agent_q::usb_response_write_json(response)
+               ? PolicyResponseWriteResult::ok
+               : PolicyResponseWriteResult::response_write_failed;
 }
 
 bool write_approval_history_response(const char* id, uint64_t before_sequence, size_t limit)
@@ -5986,7 +6027,7 @@ void handle_line(const char* line)
 
     if (strcmp(type, "policy_get") == 0) {
         // policy_get is a session-scoped read-only request. Firmware returns
-        // metadata for the active policy document it will use for method
+        // the committed active policy document it will use for method
         // decisions; Gateway must not infer policy state from local defaults.
         if (!provisioned_material_ready()) {
             write_error_response(id, "invalid_state", "Policy is available only after provisioning is complete.");
@@ -6015,16 +6056,21 @@ void handle_line(const char* line)
             return;
         }
 
-        if (!write_policy_response(id)) {
-            agent_q::persistent_material_record_runtime_failure(
-                agent_q::AgentQPersistentMaterialRuntimeFailure::active_policy_unavailable,
-                persistent_material_ops());
-            write_error_response(id, "policy_error", "Active policy is unavailable.");
-            ESP_LOGW(kTag, "policy_get active policy unavailable: id=%s", id);
-            return;
+        switch (write_policy_response(id)) {
+            case PolicyResponseWriteResult::ok:
+                ESP_LOGI(kTag, "policy_get: id=%s", id);
+                return;
+            case PolicyResponseWriteResult::active_policy_unavailable:
+                agent_q::persistent_material_record_runtime_failure(
+                    agent_q::AgentQPersistentMaterialRuntimeFailure::active_policy_unavailable,
+                    persistent_material_ops());
+                write_error_response(id, "policy_error", "Active policy is unavailable.");
+                ESP_LOGW(kTag, "policy_get active policy unavailable: id=%s", id);
+                return;
+            case PolicyResponseWriteResult::response_write_failed:
+                log_response_write_failure("policy", id);
+                return;
         }
-        ESP_LOGI(kTag, "policy_get: id=%s", id);
-        return;
     }
 
     if (strcmp(type, "get_approval_history") == 0) {

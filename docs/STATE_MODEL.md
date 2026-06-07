@@ -194,7 +194,7 @@ storage. In the current StackChan CoreS3 DEV_PROFILE implementation this means a
 binary BIP-39 entropy blob, a canonical active policy record, and a local
 6-digit PIN verifier record are stored in ordinary NVS and `prov_state` is
 `provisioned`; the normal product flow installs the default-reject policy, while
-read-only Sui account derivation, read-only active policy summary,
+read-only Sui account derivation, read-only active policy document readback,
 source-level local reset/material wipe, and the Firmware-owned
 `policy_propose` proposal flow for current-schema reject policies and at
 most one single-recipient bounded sign rule are implemented. USER_PROFILE secure
@@ -236,7 +236,7 @@ This state is not signing approval. In the current StackChan CoreS3
 implementation, `provisioned` enables `connect`, `disconnect`, read-only
 `get_capabilities` for Sui account identity with no delegated public methods
 and top-level `signing`, read-only `get_accounts` (Sui Ed25519 account 0),
-read-only `policy_get` for the committed active policy summary, read-only
+read-only `policy_get` for the committed active policy document, read-only
 `get_approval_history` for Firmware-owned persistent decision metadata, and the
 session-scoped Sign API runtime. `sign_transaction` has
 `source-wired-not-product-active` status for the bounded Sui `sign_transaction`

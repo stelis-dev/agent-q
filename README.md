@@ -196,7 +196,7 @@ Implemented:
 - Disconnect.
 - Read-only Sui account and public-key discovery over an approved runtime
   session.
-- Session-scoped capability, policy-summary, and approval-history reads for the
+- Session-scoped capability, active policy readback, and approval-history reads for the
   currently implemented device metadata, signing records, and policy-update
   terminal records.
 - A session-scoped `sign_transaction` path. The current Sui `sign_transaction`
@@ -211,8 +211,8 @@ Implemented:
   rejects broad, multi-rule, or multi-recipient signing policies that the
   current device-local policy review cannot show clearly, requires device-local
   approval, commits the active policy, and records the terminal result.
-- A local Gateway-served Admin Page for device discovery, connection, policy
-  summary, approval history, and the current policy proposal template. It
+- A local Gateway-served Admin Page for device discovery, connection, active
+  policy readback, approval history, and the current policy proposal template. It
   is not a policy authority.
 - A Sui application-facing provider package for device discovery, connection,
   read-only Sui account/capability data, `signTransaction` transport, and
@@ -221,7 +221,7 @@ Implemented:
   `sui:signPersonalMessage`, plus a Web Serial browser runtime that implements
   only the browser provider contract for dapps. Its dapp-facing
   provider object, browser runtime, and Wallet Standard adapter do not include
-  active policy summaries, approval history, policy update, policy signing, key
+  active policy readback, approval history, policy update, policy signing, key
   storage, signing decisions, or `sui:signAndExecuteTransaction`.
   Personal-message signing is source-wired for user authorization mode only and
   fails closed in policy mode. `signTransaction` may still use Firmware policy

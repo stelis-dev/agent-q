@@ -77,6 +77,7 @@ function defaultCore(overrides = {}) {
           policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
           defaultAction: "reject",
           ruleCount: 0,
+          rules: [],
         },
       };
     },
@@ -387,6 +388,40 @@ test("Admin API rejects an explicit invalid deviceId instead of using the defaul
     assert.equal(response.body.error.code, "invalid_device_id");
     assert.equal(response.body.error.message, "The provided deviceId is invalid.");
   });
+});
+
+test("Admin API rejects active policy documents with unsupported reject-rule methods", async () => {
+  await withAdminServer(
+    defaultCore({
+      async policyGet() {
+        return {
+          source: "live",
+          deviceId,
+          policy: {
+            schema: "agentq.policy.v0",
+            policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+            defaultAction: "reject",
+            ruleCount: 1,
+            rules: [
+              {
+                id: "reject_unknown_method",
+                chain: "unknown",
+                method: "unknown_method",
+                action: "reject",
+                criteria: [],
+              },
+            ],
+          },
+        };
+      },
+    }),
+    async (baseUrl) => {
+      const response = await postJson(baseUrl, "/api/policy_get", {});
+      assert.equal(response.status, 500);
+      assert.equal(response.body.ok, false);
+      assert.equal(response.body.error.code, "internal_output_error");
+    },
+  );
 });
 
 test("Admin API projects raw core errors through the public error policy", async () => {

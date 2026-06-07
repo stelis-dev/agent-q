@@ -242,6 +242,19 @@ const char* agent_q_policy_action_name(AgentQPolicyAction action)
     return "unknown";
 }
 
+const char* agent_q_policy_operator_name(AgentQPolicyOperator op)
+{
+    switch (op) {
+        case AgentQPolicyOperator::eq:
+            return "eq";
+        case AgentQPolicyOperator::in:
+            return "in";
+        case AgentQPolicyOperator::lte:
+            return "lte";
+    }
+    return "unknown";
+}
+
 const char* agent_q_policy_decision_reason_name(AgentQPolicyDecisionReason reason)
 {
     switch (reason) {

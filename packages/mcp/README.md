@@ -59,7 +59,7 @@ non-configurable margin.
 
 The `agent-q` binary serves a local Admin Page alongside stdio MCP tools through
 one shared Gateway core instance. The Admin Page supports device discovery,
-connection, active policy summary, approval history, and the current
+connection, active policy readback, approval history, and the current
 policy proposal template.
 
 The Admin Page is not a separate product and is not a policy authority.

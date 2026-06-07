@@ -6,9 +6,11 @@ usage() {
 Usage: firmware/tools/stackchan-cores3/test_policy_store.sh
 
 ESP-IDF must already be active in the shell so IDF_PATH points to the ESP-IDF
-checkout. The test compiles the StackChan CoreS3 active policy store with NVS
-stubs and ESP-IDF mbedTLS SHA-256, then checks stored default-policy metadata and
-provider fail-closed behavior.
+checkout. ArduinoJson must be available at ARDUINOJSON_ROOT or the default
+.firmware-cache StackChan component path. The test compiles the StackChan CoreS3
+active policy store with NVS stubs, ESP-IDF mbedTLS SHA-256, and the USB policy
+response writer, then checks stored policy metadata, full-document readback size,
+and provider fail-closed behavior.
 EOF
 }
 
@@ -21,6 +23,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
+ARDUINOJSON_ROOT="${ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 if [[ -z "${IDF_PATH:-}" ]]; then
   echo "IDF_PATH is not set. Source ESP-IDF v5.5.4 export.sh before running this test." >&2
@@ -36,8 +40,13 @@ if [[ ! -f "${MBEDTLS_INCLUDE_DIR}/mbedtls/sha256.h" || ! -f "${MBEDTLS_LIBRARY_
 fi
 
 for required in \
+  "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_store.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_store.h" \
+  "${TARGET_ROOT}/agent_q/agent_q_policy_proposal_parser.cpp" \
+  "${TARGET_ROOT}/agent_q/agent_q_policy_proposal_parser.h" \
+  "${TARGET_ROOT}/agent_q/agent_q_request_id.h" \
+  "${TARGET_ROOT}/agent_q/agent_q_usb_response_writer.h" \
   "${COMMON_ROOT}/agent_q_u64_decimal.h" \
   "${COMMON_ROOT}/policy/agent_q_policy_canonical.cpp" \
   "${COMMON_ROOT}/policy/agent_q_policy_canonical.h" \
@@ -114,12 +123,17 @@ cat >"${TMP_DIR}/policy_store_test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
+#include <ArduinoJson.h>
+
 #include "esp_err.h"
 #include "nvs.h"
 #include "agent_q_common/policy/agent_q_policy_canonical.h"
 #include "agent_q_common/policy/agent_q_policy_schema.h"
 #include "agent_q_common/sui/agent_q_sui_method_adapter.h"
+#include "agent_q_policy_proposal_parser.h"
 #include "agent_q_policy_store.h"
+#include "agent_q_request_id.h"
+#include "agent_q_usb_response_writer.h"
 
 namespace {
 
@@ -270,6 +284,156 @@ bool make_reject_rule_record(
     }
     output->assign(bytes, bytes + size);
     return true;
+}
+
+bool fill_generated_policy(JsonDocument* policy, size_t rule_count, size_t value_length)
+{
+    if (policy == nullptr ||
+        rule_count == 0 ||
+        rule_count > agent_q::kAgentQPolicyMaxRules ||
+        value_length == 0 ||
+        value_length > agent_q::kAgentQPolicyMaxValueLength) {
+        return false;
+    }
+
+    JsonObject root = policy->to<JsonObject>();
+    root["schema"] = "agentq.policy.v0";
+    root["defaultAction"] = "reject";
+    JsonArray rules = root["rules"].to<JsonArray>();
+    for (size_t rule_index = 0; rule_index < rule_count; ++rule_index) {
+        JsonObject rule = rules.add<JsonObject>();
+        char rule_id[agent_q::kAgentQPolicyMaxRuleIdLength + 1] = {};
+        snprintf(rule_id, sizeof(rule_id), "reject-%02u", static_cast<unsigned>(rule_index));
+        rule["id"] = rule_id;
+        rule["chain"] = "sui";
+        rule["method"] = "sign_transaction";
+        rule["action"] = "reject";
+        JsonArray criteria = rule["criteria"].to<JsonArray>();
+
+        JsonObject intent = criteria.add<JsonObject>();
+        intent["field"] = "common.intent";
+        intent["op"] = "eq";
+        intent["value"] = "single_asset_transfer";
+
+        JsonObject recipient = criteria.add<JsonObject>();
+        recipient["field"] = "sui.recipient_address";
+        recipient["op"] = "in";
+        JsonArray values = recipient["values"].to<JsonArray>();
+        std::string value = "recipient";
+        while (value.size() < value_length) {
+            value.push_back(static_cast<char>('a' + (rule_index % 26)));
+        }
+        values.add(value.c_str());
+    }
+    return !policy->overflowed();
+}
+
+bool make_largest_generated_proposal_record(
+    std::vector<uint8_t>* output,
+    size_t* proposal_json_size)
+{
+    if (output == nullptr || proposal_json_size == nullptr) {
+        return false;
+    }
+    output->clear();
+    *proposal_json_size = 0;
+
+    std::vector<uint8_t> best_record;
+    size_t best_size = 0;
+    for (size_t rule_count = 1; rule_count <= agent_q::kAgentQPolicyMaxRules; ++rule_count) {
+        for (size_t value_length = 1; value_length <= agent_q::kAgentQPolicyMaxValueLength; ++value_length) {
+            JsonDocument policy;
+            if (!fill_generated_policy(&policy, rule_count, value_length)) {
+                continue;
+            }
+            const size_t measured = measureJson(policy);
+            if (measured == 0 ||
+                measured > agent_q::kAgentQPolicyProposalMaxSerializedObjectBytes ||
+                measured <= best_size) {
+                continue;
+            }
+
+            agent_q::AgentQParsedPolicyProposal proposal = {};
+            const agent_q::AgentQPolicyMethodDescriptor method =
+                agent_q::sui_sign_transaction_policy_method_descriptor();
+            if (agent_q::parse_agent_q_policy_proposal(
+                    policy.as<JsonVariantConst>(),
+                    &method,
+                    1,
+                    &proposal) != agent_q::AgentQPolicyProposalParseStatus::ok) {
+                continue;
+            }
+
+            agent_q::AgentQPolicyCanonicalDocument canonical = {};
+            uint8_t bytes[agent_q::kAgentQPolicyMaxCanonicalRecordBytes] = {};
+            size_t size = 0;
+            if (agent_q::canonicalize_agent_q_policy_v0(proposal.document, &method, 1, &canonical) !=
+                    agent_q::AgentQPolicyCanonicalStatus::ok ||
+                agent_q::encode_agent_q_policy_v0_canonical_record(canonical, bytes, sizeof(bytes), &size) !=
+                    agent_q::AgentQPolicyCanonicalStatus::ok) {
+                continue;
+            }
+
+            best_record.assign(bytes, bytes + size);
+            best_size = measured;
+        }
+    }
+
+    if (best_record.empty()) {
+        return false;
+    }
+    *output = best_record;
+    *proposal_json_size = best_size;
+    return true;
+}
+
+size_t measure_policy_readback_response_json(
+    const agent_q::AgentQStoredPolicyDocument& policy,
+    const char* id)
+{
+    if (id == nullptr || policy.document == nullptr) {
+        return 0;
+    }
+
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = 1;
+    response["type"] = "policy";
+    JsonObject policy_json = response["policy"].to<JsonObject>();
+    policy_json["schema"] = policy.schema;
+    policy_json["policyId"] = policy.policy_id;
+    policy_json["defaultAction"] = policy.default_action;
+    policy_json["ruleCount"] = policy.rule_count;
+    JsonArray rules = policy_json["rules"].to<JsonArray>();
+    const agent_q::AgentQPolicyDocument& document = *policy.document;
+    for (size_t rule_index = 0; rule_index < document.rule_count; ++rule_index) {
+        const agent_q::AgentQPolicyRule& source_rule = document.rules[rule_index];
+        JsonObject rule = rules.add<JsonObject>();
+        rule["id"] = source_rule.id;
+        rule["chain"] = source_rule.chain;
+        rule["method"] = source_rule.operation;
+        rule["action"] = agent_q::agent_q_policy_action_name(source_rule.action);
+        JsonArray criteria = rule["criteria"].to<JsonArray>();
+        for (size_t criterion_index = 0; criterion_index < source_rule.criterion_count; ++criterion_index) {
+            const agent_q::AgentQPolicyCriterion& source_criterion =
+                source_rule.criteria[criterion_index];
+            JsonObject criterion = criteria.add<JsonObject>();
+            criterion["field"] = source_criterion.field;
+            criterion["op"] = agent_q::agent_q_policy_operator_name(source_criterion.op);
+            if (source_criterion.op == agent_q::AgentQPolicyOperator::in) {
+                JsonArray values = criterion["values"].to<JsonArray>();
+                for (size_t value_index = 0; value_index < source_criterion.value_count; ++value_index) {
+                    values.add(source_criterion.values[value_index]);
+                }
+            } else {
+                criterion["value"] = source_criterion.value;
+            }
+        }
+    }
+    if (response.overflowed()) {
+        return 0;
+    }
+    return measureJson(response);
 }
 
 void write_u64_be(uint64_t value, uint8_t* output)
@@ -424,6 +588,9 @@ esp_err_t nvs_commit(nvs_handle_t handle)
 int main()
 {
     agent_q::AgentQStoredPolicySummary summary = {};
+    agent_q::AgentQStoredPolicyDocument document = {};
+    static_assert(sizeof(agent_q::AgentQStoredPolicyDocument) < 256,
+                  "policy document readback metadata must not copy the runtime policy view");
     std::vector<uint8_t> default_record;
     std::vector<uint8_t> custom_record;
     std::vector<uint8_t> custom_record_2;
@@ -433,6 +600,7 @@ int main()
 
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "missing policy status");
     expect(!agent_q::read_active_policy_summary(&summary), "missing policy summary fails closed");
+    expect(!agent_q::read_active_policy_document(&document), "missing policy document fails closed");
     agent_q::AgentQPolicyDecision decision = evaluate_active_policy();
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "missing policy rejects");
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::invalid_policy, "missing policy reason is invalid_policy");
@@ -446,10 +614,16 @@ int main()
     expect(agent_q::store_default_policy(), "store default policy");
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "stored policy status");
     expect(agent_q::read_active_policy_summary(&summary), "read default policy summary");
+    expect(agent_q::read_active_policy_document(&document), "read default policy document");
     expect(strcmp(summary.schema, "agentq.policy.v0") == 0, "policy schema");
     expect(strcmp(summary.default_action, "reject") == 0, "policy default action");
     expect(summary.rule_count == 0, "policy rule count");
     expect(strcmp(summary.policy_id, "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3") == 0, "policy id");
+    expect(strcmp(document.schema, "agentq.policy.v0") == 0, "policy document schema");
+    expect(strcmp(document.default_action, "reject") == 0, "policy document default action");
+    expect(document.rule_count == 0, "policy document rule count");
+    expect(document.document != nullptr, "default policy document view");
+    expect(document.document->rule_count == 0, "default policy document has no rules");
 
     std::string active_commit_key;
     std::vector<uint8_t> active_commit_blob;
@@ -512,8 +686,14 @@ int main()
     expect(store_record_applied(custom_record), "store custom policy record");
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "custom policy status");
     expect(agent_q::read_active_policy_summary(&summary), "custom policy summary");
+    expect(agent_q::read_active_policy_document(&document), "custom policy document");
     expect(summary.rule_count == 1, "custom policy rule count");
     expect(strncmp(summary.policy_id, "sha256:", 7) == 0, "custom policy id prefix");
+    expect(document.rule_count == 1, "custom policy document rule count");
+    expect(document.document != nullptr, "custom policy document view");
+    expect(document.document->rule_count == 1, "custom policy runtime view rule count");
+    expect(strcmp(document.document->rules[0].id, "reject-transfer") == 0, "custom policy document rule id");
+    expect(document.document->rules[0].criterion_count > 0, "custom policy document carries criteria");
     decision = evaluate_active_policy();
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "custom policy matching rule rejects");
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::matched_rule, "custom policy match reason");
@@ -603,6 +783,7 @@ int main()
     g_blobs["pol_s0"][0] = 0;
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid, "corrupt policy status");
     expect(!agent_q::read_active_policy_summary(&summary), "corrupt policy summary fails closed");
+    expect(!agent_q::read_active_policy_document(&document), "corrupt policy document fails closed");
     decision = evaluate_active_policy();
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "corrupt policy rejects");
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::invalid_policy, "corrupt policy reason is invalid_policy");
@@ -617,6 +798,7 @@ int main()
     expect(g_blobs.empty(), "policy blob wiped");
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "wiped policy status");
     expect(!agent_q::read_active_policy_summary(&summary), "wiped policy summary fails closed");
+    expect(!agent_q::read_active_policy_document(&document), "wiped policy document fails closed");
 
     g_commit_fails = true;
     expect(!agent_q::store_default_policy(), "commit failure fails closed");
@@ -628,6 +810,25 @@ int main()
     g_open_fails = true;
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::storage_error, "storage error policy status");
     g_open_fails = false;
+
+    std::vector<uint8_t> large_policy_record;
+    size_t large_policy_proposal_size = 0;
+    expect(
+        make_largest_generated_proposal_record(&large_policy_record, &large_policy_proposal_size),
+        "build largest generated accepted policy proposal record");
+    expect(large_policy_proposal_size <= agent_q::kAgentQPolicyProposalMaxSerializedObjectBytes,
+           "largest generated policy proposal respects proposal byte cap");
+    expect(large_policy_proposal_size + 256 > agent_q::kAgentQPolicyProposalMaxSerializedObjectBytes,
+           "largest generated policy proposal exercises the proposal byte cap");
+    expect(store_record_applied(large_policy_record), "store largest generated policy proposal record");
+    expect(agent_q::read_active_policy_document(&document), "read largest generated policy document");
+    const std::string worst_request_id(agent_q::kAgentQRequestIdSize - 1, 'r');
+    const size_t readback_json_size =
+        measure_policy_readback_response_json(document, worst_request_id.c_str());
+    expect(readback_json_size != 0, "largest generated policy readback serializes");
+    expect(readback_json_size <= agent_q::kAgentQUsbResponseLineMaxBytes,
+           "largest generated policy readback fits USB response line cap");
+    expect(agent_q::wipe_policy(), "wipe largest generated policy record");
 
     if (failures != 0) {
         fprintf(stderr, "Policy store tests failed: %d\n", failures);
@@ -653,9 +854,11 @@ CXX_BIN="${CXX:-c++}"
   -I"${TMP_DIR}" \
   -I"${TARGET_ROOT}/agent_q" \
   -I"${COMMON_ROOT}" \
+  -I"${ARDUINOJSON_ROOT}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/policy_store_test.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_store.cpp" \
+  "${TARGET_ROOT}/agent_q/agent_q_policy_proposal_parser.cpp" \
   "${COMMON_ROOT}/policy/agent_q_policy_canonical.cpp" \
   "${COMMON_ROOT}/policy/agent_q_policy_schema.cpp" \
   "${COMMON_ROOT}/policy/agent_q_policy_v0.cpp" \

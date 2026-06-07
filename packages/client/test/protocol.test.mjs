@@ -835,27 +835,69 @@ const policyLine = (policyOverrides = {}, topLevelOverrides = {}) =>
       policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
       defaultAction: "reject",
       ruleCount: 0,
+      rules: [],
       ...policyOverrides,
     },
     ...topLevelOverrides,
   });
 
-test("parseProtocolResponse accepts a valid active policy summary", () => {
+const validPolicyRule = () => ({
+  id: "allow_self_transfer",
+  chain: "sui",
+  method: "sign_transaction",
+  action: "sign",
+  criteria: [
+    { field: "common.intent", op: "eq", value: "single_asset_transfer" },
+    { field: "sui.command_shape", op: "eq", value: "restricted_transfer" },
+    { field: "sui.coin_type", op: "eq", value: "0x2::sui::SUI" },
+    { field: "sui.recipient_address", op: "in", values: ["0x4b7ba5768f9ed7d0ecbcad64be775f49951f215495a10134a8acc4bdeab7da97"] },
+    { field: "sui.amount_raw", op: "lte", value: "500000000" },
+    { field: "sui.gas_budget", op: "lte", value: "50000000" },
+    { field: "sui.gas_price", op: "lte", value: "10000" },
+  ],
+});
+
+const policyLineWithRule = (rule) => policyLine({ ruleCount: 1, rules: [rule] });
+const policyRuleWithCriteria = (criteria) => ({ ...validPolicyRule(), criteria });
+const replacePolicyRuleCriterion = (field, replacement) =>
+  validPolicyRule().criteria.map((criterion) => criterion.field === field ? replacement : criterion);
+const validEmptyRejectPolicyRule = () => ({
+  id: "reject_supported_sui_tx",
+  chain: "sui",
+  method: "sign_transaction",
+  action: "reject",
+  criteria: [],
+});
+
+test("parseProtocolResponse accepts a valid active policy document", () => {
   const response = assertPolicyResponse(parseProtocolResponse(policyLine(), "req_policy"));
   assert.equal(response.type, "policy");
   assert.equal(response.policy.schema, "agentq.policy.v0");
   assert.equal(response.policy.defaultAction, "reject");
   assert.equal(response.policy.ruleCount, 0);
+  assert.deepEqual(response.policy.rules, []);
   assert.match(response.policy.policyId, /^sha256:[0-9a-f]{64}$/);
 });
 
-test("parseProtocolResponse accepts a bounded custom policy summary", () => {
-  const response = assertPolicyResponse(parseProtocolResponse(policyLine({ ruleCount: 1 }), "req_policy"));
+test("parseProtocolResponse accepts a bounded custom policy document", () => {
+  const response = assertPolicyResponse(parseProtocolResponse(policyLine({
+    ruleCount: 1,
+    rules: [validPolicyRule()],
+  }), "req_policy"));
   assert.equal(response.type, "policy");
   assert.equal(response.policy.ruleCount, 1);
+  assert.equal(response.policy.rules.length, 1);
+  assert.equal(response.policy.rules[0].criteria.length, 7);
 });
 
-test("parseProtocolResponse rejects malformed policy summaries", () => {
+test("parseProtocolResponse accepts an empty reject rule for a supported current method", () => {
+  const response = assertPolicyResponse(parseProtocolResponse(policyLineWithRule(validEmptyRejectPolicyRule()), "req_policy"));
+  assert.equal(response.type, "policy");
+  assert.equal(response.policy.ruleCount, 1);
+  assert.deepEqual(response.policy.rules[0], validEmptyRejectPolicyRule());
+});
+
+test("parseProtocolResponse rejects malformed policy documents", () => {
   assert.throws(() => parseProtocolResponse(policyLine({ schema: "agentq.policy.v1" }), "req_policy"), {
     code: "protocol_error",
   });
@@ -874,7 +916,69 @@ test("parseProtocolResponse rejects malformed policy summaries", () => {
   assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 1.5 }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLine({ rules: [] }), "req_policy"), {
+  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 1, rules: [] }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({ rules: [{ ...validPolicyRule(), privateKey: "x" }] }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLineWithRule(
+    policyRuleWithCriteria([{ field: "sui.amount_raw", op: "lte", values: ["1"] }]),
+  ), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLineWithRule(
+    policyRuleWithCriteria(validPolicyRule().criteria.filter((criterion) => criterion.field !== "sui.gas_price")),
+  ), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLineWithRule(
+    policyRuleWithCriteria(replacePolicyRuleCriterion("sui.amount_raw", {
+      field: "sui.amount_raw",
+      op: "lte",
+      value: "000500000000",
+    })),
+  ), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLineWithRule(
+    policyRuleWithCriteria(replacePolicyRuleCriterion("sui.amount_raw", {
+      field: "sui.amount_raw",
+      op: "in",
+      values: ["500000000"],
+    })),
+  ), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLineWithRule(
+    policyRuleWithCriteria(replacePolicyRuleCriterion("sui.recipient_address", {
+      field: "sui.recipient_address",
+      op: "in",
+      values: [
+        "0x4b7ba5768f9ed7d0ecbcad64be775f49951f215495a10134a8acc4bdeab7da97",
+        "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+      ],
+    })),
+  ), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 2, rules: [validPolicyRule(), { ...validPolicyRule(), id: "allow_second_transfer" }] }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 1, rules: [{ ...validPolicyRule(), method: "sign_personal_message" }] }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLineWithRule({
+    ...validEmptyRejectPolicyRule(),
+    method: "sign_personal_message",
+  }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLineWithRule({
+    ...validEmptyRejectPolicyRule(),
+    chain: "unknown",
+    method: "unknown_method",
+  }), "req_policy"), {
     code: "protocol_error",
   });
   assert.throws(() => parseProtocolResponse(policyLine({}, { sessionId: "session_abcdef0123456789" }), "req_policy"), {
@@ -882,7 +986,7 @@ test("parseProtocolResponse rejects malformed policy summaries", () => {
   });
 });
 
-test("parseProtocolResponse rejects policy summaries carrying secret material", () => {
+test("parseProtocolResponse rejects policy documents carrying secret material", () => {
   for (const fieldName of FORBIDDEN_SECRET_FIELD_NAMES) {
     assert.throws(
       () => parseProtocolResponse(policyLine({ [fieldName]: "secret-like value" }), "req_policy"),

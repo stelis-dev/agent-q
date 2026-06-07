@@ -84,9 +84,10 @@ Implemented today:
   policy provider. The current product flow installs the default-reject policy,
   while the target stores the committed active policy as a canonical binary
   record in ordinary NVS and can load canonical current-schema policy records
-  through its internal storage boundary. Firmware reads a public summary through
-  `policy_get`, consumes that active policy only when the Firmware-local signing
-  authorization mode is `policy`, rejects broad, multi-rule, and
+  through its internal storage boundary. Firmware exposes read-only active policy
+  document readback through `policy_get`, consumes that active policy only when
+  the Firmware-local signing authorization mode is `policy`, rejects broad,
+  multi-rule, and
   multi-recipient sign policies that the current device-local policy review
   cannot show clearly, and exposes policy update authorization only through the
   Firmware-owned `policy_propose` proposal flow. Policy actions do not authorize

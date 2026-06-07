@@ -948,4 +948,29 @@ bool read_active_policy_summary(AgentQStoredPolicySummary* out)
     return true;
 }
 
+bool read_active_policy_document(AgentQStoredPolicyDocument* out)
+{
+    if (out == nullptr) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+
+    ActivePolicySelection selection = {};
+    if (select_active_policy(&selection, true) != AgentQPolicyStoreStatus::active ||
+        decode_agent_q_policy_v0_canonical_record(
+            g_policy_record_buffer,
+            selection.record_size,
+            &g_policy_document) != AgentQPolicyCanonicalStatus::ok ||
+        !policy_id_for_record(g_policy_record_buffer, selection.record_size, out->policy_id, sizeof(out->policy_id)) ||
+        !agent_q_policy_canonical_to_runtime_view(g_policy_document, &g_policy_runtime_view)) {
+        return false;
+    }
+
+    out->schema = kAgentQStoredPolicySchema;
+    out->default_action = agent_q_policy_action_name(g_policy_document.default_action);
+    out->rule_count = g_policy_document.rule_count;
+    out->document = &g_policy_runtime_view.document;
+    return true;
+}
+
 }  // namespace agent_q

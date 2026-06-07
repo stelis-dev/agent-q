@@ -932,13 +932,14 @@ test(
         assert.match(update.policy.policyHash, /^sha256:[0-9a-f]{64}$/);
         assertNoSmokeOutputLeak(update);
 
-        console.log("[client-policy-update-smoke] verifying committed policy summary...");
+        console.log("[client-policy-update-smoke] verifying committed policy document...");
         const policy = await core.policyGet({ deviceId, purpose: POLICY_UPDATE_PURPOSE });
         assert.equal(policy.source, "live");
         assert.equal(policy.policy.schema, "agentq.policy.v0");
         assert.equal(policy.policy.policyId, update.policy.policyHash);
         assert.equal(policy.policy.defaultAction, "reject");
         assert.equal(policy.policy.ruleCount, 1);
+        assert.equal(policy.policy.rules.length, 1);
         assert.ok(policy.policy.ruleCount <= MAX_POLICY_RULE_COUNT);
         assertNoSmokeOutputLeak(policy);
 
