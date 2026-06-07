@@ -93,13 +93,31 @@ bool connect_approval_begin(
     return true;
 }
 
-bool connect_approval_choose(AgentQConnectApprovalChoice choice)
+bool connect_approval_review_action_available(TickType_t now)
 {
-    if (!connect_approval_awaiting_choice() ||
+    return connect_approval_awaiting_choice() &&
+           timeout_window_valid(g_state.approval_window) &&
+           !timeout_window_reached(g_state.approval_window, now);
+}
+
+bool connect_approval_choose(AgentQConnectApprovalChoice choice, TickType_t now)
+{
+    if (!connect_approval_review_action_available(now) ||
         choice == AgentQConnectApprovalChoice::none) {
         return false;
     }
     g_state.choice = choice;
+    return true;
+}
+
+bool connect_approval_return_to_review(AgentQTimeoutWindow approval_window)
+{
+    if (!g_state.active ||
+        !timeout_window_valid(approval_window)) {
+        return false;
+    }
+    g_state.choice = AgentQConnectApprovalChoice::none;
+    g_state.approval_window = approval_window;
     return true;
 }
 

@@ -73,7 +73,7 @@ int main()
     expect(!p.relevant, "idle state is not USB-session-loss relevant");
     expect(!p.clear_session && !p.clear_connect_approval && !p.clear_protocol_pin &&
 	               !p.wipe_local_pin_auth && !p.clear_policy_update_flow &&
-	               !p.cancel_user_signing && !p.clear_decision_panel &&
+	               !p.cancel_user_signing && !p.clear_connect_review_panel &&
 	               !p.clear_local_pin_panel && !p.clear_policy_update_review_panel &&
 	               !p.clear_user_signing_review_panel,
 	           "idle plan has no cleanup actions");
@@ -85,8 +85,8 @@ int main()
            "session-only loss does not clear unrelated owners");
 
     p = plan(false, true, ProtocolPurpose::none, LocalPurpose::none);
-    expect(p.relevant && p.clear_connect_approval && p.clear_decision_panel,
-           "physical connect approval is cleared with decision panel");
+    expect(p.relevant && p.clear_connect_approval && p.clear_connect_review_panel,
+           "physical connect approval is cleared with review panel");
     expect(!p.clear_session && !p.clear_protocol_pin && !p.wipe_local_pin_auth,
            "physical connect approval does not imply other cleanup");
 
@@ -138,7 +138,7 @@ int main()
 	    p = plan(true, true, ProtocolPurpose::policy_update, LocalPurpose::policy_update);
 	    expect(p.relevant && p.clear_session && p.clear_connect_approval &&
 	               p.clear_protocol_pin && p.wipe_local_pin_auth &&
-	               p.clear_policy_update_flow && p.clear_decision_panel && p.clear_local_pin_panel,
+	               p.clear_policy_update_flow && p.clear_connect_review_panel && p.clear_local_pin_panel,
 	           "combined session-bound state plans all relevant cleanup");
 
     p = plan(false, false, ProtocolPurpose::other, LocalPurpose::other);

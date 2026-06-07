@@ -1129,6 +1129,18 @@ test("parseProtocolResponse accepts signing approval history records", () => {
   assert.equal(confirmation.records[0].confirmationKind, "local_pin");
   assert.equal(confirmation.records[0].payloadDigest, APPROVAL_DIGEST);
 
+  const physicalConfirmation = assertApprovalHistoryResponse(
+    parseProtocolResponse(
+      approvalHistorySigningUserLine({ confirmationKind: "physical_confirm" }),
+      "req_approval_history",
+    ),
+  );
+  assert.equal(physicalConfirmation.records[0].eventKind, "signing");
+  assert.equal(physicalConfirmation.records[0].recordKind, "confirmation");
+  assert.equal(physicalConfirmation.records[0].authorization, "user");
+  assert.equal(physicalConfirmation.records[0].confirmationKind, "physical_confirm");
+  assert.equal(physicalConfirmation.records[0].payloadDigest, APPROVAL_DIGEST);
+
   const terminal = assertApprovalHistoryResponse(
     parseProtocolResponse(
       approvalHistorySigningUserLine({}, {}, true),

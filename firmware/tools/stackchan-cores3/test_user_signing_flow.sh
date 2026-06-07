@@ -539,6 +539,26 @@ int main()
            "signed terminal mapping");
 
     agent_q::user_signing_flow_clear();
+    reset_history_writer_stub();
+    expect(begin_valid_flow("req_physical_confirm"), "begin before physical confirm");
+    expect(agent_q::user_signing_flow_record_physical_confirmed_and_write_confirmation_history(
+               99,
+               write_confirmation_history,
+               nullptr) == Transition::ok,
+           "physical confirm writes durable history and enters critical section");
+    expect(g_history_write_calls == 1, "physical confirm history writer called once");
+    expect(agent_q::user_signing_flow_in_signing_critical_section(),
+           "physical confirm enters signing critical section");
+    expect(agent_q::user_signing_flow_consume_signable_payload(copied.data(), copied.size(), &copied_size) ==
+               Transition::ok,
+           "payload is consumable after physical confirmation history durability");
+    expect(agent_q::user_signing_flow_complete_signed() == Transition::ok,
+           "physical confirm signed terminal is recorded");
+    expect(agent_q::user_signing_flow_consume_terminal_result(&terminal) &&
+               terminal == Terminal::signed_success,
+           "physical confirm signed terminal consumed");
+
+    agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_reject"), "begin before reject");
     expect(agent_q::user_signing_flow_record_device_rejected() == Transition::ok,
            "device rejection terminalizes from review");

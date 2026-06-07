@@ -3,10 +3,10 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: firmware/tools/stackchan-cores3/test_connect_settings.sh
+Usage: firmware/tools/stackchan-cores3/test_human_approval_settings.sh
 
-Compiles the StackChan CoreS3 connect approval setting store against host NVS
-stubs and verifies the missing-key secure default, stored OFF override, invalid
+Compiles the StackChan CoreS3 human approval input mode store against host NVS
+stubs and verifies the missing-key PIN default, stored Confirm override, invalid
 value fail-closed behavior, and reset wipe back to the missing-key default.
 EOF
 }
@@ -21,8 +21,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
 
 for required in \
-  "${AGENT_Q_DIR}/agent_q_connect_settings.cpp" \
-  "${AGENT_Q_DIR}/agent_q_connect_settings.h"; do
+  "${AGENT_Q_DIR}/agent_q_human_approval_settings.cpp" \
+  "${AGENT_Q_DIR}/agent_q_human_approval_settings.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -31,7 +31,7 @@ done
 
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-connect-settings.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-human-approval-settings.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/stubs"
@@ -80,11 +80,11 @@ esp_err_t nvs_commit(nvs_handle_t handle);
 }
 H
 
-cat >"${TMP_DIR}/connect_settings_test.cpp" <<'CPP'
+cat >"${TMP_DIR}/human_approval_settings_test.cpp" <<'CPP'
 #include <stdint.h>
 #include <stdio.h>
 
-#include "agent_q_connect_settings.h"
+#include "agent_q_human_approval_settings.h"
 #include "esp_err.h"
 #include "nvs.h"
 
@@ -170,44 +170,51 @@ esp_err_t nvs_commit(nvs_handle_t handle)
 
 int main()
 {
-    bool required = false;
+    agent_q::AgentQHumanApprovalInputMode mode =
+        agent_q::AgentQHumanApprovalInputMode::confirm;
 
-    expect(agent_q::read_require_pin_on_connect(&required), "missing setting read succeeds");
-    expect(required, "missing setting defaults to PIN required");
-    expect(agent_q::connect_requires_pin(), "missing setting requires PIN");
+    expect(agent_q::read_human_approval_input_mode(&mode), "missing setting read succeeds");
+    expect(mode == agent_q::AgentQHumanApprovalInputMode::pin,
+           "missing setting defaults to PIN input");
+    expect(agent_q::human_approval_requires_pin(), "missing setting requires PIN");
 
-    expect(agent_q::store_require_pin_on_connect(false), "store PIN-off setting");
-    expect(agent_q::read_require_pin_on_connect(&required), "stored setting read succeeds");
-    expect(!required, "stored OFF disables connect PIN");
-    expect(!agent_q::connect_requires_pin(), "stored OFF is observed");
+    expect(agent_q::store_human_approval_input_mode(agent_q::AgentQHumanApprovalInputMode::confirm),
+           "store Confirm input mode");
+    expect(agent_q::read_human_approval_input_mode(&mode), "stored setting read succeeds");
+    expect(mode == agent_q::AgentQHumanApprovalInputMode::confirm,
+           "stored Confirm input mode is observed");
+    expect(!agent_q::human_approval_requires_pin(), "stored Confirm mode does not require PIN");
 
-    expect(agent_q::wipe_require_pin_on_connect(), "wipe connect PIN setting");
-    expect(agent_q::read_require_pin_on_connect(&required), "wiped setting read succeeds");
-    expect(required, "wiped setting returns to secure missing-key default");
+    expect(agent_q::wipe_human_approval_input_mode(), "wipe human approval input mode");
+    expect(agent_q::read_human_approval_input_mode(&mode), "wiped setting read succeeds");
+    expect(mode == agent_q::AgentQHumanApprovalInputMode::pin,
+           "wiped setting returns to PIN default");
 
     g_namespace_missing = true;
-    expect(agent_q::wipe_require_pin_on_connect(), "missing namespace wipe succeeds");
+    expect(agent_q::wipe_human_approval_input_mode(), "missing namespace wipe succeeds");
     g_namespace_missing = false;
 
     g_has_value = true;
     g_value = 2;
-    required = false;
-    expect(!agent_q::read_require_pin_on_connect(&required), "invalid setting reports read failure");
-    expect(required, "invalid setting fails closed to PIN required");
-    expect(agent_q::connect_requires_pin(), "invalid setting requires PIN");
+    mode = agent_q::AgentQHumanApprovalInputMode::confirm;
+    expect(!agent_q::read_human_approval_input_mode(&mode), "invalid setting reports read failure");
+    expect(mode == agent_q::AgentQHumanApprovalInputMode::pin,
+           "invalid setting fails closed to PIN mode");
+    expect(agent_q::human_approval_requires_pin(), "invalid setting requires PIN");
 
     g_open_fails = true;
-    required = false;
-    expect(!agent_q::read_require_pin_on_connect(&required), "storage error reports read failure");
-    expect(required, "storage error fails closed to PIN required");
-    expect(agent_q::connect_requires_pin(), "storage error requires PIN");
+    mode = agent_q::AgentQHumanApprovalInputMode::confirm;
+    expect(!agent_q::read_human_approval_input_mode(&mode), "storage error reports read failure");
+    expect(mode == agent_q::AgentQHumanApprovalInputMode::pin,
+           "storage error fails closed to PIN mode");
+    expect(agent_q::human_approval_requires_pin(), "storage error requires PIN");
     g_open_fails = false;
 
     if (failures != 0) {
-        fprintf(stderr, "Connect settings tests failed: %d\n", failures);
+        fprintf(stderr, "Human approval settings tests failed: %d\n", failures);
         return 1;
     }
-    printf("Connect settings tests passed\n");
+    printf("Human approval settings tests passed\n");
     return 0;
 }
 CPP
@@ -215,8 +222,8 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
   -I"${AGENT_Q_DIR}" \
-  "${TMP_DIR}/connect_settings_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_connect_settings.cpp" \
-  -o "${TMP_DIR}/connect_settings_test"
+  "${TMP_DIR}/human_approval_settings_test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_human_approval_settings.cpp" \
+  -o "${TMP_DIR}/human_approval_settings_test"
 
-"${TMP_DIR}/connect_settings_test"
+"${TMP_DIR}/human_approval_settings_test"

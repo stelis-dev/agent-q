@@ -43,6 +43,7 @@ cat >"${TMP_DIR}/persistent_material_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
+#include "agent_q_human_approval_settings.h"
 #include "agent_q_persistent_material.h"
 
 namespace {
@@ -50,13 +51,14 @@ namespace {
 bool g_root_present = false;
 bool g_policy_present = false;
 bool g_auth_present = false;
-bool g_connect_setting_present = false;
+bool g_human_approval_setting_present = false;
 bool g_approval_history_present = false;
 bool g_policy_update_marker_present = false;
 bool g_signing_mode_present = false;
 bool g_root_store_fails = false;
 bool g_policy_store_fails = false;
 bool g_auth_store_fails = false;
+bool g_human_approval_setting_store_fails = false;
 bool g_signing_mode_store_fails = false;
 bool g_root_wipe_fails = false;
 bool g_signing_mode_wipe_fails = false;
@@ -69,6 +71,8 @@ agent_q::AgentQSigningAuthorizationModeStatus g_signing_mode_status =
     agent_q::AgentQSigningAuthorizationModeStatus::missing;
 agent_q::AgentQSigningAuthorizationMode g_signing_mode =
     agent_q::AgentQSigningAuthorizationMode::user;
+agent_q::AgentQHumanApprovalInputMode g_human_approval_input_mode =
+    agent_q::AgentQHumanApprovalInputMode::pin;
 agent_q::AgentQPolicyUpdateMarkerStatus g_policy_update_marker_status =
     agent_q::AgentQPolicyUpdateMarkerStatus::clear;
 agent_q::AgentQProvisioningPersistedState g_persisted_state =
@@ -89,13 +93,14 @@ void reset_stubs()
     g_root_present = false;
     g_policy_present = false;
     g_auth_present = false;
-    g_connect_setting_present = false;
+    g_human_approval_setting_present = false;
     g_approval_history_present = false;
     g_policy_update_marker_present = false;
     g_signing_mode_present = false;
     g_root_store_fails = false;
     g_policy_store_fails = false;
     g_auth_store_fails = false;
+    g_human_approval_setting_store_fails = false;
     g_signing_mode_store_fails = false;
     g_root_wipe_fails = false;
     g_signing_mode_wipe_fails = false;
@@ -106,6 +111,7 @@ void reset_stubs()
     g_auth_status = agent_q::AgentQLocalAuthStatus::missing;
     g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::missing;
     g_signing_mode = agent_q::AgentQSigningAuthorizationMode::user;
+    g_human_approval_input_mode = agent_q::AgentQHumanApprovalInputMode::pin;
     g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::clear;
     g_persisted_state = agent_q::AgentQProvisioningPersistedState::unprovisioned;
     g_consistency_error_count = 0;
@@ -312,24 +318,34 @@ const char* signing_authorization_mode_name(AgentQSigningAuthorizationMode mode)
     return mode == AgentQSigningAuthorizationMode::policy ? "policy" : "user";
 }
 
-bool read_require_pin_on_connect(bool*)
+bool read_human_approval_input_mode(AgentQHumanApprovalInputMode* mode)
 {
-    return false;
+    if (mode == nullptr || !g_human_approval_setting_present) {
+        return false;
+    }
+    *mode = g_human_approval_input_mode;
+    return true;
 }
 
-bool connect_requires_pin()
+bool human_approval_requires_pin()
 {
     return true;
 }
 
-bool store_require_pin_on_connect(bool)
+bool store_human_approval_input_mode(AgentQHumanApprovalInputMode mode)
 {
-    return false;
+    if (g_human_approval_setting_store_fails) {
+        return false;
+    }
+    g_human_approval_setting_present = true;
+    g_human_approval_input_mode = mode;
+    return true;
 }
 
-bool wipe_require_pin_on_connect()
+bool wipe_human_approval_input_mode()
 {
-    g_connect_setting_present = false;
+    g_human_approval_setting_present = false;
+    g_human_approval_input_mode = AgentQHumanApprovalInputMode::pin;
     return true;
 }
 
@@ -403,10 +419,13 @@ int main()
     expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
                Commit::ok,
            "setup commit succeeds");
-    expect(g_root_present && g_policy_present && g_auth_present && g_signing_mode_present,
-           "setup commit stores all required material and signing mode");
+    expect(g_root_present && g_policy_present && g_auth_present &&
+               g_signing_mode_present && g_human_approval_setting_present,
+           "setup commit stores all required material, signing mode, and human approval default");
     expect(g_signing_mode == agent_q::AgentQSigningAuthorizationMode::user,
            "setup commit initializes signing mode to user");
+    expect(g_human_approval_input_mode == agent_q::AgentQHumanApprovalInputMode::pin,
+           "setup commit initializes human approval input mode to PIN");
     expect(g_persisted_state == PersistedState::provisioned,
            "setup commit persists provisioned after material");
 
@@ -421,11 +440,22 @@ int main()
            "setup commit reinitializes stale signing mode to user");
 
     reset_stubs();
+    g_human_approval_setting_present = true;
+    g_human_approval_input_mode = agent_q::AgentQHumanApprovalInputMode::confirm;
+    expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+               Commit::ok,
+           "setup commit succeeds over stale human approval input mode material");
+    expect(g_human_approval_setting_present &&
+               g_human_approval_input_mode == agent_q::AgentQHumanApprovalInputMode::pin,
+           "setup commit reinitializes stale human approval input mode to PIN");
+
+    reset_stubs();
     g_policy_store_fails = true;
     expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
                Commit::policy_storage_error,
            "policy storage failure is reported");
-    expect(!g_root_present && !g_policy_present && !g_auth_present && !g_signing_mode_present,
+    expect(!g_root_present && !g_policy_present && !g_auth_present &&
+               !g_signing_mode_present && !g_human_approval_setting_present,
            "policy failure rolls back partial setup material");
     expect(g_consistency_error_count == 0,
            "clean rollback does not enter consistency error");
@@ -441,6 +471,17 @@ int main()
            "clean signing mode rollback does not enter consistency error");
 
     reset_stubs();
+    g_human_approval_setting_store_fails = true;
+    expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+               Commit::human_approval_setting_storage_error,
+           "human approval input mode storage failure is reported");
+    expect(!g_root_present && !g_policy_present && !g_auth_present &&
+               !g_signing_mode_present && !g_human_approval_setting_present,
+           "human approval input mode failure rolls back partial setup material");
+    expect(g_consistency_error_count == 0,
+           "clean human approval input mode rollback does not enter consistency error");
+
+    reset_stubs();
     g_root_present = true;
     g_policy_present = true;
     g_policy_status = agent_q::AgentQPolicyStoreStatus::active;
@@ -448,7 +489,7 @@ int main()
     g_auth_status = agent_q::AgentQLocalAuthStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
-    g_connect_setting_present = true;
+    g_human_approval_setting_present = true;
     g_approval_history_present = true;
     g_policy_update_marker_present = true;
     g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::pending;
@@ -459,7 +500,7 @@ int main()
     expect(agent_q::persistent_material_wipe_all() == Wipe::ok,
            "wipe all succeeds");
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
-               !g_signing_mode_present && !g_connect_setting_present && !g_approval_history_present &&
+               !g_signing_mode_present && !g_human_approval_setting_present && !g_approval_history_present &&
                !g_policy_update_marker_present,
            "wipe all removes required, signing-mode, reset-scoped settings, approval-history, and policy-update marker material");
     expect(!agent_q::persistent_material_consistency_error_active(),

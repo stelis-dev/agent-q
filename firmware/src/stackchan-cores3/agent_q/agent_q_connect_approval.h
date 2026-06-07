@@ -33,7 +33,9 @@ bool connect_approval_begin(
     const char* request_id,
     const char* gateway_name,
     AgentQTimeoutWindow approval_window);
-bool connect_approval_choose(AgentQConnectApprovalChoice choice);
+bool connect_approval_review_action_available(TickType_t now);
+bool connect_approval_choose(AgentQConnectApprovalChoice choice, TickType_t now);
+bool connect_approval_return_to_review(AgentQTimeoutWindow approval_window);
 bool connect_approval_deadline_reached(TickType_t now);
 bool connect_approval_request_id(char* output, size_t output_size);
 

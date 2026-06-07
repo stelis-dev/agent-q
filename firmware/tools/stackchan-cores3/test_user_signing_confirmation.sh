@@ -407,22 +407,22 @@ bool local_auth_worker_cancel_job(uint32_t)
     return true;
 }
 
-bool read_require_pin_on_connect(bool*)
+bool read_human_approval_input_mode(AgentQHumanApprovalInputMode*)
 {
     return false;
 }
 
-bool connect_requires_pin()
+bool human_approval_requires_pin()
 {
     return true;
 }
 
-bool store_require_pin_on_connect(bool)
+bool store_human_approval_input_mode(AgentQHumanApprovalInputMode)
 {
     return false;
 }
 
-bool wipe_require_pin_on_connect()
+bool wipe_human_approval_input_mode()
 {
     return true;
 }

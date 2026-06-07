@@ -18,9 +18,11 @@ The current implementation includes:
   the current screen and then returns to the previous device state.
 - protocol handling for `connect` and `disconnect`. The current target accepts
   `connect` only after material-backed `provisioned` state and device-local
-  approval. By default that approval is stored-PIN entry on the device; a local
-  settings toggle can switch connect approval to physical Confirm after PIN
-  verification. Firmware sessions are RAM-only and do not authorize signing.
+  approval. The target shows a connect review modal first; the device-local
+  human approval input mode then selects either stored-PIN entry or physical
+  Confirm. Changing that input mode is a local Settings action and requires
+  stored PIN verification. Firmware sessions are RAM-only and do not authorize
+  signing.
 - a USB JSONL `get_capabilities` request that returns Firmware-authored Sui
   Ed25519 account identity capability over an approved session while
   `provisioned`, with no delegated public methods and top-level `signing`
@@ -44,9 +46,9 @@ The current implementation includes:
   authorization mode: policy mode evaluates active policy, shows speech-bubble
   status notifications, and signs without per-request confirmation when policy
   authorizes the bounded request, while user mode shows clear-signing review
-  and requires local PIN confirmation without applying active policy as an
-  additional filter. It returns `signed` only after required history is durable
-  and signing succeeds. Sponsored gas, arbitrary Sui transactions,
+  and requires the current human approval input mode without applying active
+  policy as an additional filter. It returns `signed` only after required
+  history is durable and signing succeeds. Sponsored gas, arbitrary Sui transactions,
   caller-selected authorization, caller-controlled timing fields, and
   chain-specific top-level signing APIs are not implemented. Detailed hardware
   evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; the full
@@ -56,8 +58,9 @@ The current implementation includes:
   `provisioned` state plus a matching active session, validates bounded Sui
   personal-message bytes, and is available only when the device-local signing
   authorization mode is `user`. User mode shows clear-signing review and
-  requires local PIN confirmation before signing the Sui PersonalMessage intent
-  digest. Policy mode fails closed with `unsupported_method`; policy facts and
+  requires the current human approval input mode before signing the Sui
+  PersonalMessage intent digest. Policy mode fails closed with
+  `unsupported_method`; policy facts and
   rules for personal-message signing are not implemented. Detailed hardware
   evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; the full
   current-tree hardware and visual evidence remain pending before product-active
@@ -78,7 +81,7 @@ The current implementation includes:
   the salt/PIN verifier. Reset requires the local Settings Reset action plus
   the stored PIN, wipes root material, active policy, PIN verifier, signing
   authorization mode, approval history, policy-update terminal marker,
-  connect-approval setting, runtime session, and provisioning state, and is not
+  human approval input mode setting, runtime session, and provisioning state, and is not
   exposed as a USB JSONL request. Hardware smoke coverage exists for local reset. Targeted hardware
   verification remains required after settings or reset UI/state changes.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
@@ -89,8 +92,9 @@ The current implementation includes:
   service.
 - an Agent-Q-only avatar UI layer. The StackChan default avatar face stays
   visible, the upstream default speech bubble is hidden by default, and Agent-Q
-  requests use an Agent-Q-owned speech-bubble decorator with state-specific
-  colors plus a small confirmation strip when physical input is required.
+  requests use Agent-Q-owned speech-bubble decorators, modal review panels for
+  external-request human approval, local PIN panels where required, and
+  state-specific colors.
 - target-local display-power handling that turns the screen backlight off after
   three minutes of inactivity, wakes for Agent-Q request UI, toggles display power
   on side-button short press, and powers off on side-button long press. Before
@@ -110,7 +114,8 @@ parser plus a common stored-policy runtime boundary. The current
 `sign_transaction` path reads the Firmware-local signing authorization mode and
 uses exactly one gate: policy mode evaluates the committed active policy, while
 user mode performs device confirmation for the bounded restricted transfer
-shape after clear-signing review, local PIN, and required history. It rejects
+shape after clear-signing review, the current human approval input mode, and
+required history. It rejects
 unsupported transactions and returns `signed`, `policy_rejected`,
 `user_rejected`, `user_timed_out`, or `signing_failed` through `sign_result` as
 applicable. Detailed hardware evidence status is recorded in
@@ -125,16 +130,14 @@ This target also implements the Firmware-owned `policy_propose` request
 for bounded current-schema policy proposals over an active session, a
 device-local policy summary review, local PIN approval after device-local
 Continue, canonical active-policy commit, and required policy-update terminal
-history. It does not
-expose MCP
-directly; Gateway/MCP only submit requests and parse Firmware responses. It
-does persist bounded approval-history metadata for signing and policy
-update terminal records. The
+history. It does not expose MCP directly; Gateway/MCP only submit requests and
+parse Firmware responses. It does persist bounded approval-history metadata for
+signing and policy update terminal records. The
 persisted values in this target implementation are the protocol `deviceId`,
 provisioning state flag, DEV_PROFILE root entropy blob after backup
 confirmation, canonical active policy slots plus commit metadata and a
 pending-write marker, a policy-update terminal marker, a DEV_PROFILE local PIN
-verifier, the optional connect-PIN setting, and the approval-history ring
+verifier, the human approval input mode setting, and the approval-history ring
 buffer. The normal provisioning flow still installs only the default-reject
 policy; custom policies enter only through the session-scoped
 `policy_propose` proposal path.
@@ -215,7 +218,8 @@ firmware/tools/stackchan-cores3/test_local_settings_touch_entry.sh
 firmware/tools/stackchan-cores3/test_usb_link_state.sh
 firmware/tools/stackchan-cores3/test_usb_session_loss.sh
 firmware/tools/stackchan-cores3/test_ui_panel_cleanup.sh
-firmware/tools/stackchan-cores3/test_connect_settings.sh
+firmware/tools/stackchan-cores3/test_modal_layout_static.sh
+firmware/tools/stackchan-cores3/test_human_approval_settings.sh
 firmware/tools/stackchan-cores3/test_session.sh
 firmware/tools/stackchan-cores3/test_sui_signing_service.sh
 firmware/tools/stackchan-cores3/test_sui_account_vectors.sh
@@ -382,9 +386,9 @@ In the hardware firmware tree:
 ## Persistent Storage
 
 This target stores the protocol `deviceId`, provisioning state, DEV_PROFILE root
-entropy, committed active policy records, local PIN verifier, optional
-connect-PIN setting, signing authorization mode, and approval-history ring buffer in NVS namespace
-`agent_q`. The StackChan build preparation step patches the generated firmware
+entropy, committed active policy records, local PIN verifier, human approval
+input mode setting, signing authorization mode, and approval-history ring
+buffer in NVS namespace `agent_q`. The StackChan build preparation step patches the generated firmware
 partition table to use a 64 KiB NVS partition; the upstream 16 KiB default is
 not sufficient for the current Agent-Q material set.
 If NVS has `prov_state = provisioned` and valid root entropy but no active
@@ -406,7 +410,7 @@ mode fail closed until reprovisioned.
 | `pol_um` | Policy-update terminal marker; presence means an incomplete policy-update terminal sequence is material inconsistency |
 | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
 | `sign_auth_mode` | Device-local signing authorization mode; setup initializes it to user and Settings can change it after local PIN verification |
-| `pin_on_connect` | Optional local connect approval setting; missing means require PIN on connect; local reset erases it back to the missing-key default |
+| `human_approval` | Human approval input mode setting; setup initializes it to `pin`, missing or invalid read fails closed to `pin`, and local reset erases it back to the missing-key default |
 | `approval_hist` | Fixed-size 32-record binary approval-history ring buffer; local reset and error-state erase wipe it |
 
 Device-local recovery phrase setup stores generated phrase text and recovered mnemonic

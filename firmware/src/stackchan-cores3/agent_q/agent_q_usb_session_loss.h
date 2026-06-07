@@ -35,7 +35,7 @@ struct AgentQUsbSessionLossPlan {
     bool wipe_local_pin_auth;
     bool clear_policy_update_flow;
     bool cancel_user_signing;
-    bool clear_decision_panel;
+    bool clear_connect_review_panel;
     bool clear_local_pin_panel;
     bool clear_policy_update_review_panel;
     bool clear_user_signing_review_panel;

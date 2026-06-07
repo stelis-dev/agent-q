@@ -66,7 +66,7 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include <stdint.h>
 #include <string.h>
 
-#include "agent_q_connect_settings.h"
+#include "agent_q_human_approval_settings.h"
 #include "agent_q_local_auth.h"
 #include "agent_q_local_auth_worker.h"
 #include "agent_q_signing_mode.h"
@@ -76,7 +76,8 @@ namespace {
 
 TickType_t g_now = 1;
 char g_current_pin[agent_q::kLocalPinBufferSize] = "123456";
-bool g_require_pin_on_connect = true;
+agent_q::AgentQHumanApprovalInputMode g_human_approval_input_mode =
+    agent_q::AgentQHumanApprovalInputMode::pin;
 uint32_t g_last_worker_job_id = 0;
 uint32_t g_last_cancelled_worker_job_id = 0;
 
@@ -99,9 +100,9 @@ bool test_current_pin_is(const char* pin)
     return pin != nullptr && strcmp(g_current_pin, pin) == 0;
 }
 
-bool test_require_pin_on_connect()
+agent_q::AgentQHumanApprovalInputMode test_human_approval_input_mode()
 {
-    return g_require_pin_on_connect;
+    return g_human_approval_input_mode;
 }
 
 uint32_t test_last_worker_job_id()
@@ -194,23 +195,23 @@ AgentQLocalAuthStatus local_auth_status()
     return AgentQLocalAuthStatus::active;
 }
 
-bool read_require_pin_on_connect(bool* required)
+bool read_human_approval_input_mode(AgentQHumanApprovalInputMode* mode)
 {
-    if (required == nullptr) {
+    if (mode == nullptr) {
         return false;
     }
-    *required = g_require_pin_on_connect;
+    *mode = g_human_approval_input_mode;
     return true;
 }
 
-bool connect_requires_pin()
+bool human_approval_requires_pin()
 {
-    return g_require_pin_on_connect;
+    return g_human_approval_input_mode == AgentQHumanApprovalInputMode::pin;
 }
 
-bool store_require_pin_on_connect(bool required)
+bool store_human_approval_input_mode(AgentQHumanApprovalInputMode mode)
 {
-    g_require_pin_on_connect = required;
+    g_human_approval_input_mode = mode;
     return true;
 }
 
@@ -219,7 +220,7 @@ bool store_signing_authorization_mode(AgentQSigningAuthorizationMode)
     return true;
 }
 
-bool wipe_require_pin_on_connect()
+bool wipe_human_approval_input_mode()
 {
     return true;
 }
@@ -266,7 +267,7 @@ cat >"${TMP_DIR}/local_pin_auth_test.cpp" <<'CPP'
 namespace agent_q {
 void test_set_tick(TickType_t now);
 bool test_current_pin_is(const char* pin);
-bool test_require_pin_on_connect();
+AgentQHumanApprovalInputMode test_human_approval_input_mode();
 uint32_t test_last_worker_job_id();
 uint32_t test_last_cancelled_worker_job_id();
 }
@@ -451,8 +452,10 @@ int main()
 
     {
         agent_q::test_set_tick(300);
-        expect(agent_q::local_pin_auth_begin_connect_setting(false, pin_window(300, 360)),
-               "connect setting PIN auth begins");
+        expect(agent_q::local_pin_auth_begin_human_approval_input_setting(
+                   agent_q::AgentQHumanApprovalInputMode::confirm,
+                   pin_window(300, 360)),
+               "human approval setting PIN auth begins");
         enter_pin("123456");
         expect(agent_q::local_pin_auth_submit(301, 0, test_input_window(360), 330) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
@@ -467,33 +470,36 @@ int main()
         expect(agent_q::local_pin_auth_commit_if_ready(305) ==
                    agent_q::AgentQLocalPinAuthCommitResult::setting_stored,
                "settings toggle stores target setting");
-        expect(!agent_q::test_require_pin_on_connect(),
-               "settings toggle persisted PIN-on-connect OFF");
+        expect(agent_q::test_human_approval_input_mode() ==
+                   agent_q::AgentQHumanApprovalInputMode::confirm,
+               "settings toggle persisted Confirm input mode");
         expect(!agent_q::local_pin_auth_snapshot(305).flow_active,
                "settings toggle commit clears flow");
     }
 
     {
         agent_q::test_set_tick(320);
-        expect(agent_q::local_pin_auth_begin_connect_setting(false, pin_window(320, 360)),
-               "connect setting PIN auth begins before wrong PIN");
+        expect(agent_q::local_pin_auth_begin_human_approval_input_setting(
+                   agent_q::AgentQHumanApprovalInputMode::confirm,
+                   pin_window(320, 360)),
+               "human approval setting PIN auth begins before wrong PIN");
         enter_pin("000000");
         expect(agent_q::local_pin_auth_submit(321, 0, test_input_window(350), 340) ==
                    agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
-               "connect setting wrong PIN starts verification");
+               "human approval setting wrong PIN starts verification");
         agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(false);
         expect(agent_q::local_pin_auth_complete_verify_job(verify_result, pin_window(321, 350), 0, 0) ==
                    agent_q::AgentQLocalPinAuthVerifyResult::wrong_pin,
-               "connect setting wrong PIN stays in local retry flow");
+               "human approval setting wrong PIN stays in local retry flow");
         agent_q::AgentQLocalPinAuthSnapshot snapshot =
             agent_q::local_pin_auth_snapshot(321);
         expect(snapshot.flow_active &&
-                   snapshot.purpose == agent_q::AgentQLocalPinAuthPurpose::settings_connect_pin &&
+                   snapshot.purpose == agent_q::AgentQLocalPinAuthPurpose::settings_human_approval_input &&
                    snapshot.stage == agent_q::AgentQLocalPinAuthStage::pin_entry,
-               "connect setting wrong PIN remains settings-owned");
+               "human approval setting wrong PIN remains settings-owned");
         expect(snapshot.input_window.started_at == 320 &&
                    snapshot.input_window.deadline == 360,
-               "connect setting wrong PIN resumes remaining input window");
+               "human approval setting wrong PIN resumes remaining input window");
         agent_q::local_pin_auth_clear_flow();
     }
 

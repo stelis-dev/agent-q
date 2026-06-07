@@ -40,8 +40,9 @@ Implemented today:
 - A connect/disconnect runtime session held in Firmware RAM after
   material-backed `provisioned` state. The session does not authorize signing.
 - Device-local approval on the StackChan CoreS3 target for `connect`. The
-  default is local 6-digit PIN entry on the device; a local setting can switch
-  connect approval to the physical Confirm path after PIN verification.
+  target shows a connect review modal first; the device-local human approval
+  input mode then selects local 6-digit PIN entry or physical Confirm. Changing
+  that input mode is a local Settings action and requires PIN verification.
 - A material-backed provisioning state on the StackChan CoreS3 target. It
   reports `provisioned` only when the persisted state, valid DEV_PROFILE root
   entropy blob, committed active policy record, and local PIN verifier all
@@ -65,7 +66,7 @@ Implemented today:
   only the local PIN verifier after repeated new PIN entry, and Reset verifies
   the stored PIN before root material wipe, active policy wipe, PIN verifier
   wipe, signing authorization mode wipe, approval history wipe,
-  policy-update terminal marker wipe, connect-approval setting wipe, session
+  policy-update terminal marker wipe, human approval input mode setting wipe, session
   cleanup, and return to `unprovisioned`.
   Firmware records an internal reset-pending marker so boot can resume an
   interrupted reset wipe. Host-triggered reset/debug protocol paths are
@@ -109,16 +110,16 @@ Implemented today:
   history before signing, emits terminal metadata, and owns cleanup. Policy
   mode evaluates active policy and signs after policy authorization with
   speech-bubble status notifications; user mode shows clear-signing review and
-  requires local PIN confirmation. Requests cannot choose the authorization
-  mode.
+  requires the current human approval input mode. Requests cannot choose the
+  authorization mode or the human approval input mode.
   Detailed hardware evidence status is tracked in
   `docs/IMPLEMENTATION_STATUS.md`. Final current-tree hardware and visual
   evidence remain pending, so product-active status is not claimed.
 - The `sign_personal_message` path has `source-wired-not-product-active` status
   for bounded Sui personal-message bytes. Firmware accepts it only in user
-  authorization mode, uses clear-signing review and local PIN confirmation, and
-  fails closed in policy mode because policy facts and rules for this method are
-  not implemented. Detailed hardware evidence status is tracked in
+  authorization mode, uses clear-signing review and the current human approval
+  input mode, and fails closed in policy mode because policy facts and rules for
+  this method are not implemented. Detailed hardware evidence status is tracked in
   `docs/IMPLEMENTATION_STATUS.md`. Final current-tree hardware and visual
   evidence remain pending, so product-active status is not claimed.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
@@ -233,17 +234,16 @@ requests, adapters, and host callers cannot choose it.
 - Policy mode treats policy authorization as sufficient for signing after the
   required policy history record, with speech-bubble status notifications
   instead of per-request device-local confirmation.
-- User mode uses device-local clear-signing review and local PIN confirmation
-  for the bounded request.
+- User mode uses device-local clear-signing review and the current human
+  approval input mode for the bounded request.
 - User mode confirmation does not prove the request came from a trustworthy
   host, dapp, provider, agent, or upstream user intent. The runtime models local
-  PIN confirmation and does not reuse the connect-only PIN setting as the
-  signing confirmation policy.
+  human approval and does not let the request choose the input mode.
 
 `sign_personal_message` is a separate Sign API method for bounded Sui
 personal-message bytes. Current source accepts it only in user authorization
-mode, where Firmware performs clear-signing review and local PIN confirmation.
-Policy authorization mode fails closed for this method because policy facts and
+mode, where Firmware performs clear-signing review and the current human
+approval input mode. Policy authorization mode fails closed for this method because policy facts and
 rules for personal-message signing are not implemented.
 
 Policy actions must not bridge these models. A policy document may use only

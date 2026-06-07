@@ -698,6 +698,47 @@ user_signing_flow_record_pin_verified_and_write_confirmation_history(
     return AgentQUserSigningTransitionResult::ok;
 }
 
+AgentQUserSigningTransitionResult
+user_signing_flow_record_physical_confirmed_and_write_confirmation_history(
+    TickType_t now,
+    AgentQUserSigningHistoryWriteFn write_fn,
+    void* context)
+{
+    if (!g_state.active()) {
+        return AgentQUserSigningTransitionResult::inactive;
+    }
+    if (g_state.stage != AgentQUserSigningStage::reviewing) {
+        return AgentQUserSigningTransitionResult::wrong_stage;
+    }
+    if (write_fn == nullptr) {
+        return AgentQUserSigningTransitionResult::invalid_argument;
+    }
+    AgentQUserSigningTransitionResult guard = require_active_session();
+    if (guard != AgentQUserSigningTransitionResult::ok) {
+        return guard;
+    }
+    guard = terminalize_if_deadline_expired(now);
+    if (guard != AgentQUserSigningTransitionResult::ok) {
+        return guard;
+    }
+    g_state.stage = AgentQUserSigningStage::history_write;
+    g_state.pin_input_window = kAgentQTimeoutWindowNone;
+    g_state.paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
+
+    const AgentQUserSigningFlowSnapshot snapshot =
+        user_signing_flow_snapshot();
+    const bool write_ok = write_fn(snapshot, context);
+    if (!same_history_write_request(snapshot)) {
+        return AgentQUserSigningTransitionResult::stale_state;
+    }
+    if (!write_ok) {
+        g_state.terminalize(AgentQUserSigningTerminalResult::history_error);
+        return AgentQUserSigningTransitionResult::history_error;
+    }
+    g_state.stage = AgentQUserSigningStage::signing_critical_section;
+    return AgentQUserSigningTransitionResult::ok;
+}
+
 AgentQUserSigningTransitionResult user_signing_flow_consume_signable_payload(
     uint8_t* output,
     size_t output_capacity,

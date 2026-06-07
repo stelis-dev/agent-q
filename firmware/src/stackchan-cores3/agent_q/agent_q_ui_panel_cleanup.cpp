@@ -25,7 +25,7 @@ bool provisioning_panel_for_kind(
             *panel = AgentQProvisioningFlowPanel::pin_entry;
             return true;
         case AgentQUiPanelKind::none:
-        case AgentQUiPanelKind::decision_strip:
+        case AgentQUiPanelKind::connect_review:
         case AgentQUiPanelKind::settings_menu:
         case AgentQUiPanelKind::reset_pin_entry:
         case AgentQUiPanelKind::error_recovery:

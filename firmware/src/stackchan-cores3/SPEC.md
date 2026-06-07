@@ -58,17 +58,17 @@ Legend:
 | Provisioning status reporting | △ | Reports `unprovisioned`, material-backed `provisioned`, or `error` for persistent material inconsistency. Hardware smoke coverage exists for local setup and recovery setup reaching `provisioned`; failure and consistency-error states still need targeted hardware checks. This is not signing approval. Sign API requests still require a matching active session, the selected authorization gate, required history, signing critical section, response writer, and current-tree hardware/LVGL evidence before product-active status. |
 | Mnemonic UI flow | △ | The local setup speech bubble opens a Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and advances to local 6-digit PIN entry after local backup confirmation. Recover accepts 12 BIP-39 words through a device-local 3-word-per-page prefix/candidate UI, verifies checksum, then enters the same PIN setup path. The target stores root entropy plus an active default-reject policy plus a salt/PIN verifier plus signing authorization mode only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. The target keeps setup/recover volatile state and cleanup decisions in a provisioning-flow state module; USB/UI code routes events and renders the current state. Local controls own the setup transitions; there are no USB setup transition requests. Hardware smoke coverage exists for Generate setup, PIN entry, and Recover entry. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
-| `connect` | O | Source accepts connection only after material-backed `provisioned` state. Default connect approval requires local PIN entry on device; local settings can switch connect approval to physical Confirm after PIN verification. The session is RAM-only and does not authorize signing. Hardware smoke coverage exists for local PIN approval and fresh reconnect after USB detach/replug. |
+| `connect` | O | Source accepts connection only after material-backed `provisioned` state and Firmware-owned device-local approval. The target shows a connect review modal first. The device-local human approval input mode then selects either local PIN entry or physical Confirm. The session is RAM-only and does not authorize signing. Hardware smoke coverage exists for local PIN approval and fresh reconnect after USB detach/replug. |
 | `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. It returns `busy` while local setup/PIN/reset or sensitive settings subflow state is active, including Change PIN, so external session teardown cannot interleave with device-local sensitive UI. A matching disconnect cancels a pending policy update before the commit critical section, because that proposal is session-bound rather than generic local UI; the canceled policy-update request receives `invalid_session`, and the disconnect request receives `disconnect_result`. Idle Settings menu does not block disconnect. |
-| Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: connect PIN toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, signing authorization mode, approval history, policy-update terminal marker, connect-approval setting, session, and returns to `unprovisioned`. Source also implements device-local destructive erase-only recovery from persistent-material consistency `error`, without PIN because the verifier may be unreadable, using the same reset-pending marker and wipe transaction. Host-triggered reset/debug/recovery/PIN-change protocol paths are intentionally not implemented. Hardware smoke coverage exists for local reset, idle Settings session behavior, Change PIN session retention, USB detach/replug session invalidation, and error-recovery modal layering; broader failure-path coverage remains limited. |
-| Agent-Q avatar UI | O | Uses an Agent-Q-owned top speech-bubble decorator and bottom decision strip. |
+| Local settings / material wipe | △ | Source implements device-local settings paths for `provisioned`: human approval input mode toggle, Change PIN, and Reset. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Reset wipes root material, active policy, PIN verifier, signing authorization mode, approval history, policy-update terminal marker, human approval input mode setting, session, and returns to `unprovisioned`. Source also implements device-local destructive erase-only recovery from persistent-material consistency `error`, without PIN because the verifier may be unreadable, using the same reset-pending marker and wipe transaction. Host-triggered reset/debug/recovery/PIN-change protocol paths are intentionally not implemented. Hardware smoke coverage exists for local reset, idle Settings session behavior, Change PIN session retention, USB detach/replug session invalidation, and error-recovery modal layering; broader failure-path coverage remains limited. |
+| Agent-Q avatar UI | O | Uses Agent-Q-owned top speech-bubble decorators, modal review panels for external-request human approval, local PIN panels where required, screen-bottom timer bars, and temporary result feedback. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
 | Display power control | O | Turns the screen backlight off after three minutes of inactivity, skips the upstream screensaver, wakes for Agent-Q UI, toggles display power on side-button short press, and powers off on side-button long press. Before screen-off or power-off, the target moves to a rest posture; when the screen wakes, it returns to awake posture. |
 | Boot/sleep posture | O | Centers yaw and raises pitch when the default avatar is attached at boot or the screen wakes. Moves to centered yaw and lowered pitch before screen-off or power-off. |
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
 | Sui transaction signing substrate | △ | Source can derive the Sui account 0 signing seed from stored DEV_PROFILE root material, sign Sui transaction bytes with the pinned MicroSui Ed25519 transaction-intent routine, return only a Sui signature envelope to internal callers, and wipe root/mnemonic/seed scratch. Host tests cover a deterministic signature vector, verification, invalid-input output wiping, and missing-root failure. The substrate is not exposed as a public signing API. |
-| `sign_transaction` | △ | Source is wired for Sui `sign_transaction` over the bounded restricted-transfer shape. The public USB dispatcher, `sign_result` writer, client/MCP/provider parser/API, Wallet Standard adapter, and raw `signing` capability are present in source. Host tests cover bounded request metadata parsed from `txBytes`, signable payload scratch, payload digest, policy runtime, review/PIN/history/signing stages, session ownership, terminal cleanup, review view-model rows derived from `txBytes`, host-supplied `network` handling, required history writes, signing-critical handoff, response boundaries, and payload/signature scratch wiping. Firmware reads device-local signing authorization mode and selects one gate: policy mode evaluates active policy and signs after policy authorization with speech-bubble notifications, while user mode requires clear-signing review and local PIN confirmation without applying active policy as an additional filter. Sponsored gas, arbitrary Sui transactions, and caller-controlled timing fields are not supported; Firmware-owned review/PIN input windows use a fixed internal 30-second window. Submitting a complete PIN pauses the input timer while stored-PIN cryptographic verification runs; the signing confirmation window is the review/PIN-entry admission boundary and is not the terminal timeout authority during stored-PIN processing after submit. The internal local-auth worker watchdog still fails closed as authentication unavailable, and wrong PIN results resume the remaining paused input window unless the shared lockout is active. Detailed hardware evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; final current-tree hardware and visual evidence remain pending, so product-active status is not claimed. |
+| `sign_transaction` | △ | Source is wired for Sui `sign_transaction` over the bounded restricted-transfer shape. The public USB dispatcher, `sign_result` writer, client/MCP/provider parser/API, Wallet Standard adapter, and raw `signing` capability are present in source. Host tests cover bounded request metadata parsed from `txBytes`, signable payload scratch, payload digest, policy runtime, review/PIN/history/signing stages, session ownership, terminal cleanup, review view-model rows derived from `txBytes`, host-supplied `network` handling, required history writes, signing-critical handoff, response boundaries, and payload/signature scratch wiping. Firmware reads device-local signing authorization mode and selects one gate: policy mode evaluates active policy and signs after policy authorization with speech-bubble notifications, while user mode requires clear-signing review and the current human approval input mode without applying active policy as an additional filter. Sponsored gas, arbitrary Sui transactions, and caller-controlled timing fields are not supported; Firmware-owned review/PIN input windows use a fixed internal 30-second window. Submitting a complete PIN pauses the input timer while stored-PIN cryptographic verification runs; the signing confirmation window is the review/PIN-entry admission boundary and is not the terminal timeout authority during stored-PIN processing after submit. The internal local-auth worker watchdog still fails closed as authentication unavailable, and wrong PIN results resume the remaining paused input window unless the shared lockout is active. Detailed hardware evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; final current-tree hardware and visual evidence remain pending, so product-active status is not claimed. |
 | `get_capabilities` | O | Source reports Sui Ed25519 account identity capability for account 0 and no delegated public methods over an approved session while material-backed `provisioned`. Top-level `signing` reports read-only Firmware signing authorization mode and supported signing methods. |
 | `get_accounts` | O | Source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is verified against Sui SDK address vectors on host; hardware smoke coverage exists for this path while idle Settings is open, after Change PIN on the same session, and after reconnect. |
 | `policy_get` | △ | Source implements session-scoped read-only document readback for the committed active `agentq.policy.v0` policy record. The current product flow installs the DEV_PROFILE default-reject policy, and the target active-policy store can load canonical current-schema policy records through its internal storage boundary. Corrupt/unreadable active policy or missing policy under `provisioned` fails closed. Gateway/MCP parser tests and target policy-store host tests cover the current source/parser/store behavior, including full-document readback shape and response-size bounds. Current-tree hardware readback evidence for the full document response remains pending. |
@@ -142,7 +142,7 @@ StackChan owns the default avatar face and normal device runtime.
 Agent-Q owns only the temporary UI objects it creates:
 
 - Agent-Q speech-bubble decorator;
-- bottom decision strip for Cancel/Confirm;
+- modal review panels for external-request human approval;
 - temporary emotion override;
 - temporary head movement feedback.
 
@@ -161,7 +161,7 @@ Current UI behavior:
 | Mnemonic recovery entry | Temporary setup panel with three numbered word cells, A-Z prefix buttons, scrollable BIP-39 candidate bubbles, and local Cancel/Clear/Previous/Next controls | `busy` |
 | Local recovery phrase Confirm | Uses the recovery phrase panel's bottom Confirm button and advances to local PIN entry | `busy` |
 | Local PIN setup | Temporary setup panel with numeric keypad, masked 6-digit entry, Clear, backspace icon, Cancel, and Confirm | `busy` |
-| Local settings menu | Temporary settings menu with fixed label/control rows. Current implemented actions are connect PIN toggle, Change PIN, and Reset. Each sensitive action opens local PIN verification directly. | `idle` while the menu is idle; `busy` after entering a sensitive subflow |
+| Local settings menu | Temporary settings menu with fixed label/control rows. Current implemented actions are human approval input mode toggle, Change PIN, and Reset. Each sensitive action opens local PIN verification directly. | `idle` while the menu is idle; `busy` after entering a sensitive subflow |
 | Local recovery phrase Cancel | Uses the recovery phrase panel's bottom Cancel button | `idle` after scratch wipe |
 | Approved result | Temporary success speech and emotion | `idle` |
 | Rejected result | Temporary rejected speech and emotion | `idle` |
@@ -223,15 +223,17 @@ session. Gateway's RAM session mirror is not device authority; Gateway clears it
 when Firmware rejects the session or when a live USB scan no longer observes the
 device.
 
-By default this target requires a device-local 6-digit PIN for `connect`.
-Successful PIN entry is the connect approval; there is no additional Confirm
-step after PIN success. A device-local settings toggle can switch connect
-approval to the physical Confirm path, but changing that toggle also requires
-stored PIN verification. The toggle is stored as `requirePinOnConnect`: a
-missing key means the secure default, ON; an invalid value fails closed to ON
-and is logged. When the target cannot read the setting, the settings menu shows
-the fail-closed value but disables the toggle instead of allowing a write from
-an uncertain source state. PIN entry is never submitted over USB.
+By default this target uses device-local 6-digit PIN entry when Firmware enters
+a human-approval branch for an external request such as `connect` or user-mode
+signing. Successful PIN entry is the approval; there is no additional Confirm
+step after PIN success. A device-local Settings action can switch the human
+approval input mode to the physical Confirm path, but changing that setting
+also requires stored PIN verification. The setting is stored as
+`human_approval`: setup initializes it to `pin`, a missing key means the
+secure default, `pin`, and an invalid value fails closed to `pin` and is
+logged. When the target cannot read the setting, the settings menu shows the
+fail-closed value but disables the toggle instead of allowing a write from an
+uncertain source state. PIN entry is never submitted over USB.
 
 USB link loss clears the Firmware RAM session by policy. For this target,
 USB connected means USB host SOF is observed through
@@ -254,14 +256,15 @@ This target persists the protocol `deviceId`, the provisioning state flag, a
 DEV_PROFILE binary root entropy blob, the DEV_PROFILE active default-reject
 policy record, and a DEV_PROFILE local PIN verifier in ordinary NVS after
 physical backup confirmation plus matching PIN repeat. Setup also initializes
-device-local signing authorization mode. The provisioning state
+device-local signing authorization mode and the human approval input mode
+default. The provisioning state
 flag is not signing material by itself and does not make the device ready to
 sign. The target reports `provisioned` only when the persisted state, valid root
 entropy blob, valid active policy record, valid local PIN verifier, and valid
 signing authorization mode all exist. If those records disagree after boot or during runtime checks, the target
 reports `provisioning.state = error` and fails closed. It does not store the
 mnemonic display string, prefixes, seed, or account data to NVS. The local PIN
-verifier is a UX gate for connect approval when enabled, settings changes, local
+verifier is a UX gate for human-approval branches when the input mode is `pin`, settings changes, local
 reset, the current policy-update proposal flow, and sensitive local writes; it
 is not root-material encryption.
 If the target boots with `prov_state = provisioned` and valid root entropy but
@@ -282,7 +285,7 @@ verifier fail closed until reprovisioned.
 | `agent_q` | `pol_um` | Policy-update terminal marker; presence means an incomplete policy-update terminal sequence is material inconsistency |
 | `agent_q` | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
 | `agent_q` | `sign_auth_mode` | Device-local signing authorization mode; setup initializes it to user and Settings can change it after local PIN verification |
-| `agent_q` | `pin_on_connect` | Optional local connect approval setting; missing means require PIN on connect; local reset erases it back to the missing-key default |
+| `agent_q` | `human_approval` | Human approval input mode setting; setup initializes it to `pin`, missing or invalid read fails closed to `pin`, and local reset erases it back to the missing-key default |
 | `agent_q` | `approval_hist` | Fixed-size 32-record binary ring buffer of Firmware-authored signing and policy-update metadata; local reset and error-state erase wipe it |
 | `agent_q` | `reset_pending` | Internal Firmware-owned marker used to resume an interrupted local reset wipe at boot; not a protocol state or host API |
 
@@ -413,7 +416,7 @@ Local settings actions are separate device-local flows under `provisioned`.
 The target enters local settings only when no setup, approval, identification,
 or Agent-Q temporary UI is active. The settings screen presents fixed
 label/control rows and Close as the only bottom action. Current implemented
-settings actions are the connect PIN toggle, Change PIN, and Reset. Selecting a
+settings actions are the human approval input mode toggle, Change PIN, and Reset. Selecting a
 sensitive action opens stored 6-digit PIN verification directly. Change PIN then
 accepts and repeats a new 6-digit PIN, stores only the replacement salt/verifier,
 and returns to Settings without ending the active RAM session; storage failure
@@ -423,13 +426,13 @@ Opening or closing the Settings menu alone does not end the active RAM session.
 While the Settings menu is idle, existing session-scoped requests remain
 available; PIN verification, PIN change, and Reset subflows return `busy` until
 the local flow completes or is canceled.
-Canceling connect-toggle, Change PIN, or Reset PIN verification, and
-successfully changing the connect-toggle setting or PIN verifier, return to the
+Canceling human approval input mode, Change PIN, or Reset PIN verification, and
+successfully changing the human approval input mode setting or PIN verifier, return to the
 settings menu instead of closing local settings. Successfully changing the
-connect-approval setting affects the next `connect`; it does not end the current
-active RAM session.
+human approval input mode setting affects the next external-request
+human-approval branch; it does not end the current active RAM session.
 Wrong PIN, timeout, or cancel leaves root material, active policy, PIN verifier,
-signing authorization mode, the local connect setting, and `provisioned` state
+signing authorization mode, the human approval input mode setting, and `provisioned` state
 intact.
 Submitting a complete PIN pauses the input deadline while stored-PIN
 cryptographic verification runs. A wrong PIN result returns to the same PIN
@@ -448,7 +451,7 @@ After Reset PIN confirm, the target keeps the reset PIN panel active and adds a
 non-interactive processing overlay before PIN verification. Correct PIN
 verification advances to destructive wipe while keeping the processing overlay
 active, then wipes root material, active policy, PIN verifier, signing
-authorization mode, the local connect setting, approval history,
+authorization mode, the human approval input mode setting, approval history,
 policy-update terminal marker, runtime session, and provisioning state before reporting `unprovisioned`. Before destructive wipe starts, Firmware
 writes an internal
 reset-pending marker; if power is lost
@@ -543,6 +546,9 @@ Current verification expectations for this target:
   timing fields remain absent;
 - run `firmware/tools/stackchan-cores3/test_ui_panel_cleanup.sh` to check
   panel-deletion cleanup routing between temporary UI and state owners;
+- run `firmware/tools/stackchan-cores3/test_modal_layout_static.sh` to check
+  bounded modal layout invariants such as the connect review Gateway name not
+  overlapping the approval row;
 - run `firmware/tools/stackchan-cores3/test_local_reset.sh` to check local reset
   and error-state erase recovery state transitions, reset-pending marker
   behavior, destructive wipe orchestration, and failure cleanup against host
@@ -553,10 +559,10 @@ Current verification expectations for this target:
 - run `firmware/tools/stackchan-cores3/test_provisioning_runtime_state.sh` to
   check persistent provisioning runtime-state load, persist, material-ready,
   and reset-marker orchestration against host stubs;
-- run `firmware/tools/stackchan-cores3/test_connect_settings.sh` to check the
-  connect-approval setting's missing-key secure default, stored OFF override,
-  invalid value fail-closed behavior, and reset wipe back to the missing-key
-  default;
+- run `firmware/tools/stackchan-cores3/test_human_approval_settings.sh` to check
+  the human approval input mode setting's missing-key secure default, stored
+  Confirm override, invalid value fail-closed behavior, and reset wipe back to
+  the missing-key default;
 - run `firmware/tools/stackchan-cores3/test_approval_history.sh` after ESP-IDF
   v5.5.4 is active to check the persistent approval-history NVS ring buffer,
   newest-first pagination, payload digest formatting, wipe behavior, and
@@ -588,9 +594,9 @@ Current verification expectations for this target:
 - smoke-test `connect` after backup-confirmed root material, active policy,
   local PIN verifier, and signing authorization mode storage requires local PIN
   by default and returns a RAM-only session id;
-- smoke-test local settings connect PIN toggle requires current PIN, changes
-  only that local setting, and leaves it unchanged after wrong PIN, cancel, or
-  timeout;
+- smoke-test local settings human approval input mode toggle requires current
+  PIN, changes only that local setting, and leaves it unchanged after wrong PIN,
+  cancel, or timeout;
 - smoke-test local settings Change PIN requires the current PIN, stores the new
   PIN only after repeated new PIN entry, leaves the old PIN valid on mismatch,
   cancel, timeout, or storage failure, and never changes root material or policy;

@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "agent_q_human_approval_settings.h"
 #include "agent_q_local_auth_worker.h"
 #include "agent_q_signing_mode.h"
 #include "agent_q_timeout_window.h"
@@ -13,7 +14,7 @@ namespace agent_q {
 enum class AgentQLocalPinAuthPurpose {
     none,
     connect,
-    settings_connect_pin,
+    settings_human_approval_input,
     settings_signing_mode,
     settings_change_pin,
     policy_update,
@@ -80,7 +81,7 @@ struct AgentQLocalPinAuthSnapshot {
     AgentQLocalPinAuthStage stage;
     size_t pin_entry_length;
     AgentQTimeoutWindow input_window;
-    bool target_require_pin_on_connect;
+    AgentQHumanApprovalInputMode target_human_approval_input_mode;
     AgentQSigningAuthorizationMode target_signing_authorization_mode;
     bool flow_active;
     bool accepts_keypad_input;
@@ -98,8 +99,8 @@ AgentQLocalPinAuthLockoutReleaseResult local_pin_auth_release_lockout_if_elapsed
 
 void local_pin_auth_clear_flow();
 bool local_pin_auth_begin_connect(AgentQTimeoutWindow input_window);
-bool local_pin_auth_begin_connect_setting(
-    bool target_require_pin_on_connect,
+bool local_pin_auth_begin_human_approval_input_setting(
+    AgentQHumanApprovalInputMode target_human_approval_input_mode,
     AgentQTimeoutWindow input_window);
 bool local_pin_auth_begin_signing_mode_setting(
     AgentQSigningAuthorizationMode target_mode,

@@ -5,7 +5,7 @@
 
 #include "agent_q_avatar_overlay_drawing.h"
 #include "agent_q_bip39_wordlist.h"
-#include "agent_q_connect_settings.h"
+#include "agent_q_human_approval_settings.h"
 #include "agent_q_display_power.h"
 #include "agent_q_local_auth.h"
 #include "agent_q_local_pin_auth.h"
@@ -26,24 +26,18 @@ constexpr size_t kRecoverWordsPerPage = kProvisioningFlowRecoverWordsPerPage;
 constexpr size_t kRecoverPageCount = kProvisioningFlowRecoverPageCount;
 constexpr int kScreenHeight = 240;
 constexpr int kScreenWidth = 320;
-constexpr int kDecisionStripHeight = 34;
 constexpr int kTimeoutTimerBarHeight = 4;
 constexpr int kTimeoutTimerBarTrackInset = 8;
-constexpr int kDecisionButtonTimerGap = 8;
-constexpr int kDecisionPanelHeight =
-    kDecisionStripHeight + kDecisionButtonTimerGap + kTimeoutTimerBarHeight;
-constexpr int kDecisionCornerRadius = 10;
-constexpr int kDecisionActionButtonGap = 0;
-constexpr int kScreenBottomActionButtonX = kTimeoutTimerBarTrackInset;
-constexpr int kScreenBottomActionButtonWidth =
-    (kScreenWidth - 2 * kTimeoutTimerBarTrackInset - kDecisionActionButtonGap) / 2;
-constexpr int kScreenBottomActionButtonRightX =
-    kScreenBottomActionButtonX + kScreenBottomActionButtonWidth + kDecisionActionButtonGap;
 constexpr int kInsetPanelWidth = kScreenWidth - 16;
 constexpr int kPanelGridLeft = 17;
 constexpr int kPanelGridCellWidth = 90;
 constexpr int kPanelGridWidth = 3 * kPanelGridCellWidth;
 constexpr int kPanelActionButtonGap = 8;
+constexpr int kBottomDecisionButtonLeftX = kTimeoutTimerBarTrackInset;
+constexpr int kBottomDecisionButtonWidth =
+    (kScreenWidth - (2 * kTimeoutTimerBarTrackInset)) / 2;
+constexpr int kBottomDecisionButtonRightX =
+    kBottomDecisionButtonLeftX + kBottomDecisionButtonWidth;
 constexpr int kPanelActionButtonLeftX = kPanelGridLeft;
 constexpr int kPanelActionButtonWidth =
     (kPanelGridWidth - kPanelActionButtonGap) / 2;
@@ -73,6 +67,12 @@ constexpr int kSettingsMenuRowThreeY = 118;
 constexpr int kSettingsMenuRowFourY = 150;
 constexpr int kSettingsMenuActionButtonWidth = 72;
 constexpr int kSettingsMenuActionButtonHeight = 26;
+constexpr int kConnectReviewTextLeft = 24;
+constexpr int kConnectReviewGatewayValueY = 108;
+constexpr int kConnectReviewGatewayValueWidth = kInsetPanelWidth - 48;
+constexpr int kConnectReviewGatewayValueHeight = 34;
+constexpr int kConnectReviewApprovalRowY = 150;
+constexpr int kConnectReviewApprovalValueX = 104;
 constexpr int kUserSigningReviewRowLabelX = 18;
 constexpr int kUserSigningReviewRowValueX = 90;
 constexpr int kUserSigningReviewRowTop = 34;
@@ -170,79 +170,6 @@ uint16_t g_recover_candidate_event_indices[kBip39WordCount] = {};
 void modal_drawing_set_callbacks(const AgentQModalDrawingCallbacks& callbacks)
 {
     g_callbacks = callbacks;
-}
-
-static bool make_button_label_with_font(
-    lv_obj_t* button,
-    const char* text,
-    const lv_font_t* font,
-    lv_event_cb_t callback,
-    void* user_data = nullptr)
-{
-    lv_obj_t* label = lv_label_create(button);
-    if (label == nullptr) {
-        return false;
-    }
-    lv_obj_remove_style_all(label);
-    lv_label_set_text(label, text);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_remove_flag(label, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(label, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_text_font(label, font, 0);
-    lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_bg_opa(label, LV_OPA_TRANSP, 0);
-    lv_obj_center(label);
-    lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(label, callback, LV_EVENT_CLICKED, user_data);
-    return true;
-}
-
-static void make_decision_button_corner_fill(lv_obj_t* button, lv_align_t align, lv_color_t color, lv_event_cb_t callback)
-{
-    lv_obj_t* fill = lv_obj_create(button);
-    lv_obj_remove_style_all(fill);
-    lv_obj_set_size(fill, kDecisionCornerRadius, kDecisionCornerRadius);
-    lv_obj_align(fill, align, 0, 0);
-    lv_obj_set_style_bg_color(fill, color, 0);
-    lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
-    lv_obj_add_flag(fill, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(fill, callback, LV_EVENT_CLICKED, nullptr);
-}
-
-static void make_decision_button(
-    lv_obj_t* parent,
-    const char* text,
-    int x,
-    int width,
-    bool left_button,
-    lv_color_t color,
-    lv_event_cb_t callback)
-{
-    // A plain clickable object avoids themed button shadows/scrollbars that can
-    // show up as stray vertical lines over the avatar.
-    lv_obj_t* button = lv_obj_create(parent);
-    lv_obj_remove_style_all(button);
-    lv_obj_set_size(button, width, kDecisionStripHeight);
-    lv_obj_align(button, LV_ALIGN_TOP_LEFT, x, 0);
-    lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(button, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_radius(button, kDecisionCornerRadius, 0);
-    lv_obj_set_style_border_width(button, 0, 0);
-    lv_obj_set_style_outline_width(button, 0, 0);
-    lv_obj_set_style_shadow_width(button, 0, 0);
-    lv_obj_set_style_pad_all(button, 0, 0);
-    lv_obj_set_style_bg_color(button, color, 0);
-    lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-    lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, nullptr);
-    if (left_button) {
-        make_decision_button_corner_fill(button, LV_ALIGN_TOP_RIGHT, color, callback);
-        make_decision_button_corner_fill(button, LV_ALIGN_BOTTOM_RIGHT, color, callback);
-    } else {
-        make_decision_button_corner_fill(button, LV_ALIGN_TOP_LEFT, color, callback);
-        make_decision_button_corner_fill(button, LV_ALIGN_BOTTOM_LEFT, color, callback);
-    }
-    make_button_label_with_font(button, text, &lv_font_montserrat_14, callback);
 }
 
 static void set_timeout_timer_width(void* obj, int32_t width)
@@ -672,60 +599,153 @@ static bool make_screen_bottom_timeout_timer_bar(
     TickType_t now);
 
 
-bool modal_draw_decision_panel(AgentQTimeoutWindow timeout_window)
+bool modal_draw_connect_review_panel(
+    const char* gateway_name,
+    AgentQHumanApprovalInputMode input_mode,
+    AgentQTimeoutWindow timeout_window)
 {
-    {
-        LvglLockGuard lock;
-        drawing_surface_clear_panel_locked();
-
-        lv_obj_t* panel = drawing_surface_create_panel_locked(AgentQUiPanelKind::decision_strip);
-        if (panel == nullptr) {
-            return false;
-        }
-        lv_obj_remove_style_all(panel);
-        lv_obj_set_size(panel, kScreenWidth, kDecisionPanelHeight);
-        lv_obj_align(panel, LV_ALIGN_BOTTOM_MID, 0, 0);
-        lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_remove_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
-        lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-        lv_obj_set_style_radius(panel, 0, 0);
-        lv_obj_set_style_clip_corner(panel, true, 0);
-        lv_obj_set_style_border_width(panel, 0, 0);
-        lv_obj_set_style_outline_width(panel, 0, 0);
-        lv_obj_set_style_shadow_width(panel, 0, 0);
-        lv_obj_set_style_bg_opa(panel, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_pad_all(panel, 0, 0);
-
-        if (!make_timeout_timer_bar(
-                panel,
-                kTimeoutTimerBarTrackInset,
-                kDecisionStripHeight + kDecisionButtonTimerGap,
-                kScreenWidth - 2 * kTimeoutTimerBarTrackInset,
-                timeout_window,
-                xTaskGetTickCount())) {
-            drawing_surface_clear_panel_locked();
-            return false;
-        }
-
-        make_decision_button(
-            panel,
-            "Cancel",
-            kScreenBottomActionButtonX,
-            kScreenBottomActionButtonWidth,
-            true,
-            lv_color_hex(0xA53B3B),
-            g_callbacks.on_no_clicked);
-        make_decision_button(
-            panel,
-            "Confirm",
-            kScreenBottomActionButtonRightX,
-            kScreenBottomActionButtonWidth,
-            false,
-            lv_color_hex(0x24875A),
-            g_callbacks.on_yes_clicked);
-
-        drawing_surface_move_panel_foreground_locked();
+    if (gateway_name == nullptr || gateway_name[0] == '\0') {
+        return false;
     }
+    avatar_overlay_clear();
+
+    LvglLockGuard lock;
+    request_display_power_wake();
+    drawing_surface_clear_panel_locked();
+
+    lv_obj_t* panel = drawing_surface_create_panel_locked(AgentQUiPanelKind::connect_review);
+    if (panel == nullptr) {
+        return false;
+    }
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_radius(panel, 8, 0);
+    lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(panel, 0, 0);
+
+    lv_obj_t* title = lv_label_create(panel);
+    if (title == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(title, "Connect Request");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 16);
+
+    lv_obj_t* message = lv_label_create(panel);
+    if (message == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(message, "Allow this Gateway session?");
+    lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(message, kInsetPanelWidth - 40);
+    lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(message, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(message, lv_color_hex(0x1F2937), 0);
+    lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 44);
+
+    lv_obj_t* gateway_label = lv_label_create(panel);
+    if (gateway_label == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(gateway_label, "Gateway");
+    lv_obj_set_style_text_font(gateway_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(gateway_label, lv_color_hex(0x475467), 0);
+    lv_obj_align(gateway_label, LV_ALIGN_TOP_LEFT, kConnectReviewTextLeft, 86);
+
+    lv_obj_t* gateway_value = lv_label_create(panel);
+    if (gateway_value == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(gateway_value, gateway_name);
+    lv_label_set_long_mode(gateway_value, LV_LABEL_LONG_CLIP);
+    lv_obj_set_size(
+        gateway_value,
+        kConnectReviewGatewayValueWidth,
+        kConnectReviewGatewayValueHeight);
+    lv_obj_set_style_text_align(gateway_value, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_font(gateway_value, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(gateway_value, lv_color_hex(0x111827), 0);
+    lv_obj_align(
+        gateway_value,
+        LV_ALIGN_TOP_LEFT,
+        kConnectReviewTextLeft,
+        kConnectReviewGatewayValueY);
+
+    lv_obj_t* mode_label = lv_label_create(panel);
+    if (mode_label == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(mode_label, "Approval");
+    lv_obj_set_style_text_font(mode_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(mode_label, lv_color_hex(0x475467), 0);
+    lv_obj_align(
+        mode_label,
+        LV_ALIGN_TOP_LEFT,
+        kConnectReviewTextLeft,
+        kConnectReviewApprovalRowY);
+
+    lv_obj_t* mode_value = lv_label_create(panel);
+    if (mode_value == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(
+        mode_value,
+        input_mode == AgentQHumanApprovalInputMode::pin
+            ? "Review, then PIN"
+            : "Review, then Confirm");
+    lv_obj_set_style_text_font(mode_value, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(mode_value, lv_color_hex(0x111827), 0);
+    lv_obj_align(
+        mode_value,
+        LV_ALIGN_TOP_LEFT,
+        kConnectReviewApprovalValueX,
+        kConnectReviewApprovalRowY);
+
+    if (!make_screen_bottom_timeout_timer_bar(
+            panel,
+            timeout_window,
+            xTaskGetTickCount())) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    if (!make_setup_button(
+            panel,
+            "Reject",
+            kBottomDecisionButtonLeftX,
+            kSetupActionButtonY,
+            kBottomDecisionButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0xA53B3B),
+            g_callbacks.on_connect_review_reject_clicked) ||
+        !make_setup_button(
+            panel,
+            input_mode == AgentQHumanApprovalInputMode::pin ? "Continue" : "Confirm",
+            kBottomDecisionButtonRightX,
+            kSetupActionButtonY,
+            kBottomDecisionButtonWidth,
+            kRecoveryPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(0x24875A),
+            g_callbacks.on_connect_review_accept_clicked)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    drawing_surface_move_panel_foreground_locked();
     return true;
 }
 
@@ -1484,28 +1504,31 @@ bool modal_draw_settings_menu_panel()
     lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
 
-    bool require_pin_on_connect = true;
-    const bool connect_setting_read_ok =
-        agent_q::read_require_pin_on_connect(&require_pin_on_connect);
+    agent_q::AgentQHumanApprovalInputMode human_approval_input_mode =
+        agent_q::AgentQHumanApprovalInputMode::pin;
+    const bool human_approval_setting_read_ok =
+        agent_q::read_human_approval_input_mode(&human_approval_input_mode);
     AgentQSigningAuthorizationMode signing_mode = AgentQSigningAuthorizationMode::user;
     const bool signing_mode_read_ok =
         agent_q::read_signing_authorization_mode(&signing_mode);
 
     // Settings are fixed rows: add future settings by appending the same
     // label/control pair, not by adding explanatory text blocks.
-    if (!make_settings_row_label(panel, "PIN on connect", kSettingsMenuRowOneY) ||
+    if (!make_settings_row_label(panel, "Approval input", kSettingsMenuRowOneY) ||
         !make_setup_button(
             panel,
-            require_pin_on_connect ? "ON" : "OFF",
+            human_approval_setting_read_ok
+                ? agent_q::human_approval_input_mode_label(human_approval_input_mode)
+                : "ERR",
             kSettingsMenuRowControlX,
             kSettingsMenuRowOneY,
             kSettingsMenuActionButtonWidth,
             kSettingsMenuActionButtonHeight,
             SetupButtonKind::outlined_keypad,
             lv_color_hex(0x24875A),
-            connect_setting_read_ok ? g_callbacks.on_settings_connect_pin_clicked : nullptr,
+            human_approval_setting_read_ok ? g_callbacks.on_settings_human_approval_input_clicked : nullptr,
             nullptr,
-            connect_setting_read_ok) ||
+            human_approval_setting_read_ok) ||
         !make_settings_row_label(panel, "Sign auth", kSettingsMenuRowTwoY) ||
         !make_setup_button(
             panel,

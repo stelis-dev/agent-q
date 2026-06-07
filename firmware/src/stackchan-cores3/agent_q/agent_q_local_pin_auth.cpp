@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "agent_q_bip39.h"
-#include "agent_q_connect_settings.h"
+#include "agent_q_human_approval_settings.h"
 #include "agent_q_local_auth.h"
 #include "agent_q_local_pin_auth_signature_internal.h"
 #include "agent_q_pin_attempt.h"
@@ -19,7 +19,7 @@ struct AgentQLocalPinAuthState {
     size_t pin_entry_length = 0;
     AgentQLocalPinAuthPurpose purpose = AgentQLocalPinAuthPurpose::none;
     AgentQLocalPinAuthStage stage = AgentQLocalPinAuthStage::none;
-    bool target_require_pin_on_connect = true;
+    AgentQHumanApprovalInputMode target_human_approval_input_mode = AgentQHumanApprovalInputMode::pin;
     AgentQSigningAuthorizationMode target_signing_authorization_mode = AgentQSigningAuthorizationMode::user;
     uint32_t auth_job_id = 0;
     AgentQTimeoutWindow input_window = kAgentQTimeoutWindowNone;
@@ -64,7 +64,7 @@ struct AgentQLocalPinAuthState {
         pin_entry_length = 0;
         purpose = AgentQLocalPinAuthPurpose::none;
         stage = AgentQLocalPinAuthStage::none;
-        target_require_pin_on_connect = true;
+        target_human_approval_input_mode = AgentQHumanApprovalInputMode::pin;
         target_signing_authorization_mode = AgentQSigningAuthorizationMode::user;
         auth_job_id = 0;
         input_window = kAgentQTimeoutWindowNone;
@@ -164,7 +164,7 @@ AgentQLocalPinAuthSnapshot local_pin_auth_snapshot(TickType_t now)
         g_state.stage,
         g_state.pin_entry_length,
         g_state.input_window,
-        g_state.target_require_pin_on_connect,
+        g_state.target_human_approval_input_mode,
         g_state.target_signing_authorization_mode,
         g_state.flow_active(),
         accepts,
@@ -229,17 +229,17 @@ bool local_pin_auth_begin_connect(AgentQTimeoutWindow input_window)
     return true;
 }
 
-bool local_pin_auth_begin_connect_setting(
-    bool target_require_pin_on_connect,
+bool local_pin_auth_begin_human_approval_input_setting(
+    AgentQHumanApprovalInputMode target_human_approval_input_mode,
     AgentQTimeoutWindow input_window)
 {
     g_state.clear_flow();
     if (!timeout_window_valid(input_window)) {
         return false;
     }
-    g_state.purpose = AgentQLocalPinAuthPurpose::settings_connect_pin;
+    g_state.purpose = AgentQLocalPinAuthPurpose::settings_human_approval_input;
     g_state.stage = AgentQLocalPinAuthStage::pin_entry;
-    g_state.target_require_pin_on_connect = target_require_pin_on_connect;
+    g_state.target_human_approval_input_mode = target_human_approval_input_mode;
     g_state.set_input_window(input_window);
     return true;
 }
@@ -516,7 +516,7 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
         return AgentQLocalPinAuthVerifyResult::advanced_to_change_pin;
     }
 
-    if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_connect_pin ||
+    if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_human_approval_input ||
         g_state.purpose == AgentQLocalPinAuthPurpose::settings_signing_mode) {
         g_state.stage = AgentQLocalPinAuthStage::committing_setting;
         g_state.commit_ready_at = setting_commit_ready_at;
@@ -622,8 +622,8 @@ AgentQLocalPinAuthCommitResult local_pin_auth_commit_if_ready(TickType_t now)
     }
 
     bool stored = false;
-    if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_connect_pin) {
-        stored = store_require_pin_on_connect(g_state.target_require_pin_on_connect);
+    if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_human_approval_input) {
+        stored = store_human_approval_input_mode(g_state.target_human_approval_input_mode);
     } else if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_signing_mode) {
         stored = store_signing_authorization_mode(g_state.target_signing_authorization_mode);
     } else {

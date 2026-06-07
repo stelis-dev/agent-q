@@ -97,7 +97,7 @@ cat >"${TMP_DIR}/local_reset_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_connect_settings.h"
+#include "agent_q_human_approval_settings.h"
 #include "agent_q_local_auth.h"
 #include "agent_q_local_pin_auth.h"
 #include "agent_q_local_reset.h"
@@ -114,13 +114,14 @@ bool g_marker_write_fails = false;
 bool g_root_present = true;
 bool g_policy_present = true;
 bool g_auth_present = true;
-bool g_connect_setting_present = true;
+bool g_human_approval_setting_present = true;
 bool g_approval_history_present = true;
 bool g_policy_update_marker_present = true;
 bool g_root_wipe_fails = false;
 bool g_approval_history_wipe_fails = false;
 bool g_policy_update_marker_wipe_fails = false;
-bool g_require_pin_on_connect = true;
+agent_q::AgentQHumanApprovalInputMode g_human_approval_input_mode =
+    agent_q::AgentQHumanApprovalInputMode::pin;
 uint32_t g_last_worker_job_id = 0;
 uint32_t g_last_cancelled_worker_job_id = 0;
 int g_clear_session_count = 0;
@@ -150,13 +151,13 @@ void reset_stubs()
     g_root_present = true;
     g_policy_present = true;
     g_auth_present = true;
-    g_connect_setting_present = true;
+    g_human_approval_setting_present = true;
     g_approval_history_present = true;
     g_policy_update_marker_present = true;
     g_root_wipe_fails = false;
     g_approval_history_wipe_fails = false;
     g_policy_update_marker_wipe_fails = false;
-    g_require_pin_on_connect = true;
+    g_human_approval_input_mode = agent_q::AgentQHumanApprovalInputMode::pin;
     g_last_worker_job_id = 0;
     g_last_cancelled_worker_job_id = 0;
     g_clear_session_count = 0;
@@ -344,9 +345,9 @@ void wipe_local_pin_verifier_record(AgentQLocalAuthPreparedRecord* prepared)
     }
 }
 
-bool wipe_require_pin_on_connect()
+bool wipe_human_approval_input_mode()
 {
-    g_connect_setting_present = false;
+    g_human_approval_setting_present = false;
     return true;
 }
 
@@ -375,23 +376,23 @@ bool policy_update_marker_clear()
     return true;
 }
 
-bool read_require_pin_on_connect(bool* required)
+bool read_human_approval_input_mode(AgentQHumanApprovalInputMode* mode)
 {
-    if (required == nullptr) {
+    if (mode == nullptr) {
         return false;
     }
-    *required = g_require_pin_on_connect;
+    *mode = g_human_approval_input_mode;
     return true;
 }
 
-bool connect_requires_pin()
+bool human_approval_requires_pin()
 {
-    return g_require_pin_on_connect;
+    return g_human_approval_input_mode == AgentQHumanApprovalInputMode::pin;
 }
 
-bool store_require_pin_on_connect(bool required)
+bool store_human_approval_input_mode(AgentQHumanApprovalInputMode mode)
 {
-    g_require_pin_on_connect = required;
+    g_human_approval_input_mode = mode;
     return true;
 }
 
@@ -446,7 +447,7 @@ int main()
     expect(agent_q::local_reset_wipe_ready(200), "wipe ready after delay");
     expect(agent_q::local_reset_commit_material(ops()) == Commit::ok, "error recovery commit succeeds");
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
-               !g_connect_setting_present && !g_approval_history_present &&
+               !g_human_approval_setting_present && !g_approval_history_present &&
                !g_policy_update_marker_present,
            "error recovery wipes all persistent material, approval history, and policy update marker");
     expect(!g_marker_present, "error recovery clears reset marker");
@@ -460,7 +461,7 @@ int main()
     expect(agent_q::local_reset_commit_material(ops()) == Commit::reset_marker_storage_error,
            "marker failure aborts before wiping");
     expect(g_root_present && g_policy_present && g_auth_present &&
-               g_connect_setting_present && g_approval_history_present &&
+               g_human_approval_setting_present && g_approval_history_present &&
                g_policy_update_marker_present,
            "marker failure leaves material untouched");
 
@@ -488,7 +489,7 @@ int main()
            "pending marker resumes wipe");
     expect(marker_seen, "pending marker reported");
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
-               !g_connect_setting_present && !g_approval_history_present &&
+               !g_human_approval_setting_present && !g_approval_history_present &&
                !g_policy_update_marker_present,
            "pending marker resume wipes all material, approval history, and policy update marker");
 

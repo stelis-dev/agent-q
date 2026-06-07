@@ -12,7 +12,7 @@
 #include "agent_q_bip39.h"
 #include "agent_q_bip39_wordlist.h"
 #include "agent_q_connect_approval.h"
-#include "agent_q_connect_settings.h"
+#include "agent_q_human_approval_settings.h"
 #include "agent_q_drawing_surface.h"
 #include "agent_q_entropy.h"
 #include "agent_q_identification_display.h"
@@ -110,7 +110,6 @@ constexpr size_t kMaxRequestIdSize = agent_q::kAgentQRequestIdSize;
 constexpr size_t kDeviceIdSize = 37;
 constexpr size_t kIdentifyCodeSize = 5;
 constexpr size_t kGatewayNameSize = 65;
-constexpr size_t kConnectDisplayMessageSize = 96;
 constexpr size_t kRecoverWordsPerPage = agent_q::kProvisioningFlowRecoverWordsPerPage;
 constexpr int kScreenWidth = 320;
 constexpr int kSettingsTouchEntryWidth = 64;
@@ -131,7 +130,7 @@ enum class AgentQUiEventKind {
     ui_surface_ready,
     settings_requested,
     settings_cancel_requested,
-    settings_connect_pin_requested,
+    settings_human_approval_input_requested,
     settings_signing_mode_requested,
     settings_change_pin_requested,
     settings_reset_requested,
@@ -181,10 +180,9 @@ static_assert(
     kGatewayNameSize == agent_q::kAgentQConnectApprovalGatewayNameSize,
     "Connect approval gateway-name storage must match USB gateway-name storage.");
 
-bool g_connect_decision_touch_armed = false;
 bool g_usb_ready = false;
 TaskHandle_t g_usb_task = nullptr;
-QueueHandle_t g_connect_decision_choice_queue = nullptr;
+QueueHandle_t g_connect_review_choice_queue = nullptr;
 QueueHandle_t g_ui_event_queue = nullptr;
 
 bool refresh_persistent_material_consistency();
@@ -198,7 +196,7 @@ bool clear_agent_q_panel_if_local_reset_stage(
     SensitiveUiClearPolicy policy = SensitiveUiClearPolicy::wipe);
 bool clear_agent_q_panel_if_local_pin_auth_stage(
     SensitiveUiClearPolicy policy = SensitiveUiClearPolicy::wipe);
-void clear_connect_decision_state();
+void clear_connect_review_state();
 void cancel_policy_update_after_session_loss(const char* log_reason);
 void cancel_user_signing_after_session_loss(const char* log_reason);
 bool pending_request_id_for_local_pin_purpose(
@@ -245,9 +243,9 @@ void wipe_local_pin_auth_scratch(const char* reason)
     }
 }
 
-bool is_decision_panel_kind(AgentQUiPanelKind kind)
+bool is_connect_review_panel_kind(AgentQUiPanelKind kind)
 {
-    return kind == AgentQUiPanelKind::decision_strip;
+    return kind == AgentQUiPanelKind::connect_review;
 }
 
 bool local_pin_auth_panel_matches_stage(AgentQUiPanelKind kind)
@@ -1107,6 +1105,26 @@ bool write_user_signing_confirmation_history(
         static_cast<uint64_t>(esp_timer_get_time() / 1000LL));
 }
 
+bool write_user_signing_physical_confirmation_history(
+    const agent_q::AgentQUserSigningFlowSnapshot& snapshot,
+    void*)
+{
+    const agent_q::AgentQSigningHistoryAppendInput input{
+        agent_q::AgentQSigningHistoryRecordKind::confirmation,
+        agent_q::AgentQApprovalHistoryConfirmationKind::physical_confirm,
+        agent_q::AgentQSigningHistoryTerminalResult::none,
+        snapshot.chain,
+        snapshot.method,
+        "device_confirmed",
+        snapshot.payload_digest,
+        nullptr,
+        nullptr,
+    };
+    return agent_q::approval_history_append_required_signing(
+        input,
+        static_cast<uint64_t>(esp_timer_get_time() / 1000LL));
+}
+
 bool write_user_signing_terminal_history(
     const agent_q::AgentQUserSigningFlowSnapshot& snapshot,
     agent_q::AgentQUserSigningTerminalResult result)
@@ -1243,6 +1261,25 @@ void finish_user_signing_terminal(
         kAgentQResultDisplayMs);
 }
 
+void execute_user_signing_critical_section_and_finish(const char* request_id)
+{
+    agent_q::AgentQUserSigningOutput signing_output = {};
+    const agent_q::AgentQUserSigningHandoffReport signing_report =
+        agent_q::user_signing_execute_critical_section(&signing_output);
+    if (signing_report.result != agent_q::AgentQUserSigningHandoffResult::ok) {
+        ESP_LOGW(kTag,
+                 "user_signing signing failed: id=%s handoff=%s signing=%s",
+                 request_id,
+                 agent_q::user_signing_handoff_result_name(signing_report.result),
+                 agent_q::sui_transaction_signing_result_to_string(signing_report.signing_result));
+        finish_user_signing_terminal(request_id);
+        agent_q::user_signing_output_wipe(&signing_output);
+        return;
+    }
+    finish_user_signing_terminal(request_id, &signing_output);
+    agent_q::user_signing_output_wipe(&signing_output);
+}
+
 bool fill_protocol_random(void* output, size_t size, const char* purpose)
 {
     if (agent_q::fill_secure_random(output, size)) {
@@ -1295,7 +1332,7 @@ agent_q::AgentQUsbSessionLossLocalPinPurpose local_pin_loss_purpose(
         case LocalPinAuthPurpose::user_signing:
             return agent_q::AgentQUsbSessionLossLocalPinPurpose::user_signing;
         case LocalPinAuthPurpose::none:
-        case LocalPinAuthPurpose::settings_connect_pin:
+        case LocalPinAuthPurpose::settings_human_approval_input:
         case LocalPinAuthPurpose::settings_signing_mode:
         case LocalPinAuthPurpose::settings_change_pin:
             return agent_q::AgentQUsbSessionLossLocalPinPurpose::other;
@@ -1366,7 +1403,7 @@ void clear_usb_session_state_for_host_loss(bool notify)
         clear_active_session();
     }
     if (plan.clear_connect_approval) {
-        clear_connect_decision_state();
+        clear_connect_review_state();
     }
     if (plan.clear_protocol_pin) {
         agent_q::protocol_pin_approval_clear();
@@ -1380,8 +1417,8 @@ void clear_usb_session_state_for_host_loss(bool notify)
     if (plan.cancel_user_signing) {
         cancel_user_signing_after_session_loss("USB host link lost during user_signing");
     }
-    if (plan.clear_decision_panel) {
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::decision_strip, SensitiveUiClearPolicy::preserve);
+    if (plan.clear_connect_review_panel) {
+        clear_agent_q_panel_if_kind(AgentQUiPanelKind::connect_review, SensitiveUiClearPolicy::preserve);
     }
     if (plan.clear_local_pin_panel) {
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
@@ -2055,7 +2092,7 @@ agent_q::AgentQTimeoutWindow local_pin_auth_next_input_window(
 {
     const agent_q::AgentQTimeoutWindow next_input_window =
         timeout_window_from_now_ms(now, kLocalPinInputWindowMs);
-    if (purpose == LocalPinAuthPurpose::settings_connect_pin ||
+    if (purpose == LocalPinAuthPurpose::settings_human_approval_input ||
         purpose == LocalPinAuthPurpose::settings_signing_mode ||
         purpose == LocalPinAuthPurpose::settings_change_pin) {
         return next_input_window;
@@ -2228,12 +2265,12 @@ bool recovery_phrase_backup_confirmation_ready()
     return agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recovery_phrase_displayed);
 }
 
-void enqueue_connect_decision_choice(ConnectApprovalChoice choice)
+void enqueue_connect_review_choice(ConnectApprovalChoice choice)
 {
-    if (choice == ConnectApprovalChoice::none || g_connect_decision_choice_queue == nullptr) {
+    if (choice == ConnectApprovalChoice::none || g_connect_review_choice_queue == nullptr) {
         return;
     }
-    if (xQueueSend(g_connect_decision_choice_queue, &choice, 0) != pdTRUE) {
+    if (xQueueSend(g_connect_review_choice_queue, &choice, 0) != pdTRUE) {
         ESP_LOGW(kTag, "Pending choice queue is full");
     }
 }
@@ -2252,14 +2289,14 @@ void enqueue_ui_event(AgentQUiEventKind kind, AgentQUiPanelKind panel_kind = Age
     }
 }
 
-void on_yes_clicked(lv_event_t*)
+void on_connect_review_accept_clicked(lv_event_t*)
 {
-    enqueue_connect_decision_choice(ConnectApprovalChoice::approved);
+    enqueue_connect_review_choice(ConnectApprovalChoice::approved);
 }
 
-void on_no_clicked(lv_event_t*)
+void on_connect_review_reject_clicked(lv_event_t*)
 {
-    enqueue_connect_decision_choice(ConnectApprovalChoice::rejected);
+    enqueue_connect_review_choice(ConnectApprovalChoice::rejected);
 }
 
 void on_user_signing_review_accept_clicked(lv_event_t*)
@@ -2312,9 +2349,9 @@ void on_settings_reset_clicked(lv_event_t*)
     enqueue_ui_event(AgentQUiEventKind::settings_reset_requested);
 }
 
-void on_settings_connect_pin_clicked(lv_event_t*)
+void on_settings_human_approval_input_clicked(lv_event_t*)
 {
-    enqueue_ui_event(AgentQUiEventKind::settings_connect_pin_requested);
+    enqueue_ui_event(AgentQUiEventKind::settings_human_approval_input_requested);
 }
 
 void on_settings_signing_mode_clicked(lv_event_t*)
@@ -2550,15 +2587,7 @@ bool clear_agent_q_panel_if_local_pin_auth_stage(SensitiveUiClearPolicy policy)
 void clear_request_ui_for_identification()
 {
     agent_q::avatar_overlay_clear();
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::decision_strip, SensitiveUiClearPolicy::preserve);
-}
-
-void show_decision_panel(agent_q::AgentQTimeoutWindow timeout_window)
-{
-    agent_q::identification_display_clear();
-    if (!agent_q::modal_draw_decision_panel(timeout_window)) {
-        ESP_LOGW(kTag, "connect decision panel could not be shown");
-    }
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::connect_review, SensitiveUiClearPolicy::preserve);
 }
 
 void show_identification_code(const char* code, uint32_t duration_ms)
@@ -2602,44 +2631,39 @@ void clear_agent_q_message_if_needed()
     show_provisioning_welcome_if_available();
 }
 
-bool show_avatar_decision(const char* message, agent_q::AgentQTimeoutWindow timeout_window)
+void clear_connect_review_state()
 {
-    if (!agent_q::avatar_overlay_show_message(message, AgentQMessageKind::approval, AgentQUiMode::decision, 0)) {
-        return false;
+    if (g_connect_review_choice_queue != nullptr) {
+        xQueueReset(g_connect_review_choice_queue);
     }
-    show_decision_panel(timeout_window);
-    return true;
-}
-
-void clear_connect_decision_state()
-{
     agent_q::connect_approval_clear();
-    g_connect_decision_touch_armed = false;
     agent_q::identification_display_clear();
 }
 
-void show_result_and_clear_connect_decision(const char* message, AgentQMessageKind kind)
+void show_result_and_clear_connect_review(const char* message, AgentQMessageKind kind)
 {
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::decision_strip, SensitiveUiClearPolicy::preserve);
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::connect_review, SensitiveUiClearPolicy::preserve);
     agent_q::avatar_overlay_show_message(message, kind, AgentQUiMode::result, kAgentQResultDisplayMs);
-    clear_connect_decision_state();
+    clear_connect_review_state();
 }
 
-void format_connect_message(char* output, size_t output_size)
+agent_q::AgentQHumanApprovalInputMode connect_review_input_mode()
 {
-    snprintf(output, output_size, "Open Gateway session?");
+    return agent_q::human_approval_input_mode_or_default();
 }
 
-void show_connect_decision()
+void show_connect_review()
 {
-    char message[kConnectDisplayMessageSize];
-    format_connect_message(message, sizeof(message));
     const agent_q::AgentQConnectApprovalSnapshot approval =
         agent_q::connect_approval_snapshot();
-    if (show_avatar_decision(message, approval.approval_window)) {
+    agent_q::identification_display_clear();
+    if (agent_q::modal_draw_connect_review_panel(
+            approval.gateway_name,
+            connect_review_input_mode(),
+            approval.approval_window)) {
         return;
     }
-    ESP_LOGW(kTag, "connect could not show Agent-Q avatar decision UI");
+    ESP_LOGW(kTag, "connect could not show Agent-Q review UI");
 }
 
 using SetupCommitResult = agent_q::AgentQPersistentMaterialCommitResult;
@@ -2960,7 +2984,7 @@ void commit_local_reset_if_ready()
         case agent_q::AgentQLocalResetCommitResult::root_wipe_error:
         case agent_q::AgentQLocalResetCommitResult::policy_wipe_error:
         case agent_q::AgentQLocalResetCommitResult::local_auth_wipe_error:
-        case agent_q::AgentQLocalResetCommitResult::connect_setting_wipe_error:
+        case agent_q::AgentQLocalResetCommitResult::human_approval_setting_wipe_error:
         case agent_q::AgentQLocalResetCommitResult::signing_mode_wipe_error:
         case agent_q::AgentQLocalResetCommitResult::approval_history_wipe_error:
         case agent_q::AgentQLocalResetCommitResult::policy_update_marker_wipe_error:
@@ -3142,7 +3166,7 @@ void start_reset_pin_from_settings_menu()
     }
 }
 
-void begin_connect_pin_auth(const char* id, const char* gateway_name)
+bool begin_connect_pin_auth(const char* id, const char* gateway_name)
 {
     agent_q::identification_display_clear();
     const TickType_t started_at = xTaskGetTickCount();
@@ -3150,22 +3174,27 @@ void begin_connect_pin_auth(const char* id, const char* gateway_name)
         timeout_window_from_now_ms(started_at, kConnectApprovalDefaultMs);
     if (!agent_q::protocol_pin_approval_begin_connect(id, request_window)) {
         write_connect_rejected_response(id, "invalid_state", "Connect is unavailable.");
+        agent_q::connect_approval_clear();
         agent_q::avatar_overlay_show_message("Connect unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        return;
+        return false;
     }
     if (!agent_q::local_pin_auth_begin_connect(request_window)) {
         write_connect_rejected_response(id, "invalid_state", "Connect PIN is unavailable.");
+        agent_q::connect_approval_clear();
         agent_q::protocol_pin_approval_clear();
         agent_q::avatar_overlay_show_message("Connect unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        return;
+        return false;
     }
 
     if (!agent_q::modal_draw_local_pin_auth_panel()) {
         write_connect_rejected_response(id, "ui_error", "Could not show local PIN UI.");
         wipe_local_pin_auth_scratch("connect PIN display allocation failed");
+        agent_q::connect_approval_clear();
         agent_q::protocol_pin_approval_clear();
         agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        return false;
     }
+    return true;
 }
 
 void clear_policy_update_terminal_state()
@@ -3391,6 +3420,31 @@ void handle_user_signing_review_accept_from_ui()
     }
 
     const TickType_t now = xTaskGetTickCount();
+    if (!agent_q::human_approval_requires_pin()) {
+        const agent_q::AgentQUserSigningTransitionResult result =
+            agent_q::user_signing_flow_record_physical_confirmed_and_write_confirmation_history(
+                now,
+                write_user_signing_physical_confirmation_history,
+                nullptr);
+        clear_agent_q_panel_if_kind(AgentQUiPanelKind::user_signing_review, SensitiveUiClearPolicy::preserve);
+        if (result == agent_q::AgentQUserSigningTransitionResult::ok) {
+            execute_user_signing_critical_section_and_finish(snapshot.request_id);
+            return;
+        }
+        if (agent_q::user_signing_flow_terminal_pending()) {
+            finish_user_signing_terminal(snapshot.request_id);
+            return;
+        }
+        finish_user_signing_error_terminal(
+            snapshot.request_id,
+            result == agent_q::AgentQUserSigningTransitionResult::history_error
+                ? "history_error"
+                : "invalid_state",
+            "Signing request is unavailable.",
+            "Signing unavailable");
+        return;
+    }
+
     const agent_q::AgentQTimeoutWindow pin_input_window =
         timeout_window_from_now_ms(now, kLocalPinInputWindowMs);
     const agent_q::AgentQUserSigningConfirmationResult result =
@@ -3506,6 +3560,7 @@ void handle_local_pin_auth_display_failure(const char* reason, bool clear_panel)
             clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
         }
         write_connect_rejected_response(request_id, "ui_error", "Could not show local PIN UI.");
+        agent_q::connect_approval_clear();
         agent_q::protocol_pin_approval_clear();
         agent_q::avatar_overlay_show_message(
             "Display error",
@@ -3549,6 +3604,7 @@ bool finish_request_backed_local_pin_input_timeout_if_reached(
             }
             if (purpose == LocalPinAuthPurpose::connect && request_id[0] != '\0') {
                 write_connect_rejected_response(request_id, "timeout", "Connection PIN timed out.");
+                agent_q::connect_approval_clear();
                 agent_q::protocol_pin_approval_clear();
                 agent_q::avatar_overlay_show_message(
                     "Connection timed out",
@@ -3582,19 +3638,20 @@ bool finish_request_backed_local_pin_input_timeout_if_reached(
     return false;
 }
 
-void start_settings_connect_pin_from_settings_menu()
+void start_settings_human_approval_input_from_settings_menu()
 {
     const agent_q::AgentQLocalResetSnapshot reset =
         agent_q::local_reset_snapshot(xTaskGetTickCount());
     if (!provisioned_material_ready() ||
         reset.stage != agent_q::AgentQLocalResetStage::settings_menu ||
         agent_q::local_pin_auth_flow_active()) {
-        ESP_LOGW(kTag, "Stale settings connect PIN action ignored");
+        ESP_LOGW(kTag, "Stale human approval input setting action ignored");
         return;
     }
 
-    bool current_require_pin = true;
-    if (!agent_q::read_require_pin_on_connect(&current_require_pin)) {
+    agent_q::AgentQHumanApprovalInputMode current_human_approval_mode =
+        agent_q::AgentQHumanApprovalInputMode::pin;
+    if (!agent_q::read_human_approval_input_mode(&current_human_approval_mode)) {
         agent_q::local_reset_wipe();
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::settings_menu, SensitiveUiClearPolicy::preserve);
         agent_q::avatar_overlay_show_message(
@@ -3607,15 +3664,19 @@ void start_settings_connect_pin_from_settings_menu()
     agent_q::local_reset_wipe();
     const agent_q::AgentQTimeoutWindow input_window =
         timeout_window_from_now_ms(xTaskGetTickCount(), agent_q::kAgentQLocalResetEntryMs);
-    if (!agent_q::local_pin_auth_begin_connect_setting(
-            !current_require_pin,
+    const agent_q::AgentQHumanApprovalInputMode target_human_approval_mode =
+        current_human_approval_mode == agent_q::AgentQHumanApprovalInputMode::pin
+            ? agent_q::AgentQHumanApprovalInputMode::confirm
+            : agent_q::AgentQHumanApprovalInputMode::pin;
+    if (!agent_q::local_pin_auth_begin_human_approval_input_setting(
+            target_human_approval_mode,
             input_window)) {
         agent_q::avatar_overlay_show_message("Settings unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
         return;
     }
 
     if (!agent_q::modal_draw_local_pin_auth_panel()) {
-        wipe_local_pin_auth_scratch("settings connect PIN display allocation failed");
+        wipe_local_pin_auth_scratch("human approval input setting display allocation failed");
         agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
     }
 }
@@ -3734,9 +3795,15 @@ void cancel_local_pin_auth_from_ui(const char* message)
     }
     if (purpose == LocalPinAuthPurpose::connect && request_id[0] != '\0') {
         wipe_local_pin_auth_scratch("local PIN authorization canceled");
-        write_connect_rejected_response(request_id, "rejected", "Connection rejected.");
         agent_q::protocol_pin_approval_clear();
-        agent_q::avatar_overlay_show_message("Connection rejected", AgentQMessageKind::rejected, AgentQUiMode::result, kAgentQResultDisplayMs);
+        if (!agent_q::connect_approval_return_to_review(
+                timeout_window_from_now_ms(now, kConnectApprovalDefaultMs))) {
+            write_connect_rejected_response(request_id, "invalid_state", "Connect is unavailable.");
+            agent_q::connect_approval_clear();
+            agent_q::avatar_overlay_show_message("Connect unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+            return;
+        }
+        show_connect_review();
         return;
     }
     if (purpose == LocalPinAuthPurpose::user_signing && request_id[0] != '\0') {
@@ -3762,7 +3829,7 @@ void cancel_local_pin_auth_from_ui(const char* message)
         }
         return;
     }
-    if (purpose == LocalPinAuthPurpose::settings_connect_pin ||
+    if (purpose == LocalPinAuthPurpose::settings_human_approval_input ||
         purpose == LocalPinAuthPurpose::settings_signing_mode ||
         purpose == LocalPinAuthPurpose::settings_change_pin) {
         wipe_local_pin_auth_scratch("local PIN authorization canceled");
@@ -4088,6 +4155,7 @@ void handle_setup_auth_worker_result(agent_q::AgentQLocalAuthWorkerResult& worke
         case SetupCommitResult::policy_storage_error:
         case SetupCommitResult::local_auth_storage_error:
         case SetupCommitResult::signing_mode_storage_error:
+        case SetupCommitResult::human_approval_setting_storage_error:
         case SetupCommitResult::state_storage_error:
             ESP_LOGW(kTag, "Local PIN confirmation storage error");
             agent_q::avatar_overlay_show_message("Storage error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4253,21 +4321,7 @@ void handle_local_pin_auth_verify_worker_result(
         }
 
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-        agent_q::AgentQUserSigningOutput signing_output = {};
-        const agent_q::AgentQUserSigningHandoffReport signing_report =
-            agent_q::user_signing_execute_critical_section(&signing_output);
-        if (signing_report.result != agent_q::AgentQUserSigningHandoffResult::ok) {
-            ESP_LOGW(kTag,
-                     "user_signing signing failed: id=%s handoff=%s signing=%s",
-                     request_id,
-                     agent_q::user_signing_handoff_result_name(signing_report.result),
-                     agent_q::sui_transaction_signing_result_to_string(signing_report.signing_result));
-            finish_user_signing_terminal(request_id);
-            agent_q::user_signing_output_wipe(&signing_output);
-            return;
-        }
-        finish_user_signing_terminal(request_id, &signing_output);
-        agent_q::user_signing_output_wipe(&signing_output);
+        execute_user_signing_critical_section_and_finish(request_id);
         return;
     }
     if (!provisioned_material_ready()) {
@@ -4286,6 +4340,7 @@ void handle_local_pin_auth_verify_worker_result(
                 return;
             }
             write_connect_rejected_response(request_id, "invalid_state", "Connect is unavailable.");
+            agent_q::connect_approval_clear();
             agent_q::protocol_pin_approval_clear();
         }
         agent_q::avatar_overlay_show_message("PIN unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4343,6 +4398,7 @@ void handle_local_pin_auth_verify_worker_result(
             }
             if (request_id[0] != '\0') {
                 write_connect_rejected_response(request_id, "auth_unavailable", "Local PIN verifier unavailable.");
+                agent_q::connect_approval_clear();
                 agent_q::protocol_pin_approval_clear();
             }
             agent_q::avatar_overlay_show_message("Auth error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4402,12 +4458,14 @@ void handle_local_pin_auth_verify_worker_result(
                 ESP_LOGE(kTag, "connect PIN could not create session id: id=%s", request_id);
                 wipe_local_pin_auth_scratch("connect PIN session creation failed");
                 clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+                agent_q::connect_approval_clear();
                 agent_q::protocol_pin_approval_clear();
                 agent_q::avatar_overlay_show_message("RNG error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
                 return;
             }
             wipe_local_pin_auth_scratch("connect PIN approved");
             clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+            agent_q::connect_approval_clear();
             if (request_id[0] != '\0') {
                 if (!write_connect_approved_response(request_id)) {
                     log_response_write_failure("connect_result", request_id);
@@ -4587,6 +4645,7 @@ void clear_local_pin_auth_if_needed()
             }
             if (request_id[0] != '\0') {
                 write_connect_rejected_response(request_id, "auth_unavailable", "Local PIN verifier unavailable.");
+                agent_q::connect_approval_clear();
                 agent_q::protocol_pin_approval_clear();
             }
             agent_q::avatar_overlay_show_message("Auth error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -4601,6 +4660,7 @@ void clear_local_pin_auth_if_needed()
         }
         if (request_id[0] != '\0') {
             write_connect_rejected_response(request_id, "timeout", "Connection PIN timed out.");
+            agent_q::connect_approval_clear();
             agent_q::protocol_pin_approval_clear();
             agent_q::avatar_overlay_show_message("Connection timed out",
                                  AgentQMessageKind::timeout,
@@ -4747,6 +4807,7 @@ void clear_local_pin_auth_if_needed()
             }
             if (purpose == LocalPinAuthPurpose::connect && request_id[0] != '\0') {
                 write_connect_rejected_response(request_id, "ui_error", "Could not restore local PIN UI.");
+                agent_q::connect_approval_clear();
                 agent_q::protocol_pin_approval_clear();
             }
             wipe_local_pin_auth_scratch("local PIN UI recovery failed");
@@ -4775,6 +4836,7 @@ void clear_local_pin_auth_if_needed()
         write_connect_rejected_response(request_id,
                                         expired ? "timeout" : "rejected",
                                         expired ? "Connection PIN timed out." : "Connection PIN UI closed.");
+        agent_q::connect_approval_clear();
         agent_q::protocol_pin_approval_clear();
         agent_q::avatar_overlay_show_message(expired ? "Connection timed out" : "Connection canceled",
                              expired ? AgentQMessageKind::timeout : AgentQMessageKind::info,
@@ -4863,48 +4925,6 @@ void clear_policy_update_review_if_needed()
             static_cast<uint64_t>(esp_timer_get_time() / 1000LL)));
 }
 
-void poll_touch_fallback()
-{
-    if (!agent_q::connect_approval_awaiting_choice()) {
-        return;
-    }
-
-    const auto touch = hal_bridge::get_touch_point();
-    if (touch.num == 0) {
-        g_connect_decision_touch_armed = true;
-        return;
-    }
-    if (!g_connect_decision_touch_armed) {
-        return;
-    }
-
-    lv_area_t panel_area;
-    {
-        LvglLockGuard lock;
-        const AgentQUiPanelKind panel_kind = agent_q::drawing_surface_panel_kind_locked();
-        if (!is_decision_panel_kind(panel_kind) ||
-            !agent_q::drawing_surface_get_panel_coords(panel_kind, &panel_area)) {
-            return;
-        }
-    }
-
-    const int panel_width = panel_area.x2 - panel_area.x1 + 1;
-    const int panel_height = panel_area.y2 - panel_area.y1 + 1;
-    const int relative_x = touch.x - panel_area.x1;
-    const int relative_y = touch.y - panel_area.y1;
-    const bool inside_panel = relative_x >= 0 && relative_y >= 0 &&
-                              relative_x < panel_width && relative_y < panel_height;
-    if (!inside_panel) {
-        return;
-    }
-
-    agent_q::connect_approval_choose(
-        relative_x < panel_width / 2
-            ? ConnectApprovalChoice::rejected
-            : ConnectApprovalChoice::approved);
-    g_connect_decision_touch_armed = false;
-}
-
 void poll_local_settings_touch_entry()
 {
     if (!local_settings_touch_entry_candidate_allowed()) {
@@ -4926,17 +4946,48 @@ void poll_local_settings_touch_entry()
     }
 }
 
-void drain_connect_decision_choice_events()
+bool connect_local_pin_flow_active()
 {
-    if (g_connect_decision_choice_queue == nullptr) {
+    const agent_q::AgentQLocalPinAuthSnapshot snapshot =
+        agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
+    return snapshot.flow_active &&
+           snapshot.purpose == LocalPinAuthPurpose::connect;
+}
+
+bool begin_connect_pin_auth_from_review(TickType_t now)
+{
+    if (!agent_q::connect_approval_review_action_available(now)) {
+        return false;
+    }
+    const agent_q::AgentQConnectApprovalSnapshot approval =
+        agent_q::connect_approval_snapshot();
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::connect_review, SensitiveUiClearPolicy::preserve);
+    return begin_connect_pin_auth(approval.request_id, approval.gateway_name);
+}
+
+void drain_connect_review_choice_events()
+{
+    if (g_connect_review_choice_queue == nullptr) {
+        return;
+    }
+    if (connect_local_pin_flow_active()) {
+        xQueueReset(g_connect_review_choice_queue);
         return;
     }
 
     ConnectApprovalChoice choice = ConnectApprovalChoice::none;
-    while (xQueueReceive(g_connect_decision_choice_queue, &choice, 0) == pdTRUE) {
+    while (xQueueReceive(g_connect_review_choice_queue, &choice, 0) == pdTRUE) {
         if (agent_q::connect_approval_awaiting_choice()) {
-            agent_q::connect_approval_choose(choice);
-            g_connect_decision_touch_armed = false;
+            const TickType_t now = xTaskGetTickCount();
+            if (choice == ConnectApprovalChoice::approved &&
+                agent_q::human_approval_requires_pin()) {
+                begin_connect_pin_auth_from_review(now);
+                xQueueReset(g_connect_review_choice_queue);
+                return;
+            }
+            agent_q::connect_approval_choose(choice, now);
+            xQueueReset(g_connect_review_choice_queue);
+            return;
         }
     }
 }
@@ -5190,8 +5241,8 @@ void drain_ui_events()
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::settings_connect_pin_requested) {
-            start_settings_connect_pin_from_settings_menu();
+        if (event.kind == AgentQUiEventKind::settings_human_approval_input_requested) {
+            start_settings_human_approval_input_from_settings_menu();
             continue;
         }
 
@@ -5366,36 +5417,41 @@ void drain_ui_events()
     }
 }
 
-void ensure_connect_decision_ui()
+void ensure_connect_review_ui()
 {
     if (!agent_q::connect_approval_awaiting_choice()) {
         return;
     }
+    if (connect_local_pin_flow_active()) {
+        return;
+    }
 
-    bool needs_decision_panel = false;
+    bool needs_connect_review_panel = false;
     {
         LvglLockGuard lock;
-        needs_decision_panel = agent_q::drawing_surface_panel_locked() == nullptr ||
-                               !is_decision_panel_kind(agent_q::drawing_surface_panel_kind_locked());
+        needs_connect_review_panel = agent_q::drawing_surface_panel_locked() == nullptr ||
+                               !is_connect_review_panel_kind(agent_q::drawing_surface_panel_kind_locked());
     }
-    if (!needs_decision_panel) {
+    if (!needs_connect_review_panel) {
         return;
     }
 
     const agent_q::AgentQConnectApprovalSnapshot approval =
         agent_q::connect_approval_snapshot();
-    show_connect_decision();
-    ESP_LOGW(kTag, "connect decision UI recovered: id=%s", approval.request_id);
+    show_connect_review();
+    ESP_LOGW(kTag, "connect review UI recovered: id=%s", approval.request_id);
 }
 
-void send_connect_decision_response_if_needed()
+void send_connect_review_response_if_needed()
 {
-    drain_connect_decision_choice_events();
-    poll_touch_fallback();
+    drain_connect_review_choice_events();
 
     agent_q::AgentQConnectApprovalSnapshot approval =
         agent_q::connect_approval_snapshot();
     if (!approval.active || approval.choice == ConnectApprovalChoice::none) {
+        if (connect_local_pin_flow_active()) {
+            return;
+        }
         if (agent_q::connect_approval_deadline_reached(xTaskGetTickCount())) {
             char request_id[kMaxRequestIdSize] = {};
             agent_q::connect_approval_request_id(request_id, sizeof(request_id));
@@ -5403,7 +5459,7 @@ void send_connect_decision_response_if_needed()
             agent_q::connect_approval_clear();
             write_connect_rejected_response(request_id, "timeout", "Connection approval timed out.");
             ESP_LOGI(kTag, "connect timed out: id=%s", request_id);
-            show_result_and_clear_connect_decision("Connection timed out", AgentQMessageKind::timeout);
+            show_result_and_clear_connect_review("Connection timed out", AgentQMessageKind::timeout);
         }
         return;
     }
@@ -5416,7 +5472,7 @@ void send_connect_decision_response_if_needed()
         if (!replace_active_session()) {
             write_error_response(request_id, "rng_error", "Could not create session id.");
             ESP_LOGE(kTag, "connect could not create session id: id=%s", request_id);
-            show_result_and_clear_connect_decision("RNG error", AgentQMessageKind::error);
+            show_result_and_clear_connect_review("RNG error", AgentQMessageKind::error);
             return;
         }
         if (write_connect_approved_response(request_id)) {
@@ -5424,14 +5480,14 @@ void send_connect_decision_response_if_needed()
         } else {
             log_response_write_failure("connect_result", request_id);
         }
-        show_result_and_clear_connect_decision("Connected", AgentQMessageKind::success);
+        show_result_and_clear_connect_review("Connected", AgentQMessageKind::success);
     } else {
         if (write_connect_rejected_response(request_id, "rejected", "Connection rejected.")) {
             ESP_LOGI(kTag, "connect rejected: id=%s", request_id);
         } else {
             log_response_write_failure("connect_result", request_id);
         }
-        show_result_and_clear_connect_decision("Connection rejected", AgentQMessageKind::rejected);
+        show_result_and_clear_connect_review("Connection rejected", AgentQMessageKind::rejected);
     }
 }
 
@@ -5659,12 +5715,6 @@ void handle_line(const char* line)
             return;
         }
 
-        if (agent_q::connect_requires_pin()) {
-            begin_connect_pin_auth(id, gateway_name);
-            ESP_LOGI(kTag, "connect waiting for local PIN: id=%s gateway=%s", id, gateway_name);
-            return;
-        }
-
         const TickType_t started_at = xTaskGetTickCount();
         const agent_q::AgentQTimeoutWindow approval_window = agent_q::timeout_window_from_deadline(
             started_at,
@@ -5674,8 +5724,11 @@ void handle_line(const char* line)
             agent_q::avatar_overlay_show_message("Connect unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
             return;
         }
-        show_connect_decision();
-        ESP_LOGI(kTag, "connect waiting for YES/NO: id=%s gateway=%s", id, gateway_name);
+        if (g_connect_review_choice_queue != nullptr) {
+            xQueueReset(g_connect_review_choice_queue);
+        }
+        show_connect_review();
+        ESP_LOGI(kTag, "connect waiting for review: id=%s gateway=%s", id, gateway_name);
         return;
     }
 
@@ -6247,7 +6300,7 @@ void poll_usb_input()
 void usb_request_task(void*)
 {
     // Ordering matters: any pending YES/NO choice is resolved and its response is
-    // sent (send_connect_decision_response_if_needed) before new input is read
+    // sent (send_connect_review_response_if_needed) before new input is read
     // (poll_usb_input). A new request therefore cannot be handled until the
     // in-flight approval response has been written in the same loop pass.
     while (true) {
@@ -6267,8 +6320,8 @@ void usb_request_task(void*)
         commit_local_pin_setting_if_ready();
         poll_local_settings_touch_entry();
         show_persistent_error_recovery_if_needed();
-        send_connect_decision_response_if_needed();
-        ensure_connect_decision_ui();
+        send_connect_review_response_if_needed();
+        ensure_connect_review_ui();
         if (g_usb_ready) {
             poll_usb_host_connection();
             poll_usb_input();
@@ -6292,17 +6345,16 @@ void init_usb_request_server()
         ESP_LOGE(kTag, "Local auth worker init failed");
     }
     agent_q::connect_approval_clear();
-    g_connect_decision_touch_armed = false;
     agent_q::identification_display_clear();
     wipe_setup_scratch("usb request server init");
     wipe_local_reset_scratch("usb request server init");
-    if (g_connect_decision_choice_queue == nullptr) {
-        g_connect_decision_choice_queue = xQueueCreate(4, sizeof(ConnectApprovalChoice));
-        if (g_connect_decision_choice_queue == nullptr) {
+    if (g_connect_review_choice_queue == nullptr) {
+        g_connect_review_choice_queue = xQueueCreate(4, sizeof(ConnectApprovalChoice));
+        if (g_connect_review_choice_queue == nullptr) {
             ESP_LOGE(kTag, "Pending choice queue create failed");
         }
     } else {
-        xQueueReset(g_connect_decision_choice_queue);
+        xQueueReset(g_connect_review_choice_queue);
     }
     if (g_ui_event_queue == nullptr) {
         g_ui_event_queue = xQueueCreate(4, sizeof(AgentQUiEvent));
@@ -6314,13 +6366,13 @@ void init_usb_request_server()
     }
     agent_q::drawing_surface_set_panel_deleted_callback(on_agent_q_panel_deleted);
     agent_q::AgentQModalDrawingCallbacks modal_callbacks;
-    modal_callbacks.on_yes_clicked = on_yes_clicked;
-    modal_callbacks.on_no_clicked = on_no_clicked;
+    modal_callbacks.on_connect_review_accept_clicked = on_connect_review_accept_clicked;
+    modal_callbacks.on_connect_review_reject_clicked = on_connect_review_reject_clicked;
     modal_callbacks.on_setup_generate_clicked = on_setup_generate_clicked;
     modal_callbacks.on_setup_recover_clicked = on_setup_recover_clicked;
     modal_callbacks.on_setup_cancel_clicked = on_setup_cancel_clicked;
     modal_callbacks.on_settings_cancel_clicked = on_settings_cancel_clicked;
-    modal_callbacks.on_settings_connect_pin_clicked = on_settings_connect_pin_clicked;
+    modal_callbacks.on_settings_human_approval_input_clicked = on_settings_human_approval_input_clicked;
     modal_callbacks.on_settings_signing_mode_clicked = on_settings_signing_mode_clicked;
     modal_callbacks.on_settings_change_pin_clicked = on_settings_change_pin_clicked;
     modal_callbacks.on_settings_reset_clicked = on_settings_reset_clicked;

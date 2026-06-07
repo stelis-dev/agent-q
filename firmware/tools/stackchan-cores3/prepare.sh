@@ -744,6 +744,74 @@ board = insert_after_once(
 )
 write_text_if_changed(board_path, board)
 
+# Agent-Q downstream hardening of the shared I2C helpers.
+#
+# Rationale: a transient I2C timeout (observed in the field as an FT6336
+# touch-controller read during display wake) was wrapped in ESP_ERROR_CHECK,
+# which calls abort() and reboots the whole device (reset_reason=4 / PANIC).
+# Rebooting a signing device because one touch register read timed out is
+# unacceptable; a missed/late read is recoverable. Upstream already ships a
+# tolerant TryReadRegs, so we extend the same policy to the per-register helpers:
+# log and continue instead of abort. The boot-time bus-add ESP_ERROR_CHECK is
+# left intact (a real configuration error should still fail fast).
+#
+# Maintainability: this uses replace_function(), which is idempotent and FAILS
+# THE BUILD ("function signature not found") if a future upstream pin changes
+# these signatures -- so this downstream change can never be silently dropped by
+# an upstream update; it forces a deliberate review instead.
+i2c_device_path = firmware_dir / "xiaozhi-esp32/main/boards/common/i2c_device.cc"
+i2c_device = read_text_file(i2c_device_path, "i2c_device.cc")
+i2c_device = insert_after_once(
+    i2c_device,
+    "#define TAG \"I2cDevice\"\n",
+    "\n// Agent-Q downstream change: WriteReg/ReadReg/ReadRegs log-and-continue on a\n"
+    "// transient I2C error instead of ESP_ERROR_CHECK/abort(), so a touch-controller\n"
+    "// read timing out during display wake cannot reboot the signing device.\n",
+    "i2c_device.cc Agent-Q tolerance note",
+)
+i2c_device = replace_function(
+    i2c_device,
+    "void I2cDevice::WriteReg(uint8_t reg, uint8_t value)",
+    """{
+    uint8_t buffer[2] = {reg, value};
+    esp_err_t agentq_err = i2c_master_transmit(i2c_device_, buffer, 2, 100);
+    if (agentq_err != ESP_OK) {
+        ESP_LOGW(TAG, "WriteReg(0x%02x) failed: %s (Agent-Q: not fatal)", reg, esp_err_to_name(agentq_err));
+    }
+}
+""",
+    "i2c_device.cc WriteReg tolerant",
+)
+i2c_device = replace_function(
+    i2c_device,
+    "uint8_t I2cDevice::ReadReg(uint8_t reg)",
+    """{
+    uint8_t buffer[1] = {0};
+    esp_err_t agentq_err = i2c_master_transmit_receive(i2c_device_, &reg, 1, buffer, 1, 100);
+    if (agentq_err != ESP_OK) {
+        ESP_LOGW(TAG, "ReadReg(0x%02x) failed: %s (Agent-Q: not fatal)", reg, esp_err_to_name(agentq_err));
+    }
+    return buffer[0];
+}
+""",
+    "i2c_device.cc ReadReg tolerant",
+)
+i2c_device = replace_function(
+    i2c_device,
+    "void I2cDevice::ReadRegs(uint8_t reg, uint8_t* buffer, size_t length)",
+    """{
+    esp_err_t agentq_err = i2c_master_transmit_receive(i2c_device_, &reg, 1, buffer, length, 100);
+    if (agentq_err != ESP_OK) {
+        ESP_LOGW(TAG, "ReadRegs(0x%02x) failed: %s (Agent-Q: not fatal)", reg, esp_err_to_name(agentq_err));
+    }
+}
+""",
+    "i2c_device.cc ReadRegs tolerant",
+)
+assert_not_contains(i2c_device, "ESP_ERROR_CHECK(i2c_master_transmit(", "i2c_device.cc WriteReg abort removed")
+assert_not_contains(i2c_device, "ESP_ERROR_CHECK(i2c_master_transmit_receive(", "i2c_device.cc read abort removed")
+write_text_if_changed(i2c_device_path, i2c_device)
+
 mcp_path = firmware_dir / "xiaozhi-esp32/main/mcp_server.cc"
 mcp = read_text_file(mcp_path, "mcp_server.cc")
 mcp = replace_function(

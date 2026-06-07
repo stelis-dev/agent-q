@@ -140,9 +140,9 @@ Rules:
   Firmware reads its local signing authorization mode and selects one gate:
   policy mode evaluates active policy and signs with speech-bubble status
   notifications when policy authorizes the bounded request, while user mode uses
-  device-local clear-signing review and local PIN confirmation. Requests cannot
-  choose this mode. Personal-message signing is user-mode only and fails closed
-  in policy mode.
+  device-local clear-signing review and the current human approval input mode.
+  Requests cannot choose this mode or the human approval input mode.
+  Personal-message signing is user-mode only and fails closed in policy mode.
   Detailed hardware evidence status is tracked in
   `docs/IMPLEMENTATION_STATUS.md`. Final current-tree Sign API hardware and
   visual evidence remains pending, so product-active status is not claimed.
@@ -306,7 +306,7 @@ salt/verifier, and returns to Settings; no root material is changed and no PIN i
 sent over USB. Reset uses the same Settings entry point: a Reset menu action,
 stored PIN verification, root material wipe, active policy wipe, PIN verifier
 wipe, signing authorization mode wipe, approval history wipe, policy-update
-terminal marker wipe, session cleanup, connect-approval setting wipe, and
+terminal marker wipe, session cleanup, human approval input mode setting wipe, and
 `unprovisioned` persistence.
 Firmware writes an internal reset-pending marker before destructive wipe starts,
 so boot can resume an interrupted reset wipe. PIN failure, timeout, or cancel

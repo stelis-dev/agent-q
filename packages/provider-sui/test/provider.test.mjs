@@ -786,6 +786,80 @@ test("browser provider rejects oversized Web Serial response lines", async () =>
   }
 });
 
+test("browser provider settles a request even when Web Serial cleanup hangs", async () => {
+  const port = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  // Simulate a device that disconnected/reset right after responding: close() never resolves.
+  port.close = () => new Promise(() => {});
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        serial: {
+          requestPort: async () => port,
+        },
+      },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    // Must resolve (not hang forever) despite the hung close(); the cleanup step is timeout-guarded.
+    const connected = await provider.connectDevice();
+    assert.equal(connected.source, "connected");
+    assert.equal(connected.deviceId, "device-1");
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider clears the cached port when Web Serial reports a device disconnect", async () => {
+  let requestPortCalls = 0;
+  const firstPort = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const secondPort = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  let disconnectHandler = null;
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        serial: {
+          requestPort: async () => {
+            requestPortCalls += 1;
+            return requestPortCalls === 1 ? firstPort : secondPort;
+          },
+          addEventListener: (type, handler) => {
+            if (type === "disconnect") {
+              disconnectHandler = handler;
+            }
+          },
+          removeEventListener: () => {},
+        },
+      },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal(typeof disconnectHandler, "function");
+    assert.equal((await provider.connectDevice()).source, "connected");
+    assert.equal(requestPortCalls, 1);
+
+    // Simulate a physical disconnect / Firmware reboot re-enumeration.
+    disconnectHandler({ target: firstPort });
+
+    // The next connect must re-request the port (browser menu reappears),
+    // not silently reuse the dead cached port.
+    assert.equal((await provider.connectDevice()).source, "connected");
+    assert.equal(requestPortCalls, 2);
+    assert.deepEqual(secondPort.requests.map((request) => request.type), ["connect"]);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
 test("provider object presents the Sui dapp-facing adapter API including signing methods", () => {
   const provider = createAgentQSuiProvider({ core: createFakeCore() });
   const methodNames = Object.getOwnPropertyNames(Object.getPrototypeOf(provider))

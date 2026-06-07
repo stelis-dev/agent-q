@@ -23,6 +23,7 @@ enum class AgentQApprovalHistoryConfirmationKind {
     none,
     policy,
     local_pin,
+    physical_confirm,
 };
 
 enum class AgentQApprovalHistoryReadResult {

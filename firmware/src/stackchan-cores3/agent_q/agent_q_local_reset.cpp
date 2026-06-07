@@ -154,9 +154,9 @@ AgentQLocalResetCommitResult wipe_persistent_material_for_local_reset(
         case AgentQPersistentMaterialWipeResult::local_auth_wipe_error:
             record_material_failure(ops, AgentQPersistentMaterialRuntimeFailure::local_reset_local_auth_wipe_failed);
             return AgentQLocalResetCommitResult::local_auth_wipe_error;
-        case AgentQPersistentMaterialWipeResult::connect_setting_wipe_error:
-            record_material_failure(ops, AgentQPersistentMaterialRuntimeFailure::local_reset_connect_setting_wipe_failed);
-            return AgentQLocalResetCommitResult::connect_setting_wipe_error;
+        case AgentQPersistentMaterialWipeResult::human_approval_setting_wipe_error:
+            record_material_failure(ops, AgentQPersistentMaterialRuntimeFailure::local_reset_human_approval_setting_wipe_failed);
+            return AgentQLocalResetCommitResult::human_approval_setting_wipe_error;
         case AgentQPersistentMaterialWipeResult::signing_mode_wipe_error:
             record_material_failure(ops, AgentQPersistentMaterialRuntimeFailure::local_reset_signing_mode_wipe_failed);
             return AgentQLocalResetCommitResult::signing_mode_wipe_error;

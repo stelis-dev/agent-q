@@ -40,6 +40,12 @@ import type {
 
 const DEFAULT_GATEWAY_NAME = "Agent-Q Sui dapp";
 
+// Web Serial cleanup (reader.cancel / port.close) can hang indefinitely when the
+// device physically disconnects or resets mid-request. Cap each cleanup step so a
+// hung transport can never wedge the request promise (which would otherwise leave
+// the dapp waiting forever and the cached port unusable for reconnect).
+const CLEANUP_STEP_TIMEOUT_MS = 1500;
+
 type BrowserSerialPort = {
   open(options: { baudRate: number }): Promise<void>;
   close(): Promise<void>;
@@ -79,10 +85,13 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
   #port: BrowserSerialPort | null;
   #session: BrowserSession | null = null;
 
+  #disconnectListener: ((event: { target?: unknown }) => void) | null = null;
+
   constructor(options: AgentQSuiBrowserProviderOptions = {}) {
     this.#port = null;
     this.#requestPort = defaultRequestPort();
     this.#gatewayName = options.gatewayName ?? DEFAULT_GATEWAY_NAME;
+    this.#registerDisconnectListener();
   }
 
   async connectDevice(input: {
@@ -279,6 +288,42 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     this.#clearPort();
   }
 
+  // Observe physical Web Serial disconnects (cable removal or a Firmware reboot
+  // that re-enumerates the device). Without this, a disconnect while idle leaves
+  // a stale cached port, so the next reconnect reuses the dead port and never
+  // re-prompts the browser port-selection menu.
+  #registerDisconnectListener(): void {
+    const serial = defaultSerial() as
+      | (BrowserSerial & { addEventListener?: (type: string, listener: (event: { target?: unknown }) => void) => void })
+      | null;
+    if (serial === null || typeof serial.addEventListener !== "function") {
+      return;
+    }
+    const listener = (event: { target?: unknown }): void => {
+      if (this.#port !== null && event.target !== undefined && event.target !== this.#port) {
+        return;
+      }
+      if (this.#port === null && this.#session === null) {
+        return;
+      }
+      console.warn("[agent-q] Web Serial device disconnected; clearing cached port and session.");
+      this.#clearSessionAndPort();
+    };
+    this.#disconnectListener = listener;
+    serial.addEventListener("disconnect", listener);
+  }
+
+  dispose(): void {
+    const serial = defaultSerial() as
+      | (BrowserSerial & { removeEventListener?: (type: string, listener: (event: { target?: unknown }) => void) => void })
+      | null;
+    if (this.#disconnectListener !== null && serial !== null && typeof serial.removeEventListener === "function") {
+      serial.removeEventListener("disconnect", this.#disconnectListener);
+    }
+    this.#disconnectListener = null;
+    this.#clearSessionAndPort();
+  }
+
   async #request<TResponse extends ProviderProtocolResponse>(
     request: ProviderProtocolRequest,
     assertResponse: (response: ProviderProtocolResponse) => TResponse,
@@ -361,6 +406,32 @@ async function disconnectApprovedMismatchedSession(port: BrowserSerialPort, sess
   }
 }
 
+// Await a best-effort transport-cleanup step, but never block longer than
+// CLEANUP_STEP_TIMEOUT_MS. A hung reader.cancel()/port.close() on a disconnected
+// device is abandoned (its rejection is swallowed) so the request still settles.
+async function settleCleanupStep(operation: Promise<unknown> | undefined, label: string): Promise<void> {
+  if (operation === undefined) {
+    return;
+  }
+  const guarded = operation.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      console.warn(
+        `[agent-q] Web Serial cleanup '${label}' did not complete within ${CLEANUP_STEP_TIMEOUT_MS}ms; abandoning it.`,
+      );
+      resolve();
+    }, CLEANUP_STEP_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([guarded, timeout]);
+  } finally {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 async function requestOverBrowserSerial<TResponse extends ProviderProtocolResponse>(
   port: BrowserSerialPort,
   request: ProviderProtocolRequest,
@@ -382,11 +453,15 @@ async function requestOverBrowserSerial<TResponse extends ProviderProtocolRespon
     writer = null;
 
     const response = readMatchingResponse(reader, request.id, assertResponse);
+    // If the deadline wins the race below, the read is cancelled in `finally` and
+    // this promise rejects after it has already lost. Attach a no-op catch so that
+    // late rejection is not reported as an unhandled promise rejection.
+    void response.catch(() => undefined);
     const deadline = new Promise<never>((_, reject) => {
-      timeout = setTimeout(
-        () => reject(new AgentQSuiBrowserProviderError("timeout", "Timed out waiting for Firmware response.")),
-        deadlineMs,
-      );
+      timeout = setTimeout(() => {
+        console.warn(`[agent-q] No Firmware response for '${request.type}' within ${deadlineMs}ms; treating link as lost.`);
+        reject(new AgentQSuiBrowserProviderError("timeout", "Timed out waiting for Firmware response."));
+      }, deadlineMs);
     });
     return await Promise.race([response, deadline]);
   } finally {
@@ -394,21 +469,21 @@ async function requestOverBrowserSerial<TResponse extends ProviderProtocolRespon
       clearTimeout(timeout);
     }
     if (writer !== null) {
-      writer.releaseLock();
+      try {
+        writer.releaseLock();
+      } catch {
+        // Writer may already be released.
+      }
     }
     if (reader !== null) {
+      await settleCleanupStep(reader.cancel(), "reader.cancel");
       try {
-        await reader.cancel();
+        reader.releaseLock();
       } catch {
-        // Best-effort transport cleanup; preserve the original request result.
+        // Reader may still be settling after a timed-out cancel.
       }
-      reader.releaseLock();
     }
-    try {
-      await port.close();
-    } catch {
-      // Best-effort transport cleanup; preserve the original request result.
-    }
+    await settleCleanupStep(port.close(), "port.close");
   }
 }
 

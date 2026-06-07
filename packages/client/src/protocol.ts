@@ -376,7 +376,7 @@ export interface SigningApprovalHistoryRecord extends ApprovalHistoryRecordBase 
   chain: string;
   method: string;
   payloadDigest: string;
-  confirmationKind?: "local_pin" | "policy";
+  confirmationKind?: "local_pin" | "physical_confirm" | "policy";
   policyHash?: string;
   ruleRef?: string;
   terminalResult?: SigningHistoryTerminalResult;
@@ -1293,7 +1293,8 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
       }
       if (value.authorization === "user") {
         if (
-          value.confirmationKind !== "local_pin" ||
+          (value.confirmationKind !== "local_pin" &&
+            value.confirmationKind !== "physical_confirm") ||
           value.policyHash !== undefined ||
           value.ruleRef !== undefined
         ) {
@@ -1307,7 +1308,7 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
           reasonCode: value.reasonCode,
           recordKind: "confirmation",
           authorization: "user",
-          confirmationKind: "local_pin",
+          confirmationKind: value.confirmationKind,
           chain: value.chain,
           method: value.method,
           payloadDigest: value.payloadDigest,

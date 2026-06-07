@@ -63,7 +63,7 @@ int main()
     expect(!agent_q::connect_approval_request_id(request_id, sizeof(request_id)),
            "inactive state has no request id");
     expect(request_id[0] == '\0', "inactive request id output is cleared");
-    expect(!agent_q::connect_approval_choose(Choice::approved),
+    expect(!agent_q::connect_approval_choose(Choice::approved, 0),
            "cleared state ignores stale approve choice");
 
     expect(agent_q::connect_approval_begin("connect-1", "Agent-Q Gateway", {10, 100}),
@@ -82,6 +82,10 @@ int main()
     expect(agent_q::connect_approval_request_id(request_id, sizeof(request_id)) &&
                strcmp(request_id, "connect-1") == 0,
            "request id is copied for response writer");
+    expect(agent_q::connect_approval_review_action_available(99),
+           "review action is available before deadline");
+    expect(!agent_q::connect_approval_review_action_available(100),
+           "review action is unavailable at deadline");
 
     expect(!agent_q::connect_approval_begin("connect-2", "Other Gateway", {25, 125}),
            "active approval cannot be overwritten");
@@ -90,13 +94,13 @@ int main()
                strcmp(snapshot.gateway_name, "Agent-Q Gateway") == 0,
            "rejected overwrite leaves state intact");
 
-    expect(!agent_q::connect_approval_choose(Choice::none),
+    expect(!agent_q::connect_approval_choose(Choice::none, 50),
            "none choice is rejected");
-    expect(agent_q::connect_approval_choose(Choice::approved),
+    expect(agent_q::connect_approval_choose(Choice::approved, 50),
            "approve choice is recorded");
     expect(!agent_q::connect_approval_awaiting_choice(),
            "approved state no longer awaits choice");
-    expect(!agent_q::connect_approval_choose(Choice::rejected),
+    expect(!agent_q::connect_approval_choose(Choice::rejected, 51),
            "recorded choice cannot be overwritten");
     snapshot = agent_q::connect_approval_snapshot();
     expect(snapshot.choice == Choice::approved, "approved choice retained");
@@ -122,13 +126,23 @@ int main()
     expect(!agent_q::connect_approval_begin("connect-3", "Agent-Q Gateway", {20, 0}),
            "zero approval deadline is rejected");
 
+    expect(agent_q::connect_approval_begin("connect-expired-choice", "Agent-Q Gateway", {30, 90}),
+           "connect approval can begin for expired-choice test");
+    expect(!agent_q::connect_approval_choose(Choice::approved, 90),
+           "approve choice at deadline is rejected");
+    snapshot = agent_q::connect_approval_snapshot();
+    expect(snapshot.choice == Choice::none, "expired approve leaves choice unset");
+    expect(agent_q::connect_approval_awaiting_choice(),
+           "expired approve keeps state awaiting timeout response");
+    agent_q::connect_approval_clear();
+
     expect(agent_q::connect_approval_begin("connect-4", "Agent-Q Gateway", {30, 300}),
            "connect approval can begin after clear");
     char small_request_id[4] = {};
     expect(!agent_q::connect_approval_request_id(small_request_id, sizeof(small_request_id)),
            "too-small request id output is rejected");
     expect(small_request_id[0] == '\0', "too-small request id output is cleared");
-    expect(agent_q::connect_approval_choose(Choice::rejected),
+    expect(agent_q::connect_approval_choose(Choice::rejected, 40),
            "reject choice is recorded");
     snapshot = agent_q::connect_approval_snapshot();
     expect(snapshot.choice == Choice::rejected, "rejected choice retained");

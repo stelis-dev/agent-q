@@ -160,12 +160,12 @@ int main()
 	               !p.recover_user_signing_review_panel,
 	           "idle settings panel delete has no state cleanup");
 
-	    p = plan(Panel::decision_strip, Event::external_delete);
+	    p = plan(Panel::connect_review, Event::external_delete);
 	    expect(!p.route_provisioning_panel_deleted && !p.wipe_local_reset &&
 	               !p.wipe_local_pin_auth && !p.recover_local_pin_auth_panel &&
 	               !p.recover_policy_update_review_panel &&
 	               !p.wipe_user_signing && !p.recover_user_signing_review_panel,
-	           "decision strip delete does not decide or cancel");
+	           "connect review delete does not decide or cancel");
 
     if (failures != 0) {
         fprintf(stderr, "%d UI panel cleanup test(s) failed\n", failures);

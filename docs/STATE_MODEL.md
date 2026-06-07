@@ -84,7 +84,7 @@ reset or debug recovery request. Its local settings paths are device-local UX
 only: provisioned devices can enter local settings, verify the stored local PIN
 to change the local PIN verifier, or choose Reset, verify the stored local PIN,
 and then wipe root material, active policy, PIN verifier, signing authorization
-mode, approval history, policy-update terminal marker, local connect setting,
+mode, approval history, policy-update terminal marker, human approval input mode setting,
 runtime session, and provisioning state before returning to `unprovisioned`.
 Firmware records an internal reset-pending marker before destructive wipe starts
 so an interrupted reset can resume at boot. The same destructive wipe machinery
@@ -104,7 +104,7 @@ hardware and must be documented in each target's `SPEC.md`.
 | Persistent device state | provisioning state, stored root material, policy, local PIN verifier, signing authorization mode, approval history, policy-update terminal marker, account availability | Firmware | Yes |
 | Volatile sensitive scratch | generated recovery phrase, setup entropy, pending backup confirmation, typed PIN digits | Firmware | Yes |
 | Local PIN authorization state | connect/settings/policy-update/reset PIN entry purpose, verification stage, Firmware-owned input deadline, RAM-only lockout | Firmware | Yes |
-| Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or connect PIN approval; Firmware-owned deadline; requested action | Firmware | Yes |
+| Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or local PIN approval; Firmware-owned deadline; requested action | Firmware | Yes |
 | Pending policy update state | validated policy proposal summary, policy hash, review/PIN/commit stage, review deadline | Firmware | Yes |
 | Runtime session state | active protocol session id and link-bound cleanup state | Firmware; Gateway mirrors its own client session state in RAM and clears that mirror when Firmware rejects it or live USB scan no longer observes the device | Yes |
 | Target-local display state | screen on/off, brightness, screensaver replacement | Firmware target display module | No |
@@ -222,11 +222,12 @@ Allowed:
   `unsupported_method`)
 - device-local settings reset/material wipe after a local Settings Reset action
   and stored PIN verification; successful reset also erases the local
-  connect-approval setting, approval history, and policy-update terminal marker
+  human approval input mode setting, approval history, and policy-update terminal marker
   so the next setup returns to the missing-key secure default without prior
   decision records or an incomplete policy-update terminal state
-- device-local settings toggle for whether USB `connect` requires local PIN;
-  changing the toggle requires stored PIN verification
+- device-local Settings action for the human approval input mode used by
+  external-request human approval branches; changing it requires stored PIN
+  verification
 - policy update through the Firmware-owned `policy_propose` proposal
   flow, which requires an active session, Firmware validation, and device-local
   approval; the pending approval remains tied to the same session and cannot
@@ -267,7 +268,7 @@ for the requested method:
   and does not fall back to user confirmation on reject. `sign_personal_message`
   is unsupported in policy mode and fails closed;
 - user mode shows the bounded request on the device and requires
-  Firmware-owned local confirmation/PIN before signing `sign_transaction` or
+  Firmware-owned human approval before signing `sign_transaction` or
   `sign_personal_message`.
 
 Neither mode proves the upstream user, dapp, provider, host, or agent intent
@@ -275,6 +276,29 @@ that produced the request. The source state must be material-backed
 `provisioned` with a matching active session. The target state after every
 terminal outcome remains `provisioned`, unless the terminal outcome detects
 persistent material inconsistency.
+
+#### Human Approval Input Mode
+
+`human approval input mode` is a device-local setting with current values
+`pin` and `confirm`. It applies only when an external request enters a
+Firmware-owned human-approval branch. It does not apply to policy authorization,
+unsupported request methods, policy update proposals, settings changes, or
+local destructive operations.
+
+| Flow | Branch | `human approval input mode` applies | UI |
+|---|---|---:|---|
+| `connect` | human approval | yes | review -> PIN or review -> Confirm |
+| `sign_transaction` in user authorization mode | human approval | yes | review -> PIN or review -> Confirm |
+| `sign_transaction` in policy authorization mode | policy authorization | no | policy evaluation result |
+| `sign_personal_message` in user authorization mode | human approval | yes | review -> PIN or review -> Confirm |
+| `sign_personal_message` in policy authorization mode | unsupported | no | fail closed |
+| `policy_propose` | sensitive write proposal | no | always review -> PIN |
+| Settings changes | local sensitive operation | no | always PIN |
+| Reset or Change PIN | local sensitive operation | no | always PIN |
+
+This setting is not a signing authorization mode. Protocol requests and adapter
+surfaces still cannot choose the signing authorization mode or the human
+approval input mode.
 
 Required owners for the device-confirmed signing pending state:
 
@@ -326,9 +350,8 @@ Failure requirements for a device-confirmed signing request:
   distinguish signature generation, signed terminal proof, and Gateway receipt;
 - every terminal path must wipe signable payload and signature scratch.
 
-The user-mode signing runtime models local PIN confirmation for implemented
-device-confirmed signing methods. The connect-only `pin_on_connect` setting
-does not apply to signing. Terminal stages for user-mode signing are:
+The user-mode signing runtime models human approval for implemented
+device-confirmed signing methods. Terminal stages for user-mode signing are:
 
 - `reviewing`: parsed summary is displayed; no PIN or signing is active.
 - `pin_entry`: local PIN input is active for this request.
@@ -356,12 +379,14 @@ from that review, the request then records terminal `user_rejected`.
 
 History records for this path use `eventKind: "signing"`. The
 required pre-signing record uses `recordKind: "confirmation"` and
-`confirmationKind: "local_pin"` after device confirmation succeeds. Terminal
-records use `recordKind: "terminal"` and record whether Firmware generated a
-signature, rejected the request, timed out, or failed during signing. A `signed`
-terminal record means Firmware generated a signature after device confirmation
-and persisted the signed terminal result; it does not prove Gateway received
-that signature. If signature generation succeeds but the signed terminal record
+`confirmationKind: "local_pin"` when human approval input mode is `pin`, or
+`confirmationKind: "physical_confirm"` when human approval input mode is
+`confirm`, after device confirmation succeeds. Terminal records use
+`recordKind: "terminal"` and record whether Firmware generated a signature,
+rejected the request, timed out, or failed during signing. A `signed` terminal
+record means Firmware generated a signature after device confirmation and
+persisted the signed terminal result; it does not prove Gateway received that
+signature. If signature generation succeeds but the signed terminal record
 cannot be persisted, Firmware must not return a provider signature result.
 
 #### Pending Policy Update
@@ -442,7 +467,7 @@ Allowed:
   cleared, Firmware returns `invalid_session`
 - device-local erase-only recovery after destructive on-device confirmation;
   this wipes root material, active policy, PIN verifier, signing authorization
-  mode, local connect setting, approval history, policy-update terminal marker, runtime session, and
+  mode, human approval input mode setting, approval history, policy-update terminal marker, runtime session, and
   provisioning state before returning to `unprovisioned`
 
 Rejected:
@@ -515,7 +540,7 @@ Gateway may hide unavailable operations, but Firmware must still reject them.
 
 The current StackChan CoreS3 target has an explicit `local_pin_auth` runtime
 substate for local PIN authorization. It records `purpose` (`connect`,
-`settings_connect_pin`, `settings_change_pin`, `policy_update`, or the
+`settings_human_approval_input`, `settings_change_pin`, `policy_update`, or the
 internal device-confirmed signing verifier purpose), `stage`
 (`pin_entry`, `pin_verifying`, `new_pin_entry`, `repeat_pin_entry`,
 `committing_setting`, or `committing_pin_change`), typed PIN scratch, new-PIN

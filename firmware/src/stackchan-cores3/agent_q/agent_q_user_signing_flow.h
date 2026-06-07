@@ -139,6 +139,11 @@ user_signing_flow_record_pin_verified_and_write_confirmation_history(
     TickType_t now,
     AgentQUserSigningHistoryWriteFn write_fn,
     void* context);
+AgentQUserSigningTransitionResult
+user_signing_flow_record_physical_confirmed_and_write_confirmation_history(
+    TickType_t now,
+    AgentQUserSigningHistoryWriteFn write_fn,
+    void* context);
 AgentQUserSigningTransitionResult user_signing_flow_consume_signable_payload(
     uint8_t* output,
     size_t output_capacity,

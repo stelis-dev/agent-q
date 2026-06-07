@@ -7,6 +7,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 namespace agent_q {
 namespace {
@@ -15,6 +16,12 @@ constexpr const char* kTag = "UsbResponseWriter";
 constexpr size_t kUsbSerialWriteChunkBytes = 512;
 constexpr uint32_t kUsbSerialWriteChunkTimeoutMs = 100;
 constexpr uint32_t kUsbSerialTxDoneTimeoutMs = 100;
+// Right after the device wakes from idle, the host USB link may be mid-resume
+// (selective-suspend) and not yet draining, so the first response write times out
+// and the response is dropped while a slightly-later log line still gets through.
+// Retry the whole response a few times to survive that resume window.
+constexpr uint32_t kUsbResponseWriteAttempts = 6;
+constexpr uint32_t kUsbResponseWriteRetryDelayMs = 150;
 
 bool write_usb_serial_bytes(const char* data, size_t length)
 {
@@ -88,15 +95,33 @@ bool usb_response_write_json(JsonDocument& response)
                  static_cast<unsigned>(measured));
         return false;
     }
-    UsbSerialJsonWriter writer;
-    const size_t len = serializeJson(response, writer);
-    if (writer.failed() || len != measured) {
-        ESP_LOGW(kTag, "USB JSON response serialization mismatch: measured=%u serialized=%u",
-                 static_cast<unsigned>(measured),
-                 static_cast<unsigned>(len));
-        return false;
+    for (uint32_t attempt = 0; attempt < kUsbResponseWriteAttempts; ++attempt) {
+        if (attempt > 0) {
+            vTaskDelay(pdMS_TO_TICKS(kUsbResponseWriteRetryDelayMs));
+        }
+        // A leading newline isolates any partial bytes left by a failed earlier
+        // attempt: the host parser sees those as an incomplete non-JSON line and
+        // discards them, then parses the freshly re-serialized response line.
+        if (!write_usb_serial_bytes("\n", 1)) {
+            continue;
+        }
+        UsbSerialJsonWriter writer;
+        const size_t len = serializeJson(response, writer);
+        if (writer.failed() || len != measured) {
+            continue;
+        }
+        if (!write_usb_serial_bytes("\n", 1)) {
+            continue;
+        }
+        if (attempt > 0) {
+            ESP_LOGW(kTag, "USB JSON response delivered on attempt %u",
+                     static_cast<unsigned>(attempt + 1));
+        }
+        return true;
     }
-    return write_usb_serial_bytes("\n", 1);
+    ESP_LOGW(kTag, "USB JSON response write failed after %u attempts",
+             static_cast<unsigned>(kUsbResponseWriteAttempts));
+    return false;
 }
 
 }  // namespace agent_q

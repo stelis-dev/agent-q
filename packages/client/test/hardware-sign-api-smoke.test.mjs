@@ -275,11 +275,12 @@ function assertRecentUserConfirmation(history, previousTopSeq, expectedMethod = 
     return (
       record.eventKind === "signing" &&
       record.recordKind === "confirmation" &&
-      record.confirmationKind === "local_pin" &&
+      (record.confirmationKind === "local_pin" ||
+        record.confirmationKind === "physical_confirm") &&
       (previousTopSeq === null || BigInt(record.seq) > previousTopSeq)
     );
   });
-  assert.ok(confirmation, "expected a newer local-PIN confirmation history record");
+  assert.ok(confirmation, "expected a newer user confirmation history record");
   assert.equal(confirmation.chain, "sui");
   assert.equal(confirmation.method, expectedMethod);
   assert.match(confirmation.payloadDigest, /^sha256:[0-9a-f]{64}$/);
@@ -484,7 +485,7 @@ test(
         const previousTopSeq = topSeq(beforeHistory);
 
         if (userSigningScenario === "positive") {
-          console.log("[client-sign-transaction-user-smoke] approve review and enter local PIN on device...");
+          console.log("[client-sign-transaction-user-smoke] approve review using the current human approval input mode on device...");
         } else if (userSigningScenario === "reject") {
           console.log("[client-sign-transaction-user-smoke] reject the signing review on device...");
         } else if (userSigningScenario === "disconnect") {
@@ -707,7 +708,7 @@ test(
         const previousTopSeq = topSeq(beforeHistory);
 
         if (userPersonalMessageScenario === "positive") {
-          console.log("[client-sign-personal-message-user-smoke] approve review and enter local PIN on device...");
+          console.log("[client-sign-personal-message-user-smoke] approve review using the current human approval input mode on device...");
         } else if (userPersonalMessageScenario === "reject") {
           console.log("[client-sign-personal-message-user-smoke] reject the signing review on device...");
         } else if (userPersonalMessageScenario === "disconnect") {

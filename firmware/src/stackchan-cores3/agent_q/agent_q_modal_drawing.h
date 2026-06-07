@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include "agent_q_drawing_surface.h"
+#include "agent_q_human_approval_settings.h"
 #include "agent_q_timeout_window.h"
 #include "agent_q_user_signing_review_view_model.h"
 #include "lvgl.h"
@@ -10,13 +11,13 @@
 namespace agent_q {
 
 struct AgentQModalDrawingCallbacks {
-    lv_event_cb_t on_yes_clicked = nullptr;
-    lv_event_cb_t on_no_clicked = nullptr;
+    lv_event_cb_t on_connect_review_accept_clicked = nullptr;
+    lv_event_cb_t on_connect_review_reject_clicked = nullptr;
     lv_event_cb_t on_setup_generate_clicked = nullptr;
     lv_event_cb_t on_setup_recover_clicked = nullptr;
     lv_event_cb_t on_setup_cancel_clicked = nullptr;
     lv_event_cb_t on_settings_cancel_clicked = nullptr;
-    lv_event_cb_t on_settings_connect_pin_clicked = nullptr;
+    lv_event_cb_t on_settings_human_approval_input_clicked = nullptr;
     lv_event_cb_t on_settings_signing_mode_clicked = nullptr;
     lv_event_cb_t on_settings_change_pin_clicked = nullptr;
     lv_event_cb_t on_settings_reset_clicked = nullptr;
@@ -54,7 +55,10 @@ struct AgentQPolicyUpdateReviewViewModel {
 
 void modal_drawing_set_callbacks(const AgentQModalDrawingCallbacks& callbacks);
 
-bool modal_draw_decision_panel(AgentQTimeoutWindow timeout_window);
+bool modal_draw_connect_review_panel(
+    const char* gateway_name,
+    AgentQHumanApprovalInputMode input_mode,
+    AgentQTimeoutWindow timeout_window);
 bool modal_draw_setup_choice_panel();
 bool modal_draw_recover_word_entry_panel(const char* notice = nullptr);
 bool modal_draw_recovery_phrase_display(const char* recovery_phrase);

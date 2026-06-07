@@ -18,6 +18,7 @@ constexpr uint8_t kStoredDecisionPolicyUpdatePlaceholder = 0;
 constexpr uint8_t kStoredConfirmationNone = 0;
 constexpr uint8_t kStoredConfirmationPolicy = 1;
 constexpr uint8_t kStoredConfirmationLocalPin = 2;
+constexpr uint8_t kStoredConfirmationPhysicalConfirm = 3;
 constexpr uint8_t kStoredDigestPayload = 1 << 0;
 constexpr uint8_t kStoredDigestPolicy = 1 << 1;
 constexpr uint8_t kStoredEventPolicyUpdate = 1;
@@ -148,7 +149,8 @@ bool stored_record_metadata_valid(const StoredApprovalHistoryRecord& record)
         return false;
     }
     if (record.signing_record_kind == kStoredSigningRecordConfirmation) {
-        if (record.confirmation_kind == kStoredConfirmationLocalPin) {
+        if (record.confirmation_kind == kStoredConfirmationLocalPin ||
+            record.confirmation_kind == kStoredConfirmationPhysicalConfirm) {
             return record.signing_terminal_result == kStoredSigningTerminalNone &&
                    !stored_has_policy_metadata(record);
         }
@@ -431,6 +433,8 @@ uint8_t stored_confirmation(AgentQApprovalHistoryConfirmationKind value)
             return kStoredConfirmationPolicy;
         case AgentQApprovalHistoryConfirmationKind::local_pin:
             return kStoredConfirmationLocalPin;
+        case AgentQApprovalHistoryConfirmationKind::physical_confirm:
+            return kStoredConfirmationPhysicalConfirm;
         case AgentQApprovalHistoryConfirmationKind::none:
         default:
             return kStoredConfirmationNone;
@@ -444,6 +448,8 @@ AgentQApprovalHistoryConfirmationKind public_confirmation(uint8_t value)
             return AgentQApprovalHistoryConfirmationKind::policy;
         case kStoredConfirmationLocalPin:
             return AgentQApprovalHistoryConfirmationKind::local_pin;
+        case kStoredConfirmationPhysicalConfirm:
+            return AgentQApprovalHistoryConfirmationKind::physical_confirm;
         case kStoredConfirmationNone:
         default:
             return AgentQApprovalHistoryConfirmationKind::none;
@@ -786,7 +792,8 @@ static bool append_signing_history(
     const bool confirmation_record =
         input.record_kind == AgentQSigningHistoryRecordKind::confirmation &&
         input.terminal_result == AgentQSigningHistoryTerminalResult::none &&
-        ((input.confirmation_kind == AgentQApprovalHistoryConfirmationKind::local_pin &&
+        (((input.confirmation_kind == AgentQApprovalHistoryConfirmationKind::local_pin ||
+           input.confirmation_kind == AgentQApprovalHistoryConfirmationKind::physical_confirm) &&
           input.policy_hash == nullptr &&
           input.rule_ref == nullptr) ||
          (input.confirmation_kind == AgentQApprovalHistoryConfirmationKind::policy &&
@@ -924,6 +931,8 @@ const char* approval_history_confirmation_kind_to_string(AgentQApprovalHistoryCo
             return "policy";
         case AgentQApprovalHistoryConfirmationKind::local_pin:
             return "local_pin";
+        case AgentQApprovalHistoryConfirmationKind::physical_confirm:
+            return "physical_confirm";
         case AgentQApprovalHistoryConfirmationKind::none:
         default:
             return "none";

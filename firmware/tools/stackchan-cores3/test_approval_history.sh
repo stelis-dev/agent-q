@@ -156,11 +156,13 @@ agent_q::AgentQPolicyUpdateHistoryAppendInput policy_update_input(
 }
 
 agent_q::AgentQSigningHistoryAppendInput user_signing_confirmation_input(
-    const char* reason = "device_confirmed")
+    const char* reason = "device_confirmed",
+    agent_q::AgentQApprovalHistoryConfirmationKind confirmation_kind =
+        agent_q::AgentQApprovalHistoryConfirmationKind::local_pin)
 {
     return agent_q::AgentQSigningHistoryAppendInput{
         agent_q::AgentQSigningHistoryRecordKind::confirmation,
-        agent_q::AgentQApprovalHistoryConfirmationKind::local_pin,
+        confirmation_kind,
         agent_q::AgentQSigningHistoryTerminalResult::none,
         "sui",
         "sign_transaction",
@@ -443,6 +445,20 @@ int main()
                strcmp(page.records[0].payload_digest,
                       "sha256:0000000000000000000000000000000000000000000000000000000000000002") == 0,
            "user_signing confirmation bounded fields are preserved");
+    expect(agent_q::approval_history_append_required_signing(
+               user_signing_confirmation_input(
+                   "device_confirmed",
+                   agent_q::AgentQApprovalHistoryConfirmationKind::physical_confirm),
+               1100),
+           "required user_signing physical confirmation history appends");
+    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+           "read user_signing physical confirmation record");
+    expect(page.records[0].event_kind == agent_q::AgentQApprovalHistoryEventKind::signing &&
+               page.records[0].signing_record_kind ==
+                   agent_q::AgentQSigningHistoryRecordKind::confirmation &&
+               page.records[0].confirmation_kind ==
+                   agent_q::AgentQApprovalHistoryConfirmationKind::physical_confirm,
+           "user_signing physical confirmation metadata is preserved");
     expect(agent_q::approval_history_append_required_signing(
                user_signing_terminal_input(),
                1101),

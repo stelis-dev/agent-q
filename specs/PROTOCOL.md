@@ -63,9 +63,9 @@ authorization mode and chooses one Firmware-owned signing gate:
   signing, this path does not require device-local confirmation for each
   signing request, and policy rejection must not fall back to asking the user.
 - `authorization: "user"` means Firmware uses device-local clear-signing review
-  and local PIN confirmation for an implemented bounded signing request. User
-  rejection or timeout is terminal and must not fall back to policy-only
-  signing.
+  and the current human approval input mode for an implemented bounded signing
+  request. User rejection or timeout is terminal and must not fall back to
+  policy-only signing.
 
 Both modes return a Firmware-authored `sign_result` that records the
 authorization actually used. Adapter package surfaces may choose different UX
@@ -194,9 +194,10 @@ Flow rules:
   Firmware before treating a device as live.
 - `connect` establishes a session when Gateway does not already hold a valid
   runtime session for the device. A fresh Firmware `connect` request requires
-  Firmware-owned device-local approval. Hardware targets may implement that
-  approval as a physical confirm or as local PIN verification, but PIN entry
-  must never be a USB protocol request.
+  Firmware-owned human approval. Hardware targets may implement that approval
+  as a physical Confirm action or as local PIN verification, according to the
+  device-local human approval input mode, but PIN entry must never be a USB
+  protocol request.
 - `get_capabilities`, `get_accounts`, `policy_get`, `get_approval_history`,
   `sign_transaction`, `sign_personal_message`, and `policy_propose` require
   `sessionId`.
@@ -221,8 +222,8 @@ returns `sign_result`. In policy authorization mode, the active policy can
 reject `sign_transaction` or authorize signing through a bounded `sign` rule.
 `sign_personal_message` is user-mode only and fails closed in policy mode. In
 user authorization mode, Firmware uses device-local clear-signing review and
-local PIN confirmation. Product-active status for the current tree still
-depends on target implementation status and hardware evidence in
+the device-local human approval input mode. Product-active status for the
+current tree still depends on target implementation status and hardware evidence in
 `docs/IMPLEMENTATION_STATUS.md`.
 
 Provisioning and material reset transitions are not USB protocol requests in the
@@ -235,9 +236,17 @@ display signaling.
 `connect` and `disconnect` are defined by the protocol and parsed by Gateway.
 The current StackChan CoreS3 target accepts `connect` only after persistent root
 material, active policy, local PIN verifier, and a `provisioned` state exist.
-Its default device-local approval is local PIN entry on the device. The target's
-local settings can switch connect approval back to physical Confirm, but changing
-that setting itself requires local PIN verification.
+Its default human approval input mode is local PIN entry on the device. The
+target's local settings can switch human approval input mode to physical
+Confirm, but changing that setting itself requires local PIN verification.
+
+Human approval input mode is a device-local setting with current values `pin`
+and `confirm`. It applies only when a request enters a Firmware-owned
+human-approval branch: `connect`, `sign_transaction` in user authorization mode,
+and `sign_personal_message` in user authorization mode. It does not apply to
+`sign_transaction` in policy authorization mode, unsupported
+`sign_personal_message` policy mode, `policy_propose`, local Settings changes,
+Change PIN, reset, provisioning, or recovery.
 
 `connect` and `disconnect` establish and end a runtime communication session
 between Gateway and Firmware. A connection session does not authorize signing,
@@ -626,16 +635,19 @@ Connect rules:
 - Firmware remains the only authority that can issue a fresh `sessionId`. A
   direct USB `connect` request must not return an existing session id without
   device-local approval.
-- The current StackChan CoreS3 target stores a local `requirePinOnConnect`
-  setting. Missing setting means the secure default, ON. Invalid stored values
-  fail closed to ON and are logged. The setting is device-local; there is no USB,
+- The current StackChan CoreS3 target stores a local human approval input mode
+  setting. The mode selects the device-local input used after Firmware enters a
+  human-approval branch for an external request: `pin` means review page then
+  local PIN entry; `confirm` means review page with a physical Confirm action.
+  Missing setting means the secure default, `pin`. Invalid stored values fail
+  closed to `pin` and are logged. The setting is device-local; there is no USB,
   Gateway, or MCP request for changing it.
-- When `requirePinOnConnect` is ON, successful device-local PIN entry is the
-  connect approval. Firmware must not add a second Confirm step after PIN
-  success. Wrong PIN attempts are rate-limited as device-local touch attempts:
-  five wrong stored-PIN verification attempts across connect, Settings, Change
-  PIN, and reset lock the local PIN UI for 30 seconds in RAM. Canceling and
-  reopening the PIN UI must not clear the lockout. Power cycling clears it.
+- When the human approval input mode is `pin`, successful device-local PIN entry
+  is the connect approval. Firmware must not add a second Confirm step after
+  PIN success. Wrong PIN attempts are rate-limited as device-local touch
+  attempts: five wrong stored-PIN verification attempts across connect, Settings,
+  Change PIN, and reset lock the local PIN UI for 30 seconds in RAM. Canceling
+  and reopening the PIN UI must not clear the lockout. Power cycling clears it.
 - Device-local PIN entry uses a Firmware-owned input window. Submitting a
   complete PIN pauses that input timeout while Firmware performs stored-PIN
   verification. This pause does not disable Firmware's internal local-auth
@@ -648,8 +660,9 @@ Connect rules:
   cryptographic work. If the submitted PIN is wrong, Firmware returns to the
   same PIN-entry state by resuming the remaining paused input window, subject
   to the shared wrong-PIN lockout.
-- When `requirePinOnConnect` is OFF, the target uses the existing physical
-  Confirm approval path.
+- When the human approval input mode is `confirm`, connect approval uses the
+  same review page and completes through a physical Confirm action instead of
+  PIN entry.
 - PIN is never submitted over USB. There is no protocol request or parameter for
   connect PIN, settings PIN, reset PIN, PIN verifier write, PIN change, or PIN
   reset.
@@ -1068,8 +1081,9 @@ gate:
 - `policy`: build policy facts, evaluate the active policy, show
   non-confirming device notifications, and sign without per-request
   device-local confirmation only when policy authorizes the bounded request;
-- `user`: build a clear-signing review, require device-local confirmation and
-  local PIN, and either reject, time out, or sign the bounded request.
+- `user`: build a clear-signing review, require device-local human approval
+  using the current human approval input mode, and either reject, time out, or
+  sign the bounded request.
 
 There is no fallback between gates. A policy rejection in policy mode ends the
 request. A user rejection or timeout in user mode ends the request.
@@ -1144,14 +1158,15 @@ User authorization mode:
   must fail before any signing approval UI can be confirmed. The displayed
   summary must be derived from the same `txBytes` that would be signed; callers
   must not supply independent review facts.
-- The first implementation requires local PIN confirmation. The connect-only
-  `pin_on_connect` setting does not control signing confirmation.
+- Human approval input mode controls whether the review proceeds directly by
+  physical Confirm or continues to local PIN verification. This setting is not
+  supplied by the request and is not the signing authorization mode.
 - Firmware owns fixed internal `30000` millisecond physical-input windows for
   review confirmation and PIN entry. The host cannot set or negotiate them
-  through the protocol. Submitting a complete PIN pauses the input timer while
-  stored-PIN cryptographic verification runs. The original signing confirmation
-  window is the review/PIN-entry admission boundary and caps PIN entry before
-  submit; it is not the terminal timeout authority for stored-PIN
+  through the protocol. In PIN mode, submitting a complete PIN pauses the input
+  timer while stored-PIN cryptographic verification runs. The original signing
+  confirmation window is the review/PIN-entry admission boundary and caps PIN
+  entry before submit; it is not the terminal timeout authority for stored-PIN
   cryptographic processing after submit. A wrong PIN result returns to the same
   PIN-entry state by resuming the remaining paused input window unless the
   shared wrong-PIN lockout is active. The internal local-auth worker watchdog
@@ -1359,9 +1374,10 @@ Approval-history contract:
 
 - Device-confirmed and policy-authorized signing use `eventKind: "signing"`.
 - Required pre-signing records use `recordKind: "confirmation"`. User-confirmed
-  signing uses `confirmationKind: "local_pin"` for the first implementation.
-  Policy-authorized signing uses `confirmationKind: "policy"` and includes
-  `policyHash` and `ruleRef`.
+  signing uses `confirmationKind: "local_pin"` when human approval input mode
+  is PIN and `confirmationKind: "physical_confirm"` when human approval input
+  mode is Confirm. Policy-authorized signing uses `confirmationKind: "policy"`
+  and includes `policyHash` and `ruleRef`.
 - Recordable terminal results are `signed`, `user_rejected`,
   `user_timed_out`, `policy_rejected`, and `signing_failed`.
 - Terminal records use `recordKind: "terminal"` and store only bounded metadata:

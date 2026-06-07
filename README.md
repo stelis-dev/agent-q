@@ -235,16 +235,16 @@ Under current-source verification:
 
 - `sign_transaction` has source-wired but not product-active status for the
   bounded Sui transfer shape. The current source includes validation,
-  state-first ingress, policy authorization, user clear-signing review, local
-  PIN confirmation, required history, signing-critical handoff, terminal
+  state-first ingress, policy authorization, user clear-signing review, the
+  current human approval input mode, required history, signing-critical handoff, terminal
   history, `sign_result`, provider `signTransaction`, client parser/builder,
   MCP tool, and `get_capabilities.signing` metadata. Hardware evidence status
   is tracked in `docs/IMPLEMENTATION_STATUS.md`; final current-tree
   hardware/visual evidence remains pending, so product-active status is not
   claimed.
 - `sign_personal_message` has source-wired but not product-active status for
-  bounded Sui personal-message bytes. It uses user clear-signing review, local
-  PIN confirmation, required history, the Sui PersonalMessage intent digest,
+  bounded Sui personal-message bytes. It uses user clear-signing review, the
+  current human approval input mode, required history, the Sui PersonalMessage intent digest,
   `sign_result`, client/MCP/provider parser/API, Wallet Standard
   `sui:signPersonalMessage`, and user-mode `get_capabilities.signing`
   metadata. Policy mode is intentionally unsupported for this method until

@@ -6,7 +6,7 @@ namespace agent_q {
 
 enum class AgentQUiPanelKind {
     none,
-    decision_strip,
+    connect_review,
     setup_choice,
     recovery_phrase_display,
     recovery_word_entry,

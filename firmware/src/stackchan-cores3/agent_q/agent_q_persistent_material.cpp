@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "agent_q_approval_history.h"
-#include "agent_q_connect_settings.h"
+#include "agent_q_human_approval_settings.h"
 #include "agent_q_policy_update_marker.h"
 #include "agent_q_signing_mode.h"
 
@@ -47,6 +47,7 @@ bool parse_persisted_provisioning_state(const char* value, AgentQProvisioningPer
 
 void rollback_setup_material()
 {
+    wipe_human_approval_input_mode();
     wipe_signing_authorization_mode();
     wipe_local_auth();
     wipe_policy();
@@ -68,8 +69,8 @@ const char* runtime_failure_message(AgentQPersistentMaterialRuntimeFailure failu
             return "Local reset could not wipe active policy; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::local_reset_local_auth_wipe_failed:
             return "Local reset could not wipe local PIN verifier; failing closed";
-        case AgentQPersistentMaterialRuntimeFailure::local_reset_connect_setting_wipe_failed:
-            return "Local reset could not wipe connect PIN setting; failing closed";
+        case AgentQPersistentMaterialRuntimeFailure::local_reset_human_approval_setting_wipe_failed:
+            return "Local reset could not wipe human approval input mode; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::local_reset_signing_mode_wipe_failed:
             return "Local reset could not wipe signing authorization mode; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::local_reset_approval_history_wipe_failed:
@@ -342,6 +343,16 @@ AgentQPersistentMaterialCommitResult persistent_material_commit_setup_with_prepa
         return AgentQPersistentMaterialCommitResult::signing_mode_storage_error;
     }
 
+    if (!store_human_approval_input_mode(AgentQHumanApprovalInputMode::pin)) {
+        rollback_setup_material();
+        if (persistent_material_exists()) {
+            latch_consistency_error(
+                ops,
+                "Human approval input mode storage failed with persistent setup material present; failing closed");
+        }
+        return AgentQPersistentMaterialCommitResult::human_approval_setting_storage_error;
+    }
+
     if (!persist_state(ops, AgentQProvisioningPersistedState::provisioned)) {
         rollback_setup_material();
         if (persistent_material_exists()) {
@@ -361,7 +372,7 @@ AgentQPersistentMaterialWipeResult persistent_material_wipe_all()
     const bool root_wiped = wipe_root_material();
     const bool policy_wiped = wipe_policy();
     const bool local_auth_wiped = wipe_local_auth();
-    const bool connect_setting_wiped = wipe_require_pin_on_connect();
+    const bool human_approval_setting_wiped = wipe_human_approval_input_mode();
     const bool signing_mode_wiped = wipe_signing_authorization_mode();
     const bool approval_history_wiped = approval_history_wipe();
     const bool policy_update_marker_wiped = policy_update_marker_clear();
@@ -375,8 +386,8 @@ AgentQPersistentMaterialWipeResult persistent_material_wipe_all()
     if (!local_auth_wiped) {
         return AgentQPersistentMaterialWipeResult::local_auth_wipe_error;
     }
-    if (!connect_setting_wiped) {
-        return AgentQPersistentMaterialWipeResult::connect_setting_wipe_error;
+    if (!human_approval_setting_wiped) {
+        return AgentQPersistentMaterialWipeResult::human_approval_setting_wipe_error;
     }
     if (!signing_mode_wiped) {
         return AgentQPersistentMaterialWipeResult::signing_mode_wipe_error;

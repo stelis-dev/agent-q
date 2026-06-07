@@ -453,7 +453,7 @@ const signingUserConfirmationApprovalHistoryRecordShape = approvalHistoryRecordS
   eventKind: z.literal("signing"),
   recordKind: z.literal("confirmation"),
   authorization: z.literal("user"),
-  confirmationKind: z.literal("local_pin"),
+  confirmationKind: z.enum(["local_pin", "physical_confirm"]),
   chain: z.string().regex(SIGN_CHAIN_PATTERN),
   method: z.string().regex(SIGN_METHOD_PATTERN),
   payloadDigest: z.string().regex(POLICY_ID_PATTERN),
