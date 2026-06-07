@@ -27,6 +27,7 @@ for required in \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
+  "${FIXTURE_DIR}/unsupported_result_reference_transfer_tx.bcs.hex" \
   "${FIXTURE_DIR}/sponsored_gas_owner_tx.bcs.hex" \
   "${FIXTURE_DIR}/valid_sui_transfer_facts.json"; do
   if [[ ! -f "${required}" ]]; then
@@ -261,6 +262,10 @@ int main(int argc, char** argv)
         &failures);
     expect_reject(
         (fixture_dir + "/wrong_command_order_tx.bcs.hex").c_str(),
+        agent_q::SuiTransactionFactsResult::unsupported,
+        &failures);
+    expect_reject(
+        (fixture_dir + "/unsupported_result_reference_transfer_tx.bcs.hex").c_str(),
         agent_q::SuiTransactionFactsResult::unsupported,
         &failures);
     expect_reject(

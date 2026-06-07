@@ -30,7 +30,7 @@ const gasPrice = 1_000n;
 const gasBudget = 50_000_000n;
 const gasVersion = 7n;
 const sdkOracleValidSuiTransferTxHex =
-  '000002000840420f00000000000020bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb020200010100000101020000010100aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc070000000000000020ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaae80300000000000080f0fa020000000000';
+  '000002000840420f00000000000020bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0202000101000001010300000000010100aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc070000000000000020ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaae80300000000000080f0fa020000000000';
 
 function concat(...chunks) {
   const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
@@ -119,11 +119,19 @@ function argResult(index) {
   return enumVariant(2, u16(index));
 }
 
+function argNestedResult(commandIndex, resultIndex) {
+  return enumVariant(3, concat(u16(commandIndex), u16(resultIndex)));
+}
+
 function splitCoinsCommand() {
   return enumVariant(2, concat(argGasCoin(), vector([argInput(0)])));
 }
 
 function transferObjectsCommand() {
+  return enumVariant(1, concat(vector([argNestedResult(0, 0)]), argInput(1)));
+}
+
+function unsupportedResultReferenceTransferObjectsCommand() {
   return enumVariant(1, concat(vector([argResult(0)]), argInput(1)));
 }
 
@@ -172,6 +180,10 @@ function unsupportedMergeCoinsTx() {
 
 function wrongCommandOrderTx() {
   return transactionData([transferObjectsCommand(), splitCoinsCommand()]);
+}
+
+function unsupportedResultReferenceTransferTx() {
+  return transactionData([splitCoinsCommand(), unsupportedResultReferenceTransferObjectsCommand()]);
 }
 
 function tooManyCommandsTx() {
@@ -236,6 +248,7 @@ async function main() {
     'sponsored_gas_owner_tx.bcs.hex',
     bytesToHex(transactionData([splitCoinsCommand(), transferObjectsCommand()], sponsoredGasOwner)),
   );
+  await writeText('unsupported_result_reference_transfer_tx.bcs.hex', bytesToHex(unsupportedResultReferenceTransferTx()));
   await writeText('wrong_command_order_tx.bcs.hex', bytesToHex(wrongCommandOrderTx()));
   await writeText('too_many_commands_tx.bcs.hex', bytesToHex(tooManyCommandsTx()));
 }

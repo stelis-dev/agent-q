@@ -158,7 +158,7 @@ bool is_input_argument(const ArgumentValue& arg, uint16_t* index_out)
 
 bool is_split_result_argument(const ArgumentValue& arg)
 {
-    return arg.kind == ArgumentKind::result && arg.index == 0;
+    return arg.kind == ArgumentKind::nested_result && arg.index == 0 && arg.nested_index == 0;
 }
 
 }  // namespace

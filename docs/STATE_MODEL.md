@@ -340,7 +340,7 @@ does not apply to signing. Terminal stages for user-mode signing are:
 - `signing_critical_section`: history is durable and signing may execute; only
   the owner may consume or wipe signing scratch. Session loss or disconnect in
   this stage is `busy`; it cannot downgrade the request to pre-signing cleanup,
-  and normal cleanup helpers must not force-clear this stage.
+  and normal cleanup functions must not force-clear this stage.
 - terminal `signed`, `user_rejected`, `user_timed_out`, or `signing_failed`.
   Pre-signing `canceled` and `history_error` are cleanup outcomes that wipe
   scratch and produce no signature. A post-signing terminal-history failure

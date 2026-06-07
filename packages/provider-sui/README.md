@@ -15,7 +15,7 @@ device-local approval, signing, and active policy commits.
 
 Mysten dapp-kit discovers wallets through Wallet Standard wallet objects and
 Sui features such as `sui:signTransaction`. Agent-Q provides a Wallet Standard
-wallet object, a global registration helper, and a dapp-kit initializer helper.
+wallet object, a global registration function, and a dapp-kit initializer.
 Agent-Q is not a self-injecting browser wallet; applications import this
 package and register the wallet during app initialization.
 
@@ -48,7 +48,7 @@ policy evaluation, signing, persistence, and cleanup.
 - `@stelis/agent-q-provider-sui/provider-sui` exposes the same Sui provider
   entrypoint.
 - `@stelis/agent-q-provider-sui/wallet-standard` exposes the Wallet Standard
-  wallet object, registration helper, and dapp-kit initializer helper.
+  wallet object, registration function, and dapp-kit initializer.
 - `@stelis/agent-q-provider-sui/browser` exposes the browser-only Web
   Serial runtime that implements `AgentQSuiWalletProvider`.
 
@@ -115,14 +115,14 @@ const registration = registerAgentQSuiWallet({
   getClient(network) {
     return clients[network];
   },
-  chains: ["sui:testnet"],
+  chains: ["sui:devnet"],
 });
 
 // Later, during teardown:
 registration.unregister();
 ```
 
-For dapp-kit, use the initializer helper before wallet UI is created:
+For dapp-kit, register the initializer before wallet UI is created:
 
 ```ts
 import { createDAppKit } from "@mysten/dapp-kit-react";
@@ -132,8 +132,8 @@ import type { AgentQSuiWalletProvider } from "@stelis/agent-q-provider-sui/walle
 declare const provider: AgentQSuiWalletProvider;
 
 export const dAppKit = createDAppKit({
-  networks: ["testnet"],
-  defaultNetwork: "testnet",
+  networks: ["devnet"],
+  defaultNetwork: "devnet",
   createClient(network) {
     return clients[network];
   },
@@ -150,9 +150,13 @@ signing, and cleanup. Personal-message signing is user-mode only in the current
 implementation.
 
 See `packages/example-sui-dapp-kit/` for a minimal dapp-kit integration
-example. The example intentionally does not create a fake provider; it uses an
-already injected provider when present, otherwise it creates the Web
-Serial-based browser runtime when the browser supports Web Serial.
+example with transfer-signing and personal-message signing buttons. The example
+intentionally does not create or accept a fake provider; it creates the Web
+Serial-based browser runtime so the Agent-Q wallet can stay visible before a
+USB device is selected. If Web Serial is unavailable, the runtime fails closed
+on connect/read/signing instead of hiding the wallet. The example does not
+expose policy reads, policy update proposals, approval history, Admin, MCP, or
+a host-selected authorization API.
 
 ### Browser-Safe Provider Boundary
 

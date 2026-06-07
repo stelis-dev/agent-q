@@ -72,9 +72,99 @@ dd {
   overflow-wrap: anywhere;
 }
 
+.signing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.signing-card {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 12px;
+  min-height: 180px;
+  border: 1px solid #dfe5ef;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fbfcfe;
+}
+
+.signing-card.full-span {
+  grid-column: 1 / -1;
+  min-height: 120px;
+}
+
+h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.signing-card button {
+  min-height: 40px;
+  border: 1px solid #28364d;
+  border-radius: 6px;
+  background: #23314a;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.signing-card button:disabled {
+  border-color: #aeb7c6;
+  background: #aeb7c6;
+  cursor: not-allowed;
+}
+
+.inline-warning {
+  margin: 12px 0 0;
+  color: #92400e;
+  font-weight: 700;
+}
+
+.result {
+  margin-top: 16px;
+  border: 1px solid #dfe5ef;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fbfcfe;
+}
+
+.result ul {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+.result.success {
+  border-color: #79a88b;
+  background: #f1faf4;
+}
+
+.result.error {
+  border-color: #c77c7c;
+  background: #fff1f1;
+}
+
+.result.pending {
+  border-color: #8fa3c2;
+  background: #f3f6fb;
+}
+
 @media (max-width: 640px) {
   header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .signing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .signing-card.full-span {
+    grid-column: auto;
   }
 }

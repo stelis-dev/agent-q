@@ -108,7 +108,7 @@ import {
   type SuiSignTransactionNetwork,
 } from "./protocol-primitives.js";
 
-// These boundary helpers are defined once in safe-text.ts (the single source of
+// These boundary functions are defined once in safe-text.ts (the single source of
 // truth) and re-exported here because protocol.ts is the wire-ingress boundary
 // that applies them; existing importers and tests resolve them via protocol.ts.
 export { isGatewayName, isSafeDeviceId, isSafeRequestId, isSessionId, sanitizeDisplayText };

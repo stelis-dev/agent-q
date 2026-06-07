@@ -13,6 +13,8 @@ import {
 } from "@mysten/wallet-standard";
 import { createAgentQSuiProvider, AgentQSuiProvider } from "../dist/provider-sui.js";
 import {
+  AGENT_Q_SUI_WALLET_ID,
+  AGENT_Q_SUI_WALLET_NAME,
   AgentQSuiWallet,
   createAgentQSuiWallet,
   createAgentQSuiWalletInitializer,
@@ -425,6 +427,8 @@ test("provider-sui package self-reference resolves Sui provider only", async () 
   const browser = await import("@stelis/agent-q-provider-sui/browser");
   assert.equal(typeof root.createAgentQSuiProvider, "function");
   assert.equal(typeof provider.AgentQSuiProvider, "function");
+  assert.equal(walletStandard.AGENT_Q_SUI_WALLET_ID, AGENT_Q_SUI_WALLET_ID);
+  assert.equal(walletStandard.AGENT_Q_SUI_WALLET_NAME, AGENT_Q_SUI_WALLET_NAME);
   assert.equal(typeof walletStandard.createAgentQSuiWallet, "function");
   assert.equal(typeof walletStandard.registerAgentQSuiWallet, "function");
   assert.equal(typeof walletStandard.createAgentQSuiWalletInitializer, "function");
@@ -1035,7 +1039,7 @@ test("Wallet Standard adapter advertises only current Agent-Q Sui signing featur
     chains: ["sui:devnet"],
   });
   assert.equal(wallet instanceof AgentQSuiWallet, true);
-  assert.equal(wallet.name, "Agent-Q Sui");
+  assert.equal(wallet.name, "Agent-Q");
   assert.deepEqual(wallet.chains, ["sui:devnet"]);
   assert.deepEqual(Object.keys(wallet.features).sort(), [
     "standard:connect",
@@ -1901,7 +1905,7 @@ test("Wallet Standard signTransaction clears connected accounts on non-live sign
   }
 });
 
-test("Wallet Standard registration helpers register, initialize, and unregister Agent-Q wallets", () => {
+test("Wallet Standard registration functions register, initialize, and unregister Agent-Q wallets", () => {
   const { core } = createSigningCore();
   const provider = createAgentQSuiProvider({ core });
   const before = new Set(getWallets().get());

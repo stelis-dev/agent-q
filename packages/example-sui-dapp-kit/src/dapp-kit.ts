@@ -3,28 +3,26 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
 import { createAgentQSuiWalletInitializer } from "@stelis/agent-q-provider-sui/wallet-standard";
 import { createAgentQProvider } from "./provider";
 
-const NETWORKS = ["testnet"] as const;
+const NETWORKS = ["devnet"] as const;
 const GRPC_URLS: Record<(typeof NETWORKS)[number], string> = {
-  testnet: "https://fullnode.testnet.sui.io:443",
+  devnet: "https://fullnode.devnet.sui.io:443",
 };
 
-const provider = createAgentQProvider();
-
-export const agentQProviderAvailable = provider !== null;
+export const agentQProvider = createAgentQProvider();
 
 export const dAppKit = createDAppKit({
   autoConnect: false,
   networks: NETWORKS,
-  defaultNetwork: "testnet",
+  defaultNetwork: "devnet",
   enableBurnerWallet: false,
   slushWalletConfig: null,
   storage: null,
   createClient(network) {
     return new SuiGrpcClient({ network, baseUrl: GRPC_URLS[network] });
   },
-  walletInitializers: provider === null
+  walletInitializers: agentQProvider === null
     ? []
-    : [createAgentQSuiWalletInitializer({ provider })],
+    : [createAgentQSuiWalletInitializer({ provider: agentQProvider })],
 });
 
 declare module "@mysten/dapp-kit-react" {

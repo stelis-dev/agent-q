@@ -96,7 +96,7 @@ Current package roles and dependencies:
 | `@stelis/agent-q-client` | Device-facing SDK for hardware discovery, USB transport, runtime sessions, protocol builders/parsers, and output schemas. | Firmware protocol / USB transport. | Owns the direct Firmware protocol boundary. |
 | `@stelis/agent-q-mcp` | Local Gateway adapter: stdio MCP server, CLI binary, and local Admin Page. | `@stelis/agent-q-client`. | Uses the admin-capable client entrypoint for MCP tools and Admin Page requests. |
 | `@stelis/agent-q-provider-sui` | Sui dapp-facing provider and Wallet Standard adapter for `sui:signTransaction` and `sui:signPersonalMessage`. | `@stelis/agent-q-client` and Sui SDK packages. | Uses the device client facade for dapp-facing discovery, connection, account reads, capabilities, `signTransaction`, and user-confirmed `signPersonalMessage`. |
-| `packages/example-sui-dapp-kit` | Private workspace example for dapp-kit integration. | `@stelis/agent-q-provider-sui` and dapp-kit dependencies. | Uses the provider-sui Wallet Standard adapter with an injected provider runtime. |
+| `packages/example-sui-dapp-kit` | Private workspace example for dapp-kit integration. | `@stelis/agent-q-provider-sui` and dapp-kit dependencies. | Uses the provider-sui Wallet Standard adapter with the Web Serial browser runtime. |
 
 MCP and provider packages narrow the API surface they present to their audience,
 but that package-level projection is not a hard security barrier. Code running
@@ -219,7 +219,7 @@ Implemented:
   user-confirmed `signPersonalMessage` transport. The provider also exposes a
   Wallet Standard registration adapter for `sui:signTransaction` and
   `sui:signPersonalMessage`, plus a Web Serial browser runtime that implements
-  only the injected provider contract for browser dapps. Its dapp-facing
+  only the browser provider contract for dapps. Its dapp-facing
   provider object, browser runtime, and Wallet Standard adapter do not include
   active policy summaries, approval history, policy update, policy signing, key
   storage, signing decisions, or `sui:signAndExecuteTransaction`.
@@ -296,4 +296,4 @@ firmware/
 not tracked by Git.
 
 `.firmware-cache/` is for pinned firmware build dependencies downloaded by
-tracked helper scripts. It is not tracked by Git.
+tracked firmware build scripts. It is not tracked by Git.

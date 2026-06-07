@@ -5,7 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: firmware/tools/common/test_policy_canonical.sh
 
-Compiles the common Agent-Q policy canonicalization helpers with a host C++
+Compiles the common Agent-Q policy canonicalization functions with a host C++
 compiler. This test does not require ESP-IDF and does not depend on .WORK paths.
 EOF
 }
@@ -138,11 +138,11 @@ int main()
     memset(record, 0xA5, sizeof(record));
     record_size = 0;
     expect_status(
-        "default policy helper encodes",
+        "default policy function encodes",
         agent_q::encode_agent_q_policy_v0_default_record(record, sizeof(record), &record_size),
         agent_q::AgentQPolicyCanonicalStatus::ok);
-    expect(record_size == sizeof(expected_default), "default helper keeps existing 16-byte record size");
-    expect(memcmp(record, expected_default, sizeof(expected_default)) == 0, "default helper record bytes");
+    expect(record_size == sizeof(expected_default), "default function keeps existing 16-byte record size");
+    expect(memcmp(record, expected_default, sizeof(expected_default)) == 0, "default function record bytes");
 
     agent_q::AgentQPolicyCanonicalDocument decoded = {};
     expect_status(
