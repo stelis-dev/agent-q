@@ -56,8 +56,17 @@ remaining-time resume, PIN Back review-return distinct from review Reject,
 clear review metadata, normal reject/timeout/success return, and no observed
 text overlap, clipping, or stale overlay. The current committed baseline is
 `34db7f55`. The current uncommitted tree changes human approval input mode,
-connect review behavior, policy readback/parser shape, and related docs/tests;
-earlier hardware/LVGL evidence remains committed-baseline evidence unless a
+connect review behavior, policy readback/parser shape, and related docs/tests; it also
+restyles the modal UI to a NES light theme via one color/shape token table
+(`agent_q_ui_theme.h`), pins display brightness to 50, and routes generate/recover Cancel
+back to the setup-choice menu (local UI, not yet exercised on hardware). Verification of
+these dirty-tree UI/display changes: build-passes; the token table itself is a value-preserving refactor (tokens hold the same
+colors the modals already used inline, so wiring them changes no pixels), while the NES
+light theme is a deliberate full repalette from the prior mint theme (an intended, major
+visual change); the Cancel->setup-choice path is
+code-audited (scratch wipe + state reset correct) but its on-screen render/touch and the
+NES look of the recover/error/reset modals remain hardware-pending.
+Earlier hardware/LVGL evidence remains committed-baseline evidence unless a
 note explicitly records current dirty-tree smoke. Sign API product-active status
 still requires a final current-tree batched hardware/visual verification pass. Policy
 mode signing, policy-mode personal-message fail-closed, and policy-update

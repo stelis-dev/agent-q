@@ -13,7 +13,11 @@ namespace {
 constexpr const char* kTag = "AgentQDisplayPower";
 constexpr uint32_t kMillisPerMinute = 60 * 1000;
 constexpr uint32_t kScreenSleepTimeoutMs = 3 * kMillisPerMinute;
-constexpr uint8_t kFallbackWakeBrightness = 75;
+// Single source of truth for device display brightness. Pinned to 50 (StackChan default
+// is 75) for lower heat / longer panel life: applied once at boot and restored on wake.
+// This intentionally overrides Settings, so app/Settings brightness changes do not persist
+// across reboot by design — change device brightness by editing this one constant.
+constexpr uint8_t kDisplayBrightness = 50;
 
 std::atomic<bool> g_toggle_requested{false};
 std::atomic<bool> g_wake_requested{false};
@@ -22,6 +26,7 @@ bool g_screen_sleeping = false;
 bool g_manual_screen_off = false;
 uint32_t g_last_inactive_time_ms = 0;
 uint8_t g_saved_brightness = 0;
+bool g_brightness_applied = false;
 
 void sleep_now(bool manual)
 {
@@ -44,7 +49,7 @@ void wake_now()
         return;
     }
 
-    const uint8_t brightness = g_saved_brightness > 0 ? g_saved_brightness : kFallbackWakeBrightness;
+    const uint8_t brightness = g_saved_brightness > 0 ? g_saved_brightness : kDisplayBrightness;
     GetHAL().setBackLightBrightness(brightness, false);
     set_motion_posture(AgentQMotionPostureState::awake);
     g_screen_sleeping = false;
@@ -66,6 +71,14 @@ void request_display_power_wake()
 
 void update_display_power(uint32_t inactive_time_ms)
 {
+    if (!g_brightness_applied) {
+        // Board boots at the StackChan default (~75). Agent-Q runs the backlight
+        // lower (cooler / longer panel life; plenty on the light theme). permanent=true
+        // so the saved setting, RestoreBrightness, and sleep/wake all settle here.
+        GetHAL().setBackLightBrightness(kDisplayBrightness, true);
+        g_brightness_applied = true;
+    }
+
     if (g_toggle_requested.exchange(false, std::memory_order_relaxed)) {
         if (g_screen_sleeping) {
             lv_display_trigger_activity(nullptr);

@@ -5072,6 +5072,33 @@ void cancel_setup_from_local_ui()
     agent_q::avatar_overlay_show_message("Setup canceled", AgentQMessageKind::rejected, AgentQUiMode::result, kAgentQResultDisplayMs);
 }
 
+// Cancel inside the generate (recovery_phrase_displayed) or recover (recover_word_entry)
+// screen goes BACK to the setup-choice menu rather than ending setup. The in-progress
+// phrase is wiped first (same protection as a full cancel) so nothing leaks across the
+// re-pick; setup-choice and generate/recover are device-local until a result commits, so
+// staying "in setup" keeps the host session consistent.
+// NOTE: built but NOT yet exercised on hardware — verify nav + scratch wipe + host on device.
+void return_to_setup_choice_from_local_ui()
+{
+    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recovery_phrase_displayed) &&
+        !agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recover_word_entry)) {
+        ESP_LOGW(kTag, "Stale local back-to-choice ignored");
+        return;
+    }
+
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::recovery_phrase_display, SensitiveUiClearPolicy::preserve);
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::recovery_word_entry, SensitiveUiClearPolicy::preserve);
+    wipe_setup_scratch("provisioning back-to-choice wipe");
+    ESP_LOGI(kTag, "Returned to setup choice from generate/recover UI");
+
+    agent_q::provisioning_flow_begin_setup_choice(
+        timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs));
+    if (!agent_q::modal_draw_setup_choice_panel()) {
+        wipe_setup_scratch("setup choice display allocation failed");
+        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    }
+}
+
 void confirm_recovery_phrase_from_local_ui()
 {
     if (!recovery_phrase_backup_confirmation_ready()) {
@@ -5277,7 +5304,7 @@ void drain_ui_events()
         }
 
         if (event.kind == AgentQUiEventKind::recovery_phrase_cancel_requested) {
-            cancel_setup_from_local_ui();
+            return_to_setup_choice_from_local_ui();
             continue;
         }
 
@@ -5317,7 +5344,7 @@ void drain_ui_events()
         }
 
         if (event.kind == AgentQUiEventKind::recover_cancel_requested) {
-            cancel_setup_from_local_ui();
+            return_to_setup_choice_from_local_ui();
             continue;
         }
 

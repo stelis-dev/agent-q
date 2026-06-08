@@ -422,6 +422,7 @@ Current protocol session flow:
 
 ```text
 get_status
+  -> identify_device?
   -> connect
     -> get_capabilities
     -> get_accounts

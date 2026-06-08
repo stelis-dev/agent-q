@@ -83,6 +83,10 @@ lv_obj_t* drawing_surface_create_panel_locked(AgentQUiPanelKind kind)
     if (panel == nullptr) {
         return nullptr;
     }
+    // Strip the default LVGL theme's "card" styling from the panel so the modal alone
+    // controls its appearance (bg, radius, border, padding) — consistent with every
+    // sub-element, which already calls remove_style_all.
+    lv_obj_remove_style_all(panel);
     drawing_surface_register_panel_locked(panel, kind);
     return panel;
 }

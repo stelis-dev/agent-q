@@ -162,7 +162,8 @@ Current UI behavior:
 | Local recovery phrase Confirm | Uses the recovery phrase panel's bottom Confirm button and advances to local PIN entry | `busy` |
 | Local PIN setup | Temporary setup panel with numeric keypad, masked 6-digit entry, Clear, backspace icon, Cancel, and Confirm | `busy` |
 | Local settings menu | Temporary settings menu with fixed label/control rows. Current implemented actions are human approval input mode toggle, Change PIN, and Reset. Each sensitive action opens local PIN verification directly. | `idle` while the menu is idle; `busy` after entering a sensitive subflow |
-| Local recovery phrase Cancel | Uses the recovery phrase panel's bottom Cancel button | `idle` after scratch wipe |
+| Local generate/recover Cancel | The recovery-phrase (generate) and recover-word panels' bottom Cancel wipes setup scratch and returns to the setup-choice menu rather than ending setup; the setup-choice menu's own Cancel ends setup | `busy` (returns to setup choice) after scratch wipe |
+| Local setup choice Cancel | The setup-choice menu's bottom Cancel button ends setup | `idle` after scratch wipe |
 | Approved result | Temporary success speech and emotion | `idle` |
 | Rejected result | Temporary rejected speech and emotion | `idle` |
 | Timeout result | Temporary timeout speech and emotion | `idle` |

@@ -173,7 +173,9 @@ Rejected:
 - external evidence or price fetch
 
 Scratch signing material may exist only inside Firmware during setup steps.
-Canceling setup must wipe scratch material before returning to `unprovisioned`.
+Canceling setup must wipe scratch material first. From `recovery_phrase_displayed`/
+`recover_word_entry`, Cancel wipes scratch and returns to `setup_choice` (re-pick; setup
+stays active); the `setup_choice` Cancel wipes scratch and returns to `unprovisioned`.
 Current StackChan CoreS3 source limits recovery phrase and typed PIN scratch to
 RAM and tracks setup with volatile substates: `none`,
 `setup_choice`, `recovery_phrase_displayed`, `recover_word_entry`,

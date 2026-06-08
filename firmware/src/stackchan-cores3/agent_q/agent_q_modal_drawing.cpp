@@ -13,6 +13,7 @@
 #include "agent_q_policy_update_flow.h"
 #include "agent_q_provisioning_flow.h"
 #include "agent_q_signing_mode.h"
+#include "agent_q_ui_theme.h"
 #include "freertos/task.h"
 #include "hal/hal.h"
 
@@ -26,18 +27,30 @@ constexpr size_t kRecoverWordsPerPage = kProvisioningFlowRecoverWordsPerPage;
 constexpr size_t kRecoverPageCount = kProvisioningFlowRecoverPageCount;
 constexpr int kScreenHeight = 240;
 constexpr int kScreenWidth = 320;
+// The modal panel fills the whole screen; only the rounded corners are kept (no
+// outer margin). The panel sits at (0,0), so panel-relative child coordinates ARE
+// screen coordinates, and a child whose bottom exceeds kPanelContentHeight (240) is
+// clipped (panel overflow is hidden). All layout below is centered/anchored against
+// these, so changing the panel size re-flows every modal from one place.
+constexpr int kPanelContentWidth = kScreenWidth;    // 320 (full screen)
+constexpr int kPanelContentHeight = kScreenHeight;  // 240 (full screen)
 constexpr int kTimeoutTimerBarHeight = 4;
 constexpr int kTimeoutTimerBarTrackInset = 8;
-constexpr int kInsetPanelWidth = kScreenWidth - 16;
-constexpr int kPanelGridLeft = 17;
 constexpr int kPanelGridCellWidth = 90;
-constexpr int kPanelGridWidth = 3 * kPanelGridCellWidth;
+constexpr int kPanelGridWidth = 3 * kPanelGridCellWidth;                     // 270
+constexpr int kPanelGridLeft = (kPanelContentWidth - kPanelGridWidth) / 2;   // 25, centered
+constexpr int kInsetPanelWidth = kPanelContentWidth;                         // 320, full width
+constexpr int kModalTitleY = 16;  // unified modal title top (panel-relative); SoT
+constexpr int kModalDescriptionY = 36;  // unified one-line description/subtitle top (below title)
 constexpr int kPanelActionButtonGap = 8;
-constexpr int kBottomDecisionButtonLeftX = kTimeoutTimerBarTrackInset;
-constexpr int kBottomDecisionButtonWidth =
-    (kScreenWidth - (2 * kTimeoutTimerBarTrackInset)) / 2;
-constexpr int kBottomDecisionButtonRightX =
-    kBottomDecisionButtonLeftX + kBottomDecisionButtonWidth;
+// Single source of truth for the bottom two-button decision row (left "reject" /
+// "cancel" + right "confirm" / "sign") shared by every decision modal: connect
+// review, user-signing review, policy-update review, recovery-phrase display, PIN
+// setup, reset PIN, error recovery, and local PIN auth. Every one of those rows
+// MUST use these X/width constants together with kSetupActionButtonY (row Y) and
+// kRecoveryPhraseButtonHeight (row height) so the layout stays identical across
+// modals. Do NOT introduce a second decision-row constant set (that is exactly how
+// the connect modal previously drifted to a wider, gap-less layout); extend these.
 constexpr int kPanelActionButtonLeftX = kPanelGridLeft;
 constexpr int kPanelActionButtonWidth =
     (kPanelGridWidth - kPanelActionButtonGap) / 2;
@@ -51,14 +64,16 @@ constexpr int kRecoveryPhraseButtonRightX = 154;
 constexpr int kRecoveryPhraseButtonBottomMargin = 8;
 constexpr int kRecoveryPhraseTopMargin = kRecoveryPhraseButtonBottomMargin;
 constexpr int kSetupActionButtonY =
-    kScreenHeight - 16 - kRecoveryPhraseButtonHeight - kRecoveryPhraseButtonBottomMargin;
+    kPanelContentHeight - kRecoveryPhraseButtonHeight - kRecoveryPhraseButtonBottomMargin;
 constexpr int kPinPanelButtonRadius = 6;
 constexpr int kPinPanelButtonHeight = 22;
-constexpr int kPinKeypadButtonWidth = kPanelGridCellWidth;
+constexpr int kPinKeypadColumnGap = 6;  // horizontal gap between keypad columns
+constexpr int kPinKeypadButtonWidth = (kPanelGridWidth - 2 * kPinKeypadColumnGap) / 3;  // 86
+constexpr int kPinKeypadColumnStride = kPinKeypadButtonWidth + kPinKeypadColumnGap;      // 92
 constexpr int kPinKeypadGridLeft = kPanelGridLeft;
 constexpr int kPinKeypadGridTop = 78;
 constexpr int kPinKeypadRowHeight = 25;
-constexpr int kSettingsMenuButtonCenterX = (kScreenWidth - 16 - kRecoveryPhraseButtonWidth) / 2;
+constexpr int kSettingsMenuButtonCenterX = (kPanelContentWidth - kRecoveryPhraseButtonWidth) / 2;
 constexpr int kSettingsMenuRowLabelX = 24;
 constexpr int kSettingsMenuRowControlX = 218;
 constexpr int kSettingsMenuRowOneY = 54;
@@ -83,9 +98,23 @@ constexpr int kPolicyUpdateReviewRowTop = 50;
 constexpr int kPolicyUpdateReviewRowHeight = 16;
 constexpr int kPolicyUpdateReviewRowWidth = kInsetPanelWidth - 36;
 constexpr int kPolicyUpdateReviewSummaryTop = 132;
-constexpr int kSetupMenuGenerateButtonY = 78;
-constexpr int kSetupMenuRecoverButtonY = 114;
-constexpr int kMnemonicWordCellWidth = kPanelGridCellWidth;
+// Setup choice: three stacked buttons, vertically centered between the title and the
+// bottom of the full-screen panel. Coordinates are panel-relative == screen (panel at
+// 0,0); a child whose bottom exceeds kPanelContentHeight (240) is clipped, and it must
+// also stay above the screen timeout bar at y=236. montserrat_14 line_height is 16, so
+// the title (TOP_MID y=24) ends panel-y ~40.
+//   block = 3*42 + 2*14 = 154, centered in [40,232] -> first Y = 58
+//   Cancel bottom = 170 + 42 = 212  (<= 232, clears the y=236 timer bar). OK.
+constexpr int kSetupChoiceButtonHeight = 42;
+constexpr int kSetupChoiceButtonGap = 14;
+constexpr int kSetupMenuGenerateButtonY = 58;
+constexpr int kSetupMenuRecoverButtonY =
+    kSetupMenuGenerateButtonY + kSetupChoiceButtonHeight + kSetupChoiceButtonGap;
+constexpr int kSetupMenuCancelButtonY =
+    kSetupMenuRecoverButtonY + kSetupChoiceButtonHeight + kSetupChoiceButtonGap;
+constexpr int kMnemonicWordColumnGap = 6;  // horizontal gap between mnemonic columns
+constexpr int kMnemonicWordCellWidth = (kPanelGridWidth - 2 * kMnemonicWordColumnGap) / 3;  // 86
+constexpr int kMnemonicWordColumnStride = kMnemonicWordCellWidth + kMnemonicWordColumnGap;   // 92
 constexpr int kMnemonicWordCellHeight = 22;
 constexpr int kMnemonicWordCellLeft = kPanelGridLeft;
 constexpr int kMnemonicWordIndexWidth = 22;
@@ -105,17 +134,17 @@ constexpr int kRecoverCandidateButtonHeight = 22;
 constexpr int kRecoverNavigationButtonWidth = 68;
 constexpr int kPinProcessingOverlaySize = 50;
 constexpr int kPinProcessingOverlayX =
-    (kScreenWidth - 16 - kPinProcessingOverlaySize) / 2;
+    (kPanelContentWidth - kPinProcessingOverlaySize) / 2;
 constexpr int kPinProcessingOverlayY =
-    (kScreenHeight - 16 - kPinProcessingOverlaySize) / 2;
+    (kPanelContentHeight - kPinProcessingOverlaySize) / 2;
 constexpr int kPinProcessingSpinnerSize = 34;
 constexpr int kPinProcessingArcDegrees = 112;
 constexpr int kPinProcessingSpinMs = 650;
 constexpr int kTimeoutTimerMinAnimationMs = 1;
-constexpr uint32_t kSetupCellBorderColor = 0xB7E4C7;
-constexpr uint32_t kSetupInputPressedColor = 0x1D4ED8;
-constexpr uint32_t kDisabledControlTextColor = 0x98A2B3;
-constexpr uint32_t kDisabledActionTextColor = 0xEAECF0;
+constexpr uint32_t kSetupCellBorderColor = theme::kOutline;
+constexpr uint32_t kSetupInputPressedColor = theme::kPressed;
+constexpr uint32_t kDisabledControlTextColor = theme::kDisabledOnSurface;
+constexpr uint32_t kDisabledActionTextColor = theme::kDisabledOnAction;
 
 enum class SetupButtonKind {
     solid_action,
@@ -212,7 +241,7 @@ static bool make_timeout_timer_bar(
     lv_obj_remove_flag(track, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_scrollbar_mode(track, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_radius(track, kTimeoutTimerBarHeight / 2, 0);
-    lv_obj_set_style_bg_color(track, lv_color_hex(0xD0D5DD), 0);
+    lv_obj_set_style_bg_color(track, lv_color_hex(theme::kOutlineVariant), 0);
     lv_obj_set_style_bg_opa(track, LV_OPA_COVER, 0);
 
     lv_obj_t* fill = lv_obj_create(track);
@@ -230,7 +259,7 @@ static bool make_timeout_timer_bar(
     lv_obj_remove_flag(fill, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_scrollbar_mode(fill, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_radius(fill, kTimeoutTimerBarHeight / 2, 0);
-    lv_obj_set_style_bg_color(fill, lv_color_hex(0x24875A), 0);
+    lv_obj_set_style_bg_color(fill, lv_color_hex(theme::kPrimary), 0);
     lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
 
     if (timeout_window_reached(timeout_window, now)) {
@@ -286,7 +315,7 @@ static bool make_setup_button(
         lv_obj_set_style_radius(button, kRecoveryPhraseButtonRadius, 0);
         lv_obj_set_style_border_width(button, 0, 0);
         lv_obj_set_style_bg_opa(button, enabled ? LV_OPA_COVER : LV_OPA_40, 0);
-        label_color = lv_color_hex(enabled ? 0xFFFFFF : kDisabledActionTextColor);
+        label_color = lv_color_hex(enabled ? theme::kOnPrimary : kDisabledActionTextColor);
         if (enabled) {
             lv_obj_set_style_bg_opa(button, LV_OPA_80, LV_STATE_PRESSED);
         }
@@ -348,7 +377,7 @@ static bool make_pin_keypad_buttons(lv_obj_t* parent, bool buttons_enabled)
         if (!make_setup_button(
                 parent,
                 kDigits[digit],
-                kPinKeypadGridLeft + column * kPinKeypadButtonWidth,
+                kPinKeypadGridLeft + column * kPinKeypadColumnStride,
                 kPinKeypadGridTop + row * kPinKeypadRowHeight,
                 kPinKeypadButtonWidth,
                 kPinPanelButtonHeight,
@@ -369,14 +398,14 @@ static bool make_pin_keypad_buttons(lv_obj_t* parent, bool buttons_enabled)
                kPinKeypadButtonWidth,
                kPinPanelButtonHeight,
                SetupButtonKind::outlined_keypad,
-               lv_color_hex(0x667085),
+               lv_color_hex(theme::kSecondary),
                g_callbacks.on_pin_clear_clicked,
                nullptr,
                buttons_enabled) &&
            make_setup_button(
                parent,
                kDigits[0],
-               kPinKeypadGridLeft + kPinKeypadButtonWidth,
+               kPinKeypadGridLeft + kPinKeypadColumnStride,
                kPinKeypadGridTop + 3 * kPinKeypadRowHeight,
                kPinKeypadButtonWidth,
                kPinPanelButtonHeight,
@@ -388,12 +417,12 @@ static bool make_pin_keypad_buttons(lv_obj_t* parent, bool buttons_enabled)
            make_setup_button(
                parent,
                LV_SYMBOL_BACKSPACE,
-               kPinKeypadGridLeft + 2 * kPinKeypadButtonWidth,
+               kPinKeypadGridLeft + 2 * kPinKeypadColumnStride,
                kPinKeypadGridTop + 3 * kPinKeypadRowHeight,
                kPinKeypadButtonWidth,
                kPinPanelButtonHeight,
                SetupButtonKind::outlined_keypad,
-               lv_color_hex(0x667085),
+               lv_color_hex(theme::kSecondary),
                g_callbacks.on_pin_backspace_clicked,
                nullptr,
                buttons_enabled);
@@ -409,7 +438,7 @@ static bool make_settings_row_label(lv_obj_t* parent, const char* text, int y)
     lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
     lv_obj_set_width(label, kSettingsMenuRowControlX - kSettingsMenuRowLabelX - 8);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(label, lv_color_hex(0x063A1D), 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(label, LV_ALIGN_TOP_LEFT, kSettingsMenuRowLabelX, y + 4);
     return true;
 }
@@ -429,7 +458,7 @@ static bool make_user_signing_review_row(
     lv_obj_set_width(label, kUserSigningReviewRowValueX - kUserSigningReviewRowLabelX - 8);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(label, &lv_font_unscii_8, 0);
-    lv_obj_set_style_text_color(label, lv_color_hex(0x475467), 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(theme::kOnSurfaceVariant), 0);
     lv_obj_align(label, LV_ALIGN_TOP_LEFT, kUserSigningReviewRowLabelX, y + 2);
 
     lv_obj_t* value = lv_label_create(parent);
@@ -441,7 +470,7 @@ static bool make_user_signing_review_row(
     lv_obj_set_width(value, kUserSigningReviewRowWidth);
     lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(value, &lv_font_unscii_8, 0);
-    lv_obj_set_style_text_color(value, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_text_color(value, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(value, LV_ALIGN_TOP_LEFT, kUserSigningReviewRowValueX, y + 2);
     return true;
 }
@@ -469,7 +498,7 @@ static bool make_policy_update_review_row(
     lv_obj_set_width(row, kPolicyUpdateReviewRowWidth);
     lv_obj_set_style_text_align(row, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(row, &lv_font_unscii_8, 0);
-    lv_obj_set_style_text_color(row, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_text_color(row, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(row, LV_ALIGN_TOP_LEFT, 18, y + 2);
     return true;
 }
@@ -515,7 +544,7 @@ static bool make_pin_processing_overlay(lv_obj_t* parent)
     }
 
     lv_obj_remove_style_all(blocker);
-    lv_obj_set_size(blocker, kScreenWidth - 16, kScreenHeight - 16);
+    lv_obj_set_size(blocker, kPanelContentWidth, kPanelContentHeight);
     lv_obj_align(blocker, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_remove_flag(blocker, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(blocker, LV_SCROLLBAR_MODE_OFF);
@@ -535,7 +564,7 @@ static bool make_pin_processing_overlay(lv_obj_t* parent)
     lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_radius(card, kPinPanelButtonRadius, 0);
     lv_obj_set_style_border_width(card, 0, 0);
-    lv_obj_set_style_bg_color(card, lv_color_hex(0x667085), 0);
+    lv_obj_set_style_bg_color(card, lv_color_hex(theme::kSecondary), 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_40, 0);
 
 #if LV_USE_ARC
@@ -553,8 +582,8 @@ static bool make_pin_processing_overlay(lv_obj_t* parent)
     lv_arc_set_rotation(spinner, 270);
     lv_obj_set_style_arc_width(spinner, 4, LV_PART_MAIN);
     lv_obj_set_style_arc_width(spinner, 4, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(spinner, lv_color_hex(0xD0D5DD), LV_PART_MAIN);
-    lv_obj_set_style_arc_color(spinner, lv_color_hex(0x24875A), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(spinner, lv_color_hex(theme::kOutlineVariant), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(spinner, lv_color_hex(theme::kPrimary), LV_PART_INDICATOR);
     lv_obj_center(spinner);
 
     lv_anim_t animation;
@@ -571,7 +600,7 @@ static bool make_pin_processing_overlay(lv_obj_t* parent)
     if (loading != nullptr) {
         lv_label_set_text(loading, "...");
         lv_obj_set_style_text_font(loading, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(loading, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_color(loading, lv_color_hex(theme::kOnPrimary), 0);
         lv_obj_center(loading);
     }
 #endif
@@ -620,11 +649,11 @@ bool modal_draw_connect_review_panel(
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
-    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_radius(panel, 8, 0);
     lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(panel, 0, 0);
 
@@ -635,21 +664,8 @@ bool modal_draw_connect_review_panel(
     }
     lv_label_set_text(title, "Connect Request");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 16);
-
-    lv_obj_t* message = lv_label_create(panel);
-    if (message == nullptr) {
-        drawing_surface_clear_panel_locked();
-        return false;
-    }
-    lv_label_set_text(message, "Allow this Gateway session?");
-    lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(message, kInsetPanelWidth - 40);
-    lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(message, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(message, lv_color_hex(0x1F2937), 0);
-    lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 44);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
 
     lv_obj_t* gateway_label = lv_label_create(panel);
     if (gateway_label == nullptr) {
@@ -658,7 +674,7 @@ bool modal_draw_connect_review_panel(
     }
     lv_label_set_text(gateway_label, "Gateway");
     lv_obj_set_style_text_font(gateway_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(gateway_label, lv_color_hex(0x475467), 0);
+    lv_obj_set_style_text_color(gateway_label, lv_color_hex(theme::kOnSurfaceVariant), 0);
     lv_obj_align(gateway_label, LV_ALIGN_TOP_LEFT, kConnectReviewTextLeft, 86);
 
     lv_obj_t* gateway_value = lv_label_create(panel);
@@ -674,7 +690,7 @@ bool modal_draw_connect_review_panel(
         kConnectReviewGatewayValueHeight);
     lv_obj_set_style_text_align(gateway_value, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(gateway_value, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(gateway_value, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_text_color(gateway_value, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(
         gateway_value,
         LV_ALIGN_TOP_LEFT,
@@ -688,7 +704,7 @@ bool modal_draw_connect_review_panel(
     }
     lv_label_set_text(mode_label, "Approval");
     lv_obj_set_style_text_font(mode_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(mode_label, lv_color_hex(0x475467), 0);
+    lv_obj_set_style_text_color(mode_label, lv_color_hex(theme::kOnSurfaceVariant), 0);
     lv_obj_align(
         mode_label,
         LV_ALIGN_TOP_LEFT,
@@ -706,7 +722,7 @@ bool modal_draw_connect_review_panel(
             ? "Review, then PIN"
             : "Review, then Confirm");
     lv_obj_set_style_text_font(mode_value, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(mode_value, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_text_color(mode_value, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(
         mode_value,
         LV_ALIGN_TOP_LEFT,
@@ -724,22 +740,22 @@ bool modal_draw_connect_review_panel(
     if (!make_setup_button(
             panel,
             "Reject",
-            kBottomDecisionButtonLeftX,
+            kPanelActionButtonLeftX,
             kSetupActionButtonY,
-            kBottomDecisionButtonWidth,
+            kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0xA53B3B),
+            lv_color_hex(theme::kError),
             g_callbacks.on_connect_review_reject_clicked) ||
         !make_setup_button(
             panel,
             input_mode == AgentQHumanApprovalInputMode::pin ? "Continue" : "Confirm",
-            kBottomDecisionButtonRightX,
+            kPanelActionButtonRightX,
             kSetupActionButtonY,
-            kBottomDecisionButtonWidth,
+            kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0x24875A),
+            lv_color_hex(theme::kPrimary),
             g_callbacks.on_connect_review_accept_clicked)) {
         drawing_surface_clear_panel_locked();
         return false;
@@ -767,11 +783,11 @@ bool modal_draw_setup_choice_panel()
     }
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
-    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_radius(panel, 8, 0);
     lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(panel, 0, 0);
 
@@ -782,8 +798,8 @@ bool modal_draw_setup_choice_panel()
     }
     lv_label_set_text(title, "Set up Agent-Q");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
 
     if (!make_setup_button(
             panel,
@@ -791,9 +807,9 @@ bool modal_draw_setup_choice_panel()
             kSettingsMenuButtonCenterX,
             kSetupMenuGenerateButtonY,
             kRecoveryPhraseButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kSetupChoiceButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0x24875A),
+            lv_color_hex(theme::kPrimary),
             g_callbacks.on_setup_generate_clicked) ||
         !make_setup_button(
             panel,
@@ -801,19 +817,19 @@ bool modal_draw_setup_choice_panel()
             kSettingsMenuButtonCenterX,
             kSetupMenuRecoverButtonY,
             kRecoveryPhraseButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kSetupChoiceButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0x1D4ED8),
+            lv_color_hex(theme::kPrimary),
             g_callbacks.on_setup_recover_clicked) ||
         !make_setup_button(
             panel,
             "Cancel",
             kSettingsMenuButtonCenterX,
-            kSetupActionButtonY,
+            kSetupMenuCancelButtonY,
             kRecoveryPhraseButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kSetupChoiceButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0x667085),
+            lv_color_hex(theme::kSecondary),
             g_callbacks.on_setup_cancel_clicked)) {
         drawing_surface_clear_panel_locked();
         return false;
@@ -852,13 +868,15 @@ static bool make_recover_word_cell(lv_obj_t* parent, uint8_t slot)
     lv_obj_align(
         cell,
         LV_ALIGN_TOP_LEFT,
-        kMnemonicWordCellLeft + static_cast<int>(slot) * kMnemonicWordCellWidth,
+        kMnemonicWordCellLeft + static_cast<int>(slot) * kMnemonicWordColumnStride,
         kRecoverWordCellTop);
     lv_obj_set_style_radius(cell, 4, 0);
-    lv_obj_set_style_border_width(cell, 1, 0);
-    lv_obj_set_style_border_color(cell, lv_color_hex(kSetupCellBorderColor), 0);
-    lv_obj_set_style_bg_color(cell, lv_color_hex(
-        slot == flow.recover_active_slot ? 0xE9F8EF : 0xFFFFFF), 0);
+    const bool cell_active = (slot == flow.recover_active_slot);
+    lv_obj_set_style_border_width(cell, cell_active ? 2 : 1, 0);
+    lv_obj_set_style_border_color(
+        cell, lv_color_hex(cell_active ? theme::kPrimary : kSetupCellBorderColor), 0);
+    lv_obj_set_style_bg_color(
+        cell, lv_color_hex(cell_active ? theme::kPrimaryContainer : theme::kSurface), 0);
     lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(cell, lv_color_hex(kSetupInputPressedColor), LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(cell, LV_OPA_30, LV_STATE_PRESSED);
@@ -881,7 +899,7 @@ static bool make_recover_word_cell(lv_obj_t* parent, uint8_t slot)
     lv_obj_set_width(index_label, kMnemonicWordIndexWidth);
     lv_obj_set_style_text_align(index_label, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(index_label, &lv_font_unscii_8, 0);
-    lv_obj_set_style_text_color(index_label, lv_color_hex(0x475467), 0);
+    lv_obj_set_style_text_color(index_label, lv_color_hex(theme::kOnSurfaceVariant), 0);
     lv_obj_set_style_bg_opa(index_label, LV_OPA_TRANSP, 0);
     lv_obj_set_style_radius(index_label, 4, LV_STATE_PRESSED);
     lv_obj_set_style_bg_color(index_label, lv_color_hex(kSetupInputPressedColor), LV_STATE_PRESSED);
@@ -904,7 +922,7 @@ static bool make_recover_word_cell(lv_obj_t* parent, uint8_t slot)
     lv_obj_set_width(prefix_label, kMnemonicWordPrefixWidth);
     lv_obj_set_style_text_align(prefix_label, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(prefix_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(prefix_label, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_text_color(prefix_label, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_set_style_bg_opa(prefix_label, LV_OPA_TRANSP, 0);
     lv_obj_set_style_radius(prefix_label, 4, LV_STATE_PRESSED);
     lv_obj_set_style_bg_color(prefix_label, lv_color_hex(kSetupInputPressedColor), LV_STATE_PRESSED);
@@ -973,7 +991,7 @@ static bool make_recover_candidate_area(lv_obj_t* parent)
         lv_obj_set_width(label, kRecoverCandidateWidth - 8);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(label, lv_color_hex(0x475467), 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(theme::kOnSurfaceVariant), 0);
         lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 16);
         return true;
     }
@@ -1025,7 +1043,7 @@ static bool make_recover_candidate_area(lv_obj_t* parent)
         lv_obj_set_width(label, kRecoverCandidateButtonWidth - 6);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_font(label, &lv_font_unscii_8, 0);
-        lv_obj_set_style_text_color(label, lv_color_hex(0x111827), 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(theme::kOnSurface), 0);
         lv_obj_set_style_bg_opa(label, LV_OPA_TRANSP, 0);
         lv_obj_set_style_radius(label, kPinPanelButtonRadius, LV_STATE_PRESSED);
         lv_obj_set_style_bg_color(label, lv_color_hex(kSetupInputPressedColor), LV_STATE_PRESSED);
@@ -1049,7 +1067,7 @@ static bool make_recover_candidate_area(lv_obj_t* parent)
         lv_obj_set_width(label, kRecoverCandidateWidth - 8);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(label, lv_color_hex(0xA53B3B), 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(theme::kError), 0);
         lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 16);
     }
 
@@ -1067,7 +1085,7 @@ static bool make_screen_bottom_timeout_timer_bar(
     clear_screen_bottom_timeout_timer_bar_locked();
     lv_obj_t* track = nullptr;
     if (!make_timeout_timer_bar(
-            lv_screen_active(),
+            lv_layer_top(),  // top layer: keep the timer bar above the full-screen modal panel
             kTimeoutTimerBarTrackInset,
             kScreenHeight - kTimeoutTimerBarHeight,
             kScreenWidth - 2 * kTimeoutTimerBarTrackInset,
@@ -1106,11 +1124,11 @@ bool modal_draw_recover_word_entry_panel(const char* notice)
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
-    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_radius(panel, 8, 0);
     lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(panel, 0, 0);
 
@@ -1127,8 +1145,8 @@ bool modal_draw_recover_word_entry_panel(const char* notice)
     }
     lv_label_set_text(title, title_text);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
 
     if (notice != nullptr && notice[0] != '\0') {
         lv_obj_t* notice_label = lv_label_create(panel);
@@ -1140,8 +1158,8 @@ bool modal_draw_recover_word_entry_panel(const char* notice)
         lv_obj_set_width(notice_label, kScreenWidth - 44);
         lv_obj_set_style_text_align(notice_label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_font(notice_label, &lv_font_unscii_8, 0);
-        lv_obj_set_style_text_color(notice_label, lv_color_hex(0xA53B3B), 0);
-        lv_obj_align(notice_label, LV_ALIGN_TOP_MID, 0, 26);
+        lv_obj_set_style_text_color(notice_label, lv_color_hex(theme::kError), 0);
+        lv_obj_align(notice_label, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
     }
 
     for (uint8_t slot = 0; slot < kRecoverWordsPerPage; ++slot) {
@@ -1165,7 +1183,7 @@ bool modal_draw_recover_word_entry_panel(const char* notice)
             kRecoverNavigationButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0xA53B3B),
+            lv_color_hex(theme::kError),
             g_callbacks.on_recover_cancel_clicked) ||
         !make_setup_button(
             panel,
@@ -1175,7 +1193,7 @@ bool modal_draw_recover_word_entry_panel(const char* notice)
             kRecoverNavigationButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::outlined_keypad,
-            lv_color_hex(0x667085),
+            lv_color_hex(theme::kSecondary),
             g_callbacks.on_recover_clear_clicked) ||
         !make_setup_button(
             panel,
@@ -1185,7 +1203,7 @@ bool modal_draw_recover_word_entry_panel(const char* notice)
             kRecoverNavigationButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0x667085),
+            lv_color_hex(theme::kSecondary),
             g_callbacks.on_recover_previous_clicked,
             nullptr,
             flow.recover_page > 0) ||
@@ -1197,7 +1215,7 @@ bool modal_draw_recover_word_entry_panel(const char* notice)
             kRecoverNavigationButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0x24875A),
+            lv_color_hex(theme::kPrimary),
             g_callbacks.on_recover_next_clicked,
             nullptr,
             flow.recover_current_page_complete)) {
@@ -1235,11 +1253,11 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
-    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_radius(panel, 8, 0);
     lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(panel, 0, 0);
 
@@ -1248,9 +1266,9 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
         drawing_surface_clear_panel_locked();
         return false;
     }
-    lv_label_set_text(title, "BIP-39 prefixes (DEV)");
+    lv_label_set_text(title, "BIP-39 prefixes");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kRecoveryPhraseTopMargin);
 
     lv_obj_t* warning = lv_label_create(panel);
@@ -1263,7 +1281,7 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
     lv_obj_set_width(warning, kScreenWidth - 44);
     lv_obj_set_style_text_align(warning, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(warning, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(warning, lv_color_hex(0x3A2B00), 0);
+    lv_obj_set_style_text_color(warning, lv_color_hex(theme::kWarning), 0);
     lv_obj_align(warning, LV_ALIGN_TOP_MID, 0, 22 + kRecoveryPhraseTopMargin);
 
     constexpr int kGridTop = 58 + kRecoveryPhraseTopMargin;
@@ -1278,8 +1296,8 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
         lv_obj_set_size(cell, kMnemonicWordCellWidth, kMnemonicWordCellHeight);
         lv_obj_set_style_radius(cell, 4, 0);
         lv_obj_set_style_border_width(cell, 1, 0);
-        lv_obj_set_style_border_color(cell, lv_color_hex(0xB7E4C7), 0);
-        lv_obj_set_style_bg_color(cell, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_border_color(cell, lv_color_hex(theme::kOutline), 0);
+        lv_obj_set_style_bg_color(cell, lv_color_hex(theme::kSurface), 0);
         lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
         lv_obj_set_style_pad_all(cell, 0, 0);
         const int column = static_cast<int>(index % 3);
@@ -1287,7 +1305,7 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
         lv_obj_align(
             cell,
             LV_ALIGN_TOP_LEFT,
-            kMnemonicWordCellLeft + column * kMnemonicWordCellWidth,
+            kMnemonicWordCellLeft + column * kMnemonicWordColumnStride,
             kGridTop + row * kGridRowHeight);
 
         lv_obj_t* index_label = lv_label_create(cell);
@@ -1302,7 +1320,7 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
         lv_obj_set_width(index_label, kMnemonicWordIndexWidth);
         lv_obj_set_style_text_align(index_label, LV_TEXT_ALIGN_RIGHT, 0);
         lv_obj_set_style_text_font(index_label, &lv_font_unscii_8, 0);
-        lv_obj_set_style_text_color(index_label, lv_color_hex(0x475467), 0);
+        lv_obj_set_style_text_color(index_label, lv_color_hex(theme::kOnSurfaceVariant), 0);
         lv_obj_align(index_label, LV_ALIGN_LEFT_MID, 4, 0);
 
         lv_obj_t* prefix_label = lv_label_create(cell);
@@ -1315,7 +1333,7 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
         lv_obj_set_width(prefix_label, kMnemonicWordPrefixWidth);
         lv_obj_set_style_text_align(prefix_label, LV_TEXT_ALIGN_LEFT, 0);
         lv_obj_set_style_text_font(prefix_label, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(prefix_label, lv_color_hex(0x111827), 0);
+        lv_obj_set_style_text_color(prefix_label, lv_color_hex(theme::kOnSurface), 0);
         lv_obj_align(prefix_label, LV_ALIGN_LEFT_MID, kMnemonicWordPrefixLeft, 0);
     }
     if (!make_setup_button(
@@ -1326,7 +1344,7 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
             kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0xA53B3B),
+            lv_color_hex(theme::kError),
             g_callbacks.on_recovery_phrase_cancel_clicked) ||
         !make_setup_button(
             panel,
@@ -1336,7 +1354,7 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
             kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0x24875A),
+            lv_color_hex(theme::kPrimary),
             g_callbacks.on_recovery_phrase_confirm_clicked)) {
         drawing_surface_clear_panel_locked();
         return false;
@@ -1365,11 +1383,11 @@ bool modal_draw_pin_setup_panel(const char* notice)
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
-    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_radius(panel, 8, 0);
     lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(panel, 0, 0);
 
@@ -1385,8 +1403,8 @@ bool modal_draw_pin_setup_panel(const char* notice)
     }
     lv_label_set_text(title, committing_stage ? "Saving setup" : (repeat_stage ? "Repeat 6-digit PIN" : "Set 6-digit PIN"));
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
 
     lv_obj_t* message = lv_label_create(panel);
     if (message == nullptr) {
@@ -1397,13 +1415,13 @@ bool modal_draw_pin_setup_panel(const char* notice)
         message,
         notice != nullptr && notice[0] != '\0'
             ? notice
-            : (committing_stage ? "Processing. Please wait." : "Choose a local setup PIN."));
+            : (committing_stage ? "Processing. Please wait." : ""));
     lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(message, kScreenWidth - 44);
     lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(message, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(message, lv_color_hex(0x3A2B00), 0);
-    lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_set_style_text_color(message, lv_color_hex(theme::kWarning), 0);
+    lv_obj_align(message, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
 
     char pin_mask[agent_q::kLocalPinDigits + 1] = {};
     for (size_t index = 0; index < agent_q::kLocalPinDigits; ++index) {
@@ -1418,7 +1436,7 @@ bool modal_draw_pin_setup_panel(const char* notice)
     }
     lv_label_set_text(pin_label, pin_text);
     lv_obj_set_style_text_font(pin_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(pin_label, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_text_color(pin_label, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(pin_label, LV_ALIGN_TOP_MID, 0, 58);
 
     if (!make_pin_keypad_buttons(panel, buttons_enabled)) {
@@ -1434,7 +1452,7 @@ bool modal_draw_pin_setup_panel(const char* notice)
             kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0xA53B3B),
+            lv_color_hex(theme::kError),
             g_callbacks.on_pin_cancel_clicked,
             nullptr,
             buttons_enabled) ||
@@ -1446,7 +1464,7 @@ bool modal_draw_pin_setup_panel(const char* notice)
             kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0x24875A),
+            lv_color_hex(theme::kPrimary),
             g_callbacks.on_pin_submit_clicked,
             nullptr,
             buttons_enabled)) {
@@ -1486,11 +1504,11 @@ bool modal_draw_settings_menu_panel()
     }
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
-    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_radius(panel, 8, 0);
     lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(panel, 0, 0);
 
@@ -1501,8 +1519,8 @@ bool modal_draw_settings_menu_panel()
     }
     lv_label_set_text(title, "Settings");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
 
     agent_q::AgentQHumanApprovalInputMode human_approval_input_mode =
         agent_q::AgentQHumanApprovalInputMode::pin;
@@ -1525,7 +1543,7 @@ bool modal_draw_settings_menu_panel()
             kSettingsMenuActionButtonWidth,
             kSettingsMenuActionButtonHeight,
             SetupButtonKind::outlined_keypad,
-            lv_color_hex(0x24875A),
+            lv_color_hex(theme::kPrimary),
             human_approval_setting_read_ok ? g_callbacks.on_settings_human_approval_input_clicked : nullptr,
             nullptr,
             human_approval_setting_read_ok) ||
@@ -1540,7 +1558,7 @@ bool modal_draw_settings_menu_panel()
             kSettingsMenuActionButtonWidth,
             kSettingsMenuActionButtonHeight,
             SetupButtonKind::outlined_keypad,
-            lv_color_hex(0x24875A),
+            lv_color_hex(theme::kPrimary),
             signing_mode_read_ok ? g_callbacks.on_settings_signing_mode_clicked : nullptr,
             nullptr,
             signing_mode_read_ok) ||
@@ -1553,7 +1571,7 @@ bool modal_draw_settings_menu_panel()
             kSettingsMenuActionButtonWidth,
             kSettingsMenuActionButtonHeight,
             SetupButtonKind::outlined_keypad,
-            lv_color_hex(0x24875A),
+            lv_color_hex(theme::kPrimary),
             g_callbacks.on_settings_change_pin_clicked) ||
         !make_settings_row_label(panel, "Reset device", kSettingsMenuRowFourY) ||
         !make_setup_button(
@@ -1564,7 +1582,7 @@ bool modal_draw_settings_menu_panel()
             kSettingsMenuActionButtonWidth,
             kSettingsMenuActionButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0xA53B3B),
+            lv_color_hex(theme::kError),
             g_callbacks.on_settings_reset_clicked) ||
         !make_setup_button(
             panel,
@@ -1574,7 +1592,7 @@ bool modal_draw_settings_menu_panel()
             kRecoveryPhraseButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::outlined_keypad,
-            lv_color_hex(0x24875A),
+            lv_color_hex(theme::kPrimary),
             g_callbacks.on_settings_cancel_clicked)) {
         drawing_surface_clear_panel_locked();
         return false;
@@ -1608,11 +1626,11 @@ bool modal_draw_error_recovery_panel(bool confirm)
     }
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
-    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_radius(panel, 8, 0);
     lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xFFF7F7), 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kErrorContainer), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(panel, 0, 0);
 
@@ -1623,8 +1641,8 @@ bool modal_draw_error_recovery_panel(bool confirm)
     }
     lv_label_set_text(title, wiping ? "Erasing device" : (confirm ? "Erase device data" : "Device data error"));
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x7A1E1E), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 26);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnErrorContainer), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
 
     lv_obj_t* message = lv_label_create(panel);
     if (message == nullptr) {
@@ -1642,7 +1660,7 @@ bool modal_draw_error_recovery_panel(bool confirm)
     lv_obj_set_width(message, kScreenWidth - 54);
     lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(message, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(message, lv_color_hex(0x3C0505), 0);
+    lv_obj_set_style_text_color(message, lv_color_hex(theme::kOnErrorContainerStrong), 0);
     lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 70);
 
     if (wiping) {
@@ -1659,7 +1677,7 @@ bool modal_draw_error_recovery_panel(bool confirm)
                 kPanelActionButtonWidth,
                 kRecoveryPhraseButtonHeight,
                 SetupButtonKind::outlined_keypad,
-                lv_color_hex(0xA53B3B),
+                lv_color_hex(theme::kError),
                 g_callbacks.on_error_recovery_cancel_clicked) ||
             !make_setup_button(
                 panel,
@@ -1669,7 +1687,7 @@ bool modal_draw_error_recovery_panel(bool confirm)
                 kPanelActionButtonWidth,
                 kRecoveryPhraseButtonHeight,
                 SetupButtonKind::solid_action,
-                lv_color_hex(0xA53B3B),
+                lv_color_hex(theme::kError),
                 g_callbacks.on_error_recovery_erase_clicked)) {
             drawing_surface_clear_panel_locked();
             return false;
@@ -1682,7 +1700,7 @@ bool modal_draw_error_recovery_panel(bool confirm)
                    kRecoveryPhraseButtonWidth,
                    kRecoveryPhraseButtonHeight,
                    SetupButtonKind::solid_action,
-                   lv_color_hex(0xA53B3B),
+                   lv_color_hex(theme::kError),
                    g_callbacks.on_error_recovery_erase_clicked)) {
         drawing_surface_clear_panel_locked();
         return false;
@@ -1716,11 +1734,11 @@ bool modal_draw_reset_pin_panel(const char* notice)
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
-    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_radius(panel, 8, 0);
     lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(panel, 0, 0);
 
@@ -1737,8 +1755,8 @@ bool modal_draw_reset_pin_panel(const char* notice)
     }
     lv_label_set_text(title, processing_stage ? "Processing reset" : "Enter reset PIN");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
 
     lv_obj_t* message = lv_label_create(panel);
     if (message == nullptr) {
@@ -1754,8 +1772,8 @@ bool modal_draw_reset_pin_panel(const char* notice)
     lv_obj_set_width(message, kScreenWidth - 44);
     lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(message, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(message, lv_color_hex(0x3A2B00), 0);
-    lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_set_style_text_color(message, lv_color_hex(theme::kWarning), 0);
+    lv_obj_align(message, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
 
     char pin_mask[agent_q::kLocalPinDigits + 1] = {};
     for (size_t index = 0; index < agent_q::kLocalPinDigits; ++index) {
@@ -1770,7 +1788,7 @@ bool modal_draw_reset_pin_panel(const char* notice)
     }
     lv_label_set_text(pin_label, pin_text);
     lv_obj_set_style_text_font(pin_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(pin_label, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_text_color(pin_label, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(pin_label, LV_ALIGN_TOP_MID, 0, 58);
 
     if (!make_pin_keypad_buttons(panel, buttons_enabled)) {
@@ -1786,7 +1804,7 @@ bool modal_draw_reset_pin_panel(const char* notice)
             kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0x667085),
+            lv_color_hex(theme::kSecondary),
             g_callbacks.on_reset_cancel_clicked,
             nullptr,
             !processing_stage) ||
@@ -1798,7 +1816,7 @@ bool modal_draw_reset_pin_panel(const char* notice)
             kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0xA53B3B),
+            lv_color_hex(theme::kError),
             g_callbacks.on_pin_submit_clicked,
             nullptr,
             buttons_enabled)) {
@@ -1908,11 +1926,11 @@ bool modal_draw_policy_update_review_panel(
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
-    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_radius(panel, 8, 0);
     lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(panel, 0, 0);
 
@@ -1926,8 +1944,8 @@ bool modal_draw_policy_update_review_panel(
     lv_obj_set_width(title, kScreenWidth - 44);
     lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
 
     lv_obj_t* subtitle = lv_label_create(panel);
     if (subtitle == nullptr) {
@@ -1939,8 +1957,8 @@ bool modal_draw_policy_update_review_panel(
     lv_obj_set_width(subtitle, kScreenWidth - 44);
     lv_obj_set_style_text_align(subtitle, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(subtitle, &lv_font_unscii_8, 0);
-    lv_obj_set_style_text_color(subtitle, lv_color_hex(0x475467), 0);
-    lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_set_style_text_color(subtitle, lv_color_hex(theme::kOnSurfaceVariant), 0);
+    lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
 
     char rule_count[16] = {};
     char policy_hash_prefix[24] = {};
@@ -1972,7 +1990,7 @@ bool modal_draw_policy_update_review_panel(
     lv_obj_set_width(summary, kPolicyUpdateReviewRowWidth);
     lv_obj_set_style_text_align(summary, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(summary, &lv_font_unscii_8, 0);
-    lv_obj_set_style_text_color(summary, lv_color_hex(0x3A2B00), 0);
+    lv_obj_set_style_text_color(summary, lv_color_hex(theme::kWarning), 0);
     lv_obj_align(summary, LV_ALIGN_TOP_LEFT, 18, kPolicyUpdateReviewSummaryTop);
 
     if (!make_screen_bottom_timeout_timer_bar(
@@ -1991,7 +2009,7 @@ bool modal_draw_policy_update_review_panel(
             kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0xA53B3B),
+            lv_color_hex(theme::kError),
             g_callbacks.on_policy_update_review_reject_clicked) ||
         !make_setup_button(
             panel,
@@ -2001,7 +2019,7 @@ bool modal_draw_policy_update_review_panel(
             kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0x24875A),
+            lv_color_hex(theme::kPrimary),
             g_callbacks.on_policy_update_review_continue_clicked)) {
         drawing_surface_clear_panel_locked();
         return false;
@@ -2034,11 +2052,11 @@ bool modal_draw_user_signing_review_panel(
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
-    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_radius(panel, 8, 0);
     lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(panel, 0, 0);
 
@@ -2052,8 +2070,8 @@ bool modal_draw_user_signing_review_panel(
     lv_obj_set_width(title, kScreenWidth - 44);
     lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
 
     int row_y = kUserSigningReviewRowTop;
     for (size_t index = 0; index < model.row_count; ++index) {
@@ -2083,7 +2101,7 @@ bool modal_draw_user_signing_review_panel(
             kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0xA53B3B),
+            lv_color_hex(theme::kError),
             g_callbacks.on_user_signing_review_reject_clicked) ||
         !make_setup_button(
             panel,
@@ -2093,7 +2111,7 @@ bool modal_draw_user_signing_review_panel(
             kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0x24875A),
+            lv_color_hex(theme::kPrimary),
             g_callbacks.on_user_signing_review_accept_clicked)) {
         drawing_surface_clear_panel_locked();
         return false;
@@ -2125,11 +2143,11 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(panel, kScreenWidth - 16, kScreenHeight - 16);
-    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_radius(panel, 8, 0);
     lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xF7FFF9), 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(panel, 0, 0);
 
@@ -2142,8 +2160,8 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
     }
     lv_label_set_text(title, local_pin_auth_title(snapshot));
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x063A1D), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
 
     lv_obj_t* message = lv_label_create(panel);
     if (message == nullptr) {
@@ -2159,8 +2177,8 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
     lv_obj_set_width(message, kScreenWidth - 44);
     lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(message, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(message, lv_color_hex(0x3A2B00), 0);
-    lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_set_style_text_color(message, lv_color_hex(theme::kWarning), 0);
+    lv_obj_align(message, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
 
     char pin_mask[agent_q::kLocalPinDigits + 1] = {};
     for (size_t index = 0; index < agent_q::kLocalPinDigits; ++index) {
@@ -2175,7 +2193,7 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
     }
     lv_label_set_text(pin_label, pin_text);
     lv_obj_set_style_text_font(pin_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(pin_label, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_text_color(pin_label, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(pin_label, LV_ALIGN_TOP_MID, 0, 58);
 
     if (!make_pin_keypad_buttons(panel, buttons_enabled)) {
@@ -2203,7 +2221,7 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
             kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0x667085),
+            lv_color_hex(theme::kSecondary),
             g_callbacks.on_pin_cancel_clicked,
             nullptr,
             !snapshot.processing) ||
@@ -2215,7 +2233,7 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
             kPanelActionButtonWidth,
             kRecoveryPhraseButtonHeight,
             SetupButtonKind::solid_action,
-            lv_color_hex(0x24875A),
+            lv_color_hex(theme::kPrimary),
             g_callbacks.on_pin_submit_clicked,
             nullptr,
             buttons_enabled)) {
