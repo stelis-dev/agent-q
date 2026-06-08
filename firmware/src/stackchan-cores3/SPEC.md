@@ -620,16 +620,16 @@ Current verification expectations for this target:
   active policy is still reported by `policy_get`; do not count the positive
   `applied` smoke as coverage for those terminal paths;
 - rerun the tracked client-owned signing smoke harness when Sign API source,
-  protocol, target runtime, timeout, PIN, modal, or display code changes. The
-  baseline direct USB/Firmware smoke covered
-  the `source-wired-not-product-active` Sign API paths:
+  protocol, target runtime, timeout, PIN, modal, or display code changes. That
+  harness covers the `source-wired-not-product-active` Sign API paths:
   `sign_transaction` positive signed result, user reject, timeout, policy
   signed/rejected outcomes, `sign_personal_message` user-mode
   signed/rejected/timeout outcomes plus policy-mode fail-closed behavior, USB
   detach/reconnect cleanup, newest approval history, and no client output leak
   of session ids, raw `txBytes`, PINs, secret-like fields, or raw message bytes
-  outside the intended signed personal-message `messageBytes` echo. Treat that
-  matrix as stale for the current tree until it is rerun after such changes;
+  outside the intended signed personal-message `messageBytes` echo. Treat its
+  results as valid only for the tree they ran on, and rerun after such changes
+  before relying on them;
 - capture LVGL clear-signing visual evidence on current firmware before
   claiming product-active status;
 - smoke-test local settings reset from `provisioned`: wrong PIN leaves

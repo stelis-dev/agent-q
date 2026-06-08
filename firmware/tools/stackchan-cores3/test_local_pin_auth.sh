@@ -67,7 +67,7 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include <string.h>
 
 #include "agent_q_human_approval_settings.h"
-#include "agent_q_local_auth.h"
+#include "agent_q_local_auth_test.h"
 #include "agent_q_local_auth_worker.h"
 #include "agent_q_signing_mode.h"
 #include "freertos/FreeRTOS.h"

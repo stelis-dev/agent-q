@@ -98,7 +98,7 @@ cat >"${TMP_DIR}/local_reset_test.cpp" <<'CPP'
 #include <string.h>
 
 #include "agent_q_human_approval_settings.h"
-#include "agent_q_local_auth.h"
+#include "agent_q_local_auth_test.h"
 #include "agent_q_local_pin_auth.h"
 #include "agent_q_local_reset.h"
 #include "agent_q_policy_store.h"

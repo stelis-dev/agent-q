@@ -33,44 +33,28 @@ Current `sign_transaction` and `sign_personal_message` statuses are
 `source-wired-not-product-active`. The signing wire requests are public in
 source. Firmware chooses the `sign_transaction` authorization gate from the
 device-local signing authorization mode, while `sign_personal_message` is
-user-mode only and fails closed in policy mode. Earlier target
-positive/reject/timeout/session-loss smoke is historical evidence from the
-pre-cutover wire names only. A later full direct USB/Firmware Sign API smoke
-matrix exists for an earlier Sign API baseline, but timeout/timer UI changes and
-the later request-backed PIN ownership normalization mean that evidence is not a
-current-tree `product-active` basis. On the timeout/timer follow-up baseline
-later committed as `1fe318e1`, StackChan CoreS3 build/flash passed and
-client-owned direct USB/Firmware smoke passed the user-mode terminal matrix for
-both `sign_transaction` and `sign_personal_message`: positive, reject, timeout,
-and USB session-loss cleanup. Client-owned `policy_propose` host-side smoke also
-passed on that baseline for the applied two-step policy-update path: proposal
-validation/canonicalization, device-local summary-review entry,
-Continue-to-PIN approval, active-policy commit, committed policy readback, and
-required terminal history. It committed the reject-only policy used by the smoke
-harness. That host-side smoke does not itself cover policy-review Back, review
-Reject, review timeout, PIN negative paths, or LVGL visual evidence. Manual
-user-confirmed LVGL visual evidence passed for the user-mode
-clear-signing review/PIN/timer/result flows: bottom timer placement, PIN-entry
-countdown, no timer continuation or full reset during processing, wrong-PIN
-remaining-time resume, PIN Back review-return distinct from review Reject,
-clear review metadata, normal reject/timeout/success return, and no observed
-text overlap, clipping, or stale overlay. The current committed baseline is
-`34db7f55`. The current uncommitted tree changes human approval input mode,
-connect review behavior, policy readback/parser shape, and related docs/tests; it also
-restyles the modal UI to a NES light theme via one color/shape token table
+user-mode only and fails closed in policy mode. The Sign API is source-wired but not `product-active`: current-tree hardware and
+visual evidence is pending. Pending verification covers the user-mode terminal matrix
+(positive, reject, timeout, and USB session-loss cleanup) for both `sign_transaction`
+and `sign_personal_message`; policy-mode signing and policy-mode `sign_personal_message`
+fail-closed; the two-step `policy_propose` path (proposal validation and
+canonicalization, device-local summary review, Continue-to-PIN approval, active-policy
+commit, committed-policy readback, and terminal history) together with its review Back,
+review Reject, review timeout, and PIN-negative paths; and the LVGL visual flows (bottom
+timer placement, PIN-entry countdown, no timer continuation or full reset during
+processing, wrong-PIN remaining-time resume, PIN Back review-return distinct from review
+Reject, clear review metadata, normal reject/timeout/success return, and no text overlap,
+clipping, or stale overlay).
+
+The modal UI uses a NES light theme defined by one color/shape token table
 (`agent_q_ui_theme.h`), pins display brightness to 50, and routes generate/recover Cancel
-back to the setup-choice menu (local UI, not yet exercised on hardware). Verification of
-these dirty-tree UI/display changes: build-passes; the token table itself is a value-preserving refactor (tokens hold the same
-colors the modals already used inline, so wiring them changes no pixels), while the NES
-light theme is a deliberate full repalette from the prior mint theme (an intended, major
-visual change); the Cancel->setup-choice path is
-code-audited (scratch wipe + state reset correct) but its on-screen render/touch and the
-NES look of the recover/error/reset modals remain hardware-pending.
-Earlier hardware/LVGL evidence remains committed-baseline evidence unless a
-note explicitly records current dirty-tree smoke. Sign API product-active status
-still requires a final current-tree batched hardware/visual verification pass. Policy
-mode signing, policy-mode personal-message fail-closed, and policy-update
-negative/visual paths remain pending before any `product-active` claim.
+back to the setup-choice menu (device-local). The token table holds the same colors the
+modals already used inline; the NES palette is a deliberate light repalette. On-device
+rendering and touch — including the NES appearance of the recover, error, and reset
+modals — are not yet hardware-verified.
+
+No `product-active` claim holds until current-tree batched hardware and visual evidence
+is recorded.
 
 This document tracks implementation status only. The wire protocol is defined in
 `specs/PROTOCOL.md`. Target-specific details live under
@@ -94,6 +78,7 @@ This document tracks implementation status only. The wire protocol is defined in
 | `get_approval_history` | △ | Read-only session-scoped approval-history path exists in Gateway/MCP and StackChan CoreS3 source. Firmware stores bounded persistent signing and policy-update terminal metadata in a fixed-size NVS ring buffer. `sign_transaction` records policy confirmation only after policy approval, user confirmation only after device-local approval, and terminal signing metadata for signed, rejected, timed-out, and failed outcomes as applicable; user-mode `sign_personal_message` records user confirmation and terminal signing metadata for supported terminal outcomes. Invalid parameter, malformed transaction/message, and unsupported-method errors are not persisted as approval history. The `policy_propose` flow emits recordable policy-update terminal records through a required-write path. History stores no raw txBytes, raw message bytes, decoded transaction, session id, request id, gateway name, PIN, secret material, raw policy, or full policy document. Local reset and error-state erase recovery wipe it. Gateway/MCP parser tests and the target approval-history host test cover current source behavior; hardware evidence status follows the Sign API evidence paragraph above. |
 | `sign_transaction` | △ | StackChan CoreS3 source has `source-wired-not-product-active` status for Sui `sign_transaction` over the bounded restricted-transfer shape. The public USB dispatcher, `sign_result` writer, Gateway core/client request builder and parser, MCP `sign_transaction` tool, provider `signTransaction` API, Wallet Standard `sui:signTransaction`, and top-level `signing` capability are present in source. Firmware owns material/session/busy gates, `txBytes`-derived facts, stored-account sender/gas-owner binding, host-supplied `network` validation without displaying it as a transaction-derived fact, device-local signing authorization mode, policy-mode active policy evaluation and speech-bubble policy signing notifications, user-mode clear-signing review and the current human approval input mode, required pre-signing history, signing-critical handoff, terminal history, response delivery, and cleanup. Requests cannot select authorization mode, human approval input mode, or caller-controlled timing fields. Firmware-owned review/PIN input windows use a fixed internal 30-second window; submitting a complete PIN pauses the input timer while stored-PIN cryptographic verification runs, the signing confirmation window is the review/PIN-entry admission boundary rather than the terminal timeout authority during stored-PIN processing after submit, the internal local-auth worker watchdog still fails closed as authentication unavailable, and wrong PIN results resume the remaining paused input window unless the shared lockout is active. Package and host firmware tests cover the source behavior; hardware evidence status follows the Sign API evidence paragraph above. |
 | `sign_personal_message` | △ | StackChan CoreS3 source has `source-wired-not-product-active` status for bounded Sui personal-message signing. The public USB dispatcher, `sign_result` writer, Gateway core/client request builder and parser, MCP `sign_personal_message` tool, provider `signPersonalMessage` API, Wallet Standard `sui:signPersonalMessage`, and user-mode `signing` capability are present in source. Firmware owns material/session/busy gates, canonical base64 message validation, Sui PersonalMessage intent digest construction, user-mode clear-signing review and the current human approval input mode, required pre-signing history, signing-critical handoff, terminal history, response delivery, and cleanup. Policy mode fails closed with `unsupported_method`; policy facts/rules for personal-message signing are not implemented. Package and host firmware tests cover the source behavior; hardware evidence status follows the Sign API evidence paragraph above. |
+| Buffered result recovery (`get_result` / `ack_result`) | △ | StackChan CoreS3 source buffers each completed `sign_result` in RAM keyed by `(session, request id)` so a result whose response delivery failed is recoverable: re-sending the same request id returns the buffered result instead of signing again (idempotent), `get_result` retrieves it by id (or `unknown_request` when none is buffered), and `ack_result` releases it. After recovering a buffered result, the provider sends a best-effort `ack_result` to release it. The buffer is session-bound, survives a transient USB link drop through a short session grace window so a quick reconnect recovers, and is cleared on session end, on a new session replacing it, or on device reset — a reset surfaces lost work as explicit re-authorization, never a silent vanished signature. The provider serializes requests over a persistent port and recovers a lost sign response over a still-open transport. Host firmware tests cover the result store (including ack release), the session grace decision logic, and the request-line framing; host provider tests cover the `get_result` recovery, the `ack_result` release round-trip (parsing, recovery-then-ack, and ack-failure best-effort handling), and idempotent request id. Live USB link behavior (selective-suspend resume) hardware evidence follows the Sign API evidence paragraph above. |
 
 ## Gateway
 

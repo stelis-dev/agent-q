@@ -47,7 +47,7 @@ bool agent_q_policy_is_known_operator(AgentQPolicyOperator op)
     return false;
 }
 
-bool agent_q_policy_is_known_value_type(AgentQPolicyValueType type)
+static bool agent_q_policy_is_known_value_type(AgentQPolicyValueType type)
 {
     switch (type) {
         case AgentQPolicyValueType::string:

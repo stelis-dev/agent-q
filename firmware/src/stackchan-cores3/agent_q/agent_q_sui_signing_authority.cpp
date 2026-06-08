@@ -30,18 +30,4 @@ AgentQSuiSigningAccountBindingResult verify_sui_signing_stored_account_binding(
                    : AgentQSuiSigningAccountBindingResult::account_mismatch;
 }
 
-const char* sui_signing_account_binding_result_name(
-    AgentQSuiSigningAccountBindingResult result)
-{
-    switch (result) {
-        case AgentQSuiSigningAccountBindingResult::ok:
-            return "ok";
-        case AgentQSuiSigningAccountBindingResult::account_unavailable:
-            return "account_unavailable";
-        case AgentQSuiSigningAccountBindingResult::account_mismatch:
-            return "account_mismatch";
-    }
-    return "unknown";
-}
-
 }  // namespace agent_q

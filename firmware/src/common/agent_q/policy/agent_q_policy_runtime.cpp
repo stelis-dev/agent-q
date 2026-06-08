@@ -14,12 +14,14 @@ AgentQPolicyDecision reject_invalid_policy()
 
 }  // namespace
 
+static bool load_agent_q_default_reject_policy(AgentQPolicyDocument* out, void* context);
+
 AgentQPolicyProvider agent_q_default_reject_policy_provider()
 {
     return AgentQPolicyProvider{load_agent_q_default_reject_policy, nullptr};
 }
 
-bool load_agent_q_default_reject_policy(AgentQPolicyDocument* out, void* context)
+static bool load_agent_q_default_reject_policy(AgentQPolicyDocument* out, void* context)
 {
     (void)context;
     if (out == nullptr) {

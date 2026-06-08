@@ -26,6 +26,7 @@ import {
   isAgentQSuiBrowserProviderAvailable,
 } from "../dist/browser.js";
 import { FORBIDDEN_SECRET_FIELD_NAMES, SIGN_RESULT_ERROR_MESSAGES, SUI_DERIVATION_PATH } from "@stelis/agent-q-client/protocol";
+import { parseProviderProtocolResponse } from "@stelis/agent-q-client/provider-protocol";
 
 const SUI_ADDRESS = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
 const SUI_PUBLIC_KEY = "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=";
@@ -408,6 +409,39 @@ function createFakeBrowserProtocolResponse(request) {
   }
 }
 
+function makeBrowserTerminalSignResult(status, method, messageBytes = PERSONAL_MESSAGE_BYTES) {
+  if (status === "policy_rejected") {
+    return {
+      type: "sign_result",
+      status: "policy_rejected",
+      authorization: "policy",
+      chain: "sui",
+      method,
+      policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+      ruleRef: "default",
+      error: {
+        code: "policy_rejected",
+        message: "The signing request was rejected by device policy.",
+      },
+    };
+  }
+  const terminal = {
+    type: "sign_result",
+    status,
+    authorization: "user",
+    chain: "sui",
+    method,
+    error: {
+      code: status,
+      message: `The signing request was ${status}.`,
+    },
+  };
+  if (method === "sign_personal_message") {
+    terminal.messageBytes = messageBytes;
+  }
+  return terminal;
+}
+
 test("provider-sui package metadata exposes only Sui provider and Wallet Standard entrypoints", async () => {
   const packagePath = fileURLToPath(new URL("../package.json", import.meta.url));
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
@@ -635,6 +669,624 @@ test("browser provider disconnects approved sessions that fail requested device 
     assert.equal(requestPortCalls, 2);
     assert.equal(connected.source, "connected");
     assert.deepEqual(matchedPort.requests.map((request) => request.type), ["connect"]);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+function waitMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// A fake Web Serial port that mimics real Web Serial: open() throws when the port
+// is already open. It records the peak number of simultaneous opens so a missing
+// request lock surfaces as maxConcurrentOpens > 1 (or a rejected open). An optional
+// per-write delay holds a request "in flight" so queue behavior is observable.
+class SerializationProbePort {
+  openCount = 0;
+  closeCount = 0;
+  maxConcurrentOpens = 0;
+  requests = [];
+  readable = null;
+  writable = null;
+  #open = 0;
+  #controller = null;
+  #responder;
+  #responseDelayMs;
+  #beforeRespond;
+
+  constructor(responder, { responseDelayMs = 0, beforeRespond = null } = {}) {
+    this.#responder = responder;
+    this.#responseDelayMs = responseDelayMs;
+    this.#beforeRespond = beforeRespond;
+  }
+
+  async open() {
+    this.#open += 1;
+    this.maxConcurrentOpens = Math.max(this.maxConcurrentOpens, this.#open);
+    if (this.#open > 1) {
+      this.#open -= 1;
+      throw new Error("Failed to open serial port: the port is already open.");
+    }
+    this.openCount += 1;
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    this.readable = new ReadableStream({
+      start: (controller) => {
+        this.#controller = controller;
+      },
+      cancel: () => {
+        this.#controller = null;
+      },
+    });
+    this.writable = new WritableStream({
+      write: async (chunk) => {
+        const text = decoder.decode(chunk);
+        for (const rawLine of text.split("\n")) {
+          const line = rawLine.trim();
+          if (line.length === 0) {
+            continue;
+          }
+          const request = JSON.parse(line);
+          this.requests.push(request);
+          const response = this.#responder(request);
+          if (this.#beforeRespond) {
+            // Deterministic hold point: a test can hold a request mid-write with
+            // no timers, so queue/invalidation behavior is observable.
+            await this.#beforeRespond(request);
+          } else if (this.#responseDelayMs > 0) {
+            await waitMs(this.#responseDelayMs);
+          }
+          if (response === null) {
+            this.#controller?.close();
+            continue;
+          }
+          this.#controller?.enqueue(
+            encoder.encode(typeof response === "string" ? response : `${JSON.stringify(response)}\n`),
+          );
+        }
+      },
+    });
+  }
+
+  async close() {
+    // Real Web Serial rejects close() while a stream is locked (a reader/writer is
+    // active), so an in-flight request survives a concurrent close attempt.
+    if (this.readable?.locked === true || this.writable?.locked === true) {
+      throw new Error("Cannot close a serial port while its streams are locked.");
+    }
+    this.#open = Math.max(0, this.#open - 1);
+    this.closeCount += 1;
+    try {
+      this.#controller?.close();
+    } catch {
+      // The reader may already have cancelled the stream.
+    }
+    this.#controller = null;
+    this.readable = null;
+    this.writable = null;
+  }
+}
+
+function createDisconnectableSerial(port) {
+  const listeners = new Map();
+  let requestPortCalls = 0;
+  return {
+    serial: {
+      requestPort: async () => {
+        requestPortCalls += 1;
+        return port;
+      },
+      addEventListener: (type, listener) => {
+        listeners.set(type, listener);
+      },
+      removeEventListener: (type) => {
+        listeners.delete(type);
+      },
+    },
+    fireDisconnect: (target) => {
+      const listener = listeners.get("disconnect");
+      if (listener !== undefined) {
+        listener({ target });
+      }
+    },
+    get requestPortCalls() {
+      return requestPortCalls;
+    },
+  };
+}
+
+test("browser provider serializes concurrent Web Serial requests through one open at a time", async () => {
+  const port = new SerializationProbePort(createFakeBrowserProtocolResponse, { responseDelayMs: 5 });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+
+    // Without the request queue, the second open() would throw on the already-open
+    // port (or two requests would interleave reads on one stream).
+    const results = await Promise.all([
+      provider.getCapabilities(),
+      provider.getAccounts(),
+      provider.getCapabilities(),
+    ]);
+    assert.equal(results.every((result) => result.source === "live"), true);
+    assert.equal(port.maxConcurrentOpens, 1, "the port must never be open more than once at a time");
+    assert.equal(port.openCount, 1, "the persistent port opens once and is reused by serialized requests");
+    assert.equal(port.closeCount, 0, "a successful session leaves the port open for reuse");
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider invalidates queued requests when the device disconnects mid-flight", async () => {
+  // Deterministic, timer-free: the probe holds the first post-connect request
+  // mid-write until the test releases it, and signals exactly when it is in flight.
+  let signalInFlight;
+  const firstRequestInFlight = new Promise((resolve) => { signalInFlight = resolve; });
+  let releaseInFlight;
+  const inFlightGate = new Promise((resolve) => { releaseInFlight = resolve; });
+  let heldOne = false;
+  const port = new SerializationProbePort(createFakeBrowserProtocolResponse, {
+    beforeRespond: async (request) => {
+      if (request.type !== "connect" && !heldOne) {
+        heldOne = true;
+        signalInFlight();
+        await inFlightGate;
+      }
+    },
+  });
+  const mock = createDisconnectableSerial(port);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: mock.serial },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+
+    // The first request is held mid-write (already opened + past its generation
+    // check); the rest wait behind it in the queue.
+    const inFlight = provider.getCapabilities();
+    const queuedA = provider.getCapabilities();
+    const queuedB = provider.getAccounts();
+    await firstRequestInFlight;
+    mock.fireDisconnect(port);
+    releaseInFlight();
+
+    const settled = await Promise.all([inFlight, queuedA, queuedB]);
+    // The in-flight request completes; the queued ones must not re-prompt for a
+    // dead port — they report session_ended via the generation guard.
+    assert.equal(settled[0].source, "live");
+    assert.equal(settled[1].source, "session_ended");
+    assert.equal(settled[1].reason, "transport_closed");
+    assert.equal(settled[2].source, "session_ended");
+    assert.equal(mock.requestPortCalls, 1, "queued requests must not re-prompt for a port after disconnect");
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider keeps serving requests after one request rejects", async () => {
+  let capabilityCalls = 0;
+  const port = new SerializationProbePort((request) => {
+    if (request.type === "get_capabilities") {
+      capabilityCalls += 1;
+      if (capabilityCalls === 1) {
+        return { id: request.id, version: 1, type: "error", error: { code: "internal_error", message: "transient device error" } };
+      }
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+
+    // A failing request must not wedge the queue: the following request still runs.
+    const [failed, recovered] = await Promise.allSettled([
+      provider.getCapabilities(),
+      provider.getCapabilities(),
+    ]);
+    assert.equal(failed.status, "rejected");
+    assert.equal(failed.reason.code, "internal_error");
+    assert.equal(recovered.status, "fulfilled");
+    assert.equal(recovered.value.source, "live");
+    assert.equal(port.maxConcurrentOpens, 1);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider recovers a buffered signing result when the sign response is lost", async () => {
+  const port = new FakeBrowserSerialPort((request) => {
+    if (request.type === "sign_transaction") {
+      // The device signed and buffered the result, but the response is lost in transit.
+      return { id: request.id, version: 1, type: "error", error: { code: "internal_error", message: "lost" } };
+    }
+    if (request.type === "get_result") {
+      // The device returns the buffered signature for the original request id.
+      return {
+        id: request.id, version: 1, type: "sign_result", status: "signed",
+        authorization: "user", chain: "sui", method: "sign_transaction", signature: SUI_SIGNATURE,
+      };
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+
+    const result = await provider.signTransaction({
+      chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
+    });
+    assert.equal(result.source, "live", "the buffered result is recovered, not surfaced as an error");
+    const signReq = port.requests.find((r) => r.type === "sign_transaction");
+    const getResultReq = port.requests.find((r) => r.type === "get_result");
+    assert.ok(getResultReq, "provider must issue a get_result after a lost sign response");
+    assert.equal(getResultReq.id, signReq.id, "get_result must target the original sign request id");
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+for (const status of ["user_rejected", "user_timed_out", "signing_failed", "policy_rejected"]) {
+  test(`browser provider recovers a buffered ${status} sign_transaction result when the sign response is lost`, async () => {
+    const port = new FakeBrowserSerialPort((request) => {
+      if (request.type === "sign_transaction") {
+        return { id: request.id, version: 1, type: "error", error: { code: "internal_error", message: "lost" } };
+      }
+      if (request.type === "get_result") {
+        return {
+          id: request.id,
+          version: 1,
+          ...makeBrowserTerminalSignResult(status, "sign_transaction"),
+        };
+      }
+      if (request.type === "ack_result") {
+        return { id: request.id, version: 1, type: "ack_result", status: "acked" };
+      }
+      return createFakeBrowserProtocolResponse(request);
+    });
+    const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    try {
+      Object.defineProperty(globalThis, "navigator", {
+        configurable: true,
+        value: { serial: { requestPort: async () => port } },
+      });
+      const provider = createAgentQSuiBrowserProvider();
+      assert.equal((await provider.connectDevice()).source, "connected");
+
+      const result = await provider.signTransaction({
+        chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
+      });
+      assert.equal(result.source, "live");
+      assert.equal(result.status, status);
+      const signReq = port.requests.find((r) => r.type === "sign_transaction");
+      const getResultReq = port.requests.find((r) => r.type === "get_result");
+      const ackReq = port.requests.find((r) => r.type === "ack_result");
+      assert.ok(getResultReq, "provider must issue get_result after a lost sign response");
+      assert.equal(getResultReq.id, signReq.id, "get_result must target the original request id");
+      assert.ok(ackReq, "provider must send ack_result after recovering terminal result");
+      assert.equal(ackReq.id, signReq.id, "ack_result must target the original request id");
+      if (status === "policy_rejected") {
+        assert.equal(result.authorization, "policy");
+        assert.equal(result.error.code, "policy_rejected");
+      } else {
+        assert.equal(result.authorization, "user");
+        assert.equal(result.error.code, status);
+      }
+    } finally {
+      if (previousNavigator === undefined) {
+        delete globalThis.navigator;
+      } else {
+        Object.defineProperty(globalThis, "navigator", previousNavigator);
+      }
+    }
+  });
+}
+
+for (const status of ["user_rejected", "user_timed_out", "signing_failed"]) {
+  test(`browser provider recovers a buffered ${status} sign_personal_message result when the sign response is lost`, async () => {
+    const port = new FakeBrowserSerialPort((request) => {
+      if (request.type === "sign_personal_message") {
+        return { id: request.id, version: 1, type: "error", error: { code: "internal_error", message: "lost" } };
+      }
+      if (request.type === "get_result") {
+        return {
+          id: request.id,
+          version: 1,
+          ...makeBrowserTerminalSignResult(status, "sign_personal_message"),
+        };
+      }
+      if (request.type === "ack_result") {
+        return { id: request.id, version: 1, type: "ack_result", status: "acked" };
+      }
+      return createFakeBrowserProtocolResponse(request);
+    });
+    const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    try {
+      Object.defineProperty(globalThis, "navigator", {
+        configurable: true,
+        value: { serial: { requestPort: async () => port } },
+      });
+      const provider = createAgentQSuiBrowserProvider();
+      assert.equal((await provider.connectDevice()).source, "connected");
+
+      const result = await provider.signPersonalMessage({
+        chain: "sui", method: "sign_personal_message", network: "mainnet", message: PERSONAL_MESSAGE_BYTES,
+      });
+      assert.equal(result.source, "live");
+      assert.equal(result.status, status);
+      assert.equal(result.authorization, "user");
+      assert.equal(result.error.code, status);
+      const signReq = port.requests.find((r) => r.type === "sign_personal_message");
+      const getResultReq = port.requests.find((r) => r.type === "get_result");
+      const ackReq = port.requests.find((r) => r.type === "ack_result");
+      assert.ok(getResultReq, "provider must issue get_result after a lost sign response");
+      assert.equal(getResultReq.id, signReq.id, "get_result must target the original request id");
+      assert.ok(ackReq, "provider must send ack_result after recovering terminal result");
+      assert.equal(ackReq.id, signReq.id, "ack_result must target the original request id");
+    } finally {
+      if (previousNavigator === undefined) {
+        delete globalThis.navigator;
+      } else {
+        Object.defineProperty(globalThis, "navigator", previousNavigator);
+      }
+    }
+  });
+}
+
+test("browser provider surfaces the original error when no buffered result exists", async () => {
+  const port = new FakeBrowserSerialPort((request) => {
+    if (request.type === "sign_transaction") {
+      return { id: request.id, version: 1, type: "error", error: { code: "invalid_params", message: "bad tx" } };
+    }
+    if (request.type === "get_result") {
+      // The device never signed, so there is nothing buffered to recover.
+      return { id: request.id, version: 1, type: "error", error: { code: "unknown_request", message: "no result" } };
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+
+    await assert.rejects(
+      () => provider.signTransaction({ chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID" }),
+      (error) => error.code === "invalid_params",
+      "the original sign error must surface when get_result finds nothing to recover",
+    );
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider uses a caller-provided requestId for idempotent retries", async () => {
+  const port = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+
+    const stableId = `req_${"ab".repeat(12)}`;
+    await provider.signTransaction({
+      chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID", requestId: stableId,
+    });
+    const signReq = port.requests.find((r) => r.type === "sign_transaction");
+    assert.equal(signReq.id, stableId, "the provider must use the caller-provided requestId");
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("provider protocol parser accepts a valid ack_result and fails closed on a malformed one", () => {
+  const valid = parseProviderProtocolResponse(
+    JSON.stringify({ id: "req_ack_1", version: 1, type: "ack_result", status: "acked" }),
+    "req_ack_1",
+  );
+  assert.equal(valid.type, "ack_result");
+  assert.equal(valid.status, "acked");
+  // Fail closed on a wrong status, and on any extra (possibly secret-like) field.
+  assert.throws(() =>
+    parseProviderProtocolResponse(
+      JSON.stringify({ id: "req_ack_1", version: 1, type: "ack_result", status: "nope" }),
+      "req_ack_1",
+    ),
+  );
+  assert.throws(() =>
+    parseProviderProtocolResponse(
+      JSON.stringify({ id: "req_ack_1", version: 1, type: "ack_result", status: "acked", signature: "x" }),
+      "req_ack_1",
+    ),
+  );
+});
+
+test("browser provider releases a recovered result with ack_result", async () => {
+  let ackReceived = false;
+  const port = new FakeBrowserSerialPort((request) => {
+    if (request.type === "sign_transaction") {
+      return { id: request.id, version: 1, type: "error", error: { code: "internal_error", message: "lost" } };
+    }
+    if (request.type === "get_result") {
+      return {
+        id: request.id, version: 1, type: "sign_result", status: "signed",
+        authorization: "user", chain: "sui", method: "sign_transaction", signature: SUI_SIGNATURE,
+      };
+    }
+    if (request.type === "ack_result") {
+      ackReceived = true;
+      return { id: request.id, version: 1, type: "ack_result", status: "acked" };
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+    const result = await provider.signTransaction({
+      chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
+    });
+    assert.equal(result.source, "live");
+    // The ack is fire-and-forget; a follow-up request serializes after it, so awaiting the
+    // follow-up guarantees the ack has been sent.
+    await provider.getCapabilities();
+    const signReq = port.requests.find((r) => r.type === "sign_transaction");
+    const getReq = port.requests.find((r) => r.type === "get_result");
+    const ackReq = port.requests.find((r) => r.type === "ack_result");
+    assert.ok(ackReq, "the recovery must release the buffered result with ack_result");
+    assert.equal(getReq.id, signReq.id);
+    assert.equal(ackReq.id, signReq.id, "ack must target the original request id");
+    assert.ok(ackReceived, "the device received the ack");
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider recovery still returns the result when the ack fails", async () => {
+  const port = new FakeBrowserSerialPort((request) => {
+    if (request.type === "sign_transaction") {
+      return { id: request.id, version: 1, type: "error", error: { code: "internal_error", message: "lost" } };
+    }
+    if (request.type === "get_result") {
+      return {
+        id: request.id, version: 1, type: "sign_result", status: "signed",
+        authorization: "user", chain: "sui", method: "sign_transaction", signature: SUI_SIGNATURE,
+      };
+    }
+    if (request.type === "ack_result") {
+      return { id: request.id, version: 1, type: "error", error: { code: "internal_error", message: "ack failed" } };
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+    const result = await provider.signTransaction({
+      chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
+    });
+    assert.equal(result.source, "live", "a failed ack must not turn a successful recovery into a failure");
+    await provider.getCapabilities();
+    assert.ok(port.requests.find((r) => r.type === "ack_result"), "the recovery attempted the ack");
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider invalidates a queued request when disconnectDevice tears down the transport", async () => {
+  const port = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+    // Fire a disconnect and a request together: the request queues behind the disconnect.
+    const disconnectP = provider.disconnectDevice();
+    const queuedP = provider.getCapabilities();
+    assert.equal((await disconnectP).source, "disconnected");
+    // The disconnect is a full teardown that bumps the transport generation, so the queued
+    // request is invalidated upfront (never sent) instead of running over a dead transport.
+    const queuedResult = await queuedP;
+    assert.equal(queuedResult.source, "session_ended");
+    assert.ok(
+      !port.requests.some((r) => r.type === "get_capabilities"),
+      "the invalidated request must not be sent over the torn-down transport",
+    );
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider clears a prior session when a later connect mismatches the requested deviceId", async () => {
+  const port = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+    // A later connect for a different deviceId mismatches (the device reports device-1).
+    await assert.rejects(() => provider.connectDevice({ deviceId: "device-2" }), { code: "device_mismatch" });
+    // The mismatch is a full teardown: the prior device-1 session must not be left stale.
+    const result = await provider.getCapabilities();
+    assert.equal(result.source, "not_connected");
   } finally {
     if (previousNavigator === undefined) {
       delete globalThis.navigator;

@@ -1,5 +1,6 @@
 import {
   assertAccountsResponse,
+  assertAckResultResponse,
   assertCapabilitiesResponse,
   assertConnectResponse,
   assertDisconnectResponse,
@@ -17,6 +18,8 @@ import {
   makeDisconnectRequest,
   makeGetAccountsRequest,
   makeGetCapabilitiesRequest,
+  makeGetResultRequest,
+  makeAckResultRequest,
   makeSignPersonalMessageRequest,
   makeSignTransactionRequest,
   parseJsonLine,
@@ -85,6 +88,16 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
   #port: BrowserSerialPort | null;
   #session: BrowserSession | null = null;
 
+  // Every Web Serial port operation runs through this single-slot queue so
+  // concurrent callers never open the same port at once. Web Serial throws when
+  // open() is called on an already-open port, so two in-flight requests would
+  // otherwise collide; each request now waits for the previous one to settle.
+  #requestQueue: Promise<unknown> = Promise.resolve();
+  // Bumped whenever the cached transport is torn down (physical disconnect or a
+  // session-ended error). A request still queued when this changes rejects
+  // instead of re-prompting the browser for a now-dead port.
+  #transportGeneration = 0;
+
   #disconnectListener: ((event: { target?: unknown }) => void) | null = null;
 
   constructor(options: AgentQSuiBrowserProviderOptions = {}) {
@@ -111,18 +124,16 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       }
     }
 
-    const port = await this.#getPort();
     let response: ConnectResponse;
     try {
-      response = await requestOverBrowserSerial(
-        port,
+      response = await this.#exchange(
         makeConnectRequest(input.gatewayName ?? this.#gatewayName),
         assertConnectResponse,
         INTERNAL_CONNECT_DEADLINE_MS,
       );
     } catch (error) {
       if (isSessionEndedError(error)) {
-        this.#clearPort();
+        this.#clearSessionAndPort();
       }
       throw error;
     }
@@ -131,9 +142,15 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     }
     if (input.deviceId !== undefined && response.device.deviceId !== input.deviceId) {
       try {
-        await disconnectApprovedMismatchedSession(port, response.sessionId);
+        await this.#exchange(
+          makeDisconnectRequest(response.sessionId),
+          assertDisconnectResponse,
+          INTERNAL_DISCONNECT_DEADLINE_MS,
+        );
+      } catch {
+        // Best-effort cleanup for a session this provider will not retain.
       } finally {
-        this.#clearPort();
+        this.#clearSessionAndPort();
       }
       throw new AgentQSuiBrowserProviderError("device_mismatch", "Connected Agent-Q device did not match the requested deviceId.");
     }
@@ -158,13 +175,14 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     try {
       await this.#request(makeDisconnectRequest(session.sessionId), assertDisconnectResponse);
     } catch (error) {
-      const ended = this.#clearIfSessionEnded(error, session.deviceId);
-      if (ended !== null) {
-        return ended;
+      if (isSessionEndedError(error)) {
+        return { source: "session_ended", deviceId: session.deviceId, reason: errorCode(error) ?? "session_ended" };
       }
       throw error;
     } finally {
-      this.#session = null;
+      // A user-requested disconnect is a full transport teardown: invalidate any
+      // queued requests (generation bump) and release the port, not just the session.
+      this.#clearSessionAndPort();
     }
     return { source: "disconnected", deviceId: session.deviceId, reason: "firmware_confirmed" };
   }
@@ -221,21 +239,30 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     method: "sign_transaction";
     network: "mainnet" | "testnet" | "devnet" | "localnet";
     txBytes: string;
+    // Optional stable request id for idempotent retries. The caller owns id uniqueness:
+    // reuse it only to retry the same request, which returns the already-authorized result
+    // instead of signing twice. Reusing an id for a different request returns that prior
+    // (already-authorized) result, never an unauthorized one.
+    requestId?: string;
   }): Promise<AgentQSuiWalletSignTransactionResult> {
     const session = this.#matchingSession(input.deviceId);
     if (session === null) {
       return this.#inactiveResult(input.deviceId);
     }
+    const signRequest = makeSignTransactionRequest(session.sessionId, input.chain, input.method, {
+      network: input.network,
+      txBytes: input.txBytes,
+    }, input.requestId);
     try {
-      const response = await this.#request(
-        makeSignTransactionRequest(session.sessionId, input.chain, input.method, {
-          network: input.network,
-          txBytes: input.txBytes,
-        }),
-        assertSignResultResponse,
-      );
+      const response = await this.#request(signRequest, assertSignResultResponse);
       return toLiveSignResult(session.deviceId, response);
     } catch (error) {
+      // W4: the request may have been signed but its response lost in transit. Recover
+      // the buffered result by id before surfacing the error.
+      const recovered = await this.#tryRecoverBufferedSignResult(session.sessionId, signRequest.id);
+      if (recovered !== null) {
+        return toLiveSignResult(session.deviceId, recovered);
+      }
       const ended = this.#clearIfSessionEnded(error, session.deviceId);
       if (ended !== null) {
         return ended;
@@ -251,26 +278,60 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     method: "sign_personal_message";
     network: "mainnet" | "testnet" | "devnet" | "localnet";
     message: string;
+    // Optional stable request id for idempotent retries. The caller owns id uniqueness:
+    // reuse it only to retry the same request, which returns the already-authorized result
+    // instead of signing twice. Reusing an id for a different request returns that prior
+    // (already-authorized) result, never an unauthorized one.
+    requestId?: string;
   }): Promise<AgentQSuiWalletSignTransactionResult> {
     const session = this.#matchingSession(input.deviceId);
     if (session === null) {
       return this.#inactiveResult(input.deviceId);
     }
+    const signRequest = makeSignPersonalMessageRequest(session.sessionId, input.chain, input.method, {
+      network: input.network,
+      message: input.message,
+    }, input.requestId);
     try {
-      const response = await this.#request(
-        makeSignPersonalMessageRequest(session.sessionId, input.chain, input.method, {
-          network: input.network,
-          message: input.message,
-        }),
-        assertSignResultResponse,
-      );
+      const response = await this.#request(signRequest, assertSignResultResponse);
       return toLiveSignResult(session.deviceId, response);
     } catch (error) {
+      // W4: the request may have been signed but its response lost in transit. Recover
+      // the buffered result by id before surfacing the error.
+      const recovered = await this.#tryRecoverBufferedSignResult(session.sessionId, signRequest.id);
+      if (recovered !== null) {
+        return toLiveSignResult(session.deviceId, recovered);
+      }
       const ended = this.#clearIfSessionEnded(error, session.deviceId);
       if (ended !== null) {
         return ended;
       }
       throw error;
+    }
+  }
+
+  // W4: best-effort recovery of a buffered signing result whose response was lost in
+  // transit. Returns null when the device has no buffered result for this id (it never
+  // signed, or the session ended and the buffer cleared), so the caller surfaces the
+  // original error.
+  async #tryRecoverBufferedSignResult(sessionId: string, requestId: string) {
+    // Only recover over a still-open transport. If the port was already cleared (a real
+    // disconnect), re-acquiring it here would surprise the user with a port picker, so
+    // leave the original error to surface. The device holds the session through a short
+    // grace window, so a transient drop that kept the port open still recovers here.
+    if (this.#port === null) {
+      return null;
+    }
+    try {
+      const recovered = await this.#request(makeGetResultRequest(sessionId, requestId), assertSignResultResponse);
+      // Best-effort release: now that we hold the result, tell the device to drop its
+      // buffered copy. A separate serialized request, fire-and-forget — a failed ack
+      // leaves cleanup to the device's LRU and session-clear, so it never turns a
+      // successful recovery into a failure.
+      void this.#request(makeAckResultRequest(sessionId, requestId), assertAckResultResponse).catch(() => undefined);
+      return recovered;
+    } catch {
+      return null;
     }
   }
 
@@ -280,10 +341,17 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
   }
 
   #clearPort(): void {
+    const port = this.#port;
     this.#port = null;
+    if (port !== null && port.readable !== null) {
+      // Persistent port: close it on clear. Fire-and-forget so disconnect/dispose stay
+      // synchronous; a dead port's close may never settle.
+      void settleCleanupStep(port.close(), "port.close");
+    }
   }
 
   #clearSessionAndPort(): void {
+    this.#transportGeneration += 1;
     this.#session = null;
     this.#clearPort();
   }
@@ -328,12 +396,45 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     request: ProviderProtocolRequest,
     assertResponse: (response: ProviderProtocolResponse) => TResponse,
   ): Promise<TResponse> {
-    return requestOverBrowserSerial(
-      await this.#getPort(),
-      request,
-      assertResponse,
-      deadlineForProviderRequest(request),
-    );
+    return this.#exchange(request, assertResponse, deadlineForProviderRequest(request));
+  }
+
+  #assertTransportLive(generation: number): void {
+    if (this.#transportGeneration !== generation) {
+      throw new AgentQSuiBrowserProviderError(
+        "transport_closed",
+        "The device transport was torn down before this request could run.",
+      );
+    }
+  }
+
+  // Serialize one write -> read cycle against the persistent port. Concurrent
+  // callers queue behind each other instead of racing on the same port. A teardown
+  // observed while this request was queued or while #getPort() was re-prompting
+  // rejects it here rather than running over a torn-down transport.
+  #exchange<TResponse extends ProviderProtocolResponse>(
+    request: ProviderProtocolRequest,
+    assertResponse: (response: ProviderProtocolResponse) => TResponse,
+    deadlineMs: number,
+  ): Promise<TResponse> {
+    const generation = this.#transportGeneration;
+    return this.#enqueue(async () => {
+      this.#assertTransportLive(generation);
+      const port = await this.#getPort();
+      // Re-check after the (possibly awaited) port acquisition: a disconnect observed
+      // while #getPort() was re-prompting bumps the generation, so this request must
+      // not run over or reopen a transport that was torn down in that window.
+      this.#assertTransportLive(generation);
+      return requestOverBrowserSerial(port, request, assertResponse, deadlineMs);
+    });
+  }
+
+  #enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.#requestQueue.then(operation, operation);
+    // Continue the chain past either outcome, and swallow the settled value so a
+    // failed request never surfaces as an unhandled rejection on the queue tail.
+    this.#requestQueue = run.then(noop, noop);
+    return run;
   }
 
   #matchingSession(deviceId: string | undefined): BrowserSession | null {
@@ -393,18 +494,7 @@ function defaultRequestPort(): () => Promise<BrowserSerialPort> {
   };
 }
 
-async function disconnectApprovedMismatchedSession(port: BrowserSerialPort, sessionId: string): Promise<void> {
-  try {
-    await requestOverBrowserSerial(
-      port,
-      makeDisconnectRequest(sessionId),
-      assertDisconnectResponse,
-      INTERNAL_DISCONNECT_DEADLINE_MS,
-    );
-  } catch {
-    // Best-effort cleanup for a session this provider will not retain.
-  }
-}
+function noop(): void {}
 
 // Await a best-effort transport-cleanup step, but never block longer than
 // CLEANUP_STEP_TIMEOUT_MS. A hung reader.cancel()/port.close() on a disconnected
@@ -438,10 +528,16 @@ async function requestOverBrowserSerial<TResponse extends ProviderProtocolRespon
   assertResponse: (response: ProviderProtocolResponse) => TResponse,
   deadlineMs: number,
 ): Promise<TResponse> {
-  await port.open({ baudRate: DEFAULT_AGENT_Q_USB_BAUD_RATE });
+  // Persistent port: open once and reuse it across serialized requests (the request
+  // queue guarantees one at a time). open() is idempotent here — a port a prior request
+  // left open is reused; only a prior error or a disconnect leaves it closed.
+  if (port.readable === null || port.writable === null) {
+    await port.open({ baudRate: DEFAULT_AGENT_Q_USB_BAUD_RATE });
+  }
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   let timeout: ReturnType<typeof setTimeout> | null = null;
+  let succeeded = false;
   try {
     if (port.readable === null || port.writable === null) {
       throw new AgentQSuiBrowserProviderError("transport_closed", "Web Serial port is not readable or writable.");
@@ -463,7 +559,9 @@ async function requestOverBrowserSerial<TResponse extends ProviderProtocolRespon
         reject(new AgentQSuiBrowserProviderError("timeout", "Timed out waiting for Firmware response."));
       }, deadlineMs);
     });
-    return await Promise.race([response, deadline]);
+    const result = await Promise.race([response, deadline]);
+    succeeded = true;
+    return result;
   } finally {
     if (timeout !== null) {
       clearTimeout(timeout);
@@ -476,14 +574,21 @@ async function requestOverBrowserSerial<TResponse extends ProviderProtocolRespon
       }
     }
     if (reader !== null) {
-      await settleCleanupStep(reader.cancel(), "reader.cancel");
+      if (!succeeded) {
+        // Error or timeout: the read may still be pending; cancel it before releasing.
+        await settleCleanupStep(reader.cancel(), "reader.cancel");
+      }
       try {
         reader.releaseLock();
       } catch {
         // Reader may still be settling after a timed-out cancel.
       }
     }
-    await settleCleanupStep(port.close(), "port.close");
+    if (!succeeded) {
+      // Close on failure so the next request reopens a clean transport; a successful
+      // request leaves the port open for reuse.
+      await settleCleanupStep(port.close(), "port.close");
+    }
   }
 }
 
@@ -535,6 +640,8 @@ function deadlineForProviderRequest(request: ProviderProtocolRequest): number {
       return INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS;
     case "get_capabilities":
     case "get_accounts":
+    case "get_result":
+    case "ack_result":
       return INTERNAL_USB_DEADLINE_MS;
   }
 }

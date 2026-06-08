@@ -61,7 +61,7 @@ cat >"${TMP_DIR}/policy_v0_test.cpp" <<'CPP'
 
 #include "agent_q_u64_decimal.h"
 #include "agent_q_policy_v0.h"
-#include "agent_q_policy_runtime.h"
+#include "agent_q_policy_runtime_test.h"
 #include "agent_q_sui_method_adapter.h"
 #include "agent_q_sui_transaction_facts.h"
 

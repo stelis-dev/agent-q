@@ -76,9 +76,7 @@ struct AgentQLocalResetPersistenceOps {
 };
 
 AgentQLocalResetSnapshot local_reset_snapshot(TickType_t now);
-bool local_reset_persistent_material_exists();
 bool local_reset_deadline_expired(TickType_t now);
-bool local_reset_processing_deadline_expired(TickType_t now);
 bool local_reset_fail_processing_if_expired(TickType_t now);
 AgentQLocalResetLockoutReleaseResult local_reset_release_lockout_if_elapsed(TickType_t now);
 bool local_reset_wipe_ready(TickType_t now);
@@ -99,7 +97,6 @@ AgentQLocalResetPinVerifyResult local_reset_complete_pin_verify_job(
     TickType_t lockout_until,
     TickType_t wipe_ready_at);
 
-bool local_reset_pending_marker_present();
 AgentQLocalResetCommitResult local_reset_commit_material(
     const AgentQLocalResetPersistenceOps& ops);
 AgentQLocalResetCommitResult local_reset_resume_pending_if_needed(

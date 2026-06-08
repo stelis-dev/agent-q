@@ -13,7 +13,4 @@ enum class AgentQSuiSigningAccountBindingResult {
 AgentQSuiSigningAccountBindingResult verify_sui_signing_stored_account_binding(
     const SuiTransferFacts& facts);
 
-const char* sui_signing_account_binding_result_name(
-    AgentQSuiSigningAccountBindingResult result);
-
 }  // namespace agent_q

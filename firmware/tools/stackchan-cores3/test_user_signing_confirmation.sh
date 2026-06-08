@@ -53,11 +53,12 @@ cat >"${TMP_DIR}/user_signing_confirmation_test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_local_auth.h"
+#include "agent_q_local_auth_test.h"
 #include "agent_q_local_auth_worker.h"
 #include "agent_q_local_pin_auth.h"
 #include "agent_q_pin_attempt.h"
-#include "agent_q_user_signing_confirmation.h"
+#include "agent_q_user_signing_confirmation_test.h"
+#include "agent_q_user_signing_flow_test.h"
 #include "agent_q_sui_account_store.h"
 #include "freertos/FreeRTOS.h"
 

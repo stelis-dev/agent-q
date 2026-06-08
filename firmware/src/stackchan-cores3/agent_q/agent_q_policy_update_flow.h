@@ -84,8 +84,6 @@ AgentQPolicyUpdateFlowTerminalResult policy_update_flow_record_timed_out(uint64_
 AgentQPolicyUpdateFlowTerminalResult policy_update_flow_record_ui_error();
 AgentQPolicyUpdateFlowTerminalResult policy_update_flow_commit(uint64_t uptime_ms);
 
-const char* policy_update_flow_stage_name(AgentQPolicyUpdateFlowStage stage);
-const char* policy_update_flow_transition_reason(AgentQPolicyUpdateFlowTransitionResult result);
 const char* policy_update_flow_begin_result_reason(AgentQPolicyUpdateFlowBeginResult result);
 const char* policy_update_flow_terminal_status(AgentQPolicyUpdateFlowTerminalResult result);
 const char* policy_update_flow_terminal_reason(AgentQPolicyUpdateFlowTerminalResult result);

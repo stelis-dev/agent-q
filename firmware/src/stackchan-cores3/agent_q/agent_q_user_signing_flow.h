@@ -116,9 +116,7 @@ using AgentQUserSigningHistoryWriteFn =
 
 AgentQUserSigningTransitionResult user_signing_flow_clear();
 bool user_signing_flow_active();
-bool user_signing_flow_in_signing_critical_section();
 bool user_signing_flow_session_matches(const char* session_id);
-AgentQSessionValidationResult user_signing_flow_validate_session();
 AgentQUserSigningFlowSnapshot user_signing_flow_snapshot();
 
 AgentQUserSigningFlowBeginResult user_signing_flow_begin(

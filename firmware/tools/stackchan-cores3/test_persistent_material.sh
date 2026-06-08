@@ -44,6 +44,7 @@ cat >"${TMP_DIR}/persistent_material_test.cpp" <<'CPP'
 #include <string.h>
 
 #include "agent_q_human_approval_settings.h"
+#include "agent_q_local_auth_test.h"
 #include "agent_q_persistent_material.h"
 
 namespace {

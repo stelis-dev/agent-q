@@ -590,42 +590,6 @@ AgentQPolicyUpdateFlowTerminalResult policy_update_flow_commit(uint64_t uptime_m
     }
 }
 
-const char* policy_update_flow_stage_name(AgentQPolicyUpdateFlowStage stage)
-{
-    switch (stage) {
-        case AgentQPolicyUpdateFlowStage::idle:
-            return "idle";
-        case AgentQPolicyUpdateFlowStage::reviewing:
-            return "reviewing";
-        case AgentQPolicyUpdateFlowStage::pin_entry:
-            return "pin_entry";
-        case AgentQPolicyUpdateFlowStage::pin_verifying:
-            return "pin_verifying";
-        case AgentQPolicyUpdateFlowStage::committing:
-            return "committing";
-    }
-    return "";
-}
-
-const char* policy_update_flow_transition_reason(AgentQPolicyUpdateFlowTransitionResult result)
-{
-    switch (result) {
-        case AgentQPolicyUpdateFlowTransitionResult::ok:
-            return "ok";
-        case AgentQPolicyUpdateFlowTransitionResult::inactive:
-            return "inactive";
-        case AgentQPolicyUpdateFlowTransitionResult::wrong_stage:
-            return "wrong_stage";
-        case AgentQPolicyUpdateFlowTransitionResult::timed_out:
-            return "timeout";
-        case AgentQPolicyUpdateFlowTransitionResult::invalid_argument:
-            return "invalid_argument";
-        case AgentQPolicyUpdateFlowTransitionResult::invalid_deadline:
-            return "invalid_deadline";
-    }
-    return "invalid_state";
-}
-
 const char* policy_update_flow_begin_result_reason(AgentQPolicyUpdateFlowBeginResult result)
 {
     switch (result) {

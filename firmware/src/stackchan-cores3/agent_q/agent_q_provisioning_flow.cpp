@@ -212,11 +212,6 @@ AgentQProvisioningFlowSnapshot provisioning_flow_snapshot()
     };
 }
 
-AgentQProvisioningFlowStage provisioning_flow_stage()
-{
-    return g_state.stage;
-}
-
 bool provisioning_flow_active()
 {
     return g_state.stage != AgentQProvisioningFlowStage::none;
@@ -669,19 +664,6 @@ AgentQProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     wipe_sensitive_buffer(g_state.pin_entry, sizeof(g_state.pin_entry));
     g_state.pin_entry_length = 0;
     return AgentQProvisioningFlowPinSubmitResult::commit_started;
-}
-
-bool provisioning_flow_commit_inputs(
-    const uint8_t** root_material,
-    size_t* root_material_size)
-{
-    if (root_material == nullptr || root_material_size == nullptr ||
-        g_state.stage != AgentQProvisioningFlowStage::pin_committing) {
-        return false;
-    }
-    *root_material = g_state.root_material;
-    *root_material_size = sizeof(g_state.root_material);
-    return true;
 }
 
 bool provisioning_flow_commit_worker_result(

@@ -1,0 +1,62 @@
+#pragma once
+
+#include <stddef.h>
+
+#include "agent_q_request_id.h"
+#include "agent_q_session.h"
+
+namespace agent_q {
+
+// Bounded RAM store of completed signing results, keyed by (session_id, request_id).
+// A generated signature is buffered here until the host acknowledges it, so a link
+// blip or reconnect between "signed" and "delivered" no longer loses the result:
+// the host re-requests the same request_id and the device returns the stored result
+// (idempotent, never re-signs) or fetches it with a get_result request.
+//
+// The store is RAM-only by design: a device reset clears it, after which a re-request
+// re-runs the normal signing gates (the host is told `unknown_request` and re-issues).
+// This eliminates *silent* loss (a reset surfaces as an explicit re-authorization,
+// not a vanished signature). All entries clear on disconnect/session end and on wipe.
+
+constexpr size_t kSigningResultStoreCapacity = 4;
+// Bounds one serialized sign_result line (id, version, type, status, authorization,
+// chain, method, base64 signature ~132, optional base64 messageBytes ~344). A full
+// sign_personal_message result is ~734 bytes, so 1024 leaves headroom.
+constexpr size_t kSigningResultMaxSize = 1024;
+
+enum class SigningResultStoreOutcome {
+    stored,     // newly stored
+    duplicate,  // (session_id, request_id) already present — idempotent, left as-is
+    too_large,  // serialized result exceeds kSigningResultMaxSize
+    invalid,    // null/empty session_id or request_id, or null result
+};
+
+// Store a completed serialized result for (session_id, request_id). Idempotent: if the
+// pair is already stored, returns `duplicate` and leaves the existing entry untouched.
+// Evicts the least-recently-stored entry when the store is full.
+SigningResultStoreOutcome signing_result_store(
+    const char* session_id,
+    const char* request_id,
+    const char* serialized_result,
+    size_t serialized_size);
+
+// Copy a stored result for (session_id, request_id) into `out` (bounded by out_size,
+// NUL-terminated). Writes the length to out_len when non-null. Returns false if not
+// found or if out is too small.
+bool signing_result_find(
+    const char* session_id,
+    const char* request_id,
+    char* out,
+    size_t out_size,
+    size_t* out_len);
+
+// Release a stored result (the host acknowledged delivery). Returns true if it existed.
+bool signing_result_ack(const char* session_id, const char* request_id);
+
+// Drop every result belonging to a session (disconnect or session end).
+void signing_result_clear_session(const char* session_id);
+
+// Drop every stored result (wipe / reset).
+void signing_result_clear_all();
+
+}  // namespace agent_q

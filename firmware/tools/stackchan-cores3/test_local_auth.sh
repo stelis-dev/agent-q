@@ -163,7 +163,7 @@ cat >"${TMP_DIR}/local_auth_test.cpp" <<'CPP'
 
 #include <vector>
 
-#include "agent_q_local_auth.h"
+#include "agent_q_local_auth_test.h"
 #include "esp_err.h"
 #include "nvs.h"
 

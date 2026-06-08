@@ -65,7 +65,6 @@ struct AgentQProvisioningFlowSnapshot {
 };
 
 AgentQProvisioningFlowSnapshot provisioning_flow_snapshot();
-AgentQProvisioningFlowStage provisioning_flow_stage();
 bool provisioning_flow_active();
 bool provisioning_flow_stage_is(AgentQProvisioningFlowStage stage);
 bool provisioning_flow_stage_expired(TickType_t now);
@@ -111,9 +110,6 @@ AgentQProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     TickType_t commit_ready_at,
     TickType_t worker_deadline);
 
-bool provisioning_flow_commit_inputs(
-    const uint8_t** root_material,
-    size_t* root_material_size);
 bool provisioning_flow_commit_worker_result(
     const AgentQLocalAuthWorkerResult& result,
     const uint8_t** root_material,

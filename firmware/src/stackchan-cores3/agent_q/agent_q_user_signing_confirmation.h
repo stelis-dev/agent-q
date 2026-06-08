@@ -57,6 +57,4 @@ user_signing_confirmation_cancel_for_session_loss();
 AgentQUserSigningConfirmationResult
 user_signing_confirmation_cancel_for_pin_loss();
 
-bool user_signing_confirmation_pin_active();
-
 }  // namespace agent_q

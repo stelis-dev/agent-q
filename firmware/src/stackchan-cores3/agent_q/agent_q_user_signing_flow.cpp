@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "agent_q_protocol_input_copy.h"
+
 #include "agent_q_bip39.h"
 #include "agent_q_sui_account_store.h"
 #include "agent_q_sui_signing_authority.h"
@@ -79,24 +81,6 @@ constexpr const char* kSuiAsset = "0x2::sui::SUI";
 constexpr size_t kSuiAddressHexLength = 64;
 constexpr size_t kSuiAddressStringLength = 2 + kSuiAddressHexLength;
 constexpr uint16_t kRestrictedSuiTransferCommandCount = 2;
-
-bool copy_nonempty_c_string(const char* input, char* output, size_t output_size)
-{
-    if (input == nullptr || input[0] == '\0' || output == nullptr || output_size == 0) {
-        return false;
-    }
-    size_t index = 0;
-    while (input[index] != '\0' && index + 1 < output_size) {
-        output[index] = input[index];
-        ++index;
-    }
-    if (input[index] != '\0') {
-        output[0] = '\0';
-        return false;
-    }
-    output[index] = '\0';
-    return true;
-}
 
 bool supported_network(const char* network)
 {

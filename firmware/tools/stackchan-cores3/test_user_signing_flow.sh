@@ -46,7 +46,7 @@ cat >"${TMP_DIR}/user_signing_flow_test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_user_signing_flow.h"
+#include "agent_q_user_signing_flow_test.h"
 #include "agent_q_sui_account_store.h"
 
 namespace {

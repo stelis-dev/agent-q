@@ -50,6 +50,9 @@
 #include "agent_q_usb_link_state.h"
 #include "agent_q_ui_panel_cleanup.h"
 #include "agent_q_usb_response_writer.h"
+#include "agent_q_signing_result_store.h"
+#include "agent_q_usb_session_grace.h"
+#include "agent_q_usb_request_line.h"
 #include "agent_q_usb_session_loss.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
@@ -585,7 +588,27 @@ bool write_sign_result_signed_fields(
     if (agent_q::signing_method_requires_message_bytes(signing_method)) {
         response["messageBytes"] = message_base64;
     }
+    // W4: buffer the signed result for durable redelivery (get_result / idempotent
+    // re-request) before sending it, so a link drop between signing and delivery does
+    // not lose the signature. Best-effort: a too-large result is simply not buffered.
+    // The static scratch holds only a public signature; the store copies it out.
+    static char serialized_result[agent_q::kSigningResultMaxSize];
+    const size_t serialized_len = serializeJson(response, serialized_result, sizeof(serialized_result));
+    if (serialized_len > 0 && serialized_len < sizeof(serialized_result)) {
+        agent_q::signing_result_store(agent_q::session_id(), id, serialized_result, serialized_len);
+    }
     return agent_q::usb_response_write_json(response);
+}
+
+bool buffer_sign_result_for_retry(const char* request_id, const JsonDocument& response)
+{
+    static char serialized_result[agent_q::kSigningResultMaxSize];
+    const size_t serialized_len = serializeJson(response, serialized_result, sizeof(serialized_result));
+    if (serialized_len == 0 || serialized_len >= sizeof(serialized_result)) {
+        return false;
+    }
+    return agent_q::signing_result_store(agent_q::session_id(), request_id, serialized_result, serialized_len) !=
+           agent_q::SigningResultStoreOutcome::invalid;
 }
 
 bool write_sign_result_signed(
@@ -606,6 +629,31 @@ bool write_sign_result_signed(
         signing_output.signature_size,
         signing_output.message_bytes_size > 0 ? signing_output.message_bytes : nullptr,
         signing_output.message_bytes_size);
+}
+
+// W4: re-deliver a buffered signing result for (session_id, request_id) if present, so
+// a retried sign_transaction/sign_personal_message or a get_result returns the stored
+// signature instead of re-signing. Returns true when a stored result was written.
+//
+// Keyed by request_id only, with no request-content check: the host owns id uniqueness,
+// so reusing an id returns the prior result. This is safe by construction because the
+// buffer only ever holds already-authorized results — every store is gated by user
+// approval or policy execution — so a reused id can resurface an authorized result but
+// can never fabricate an unauthorized one. (Do not add content hashing here: it would put
+// state and branches into the signing path for no security gain.)
+bool try_deliver_stored_result(const char* session_id, const char* request_id)
+{
+    static char stored_result[agent_q::kSigningResultMaxSize];
+    size_t stored_len = 0;
+    if (!agent_q::signing_result_find(
+            session_id, request_id, stored_result, sizeof(stored_result), &stored_len)) {
+        return false;
+    }
+    JsonDocument response;
+    if (deserializeJson(response, stored_result, stored_len)) {
+        return false;
+    }
+    return agent_q::usb_response_write_json(response);
 }
 
 bool write_sign_result_user_terminal(
@@ -629,6 +677,7 @@ bool write_sign_result_user_terminal(
     response["status"] = status;
     response["error"]["code"] = reason;
     response["error"]["message"] = message;
+    buffer_sign_result_for_retry(id, response);
     return agent_q::usb_response_write_json(response);
 }
 
@@ -651,6 +700,7 @@ bool write_sign_result_policy_rejected(
     response["ruleRef"] = rule_ref;
     response["error"]["code"] = "policy_rejected";
     response["error"]["message"] = "The signing request was rejected by device policy.";
+    buffer_sign_result_for_retry(id, response);
     return agent_q::usb_response_write_json(response);
 }
 
@@ -670,6 +720,7 @@ bool write_sign_result_signing_failed(
     response["status"] = "signing_failed";
     response["error"]["code"] = "signing_failed";
     response["error"]["message"] = "The device could not produce a signature.";
+    buffer_sign_result_for_retry(id, response);
     return agent_q::usb_response_write_json(response);
 }
 
@@ -974,6 +1025,9 @@ bool write_invalid_params_if_unsupported_request_fields(
 void clear_active_session()
 {
     agent_q::session_clear();
+    // W4: buffered signing results are session-scoped; drop them when the session ends
+    // so a new session never sees a prior session's results.
+    agent_q::signing_result_clear_all();
 }
 
 bool persist_unprovisioned_state_for_local_reset()
@@ -1297,6 +1351,9 @@ bool fill_session_random(void* output, size_t size, void*)
 
 bool replace_active_session()
 {
+    // A newly established session must not inherit the previous session's buffered
+    // signing results, so drop them before the session id changes.
+    agent_q::signing_result_clear_all();
     return agent_q::session_replace(fill_session_random, nullptr) ==
            agent_q::AgentQSessionStartResult::ok;
 }
@@ -1388,13 +1445,13 @@ void show_usb_connected_message()
         kAgentQResultDisplayMs);
 }
 
-void clear_usb_session_state_for_host_loss(bool notify)
+void clear_usb_session_state_for_host_loss()
 {
     const agent_q::AgentQUsbSessionLossPlan plan =
         current_usb_session_loss_plan(xTaskGetTickCount());
 
-    g_line_size = 0;
-    g_discarding_invalid_line = false;
+    // Line-framing state is transport state and is reset at the disconnect edge, which
+    // always precedes this confirm-path call; this function clears session-bound state.
     if (!plan.relevant) {
         return;
     }
@@ -1429,34 +1486,48 @@ void clear_usb_session_state_for_host_loss(bool notify)
     if (plan.clear_user_signing_review_panel) {
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::user_signing_review, SensitiveUiClearPolicy::preserve);
     }
-    if (notify) {
-        show_usb_disconnected_message();
-    }
     ESP_LOGW(kTag, "USB host SOF lost; session-bound state cleared");
 }
 
+// W4-W2: hold the session for this long after a USB drop so a transient resume can
+// reconnect and recover its buffered signing result before the session is torn down.
+constexpr uint32_t kUsbSessionGraceMs = 2000;
+agent_q::AgentQUsbGraceState g_usb_session_grace;
+
 void poll_usb_host_connection()
 {
+    const TickType_t now = xTaskGetTickCount();
     const agent_q::AgentQUsbLinkEvent event = agent_q::usb_link_state_observe(
         usb_serial_jtag_is_connected(),
-        xTaskGetTickCount(),
+        now,
         pdMS_TO_TICKS(kUsbHostLinkCheckMs));
+    const agent_q::AgentQUsbGraceAction grace = agent_q::usb_session_grace_step(
+        event, now, pdMS_TO_TICKS(kUsbSessionGraceMs), g_usb_session_grace);
     switch (event) {
         case agent_q::AgentQUsbLinkEvent::not_due:
         case agent_q::AgentQUsbLinkEvent::initial_observed:
         case agent_q::AgentQUsbLinkEvent::unchanged_connected:
             return;
         case agent_q::AgentQUsbLinkEvent::connected:
+            // A fresh connect, or a reconnect that resumed within the grace window.
             show_usb_connected_message();
             return;
         case agent_q::AgentQUsbLinkEvent::unchanged_disconnected:
-            if (current_usb_session_loss_plan(xTaskGetTickCount()).relevant) {
-                clear_usb_session_state_for_host_loss(true);
+            // Tear the session down only once the grace window confirms the loss; the
+            // loss plan still protects an in-flight critical section.
+            if (grace == agent_q::AgentQUsbGraceAction::confirm) {
+                if (current_usb_session_loss_plan(now).relevant) {
+                    clear_usb_session_state_for_host_loss();
+                }
+                show_usb_disconnected_message();
             }
             return;
         case agent_q::AgentQUsbLinkEvent::disconnected:
-            clear_usb_session_state_for_host_loss(false);
-            show_usb_disconnected_message();
+            // Edge: the grace window is now open and the session is held; stay quiet so
+            // a quick resume is seamless. A sustained drop confirms above. Reset the line
+            // framing here so a resume parses cleanly even if the drop cut a partial line.
+            g_line_size = 0;
+            g_discarding_invalid_line = false;
             return;
     }
 }
@@ -5075,9 +5146,10 @@ void cancel_setup_from_local_ui()
 // Cancel inside the generate (recovery_phrase_displayed) or recover (recover_word_entry)
 // screen goes BACK to the setup-choice menu rather than ending setup. The in-progress
 // phrase is wiped first (same protection as a full cancel) so nothing leaks across the
-// re-pick; setup-choice and generate/recover are device-local until a result commits, so
-// staying "in setup" keeps the host session consistent.
-// NOTE: built but NOT yet exercised on hardware — verify nav + scratch wipe + host on device.
+// re-pick. Setup is entirely device-local (SPEC: local controls own the setup transitions,
+// there are no USB setup transition requests), and status stays `busy` throughout, so
+// returning to the menu changes nothing a host can observe beyond the unchanged `busy`.
+// NOTE: built but NOT yet exercised on hardware — verify nav + scratch wipe + re-pick.
 void return_to_setup_choice_from_local_ui()
 {
     if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recovery_phrase_displayed) &&
@@ -5776,6 +5848,11 @@ void handle_line(const char* line)
         if (!require_active_matching_session(id, session_id)) {
             return;
         }
+        // W4: idempotent re-request — return the buffered result if this (session, id)
+        // was already signed, instead of re-running the signing flow.
+        if (try_deliver_stored_result(session_id, id)) {
+            return;
+        }
 
         const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "chain", "method", "params"};
         if (write_invalid_params_if_unsupported_request_fields(
@@ -5888,6 +5965,11 @@ void handle_line(const char* line)
         if (!require_active_matching_session(id, session_id)) {
             return;
         }
+        // W4: idempotent re-request — return the buffered result if this (session, id)
+        // was already signed, instead of re-running the signing flow.
+        if (try_deliver_stored_result(session_id, id)) {
+            return;
+        }
 
         const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "chain", "method", "params"};
         if (write_invalid_params_if_unsupported_request_fields(
@@ -5981,6 +6063,71 @@ void handle_line(const char* line)
             return;
         }
         ESP_LOGI(kTag, "sign_personal_message waiting for device review: id=%s", id);
+        return;
+    }
+
+    if (strcmp(type, "get_result") == 0) {
+        if (!provisioned_material_ready()) {
+            write_error_response(id, "invalid_state", "get_result is available only after provisioning is complete.");
+            return;
+        }
+        const char* session_id = nullptr;
+        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
+            write_error_response(id, "invalid_session", "Invalid session.");
+            return;
+        }
+        if (!require_active_matching_session(id, session_id)) {
+            return;
+        }
+        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
+        if (write_invalid_params_if_unsupported_request_fields(
+                id,
+                request,
+                allowed_request_fields,
+                4,
+                "get_result request contains unsupported fields.")) {
+            return;
+        }
+        // Re-deliver the buffered result for this request id, or report it is gone so
+        // the host re-issues the original signing request.
+        if (try_deliver_stored_result(session_id, id)) {
+            return;
+        }
+        write_error_response(id, "unknown_request", "No buffered signing result for this request id.");
+        return;
+    }
+
+    if (strcmp(type, "ack_result") == 0) {
+        if (!provisioned_material_ready()) {
+            write_error_response(id, "invalid_state", "ack_result is available only after provisioning is complete.");
+            return;
+        }
+        const char* session_id = nullptr;
+        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
+            write_error_response(id, "invalid_session", "Invalid session.");
+            return;
+        }
+        if (!require_active_matching_session(id, session_id)) {
+            return;
+        }
+        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
+        if (write_invalid_params_if_unsupported_request_fields(
+                id,
+                request,
+                allowed_request_fields,
+                4,
+                "ack_result request contains unsupported fields.")) {
+            return;
+        }
+        // Releasing a buffered result is idempotent: acking an already-released or
+        // unknown id still reports success so the host can stop retrying.
+        agent_q::signing_result_ack(session_id, id);
+        JsonDocument response;
+        response["id"] = id;
+        response["version"] = kProtocolVersion;
+        response["type"] = "ack_result";
+        response["status"] = "acked";
+        agent_q::usb_response_write_json(response);
         return;
     }
 
@@ -6284,43 +6431,24 @@ void poll_usb_input()
     }
 
     for (int index = 0; index < read_count; ++index) {
-        const char c = static_cast<char>(buffer[index]);
-        if (c == '\r') {
-            continue;
-        }
-        if (c == '\n') {
-            if (g_discarding_invalid_line) {
-                g_discarding_invalid_line = false;
-                g_line_size = 0;
-                continue;
-            }
-            g_line_buffer[g_line_size] = '\0';
-            if (g_line_size > 0) {
+        switch (agent_q::usb_request_line_feed(
+            static_cast<char>(buffer[index]),
+            g_line_buffer,
+            sizeof(g_line_buffer),
+            &g_line_size,
+            &g_discarding_invalid_line)) {
+            case agent_q::AgentQUsbLineFeedResult::line_ready:
                 handle_line(g_line_buffer);
-            }
-            g_line_size = 0;
-            continue;
+                break;
+            case agent_q::AgentQUsbLineFeedResult::rejected_nul:
+                write_error_response(nullptr, "invalid_json", "JSON line contains a NUL byte.");
+                break;
+            case agent_q::AgentQUsbLineFeedResult::rejected_too_long:
+                write_error_response(nullptr, "invalid_json", "JSON line is too long.");
+                break;
+            case agent_q::AgentQUsbLineFeedResult::none:
+                break;
         }
-
-        if (g_discarding_invalid_line) {
-            continue;
-        }
-
-        if (c == '\0') {
-            g_line_size = 0;
-            g_discarding_invalid_line = true;
-            write_error_response(nullptr, "invalid_json", "JSON line contains a NUL byte.");
-            continue;
-        }
-
-        if (g_line_size + 1 >= sizeof(g_line_buffer)) {
-            g_line_size = 0;
-            g_discarding_invalid_line = true;
-            write_error_response(nullptr, "invalid_json", "JSON line is too long.");
-            continue;
-        }
-
-        g_line_buffer[g_line_size++] = c;
     }
 }
 

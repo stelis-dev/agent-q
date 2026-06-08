@@ -1359,6 +1359,20 @@ requests.
   `signing_failed`, and it must not claim that Firmware did not generate a
   signature. A later `get_approval_history` read may show the durable `signed`
   terminal record.
+- Firmware buffers each completed `sign_result` in RAM, keyed by `(session, request
+  id)`, so a result whose response delivery failed can be recovered. The host recovers
+  it by re-sending the same request id (Firmware returns the buffered result instead of
+  signing again — idempotent) or by a `get_result` request (standard envelope +
+  `sessionId`, with `id` set to the original signing request's id), which returns the
+  buffered `sign_result` or an `unknown_request` error if none is buffered. An
+  `ack_result` request releases a buffered result. The buffer is session-bound (another
+  session cannot read it), survives a transient link drop via a short session grace
+  window, and is cleared on session end or device reset. A device reset clears it, so a
+  later re-request re-runs the normal signing gates — a lost signature surfaces as an
+  explicit re-authorization, never as a silent vanished signature. The host owns request
+  id uniqueness — an id names one request — so reusing an id returns that prior result;
+  because the buffer only ever holds already-authorized results, a reused id can resurface
+  an authorized result but never produce an unauthorized one.
 - The provider `signTransaction` API and MCP `sign_transaction` tool return
   discriminated results for Firmware-authored terminal `sign_result` statuses.
   Device rejection, device timeout, policy rejection, and signing failure are

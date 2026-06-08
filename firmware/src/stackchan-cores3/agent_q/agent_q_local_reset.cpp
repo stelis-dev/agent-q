@@ -198,17 +198,12 @@ AgentQLocalResetSnapshot local_reset_snapshot(TickType_t now)
     };
 }
 
-bool local_reset_persistent_material_exists()
-{
-    return persistent_material_exists();
-}
-
 bool local_reset_deadline_expired(TickType_t now)
 {
     return timeout_window_reached(g_local_reset.input_window, now);
 }
 
-bool local_reset_processing_deadline_expired(TickType_t now)
+static bool local_reset_processing_deadline_expired(TickType_t now)
 {
     return g_local_reset.stage == AgentQLocalResetStage::pin_verifying &&
            timeout_window_tick_reached(now, g_local_reset.worker_deadline);
@@ -442,7 +437,7 @@ AgentQLocalResetPinVerifyResult local_reset_complete_pin_verify_job(
     return AgentQLocalResetPinVerifyResult::verified;
 }
 
-bool local_reset_pending_marker_present()
+static bool local_reset_pending_marker_present()
 {
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READONLY, &nvs);
