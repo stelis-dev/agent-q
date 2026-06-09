@@ -22,6 +22,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 USB_SERVER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_server.cpp"
+SIGNING_PREFLIGHT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_signing_preflight.cpp"
 POLICY_SIGNING_EXECUTION_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_policy_signing_execution.cpp"
 USER_REVIEW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_review_view_model.cpp"
 USER_SIGNING_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_critical_section.cpp"
@@ -140,27 +141,35 @@ expect_present "${USB_SERVER}" 'user_signing_flow_begin' \
   "USB request server user branch must enter user-confirmed flow"
 
 SIGN_TRANSACTION_BRANCH_SNIPPET="${TMP_DIR}/sign-transaction-branch.cpp"
+SIGN_TRANSACTION_PREFLIGHT_SNIPPET="${TMP_DIR}/sign-transaction-preflight.cpp"
+awk '
+  /AgentQSigningPreflightResult evaluate_sign_transaction_preflight/ { capture = 1 }
+  capture { print }
+  /AgentQSigningPreflightResult evaluate_sign_personal_message_preflight/ { capture = 0 }
+' "${SIGNING_PREFLIGHT_SOURCE}" >"${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}"
 awk '
   /if \(strcmp\(type, "sign_transaction"\) == 0\)/ { capture = 1 }
   capture { print }
   /ESP_LOGI\(kTag, "sign_transaction waiting for device review/ { capture = 0 }
 ' "${USB_SERVER}" >"${SIGN_TRANSACTION_BRANCH_SNIPPET}"
-expect_present "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'read_signing_authorization_mode' \
+expect_present "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'read_signing_mode_for_preflight' \
   "USB request server sign_transaction branch snippet must be captured"
-expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'write_sign_route_error_if_unsupported' 'evaluate_sign_transaction_user_ingress' \
-  "sign_transaction must identify the route before state/session work"
-expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'evaluate_sign_transaction_user_ingress' 'sign_request_identity' \
-  "sign_transaction preflight must complete before request identity"
-expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'sign_request_identity' 'try_deliver_stored_result' \
-  "sign_transaction must bind request identity before stored-result replay"
-expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'try_deliver_stored_result' 'read_signing_authorization_mode' \
-  "sign_transaction replay must complete before reading signing mode"
-expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'try_deliver_stored_result' 'prepare_sui_sign_transaction' \
-  "sign_transaction replay must complete before Sui adapter preparation"
-expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'prepare_sui_sign_transaction' 'handle_sign_transaction_policy_mode' \
+expect_present "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'evaluate_sign_transaction_preflight' \
+  "sign_transaction branch must delegate signing preflight to the extracted helper"
+expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'evaluate_sign_transaction_preflight' 'handle_sign_transaction_policy_mode' \
   "sign_transaction policy authorization must consume prepared Sui transaction data"
-expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'prepare_sui_sign_transaction' 'user_signing_flow_begin' \
+expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'evaluate_sign_transaction_preflight' 'user_signing_flow_begin' \
   "sign_transaction user authorization must consume prepared Sui transaction data"
+expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'classify_sign_route\(AgentQSignOperation::sign_transaction' 'evaluate_sign_transaction_user_ingress' \
+  "sign_transaction preflight must identify the route before state/session work"
+expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'evaluate_sign_transaction_user_ingress' 'sign_request_identity' \
+  "sign_transaction preflight must complete before request identity"
+expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'sign_request_identity' 'retry_allows_preflight_to_continue' \
+  "sign_transaction must bind request identity before stored-result replay"
+expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'retry_allows_preflight_to_continue' 'read_signing_mode' \
+  "sign_transaction replay must complete before reading signing mode"
+expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'retry_allows_preflight_to_continue' 'prepare_sui_sign_transaction' \
+  "sign_transaction replay must complete before Sui adapter preparation"
 expect_order "${SIGN_TRANSACTION_INGRESS_SOURCE}" 'if \(!state\.material_ready\)' 'validate_sign_transaction_user_session_format' \
   "sign_transaction preflight must check state before session format"
 expect_order "${SIGN_TRANSACTION_INGRESS_SOURCE}" 'validate_sign_transaction_user_session_format' 'validate_sign_transaction_user_envelope' \
@@ -169,36 +178,44 @@ expect_order "${SIGN_TRANSACTION_INGRESS_SOURCE}" 'validate_sign_transaction_use
   "sign_transaction preflight must exact-check the request before shallow params"
 
 SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET="${TMP_DIR}/sign-personal-message-branch.cpp"
+SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET="${TMP_DIR}/sign-personal-message-preflight.cpp"
+awk '
+  /AgentQSigningPreflightResult evaluate_sign_personal_message_preflight/ { capture = 1 }
+  capture { print }
+  /^\}  \/\/ namespace agent_q/ { capture = 0 }
+' "${SIGNING_PREFLIGHT_SOURCE}" >"${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}"
 awk '
   /if \(strcmp\(type, "sign_personal_message"\) == 0\)/ { capture = 1 }
   capture { print }
   /show_user_signing_review\(\)/ { capture = 0 }
 ' "${USB_SERVER}" >"${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}"
-expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'read_signing_authorization_mode' \
+expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'read_signing_mode_for_preflight' \
   "USB request server sign_personal_message branch snippet must be captured"
-expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'write_sign_route_error_if_unsupported' 'evaluate_sign_personal_message_user_ingress' \
-  "sign_personal_message must identify the route before state/session work"
-expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'evaluate_sign_personal_message_user_ingress' 'sign_request_identity' \
-  "sign_personal_message preflight must complete before request identity"
-expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'sign_request_identity' 'try_deliver_stored_result' \
-  "sign_personal_message must bind request identity before stored-result replay"
-expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'try_deliver_stored_result' 'read_signing_authorization_mode' \
-  "sign_personal_message replay must complete before reading signing mode"
-expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'try_deliver_stored_result' 'prepare_sui_sign_personal_message' \
-  "sign_personal_message replay must complete before Sui adapter preparation"
-expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'prepare_sui_sign_personal_message' 'user_signing_flow_begin_personal_message' \
+expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'evaluate_sign_personal_message_preflight' \
+  "sign_personal_message branch must delegate signing preflight to the extracted helper"
+expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'evaluate_sign_personal_message_preflight' 'user_signing_flow_begin_personal_message' \
   "sign_personal_message user authorization must consume prepared Sui message data"
+expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'classify_sign_route\(AgentQSignOperation::sign_personal_message' 'evaluate_sign_personal_message_user_ingress' \
+  "sign_personal_message must identify the route before state/session work"
+expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'evaluate_sign_personal_message_user_ingress' 'sign_request_identity' \
+  "sign_personal_message preflight must complete before request identity"
+expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'sign_request_identity' 'retry_allows_preflight_to_continue' \
+  "sign_personal_message must bind request identity before stored-result replay"
+expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'retry_allows_preflight_to_continue' 'read_signing_mode' \
+  "sign_personal_message replay must complete before reading signing mode"
+expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'retry_allows_preflight_to_continue' 'prepare_sui_sign_personal_message' \
+  "sign_personal_message replay must complete before Sui adapter preparation"
 expect_order "${SIGN_PERSONAL_MESSAGE_INGRESS_SOURCE}" 'if \(!state\.material_ready\)' 'validate_sign_personal_message_user_session_format' \
   "sign_personal_message preflight must check state before session format"
 expect_order "${SIGN_PERSONAL_MESSAGE_INGRESS_SOURCE}" 'validate_sign_personal_message_user_session_format' 'validate_sign_personal_message_user_envelope' \
   "sign_personal_message preflight must check session before exact envelope"
 expect_order "${SIGN_PERSONAL_MESSAGE_INGRESS_SOURCE}" 'validate_sign_personal_message_user_envelope' 'validate_sign_personal_message_user_params' \
   "sign_personal_message preflight must exact-check the request before shallow params"
-expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'AgentQSigningAuthorizationMode::policy' \
+expect_present "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'AgentQSigningAuthorizationMode::policy' \
   "sign_personal_message branch must explicitly handle policy mode"
-expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'unsupported_method' \
+expect_present "${USB_SERVER}" 'sign_personal_message is not available in policy authorization mode' \
   "sign_personal_message policy mode must fail closed as unsupported"
-expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'evaluate_sign_personal_message_user_ingress' \
+expect_present "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'evaluate_sign_personal_message_user_ingress' \
   "sign_personal_message user mode must use the method-specific ingress owner"
 expect_absent "${USB_SERVER}" 'decode_sign_personal_message_request' \
   "USB request server must not inline-decode sign_personal_message params"
@@ -230,7 +247,7 @@ expect_absent "${USER_SIGNING_SOURCE}" 'classify_sui_sign_transaction|base64_to_
 
 USER_BRANCH_SNIPPET="${TMP_DIR}/sign-transaction-user-branch.cpp"
 awk '
-  /AgentQSignTransactionUserIngressOutput ingress/ { capture = 1 }
+  /evaluate_sign_transaction_preflight/ { capture = 1 }
   capture { print }
   /show_user_signing_review\(\)/ { capture = 0 }
 ' "${USB_SERVER}" >"${USER_BRANCH_SNIPPET}"

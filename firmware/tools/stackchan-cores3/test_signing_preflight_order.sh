@@ -53,6 +53,10 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_request_identity.cpp" \
+  "${AGENT_Q_DIR}/agent_q_signing_preflight.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_ingress.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_validation.cpp" \
+  "${AGENT_Q_DIR}/agent_q_signing_retry_delivery.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_transaction_user_ingress.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_result_store.cpp" \
@@ -88,9 +92,10 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_sign_request_identity.h"
 #include "agent_q_sign_route.h"
 #include "agent_q_sign_transaction_user_ingress.h"
+#include "agent_q_signing_preflight.h"
+#include "agent_q_sign_request_identity.h"
 #include "agent_q_signing_result_store.h"
 #include "agent_q_sui_account_store.h"
 #include "agent_q_sui_signing_authority.h"
@@ -111,6 +116,10 @@ agent_q::AgentQSessionValidationResult g_session_result =
     agent_q::AgentQSessionValidationResult::ok;
 agent_q::AgentQSuiSigningAccountBindingResult g_binding_result =
     agent_q::AgentQSuiSigningAccountBindingResult::ok;
+agent_q::AgentQSigningAuthorizationMode g_signing_mode =
+    agent_q::AgentQSigningAuthorizationMode::user;
+agent_q::AgentQSigningRetryDeliveryStatus g_retry_status =
+    agent_q::AgentQSigningRetryDeliveryStatus::not_found;
 
 enum class PreflightOutcome {
     ok_prepared,
@@ -218,35 +227,67 @@ agent_q::AgentQSignTransactionUserIngressState state(bool material_ready, bool b
     };
 }
 
-PreflightOutcome route_outcome(agent_q::AgentQSignRouteResult result)
+PreflightOutcome preflight_result_outcome(
+    agent_q::AgentQSigningPreflightResult result,
+    const agent_q::AgentQSignTransactionPreflightOutput& output)
 {
     switch (result) {
-        case agent_q::AgentQSignRouteResult::invalid_params:
+        case agent_q::AgentQSigningPreflightResult::ok:
+            return PreflightOutcome::ok_prepared;
+        case agent_q::AgentQSigningPreflightResult::route_invalid_params:
             return PreflightOutcome::route_invalid_params;
-        case agent_q::AgentQSignRouteResult::unsupported_chain:
+        case agent_q::AgentQSigningPreflightResult::route_unsupported_chain:
             return PreflightOutcome::route_unsupported_chain;
-        case agent_q::AgentQSignRouteResult::unsupported_method:
+        case agent_q::AgentQSigningPreflightResult::route_unsupported_method:
             return PreflightOutcome::route_unsupported_method;
-        case agent_q::AgentQSignRouteResult::ok:
+        case agent_q::AgentQSigningPreflightResult::transaction_ingress_error:
+            switch (output.ingress_result) {
+                case agent_q::AgentQSignTransactionUserIngressResult::invalid_state:
+                    return PreflightOutcome::ingress_invalid_state;
+                case agent_q::AgentQSignTransactionUserIngressResult::busy:
+                    return PreflightOutcome::ingress_busy;
+                case agent_q::AgentQSignTransactionUserIngressResult::invalid_session:
+                    return PreflightOutcome::ingress_invalid_session;
+                case agent_q::AgentQSignTransactionUserIngressResult::invalid_tx_bytes:
+                    return PreflightOutcome::ingress_invalid_tx_bytes;
+                default:
+                    return PreflightOutcome::identity_error;
+            }
+        case agent_q::AgentQSigningPreflightResult::retry_consumed:
+            if (g_retry_status == agent_q::AgentQSigningRetryDeliveryStatus::match) {
+                return PreflightOutcome::replay_match;
+            }
+            if (g_retry_status ==
+                agent_q::AgentQSigningRetryDeliveryStatus::request_id_conflict) {
+                return PreflightOutcome::replay_conflict;
+            }
+            return PreflightOutcome::identity_error;
+        case agent_q::AgentQSigningPreflightResult::transaction_preparation_error:
+            return PreflightOutcome::preparation_error;
         default:
             return PreflightOutcome::identity_error;
     }
 }
 
-PreflightOutcome ingress_outcome(agent_q::AgentQSignTransactionUserIngressResult result)
+bool read_signing_mode(
+    agent_q::AgentQSigningAuthorizationMode* mode,
+    void*)
 {
-    switch (result) {
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_state:
-            return PreflightOutcome::ingress_invalid_state;
-        case agent_q::AgentQSignTransactionUserIngressResult::busy:
-            return PreflightOutcome::ingress_busy;
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_session:
-            return PreflightOutcome::ingress_invalid_session;
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_tx_bytes:
-            return PreflightOutcome::ingress_invalid_tx_bytes;
-        default:
-            return PreflightOutcome::identity_error;
-    }
+    assert(mode != nullptr);
+    *mode = g_signing_mode;
+    return true;
+}
+
+agent_q::AgentQSigningPreflightRetryDisposition respond_to_retry(
+    const char*,
+    const agent_q::AgentQSigningRetryDeliveryResult& retry,
+    const char*,
+    void*)
+{
+    g_retry_status = retry.status;
+    return retry.status == agent_q::AgentQSigningRetryDeliveryStatus::not_found
+               ? agent_q::AgentQSigningPreflightRetryDisposition::continue_preflight
+               : agent_q::AgentQSigningPreflightRetryDisposition::consumed;
 }
 
 PreflightOutcome run_transaction_preflight(
@@ -255,71 +296,24 @@ PreflightOutcome run_transaction_preflight(
     bool busy)
 {
     JsonDocument document = parse_json(json);
-    const char* chain = document["chain"].as<const char*>();
-    const char* method = document["method"].as<const char*>();
-    const agent_q::AgentQSignRouteClassification classification =
-        agent_q::classify_sign_route(
-            agent_q::AgentQSignOperation::sign_transaction,
-            chain,
-            method);
-    if (classification.result != agent_q::AgentQSignRouteResult::ok) {
-        return route_outcome(classification.result);
-    }
-
-    agent_q::AgentQSignTransactionUserIngressOutput ingress = {};
-    const agent_q::AgentQSignTransactionUserIngressResult ingress_result =
-        agent_q::evaluate_sign_transaction_user_ingress(
+    agent_q::AgentQSignTransactionPreflightOutput output = {};
+    char retry_stored_result[agent_q::kSigningResultMaxSize] = {};
+    const agent_q::AgentQSigningPreflightResult result =
+        agent_q::evaluate_sign_transaction_preflight(
             document,
-            classification.route,
             state(material_ready, busy),
-            &ingress);
-    if (ingress_result != agent_q::AgentQSignTransactionUserIngressResult::ok) {
-        return ingress_outcome(ingress_result);
-    }
-
-    uint8_t identity[agent_q::kAgentQSignRequestIdentitySize] = {};
-    if (!agent_q::sign_request_identity(
-            classification.route,
-            ingress.params.network,
-            ingress.params.tx_bytes_base64,
-            identity,
-            sizeof(identity))) {
-        return PreflightOutcome::identity_error;
-    }
-
-    char stored[agent_q::kSigningResultMaxSize] = {};
-    size_t stored_len = 0;
-    const agent_q::SigningResultRetryLookup retry =
-        agent_q::signing_result_find_for_retry(
-            ingress.session.session_id,
-            ingress.envelope.request_id,
-            identity,
-            sizeof(identity),
-            stored,
-            sizeof(stored),
-            &stored_len);
-    if (retry == agent_q::SigningResultRetryLookup::match) {
-        return PreflightOutcome::replay_match;
-    }
-    if (retry == agent_q::SigningResultRetryLookup::conflict) {
-        return PreflightOutcome::replay_conflict;
-    }
-    if (retry == agent_q::SigningResultRetryLookup::invalid) {
-        return PreflightOutcome::identity_error;
-    }
-
-    agent_q::AgentQSuiPreparedSignTransaction prepared = {};
-    const agent_q::AgentQSuiSigningPreparationResult preparation_result =
-        agent_q::prepare_sui_sign_transaction(
-            classification.route,
-            ingress.params.network,
-            ingress.params.tx_bytes_base64,
-            ingress.params.tx_bytes_decoded_size,
-            &prepared);
-    agent_q::clear_prepared_sui_sign_transaction(&prepared);
-    return preparation_result == agent_q::AgentQSuiSigningPreparationResult::ok
-               ? PreflightOutcome::ok_prepared
-               : PreflightOutcome::preparation_error;
+            agent_q::AgentQSigningPreflightRuntime{
+                read_signing_mode,
+                nullptr,
+                respond_to_retry,
+                nullptr,
+                retry_stored_result,
+                sizeof(retry_stored_result),
+            },
+            &output);
+    const PreflightOutcome outcome = preflight_result_outcome(result, output);
+    agent_q::clear_prepared_sui_sign_transaction(&output.prepared);
+    return outcome;
 }
 
 void reset_counters()
@@ -329,6 +323,8 @@ void reset_counters()
     g_binding_calls = 0;
     g_session_result = agent_q::AgentQSessionValidationResult::ok;
     g_binding_result = agent_q::AgentQSuiSigningAccountBindingResult::ok;
+    g_signing_mode = agent_q::AgentQSigningAuthorizationMode::user;
+    g_retry_status = agent_q::AgentQSigningRetryDeliveryStatus::not_found;
     agent_q::signing_result_clear_all();
 }
 
@@ -579,6 +575,10 @@ CPP
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_request_identity.cpp" \
+  "${AGENT_Q_DIR}/agent_q_signing_preflight.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_ingress.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_validation.cpp" \
+  "${AGENT_Q_DIR}/agent_q_signing_retry_delivery.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_transaction_user_ingress.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_result_store.cpp" \
