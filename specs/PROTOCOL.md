@@ -1114,6 +1114,10 @@ validated signing request using the same `(session, request id)` returns
 work. `get_result`, `ack_result`, and session-bound result cleanup remain keyed
 by `(session, request id)` and unchanged.
 
+The signing-request identity is Firmware-local recovery state. Hosts do not
+compute or verify it, and tracked target identity vectors are regression
+fixtures for Firmware serialization, not a cross-version persistence format.
+
 Stored signing results are bounded RAM recovery state, not persistent replay
 protection. Retry match and `request_id_conflict` behavior apply only while the
 original `(session, request id)` entry remains buffered. After eviction, ack,

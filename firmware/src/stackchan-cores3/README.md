@@ -191,6 +191,9 @@ AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
 AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stackchan-cores3/with-idf.sh \
   firmware/tools/stackchan-cores3/test_signing_preflight_order.sh
+AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+  firmware/tools/stackchan-cores3/with-idf.sh \
+  firmware/tools/stackchan-cores3/test_sign_request_identity_vectors.sh
 ```
 
 Other checks can be run directly when their script header says ESP-IDF is not
