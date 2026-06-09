@@ -4,7 +4,7 @@ import {
   MAX_FIRMWARE_VERSION_LENGTH,
   MAX_HARDWARE_ID_LENGTH,
   isDeviceState,
-  isGatewayName,
+  isClientName,
   isProvisioningState,
   isSafeDeviceId,
   isSafeRequestId,
@@ -126,7 +126,7 @@ import {
 // These boundary functions are defined once in safe-text.ts (the single source of
 // truth) and re-exported here because protocol.ts is the wire-ingress boundary
 // that applies them; existing importers and tests resolve them via protocol.ts.
-export { isGatewayName, isSafeDeviceId, isSafeRequestId, isSessionId, sanitizeDisplayText };
+export { isClientName, isSafeDeviceId, isSafeRequestId, isSessionId, sanitizeDisplayText };
 export {
   AGENT_Q_POLICY_SCHEMA,
   APPROVAL_HISTORY_HIGHEST_ACTIONS,

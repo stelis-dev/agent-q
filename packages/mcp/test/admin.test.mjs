@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 import {
   buildRejectOnlySuiPolicy,
   createAdminHttpServer,
-  startAdminGateway,
+  startAdminServer,
 } from "../dist/admin.js";
-import { GatewayError } from "@stelis/agent-q-client/adapter-internal";
+import { AgentQError } from "@stelis/agent-q-client/adapter-internal";
 
 const deviceId = "a508d833-5c83-4680-88bb-18aee976881e";
 
@@ -151,18 +151,18 @@ test("Admin page serves the local management UI without session tokens", async (
   });
 });
 
-test("Admin egress boundary uses shared Gateway output schemas without importing MCP", async () => {
+test("Admin egress boundary uses shared Agent-Q output schemas without importing MCP", async () => {
   const adminPath = fileURLToPath(new URL("../dist/admin.js", import.meta.url));
   const source = await readFile(adminPath, "utf8");
   assert.doesNotMatch(source, /["']\.\/mcp\.js["']/);
   assert.match(source, /["']@stelis\/agent-q-client\/adapter-internal["']/);
 });
 
-test("Admin gateway rejects non-loopback bind hosts", async () => {
+test("Admin agent-q rejects non-loopback bind hosts", async () => {
   await assert.rejects(
-    () => startAdminGateway({ core: defaultCore(), host: "0.0.0.0", port: 0 }),
+    () => startAdminServer({ core: defaultCore(), host: "0.0.0.0", port: 0 }),
     (error) =>
-      error instanceof GatewayError &&
+      error instanceof AgentQError &&
       error.code === "invalid_params" &&
       error.retryable === false,
   );
@@ -272,7 +272,7 @@ test("Admin policy preview builds only the supported reject-only Sui proposal", 
   });
 });
 
-test("Admin propose path forwards a server-built proposal through Gateway core", async () => {
+test("Admin propose path forwards a server-built proposal through Agent-Q core", async () => {
   let submitted;
   await withAdminServer(
     defaultCore({
@@ -304,7 +304,7 @@ test("Admin propose path forwards a server-built proposal through Gateway core",
   );
 });
 
-test("Gateway closes the Admin listener when stdio closes", { timeout: 5000 }, async () => {
+test("Agent-Q closes the Admin listener when stdio closes", { timeout: 5000 }, async () => {
   const port = await allocatePort();
   const binPath = fileURLToPath(new URL("../dist/bin/agent-q.js", import.meta.url));
   const child = spawn(process.execPath, [binPath, "--port", String(port)], {
@@ -428,7 +428,7 @@ test("Admin API projects raw core errors through the public error policy", async
   await withAdminServer(
     defaultCore({
       async scanDevices() {
-        throw new GatewayError("port_not_found", "raw /dev/cu.secret should not be exposed", true);
+        throw new AgentQError("port_not_found", "raw /dev/cu.secret should not be exposed", true);
       },
     }),
     async (baseUrl) => {

@@ -1,19 +1,19 @@
 // Single source of truth (SoT) for string-policy validation and sanitization
-// at every Agent-Q Gateway trust boundary:
+// at every Agent-Q trust boundary:
 //   - wire ingress   (protocol.ts parseProtocolResponse): device-supplied text
 //   - disk ingress   (config.ts load): the stored, possibly hand-edited registry
 //   - MCP egress      (mcp.ts output schemas): the untrusted client/agent surface
 //   - MCP input + request building (mcp.ts input schemas, protocol.ts make*)
 //
 // Two policies, applied deliberately differently:
-//   - Identifiers (deviceId, requestId, sessionId, purpose, gatewayName) have a
+//   - Identifiers (deviceId, requestId, sessionId, purpose, clientName) have a
 //     strict format. Invalid values are REJECTED so the caller corrects them; an
 //     identifier is never silently rewritten.
 //   - Display text (firmwareName, hardware, firmwareVersion, port hints) is
 //     untrusted device-/OS-supplied text. It is STRIPPED to bounded printable
 //     ASCII and never rejected, so one malformed device cannot brick discovery.
 //
-// This module imports nothing else from Gateway. It is the leaf that every
+// This module imports nothing else from Agent-Q. It is the leaf that every
 // boundary depends on, so there is exactly one definition of each rule.
 //
 // Control characters (C0 range and DEL) are detected by code-point scan rather
@@ -32,7 +32,7 @@ export const REQUEST_ID_PATTERN = /^[A-Za-z0-9_.-]{1,79}$/;
 export const SESSION_ID_PATTERN = /^session_[0-9a-f]{1,128}$/;
 export const PURPOSE_PATTERN = /^[A-Za-z0-9_.-]{1,32}$/;
 // Printable ASCII only: space (0x20) through tilde (0x7E).
-export const GATEWAY_NAME_PATTERN = /^[\x20-\x7E]{1,64}$/;
+export const CLIENT_NAME_PATTERN = /^[\x20-\x7E]{1,64}$/;
 // Firmware identification code: exactly four decimal digits.
 export const IDENTIFICATION_CODE_PATTERN = /^[0-9]{4}$/;
 
@@ -109,8 +109,8 @@ export function isSessionId(value: unknown): value is string {
   return typeof value === "string" && SESSION_ID_PATTERN.test(value);
 }
 
-export function isGatewayName(value: unknown): value is string {
-  return typeof value === "string" && GATEWAY_NAME_PATTERN.test(value);
+export function isClientName(value: unknown): value is string {
+  return typeof value === "string" && CLIENT_NAME_PATTERN.test(value);
 }
 
 export function isValidPurpose(value: unknown): value is string {

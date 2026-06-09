@@ -5,6 +5,13 @@ import { runSuiSignCli } from "../dist/sui-sign-cli.js";
 
 const SIGNATURE = `${"A".repeat(130)}==`;
 const TX_BYTES = Buffer.from("test transaction").toString("base64");
+const ACCOUNT = {
+  chain: "sui",
+  address: "0x20696454da2cbed8151c9672d263a895c909d2c950e95507f552aa3cf062523c",
+  publicKey: Buffer.alloc(32, 1).toString("base64"),
+  keyScheme: "ed25519",
+  derivationPath: "m/44'/784'/0'/0'/0'",
+};
 
 function makeHarness(overrides = {}) {
   const calls = [];
@@ -21,7 +28,7 @@ function makeHarness(overrides = {}) {
     },
     async getAccounts() {
       calls.push("accounts");
-      return { source: "live", accounts: [{ address: "0x1" }] };
+      return { source: "live", accounts: [ACCOUNT] };
     },
     async signTransaction(input) {
       calls.push(["sign", input.txBytes]);
@@ -45,16 +52,23 @@ function makeHarness(overrides = {}) {
     async writeStderr(text) {
       stderr.push(text);
     },
+    async loadConfig() {
+      return { network: "testnet" };
+    },
+    async saveConfig(config) {
+      calls.push(["saveConfig", config]);
+    },
     ...overrides.dependencies,
   };
   return { calls, stdout, stderr, dependencies };
 }
 
-test("help describes an offline bridge without claiming external-signer compatibility", async () => {
+test("help describes the Sui CLI external signer", async () => {
   const harness = makeHarness();
   assert.equal(await runSuiSignCli(["--help"], harness.dependencies), 0);
-  assert.match(harness.stdout.join(""), /offline-signing bridge/);
-  assert.match(harness.stdout.join(""), /not the Sui CLI JSON-RPC external-signer protocol/);
+  assert.match(harness.stdout.join(""), /Sui CLI external signer/);
+  assert.match(harness.stdout.join(""), /private key stays on/);
+  assert.doesNotMatch(harness.stdout.join(""), /offline-signing bridge/);
   assert.deepEqual(harness.calls, []);
 });
 
@@ -63,6 +77,148 @@ test("invalid local arguments fail before connecting", async () => {
   assert.equal(await runSuiSignCli([], harness.dependencies), 1);
   assert.equal(harness.stdout.join(""), "");
   assert.equal(JSON.parse(harness.stderr.join("")).code, "invalid_params");
+  assert.deepEqual(harness.calls, []);
+});
+
+test("configure stores signer settings", async () => {
+  const harness = makeHarness();
+  assert.equal(
+    await runSuiSignCli(
+      ["configure", "--network", "testnet", "--device-id", "dev1", "--purpose", "Sui CLI"],
+      harness.dependencies,
+    ),
+    0,
+  );
+  assert.deepEqual(harness.calls, [
+    [
+      "saveConfig",
+      {
+        network: "testnet",
+        deviceId: "dev1",
+        purpose: "Sui CLI",
+      },
+    ],
+  ]);
+  assert.match(harness.stdout.join(""), /configured/);
+});
+
+test("Sui CLI call keys returns external signer key records", async () => {
+  const harness = makeHarness();
+  assert.equal(
+    await runSuiSignCli(
+      ["call"],
+      {
+        ...harness.dependencies,
+        async readStdin() {
+          return '{"jsonrpc":"2.0","method":"keys","params":null,"id":0}\n';
+        },
+      },
+    ),
+    0,
+  );
+  const response = JSON.parse(harness.stdout.join(""));
+  assert.equal(response.jsonrpc, "2.0");
+  assert.equal(response.id, 0);
+  assert.deepEqual(response.result.keys, [
+    {
+      key_id: ACCOUNT.derivationPath,
+      public_key: { Ed25519: ACCOUNT.publicKey },
+      sui_address: ACCOUNT.address,
+    },
+  ]);
+  assert.deepEqual(harness.calls, ["connect", "accounts", "disconnect"]);
+});
+
+test("Sui CLI call public_key returns one key", async () => {
+  const harness = makeHarness();
+  assert.equal(
+    await runSuiSignCli(
+      ["call"],
+      {
+        ...harness.dependencies,
+        async readStdin() {
+          return `{"jsonrpc":"2.0","method":"public_key","params":{"key_id":"${ACCOUNT.derivationPath}"},"id":1}\n`;
+        },
+      },
+    ),
+    0,
+  );
+  const response = JSON.parse(harness.stdout.join(""));
+  assert.deepEqual(response.result, {
+    key_id: ACCOUNT.derivationPath,
+    public_key: { Ed25519: ACCOUNT.publicKey },
+    sui_address: ACCOUNT.address,
+  });
+  assert.deepEqual(harness.calls, ["connect", "accounts", "disconnect"]);
+});
+
+test("Sui CLI call sign returns JSON-RPC signature and signs once", async () => {
+  const harness = makeHarness();
+  assert.equal(
+    await runSuiSignCli(
+      ["call"],
+      {
+        ...harness.dependencies,
+        async readStdin() {
+          return `{"jsonrpc":"2.0","method":"sign","params":{"key_id":"${ACCOUNT.derivationPath}","msg":"${TX_BYTES}"},"id":2}\n`;
+        },
+      },
+    ),
+    0,
+  );
+  const response = JSON.parse(harness.stdout.join(""));
+  assert.deepEqual(response.result, { signature: SIGNATURE });
+  assert.equal(harness.stderr.join(""), "");
+  assert.deepEqual(harness.calls, [
+    "connect",
+    "accounts",
+    ["sign", TX_BYTES],
+    "disconnect",
+  ]);
+});
+
+test("Sui CLI call sign requires configured network", async () => {
+  const harness = makeHarness({
+    dependencies: {
+      async loadConfig() {
+        return {};
+      },
+    },
+  });
+  assert.equal(
+    await runSuiSignCli(
+      ["call"],
+      {
+        ...harness.dependencies,
+        async readStdin() {
+          return `{"jsonrpc":"2.0","method":"sign","params":{"key_id":"${ACCOUNT.derivationPath}","msg":"${TX_BYTES}"},"id":3}\n`;
+        },
+      },
+    ),
+    1,
+  );
+  const response = JSON.parse(harness.stdout.join(""));
+  assert.equal(response.error.code, 1);
+  assert.match(response.error.message, /network is not configured/);
+  assert.deepEqual(harness.calls, []);
+});
+
+test("Sui CLI call create_key is explicitly unsupported", async () => {
+  const harness = makeHarness();
+  assert.equal(
+    await runSuiSignCli(
+      ["call"],
+      {
+        ...harness.dependencies,
+        async readStdin() {
+          return '{"jsonrpc":"2.0","method":"create_key","params":{},"id":4}\n';
+        },
+      },
+    ),
+    1,
+  );
+  const response = JSON.parse(harness.stdout.join(""));
+  assert.equal(response.error.code, -32601);
   assert.deepEqual(harness.calls, []);
 });
 

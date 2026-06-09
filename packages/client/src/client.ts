@@ -1,5 +1,5 @@
 import { ConfigStore } from "./config.js";
-import { GatewayCore } from "./core.js";
+import { AgentQHostCore } from "./core.js";
 import { SerialPortUsbDriver } from "./usb.js";
 import type {
   ConnectDeviceResult,
@@ -43,7 +43,7 @@ export interface DeviceClientCore {
   connectDevice(input?: {
     deviceId?: string;
     purpose?: string;
-    gatewayName?: string;
+    clientName?: string;
   }): Promise<ConnectDeviceResult>;
   disconnectDevice(input?: {
     deviceId?: string;
@@ -85,7 +85,7 @@ export interface DeviceClientCore {
   }): Promise<SignPersonalMessageResult>;
 }
 
-function deviceClientFromCore(core: GatewayCore): DeviceClientCore {
+function deviceClientFromCore(core: AgentQHostCore): DeviceClientCore {
   return {
     scanDevices: (input = {}) => core.scanDevices(input),
     identifyDevices: (input = {}) => core.identifyDevices(input),
@@ -103,5 +103,5 @@ function deviceClientFromCore(core: GatewayCore): DeviceClientCore {
 }
 
 export function createDefaultDeviceClientCore(): DeviceClientCore {
-  return deviceClientFromCore(new GatewayCore(new ConfigStore(), new SerialPortUsbDriver()));
+  return deviceClientFromCore(new AgentQHostCore(new ConfigStore(), new SerialPortUsbDriver()));
 }

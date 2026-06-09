@@ -41,7 +41,7 @@ import type {
   AgentQSuiWalletSignTransactionResult,
 } from "./wallet-standard.js";
 
-const DEFAULT_GATEWAY_NAME = "Agent-Q Sui dapp";
+const DEFAULT_CLIENT_NAME = "Agent-Q Sui dapp";
 
 // Web Serial cleanup (reader.cancel / port.close) can hang indefinitely when the
 // device physically disconnects or resets mid-request. Cap each cleanup step so a
@@ -61,7 +61,7 @@ type BrowserSerial = {
 };
 
 export interface AgentQSuiBrowserProviderOptions {
-  gatewayName?: string;
+  clientName?: string;
 }
 
 type BrowserSession = {
@@ -84,7 +84,7 @@ export class AgentQSuiBrowserProviderError extends Error {
 
 export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
   readonly #requestPort: () => Promise<BrowserSerialPort>;
-  readonly #gatewayName: string;
+  readonly #clientName: string;
   #port: BrowserSerialPort | null;
   #session: BrowserSession | null = null;
 
@@ -103,14 +103,14 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
   constructor(options: AgentQSuiBrowserProviderOptions = {}) {
     this.#port = null;
     this.#requestPort = defaultRequestPort();
-    this.#gatewayName = options.gatewayName ?? DEFAULT_GATEWAY_NAME;
+    this.#clientName = options.clientName ?? DEFAULT_CLIENT_NAME;
     this.#registerDisconnectListener();
   }
 
   async connectDevice(input: {
     deviceId?: string;
     purpose?: string;
-    gatewayName?: string;
+    clientName?: string;
   } = {}): Promise<unknown> {
     if (this.#session !== null && targetMatches(input.deviceId, this.#session.deviceId)) {
       try {
@@ -127,7 +127,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     let response: ConnectResponse;
     try {
       response = await this.#exchange(
-        makeConnectRequest(input.gatewayName ?? this.#gatewayName),
+        makeConnectRequest(input.clientName ?? this.#clientName),
         assertConnectResponse,
         INTERNAL_CONNECT_DEADLINE_MS,
       );
@@ -257,7 +257,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       const response = await this.#request(signRequest, assertSignResultResponse);
       return toLiveSignResult(session.deviceId, response);
     } catch (error) {
-      // W4: the request may have been signed but its response lost in transit. Recover
+      // W4: the request may have been signed but its response was lost in transit. Fetch
       // the buffered result by id before surfacing the error.
       const recovered = await this.#tryRecoverBufferedSignResult(session.sessionId, signRequest.id);
       if (recovered !== null) {
@@ -296,7 +296,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       const response = await this.#request(signRequest, assertSignResultResponse);
       return toLiveSignResult(session.deviceId, response);
     } catch (error) {
-      // W4: the request may have been signed but its response lost in transit. Recover
+      // W4: the request may have been signed but its response was lost in transit. Fetch
       // the buffered result by id before surfacing the error.
       const recovered = await this.#tryRecoverBufferedSignResult(session.sessionId, signRequest.id);
       if (recovered !== null) {
@@ -327,7 +327,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       // Best-effort release: now that we hold the result, tell the device to drop its
       // buffered copy. A separate serialized request, fire-and-forget — a failed ack
       // leaves cleanup to the device's LRU and session-clear, so it never turns a
-      // successful recovery into a failure.
+      // successful buffered-result fetch into a failure.
       void this.#request(makeAckResultRequest(sessionId, requestId), assertAckResultResponse).catch(() => undefined);
       return recovered;
     } catch {

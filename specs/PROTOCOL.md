@@ -1,6 +1,6 @@
 # Agent-Q Communication Protocol
 
-This document defines the communication contract between Agent-Q Gateway and
+This document defines the communication contract between Agent-Q and
 Agent-Q Firmware.
 
 The protocol is intentionally small. It is inspired by wallet capability
@@ -8,7 +8,7 @@ discovery patterns, but it does not copy a full wallet standard.
 
 ## Scope
 
-The protocol only needs enough structure for Gateway and Firmware to agree on:
+The protocol only needs enough structure for the host process and Firmware to agree on:
 
 - device discovery and selection
 - connection approval
@@ -24,7 +24,7 @@ creating separate product-level protocols.
 
 ## Roles
 
-Agent-Q Gateway:
+Agent-Q:
 
 - exposes MCP tools
 - sends protocol messages to Firmware
@@ -40,21 +40,21 @@ Agent-Q Firmware:
 - signs, rejects, or times out only request types implemented by the current
   target/runtime state
 
-The local Admin Page served by Gateway exists for read-only device metadata and
+The local Admin Page served by the host process exists for read-only device metadata and
 the current policy proposal template. Firmware-owned admin methods exist
-only where this protocol and a target implementation say so; Gateway/Admin
+only where this protocol and a target implementation say so; the host process and Admin
 clients submit requests, but Firmware remains the authority for validation,
 device-local approval, persistence, and failure state.
 
 ## Request Authority Model
 
-Protocol requests are not authority. Gateway, MCP, Admin Page, provider, dapp,
+Protocol requests are not authority. the host process, MCP, Admin Page, provider, dapp,
 and CLI callers can submit bounded input only. Firmware owns the state gates,
 policy evaluation, device-local approval, signing execution, persistence, and
 failure cleanup.
 
 `sign_transaction` is the current transaction-signing protocol request.
-Authorization is not selected by the request, Gateway, MCP, provider, Admin
+Authorization is not selected by the request, the host process, MCP, provider, Admin
 Page, dapp, or CLI caller. Firmware reads its device-local signing
 authorization mode and chooses one Firmware-owned signing gate:
 
@@ -137,7 +137,7 @@ Protocol error codes:
 - `invalid_id`
 - `request_id_conflict`
 - `invalid_code`
-- `invalid_gateway_name`
+- `invalid_client_name`
 - `invalid_session`
 - `invalid_state`
 - `invalid_method`
@@ -160,7 +160,7 @@ Protocol error codes:
 - `rng_error`
 - `account_error`
 
-Transport-layer errors are owned by Gateway and are not Firmware protocol
+Transport-layer errors are owned by the host process and are not Firmware protocol
 errors.
 
 ## Session Flow
@@ -190,13 +190,13 @@ Flow rules:
 
 - `get_status` can be called before a session exists.
 - `get_status` is the transport handshake used to identify Firmware candidates.
-- If multiple Firmware devices are connected, Gateway must not silently choose
-  one. Gateway should request Firmware devices to display short identification
+- If multiple Firmware devices are connected, the host process must not silently choose
+  one. the host process should request Firmware devices to display short identification
   codes, then use the user's selection to choose one active device.
-- Gateway may store the selected `deviceId` and transport hint locally.
-- A stored transport hint is not identity. Gateway must confirm identity with
+- The host process may store the selected `deviceId` and transport hint locally.
+- A stored transport hint is not identity. the host process must confirm identity with
   Firmware before treating a device as live.
-- `connect` establishes a session when Gateway does not already hold a valid
+- `connect` establishes a session when the host process does not already hold a valid
   runtime session for the device. A fresh Firmware `connect` request requires
   Firmware-owned human approval. Hardware targets may implement that approval
   as a physical Confirm action or as local PIN verification, according to the
@@ -208,16 +208,16 @@ Flow rules:
 - `disconnect` ends the session.
 - Firmware should reject session-scoped requests with an unknown or inactive
   `sessionId`.
-- When Gateway has an active runtime session and a session teardown or fresh
+- When the host process has an active runtime session and a session teardown or fresh
   connect attempt ends with `invalid_session`, `timeout`, `port_not_found`,
-  `port_in_use`, or `transport_closed`, Gateway must clear its local session
-  view. This does not prove Firmware observed disconnect; it prevents Gateway
+  `port_in_use`, or `transport_closed`, the host process must clear its local session
+  view. This does not prove Firmware observed disconnect; it prevents host process
   from keeping a session it can no longer confirm.
 
 Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
 `get_capabilities`, `get_accounts`, `policy_get`, `get_approval_history`,
 `policy_propose`, `sign_transaction`, `sign_personal_message`, explicit local
-Gateway device selection, and local Gateway caching of discovered devices. The
+host-process device selection, and local host process caching of discovered devices. The
 current signing runtime enforces state and session gates, keeps unknown methods
 rejected, recognizes bounded restricted SUI transfer request inputs for Sui
 `sign_transaction`, recognizes bounded Sui personal-message bytes for
@@ -232,12 +232,12 @@ current tree still depends on target implementation status and hardware evidence
 
 Provisioning and material reset transitions are not USB protocol requests in the
 current implementation. The StackChan CoreS3 target enters setup from its local
-unprovisioned setup UI and confirms or cancels the recovery phrase on the
+unprovisioned setup UI and confirms or cancels the backup phrase on the
 device. There is no implemented USB request for starting provisioning, canceling
-provisioning, confirming a recovery phrase backup, factory reset, or diagnostic
+provisioning, confirming a backup phrase, factory reset, or diagnostic
 display signaling.
 
-`connect` and `disconnect` are defined by the protocol and parsed by Gateway.
+`connect` and `disconnect` are defined by the protocol and parsed by host process.
 The current StackChan CoreS3 target accepts `connect` only after persistent root
 material, active policy, local PIN verifier, and a `provisioned` state exist.
 Its default human approval input mode is local PIN entry on the device. The
@@ -253,7 +253,7 @@ and `sign_personal_message` in user authorization mode. It does not apply to
 Change PIN, reset, provisioning, or recovery.
 
 `connect` and `disconnect` establish and end a runtime communication session
-between Gateway and Firmware. A connection session does not authorize signing,
+between the host process and Firmware. A connection session does not authorize signing,
 does not prove agent identity, and does not change Firmware policy.
 
 `get_capabilities` is implemented as a read-only, session-scoped capability
@@ -261,7 +261,7 @@ request that reports Sui account identity, no delegated public methods, and
 top-level `signing` availability. `signing.authorization` is Firmware-authored
 read-only runtime state that describes the current device-local signing
 authorization mode; it is not a request option, setter, or security decision
-made by Gateway, MCP, provider, Admin Page, dapp, or CLI callers.
+made by the host process, MCP, provider, Admin Page, dapp, or CLI callers.
 `get_accounts` is implemented as a read-only, session-scoped identity request
 for the Sui Ed25519 account at index 0 in the `provisioned` state.
 `policy_get` is implemented as a read-only, session-scoped readback of the
@@ -281,30 +281,30 @@ claims after changes to `policy_get`, `get_approval_history`, policy-mode
 
 ## Device Discovery And Selection
 
-Gateway discovers Firmware candidates by scanning supported transports and
-calling `get_status` only on likely candidates. Gateway must avoid blind writes
+the host process discovers Firmware candidates by scanning supported transports and
+calling `get_status` only on likely candidates. the host process must avoid blind writes
 to unrelated ports or devices.
 
 USB discovery writes a `get_status` handshake only to candidate serial ports
 selected from currently observed USB metadata. A stored port path is only a
 hint; it must be rechecked against current port metadata before any write.
 
-Gateway must not silently change the active device after discovery. Even when
-one Firmware candidate is found, Gateway should request the device to show an
+the host process must not silently change the active device after discovery. Even when
+one Firmware candidate is found, the host process should request the device to show an
 identification code before saving it as the active device. If more than one
-Firmware candidate is found, Gateway must require explicit user selection before
+Firmware candidate is found, the host process must require explicit user selection before
 changing the active device.
 
 The intended multi-device selection flow is:
 
 ```text
 user asks to find devices
-  -> Gateway scans transport candidates
-  -> Gateway calls get_status on likely candidates
-  -> Gateway requests temporary identification display on candidate devices
+  -> the host process scans transport candidates
+  -> the host process calls get_status on likely candidates
+  -> the host process requests temporary identification display on candidate devices
   -> Firmware devices show short codes
   -> user chooses one code
-  -> Gateway stores the selected deviceId and transport hint
+  -> the host process stores the selected deviceId and transport hint
 ```
 
 Identification display is temporary UI. Firmware must return to the previous
@@ -312,7 +312,7 @@ device state after showing the code.
 
 ## Status
 
-Gateway can request whether Firmware is available and what status Firmware reports.
+the host process can request whether Firmware is available and what status Firmware reports.
 
 Read-only status requests must not show physical approval UI.
 
@@ -379,7 +379,7 @@ Provisioning states:
 
 `provisioning.state` reports only the Firmware's provisioning state. It is not
 signing readiness, it does not prove that signing APIs exist, and it does not
-authorize Gateway to make policy decisions. Gateway must preserve and
+authorize host process to make policy decisions. the host process must preserve and
 display the value without treating it as authority.
 
 The current StackChan CoreS3 target persists `unprovisioned` and `provisioned`
@@ -389,11 +389,11 @@ material blob, a committed active policy record, the local PIN verifier, and
 the signing authorization mode all exist. The current product flow installs the
 default-reject policy. It does not
 use `locked` because no unlock model is
-implemented. Source-level DEV_PROFILE recovery phrase display, device-local
-mnemonic recovery entry, persistent root material, active policy storage, local
+implemented. Source-level DEV_PROFILE backup phrase display, device-local
+mnemonic import entry, persistent root material, active policy storage, local
 PIN verifier storage, signing authorization mode storage, local reset, and
 read-only `get_accounts` Sui account derivation are implemented.
-USB/Gateway/MCP mnemonic import is not implemented.
+USB, host process, or MCP mnemonic import is not implemented.
 Policy updates are available only through the Firmware-owned
 `policy_propose` proposal flow for current-schema reject policies and at
 most one single-recipient bounded sign rule.
@@ -404,12 +404,12 @@ Firmware must fail closed instead of reporting normal `provisioned`. Existing
 DEV_PROFILE devices without the current local PIN verifier or signing
 authorization mode fail closed until reprovisioned.
 
-Device metadata strings are untrusted input and Gateway bounds them when
+Device metadata strings are untrusted input and host process bounds them when
 parsing a response:
 
 - `deviceId`: a safe identifier of `[A-Za-z0-9_.-]`, 1-128 characters. A
   response whose `deviceId` is outside this set is rejected as malformed.
-- `firmwareName`, `hardware`, `firmwareVersion`: display strings. Gateway keeps
+- `firmwareName`, `hardware`, `firmwareVersion`: display strings. The host process keeps
   printable ASCII only and caps length (64, 64, and 32 characters), dropping
   control characters and newlines. These are display values, not a trust
   signal, so they are sanitized rather than rejected.
@@ -417,28 +417,28 @@ parsing a response:
 ## Local Provisioning And Reset Boundary
 
 Provisioning setup and destructive material reset are device-local UX flows in
-the current protocol. Gateway can observe the resulting state through
-`get_status`, but it cannot trigger setup, cancellation, recovery phrase backup
-confirmation, mnemonic import/recovery, factory reset, or diagnostic display
+the current protocol. the host process can observe the resulting state through
+`get_status`, but it cannot trigger setup, cancellation, backup phrase
+confirmation, mnemonic import, factory reset, or diagnostic display
 approval by sending a USB request.
 
 The StackChan CoreS3 target enters setup from the local unprovisioned setup
-speech bubble and then shows a local Generate/Recover choice. Generate creates
-a 12-word BIP-39 recovery phrase in RAM, displays up-to-4-letter word prefixes
+speech bubble and then shows a local Generate/Import choice. Generate creates
+a 12-word BIP-39 backup phrase in RAM, displays up-to-4-letter word prefixes
 on the device in a 3-column by 4-row grid, and exposes only local Cancel and
-Confirm controls on the recovery phrase panel. Three-letter BIP-39 words are
+Confirm controls on the backup phrase panel. Three-letter BIP-39 words are
 displayed as the full word.
 
 Firmware owns the volatile setup scratch substate, separate from
 persistent `provisioning.state`, session state, display power state, and LVGL
 object lifetime. The current substates are:
 
-- `none`: no generated recovery phrase is valid in RAM.
+- `none`: no generated backup phrase is valid in RAM.
 - `setup_choice`: local setup mode selection is active; no root material is
   valid yet.
-- `recovery_phrase_displayed`: root entropy and recovery phrase scratch exist
-  in RAM and the device recovery phrase panel is active.
-- `recover_word_entry`: local mnemonic recovery word-entry scratch exists in
+- `backup_phrase_displayed`: root entropy and backup phrase scratch exist
+  in RAM and the device backup phrase panel is active.
+- `import_word_entry`: local mnemonic import word-entry scratch exists in
   RAM; the device shows three word-entry cells per page, local A-Z prefix
   buttons, and scrollable BIP-39 candidate bubbles. No persistent material is
   stored in this state.
@@ -453,7 +453,7 @@ object lifetime. The current substates are:
   further local input is ignored.
 
 The UI panel is an output of this substate machine, not the source of truth. If
-the recovery phrase or PIN panel is removed, replaced, expires, is canceled, or
+the backup phrase or PIN panel is removed, replaced, expires, is canceled, or
 fails to store material, Firmware wipes the volatile setup scratch and returns
 the scratch substate to `none`. Screen/backlight sleep does not by itself change
 the security state; Agent-Q UI wakes the display before showing setup material
@@ -462,7 +462,7 @@ or approval UI.
 Local Confirm is the only implemented backup confirmation transition for the
 Generate path. It stores no persistent material by itself; it advances the
 scratch state to local 6-digit PIN entry and wipes phrase text/prefix scratch.
-The Recover path accepts mnemonic input only through the device-local word-entry
+The Import path accepts mnemonic input only through the device-local word-entry
 UI: three word cells per page, A-Z prefix buttons, and on-device candidate
 selection. After 12 selected BIP-39 words pass checksum validation, Firmware
 reconstructs root entropy in RAM and enters the same local PIN setup state as
@@ -474,8 +474,9 @@ material where possible, wipes volatile scratch, and must not report
 `provisioned`. Local Cancel wipes volatile scratch and leaves persistent state
 `unprovisioned`.
 
-Gateway must not receive the generated phrase, displayed prefixes, recovered
-words, entropy, seed, private key, account data, policy data, or import text.
+The host process must not receive the generated phrase, displayed prefixes,
+imported words, entropy, seed, private key, account data, policy data, or import
+text.
 BIP-39 English word prefixes of up to four letters identify the words and must
 be treated as secret material.
 
@@ -492,16 +493,16 @@ authentication lockout is target-local state, not a protocol state, and must not
 create a host-triggered recovery path. A target may offer a device-local,
 PIN-less, destructive erase-only recovery from material/state consistency
 `error` when the PIN verifier may be unreadable, but that path still must not be
-exposed as a USB/Gateway/MCP request and must not read, export, repair, or
+exposed as a USB, host process, and MCP request and must not read, export, repair, or
 unlock stored material.
 
 ## Identify Device
 
-Gateway can request Firmware to show a short temporary identification code. This is
+the host process can request Firmware to show a short temporary identification code. This is
 used for selecting the intended device after discovery. It is not signing
 approval.
 
-`identify_device` may be used for one candidate or many candidates. Gateway must
+`identify_device` may be used for one candidate or many candidates. the host process must
 not save an active device until the user has selected one of the displayed
 codes.
 
@@ -539,7 +540,7 @@ Response:
 
 Identification codes are four decimal digits. Identification display duration is
 Firmware-owned temporary UI with a fixed internal `30000` millisecond window; it
-is not a request parameter. Gateway may stop waiting before the device clears
+is not a request parameter. the host process may stop waiting before the device clears
 the temporary layer; there is no cancel message.
 
 Identification display is temporary UI. Firmware must return to the previous
@@ -548,7 +549,7 @@ temporary layer.
 
 ## Connect
 
-When Gateway has no valid in-memory runtime session for a live device, it opens
+When the host process has no valid in-memory runtime session for a live device, it opens
 a communication session by sending `connect`. A Firmware `connect` request
 requires Firmware-owned device-local approval every time it is sent. Connect is
 not signing approval and does not authorize signing.
@@ -561,7 +562,7 @@ Request:
   "version": 1,
   "type": "connect",
   "params": {
-    "gatewayName": "Agent-Q Gateway"
+    "clientName": "Agent-Q"
   }
 }
 ```
@@ -570,14 +571,14 @@ Request rules:
 
 - `connect` is valid only after Firmware reports `provisioned` from stored root
   material.
-- `gatewayName` is a Gateway-supplied display label. It is not a security
+- `clientName` is a host-process-supplied display label. It is not a security
   boundary and Firmware must not treat it as proof that the requester is
   trusted.
-- `gatewayName` is required, 1-64 characters of printable ASCII.
+- `clientName` is required, 1-64 characters of printable ASCII.
 - Firmware owns fixed internal `30000` millisecond physical-input windows for
   local approval/PIN entry. The host cannot set or negotiate them through the
   protocol.
-- Gateway transport waits for `connect` are internally fixed and include a
+- Host-side transport waits for `connect` are internally fixed and include a
   non-configurable budget for Firmware PIN retry/lockout handling plus a
   transport margin. This is not a request field and callers cannot set or
   negotiate it.
@@ -630,11 +631,11 @@ Connect rules:
 
 - Establishing a session requires Firmware-owned device-local approval every
   time a Firmware `connect` request is sent. Firmware does not remember a
-  previously approved Gateway.
-- `connect_device` may reuse a Gateway RAM-held session only after contacting
+  previously approved host process.
+- `connect_device` may reuse a host process RAM-held session only after contacting
   Firmware with a session-scoped read-only request and receiving a response that
   proves the current `sessionId` is still valid. If validation fails with
-  `invalid_session`, Gateway must clear its local session and send a fresh
+  `invalid_session`, the host process must clear its local session and send a fresh
   Firmware `connect` request, which requires device-local approval.
 - Firmware remains the only authority that can issue a fresh `sessionId`. A
   direct USB `connect` request must not return an existing session id without
@@ -645,7 +646,7 @@ Connect rules:
   local PIN entry; `confirm` means review page with a physical Confirm action.
   Missing setting means the secure default, `pin`. Invalid stored values fail
   closed to `pin` and are logged. The setting is device-local; there is no USB,
-  Gateway, or MCP request for changing it.
+  host process, or MCP request for changing it.
 - When the human approval input mode is `pin`, successful device-local PIN entry
   is the connect approval. Firmware must not add a second Confirm step after
   PIN success. Wrong PIN attempts are rate-limited as device-local touch
@@ -677,36 +678,36 @@ Connect rules:
 - `sessionId` must be derived from device RNG. It must not be derived from MAC
   address, USB serial number, `deviceId`, account public key, or signing key.
 - `sessionTtlMs` is Firmware-owned wire metadata. `sessionTtlMs` is a uint32
-  millisecond value; Gateway treats a `connect_result` whose `sessionTtlMs` is
+  millisecond value; the host process treats a `connect_result` whose `sessionTtlMs` is
   not a positive integer within the uint32 range (`1`..`4294967295`) as a
   malformed response. A target whose sessions are bound to the physical USB link
   may advertise the maximum value to avoid implying a shorter time-based
   reapproval deadline.
 - Approving a new connect replaces any previously active Firmware session.
-- A Gateway runtime session is held in memory only. Gateway must not persist
+- A host runtime session is held in memory only. the host process must not persist
   `sessionId` to disk. `sessionId` is a Firmware-issued token kept internal to
-  Gateway; Gateway must not return it to untrusted MCP clients.
-- When Gateway already has an in-memory runtime session for a live device,
+  host process; the host process must not return it to untrusted MCP clients.
+- When host process already has an in-memory runtime session for a live device,
   `connect_device` must validate that session with a session-scoped read-only
   request and return the existing connection if validation succeeds. It must not
   send a fresh Firmware `connect` request solely because the caller invoked
   `connect_device` again.
-- Gateway restart and explicit disconnect end Gateway's view of the session;
-  Firmware reboot ends the session on the device. Gateway restart clears only
-  Gateway's in-memory record. Firmware cannot observe a Gateway restart and
+- host process restart and explicit disconnect end the host process's view of the session;
+  Firmware reboot ends the session on the device. Host process restart clears only
+  the host process's in-memory record. Firmware cannot observe a host process restart and
   keeps its active session until target policy clears it, such as on USB link
   loss, reboot, explicit disconnect, persistent-material error cleanup, or
   replacement by a new approved connect.
 - Firmware targets may clear an active session earlier when the transport link
   is lost. On StackChan CoreS3, USB connected means USB host SOF is observed by
-  `usb_serial_jtag_is_connected()`. It does not prove Gateway is running or that
+  `usb_serial_jtag_is_connected()`. It does not prove The host process is running or that
   the serial port is open. Cable removal, host suspend, or SOF loss can clear
   the Firmware RAM session by policy.
-- Gateway's local session cache is a RAM-only mirror, not authority. Gateway
+- The host process's local session cache is a RAM-only mirror, not authority. The host process
   must clear it when Firmware rejects the session or when the transport can no
   longer be confirmed. A successful live USB scan that no longer observes the
-  device is enough evidence to clear Gateway's RAM mirror for that device.
-  Gateway must not use local time alone to force reapproval while the Firmware
+  device is enough evidence to clear the host process's RAM mirror for that device.
+  the host process must not use local time alone to force reapproval while the Firmware
   session remains valid.
 - Firmware should return `busy` for UI-affecting or session-changing requests
   (including `connect` and `disconnect`) while an approval UI, device-only setup
@@ -718,9 +719,9 @@ Connect rules:
 
 ## Disconnect
 
-Gateway can disconnect and end the active session.
+the host process can disconnect and end the active session.
 
-After disconnect, Gateway must call `connect` again before calling
+After disconnect, the host process must call `connect` again before calling
 session-scoped requests.
 
 Request:
@@ -766,7 +767,7 @@ Response:
 
 ## Capabilities
 
-Gateway can request which chains and methods Firmware supports.
+the host process can request which chains and methods Firmware supports.
 
 Request:
 
@@ -835,17 +836,17 @@ Rules:
 - A non-empty `methods` list is a Firmware-authored availability claim. Firmware
   must advertise only delegated non-signing methods that have a connected
   runtime implementation, result schema, required approval behavior, required
-  history behavior, Gateway parser/output support, MCP output support, and
+  history behavior, host parser/output support, MCP output support, and
   provider support for the same method boundary. Signing availability must use
   top-level `signing`.
-- Gateway, MCP, provider-sui, and UI consumers may use
+- the host process, MCP, provider-sui, and UI consumers may use
   `signing.authorization` only to describe expected behavior. The security
   decision is the Firmware-authored `sign_result` and its recorded
   authorization.
-- Gateway validates the response strictly, rejects unknown chains, unsupported
+- The host process validates the response strictly, rejects unknown chains, unsupported
   account schemes or derivation paths, unknown method lists, unknown signing
   availability entries,
-  secret-like fields, and any unexpected `sessionId` in the response. Gateway
+  secret-like fields, and any unexpected `sessionId` in the response. The host process
   does not infer or add capabilities.
 
 ## Accounts
@@ -899,16 +900,16 @@ Rules:
   returns `invalid_session`.
 - Account derivation runs in Firmware on demand and wipes all intermediate secret
   material. A derivation failure returns `account_error` with no partial account.
-- Gateway parses and re-validates the account shape, rejects any response that
+- The host process parses and re-validates the account shape, rejects any response that
   carries a secret-like field, and recomputes the Sui Ed25519 address from
   `publicKey` to reject mismatched public identities. Firmware still owns account
-  derivation; Gateway validation is consistency checking, not signing authority.
-  The Gateway MCP `get_accounts` tool never exposes the session id.
+  derivation; host-process validation is consistency checking, not signing authority.
+  The host process MCP `get_accounts` tool never exposes the session id.
 - The current StackChan CoreS3 target implements the Sui Ed25519 account at index
-  0 (`m/44'/784'/0'/0'/0'`) and returns exactly one `accounts[]` entry. Gateway
+  0 (`m/44'/784'/0'/0'/0'`) and returns exactly one `accounts[]` entry. The host process
   rejects any other account count for this target. Additional chains and accounts
   are added as more `accounts[]` entries only after the protocol, capability
-  response, and Gateway bounds are updated. StackChan CoreS3 hardware smoke
+  response, and host process bounds are updated. StackChan CoreS3 hardware smoke
   verifies the current single-account response over an approved session.
   `get_accounts` reads identity only. Current delegated public method
   availability is reported by `get_capabilities.chains[].methods`.
@@ -970,9 +971,9 @@ Rules:
 - `ruleCount` must match `rules.length`. Each rule is bounded by the current
   policy schema: `id`, `chain`, `method`, `action`, and `criteria[]`; each
   criterion contains `field`, `op`, and either `value` or `values`.
-- Gateway validates the response strictly, rejects secret-like fields and any
+- The host process validates the response strictly, rejects secret-like fields and any
   unexpected `sessionId`, and does not evaluate policy.
-- The Gateway MCP `policy_get` tool never exposes the session id.
+- The host process MCP `policy_get` tool never exposes the session id.
 
 ## Approval History
 
@@ -1066,17 +1067,17 @@ Rules:
   corresponding terminal result is reported or fail closed through the defined
   error path.
 - History records must not store or return raw `txBytes`, full decoded
-  transactions, session ids, raw request ids, gateway names, mnemonic text,
+  transactions, session ids, raw request ids, client names, mnemonic text,
   seed, private key material, PINs, or complete policy documents.
-- Gateway validates the response strictly, rejects secret-like fields and any
+- The host process validates the response strictly, rejects secret-like fields and any
   unexpected `sessionId`, preserves protocol integers as strings, and does not
   evaluate policy or signing safety.
-- The Gateway MCP `get_approval_history` tool never exposes the session id.
+- The host process MCP `get_approval_history` tool never exposes the session id.
 
 ## Shared Signing Route And Validation Order
 
 Signing uses shared top-level request types rather than chain-specific product
-APIs. Firmware and Gateway independently classify the bounded
+APIs. Firmware and host process independently classify the bounded
 `(type, chain, method)` route:
 
 - chain identifiers use `[a-z][a-z0-9_.-]*` and are at most 32 characters;
@@ -1133,7 +1134,7 @@ session end, or reset, `get_result` returns `unknown_request` and a same-id
 signing submission is evaluated as a normal new request through the current
 route, state/session, parameter, adapter, and authorization gates.
 
-Common Client, Gateway, MCP, and CLI request validation owns canonical base64
+Common Client, the host process, MCP, and CLI request validation owns canonical base64
 syntax and the chain-independent transport/frame bound. It must not reject a
 request using the current Sui adapter's decoded-payload capacity. Firmware's
 selected Sui adapter owns base64 decoding, its current implementation capacity,
@@ -1196,7 +1197,7 @@ Rules for the first implementation:
   `unsupported_payload_size`; malformed decoded bytes return
   `malformed_transaction`; a decoded but unsupported transaction shape returns
   `unsupported_transaction`. These are adapter outcomes, not common
-  Client/Gateway/MCP/CLI request-format limits.
+  Client, host process, MCP, and CLI request-format limits.
 - Firmware must derive the signing account from stored device material, and
   the parsed sender and gas owner must both match that device-derived account.
   Sponsored gas and request-supplied expected-signer bindings are unsupported
@@ -1291,7 +1292,7 @@ Rules for the first implementation:
   that fits the shared transport/frame bound. The current Sui Firmware adapter
   has a 256-byte decoded personal-message implementation capacity. Capacity
   overflow returns `unsupported_payload_size`; this is an adapter outcome, not
-  a common Client/Gateway/MCP/CLI request-format limit.
+  a common Client, host process, MCP, and CLI request-format limit.
 - `params.network` is required and must be one of `mainnet`, `testnet`,
   `devnet`, or `localnet`. Current Sui personal-message bytes do not carry
   network identity, so Firmware validates this only as request context and does
@@ -1428,13 +1429,13 @@ canonical base64 syntax.
 ## Response Delivery And Provider Boundary
 
 - Firmware signature generation, terminal history persistence, USB response
-  delivery, Gateway receipt, provider return, and application use of a
+  delivery, host receipt, provider return, and application use of a
   signature are separate events.
 - `sign_result.status: "signing_failed"` means the authorization source
   approved signing but Firmware could not produce a signature. It is not a
   response-delivery failure status.
 - `signing_failed` is terminal-idempotent for the signing request id. If the
-  retained result is recovered with the same `(session, request id)` and the
+  retained result is imported with the same `(session, request id)` and the
   same signing-request identity, Firmware must replay the stored
   `signing_failed` result instead of attempting to sign again. A caller that
   wants a new signing attempt after `signing_failed` must submit a fresh
@@ -1447,7 +1448,7 @@ canonical base64 syntax.
   `get_approval_history` read must not be treated as signed terminal proof
   unless the signed terminal record exists.
 - If Firmware generates a signature and records a durable `signed` terminal
-  record, then response delivery fails before Gateway receives the response, the
+  record, then response delivery fails before the host process receives the response, the
   caller-facing result is a transport or protocol failure. That failure must
   not be reported as `user_rejected`, `user_timed_out`, `policy_rejected`, or
   `signing_failed`, and it must not claim that Firmware did not generate a
@@ -1482,7 +1483,7 @@ canonical base64 syntax.
   discriminated results for Firmware-authored terminal `sign_result` statuses.
   Device rejection, device timeout, policy rejection, and signing failure are
   product outcomes, not provider or MCP exceptions. Adapter promise rejection is
-  reserved for local adapter/programmer errors; Gateway or transport failures
+  reserved for local adapter/programmer errors; host process or transport failures
   use the same structured public-error style as the current methods.
 - Provider-sui must not expose Admin, policy proposal, active policy reads,
   approval-history reads, or a host-selected policy-signing API. MCP/Admin
@@ -1505,14 +1506,14 @@ Approval-history contract:
   store raw `txBytes`, decoded transaction internals, session ids, raw request
   ids, PINs, seed, mnemonic, private key material, or full UI text.
 - A durable `signed` terminal record means Firmware generated a signature after
-  device confirmation or policy authorization. It does not prove Gateway
+  device confirmation or policy authorization. It does not prove host process
   received the signature.
 - If a required confirmation history write fails before signing, Firmware must
   return top-level `history_error` and must not call the signing service.
 
 ## Policy Update Proposal
 
-Admin is a Gateway capability, not a separate product protocol. The current
+Admin is a host process capability, not a separate product protocol. The current
 policy-write path is the top-level `policy_propose` request. It is not a
 signing method, it must not use `chain` or `method`, and it must not route
 through `sign_transaction`.
@@ -1520,15 +1521,15 @@ through `sign_transaction`.
 ### `policy_propose`
 
 `policy_propose` is a policy-write proposal request. StackChan CoreS3
-Firmware and Gateway/MCP implement the first supported path: a session-scoped
+Firmware, host process, and MCP implement the first supported path: a session-scoped
 proposal is validated by Firmware, shown on device as a policy-update summary
 review, advanced to local PIN approval only after device-local Continue,
 committed through the canonical active-policy store, and reported as
-`policy_propose_result`. The Gateway-served local Admin Page can submit the
+`policy_propose_result`. The local Admin Page can submit the
 current policy proposal template; full policy editing is not implemented.
 MCP/API callers can submit bounded current-schema policy proposals.
 
-The method is a proposal, not a setter. Gateway or Admin may submit a bounded
+The method is a proposal, not a setter. The host process or Admin may submit a bounded
 policy document, but Firmware remains the authority that validates the document,
 shows device-local approval, commits the active policy, and reports the result.
 The pending proposal remains bound to the same active `sessionId` until the
@@ -1614,7 +1615,7 @@ Policy document rules for the first version:
   are rejected.
 - `u64_decimal` values must be canonical unsigned decimal strings in the
   `uint64` range.
-- No policy may depend on Gateway labels, purpose routing, gateway name, raw
+- No policy may depend on client labels, purpose routing, client name, raw
   request id, session id, external market data, network fetches, JavaScript,
   Rego, CEL, JSONPath, arbitrary code execution, or a Sui host-supplied network
   label. Other chains may expose chain-specific transaction-bound network facts
@@ -1767,5 +1768,5 @@ Policy update history:
 - History records may include sequence, uptime, event kind, result, policy
   hash/id, rule count, highest-risk action, and reason code.
 - History records must not store raw policy documents, full rule content,
-  session ids, request ids, gateway names, PINs, mnemonic text, seed, or private
+  session ids, request ids, client names, PINs, mnemonic text, seed, or private
   key material.

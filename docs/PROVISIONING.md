@@ -17,7 +17,7 @@ create, import, export, display, or reset signing material.
 ## Security Rules
 
 - Firmware owns signing material.
-- Gateway must not store mnemonics, seeds, private keys, or imported signing
+- The host process must not store mnemonics, seeds, private keys, or imported signing
   material.
 - MCP clients must not receive mnemonics, seeds, private keys, or imported
   signing material.
@@ -73,7 +73,7 @@ Rules:
 
 ### Import Existing Mnemonic
 
-Device-local recovery path:
+Device-local import path:
 
 ```text
 user provides mnemonic
@@ -86,7 +86,7 @@ user provides mnemonic
 ```
 
 Direct device input is preferred when hardware supports it. The current
-StackChan CoreS3 DEV_PROFILE source implements device-local Recover. Host-assisted
+StackChan CoreS3 DEV_PROFILE source implements device-local Import. Host-assisted
 input is not implemented and would be weaker because the host sees the root
 secret; if added later, it must be labeled as weaker.
 
@@ -101,11 +101,11 @@ Provisioning UX depends on hardware:
   weaker assisted flow or external secure setup tooling.
 
 StackChan CoreS3 has display and touch hardware. Source-level DEV_PROFILE
-recovery phrase generation, backup confirmation, persistent root storage, and
+backup phrase generation, backup confirmation, persistent root storage, and
 read-only `get_accounts` Sui account derivation are implemented. The current
 setup source also records a DEV_PROFILE local PIN verifier before reporting
 `provisioned`, and initializes device-local signing authorization mode to
-`user`. Source/build tests cover the provisioned Gateway/MCP session path
+`user`. Source/build tests cover the provisioned host process and MCP session path
 through `get_accounts`, policy-decision rejection, restricted SUI transfer
 request validation, the current `sign_transaction` policy/user gate split, and
 the user-mode `sign_personal_message` source path.
@@ -114,7 +114,7 @@ Targeted hardware verification remains required after setup UI or state changes.
 Source-level local settings
 reset/material wipe now exists for provisioned StackChan CoreS3 devices, with
 hardware smoke coverage for local reset.
-Device-local Recover is implemented for DEV_PROFILE. USB/Gateway/MCP mnemonic
+Device-local Import is implemented for DEV_PROFILE. USB, host process, and MCP mnemonic
 import, host-assisted import, and arbitrary transaction signing are not
 implemented. Automatic signing outside the bounded policy-authorized
 `sign_transaction` path is not implemented.
@@ -132,7 +132,7 @@ Initial target chains:
 
 Rules:
 
-- Gateway must not derive private keys.
+- The host process must not derive private keys.
 - Firmware returns public key/address data through `get_accounts`.
 - The current Sign API source paths have `source-wired-not-product-active`
   status for the bounded Sui `sign_transaction` transfer shape and user-mode
@@ -184,7 +184,7 @@ The current Sign API source paths exist for bounded Sui `sign_transaction`
 transaction bytes and user-mode `sign_personal_message` personal-message bytes,
 but product-active claims still depend on the target evidence tracked in
 `docs/IMPLEMENTATION_STATUS.md`.
-Current StackChan CoreS3 source can generate a BIP-39 recovery
+Current StackChan CoreS3 source can generate a BIP-39 backup
 phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
 3-column by 4-row grid, and wipe scratch on confirm, cancel, timeout, failure,
 or display expiry. Three-letter BIP-39 words are displayed as the full word.
@@ -210,53 +210,53 @@ stateDiagram-v2
 ```
 
 The current runtime does not expose USB requests for provisioning start,
-provisioning cancel, recovery phrase backup confirmation, mnemonic import,
+provisioning cancel, backup phrase confirmation, mnemonic import,
 factory reset, or diagnostic display signaling. These transitions are
 device-local UX only.
 
-## Device-Local Recovery Phrase Setup
+## Device-Local Backup And Import Setup
 
 Current StackChan CoreS3 source enters setup only through the local setup speech
 bubble shown while the device is `unprovisioned`. The first local setup panel
-offers `Generate` and `Recover`. Gateway/MCP cannot start, cancel, confirm, or
+offers `Generate` and `Import`. The host process and MCP cannot start, cancel, confirm, or
 import this setup flow through USB protocol messages.
 
 Local setup generates 128-bit BIP-39 root entropy from an Agent-Q CSPRNG seeded
 from early boot entropy before HAL initialization, then uses BIP-39 checksum
-logic to render a 12-word recovery phrase. Firmware keeps the root entropy and
+logic to render a 12-word backup phrase. Firmware keeps the root entropy and
 phrase only in RAM until backup confirmation and displays only the
 up-to-4-letter word prefixes on the device. Three-letter BIP-39 words are
 displayed as the full word. The prefixes are shown as 12 numbered cells in 3
 columns by 4 rows so they fit on one StackChan CoreS3 screen. BIP-39 English
-word prefixes identify the words and are secret material; Gateway never
+word prefixes identify the words and are secret material; the host process never
 receives them. No protocol response carries the phrase, prefixes, entropy,
 seed, private key, account data, or policy data.
 
 Firmware tracks the volatile setup flow with explicit RAM scratch substates:
-`none`, `setup_choice`, `recovery_phrase_displayed`, `recover_word_entry`,
+`none`, `setup_choice`, `backup_phrase_displayed`, `import_word_entry`,
 `pin_first_entry`, `pin_repeat_entry`, and `pin_committing`. This substate is
 separate from the persistent
 `provisioning.state`, session state, display power state, and LVGL panel state.
 The UI is not the source of truth; panel deletion or replacement is treated as
 an event that must wipe or invalidate the current setup scratch.
 
-In the local recovery path, the device shows three word-entry cells per page for
+In the local import path, the device shows three word-entry cells per page for
 four pages. The cells use the same numbered, bordered visual style as the
 generated mnemonic prefix grid. The user selects a word cell, enters a
 lowercase BIP-39 prefix through device-local A-Z buttons, then selects a
-matching BIP-39 word from the scrollable on-device candidate bubbles. Recovery
+matching BIP-39 word from the scrollable on-device candidate bubbles. Import
 word input is secret scratch owned by Firmware. `Next` is available only after
 all three words on the page are selected. After all 12 words are selected,
 Firmware reconstructs the 128-bit BIP-39 entropy and verifies the checksum.
-Checksum failure stores nothing and keeps the user in local recovery entry;
-Cancel, timeout, panel deletion, or display allocation failure wipes recovery
+Checksum failure stores nothing and keeps the user in local import entry;
+Cancel, timeout, panel deletion, or display allocation failure wipes import
 word scratch and leaves persistent state `unprovisioned`.
 
 Backup confirmation is accepted only after a generated phrase has been
 displayed. The device-local Confirm button does not store material by itself.
 It advances the RAM scratch state to local PIN setup, wipes phrase text/prefix
 scratch, and requires the user to enter and repeat a 6-digit numeric PIN on the
-device. The recovery path reaches the same PIN setup state only after 12
+device. The import path reaches the same PIN setup state only after 12
 selected BIP-39 words pass checksum validation. If the two PIN entries mismatch,
 Firmware wipes only typed PIN scratch and returns to the first PIN entry while
 retaining the root entropy scratch. If PIN setup is canceled, times out, or
@@ -273,7 +273,7 @@ being persisted. If root material, policy, PIN verifier, or state persistence
 fails, Firmware rolls back persistent setup material where possible, wipes
 volatile scratch, and must not report `provisioned`.
 
-The recovery phrase is backup-ready only while its recovery phrase setup panel
+The backup phrase is backup-ready only while its backup phrase setup panel
 is still active and not expired. If that panel is removed or replaced, Firmware
 wipes or invalidates the volatile phrase so a later backup confirmation cannot
 confirm material whose setup UI is gone. Display power state is not part of
@@ -290,7 +290,7 @@ failure removes the panel, Firmware must wipe scratch and the user must start
 the local setup flow again.
 
 This DEV_PROFILE provisioning flow provides read-only `get_accounts`,
-device-local mnemonic recovery, and the source signing paths described in the
+device-local mnemonic import, and the source signing paths described in the
 implementation status, but it remains separate from USER_PROFILE secure
 provisioning. Current-schema policy updates are a separate provisioned-state
 proposal flow, not part of provisioning. USER_PROFILE signing
@@ -317,7 +317,7 @@ The same destructive wipe machinery is also used by the StackChan CoreS3
 device-local error-state erase recovery. That path is PIN-less because the
 stored PIN verifier may be unreadable, but it still requires on-device
 destructive confirmation, cannot read or export material, and is not exposed as
-a USB/Gateway/MCP recovery request.
+a USB, host process, or MCP import request.
 
 ## Implementation Order
 
@@ -325,18 +325,18 @@ Provisioning-specific sequence:
 
 1. Report whether a device is provisioned.
 2. Add device-local setup entry that still stores no persistent assets.
-3. Add DEV_PROFILE BIP-39 recovery phrase display with volatile wipe and no
+3. Add DEV_PROFILE BIP-39 backup phrase display with volatile wipe and no
    host exposure.
-4. Add DEV_PROFILE device-local mnemonic recovery entry with checksum
+4. Add DEV_PROFILE device-local mnemonic import entry with checksum
    validation.
 5. Add DEV_PROFILE persistent root material, active policy, local PIN verifier,
    and signing authorization mode storage after backup confirmation or
-   successful recovery plus matching PIN repeat.
+   successful import plus matching PIN repeat.
 6. Add Sui Ed25519 account derivation and read-only `get_accounts`.
 
 Current implementation status: steps 1 through 6 are implemented for the
 StackChan CoreS3 DEV_PROFILE source path. Hardware smoke coverage exists for
-local setup, PIN entry, device-local Recover, and local reset/material wipe.
+local setup, PIN entry, device-local Import, and local reset/material wipe.
 Targeted hardware verification remains required after setup, reset UI, or
 reset-state changes.
 
@@ -345,7 +345,7 @@ the policy facts / method adapter boundary stable, use the Firmware-owned
 `policy_propose` flow for current-schema active policy changes, and keep
 `sign_transaction` as a single request whose Firmware-local signing mode selects
 policy evaluation or user confirmation as the authorization gate. Policy update
-remains a proposal flow, not a direct state setter: Gateway/Admin may submit a
+remains a proposal flow, not a direct state setter: the host process and Admin may submit a
 bounded proposal, but Firmware validates it, requires device-local approval,
 and commits it through rollback-safe storage. Sui `sign_personal_message`
 is source-wired for user authorization mode only; policy facts and rules for
@@ -367,5 +367,5 @@ Provisioning is complete only when:
 - Generated material is wiped on cancel.
 - Confirmed material is stored only in Firmware local storage.
 - Export is unavailable after provisioning.
-- Gateway receives only public key/address data.
+- The host process receives only public key/address data.
 - DEV_PROFILE and USER_PROFILE setup are documented separately.

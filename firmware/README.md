@@ -19,6 +19,39 @@ executable chain. The selected Sui adapter owns decoded-payload capacity,
 semantic parsing, account binding, and signing preparation; those limits are
 not shared host request-format rules.
 
+## Quick Start
+
+Use this document when you need to build or inspect Firmware. For a specific
+hardware target, continue in that target's README.
+
+Current target:
+
+```text
+firmware/src/stackchan-cores3/
+```
+
+Build the StackChan CoreS3 target:
+
+```bash
+AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+  firmware/tools/stackchan-cores3/with-idf.sh \
+  firmware/tools/stackchan-cores3/build.sh
+```
+
+Run host checks that do not require ESP-IDF directly:
+
+```bash
+firmware/tools/common/test_sign_route.sh
+firmware/tools/common/test_sui_transaction_facts.sh
+firmware/tools/common/test_sui_sign_transaction_adapter.sh
+firmware/tools/stackchan-cores3/test_signing_preflight_order.sh
+firmware/tools/stackchan-cores3/test_sui_signing_preparation.sh
+```
+
+Hardware smoke requires the target device, the current build, manual
+device-local approval where required, and recorded evidence. Do not raise
+product-active status from source paths alone.
+
 ## Folder Policy
 
 ### `src/common/`

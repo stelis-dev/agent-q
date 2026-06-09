@@ -2,7 +2,7 @@ import { MAX_PROTOCOL_RESPONSE_LINE_BYTES } from "./transport-invariants.js";
 import { ProtocolError } from "./protocol-error.js";
 
 export const PROTOCOL_VERSION = 1;
-// sessionTtlMs is uint32 wire metadata. Gateway does not use it as the session
+// sessionTtlMs is uint32 wire metadata. Agent-Q does not use it as the session
 // authority; it is bounded here only to reject malformed Firmware responses.
 export const MAX_SESSION_TTL_MS = 4_294_967_295;
 export const MAX_RAW_PROTOCOL_JSON_BYTES = 4096;

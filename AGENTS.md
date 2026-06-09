@@ -13,7 +13,7 @@ use judgment.
 
 Agent-Q separates AI agent execution from signing authority.
 
-The goal is to let agents request signatures through a local Gateway while a
+The goal is to let agents request signatures through a local host process while a
 separate device keeps keys and policies, evaluates each request, and decides
 whether to reject or proceed according to the currently implemented policy and
 request type. Firmware-owned device-local approval is a separate requirement
@@ -22,14 +22,15 @@ update proposals. Do not describe signing policy as requiring device-local
 approval unless the current protocol explicitly implements that model.
 
 Product context lives in `README.md`. The shared communication contract between
-Gateway and the software running on the device lives in `specs/PROTOCOL.md`.
+the host process and the software running on the device lives in `specs/PROTOCOL.md`.
 
 Terms used in this document:
 
-- Gateway means the local server process that exposes MCP and web endpoints.
+- host process means the local `agent-q` process that exposes MCP and web
+  endpoints.
 - MCP means Model Context Protocol.
 - Firmware means the software running on a separate signing device.
-- Admin Page means the local web UI served by Gateway.
+- Admin Page means the local web UI served by the host process.
 
 Write documentation so a new agent or human can understand it without prior chat
 context.
@@ -42,10 +43,10 @@ does and does not mean.
 
 Non-negotiable boundaries:
 
-- Agent-Q Gateway is a local MCP server and local web server.
-- Agent-Q Gateway must not store signing keys.
-- Agent-Q Gateway must not make signing or policy decisions.
-- Admin is a Gateway capability, not a separate product area.
+- The `agent-q` host process is a local MCP server and local web server.
+- The host process must not store signing keys.
+- The host process must not make signing or policy decisions.
+- Admin is a host process capability, not a separate product area.
 - Agent-Q Firmware is the signing authority.
 - Agent-Q Firmware stores keys and policies locally.
 - First connection and sensitive write actions must pass Firmware-owned
@@ -160,7 +161,7 @@ For non-trivial work:
    tests, and user flows.
 
 For non-trivial work that touches protocol behavior, device state, Firmware
-state storage, Gateway/MCP API surface, provisioning, accounts, policy, signing,
+state storage, host-process/MCP API surface, provisioning, accounts, policy, signing,
 or product-boundary documentation, the plan must also classify the affected
 device states before implementation starts. Use `docs/STATE_MODEL.md` as the
 baseline for state names and state-gated behavior.
@@ -174,7 +175,7 @@ A state-scoped plan must state:
   exists;
 - APIs that are allowed in each affected state;
 - APIs that must remain unavailable in each affected state;
-- the authority that enforces the rule: Firmware or Gateway;
+- the authority that enforces the rule: Firmware or host process;
 - the UI requirement: silent handling, notification, or physical approval;
 - persistence and wipe requirements;
 - transition triggers, guards, side effects, failure behavior, and cleanup for
@@ -185,7 +186,7 @@ Do not implement a new API, state transition, account path, signing path, policy
 path, or provisioning step unless its allowed and forbidden states are
 explicitly classified.
 
-Gateway may hide unavailable operations, but Firmware must enforce device-state
+the host process may hide unavailable operations, but Firmware must enforce device-state
 gates.
 
 External APIs must not directly command Firmware state transitions. A protocol
@@ -274,8 +275,8 @@ commands also work from `packages/client/`, `packages/mcp/`, and
 
 Current root commands:
 
-- Build Gateway: `npm run build`
-- Test Gateway: `npm test`
+- Build host process: `npm run build`
+- Test host process: `npm test`
 
 Current client package commands:
 
@@ -499,7 +500,7 @@ Project-specific rules:
 - `firmware/build/` is ignored and is for build output only.
 - Firmware source is organized by hardware under
   `firmware/src/<hardware-id>/`.
-- Treat Admin as a Gateway capability, not a separate product area.
+- Treat Admin as a host process capability, not a separate product area.
 - Avoid hardware-specific wording in common documents.
 - Use concrete hardware names only in hardware-specific source, plans, or notes.
 

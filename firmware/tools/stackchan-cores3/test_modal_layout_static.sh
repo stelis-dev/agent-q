@@ -35,32 +35,32 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 SNIPPET="${TMP_DIR}/connect_review.cpp"
 sed -n '/bool modal_draw_connect_review_panel(/,/^}/p' "${MODAL_SOURCE}" >"${SNIPPET}"
 
-grep -Fq 'lv_label_set_long_mode(gateway_value, LV_LABEL_LONG_CLIP);' "${SNIPPET}" ||
-  fail "connect review gateway value must use bounded long mode"
+grep -Fq 'lv_label_set_long_mode(client_value, LV_LABEL_LONG_CLIP);' "${SNIPPET}" ||
+  fail "connect review agent-q value must use bounded long mode"
 
-if grep -Fq 'lv_label_set_long_mode(gateway_value, LV_LABEL_LONG_WRAP);' "${SNIPPET}"; then
-  fail "connect review gateway value must not wrap into following rows"
+if grep -Fq 'lv_label_set_long_mode(client_value, LV_LABEL_LONG_WRAP);' "${SNIPPET}"; then
+  fail "connect review agent-q value must not wrap into following rows"
 fi
 
 grep -Fq 'lv_obj_set_size(' "${SNIPPET}" ||
-  fail "connect review gateway value must have a fixed display region"
-grep -Fq 'kConnectReviewGatewayValueWidth' "${SNIPPET}" ||
-  fail "connect review gateway value width must use the bounded layout constant"
-grep -Fq 'kConnectReviewGatewayValueHeight' "${SNIPPET}" ||
-  fail "connect review gateway value height must use the bounded layout constant"
+  fail "connect review agent-q value must have a fixed display region"
+grep -Fq 'kConnectReviewClientNameValueWidth' "${SNIPPET}" ||
+  fail "connect review agent-q value width must use the bounded layout constant"
+grep -Fq 'kConnectReviewClientNameValueHeight' "${SNIPPET}" ||
+  fail "connect review agent-q value height must use the bounded layout constant"
 grep -Fq 'kConnectReviewApprovalRowY' "${SNIPPET}" ||
   fail "connect review approval row must use a named layout constant"
 
-gateway_y="$(const_int kConnectReviewGatewayValueY)"
-gateway_height="$(const_int kConnectReviewGatewayValueHeight)"
+client_name_y="$(const_int kConnectReviewClientNameValueY)"
+client_name_height="$(const_int kConnectReviewClientNameValueHeight)"
 approval_y="$(const_int kConnectReviewApprovalRowY)"
 
-if [[ -z "${gateway_y}" || -z "${gateway_height}" || -z "${approval_y}" ]]; then
+if [[ -z "${client_name_y}" || -z "${client_name_height}" || -z "${approval_y}" ]]; then
   fail "connect review layout constants must be parseable"
 fi
 
-if (( gateway_y + gateway_height > approval_y )); then
-  fail "connect review gateway value region overlaps the approval row"
+if (( client_name_y + client_name_height > approval_y )); then
+  fail "connect review agent-q value region overlaps the approval row"
 fi
 
 printf 'Modal layout static checks passed\n'

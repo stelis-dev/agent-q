@@ -11,7 +11,7 @@ namespace {
 struct ConnectApprovalState {
     bool active = false;
     char request_id[kAgentQConnectApprovalRequestIdSize] = {};
-    char gateway_name[kAgentQConnectApprovalGatewayNameSize] = {};
+    char client_name[kAgentQConnectApprovalClientNameSize] = {};
     AgentQTimeoutWindow approval_window = kAgentQTimeoutWindowNone;
     AgentQConnectApprovalChoice choice = AgentQConnectApprovalChoice::none;
 
@@ -19,7 +19,7 @@ struct ConnectApprovalState {
     {
         active = false;
         request_id[0] = '\0';
-        gateway_name[0] = '\0';
+        client_name[0] = '\0';
         approval_window = kAgentQTimeoutWindowNone;
         choice = AgentQConnectApprovalChoice::none;
     }
@@ -49,7 +49,7 @@ AgentQConnectApprovalSnapshot connect_approval_snapshot()
     return AgentQConnectApprovalSnapshot{
         g_state.active,
         g_state.request_id,
-        g_state.gateway_name,
+        g_state.client_name,
         g_state.approval_window,
         g_state.choice,
     };
@@ -57,7 +57,7 @@ AgentQConnectApprovalSnapshot connect_approval_snapshot()
 
 bool connect_approval_begin(
     const char* request_id,
-    const char* gateway_name,
+    const char* client_name,
     AgentQTimeoutWindow approval_window)
 {
     if (g_state.active) {
@@ -68,7 +68,7 @@ bool connect_approval_begin(
         return false;
     }
     if (!copy_nonempty_c_string(request_id, next.request_id, sizeof(next.request_id)) ||
-        !copy_nonempty_c_string(gateway_name, next.gateway_name, sizeof(next.gateway_name))) {
+        !copy_nonempty_c_string(client_name, next.client_name, sizeof(next.client_name))) {
         return false;
     }
     next.active = true;

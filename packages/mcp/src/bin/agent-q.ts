@@ -2,14 +2,14 @@
 const args = process.argv.slice(2);
 
 if (args.includes("--help") || args.includes("-h")) {
-  console.log(`Agent-Q Gateway
+  console.log(`Agent-Q
 
 Usage:
-  agent-q           Start the local Gateway
-  agent-q --port N  Start the local Gateway with the Admin Page on port N
+  agent-q           Start the local Agent-Q process
+  agent-q --port N  Start the local Agent-Q process with the Admin Page on port N
   agent-q --help             Show this help
 
-Exposes stdio MCP tools and a local Admin Page through one shared Gateway
+Exposes stdio MCP tools and a local Admin Page through one shared Agent-Q
 session owner. Connection sessions do not authorize signing.`);
   process.exit(0);
 }
@@ -19,9 +19,9 @@ if (args.length !== 0 && (args.length !== 2 || args[0] !== "--port")) {
   process.exit(1);
 }
 
-await startGateway(args);
+await startAgentQ(args);
 
-async function startGateway(gatewayArgs: string[]): Promise<void> {
+async function startAgentQ(agentQArgs: string[]): Promise<void> {
   let adminServer: import("node:http").Server | undefined;
   let adminServerClosed = false;
   const closeAdminServer = async (): Promise<void> => {
@@ -35,12 +35,12 @@ async function startGateway(gatewayArgs: string[]): Promise<void> {
     });
   };
   try {
-    const { createDefaultGatewayCore } = await import("@stelis/agent-q-client/admin");
-    const { DEFAULT_ADMIN_PORT, startAdminGateway } = await import("../admin.js");
-    const { startStdioGateway } = await import("../mcp.js");
-    const core = createDefaultGatewayCore();
-    const port = parseAdminPort(gatewayArgs, DEFAULT_ADMIN_PORT);
-    const admin = await startAdminGateway({ core, port });
+    const { createDefaultAgentQHostCore } = await import("@stelis/agent-q-client/admin");
+    const { DEFAULT_ADMIN_PORT, startAdminServer } = await import("../admin.js");
+    const { startStdioMcpServer } = await import("../mcp.js");
+    const core = createDefaultAgentQHostCore();
+    const port = parseAdminPort(agentQArgs, DEFAULT_ADMIN_PORT);
+    const admin = await startAdminServer({ core, port });
     adminServer = admin.server;
     console.error(`Agent-Q Admin listening on ${admin.url}`);
     process.stdin.once("end", () => {
@@ -49,7 +49,7 @@ async function startGateway(gatewayArgs: string[]): Promise<void> {
     process.stdin.once("close", () => {
       void closeAdminServer();
     });
-    await startStdioGateway(core, {
+    await startStdioMcpServer(core, {
       onClose: () => {
         void closeAdminServer();
       },
@@ -59,16 +59,16 @@ async function startGateway(gatewayArgs: string[]): Promise<void> {
     // Do not interpolate the raw error: a startup failure can carry OS/transport
     // text, and stderr is a shared diagnostic channel. A fixed line signals the
     // failure; the non-zero exit code is the machine-readable signal.
-    console.error("Agent-Q Gateway failed to start.");
+    console.error("Agent-Q failed to start.");
     process.exit(1);
   }
 }
 
-function parseAdminPort(gatewayArgs: string[], defaultPort: number): number {
-  if (gatewayArgs.length === 0) {
+function parseAdminPort(agentQArgs: string[], defaultPort: number): number {
+  if (agentQArgs.length === 0) {
     return defaultPort;
   }
-  const port = Number(gatewayArgs[1]);
+  const port = Number(agentQArgs[1]);
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     console.error("Invalid port. Run agent-q --help.");
     process.exit(1);

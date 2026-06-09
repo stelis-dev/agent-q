@@ -43,7 +43,7 @@ import {
 import {
   DEVICE_ID_PATTERN,
   DEVICE_STATES,
-  GATEWAY_NAME_PATTERN,
+  CLIENT_NAME_PATTERN,
   IDENTIFICATION_CODE_PATTERN,
   ISO_TIMESTAMP_PATTERN,
   MAX_FIRMWARE_NAME_LENGTH,
@@ -60,7 +60,7 @@ import {
 } from "./safe-text.js";
 
 // Mirrors public-error.ts exactly: the code must be an allowlisted public code
-// and the message must be that code's canonical string. This keeps Gateway
+// and the message must be that code's canonical string. This keeps Agent-Q
 // egress schemas in lockstep with the runtime.
 export const publicErrorShape = z
   .object({
@@ -726,7 +726,7 @@ export const getDeviceStatusToolOutputShape = z.discriminatedUnion("source", [
   errorToolResultShape,
 ]);
 
-export const gatewaySuccessOutputSchemas = {
+export const hostSuccessOutputSchemas = {
   scanDevices: scanDevicesSuccessOutputShape,
   identifyDevices: identifyDevicesSuccessOutputShape,
   selectDevice: selectDeviceSuccessOutputShape,

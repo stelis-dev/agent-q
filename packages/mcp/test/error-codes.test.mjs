@@ -9,7 +9,7 @@ function readSrc(rel) {
 }
 
 const SRC_FILES = ["admin.ts", "mcp.ts", "bin/agent-q.ts"];
-const LITERAL_CODE = /new GatewayError\(\s*"([a-z_]+)"/g;
+const LITERAL_CODE = /new AgentQError\(\s*"([a-z_]+)"/g;
 
 const producedCodes = new Set();
 for (const file of SRC_FILES) {
@@ -20,7 +20,7 @@ for (const file of SRC_FILES) {
 
 const allowlist = new Set(Object.keys(PUBLIC_ERROR_MESSAGES));
 
-test("every literal MCP/Admin Gateway error code is registered in the public-error allowlist", () => {
+test("every literal MCP/Admin Agent-Q error code is registered in the public-error allowlist", () => {
   assert.ok(producedCodes.size > 0, "should discover adapter error codes from source");
   const missing = [...producedCodes].filter((code) => !allowlist.has(code)).sort();
   assert.deepEqual(

@@ -13,22 +13,22 @@ namespace {
 
 struct ProvisioningFlowState {
     uint8_t root_material[kRootMaterialBytes] = {};
-    char recovery_phrase[kBip39MnemonicMaxChars] = {};
-    char recovery_phrase_prefix_cells[kProvisioningFlowPhrasePrefixCellCount]
+    char backup_phrase[kBip39MnemonicMaxChars] = {};
+    char backup_phrase_prefix_cells[kProvisioningFlowPhrasePrefixCellCount]
                                      [kProvisioningFlowPhrasePrefixCellSize] = {};
-    uint16_t recover_word_indices[kBip39MnemonicWordCount] = {};
-    bool recover_word_selected[kBip39MnemonicWordCount] = {};
-    char recover_prefixes[kBip39MnemonicWordCount][kProvisioningFlowRecoverPrefixBufferSize] = {};
+    uint16_t import_word_indices[kBip39MnemonicWordCount] = {};
+    bool import_word_selected[kBip39MnemonicWordCount] = {};
+    char import_prefixes[kBip39MnemonicWordCount][kProvisioningFlowImportPrefixBufferSize] = {};
     char pin_first[kLocalPinBufferSize] = {};
     char pin_entry[kLocalPinBufferSize] = {};
     size_t pin_entry_length = 0;
     uint32_t pin_commit_job_id = 0;
-    uint8_t recover_page = 0;
-    uint8_t recover_active_slot = 0;
+    uint8_t import_page = 0;
+    uint8_t import_active_slot = 0;
     AgentQProvisioningFlowStage stage = AgentQProvisioningFlowStage::none;
     AgentQTimeoutWindow setup_choice_window = kAgentQTimeoutWindowNone;
-    AgentQTimeoutWindow recovery_phrase_window = kAgentQTimeoutWindowNone;
-    AgentQTimeoutWindow recover_word_window = kAgentQTimeoutWindowNone;
+    AgentQTimeoutWindow backup_phrase_window = kAgentQTimeoutWindowNone;
+    AgentQTimeoutWindow import_word_window = kAgentQTimeoutWindowNone;
     AgentQTimeoutWindow pin_window = kAgentQTimeoutWindowNone;
     TickType_t pin_commit_ready_at = 0;
     TickType_t pin_commit_deadline = 0;
@@ -49,31 +49,31 @@ struct ProvisioningFlowState {
 
     void wipe_displayed_phrase_text()
     {
-        wipe_sensitive_buffer(recovery_phrase, sizeof(recovery_phrase));
+        wipe_sensitive_buffer(backup_phrase, sizeof(backup_phrase));
         wipe_sensitive_buffer(
-            recovery_phrase_prefix_cells,
+            backup_phrase_prefix_cells,
             kProvisioningFlowPhrasePrefixCellCount * kProvisioningFlowPhrasePrefixCellSize);
     }
 
-    void wipe_recover_word_entry()
+    void wipe_import_word_entry()
     {
-        wipe_sensitive_buffer(recover_word_indices, sizeof(recover_word_indices));
-        wipe_sensitive_buffer(recover_word_selected, sizeof(recover_word_selected));
-        wipe_sensitive_buffer(recover_prefixes, sizeof(recover_prefixes));
-        recover_page = 0;
-        recover_active_slot = 0;
-        recover_word_window = kAgentQTimeoutWindowNone;
+        wipe_sensitive_buffer(import_word_indices, sizeof(import_word_indices));
+        wipe_sensitive_buffer(import_word_selected, sizeof(import_word_selected));
+        wipe_sensitive_buffer(import_prefixes, sizeof(import_prefixes));
+        import_page = 0;
+        import_active_slot = 0;
+        import_word_window = kAgentQTimeoutWindowNone;
     }
 
     void wipe()
     {
         wipe_sensitive_buffer(root_material, sizeof(root_material));
         wipe_displayed_phrase_text();
-        wipe_recover_word_entry();
+        wipe_import_word_entry();
         wipe_pin_only();
         stage = AgentQProvisioningFlowStage::none;
         setup_choice_window = kAgentQTimeoutWindowNone;
-        recovery_phrase_window = kAgentQTimeoutWindowNone;
+        backup_phrase_window = kAgentQTimeoutWindowNone;
     }
 };
 
@@ -89,10 +89,10 @@ AgentQTimeoutWindow current_input_window()
     switch (g_state.stage) {
         case AgentQProvisioningFlowStage::setup_choice:
             return g_state.setup_choice_window;
-        case AgentQProvisioningFlowStage::recovery_phrase_displayed:
-            return g_state.recovery_phrase_window;
-        case AgentQProvisioningFlowStage::recover_word_entry:
-            return g_state.recover_word_window;
+        case AgentQProvisioningFlowStage::backup_phrase_displayed:
+            return g_state.backup_phrase_window;
+        case AgentQProvisioningFlowStage::import_word_entry:
+            return g_state.import_word_window;
         case AgentQProvisioningFlowStage::pin_first_entry:
         case AgentQProvisioningFlowStage::pin_repeat_entry:
             return g_state.pin_window;
@@ -103,14 +103,14 @@ AgentQTimeoutWindow current_input_window()
     return kAgentQTimeoutWindowNone;
 }
 
-void wipe_recovery_phrase_prefix_cells(
+void wipe_backup_phrase_prefix_cells(
     char cells[kProvisioningFlowPhrasePrefixCellCount][kProvisioningFlowPhrasePrefixCellSize])
 {
     wipe_sensitive_buffer(
         cells, kProvisioningFlowPhrasePrefixCellCount * kProvisioningFlowPhrasePrefixCellSize);
 }
 
-bool format_recovery_phrase_prefix_cells(
+bool format_backup_phrase_prefix_cells(
     const char* phrase,
     char cells[kProvisioningFlowPhrasePrefixCellCount][kProvisioningFlowPhrasePrefixCellSize])
 {
@@ -118,7 +118,7 @@ bool format_recovery_phrase_prefix_cells(
         return false;
     }
 
-    wipe_recovery_phrase_prefix_cells(cells);
+    wipe_backup_phrase_prefix_cells(cells);
     size_t word_count = 0;
     const char* cursor = phrase;
     while (*cursor != '\0') {
@@ -139,7 +139,7 @@ bool format_recovery_phrase_prefix_cells(
         }
         word_count++;
         if (word_count > kBip39MnemonicWordCount) {
-            wipe_recovery_phrase_prefix_cells(cells);
+            wipe_backup_phrase_prefix_cells(cells);
             return false;
         }
 
@@ -150,13 +150,13 @@ bool format_recovery_phrase_prefix_cells(
             prefix);
         if (written <= 0 ||
             static_cast<size_t>(written) >= kProvisioningFlowPhrasePrefixCellSize) {
-            wipe_recovery_phrase_prefix_cells(cells);
+            wipe_backup_phrase_prefix_cells(cells);
             return false;
         }
     }
 
     if (word_count != kBip39MnemonicWordCount) {
-        wipe_recovery_phrase_prefix_cells(cells);
+        wipe_backup_phrase_prefix_cells(cells);
         return false;
     }
     return true;
@@ -180,14 +180,14 @@ void write_selected_word_prefix(size_t global_slot, uint16_t word_index)
     if (global_slot >= kBip39MnemonicWordCount) {
         return;
     }
-    char* prefix = g_state.recover_prefixes[global_slot];
-    wipe_sensitive_buffer(prefix, kProvisioningFlowRecoverPrefixBufferSize);
+    char* prefix = g_state.import_prefixes[global_slot];
+    wipe_sensitive_buffer(prefix, kProvisioningFlowImportPrefixBufferSize);
     const char* word = bip39_english_word(word_index);
     if (word == nullptr) {
         return;
     }
     size_t index = 0;
-    while (index < kProvisioningFlowRecoverPrefixMaxChars && word[index] != '\0') {
+    while (index < kProvisioningFlowImportPrefixMaxChars && word[index] != '\0') {
         prefix[index] = word[index];
         ++index;
     }
@@ -200,14 +200,14 @@ AgentQProvisioningFlowSnapshot provisioning_flow_snapshot()
 {
     return {
         g_state.stage,
-        g_state.recover_page,
-        g_state.recover_active_slot,
+        g_state.import_page,
+        g_state.import_active_slot,
         g_state.pin_entry_length,
         g_state.stage != AgentQProvisioningFlowStage::none,
         pin_setup_stage(),
-        g_state.stage == AgentQProvisioningFlowStage::recovery_phrase_displayed,
-        provisioning_flow_recover_current_page_complete(),
-        provisioning_flow_recover_all_words_complete(),
+        g_state.stage == AgentQProvisioningFlowStage::backup_phrase_displayed,
+        provisioning_flow_import_current_page_complete(),
+        provisioning_flow_import_all_words_complete(),
         current_input_window(),
     };
 }
@@ -227,10 +227,10 @@ bool provisioning_flow_stage_expired(TickType_t now)
     switch (g_state.stage) {
         case AgentQProvisioningFlowStage::setup_choice:
             return timeout_window_reached(g_state.setup_choice_window, now);
-        case AgentQProvisioningFlowStage::recovery_phrase_displayed:
-            return timeout_window_reached(g_state.recovery_phrase_window, now);
-        case AgentQProvisioningFlowStage::recover_word_entry:
-            return timeout_window_reached(g_state.recover_word_window, now);
+        case AgentQProvisioningFlowStage::backup_phrase_displayed:
+            return timeout_window_reached(g_state.backup_phrase_window, now);
+        case AgentQProvisioningFlowStage::import_word_entry:
+            return timeout_window_reached(g_state.import_word_window, now);
         case AgentQProvisioningFlowStage::pin_first_entry:
         case AgentQProvisioningFlowStage::pin_repeat_entry:
             return timeout_window_reached(g_state.pin_window, now);
@@ -273,10 +273,10 @@ bool provisioning_flow_handle_panel_deleted(AgentQProvisioningFlowPanel panel)
     const bool matches =
         (panel == AgentQProvisioningFlowPanel::setup_choice &&
          g_state.stage == AgentQProvisioningFlowStage::setup_choice) ||
-        (panel == AgentQProvisioningFlowPanel::recovery_phrase_display &&
-         g_state.stage == AgentQProvisioningFlowStage::recovery_phrase_displayed) ||
-        (panel == AgentQProvisioningFlowPanel::recovery_word_entry &&
-         g_state.stage == AgentQProvisioningFlowStage::recover_word_entry) ||
+        (panel == AgentQProvisioningFlowPanel::backup_phrase_display &&
+         g_state.stage == AgentQProvisioningFlowStage::backup_phrase_displayed) ||
+        (panel == AgentQProvisioningFlowPanel::import_word_entry &&
+         g_state.stage == AgentQProvisioningFlowStage::import_word_entry) ||
         (panel == AgentQProvisioningFlowPanel::pin_entry &&
          (pin_setup_stage() || g_state.stage == AgentQProvisioningFlowStage::pin_committing));
     if (!matches) {
@@ -316,89 +316,89 @@ AgentQProvisioningFlowGenerateResult provisioning_flow_begin_generate(AgentQTime
     }
     if (!make_bip39_mnemonic_12_words(
             g_state.root_material,
-            g_state.recovery_phrase,
-            sizeof(g_state.recovery_phrase)) ||
-        !format_recovery_phrase_prefix_cells(
-            g_state.recovery_phrase,
-            g_state.recovery_phrase_prefix_cells)) {
+            g_state.backup_phrase,
+            sizeof(g_state.backup_phrase)) ||
+        !format_backup_phrase_prefix_cells(
+            g_state.backup_phrase,
+            g_state.backup_phrase_prefix_cells)) {
         g_state.wipe();
         return AgentQProvisioningFlowGenerateResult::generation_error;
     }
 
-    g_state.stage = AgentQProvisioningFlowStage::recovery_phrase_displayed;
-    g_state.recovery_phrase_window = input_window;
+    g_state.stage = AgentQProvisioningFlowStage::backup_phrase_displayed;
+    g_state.backup_phrase_window = input_window;
     return AgentQProvisioningFlowGenerateResult::ok;
 }
 
-void provisioning_flow_begin_recover(AgentQTimeoutWindow input_window)
+void provisioning_flow_begin_import_phrase(AgentQTimeoutWindow input_window)
 {
     g_state.wipe();
     if (!timeout_window_valid(input_window)) {
         return;
     }
-    g_state.stage = AgentQProvisioningFlowStage::recover_word_entry;
-    g_state.recover_page = 0;
-    g_state.recover_active_slot = 0;
-    g_state.recover_word_window = input_window;
+    g_state.stage = AgentQProvisioningFlowStage::import_word_entry;
+    g_state.import_page = 0;
+    g_state.import_active_slot = 0;
+    g_state.import_word_window = input_window;
 }
 
-const char* provisioning_flow_recovery_phrase()
+const char* provisioning_flow_backup_phrase()
 {
-    return g_state.recovery_phrase;
+    return g_state.backup_phrase;
 }
 
-const char* provisioning_flow_recovery_phrase_prefix_cell(size_t index)
+const char* provisioning_flow_backup_phrase_prefix_cell(size_t index)
 {
     if (index >= kProvisioningFlowPhrasePrefixCellCount) {
         return "";
     }
-    return g_state.recovery_phrase_prefix_cells[index];
+    return g_state.backup_phrase_prefix_cells[index];
 }
 
-size_t provisioning_flow_recover_global_word_slot()
+size_t provisioning_flow_import_global_word_slot()
 {
-    return provisioning_flow_recover_global_word_slot_for(
-        g_state.recover_page,
-        g_state.recover_active_slot);
+    return provisioning_flow_import_global_word_slot_for(
+        g_state.import_page,
+        g_state.import_active_slot);
 }
 
-size_t provisioning_flow_recover_global_word_slot_for(uint8_t page, uint8_t slot)
+size_t provisioning_flow_import_global_word_slot_for(uint8_t page, uint8_t slot)
 {
-    return static_cast<size_t>(page) * kProvisioningFlowRecoverWordsPerPage + slot;
+    return static_cast<size_t>(page) * kProvisioningFlowImportWordsPerPage + slot;
 }
 
-const char* provisioning_flow_recover_prefix(size_t global_slot)
+const char* provisioning_flow_import_prefix(size_t global_slot)
 {
     if (global_slot >= kBip39MnemonicWordCount) {
         return "";
     }
-    return g_state.recover_prefixes[global_slot];
+    return g_state.import_prefixes[global_slot];
 }
 
-bool provisioning_flow_recover_word_selected(size_t global_slot)
+bool provisioning_flow_import_word_selected(size_t global_slot)
 {
-    return global_slot < kBip39MnemonicWordCount && g_state.recover_word_selected[global_slot];
+    return global_slot < kBip39MnemonicWordCount && g_state.import_word_selected[global_slot];
 }
 
-bool provisioning_flow_recover_current_page_complete()
+bool provisioning_flow_import_current_page_complete()
 {
-    if (g_state.recover_page >= kProvisioningFlowRecoverPageCount) {
+    if (g_state.import_page >= kProvisioningFlowImportPageCount) {
         return false;
     }
-    for (size_t slot = 0; slot < kProvisioningFlowRecoverWordsPerPage; ++slot) {
+    for (size_t slot = 0; slot < kProvisioningFlowImportWordsPerPage; ++slot) {
         const size_t global_slot =
-            provisioning_flow_recover_global_word_slot_for(g_state.recover_page, slot);
-        if (global_slot >= kBip39MnemonicWordCount || !g_state.recover_word_selected[global_slot]) {
+            provisioning_flow_import_global_word_slot_for(g_state.import_page, slot);
+        if (global_slot >= kBip39MnemonicWordCount || !g_state.import_word_selected[global_slot]) {
             return false;
         }
     }
     return true;
 }
 
-bool provisioning_flow_recover_all_words_complete()
+bool provisioning_flow_import_all_words_complete()
 {
     for (size_t index = 0; index < kBip39MnemonicWordCount; ++index) {
-        if (!g_state.recover_word_selected[index]) {
+        if (!g_state.import_word_selected[index]) {
             return false;
         }
     }
@@ -418,133 +418,133 @@ bool provisioning_flow_word_starts_with_prefix(const char* word, const char* pre
     return true;
 }
 
-bool provisioning_flow_recover_select_slot(uint8_t slot, AgentQTimeoutWindow input_window)
+bool provisioning_flow_import_select_slot(uint8_t slot, AgentQTimeoutWindow input_window)
 {
-    if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
-        slot >= kProvisioningFlowRecoverWordsPerPage ||
+    if (g_state.stage != AgentQProvisioningFlowStage::import_word_entry ||
+        slot >= kProvisioningFlowImportWordsPerPage ||
         !timeout_window_valid(input_window)) {
         return false;
     }
-    g_state.recover_active_slot = slot;
-    g_state.recover_word_window = input_window;
+    g_state.import_active_slot = slot;
+    g_state.import_word_window = input_window;
     return true;
 }
 
-bool provisioning_flow_recover_add_letter(char letter, AgentQTimeoutWindow input_window)
+bool provisioning_flow_import_add_letter(char letter, AgentQTimeoutWindow input_window)
 {
-    if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
+    if (g_state.stage != AgentQProvisioningFlowStage::import_word_entry ||
         letter < 'a' || letter > 'z' ||
         !timeout_window_valid(input_window)) {
         return false;
     }
-    const size_t global_slot = provisioning_flow_recover_global_word_slot();
+    const size_t global_slot = provisioning_flow_import_global_word_slot();
     if (global_slot >= kBip39MnemonicWordCount) {
         return false;
     }
-    char* prefix = g_state.recover_prefixes[global_slot];
+    char* prefix = g_state.import_prefixes[global_slot];
     size_t length = strlen(prefix);
-    if (length >= kProvisioningFlowRecoverPrefixMaxChars) {
-        g_state.recover_word_window = input_window;
+    if (length >= kProvisioningFlowImportPrefixMaxChars) {
+        g_state.import_word_window = input_window;
         return true;
     }
     prefix[length++] = letter;
     prefix[length] = '\0';
-    g_state.recover_word_selected[global_slot] = false;
-    g_state.recover_word_indices[global_slot] = 0;
-    g_state.recover_word_window = input_window;
+    g_state.import_word_selected[global_slot] = false;
+    g_state.import_word_indices[global_slot] = 0;
+    g_state.import_word_window = input_window;
     return true;
 }
 
-bool provisioning_flow_recover_clear_active(AgentQTimeoutWindow input_window)
+bool provisioning_flow_import_clear_active(AgentQTimeoutWindow input_window)
 {
-    if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
+    if (g_state.stage != AgentQProvisioningFlowStage::import_word_entry ||
         !timeout_window_valid(input_window)) {
         return false;
     }
-    const size_t global_slot = provisioning_flow_recover_global_word_slot();
+    const size_t global_slot = provisioning_flow_import_global_word_slot();
     if (global_slot >= kBip39MnemonicWordCount) {
         return false;
     }
-    wipe_sensitive_buffer(g_state.recover_prefixes[global_slot], kProvisioningFlowRecoverPrefixBufferSize);
-    g_state.recover_word_selected[global_slot] = false;
-    g_state.recover_word_indices[global_slot] = 0;
-    g_state.recover_word_window = input_window;
+    wipe_sensitive_buffer(g_state.import_prefixes[global_slot], kProvisioningFlowImportPrefixBufferSize);
+    g_state.import_word_selected[global_slot] = false;
+    g_state.import_word_indices[global_slot] = 0;
+    g_state.import_word_window = input_window;
     return true;
 }
 
-bool provisioning_flow_recover_select_candidate(uint16_t word_index, AgentQTimeoutWindow input_window)
+bool provisioning_flow_import_select_candidate(uint16_t word_index, AgentQTimeoutWindow input_window)
 {
-    if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
+    if (g_state.stage != AgentQProvisioningFlowStage::import_word_entry ||
         word_index >= kBip39WordCount ||
         bip39_english_word(word_index) == nullptr ||
         !timeout_window_valid(input_window)) {
         return false;
     }
-    const size_t global_slot = provisioning_flow_recover_global_word_slot();
+    const size_t global_slot = provisioning_flow_import_global_word_slot();
     if (global_slot >= kBip39MnemonicWordCount) {
         return false;
     }
-    g_state.recover_word_indices[global_slot] = word_index;
-    g_state.recover_word_selected[global_slot] = true;
+    g_state.import_word_indices[global_slot] = word_index;
+    g_state.import_word_selected[global_slot] = true;
     write_selected_word_prefix(global_slot, word_index);
-    if (g_state.recover_active_slot + 1 < kProvisioningFlowRecoverWordsPerPage) {
-        ++g_state.recover_active_slot;
+    if (g_state.import_active_slot + 1 < kProvisioningFlowImportWordsPerPage) {
+        ++g_state.import_active_slot;
     }
-    g_state.recover_word_window = input_window;
+    g_state.import_word_window = input_window;
     return true;
 }
 
-bool provisioning_flow_recover_previous_page(AgentQTimeoutWindow input_window)
+bool provisioning_flow_import_previous_page(AgentQTimeoutWindow input_window)
 {
-    if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
-        g_state.recover_page == 0 ||
+    if (g_state.stage != AgentQProvisioningFlowStage::import_word_entry ||
+        g_state.import_page == 0 ||
         !timeout_window_valid(input_window)) {
         return false;
     }
-    --g_state.recover_page;
-    g_state.recover_active_slot = 0;
-    g_state.recover_word_window = input_window;
+    --g_state.import_page;
+    g_state.import_active_slot = 0;
+    g_state.import_word_window = input_window;
     return true;
 }
 
-bool provisioning_flow_recover_next_page(AgentQTimeoutWindow input_window)
+bool provisioning_flow_import_next_page(AgentQTimeoutWindow input_window)
 {
-    if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
-        !provisioning_flow_recover_current_page_complete() ||
+    if (g_state.stage != AgentQProvisioningFlowStage::import_word_entry ||
+        !provisioning_flow_import_current_page_complete() ||
         !timeout_window_valid(input_window)) {
         return false;
     }
-    if (g_state.recover_page + 1 >= kProvisioningFlowRecoverPageCount) {
+    if (g_state.import_page + 1 >= kProvisioningFlowImportPageCount) {
         return false;
     }
-    ++g_state.recover_page;
-    g_state.recover_active_slot = 0;
-    g_state.recover_word_window = input_window;
+    ++g_state.import_page;
+    g_state.import_active_slot = 0;
+    g_state.import_word_window = input_window;
     return true;
 }
 
-bool provisioning_flow_recover_refresh_deadline(AgentQTimeoutWindow input_window)
+bool provisioning_flow_import_refresh_deadline(AgentQTimeoutWindow input_window)
 {
-    if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
+    if (g_state.stage != AgentQProvisioningFlowStage::import_word_entry ||
         !timeout_window_valid(input_window)) {
         return false;
     }
-    g_state.recover_word_window = input_window;
+    g_state.import_word_window = input_window;
     return true;
 }
 
-Bip39EntropyRecoveryResult provisioning_flow_recover_entropy_from_words()
+Bip39EntropyDecodeResult provisioning_flow_decode_entropy_from_words()
 {
-    if (g_state.stage != AgentQProvisioningFlowStage::recover_word_entry ||
-        !provisioning_flow_recover_all_words_complete()) {
-        return Bip39EntropyRecoveryResult::invalid_word_count;
+    if (g_state.stage != AgentQProvisioningFlowStage::import_word_entry ||
+        !provisioning_flow_import_all_words_complete()) {
+        return Bip39EntropyDecodeResult::invalid_word_count;
     }
-    const Bip39EntropyRecoveryResult result = recover_bip39_entropy_12_words(
-        g_state.recover_word_indices,
+    const Bip39EntropyDecodeResult result = decode_bip39_entropy_12_words(
+        g_state.import_word_indices,
         kBip39MnemonicWordCount,
         g_state.root_material,
         sizeof(g_state.root_material));
-    if (result != Bip39EntropyRecoveryResult::ok) {
+    if (result != Bip39EntropyDecodeResult::ok) {
         wipe_sensitive_buffer(g_state.root_material, sizeof(g_state.root_material));
     }
     return result;
@@ -552,7 +552,7 @@ Bip39EntropyRecoveryResult provisioning_flow_recover_entropy_from_words()
 
 bool provisioning_flow_begin_pin_setup_from_displayed_phrase(AgentQTimeoutWindow input_window)
 {
-    if (g_state.stage != AgentQProvisioningFlowStage::recovery_phrase_displayed ||
+    if (g_state.stage != AgentQProvisioningFlowStage::backup_phrase_displayed ||
         !timeout_window_valid(input_window)) {
         return false;
     }
@@ -563,14 +563,14 @@ bool provisioning_flow_begin_pin_setup_from_displayed_phrase(AgentQTimeoutWindow
     return true;
 }
 
-void provisioning_flow_begin_pin_setup_after_recovery(AgentQTimeoutWindow input_window)
+void provisioning_flow_begin_pin_setup_after_import(AgentQTimeoutWindow input_window)
 {
     if (!timeout_window_valid(input_window)) {
         g_state.wipe();
         return;
     }
     g_state.stage = AgentQProvisioningFlowStage::pin_first_entry;
-    g_state.wipe_recover_word_entry();
+    g_state.wipe_import_word_entry();
     g_state.wipe_pin_only();
     g_state.pin_window = input_window;
 }

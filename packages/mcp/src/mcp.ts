@@ -1,9 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
-import { createDefaultGatewayCore } from "@stelis/agent-q-client/admin";
+import { createDefaultAgentQHostCore } from "@stelis/agent-q-client/admin";
 import {
-  GatewayCore,
+  AgentQHostCore,
   type ConnectDeviceResult,
   type DeviceListResult,
   type DeviceStatusToolResult,
@@ -19,8 +19,8 @@ import {
 } from "@stelis/agent-q-client/admin";
 import {
   DEVICE_ID_PATTERN,
-  GATEWAY_NAME_PATTERN,
-  GatewayError,
+  CLIENT_NAME_PATTERN,
+  AgentQError,
   MAX_LABEL_LENGTH,
   PUBLIC_ERROR_MESSAGES,
   PURPOSE_PATTERN,
@@ -58,7 +58,7 @@ import {
   isValidLabel,
   isValidPurpose,
   normalizeErrorCode,
-  toGatewayError,
+  toAgentQError,
   toPublicError,
 } from "@stelis/agent-q-client/adapter-internal";
 import {
@@ -83,7 +83,7 @@ function strictInputSchema<Shape extends z.ZodRawShape>(shape: Shape) {
   return z.object(shape).strict();
 }
 
-export const gatewayToolDefinitions = {
+export const hostToolDefinitions = {
   scanDevices: {
     name: "scan_devices",
     title: "Scan devices",
@@ -106,7 +106,7 @@ export const gatewayToolDefinitions = {
     name: "select_device",
     title: "Select device",
     description:
-      "Set a previously discovered Agent-Q Firmware device as the default active device, or as the active device for a named routing purpose. 'purpose' is local Gateway routing metadata, not security policy. Updates local Gateway state only; does not contact Firmware.",
+      "Set a previously discovered Agent-Q Firmware device as the default active device, or as the active device for a named routing purpose. 'purpose' is local Agent-Q process routing metadata, not security policy. Updates local Agent-Q process state only; does not contact Firmware.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN),
       purpose: purposeSchema.optional(),
@@ -123,7 +123,7 @@ export const gatewayToolDefinitions = {
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
     }),
-    // outputSchema (full union) is for Gateway-side tests only; it is not
+    // outputSchema (full union) is for host-side tests only; it is not
     // registered with the SDK. successOutputSchema (live | cached) is the
     // runtime sanitize boundary used by run().
     outputSchema: getDeviceStatusToolOutputShape,
@@ -133,7 +133,7 @@ export const gatewayToolDefinitions = {
     name: "list_devices",
     title: "List devices",
     description:
-      "List Agent-Q Firmware devices known to Gateway, including Gateway-local label, purpose routing assignments, and any in-memory connection session metadata. Reads from local Gateway state only; does not contact Firmware.",
+      "List Agent-Q Firmware devices known to Agent-Q, including local label, purpose routing assignments, and any in-memory connection session metadata. Reads from local Agent-Q process state only; does not contact Firmware.",
     inputSchema: strictInputSchema({}),
     outputSchema: listDevicesToolOutputShape,
     successOutputSchema: listDevicesSuccessOutputShape,
@@ -142,7 +142,7 @@ export const gatewayToolDefinitions = {
     name: "set_device_metadata",
     title: "Set device metadata",
     description:
-      "Set Gateway-local metadata for a known Agent-Q Firmware device. 'label' is human-readable Gateway-local metadata, not a security boundary and not device authority. Pass null to clear the label. Updates local Gateway state only; does not contact Firmware.",
+      "Set local metadata for a known Agent-Q Firmware device. 'label' is human-readable local metadata, not a security boundary and not device authority. Pass null to clear the label. Updates local Agent-Q process state only; does not contact Firmware.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN),
       label: z.union([z.string().max(MAX_LABEL_LENGTH).refine((value) => isValidLabel(value)), z.null()]),
@@ -154,11 +154,11 @@ export const gatewayToolDefinitions = {
     name: "connect_device",
     title: "Connect device",
     description:
-      "Open a communication session with a known Agent-Q Firmware device. Resolves the target device by deviceId, by purpose, or by the default active device. Sends a connect request that requires Firmware-owned device-local approval. Writes a status handshake to candidate USB serial ports while locating the device. Connect is not signing approval and does not authorize signing. Session is held in Gateway memory only.",
+      "Open a communication session with a known Agent-Q Firmware device. Resolves the target device by deviceId, by purpose, or by the default active device. Sends a connect request that requires Firmware-owned device-local approval. Writes a status handshake to candidate USB serial ports while locating the device. Connect is not signing approval and does not authorize signing. Session is held in Agent-Q process memory only.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
-      gatewayName: z.string().regex(GATEWAY_NAME_PATTERN).optional(),
+      clientName: z.string().regex(CLIENT_NAME_PATTERN).optional(),
     }),
     outputSchema: connectDeviceToolOutputShape,
     successOutputSchema: connectDeviceSuccessOutputShape,
@@ -167,7 +167,7 @@ export const gatewayToolDefinitions = {
     name: "disconnect_device",
     title: "Disconnect device",
     description:
-      "End a previously approved Agent-Q Firmware session. Resolves the target device by deviceId, by purpose, or by the default active device. Returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Writes a status handshake to candidate USB serial ports when locating the device. Disconnect does not require physical approval.",
+      "End a previously approved Agent-Q Firmware session. Resolves the target device by deviceId, by purpose, or by the default active device. Returns 'not_connected' without contacting Firmware when there is no Agent-Q runtime session. Writes a status handshake to candidate USB serial ports when locating the device. Disconnect does not require physical approval.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
@@ -179,7 +179,7 @@ export const gatewayToolDefinitions = {
     name: "get_capabilities",
     title: "Get capabilities",
     description:
-      "Read Firmware-authored supported chains, public account schemes, and supported signing methods over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. signing.authorization is Firmware-authored read-only state and is not a request option.",
+      "Read Firmware-authored supported chains, public account schemes, and supported signing methods over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Agent-Q runtime session. signing.authorization is Firmware-authored read-only state and is not a request option.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
@@ -191,7 +191,7 @@ export const gatewayToolDefinitions = {
     name: "get_accounts",
     title: "Get accounts",
     description:
-      "List the public accounts (chain, address, public key) held by a provisioned Agent-Q Firmware device over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Read-only: no signing, no private material, and no session id is ever returned.",
+      "List the public accounts (chain, address, public key) held by a provisioned Agent-Q Firmware device over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Agent-Q runtime session. Read-only: no signing, no private material, and no session id is ever returned.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
@@ -203,7 +203,7 @@ export const gatewayToolDefinitions = {
     name: "policy_get",
     title: "Get policy",
     description:
-      "Read the Firmware-owned active policy document over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Gateway runtime session. Read-only: no policy update, no signing, no private material, and no session id is ever returned.",
+      "Read the Firmware-owned active policy document over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Agent-Q runtime session. Read-only: no policy update, no signing, no private material, and no session id is ever returned.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
@@ -215,7 +215,7 @@ export const gatewayToolDefinitions = {
     name: "get_approval_history",
     title: "Get approval history",
     description:
-      "Read a bounded page of Firmware-owned approval history over an approved session. This is not on-chain history and is read-only: no raw requests, session ids, private material, PINs, gateway names, or full policy documents are returned.",
+      "Read a bounded page of Firmware-owned approval history over an approved session. This is not on-chain history and is read-only: no raw requests, session ids, private material, PINs, client names, or full policy documents are returned.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
@@ -229,7 +229,7 @@ export const gatewayToolDefinitions = {
     name: "sign_transaction",
     title: "Sign transaction",
     description:
-      "Request a Firmware-owned transaction signature over an approved session. Gateway and MCP do not store keys, choose authorization, or make signing decisions; Firmware uses its local signing authorization mode to select policy authorization or user confirmation and returns sign_result.",
+      "Request a Firmware-owned transaction signature over an approved session. Agent-Q and MCP do not store keys, choose authorization, or make signing decisions; Firmware uses its local signing authorization mode to select policy authorization or user confirmation and returns sign_result.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
@@ -245,7 +245,7 @@ export const gatewayToolDefinitions = {
     name: "sign_personal_message",
     title: "Sign personal message",
     description:
-      "Request a Firmware-owned Sui personal-message signature over an approved session. Gateway and MCP do not store keys, choose authorization, or make signing decisions. The current Firmware implementation signs this method only in user-confirmed authorization mode; policy authorization mode fails closed.",
+      "Request a Firmware-owned Sui personal-message signature over an approved session. Agent-Q and MCP do not store keys, choose authorization, or make signing decisions. The current Firmware implementation signs this method only in user-confirmed authorization mode; policy authorization mode fails closed.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
@@ -261,7 +261,7 @@ export const gatewayToolDefinitions = {
     name: "policy_propose",
     title: "Propose policy update",
     description:
-      "Submit a bounded active-policy proposal to Agent-Q Firmware. Firmware validates the proposal, shows a device-local policy summary review, starts local PIN approval only after device-local Continue, and returns the terminal policy_propose_result. This is a request path only: Gateway and MCP do not store, apply, or decide policy.",
+      "Submit a bounded active-policy proposal to Agent-Q Firmware. Firmware validates the proposal, shows a device-local policy summary review, starts local PIN approval only after device-local Continue, and returns the terminal policy_propose_result. This is a request path only: Agent-Q and MCP do not store, apply, or decide policy.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
@@ -272,9 +272,9 @@ export const gatewayToolDefinitions = {
   },
 } as const;
 
-export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpServer {
+export function createAgentQMcpServer(core = createDefaultAgentQHostCore()): McpServer {
   const server = new McpServer({
-    name: "agent-q-gateway",
+    name: "agent-q",
     version: "0.0.0",
   });
 
@@ -294,9 +294,9 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
     try {
       raw = await work();
     } catch (error) {
-      const gatewayError = toGatewayError(error);
-      logToolDiagnostic("gateway_tool_error", gatewayError.code, gatewayError.retryable);
-      return withStructuredContent(toPublicErrorToolResult(gatewayError), true);
+      const agentQError = toAgentQError(error);
+      logToolDiagnostic("agent_q_tool_error", agentQError.code, agentQError.retryable);
+      return withStructuredContent(toPublicErrorToolResult(agentQError), true);
     }
 
     let sanitized: object;
@@ -305,9 +305,9 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
     } catch {
       // An unsanitizable success is an internal contract bug. Surface a fixed
       // generic error instead of the raw value or the ZodError details.
-      logToolDiagnostic("gateway_output_sanitize_failed", "internal_output_error", false);
+      logToolDiagnostic("agent_q_output_sanitize_failed", "internal_output_error", false);
       return withStructuredContent(
-        toPublicErrorToolResult(new GatewayError("internal_output_error", "", false)),
+        toPublicErrorToolResult(new AgentQError("internal_output_error", "", false)),
         true,
       );
     }
@@ -318,50 +318,50 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
   // object shape. Error results carry `isError: true`, for which the SDK skips
   // output validation, so the error variant is intentionally absent there.
   server.registerTool(
-    gatewayToolDefinitions.scanDevices.name,
+    hostToolDefinitions.scanDevices.name,
     {
-      title: gatewayToolDefinitions.scanDevices.title,
-      description: gatewayToolDefinitions.scanDevices.description,
-      inputSchema: gatewayToolDefinitions.scanDevices.inputSchema,
-      outputSchema: gatewayToolDefinitions.scanDevices.successOutputSchema,
+      title: hostToolDefinitions.scanDevices.title,
+      description: hostToolDefinitions.scanDevices.description,
+      inputSchema: hostToolDefinitions.scanDevices.inputSchema,
+      outputSchema: hostToolDefinitions.scanDevices.successOutputSchema,
     },
     async () =>
-      run(gatewayToolDefinitions.scanDevices.successOutputSchema, () => core.scanDevices()),
+      run(hostToolDefinitions.scanDevices.successOutputSchema, () => core.scanDevices()),
   );
 
   server.registerTool(
-    gatewayToolDefinitions.identifyDevices.name,
+    hostToolDefinitions.identifyDevices.name,
     {
-      title: gatewayToolDefinitions.identifyDevices.title,
-      description: gatewayToolDefinitions.identifyDevices.description,
-      inputSchema: gatewayToolDefinitions.identifyDevices.inputSchema,
-      outputSchema: gatewayToolDefinitions.identifyDevices.successOutputSchema,
+      title: hostToolDefinitions.identifyDevices.title,
+      description: hostToolDefinitions.identifyDevices.description,
+      inputSchema: hostToolDefinitions.identifyDevices.inputSchema,
+      outputSchema: hostToolDefinitions.identifyDevices.successOutputSchema,
     },
     async () =>
       run({ parse: sanitizeIdentifyDevicesResult }, () => core.identifyDevices()),
   );
 
   server.registerTool(
-    gatewayToolDefinitions.selectDevice.name,
+    hostToolDefinitions.selectDevice.name,
     {
-      title: gatewayToolDefinitions.selectDevice.title,
-      description: gatewayToolDefinitions.selectDevice.description,
-      inputSchema: gatewayToolDefinitions.selectDevice.inputSchema,
-      outputSchema: gatewayToolDefinitions.selectDevice.successOutputSchema,
+      title: hostToolDefinitions.selectDevice.title,
+      description: hostToolDefinitions.selectDevice.description,
+      inputSchema: hostToolDefinitions.selectDevice.inputSchema,
+      outputSchema: hostToolDefinitions.selectDevice.successOutputSchema,
     },
     async ({ deviceId, purpose }) =>
-      run(gatewayToolDefinitions.selectDevice.successOutputSchema, () => core.selectDevice({ deviceId, purpose })),
+      run(hostToolDefinitions.selectDevice.successOutputSchema, () => core.selectDevice({ deviceId, purpose })),
   );
 
   // get_device_status is the one tool without a registered SDK outputSchema
   // (success is a live | cached union). It is still sanitized at run() using
   // its success-only union, so an error-shaped result cannot leak as a success.
   server.registerTool(
-    gatewayToolDefinitions.getDeviceStatus.name,
+    hostToolDefinitions.getDeviceStatus.name,
     {
-      title: gatewayToolDefinitions.getDeviceStatus.title,
-      description: gatewayToolDefinitions.getDeviceStatus.description,
-      inputSchema: gatewayToolDefinitions.getDeviceStatus.inputSchema,
+      title: hostToolDefinitions.getDeviceStatus.title,
+      description: hostToolDefinitions.getDeviceStatus.description,
+      inputSchema: hostToolDefinitions.getDeviceStatus.inputSchema,
     },
     async ({ deviceId, purpose }) =>
       run({ parse: sanitizeGetDeviceStatusResult }, () =>
@@ -370,64 +370,64 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
   );
 
   server.registerTool(
-    gatewayToolDefinitions.listDevices.name,
+    hostToolDefinitions.listDevices.name,
     {
-      title: gatewayToolDefinitions.listDevices.title,
-      description: gatewayToolDefinitions.listDevices.description,
-      inputSchema: gatewayToolDefinitions.listDevices.inputSchema,
-      outputSchema: gatewayToolDefinitions.listDevices.successOutputSchema,
+      title: hostToolDefinitions.listDevices.title,
+      description: hostToolDefinitions.listDevices.description,
+      inputSchema: hostToolDefinitions.listDevices.inputSchema,
+      outputSchema: hostToolDefinitions.listDevices.successOutputSchema,
     },
-    async () => run(gatewayToolDefinitions.listDevices.successOutputSchema, () => core.listDevices()),
+    async () => run(hostToolDefinitions.listDevices.successOutputSchema, () => core.listDevices()),
   );
 
   server.registerTool(
-    gatewayToolDefinitions.setDeviceMetadata.name,
+    hostToolDefinitions.setDeviceMetadata.name,
     {
-      title: gatewayToolDefinitions.setDeviceMetadata.title,
-      description: gatewayToolDefinitions.setDeviceMetadata.description,
-      inputSchema: gatewayToolDefinitions.setDeviceMetadata.inputSchema,
-      outputSchema: gatewayToolDefinitions.setDeviceMetadata.successOutputSchema,
+      title: hostToolDefinitions.setDeviceMetadata.title,
+      description: hostToolDefinitions.setDeviceMetadata.description,
+      inputSchema: hostToolDefinitions.setDeviceMetadata.inputSchema,
+      outputSchema: hostToolDefinitions.setDeviceMetadata.successOutputSchema,
     },
     async ({ deviceId, label }) =>
-      run(gatewayToolDefinitions.setDeviceMetadata.successOutputSchema, () =>
+      run(hostToolDefinitions.setDeviceMetadata.successOutputSchema, () =>
         core.setDeviceMetadata({ deviceId, label }),
       ),
   );
 
   server.registerTool(
-    gatewayToolDefinitions.connectDevice.name,
+    hostToolDefinitions.connectDevice.name,
     {
-      title: gatewayToolDefinitions.connectDevice.title,
-      description: gatewayToolDefinitions.connectDevice.description,
-      inputSchema: gatewayToolDefinitions.connectDevice.inputSchema,
-      outputSchema: gatewayToolDefinitions.connectDevice.successOutputSchema,
+      title: hostToolDefinitions.connectDevice.title,
+      description: hostToolDefinitions.connectDevice.description,
+      inputSchema: hostToolDefinitions.connectDevice.inputSchema,
+      outputSchema: hostToolDefinitions.connectDevice.successOutputSchema,
     },
-    async ({ deviceId, purpose, gatewayName }) =>
-      run(gatewayToolDefinitions.connectDevice.successOutputSchema, () =>
-        core.connectDevice({ deviceId, purpose, gatewayName }),
+    async ({ deviceId, purpose, clientName }) =>
+      run(hostToolDefinitions.connectDevice.successOutputSchema, () =>
+        core.connectDevice({ deviceId, purpose, clientName }),
       ),
   );
 
   server.registerTool(
-    gatewayToolDefinitions.disconnectDevice.name,
+    hostToolDefinitions.disconnectDevice.name,
     {
-      title: gatewayToolDefinitions.disconnectDevice.title,
-      description: gatewayToolDefinitions.disconnectDevice.description,
-      inputSchema: gatewayToolDefinitions.disconnectDevice.inputSchema,
-      outputSchema: gatewayToolDefinitions.disconnectDevice.successOutputSchema,
+      title: hostToolDefinitions.disconnectDevice.title,
+      description: hostToolDefinitions.disconnectDevice.description,
+      inputSchema: hostToolDefinitions.disconnectDevice.inputSchema,
+      outputSchema: hostToolDefinitions.disconnectDevice.successOutputSchema,
     },
     async ({ deviceId, purpose }) =>
-      run(gatewayToolDefinitions.disconnectDevice.successOutputSchema, () =>
+      run(hostToolDefinitions.disconnectDevice.successOutputSchema, () =>
         core.disconnectDevice({ deviceId, purpose }),
       ),
   );
 
   server.registerTool(
-    gatewayToolDefinitions.getCapabilities.name,
+    hostToolDefinitions.getCapabilities.name,
     {
-      title: gatewayToolDefinitions.getCapabilities.title,
-      description: gatewayToolDefinitions.getCapabilities.description,
-      inputSchema: gatewayToolDefinitions.getCapabilities.inputSchema,
+      title: hostToolDefinitions.getCapabilities.title,
+      description: hostToolDefinitions.getCapabilities.description,
+      inputSchema: hostToolDefinitions.getCapabilities.inputSchema,
       // Success is a discriminated union (live | not_connected | session_ended),
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
@@ -439,65 +439,65 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
   );
 
   server.registerTool(
-    gatewayToolDefinitions.getAccounts.name,
+    hostToolDefinitions.getAccounts.name,
     {
-      title: gatewayToolDefinitions.getAccounts.title,
-      description: gatewayToolDefinitions.getAccounts.description,
-      inputSchema: gatewayToolDefinitions.getAccounts.inputSchema,
+      title: hostToolDefinitions.getAccounts.title,
+      description: hostToolDefinitions.getAccounts.description,
+      inputSchema: hostToolDefinitions.getAccounts.inputSchema,
       // Success is a discriminated union (live | not_connected | session_ended),
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
     async ({ deviceId, purpose }) =>
-      run(gatewayToolDefinitions.getAccounts.successOutputSchema, () =>
+      run(hostToolDefinitions.getAccounts.successOutputSchema, () =>
         core.getAccounts({ deviceId, purpose }),
       ),
   );
 
   server.registerTool(
-    gatewayToolDefinitions.policyGet.name,
+    hostToolDefinitions.policyGet.name,
     {
-      title: gatewayToolDefinitions.policyGet.title,
-      description: gatewayToolDefinitions.policyGet.description,
-      inputSchema: gatewayToolDefinitions.policyGet.inputSchema,
+      title: hostToolDefinitions.policyGet.title,
+      description: hostToolDefinitions.policyGet.description,
+      inputSchema: hostToolDefinitions.policyGet.inputSchema,
       // Success is a discriminated union (live | not_connected | session_ended),
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
     async ({ deviceId, purpose }) =>
-      run(gatewayToolDefinitions.policyGet.successOutputSchema, () =>
+      run(hostToolDefinitions.policyGet.successOutputSchema, () =>
         core.policyGet({ deviceId, purpose }),
       ),
   );
 
   server.registerTool(
-    gatewayToolDefinitions.getApprovalHistory.name,
+    hostToolDefinitions.getApprovalHistory.name,
     {
-      title: gatewayToolDefinitions.getApprovalHistory.title,
-      description: gatewayToolDefinitions.getApprovalHistory.description,
-      inputSchema: gatewayToolDefinitions.getApprovalHistory.inputSchema,
+      title: hostToolDefinitions.getApprovalHistory.title,
+      description: hostToolDefinitions.getApprovalHistory.description,
+      inputSchema: hostToolDefinitions.getApprovalHistory.inputSchema,
       // Success is a discriminated union (live | not_connected | session_ended),
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
     async ({ deviceId, purpose, limit, beforeSeq }) =>
-      run(gatewayToolDefinitions.getApprovalHistory.successOutputSchema, () =>
+      run(hostToolDefinitions.getApprovalHistory.successOutputSchema, () =>
         core.getApprovalHistory({ deviceId, purpose, limit, beforeSeq }),
       ),
   );
 
   server.registerTool(
-    gatewayToolDefinitions.signTransaction.name,
+    hostToolDefinitions.signTransaction.name,
     {
-      title: gatewayToolDefinitions.signTransaction.title,
-      description: gatewayToolDefinitions.signTransaction.description,
-      inputSchema: gatewayToolDefinitions.signTransaction.inputSchema,
+      title: hostToolDefinitions.signTransaction.title,
+      description: hostToolDefinitions.signTransaction.description,
+      inputSchema: hostToolDefinitions.signTransaction.inputSchema,
       // Success is a discriminated union (live | not_connected | session_ended),
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
     async ({ deviceId, purpose, chain, method, network, txBytes }) =>
-      run(gatewayToolDefinitions.signTransaction.successOutputSchema, () =>
+      run(hostToolDefinitions.signTransaction.successOutputSchema, () =>
         core.signTransaction({
           deviceId,
           purpose,
@@ -510,17 +510,17 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
   );
 
   server.registerTool(
-    gatewayToolDefinitions.signPersonalMessage.name,
+    hostToolDefinitions.signPersonalMessage.name,
     {
-      title: gatewayToolDefinitions.signPersonalMessage.title,
-      description: gatewayToolDefinitions.signPersonalMessage.description,
-      inputSchema: gatewayToolDefinitions.signPersonalMessage.inputSchema,
+      title: hostToolDefinitions.signPersonalMessage.title,
+      description: hostToolDefinitions.signPersonalMessage.description,
+      inputSchema: hostToolDefinitions.signPersonalMessage.inputSchema,
       // Success is a discriminated union (live | not_connected | session_ended),
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
     async ({ deviceId, purpose, chain, method, network, message }) =>
-      run(gatewayToolDefinitions.signPersonalMessage.successOutputSchema, () =>
+      run(hostToolDefinitions.signPersonalMessage.successOutputSchema, () =>
         core.signPersonalMessage({
           deviceId,
           purpose,
@@ -533,17 +533,17 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
   );
 
   server.registerTool(
-    gatewayToolDefinitions.policyPropose.name,
+    hostToolDefinitions.policyPropose.name,
     {
-      title: gatewayToolDefinitions.policyPropose.title,
-      description: gatewayToolDefinitions.policyPropose.description,
-      inputSchema: gatewayToolDefinitions.policyPropose.inputSchema,
+      title: hostToolDefinitions.policyPropose.title,
+      description: hostToolDefinitions.policyPropose.description,
+      inputSchema: hostToolDefinitions.policyPropose.inputSchema,
       // Success is a discriminated union (live | not_connected | session_ended),
       // which the SDK outputSchema model cannot represent; it is sanitized at the
       // run() boundary below instead.
     },
     async ({ deviceId, purpose, policy }) =>
-      run(gatewayToolDefinitions.policyPropose.successOutputSchema, () =>
+      run(hostToolDefinitions.policyPropose.successOutputSchema, () =>
         core.policyPropose({ deviceId, purpose, policy }),
       ),
   );
@@ -551,11 +551,11 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
   return server;
 }
 
-export async function startStdioGateway(
-  core = createDefaultGatewayCore(),
+export async function startStdioMcpServer(
+  core = createDefaultAgentQHostCore(),
   options: { onClose?: () => void } = {},
 ): Promise<void> {
-  const server = createGatewayMcpServer(core);
+  const server = createAgentQMcpServer(core);
   const transport = new StdioServerTransport();
   if (options.onClose !== undefined) {
     transport.onclose = options.onClose;
@@ -564,7 +564,7 @@ export async function startStdioGateway(
 }
 
 // Operator-facing diagnostic on stderr (never stdout, which is the MCP JSON-RPC
-// channel). Carries only allowlisted, Gateway-authored fields: the normalized
+// channel). Carries only allowlisted, Agent-Q-authored fields: the normalized
 // code, its canonical public message, and retryability. A raw device/OS/Firmware
 // string is never logged — not even sanitized, because stripping control bytes is
 // not redaction — so the string hazards closed at the MCP output boundary cannot
@@ -578,7 +578,7 @@ function logToolDiagnostic(event: string, rawCode: string, retryable: boolean): 
  * Build a client-safe top-level error result. Neither the code nor the message
  * can carry attacker- or device-controlled text to the MCP client.
  */
-function toPublicErrorToolResult(error: GatewayError) {
+function toPublicErrorToolResult(error: AgentQError) {
   return errorToolResultShape.parse({
     source: "error",
     connected: false,
@@ -615,11 +615,11 @@ function sanitizeIdentifyDevicesResult(raw: unknown): object {
 }
 
 // get_device_status cached results carry a Firmware-supplied diagnostic code.
-// It is a code, not a message: normalize unknown codes to `gateway_error` and
+// It is a code, not a message: normalize unknown codes to `agent_q_error` and
 // attach no message (unlike an error object).
 function sanitizeGetDeviceStatusResult(raw: unknown): object {
   // Normalize the Firmware diagnostic code BEFORE schema validation so an unknown
-  // or raw code becomes gateway_error rather than failing the now allowlist-
+  // or raw code becomes agent_q_error rather than failing the now allowlist-
   // constrained firmwareErrorCode. It is a code, not a message: no message is
   // attached (unlike an error object).
   let candidate = raw;

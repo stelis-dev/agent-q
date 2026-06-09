@@ -104,7 +104,7 @@ constexpr uint32_t kIdentifyDisplayDefaultMs = 30000;
 constexpr uint32_t kConnectApprovalDefaultMs = 30000;
 constexpr uint32_t kProvisioningApprovalMaxMs = 30000;
 constexpr uint32_t kLocalPinInputWindowMs = 30000;
-constexpr uint32_t kRecoveryPhraseDisplayMs = kProvisioningApprovalMaxMs;
+constexpr uint32_t kBackupPhraseDisplayMs = kProvisioningApprovalMaxMs;
 constexpr uint32_t kLocalPinSetupMs = kProvisioningApprovalMaxMs;
 constexpr uint32_t kLocalProcessingRenderDelayMs = 250;
 constexpr uint32_t kLocalProcessingDisplayMs = 900;
@@ -117,8 +117,8 @@ constexpr size_t kPolicyReadbackEnvelopeReserveBytes = 1024;
 constexpr size_t kMaxRequestIdSize = agent_q::kAgentQRequestIdSize;
 constexpr size_t kDeviceIdSize = 37;
 constexpr size_t kIdentifyCodeSize = 5;
-constexpr size_t kGatewayNameSize = 65;
-constexpr size_t kRecoverWordsPerPage = agent_q::kProvisioningFlowRecoverWordsPerPage;
+constexpr size_t kClientNameSize = 65;
+constexpr size_t kImportWordsPerPage = agent_q::kProvisioningFlowImportWordsPerPage;
 constexpr int kScreenWidth = 320;
 constexpr int kSettingsTouchEntryWidth = 64;
 constexpr int kSettingsTouchEntryHeight = 56;
@@ -133,7 +133,7 @@ enum class AgentQUiEventKind {
     panel_deleted,
     setup_requested,
     setup_generate_requested,
-    setup_recover_requested,
+    setup_import_requested,
     setup_cancel_requested,
     ui_surface_ready,
     settings_requested,
@@ -145,20 +145,20 @@ enum class AgentQUiEventKind {
     error_recovery_erase_requested,
     error_recovery_cancel_requested,
     reset_cancel_requested,
-    recovery_phrase_cancel_requested,
-    recovery_phrase_confirm_requested,
+    backup_phrase_cancel_requested,
+    backup_phrase_confirm_requested,
     pin_digit_requested,
     pin_clear_requested,
     pin_backspace_requested,
     pin_submit_requested,
     pin_cancel_requested,
-    recover_slot_requested,
-    recover_letter_requested,
-    recover_clear_requested,
-    recover_candidate_requested,
-    recover_previous_requested,
-    recover_next_requested,
-    recover_cancel_requested,
+    import_slot_requested,
+    import_letter_requested,
+    import_clear_requested,
+    import_candidate_requested,
+    import_previous_requested,
+    import_next_requested,
+    import_cancel_requested,
     policy_update_review_continue_requested,
     policy_update_review_reject_requested,
     user_signing_review_accept_requested,
@@ -185,8 +185,8 @@ static_assert(
     kMaxRequestIdSize == agent_q::kAgentQConnectApprovalRequestIdSize,
     "Connect approval request-id storage must match USB request-id storage.");
 static_assert(
-    kGatewayNameSize == agent_q::kAgentQConnectApprovalGatewayNameSize,
-    "Connect approval gateway-name storage must match USB gateway-name storage.");
+    kClientNameSize == agent_q::kAgentQConnectApprovalClientNameSize,
+    "Connect approval agent-q-name storage must match USB agent-q-name storage.");
 
 bool g_usb_ready = false;
 TaskHandle_t g_usb_task = nullptr;
@@ -368,14 +368,14 @@ bool is_safe_identification_code(const char* value)
     return value[4] == '\0';
 }
 
-bool is_printable_ascii_gateway_name(const char* value)
+bool is_printable_ascii_client_name(const char* value)
 {
     if (value == nullptr || value[0] == '\0') {
         return false;
     }
     size_t length = 0;
     for (const char* cursor = value; *cursor != '\0'; ++cursor) {
-        if (++length >= kGatewayNameSize) {
+        if (++length >= kClientNameSize) {
             return false;
         }
         const unsigned char c = static_cast<unsigned char>(*cursor);
@@ -2443,9 +2443,9 @@ bool disconnect_pending_user_signing_for_session(const char* id, const char* ses
     return true;
 }
 
-bool recovery_phrase_backup_confirmation_ready()
+bool backup_phrase_backup_confirmation_ready()
 {
-    return agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recovery_phrase_displayed);
+    return agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::backup_phrase_displayed);
 }
 
 void enqueue_connect_review_choice(ConnectApprovalChoice choice)
@@ -2512,9 +2512,9 @@ void on_setup_generate_clicked(lv_event_t*)
     enqueue_ui_event(AgentQUiEventKind::setup_generate_requested);
 }
 
-void on_setup_recover_clicked(lv_event_t*)
+void on_setup_import_clicked(lv_event_t*)
 {
-    enqueue_ui_event(AgentQUiEventKind::setup_recover_requested);
+    enqueue_ui_event(AgentQUiEventKind::setup_import_requested);
 }
 
 void on_setup_cancel_clicked(lv_event_t*)
@@ -2562,14 +2562,14 @@ void on_reset_cancel_clicked(lv_event_t*)
     enqueue_ui_event(AgentQUiEventKind::reset_cancel_requested);
 }
 
-void on_recovery_phrase_cancel_clicked(lv_event_t*)
+void on_backup_phrase_cancel_clicked(lv_event_t*)
 {
-    enqueue_ui_event(AgentQUiEventKind::recovery_phrase_cancel_requested);
+    enqueue_ui_event(AgentQUiEventKind::backup_phrase_cancel_requested);
 }
 
-void on_recovery_phrase_confirm_clicked(lv_event_t*)
+void on_backup_phrase_confirm_clicked(lv_event_t*)
 {
-    enqueue_ui_event(AgentQUiEventKind::recovery_phrase_confirm_requested);
+    enqueue_ui_event(AgentQUiEventKind::backup_phrase_confirm_requested);
 }
 
 void on_pin_digit_clicked(lv_event_t* event)
@@ -2610,22 +2610,22 @@ void on_pin_cancel_clicked(lv_event_t*)
     enqueue_ui_event(AgentQUiEventKind::pin_cancel_requested);
 }
 
-void on_recover_slot_clicked(lv_event_t* event)
+void on_import_slot_clicked(lv_event_t* event)
 {
     const uint8_t* slot = static_cast<const uint8_t*>(lv_event_get_user_data(event));
-    if (slot == nullptr || *slot >= kRecoverWordsPerPage || g_ui_event_queue == nullptr) {
+    if (slot == nullptr || *slot >= kImportWordsPerPage || g_ui_event_queue == nullptr) {
         return;
     }
 
     AgentQUiEvent ui_event;
-    ui_event.kind = AgentQUiEventKind::recover_slot_requested;
+    ui_event.kind = AgentQUiEventKind::import_slot_requested;
     ui_event.slot = *slot;
     if (xQueueSend(g_ui_event_queue, &ui_event, 0) != pdTRUE) {
         ESP_LOGW(kTag, "UI event queue is full");
     }
 }
 
-void on_recover_letter_clicked(lv_event_t* event)
+void on_import_letter_clicked(lv_event_t* event)
 {
     const char* letter = static_cast<const char*>(lv_event_get_user_data(event));
     if (letter == nullptr || letter[0] < 'a' || letter[0] > 'z' || g_ui_event_queue == nullptr) {
@@ -2633,14 +2633,14 @@ void on_recover_letter_clicked(lv_event_t* event)
     }
 
     AgentQUiEvent ui_event;
-    ui_event.kind = AgentQUiEventKind::recover_letter_requested;
+    ui_event.kind = AgentQUiEventKind::import_letter_requested;
     ui_event.letter = letter[0];
     if (xQueueSend(g_ui_event_queue, &ui_event, 0) != pdTRUE) {
         ESP_LOGW(kTag, "UI event queue is full");
     }
 }
 
-void on_recover_candidate_clicked(lv_event_t* event)
+void on_import_candidate_clicked(lv_event_t* event)
 {
     const uint16_t* word_index = static_cast<const uint16_t*>(lv_event_get_user_data(event));
     if (word_index == nullptr || *word_index >= agent_q::kBip39WordCount ||
@@ -2649,31 +2649,31 @@ void on_recover_candidate_clicked(lv_event_t* event)
     }
 
     AgentQUiEvent ui_event;
-    ui_event.kind = AgentQUiEventKind::recover_candidate_requested;
+    ui_event.kind = AgentQUiEventKind::import_candidate_requested;
     ui_event.word_index = *word_index;
     if (xQueueSend(g_ui_event_queue, &ui_event, 0) != pdTRUE) {
         ESP_LOGW(kTag, "UI event queue is full");
     }
 }
 
-void on_recover_clear_clicked(lv_event_t*)
+void on_import_clear_clicked(lv_event_t*)
 {
-    enqueue_ui_event(AgentQUiEventKind::recover_clear_requested);
+    enqueue_ui_event(AgentQUiEventKind::import_clear_requested);
 }
 
-void on_recover_previous_clicked(lv_event_t*)
+void on_import_previous_clicked(lv_event_t*)
 {
-    enqueue_ui_event(AgentQUiEventKind::recover_previous_requested);
+    enqueue_ui_event(AgentQUiEventKind::import_previous_requested);
 }
 
-void on_recover_next_clicked(lv_event_t*)
+void on_import_next_clicked(lv_event_t*)
 {
-    enqueue_ui_event(AgentQUiEventKind::recover_next_requested);
+    enqueue_ui_event(AgentQUiEventKind::import_next_requested);
 }
 
-void on_recover_cancel_clicked(lv_event_t*)
+void on_import_cancel_clicked(lv_event_t*)
 {
-    enqueue_ui_event(AgentQUiEventKind::recover_cancel_requested);
+    enqueue_ui_event(AgentQUiEventKind::import_cancel_requested);
 }
 
 void on_agent_q_panel_deleted(AgentQUiPanelKind deleted_kind)
@@ -2841,7 +2841,7 @@ void show_connect_review()
         agent_q::connect_approval_snapshot();
     agent_q::identification_display_clear();
     if (agent_q::modal_draw_connect_review_panel(
-            approval.gateway_name,
+            approval.client_name,
             connect_review_input_mode(),
             approval.approval_window)) {
         return;
@@ -2889,45 +2889,45 @@ void clear_setup_choice_if_needed()
     }
 }
 
-void clear_recovery_word_entry_if_needed()
+void clear_import_word_entry_if_needed()
 {
-    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recover_word_entry)) {
+    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::import_word_entry)) {
         return;
     }
 
-    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::recovery_word_entry);
+    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::import_word_entry);
     const bool expired = agent_q::provisioning_flow_stage_expired(xTaskGetTickCount());
     if (panel_active && !expired) {
         return;
     }
 
     if (panel_active) {
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::recovery_word_entry);
+        clear_agent_q_panel_if_kind(AgentQUiPanelKind::import_word_entry);
     } else {
-        wipe_setup_scratch("recovery word entry panel lost");
+        wipe_setup_scratch("import word entry panel lost");
     }
 
     if (expired) {
-        agent_q::avatar_overlay_show_message("Recovery expired", AgentQMessageKind::timeout, AgentQUiMode::result, kAgentQResultDisplayMs);
+        agent_q::avatar_overlay_show_message("Import expired", AgentQMessageKind::timeout, AgentQUiMode::result, kAgentQResultDisplayMs);
     }
 }
 
-void clear_recovery_phrase_if_needed()
+void clear_backup_phrase_if_needed()
 {
-    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recovery_phrase_displayed)) {
+    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::backup_phrase_displayed)) {
         return;
     }
 
-    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::recovery_phrase_display);
+    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::backup_phrase_display);
     const bool expired = agent_q::provisioning_flow_stage_expired(xTaskGetTickCount());
     if (panel_active && !expired) {
         return;
     }
 
     if (panel_active) {
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::recovery_phrase_display);
+        clear_agent_q_panel_if_kind(AgentQUiPanelKind::backup_phrase_display);
     } else {
-        wipe_setup_scratch("recovery phrase display lost");
+        wipe_setup_scratch("backup phrase display lost");
     }
 
     if (expired) {
@@ -3349,7 +3349,7 @@ void start_reset_pin_from_settings_menu()
     }
 }
 
-bool begin_connect_pin_auth(const char* id, const char* gateway_name)
+bool begin_connect_pin_auth(const char* id, const char* client_name)
 {
     agent_q::identification_display_clear();
     const TickType_t started_at = xTaskGetTickCount();
@@ -4323,7 +4323,7 @@ void handle_setup_auth_worker_result(agent_q::AgentQLocalAuthWorkerResult& worke
             root_material_size,
             prepared_auth,
             persistent_material_ops());
-    wipe_setup_scratch("local recovery phrase backup and PIN committed");
+    wipe_setup_scratch("local backup phrase and PIN committed");
     clear_agent_q_panel_if_kind(AgentQUiPanelKind::pin_entry, SensitiveUiClearPolicy::preserve);
     switch (result) {
         case SetupCommitResult::ok:
@@ -5145,7 +5145,7 @@ bool begin_connect_pin_auth_from_review(TickType_t now)
     const agent_q::AgentQConnectApprovalSnapshot approval =
         agent_q::connect_approval_snapshot();
     clear_agent_q_panel_if_kind(AgentQUiPanelKind::connect_review, SensitiveUiClearPolicy::preserve);
-    return begin_connect_pin_auth(approval.request_id, approval.gateway_name);
+    return begin_connect_pin_auth(approval.request_id, approval.client_name);
 }
 
 void drain_connect_review_choice_events()
@@ -5184,12 +5184,12 @@ void start_local_provisioning_from_setup_touch()
 
     const ProvisioningFlowGenerateResult generation_result =
         agent_q::provisioning_flow_begin_generate(
-            timeout_window_from_now_ms(xTaskGetTickCount(), kRecoveryPhraseDisplayMs));
+            timeout_window_from_now_ms(xTaskGetTickCount(), kBackupPhraseDisplayMs));
     if (generation_result == ProvisioningFlowGenerateResult::ok) {
-        if (agent_q::modal_draw_recovery_phrase_display(agent_q::provisioning_flow_recovery_phrase())) {
-            ESP_LOGI(kTag, "Local setup recovery phrase displayed");
+        if (agent_q::modal_draw_backup_phrase_display(agent_q::provisioning_flow_backup_phrase())) {
+            ESP_LOGI(kTag, "Local setup backup phrase displayed");
         } else {
-            wipe_setup_scratch("local setup recovery phrase display allocation failed");
+            wipe_setup_scratch("local setup backup phrase display allocation failed");
             ESP_LOGW(kTag, "Local setup display failed");
             agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
         }
@@ -5223,17 +5223,17 @@ void show_setup_choice_from_setup_touch()
     }
 }
 
-void start_local_recovery_from_setup_choice()
+void start_local_import_from_setup_choice()
 {
     if (!setup_choice_action_allowed()) {
-        ESP_LOGW(kTag, "Stale local recover action ignored");
+        ESP_LOGW(kTag, "Stale local import action ignored");
         return;
     }
 
-    agent_q::provisioning_flow_begin_recover(
+    agent_q::provisioning_flow_begin_import_phrase(
         timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs));
-    if (!agent_q::modal_draw_recover_word_entry_panel()) {
-        wipe_setup_scratch("recovery word entry display allocation failed");
+    if (!agent_q::modal_draw_import_word_entry_panel()) {
+        wipe_setup_scratch("import word entry display allocation failed");
         agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
     }
 }
@@ -5247,15 +5247,15 @@ void cancel_setup_from_local_ui()
     }
 
     clear_agent_q_panel_if_kind(AgentQUiPanelKind::setup_choice, SensitiveUiClearPolicy::preserve);
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::recovery_phrase_display, SensitiveUiClearPolicy::preserve);
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::recovery_word_entry, SensitiveUiClearPolicy::preserve);
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::backup_phrase_display, SensitiveUiClearPolicy::preserve);
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::import_word_entry, SensitiveUiClearPolicy::preserve);
     clear_agent_q_panel_if_kind(AgentQUiPanelKind::pin_entry, SensitiveUiClearPolicy::preserve);
     wipe_setup_scratch("provisioning scratch wipe");
-    ESP_LOGI(kTag, "Local setup canceled from recovery phrase UI");
+    ESP_LOGI(kTag, "Local setup canceled from backup phrase UI");
     agent_q::avatar_overlay_show_message("Setup canceled", AgentQMessageKind::rejected, AgentQUiMode::result, kAgentQResultDisplayMs);
 }
 
-// Cancel inside the generate (recovery_phrase_displayed) or recover (recover_word_entry)
+// Cancel inside the generate (backup_phrase_displayed) or import (import_word_entry)
 // screen goes BACK to the setup-choice menu rather than ending setup. The in-progress
 // phrase is wiped first (same protection as a full cancel) so nothing leaks across the
 // re-pick. Setup is entirely device-local (SPEC: local controls own the setup transitions,
@@ -5264,16 +5264,16 @@ void cancel_setup_from_local_ui()
 // NOTE: built but NOT yet exercised on hardware — verify nav + scratch wipe + re-pick.
 void return_to_setup_choice_from_local_ui()
 {
-    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recovery_phrase_displayed) &&
-        !agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recover_word_entry)) {
+    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::backup_phrase_displayed) &&
+        !agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::import_word_entry)) {
         ESP_LOGW(kTag, "Stale local back-to-choice ignored");
         return;
     }
 
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::recovery_phrase_display, SensitiveUiClearPolicy::preserve);
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::recovery_word_entry, SensitiveUiClearPolicy::preserve);
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::backup_phrase_display, SensitiveUiClearPolicy::preserve);
+    clear_agent_q_panel_if_kind(AgentQUiPanelKind::import_word_entry, SensitiveUiClearPolicy::preserve);
     wipe_setup_scratch("provisioning back-to-choice wipe");
-    ESP_LOGI(kTag, "Returned to setup choice from generate/recover UI");
+    ESP_LOGI(kTag, "Returned to setup choice from generate/import UI");
 
     agent_q::provisioning_flow_begin_setup_choice(
         timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs));
@@ -5283,9 +5283,9 @@ void return_to_setup_choice_from_local_ui()
     }
 }
 
-void confirm_recovery_phrase_from_local_ui()
+void confirm_backup_phrase_from_local_ui()
 {
-    if (!recovery_phrase_backup_confirmation_ready()) {
+    if (!backup_phrase_backup_confirmation_ready()) {
         ESP_LOGW(kTag, "Stale local backup confirmation ignored");
         return;
     }
@@ -5306,107 +5306,107 @@ void confirm_recovery_phrase_from_local_ui()
     ESP_LOGI(kTag, "Local backup confirmed; setup PIN entry started");
 }
 
-void handle_recover_slot_from_local_ui(uint8_t slot)
+void handle_import_slot_from_local_ui(uint8_t slot)
 {
-    if (!agent_q::provisioning_flow_recover_select_slot(
+    if (!agent_q::provisioning_flow_import_select_slot(
             slot,
             timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs))) {
         return;
     }
-    if (!agent_q::modal_draw_recover_word_entry_panel()) {
-        wipe_setup_scratch("recovery word entry display allocation failed");
+    if (!agent_q::modal_draw_import_word_entry_panel()) {
+        wipe_setup_scratch("import word entry display allocation failed");
         agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
     }
 }
 
-void handle_recover_letter_from_local_ui(char letter)
+void handle_import_letter_from_local_ui(char letter)
 {
-    if (!agent_q::provisioning_flow_recover_add_letter(
+    if (!agent_q::provisioning_flow_import_add_letter(
             letter,
             timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs))) {
         return;
     }
-    if (!agent_q::modal_draw_recover_word_entry_panel()) {
-        wipe_setup_scratch("recovery word entry display allocation failed");
+    if (!agent_q::modal_draw_import_word_entry_panel()) {
+        wipe_setup_scratch("import word entry display allocation failed");
         agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
     }
 }
 
-void handle_recover_clear_from_local_ui()
+void handle_import_clear_from_local_ui()
 {
-    if (agent_q::provisioning_flow_recover_clear_active(
+    if (agent_q::provisioning_flow_import_clear_active(
             timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs)) &&
-        !agent_q::modal_draw_recover_word_entry_panel()) {
-        wipe_setup_scratch("recovery word entry display allocation failed");
+        !agent_q::modal_draw_import_word_entry_panel()) {
+        wipe_setup_scratch("import word entry display allocation failed");
         agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
     }
 }
 
-void handle_recover_candidate_from_local_ui(uint16_t word_index)
+void handle_import_candidate_from_local_ui(uint16_t word_index)
 {
-    if (agent_q::provisioning_flow_recover_select_candidate(
+    if (agent_q::provisioning_flow_import_select_candidate(
             word_index,
             timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs)) &&
-        !agent_q::modal_draw_recover_word_entry_panel()) {
-        wipe_setup_scratch("recovery word entry display allocation failed");
+        !agent_q::modal_draw_import_word_entry_panel()) {
+        wipe_setup_scratch("import word entry display allocation failed");
         agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
     }
 }
 
-void handle_recover_previous_from_local_ui()
+void handle_import_previous_from_local_ui()
 {
-    if (agent_q::provisioning_flow_recover_previous_page(
+    if (agent_q::provisioning_flow_import_previous_page(
             timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs)) &&
-        !agent_q::modal_draw_recover_word_entry_panel()) {
-        wipe_setup_scratch("recovery word entry display allocation failed");
+        !agent_q::modal_draw_import_word_entry_panel()) {
+        wipe_setup_scratch("import word entry display allocation failed");
         agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
     }
 }
 
-void start_pin_setup_after_recovered_entropy()
+void start_pin_setup_after_imported_entropy()
 {
-    agent_q::provisioning_flow_begin_pin_setup_after_recovery(
+    agent_q::provisioning_flow_begin_pin_setup_after_import(
         timeout_window_from_now_ms(xTaskGetTickCount(), kLocalPinSetupMs));
 
     if (!agent_q::modal_draw_pin_setup_panel()) {
-        wipe_setup_scratch("local PIN setup display allocation failed after recovery");
+        wipe_setup_scratch("local PIN setup display allocation failed after import");
         agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
     }
 }
 
-void handle_recover_next_from_local_ui()
+void handle_import_next_from_local_ui()
 {
-    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::recover_word_entry) ||
-        !agent_q::provisioning_flow_recover_current_page_complete()) {
+    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::import_word_entry) ||
+        !agent_q::provisioning_flow_import_current_page_complete()) {
         return;
     }
 
-    if (agent_q::provisioning_flow_recover_next_page(
+    if (agent_q::provisioning_flow_import_next_page(
             timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs))) {
-        if (!agent_q::modal_draw_recover_word_entry_panel()) {
-            wipe_setup_scratch("recovery word entry display allocation failed");
+        if (!agent_q::modal_draw_import_word_entry_panel()) {
+            wipe_setup_scratch("import word entry display allocation failed");
             agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
         }
         return;
     }
 
-    if (!agent_q::provisioning_flow_recover_all_words_complete()) {
+    if (!agent_q::provisioning_flow_import_all_words_complete()) {
         return;
     }
 
-    const agent_q::Bip39EntropyRecoveryResult result =
-        agent_q::provisioning_flow_recover_entropy_from_words();
-    if (result != agent_q::Bip39EntropyRecoveryResult::ok) {
-        agent_q::provisioning_flow_recover_refresh_deadline(
+    const agent_q::Bip39EntropyDecodeResult result =
+        agent_q::provisioning_flow_decode_entropy_from_words();
+    if (result != agent_q::Bip39EntropyDecodeResult::ok) {
+        agent_q::provisioning_flow_import_refresh_deadline(
             timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs));
-        if (!agent_q::modal_draw_recover_word_entry_panel("Checksum failed. Recheck words.")) {
-            wipe_setup_scratch("recovery checksum failure display allocation failed");
-            agent_q::avatar_overlay_show_message("Recovery error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+        if (!agent_q::modal_draw_import_word_entry_panel("Checksum failed. Recheck words.")) {
+            wipe_setup_scratch("import checksum failure display allocation failed");
+            agent_q::avatar_overlay_show_message("Import error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
         }
         return;
     }
 
-    start_pin_setup_after_recovered_entropy();
+    start_pin_setup_after_imported_entropy();
 }
 
 void drain_ui_events()
@@ -5427,8 +5427,8 @@ void drain_ui_events()
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::setup_recover_requested) {
-            start_local_recovery_from_setup_choice();
+        if (event.kind == AgentQUiEventKind::setup_import_requested) {
+            start_local_import_from_setup_choice();
             continue;
         }
 
@@ -5487,47 +5487,47 @@ void drain_ui_events()
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::recovery_phrase_cancel_requested) {
+        if (event.kind == AgentQUiEventKind::backup_phrase_cancel_requested) {
             return_to_setup_choice_from_local_ui();
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::recovery_phrase_confirm_requested) {
-            confirm_recovery_phrase_from_local_ui();
+        if (event.kind == AgentQUiEventKind::backup_phrase_confirm_requested) {
+            confirm_backup_phrase_from_local_ui();
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::recover_slot_requested) {
-            handle_recover_slot_from_local_ui(event.slot);
+        if (event.kind == AgentQUiEventKind::import_slot_requested) {
+            handle_import_slot_from_local_ui(event.slot);
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::recover_letter_requested) {
-            handle_recover_letter_from_local_ui(event.letter);
+        if (event.kind == AgentQUiEventKind::import_letter_requested) {
+            handle_import_letter_from_local_ui(event.letter);
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::recover_clear_requested) {
-            handle_recover_clear_from_local_ui();
+        if (event.kind == AgentQUiEventKind::import_clear_requested) {
+            handle_import_clear_from_local_ui();
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::recover_candidate_requested) {
-            handle_recover_candidate_from_local_ui(event.word_index);
+        if (event.kind == AgentQUiEventKind::import_candidate_requested) {
+            handle_import_candidate_from_local_ui(event.word_index);
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::recover_previous_requested) {
-            handle_recover_previous_from_local_ui();
+        if (event.kind == AgentQUiEventKind::import_previous_requested) {
+            handle_import_previous_from_local_ui();
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::recover_next_requested) {
-            handle_recover_next_from_local_ui();
+        if (event.kind == AgentQUiEventKind::import_next_requested) {
+            handle_import_next_from_local_ui();
             continue;
         }
 
-        if (event.kind == AgentQUiEventKind::recover_cancel_requested) {
+        if (event.kind == AgentQUiEventKind::import_cancel_requested) {
             return_to_setup_choice_from_local_ui();
             continue;
         }
@@ -5986,19 +5986,19 @@ void handle_line(const char* line)
                 "connect request contains unsupported fields.")) {
             return;
         }
-        const char* const allowed_connect_params[] = {"gatewayName"};
+        const char* const allowed_connect_params[] = {"clientName"};
         if (!json_object_fields_supported(request["params"], allowed_connect_params, 1)) {
             write_error_response(id, "invalid_params", "connect params contain unsupported fields.");
             return;
         }
 
-        const char* gateway_name = nullptr;
-        if (!agent_q::agent_q_json_optional_c_string(request["params"]["gatewayName"], "", &gateway_name)) {
-            write_error_response(id, "invalid_gateway_name", "gatewayName must be 1-64 printable ASCII characters.");
+        const char* client_name = nullptr;
+        if (!agent_q::agent_q_json_optional_c_string(request["params"]["clientName"], "", &client_name)) {
+            write_error_response(id, "invalid_client_name", "clientName must be 1-64 printable ASCII characters.");
             return;
         }
-        if (!is_printable_ascii_gateway_name(gateway_name)) {
-            write_error_response(id, "invalid_gateway_name", "gatewayName must be 1-64 printable ASCII characters.");
+        if (!is_printable_ascii_client_name(client_name)) {
+            write_error_response(id, "invalid_client_name", "clientName must be 1-64 printable ASCII characters.");
             return;
         }
 
@@ -6006,7 +6006,7 @@ void handle_line(const char* line)
         const agent_q::AgentQTimeoutWindow approval_window = agent_q::timeout_window_from_deadline(
             started_at,
             started_at + pdMS_TO_TICKS(kConnectApprovalDefaultMs));
-        if (!agent_q::connect_approval_begin(id, gateway_name, approval_window)) {
+        if (!agent_q::connect_approval_begin(id, client_name, approval_window)) {
             write_connect_rejected_response(id, "invalid_state", "Connect is unavailable.");
             agent_q::avatar_overlay_show_message("Connect unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
             return;
@@ -6015,7 +6015,7 @@ void handle_line(const char* line)
             xQueueReset(g_connect_review_choice_queue);
         }
         show_connect_review();
-        ESP_LOGI(kTag, "connect waiting for review: id=%s gateway=%s", id, gateway_name);
+        ESP_LOGI(kTag, "connect waiting for review: id=%s agent-q=%s", id, client_name);
         return;
     }
 
@@ -6254,7 +6254,7 @@ void handle_line(const char* line)
 
     if (strcmp(type, "get_capabilities") == 0) {
         // get_capabilities is read-only and session-scoped. Firmware is the
-        // capability authority; Gateway must not infer or extend this response.
+        // capability authority; Agent-Q must not infer or extend this response.
         if (!provisioned_material_ready()) {
             write_error_response(id, "invalid_state", "Capabilities are available only after provisioning is complete.");
             return;
@@ -6340,7 +6340,7 @@ void handle_line(const char* line)
     if (strcmp(type, "policy_get") == 0) {
         // policy_get is a session-scoped read-only request. Firmware returns
         // the committed active policy document it will use for method
-        // decisions; Gateway must not infer policy state from local defaults.
+        // decisions; Agent-Q must not infer policy state from local defaults.
         if (!provisioned_material_ready()) {
             write_error_response(id, "invalid_state", "Policy is available only after provisioning is complete.");
             return;
@@ -6548,8 +6548,8 @@ void usb_request_task(void*)
         clear_identification_if_needed();
         clear_agent_q_message_if_needed();
         clear_setup_choice_if_needed();
-        clear_recovery_phrase_if_needed();
-        clear_recovery_word_entry_if_needed();
+        clear_backup_phrase_if_needed();
+        clear_import_word_entry_if_needed();
         clear_pin_setup_if_needed();
         clear_local_reset_if_needed();
         clear_local_pin_auth_if_needed();
@@ -6609,7 +6609,7 @@ void init_usb_request_server()
     modal_callbacks.on_connect_review_accept_clicked = on_connect_review_accept_clicked;
     modal_callbacks.on_connect_review_reject_clicked = on_connect_review_reject_clicked;
     modal_callbacks.on_setup_generate_clicked = on_setup_generate_clicked;
-    modal_callbacks.on_setup_recover_clicked = on_setup_recover_clicked;
+    modal_callbacks.on_setup_import_clicked = on_setup_import_clicked;
     modal_callbacks.on_setup_cancel_clicked = on_setup_cancel_clicked;
     modal_callbacks.on_settings_cancel_clicked = on_settings_cancel_clicked;
     modal_callbacks.on_settings_human_approval_input_clicked = on_settings_human_approval_input_clicked;
@@ -6619,20 +6619,20 @@ void init_usb_request_server()
     modal_callbacks.on_error_recovery_erase_clicked = on_error_recovery_erase_clicked;
     modal_callbacks.on_error_recovery_cancel_clicked = on_error_recovery_cancel_clicked;
     modal_callbacks.on_reset_cancel_clicked = on_reset_cancel_clicked;
-    modal_callbacks.on_recovery_phrase_cancel_clicked = on_recovery_phrase_cancel_clicked;
-    modal_callbacks.on_recovery_phrase_confirm_clicked = on_recovery_phrase_confirm_clicked;
+    modal_callbacks.on_backup_phrase_cancel_clicked = on_backup_phrase_cancel_clicked;
+    modal_callbacks.on_backup_phrase_confirm_clicked = on_backup_phrase_confirm_clicked;
     modal_callbacks.on_pin_digit_clicked = on_pin_digit_clicked;
     modal_callbacks.on_pin_clear_clicked = on_pin_clear_clicked;
     modal_callbacks.on_pin_backspace_clicked = on_pin_backspace_clicked;
     modal_callbacks.on_pin_submit_clicked = on_pin_submit_clicked;
     modal_callbacks.on_pin_cancel_clicked = on_pin_cancel_clicked;
-    modal_callbacks.on_recover_slot_clicked = on_recover_slot_clicked;
-    modal_callbacks.on_recover_letter_clicked = on_recover_letter_clicked;
-    modal_callbacks.on_recover_candidate_clicked = on_recover_candidate_clicked;
-    modal_callbacks.on_recover_clear_clicked = on_recover_clear_clicked;
-    modal_callbacks.on_recover_previous_clicked = on_recover_previous_clicked;
-    modal_callbacks.on_recover_next_clicked = on_recover_next_clicked;
-    modal_callbacks.on_recover_cancel_clicked = on_recover_cancel_clicked;
+    modal_callbacks.on_import_slot_clicked = on_import_slot_clicked;
+    modal_callbacks.on_import_letter_clicked = on_import_letter_clicked;
+    modal_callbacks.on_import_candidate_clicked = on_import_candidate_clicked;
+    modal_callbacks.on_import_clear_clicked = on_import_clear_clicked;
+    modal_callbacks.on_import_previous_clicked = on_import_previous_clicked;
+    modal_callbacks.on_import_next_clicked = on_import_next_clicked;
+    modal_callbacks.on_import_cancel_clicked = on_import_cancel_clicked;
     modal_callbacks.on_policy_update_review_continue_clicked = on_policy_update_review_continue_clicked;
     modal_callbacks.on_policy_update_review_reject_clicked = on_policy_update_review_reject_clicked;
     modal_callbacks.on_user_signing_review_accept_clicked = on_user_signing_review_accept_clicked;

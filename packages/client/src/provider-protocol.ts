@@ -3,7 +3,7 @@ import {
   MAX_FIRMWARE_VERSION_LENGTH,
   MAX_HARDWARE_ID_LENGTH,
   isDeviceState,
-  isGatewayName,
+  isClientName,
   isProvisioningState,
   isSafeDeviceId,
   isSafeRequestId,
@@ -110,7 +110,7 @@ export interface ConnectRequest {
   version: typeof PROTOCOL_VERSION;
   type: "connect";
   params: {
-    gatewayName: string;
+    clientName: string;
   };
 }
 
@@ -379,12 +379,12 @@ export type ProviderProtocolResponse =
   | ProtocolErrorResponse
   | SignResultResponse;
 
-export function makeConnectRequest(gatewayName: string, id = createRequestId()): ConnectRequest {
+export function makeConnectRequest(clientName: string, id = createRequestId()): ConnectRequest {
   validateRequestId(id);
-  if (!isGatewayName(gatewayName)) {
-    throw new ProtocolError("invalid_gateway_name", "gatewayName must be 1-64 printable ASCII characters.");
+  if (!isClientName(clientName)) {
+    throw new ProtocolError("invalid_client_name", "clientName must be 1-64 printable ASCII characters.");
   }
-  return { id, version: PROTOCOL_VERSION, type: "connect", params: { gatewayName } };
+  return { id, version: PROTOCOL_VERSION, type: "connect", params: { clientName } };
 }
 
 export function makeDisconnectRequest(sessionId: string, id = createRequestId()): DisconnectRequest {
@@ -586,8 +586,8 @@ function normalizeProviderProtocolRequest(request: unknown): ProviderProtocolReq
     case "connect": {
       requireOnlyKeys(request, ["id", "version", "type", "params"], "connect request");
       const params = asRecord(request.params, "connect params");
-      requireOnlyKeys(params, ["gatewayName"], "connect params");
-      return makeConnectRequest(params.gatewayName as string, request.id as string);
+      requireOnlyKeys(params, ["clientName"], "connect params");
+      return makeConnectRequest(params.clientName as string, request.id as string);
     }
     case "disconnect":
       requireOnlyKeys(request, ["id", "version", "type", "sessionId"], "disconnect request");

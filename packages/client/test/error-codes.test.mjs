@@ -4,10 +4,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { normalizeErrorCode, PUBLIC_ERROR_MESSAGES } from "../dist/public-error.js";
 
-// Drift guard: derive the set of error codes Gateway can actually throw straight
+// Drift guard: derive the set of error codes Agent-Q can actually throw straight
 // from source, and assert each one has a canonical message in the public-error
-// SoT allowlist. A new `new GatewayError("x", ...)` that forgets to register "x"
-// would otherwise silently collapse to gateway_error at every output boundary.
+// SoT allowlist. A new `new AgentQError("x", ...)` that forgets to register "x"
+// would otherwise silently collapse to agent_q_error at every output boundary.
 // Codes built from a variable (e.g. a parsed Firmware error code) are not matched
 // here; the allowlist is their fail-closed default.
 function readSrc(rel) {
@@ -15,7 +15,7 @@ function readSrc(rel) {
 }
 
 const SRC_FILES = ["config.ts", "core.ts", "protocol.ts", "usb.ts"];
-const LITERAL_CODE = /new (?:Gateway|Config|Protocol)Error\(\s*"([a-z_]+)"/g;
+const LITERAL_CODE = /new (?:Agent-Q|Config|Protocol)Error\(\s*"([a-z_]+)"/g;
 
 const producedCodes = new Set();
 for (const file of SRC_FILES) {
@@ -36,9 +36,9 @@ const firmwareProtocolCodes = [
   "malformed_transaction",
 ];
 
-test("every literal Gateway error code is registered in the public-error allowlist", () => {
+test("every literal Agent-Q error code is registered in the public-error allowlist", () => {
   assert.ok(producedCodes.size > 5, "should discover the thrown error codes from source");
-  assert.ok(allowlist.has("gateway_error"), "allowlist loaded");
+  assert.ok(allowlist.has("agent_q_error"), "allowlist loaded");
   const missing = [...producedCodes].filter((code) => !allowlist.has(code)).sort();
   assert.deepEqual(
     missing,
@@ -47,7 +47,7 @@ test("every literal Gateway error code is registered in the public-error allowli
   );
 });
 
-test("Firmware-emitted runtime error codes are public Gateway errors", () => {
+test("Firmware-emitted runtime error codes are public Agent-Q errors", () => {
   for (const code of firmwareProtocolCodes) {
     assert.ok(allowlist.has(code), `${code} should be registered`);
     assert.equal(normalizeErrorCode(code), code);

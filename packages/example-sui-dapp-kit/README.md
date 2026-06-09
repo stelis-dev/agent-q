@@ -4,15 +4,18 @@ This example shows the intended Sui dapp-kit registration path for
 `@stelis/agent-q-provider-sui`. It includes browser signing actions for
 self-transfer transaction signing and personal-message signing.
 
+Use this example when you want to see how a Sui app registers the Agent-Q Wallet
+Standard adapter and sends signing requests to an Agent-Q device.
+
 It is not hardware evidence and it is not a product-active signing claim. The
 example does not create a fake provider, fake account, fake signature, or fake
 device state. It creates the package's Web Serial browser runtime and registers
 the Agent-Q Wallet Standard wallet from that runtime.
 
 The current repository provider factory, `createAgentQSuiProvider()`, is
-Node/Gateway-local and must not be used as a browser dapp provider.
+Node/host-local and must not be used as a browser dapp provider.
 
-## Run
+## Quick Start
 
 This example depends on the repository workspace packages. From a fresh
 checkout, install the root workspace dependencies first:

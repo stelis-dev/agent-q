@@ -1,6 +1,6 @@
 import { SerialPort } from "serialport";
 import { existsSync } from "node:fs";
-import { GatewayError } from "./errors.js";
+import { AgentQError } from "./errors.js";
 import {
   assertAccountsResponse,
   assertApprovalHistoryResponse,
@@ -92,7 +92,7 @@ export interface UsbStatusScanResult {
 }
 
 // Transport contract: each call should resolve or reject within its internal
-// deadline. GatewayCore wraps the driver in deadlineEnforcingDriver, so a driver
+// deadline. AgentQHostCore wraps the driver in deadlineEnforcingDriver, so a driver
 // that ignores the deadline argument still cannot exceed the budget. listPorts
 // has no deadline argument and is bounded by the shared scan deadline in
 // scanUsbDeviceStatuses.
@@ -106,7 +106,7 @@ export interface UsbSerialDriver {
   ): Promise<IdentifyDeviceResponse>;
   connectDevice(
     portPath: string,
-    gatewayName: string,
+    clientName: string,
     deadlineMs: number,
   ): Promise<ConnectResponse>;
   disconnectDevice(
@@ -179,10 +179,10 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
 
   async connectDevice(
     portPath: string,
-    gatewayName: string,
+    clientName: string,
     deadlineMs: number,
   ): Promise<ConnectResponse> {
-    return connectDeviceOverSerial(portPath, gatewayName, deadlineMs);
+    return connectDeviceOverSerial(portPath, clientName, deadlineMs);
   }
 
   async disconnectDevice(
@@ -273,10 +273,10 @@ export function validateInternalDeadlineMs(value: unknown): number {
     return INTERNAL_USB_DEADLINE_MS;
   }
   if (!Number.isInteger(value) || typeof value !== "number" || value <= 0) {
-    throw new GatewayError("gateway_error", "Internal USB deadline is invalid.", false);
+    throw new AgentQError("agent_q_error", "Internal USB deadline is invalid.", false);
   }
   if (value > INTERNAL_USB_DEADLINE_MS) {
-    throw new GatewayError("gateway_error", "Internal USB deadline is invalid.", false);
+    throw new AgentQError("agent_q_error", "Internal USB deadline is invalid.", false);
   }
   return value;
 }
@@ -310,7 +310,7 @@ export async function scanUsbDevices(
   return (await scanUsbDeviceStatuses(driver, deadlineMs)).devices;
 }
 
-// Enforce a Gateway-side deadline on a transport call so a slow or uncooperative
+// Enforce a host-side deadline on a transport call so a slow or uncooperative
 // driver — one that ignores its deadline argument, or a stuck listPorts() — cannot
 // push the scan past its budget. A genuine rejection from `work` propagates
 // UNCHANGED, so callers can still tell an enumeration/transport error apart from
@@ -322,7 +322,7 @@ function raceDeadline<T>(work: Promise<T>, remainingMs: number, timeoutMessage: 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<T>((_resolve, reject) => {
     timer = setTimeout(
-      () => reject(new GatewayError("timeout", timeoutMessage, true)),
+      () => reject(new AgentQError("timeout", timeoutMessage, true)),
       Math.max(0, remainingMs),
     );
   });
@@ -332,7 +332,7 @@ function raceDeadline<T>(work: Promise<T>, remainingMs: number, timeoutMessage: 
 // Single enforcement boundary for the transport deadline contract. Wrapping a
 // driver here races every deadline-bearing call against its own deadline argument,
 // so a driver that ignores the argument still cannot exceed the budget. Applied
-// once in GatewayCore, this bounds deadline-bearing calls in one place instead
+// once in AgentQHostCore, this bounds deadline-bearing calls in one place instead
 // of relying on each call site to remember to race.
 // listPorts has no deadline argument and is bounded by the shared scan deadline in
 // scanUsbDeviceStatuses.
@@ -351,9 +351,9 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         deadlineMs,
         "USB identify exceeded its timeout.",
       ),
-    connectDevice: (portPath, gatewayName, deadlineMs) =>
+    connectDevice: (portPath, clientName, deadlineMs) =>
       raceDeadline(
-        driver.connectDevice(portPath, gatewayName, deadlineMs),
+        driver.connectDevice(portPath, clientName, deadlineMs),
         deadlineMs,
         "USB connect exceeded its timeout.",
       ),
@@ -443,7 +443,7 @@ export async function scanUsbDeviceStatuses(
     try {
       // scanUsbDeviceStatuses OWNS the total scan budget, so it bounds each
       // handshake itself by the time remaining until the deadline. A raw/direct
-      // caller is therefore safe even without the GatewayCore driver wrapper; the
+      // caller is therefore safe even without the AgentQHostCore driver wrapper; the
       // wrapper adds the same bound for Core's non-scan transport calls and the
       // overlap on this path is harmless (same timeout, whichever fires first).
       const protocolResponse = await raceDeadline(
@@ -474,7 +474,7 @@ export async function scanUsbDeviceStatuses(
 }
 
 export function mapErrorToUnavailableReason(error: unknown): UnavailableReason {
-  if (error instanceof GatewayError) {
+  if (error instanceof AgentQError) {
     if (isUnavailableReason(error.code)) {
       return error.code;
     }
@@ -514,10 +514,10 @@ async function identifyDeviceOverSerial(
 
 async function connectDeviceOverSerial(
   portPath: string,
-  gatewayName: string,
+  clientName: string,
   deadlineMs: number,
 ): Promise<ConnectResponse> {
-  const request = makeConnectRequest(gatewayName);
+  const request = makeConnectRequest(clientName);
   return requestOverSerial(portPath, request, deadlineMs, (response) => assertConnectResponse(response));
 }
 
@@ -621,7 +621,7 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
       let settled = false;
       let buffer = "";
       const timer = setTimeout(() => {
-        settle(() => reject(new GatewayError("timeout", "Timed out waiting for Firmware response.", true)));
+        settle(() => reject(new AgentQError("timeout", "Timed out waiting for Firmware response.", true)));
       }, deadlineMs);
 
       const settle = (complete: () => void): void => {
@@ -641,7 +641,7 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
       };
 
       const onClose = (): void => {
-        settle(() => reject(new GatewayError("transport_closed", "USB serial transport closed.", true)));
+        settle(() => reject(new AgentQError("transport_closed", "USB serial transport closed.", true)));
       };
 
       const onData = (chunk: Buffer): void => {
@@ -651,7 +651,7 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
           buffer = consumed.buffer;
           lines = consumed.lines;
         } catch (error) {
-          settle(() => reject(toGatewayProtocolError(error)));
+          settle(() => reject(toAgentQProtocolError(error)));
           return;
         }
 
@@ -695,14 +695,14 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
   }
 }
 
-function toGatewayProtocolError(error: unknown): unknown {
+function toAgentQProtocolError(error: unknown): unknown {
   if (error instanceof ProtocolError) {
-    return new GatewayError(error.code, error.message, error.code === "timeout");
+    return new AgentQError(error.code, error.message, error.code === "timeout");
   }
   return error;
 }
 
-/** @internal Exported for focused protocol-line tests; not part of Gateway's public API. */
+/** @internal Exported for focused protocol-line tests; not part of Agent-Q's public API. */
 export function tryParseMatchingResponseLine<TResponse extends ProtocolResponse>(
   line: string,
   expectedId: string,
@@ -723,7 +723,7 @@ export function tryParseMatchingResponseLine<TResponse extends ProtocolResponse>
     if (parsed.id === undefined && parsed.type === "error") {
       const response = parseProtocolResponse(line);
       if (response.type === "error") {
-        throw new GatewayError(
+        throw new AgentQError(
           response.error.code,
           response.error.message,
           isRetryableIdlessFirmwareError(response.error.code),
@@ -737,7 +737,7 @@ export function tryParseMatchingResponseLine<TResponse extends ProtocolResponse>
     return assertResponse(parseProtocolResponse(line, expectedId));
   } catch (error) {
     if (error instanceof ProtocolError) {
-      throw new GatewayError(error.code, error.message, error.code === "timeout");
+      throw new AgentQError(error.code, error.message, error.code === "timeout");
     }
     throw error;
   }
@@ -776,13 +776,13 @@ function closePort(port: SerialPort): Promise<void> {
   });
 }
 
-function mapSerialOpenError(error: Error): GatewayError {
+function mapSerialOpenError(error: Error): AgentQError {
   const message = error.message || "USB serial transport failed.";
   const reason = classifySerialUnavailableReason(error);
   if (reason !== null) {
-    return new GatewayError(reason, message, true);
+    return new AgentQError(reason, message, true);
   }
-  return new GatewayError("handshake_failed", message, true);
+  return new AgentQError("handshake_failed", message, true);
 }
 
 function classifySerialUnavailableReason(error: unknown): UnavailableReason | null {
@@ -831,7 +831,7 @@ function isRetryableIdlessFirmwareError(code: string): boolean {
 }
 
 function getFirmwareErrorCode(error: unknown): string | undefined {
-  if (error instanceof GatewayError && !isUnavailableReason(error.code)) {
+  if (error instanceof AgentQError && !isUnavailableReason(error.code)) {
     return error.code;
   }
   if (error instanceof ProtocolError) {

@@ -117,7 +117,7 @@ export class AgentQSuiProvider {
   async connectDevice(input: {
     deviceId?: string;
     purpose?: string;
-    gatewayName?: string;
+    clientName?: string;
   } = {}): Promise<ConnectDeviceResult> {
     return parseProviderOutput(connectDeviceSuccessOutputShape, await this.core.connectDevice(input)) as ConnectDeviceResult;
   }

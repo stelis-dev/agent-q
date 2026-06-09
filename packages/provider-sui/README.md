@@ -13,6 +13,33 @@ The Sui provider does not store signing keys and does not make policy
 decisions. Agent-Q Firmware remains the authority for keys, policy evaluation,
 device-local approval, signing, and active policy commits.
 
+## Quick Start
+
+Use this package when a Sui app should show an Agent-Q wallet and route signing
+requests to an Agent-Q device.
+
+For Wallet Standard / dapp-kit, register the wallet during app initialization:
+
+```ts
+import { createDAppKit } from "@mysten/dapp-kit-react";
+import { createAgentQSuiWalletInitializer } from "@stelis/agent-q-provider-sui/wallet-standard";
+import { createAgentQSuiBrowserProvider } from "@stelis/agent-q-provider-sui/browser";
+
+const provider = createAgentQSuiBrowserProvider();
+
+export const dAppKit = createDAppKit({
+  networks: ["devnet"],
+  defaultNetwork: "devnet",
+  createClient(network) {
+    return clients[network];
+  },
+  walletInitializers: [createAgentQSuiWalletInitializer({ provider })],
+});
+```
+
+The app then uses normal Sui wallet flows. Agent-Q signs only after the device
+accepts the request through its current policy or device-confirmation gate.
+
 Mysten dapp-kit discovers wallets through Wallet Standard wallet objects and
 Sui features such as `sui:signTransaction`. Agent-Q provides a Wallet Standard
 wallet object, a global registration function, and a dapp-kit initializer.
@@ -21,7 +48,7 @@ package and register the wallet during app initialization.
 
 The Wallet Standard entrypoint requires an injected provider implementation and
 does not create a default provider internally. The repository's
-`createAgentQSuiProvider()` factory is Node/Gateway-local and uses the device
+`createAgentQSuiProvider()` factory is Node/host-local and uses the device
 client transport. Browser dapps can use the `./browser` subpath for a Web
 Serial-based runtime that implements `AgentQSuiWalletProvider`. Do not use the
 Wallet Standard adapter or Web Serial runtime as evidence that browser hardware
@@ -29,7 +56,7 @@ signing has been verified; product-active status still requires current-tree
 hardware smoke and LVGL visual evidence.
 
 The current package still depends on `@stelis/agent-q-client` because the root
-provider factory is Node/Gateway-local. The `./wallet-standard` subpath remains
+provider factory is Node/host-local. The `./wallet-standard` subpath remains
 runtime-separated from that Node transport, and the `./browser` subpath uses the
 client package's provider protocol projection needed to satisfy
 `AgentQSuiWalletProvider` over Web Serial. That projection exact-validates
@@ -83,7 +110,7 @@ The current signing methods are Sui `sign_transaction` and user-confirmed Sui
 message signing are not implemented and must not be advertised.
 
 Provider-sui remains a Sui-specific projection. It does not own a shared chain
-router or registry; the common Client/Gateway and Firmware boundaries enforce
+router or registry; the common Client, host process, and Firmware boundaries enforce
 the shared route contract.
 
 ## Wallet Standard

@@ -5,7 +5,7 @@ import {
   MAX_FIRMWARE_NAME_LENGTH,
   MAX_PORT_HINT_LENGTH,
   isDeviceState,
-  isGatewayName,
+  isClientName,
   isIsoTimestamp,
   isSafeDeviceId,
   isSafeDisplayText,
@@ -59,13 +59,13 @@ test("isSessionId requires the lowercase-hex session format", () => {
   assert.equal(isSessionId(""), false);
 });
 
-test("isGatewayName accepts bounded printable ASCII and rejects control/high bytes", () => {
-  assert.equal(isGatewayName("Agent-Q Gateway"), true);
-  assert.equal(isGatewayName("x".repeat(64)), true);
-  assert.equal(isGatewayName("x".repeat(65)), false);
-  assert.equal(isGatewayName(""), false);
-  assert.equal(isGatewayName("control" + TAB + "char"), false);
-  assert.equal(isGatewayName("Hello " + HIGH), false);
+test("isClientName accepts bounded printable ASCII and rejects control/high bytes", () => {
+  assert.equal(isClientName("Agent-Q"), true);
+  assert.equal(isClientName("x".repeat(64)), true);
+  assert.equal(isClientName("x".repeat(65)), false);
+  assert.equal(isClientName(""), false);
+  assert.equal(isClientName("control" + TAB + "char"), false);
+  assert.equal(isClientName("Hello " + HIGH), false);
 });
 
 test("isValidPurpose enforces charset and rejects reserved + prototype-sensitive names", () => {

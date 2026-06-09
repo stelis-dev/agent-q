@@ -1,25 +1,32 @@
-import type { GatewayCore } from "@stelis/agent-q-client/admin";
-import { toGatewayError, toPublicError } from "@stelis/agent-q-client/adapter-internal";
+import type { AgentQHostCore } from "@stelis/agent-q-client/admin";
+import { toAgentQError, toPublicError } from "@stelis/agent-q-client/adapter-internal";
 import {
   SIGN_RESULT_ERROR_MESSAGES,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
+  SUI_SIGN_TRANSACTION_NETWORKS,
+  type Account,
+  type SuiSignTransactionNetwork,
   validateSignTransactionParamsInput,
 } from "@stelis/agent-q-client/protocol";
 
-export const SUI_SIGN_CLI_HELP = `Agent-Q Sui offline-signing bridge
+export const SUI_SIGN_CLI_HELP = `Agent-Q Sui CLI external signer
 
 Usage:
-  agent-q-sui-sign --tx-bytes <base64> --network <mainnet|testnet|devnet|localnet> [--device-id <id>] [--purpose <purpose>]
-  agent-q-sui-sign --tx-bytes=<base64> --network=<mainnet|testnet|devnet|localnet>
-  <unsigned-tx-command> | agent-q-sui-sign --network <network> --tx-bytes -
-  agent-q-sui-sign --help
+  sui external-keys list-keys agent-q-sui-signer
+  sui external-keys add-existing "<KEY_ID>" agent-q-sui-signer
+  sui client switch --address <SUI_ADDRESS>
+  sui client transfer --object-id <OBJECT_ID> --to <TO_ADDRESS>
 
-Submits the shared Sui sign_transaction request and prints the Firmware-authored
-serialized signature to stdout. Firmware remains the signing authority. This
-command is not the Sui CLI JSON-RPC external-signer protocol.`;
+Advanced:
+  agent-q-sui-signer configure --network <mainnet|testnet|devnet|localnet> [--device-id <id>] [--purpose <purpose>]
+  agent-q-sui-signer --tx-bytes <base64> --network <mainnet|testnet|devnet|localnet> [--device-id <id>] [--purpose <purpose>]
+  agent-q-sui-signer --help
+
+Sui CLI calls this program as an external signer. Agent-Q lists the Sui key from
+the connected device and sends signing requests to Firmware. The private key stays on the device.`;
 
 export type SuiSignCliCore = Pick<
-  GatewayCore,
+  AgentQHostCore,
   "connectDevice" | "disconnectDevice" | "getAccounts" | "signTransaction"
 >;
 
@@ -28,6 +35,8 @@ export interface SuiSignCliDependencies {
   readStdin(): Promise<string>;
   writeStdout(text: string): Promise<void>;
   writeStderr(text: string): Promise<void>;
+  loadConfig?(): Promise<SuiSignCliConfig>;
+  saveConfig?(config: SuiSignCliConfig): Promise<void>;
 }
 
 interface SuiSignCliFailure {
@@ -36,7 +45,36 @@ interface SuiSignCliFailure {
   retryable?: boolean;
 }
 
+export interface SuiSignCliConfig {
+  network?: SuiSignTransactionNetwork;
+  deviceId?: string;
+  purpose?: string;
+}
+
+interface JsonRpcRequest {
+  jsonrpc: string;
+  method: string;
+  params: unknown;
+  id: number;
+}
+
+interface SignParams {
+  key_id: string;
+  msg: string;
+}
+
+interface PublicKeyParams {
+  key_id: string;
+}
+
+interface PublicKeyResponse {
+  key_id: string;
+  public_key: { Ed25519: string };
+  sui_address: string;
+}
+
 const SUI_SIGN_CLI_VALUE_FLAGS = new Set(["--network", "--tx-bytes", "--device-id", "--purpose"]);
+const SUI_SIGN_CLI_CONFIG_VALUE_FLAGS = new Set(["--network", "--device-id", "--purpose"]);
 
 export async function runSuiSignCli(
   args: string[],
@@ -47,7 +85,15 @@ export async function runSuiSignCli(
     return 0;
   }
 
-  const parsedFlags = parseFlags(args);
+  if (args.length === 1 && args[0] === "call") {
+    return runSuiExternalSignerCall(dependencies);
+  }
+
+  if (args[0] === "configure") {
+    return runConfigure(args.slice(1), dependencies);
+  }
+
+  const parsedFlags = parseCliFlags(args);
   if ("failure" in parsedFlags) {
     return writeFailure(dependencies, parsedFlags.failure);
   }
@@ -73,10 +119,10 @@ export async function runSuiSignCli(
 
   let validatedParams: ReturnType<typeof validateSignTransactionParamsInput>;
   try {
-    validatedParams = validateSignTransactionParamsInput({ network, txBytes }, "agent-q-sui-sign");
+    validatedParams = validateSignTransactionParamsInput({ network, txBytes }, "agent-q-sui-signer");
   } catch (error) {
-    const gatewayError = toGatewayError(error);
-    return writeFailure(dependencies, toPublicError(gatewayError.code, gatewayError.retryable));
+    const agentQError = toAgentQError(error);
+    return writeFailure(dependencies, toPublicError(agentQError.code, agentQError.retryable));
   }
 
   let connected = false;
@@ -130,10 +176,10 @@ export async function runSuiSignCli(
     resultCode = 0;
     return resultCode;
   } catch (error) {
-    const gatewayError = toGatewayError(error);
+    const agentQError = toAgentQError(error);
     resultCode = await writeFailure(
       dependencies,
-      toPublicError(gatewayError.code, gatewayError.retryable),
+      toPublicError(agentQError.code, agentQError.retryable),
     );
     return resultCode;
   } finally {
@@ -147,7 +193,307 @@ export async function runSuiSignCli(
   }
 }
 
-function parseFlags(args: string[]):
+async function runConfigure(
+  args: string[],
+  dependencies: SuiSignCliDependencies,
+): Promise<number> {
+  if (dependencies.saveConfig === undefined) {
+    return writeFailure(dependencies, {
+      code: "invalid_params",
+      message: "This installation cannot save signer configuration.",
+    });
+  }
+
+  const parsedFlags = parseAllowedFlags(args, SUI_SIGN_CLI_CONFIG_VALUE_FLAGS);
+  if ("failure" in parsedFlags) {
+    return writeFailure(dependencies, parsedFlags.failure);
+  }
+
+  const networkInput = parsedFlags.values.get("--network");
+  if (networkInput === undefined) {
+    return writeFailure(dependencies, {
+      code: "invalid_params",
+      message: "Provide --network <mainnet|testnet|devnet|localnet>.",
+    });
+  }
+
+  let network: SuiSignTransactionNetwork;
+  try {
+    network = validateNetwork(networkInput);
+  } catch (error) {
+    const agentQError = toAgentQError(error);
+    return writeFailure(dependencies, toPublicError(agentQError.code, agentQError.retryable));
+  }
+
+  const config: SuiSignCliConfig = {
+    network,
+    ...(parsedFlags.values.has("--device-id")
+      ? { deviceId: parsedFlags.values.get("--device-id") }
+      : {}),
+    ...(parsedFlags.values.has("--purpose") ? { purpose: parsedFlags.values.get("--purpose") } : {}),
+  };
+  await dependencies.saveConfig(config);
+  await dependencies.writeStdout("Agent-Q Sui signer configured.\n");
+  return 0;
+}
+
+async function runSuiExternalSignerCall(dependencies: SuiSignCliDependencies): Promise<number> {
+  let request: JsonRpcRequest;
+  try {
+    request = parseJsonRpcRequest(await dependencies.readStdin());
+  } catch (error) {
+    await writeJsonRpcError(dependencies, null, -32700, errorMessage(error));
+    return 1;
+  }
+
+  try {
+    switch (request.method) {
+      case "keys": {
+        const accounts = await readDeviceAccounts(dependencies);
+        await writeJsonRpcResult(dependencies, request.id, {
+          keys: accounts.map(accountToPublicKeyResponse),
+        });
+        return 0;
+      }
+      case "public_key": {
+        const params = parsePublicKeyParams(request.params);
+        const account = await findDeviceAccount(dependencies, params.key_id);
+        await writeJsonRpcResult(dependencies, request.id, accountToPublicKeyResponse(account));
+        return 0;
+      }
+      case "sign": {
+        const params = parseSignParams(request.params);
+        const config = await loadSignerConfig(dependencies);
+        const network = config.network;
+        if (network === undefined) {
+          throw new Error(
+            "Sui network is not configured. Run `agent-q-sui-signer configure --network <network>`.",
+          );
+        }
+        const result = await signWithDevice(dependencies, {
+          deviceId: config.deviceId,
+          purpose: config.purpose,
+          network,
+          txBytes: params.msg,
+          expectedKeyId: params.key_id,
+        });
+        await writeJsonRpcResult(dependencies, request.id, { signature: result });
+        return 0;
+      }
+      case "create_key":
+      case "sign_hashed": {
+        await writeJsonRpcError(
+          dependencies,
+          request.id,
+          -32601,
+          `${request.method} is not supported by agent-q-sui-signer.`,
+        );
+        return 1;
+      }
+      default: {
+        await writeJsonRpcError(dependencies, request.id, -32601, "Method not found.");
+        return 1;
+      }
+    }
+  } catch (error) {
+    await writeJsonRpcError(dependencies, request.id, 1, errorMessage(error));
+    return 1;
+  }
+}
+
+async function readDeviceAccounts(dependencies: SuiSignCliDependencies): Promise<Account[]> {
+  const config = await loadSignerConfig(dependencies);
+  let connected = false;
+  try {
+    await dependencies.core.connectDevice({ deviceId: config.deviceId, purpose: config.purpose });
+    connected = true;
+    const accounts = await dependencies.core.getAccounts({
+      deviceId: config.deviceId,
+      purpose: config.purpose,
+    });
+    if (accounts.source !== "live") {
+      throw new Error(`The device is ${accounts.source} (${accounts.reason}).`);
+    }
+    return accounts.accounts;
+  } finally {
+    if (connected) {
+      await dependencies.core.disconnectDevice({
+        deviceId: config.deviceId,
+        purpose: config.purpose,
+      });
+    }
+  }
+}
+
+async function findDeviceAccount(
+  dependencies: SuiSignCliDependencies,
+  keyId: string,
+): Promise<Account> {
+  const accounts = await readDeviceAccounts(dependencies);
+  const account = accounts.find(
+    (entry) => entry.derivationPath === keyId || entry.address === keyId,
+  );
+  if (account === undefined) {
+    throw new Error("Requested key is not available on the Agent-Q device.");
+  }
+  return account;
+}
+
+async function signWithDevice(
+  dependencies: SuiSignCliDependencies,
+  input: {
+    deviceId?: string;
+    purpose?: string;
+    network: SuiSignTransactionNetwork;
+    txBytes: string;
+    expectedKeyId: string;
+  },
+): Promise<string> {
+  let connected = false;
+  try {
+    await dependencies.core.connectDevice({ deviceId: input.deviceId, purpose: input.purpose });
+    connected = true;
+    const accounts = await dependencies.core.getAccounts({
+      deviceId: input.deviceId,
+      purpose: input.purpose,
+    });
+    if (accounts.source !== "live") {
+      throw new Error(`The device is ${accounts.source} (${accounts.reason}).`);
+    }
+    const account = accounts.accounts.find(
+      (entry) => entry.derivationPath === input.expectedKeyId || entry.address === input.expectedKeyId,
+    );
+    if (account === undefined) {
+      throw new Error("Requested key is not available on the Agent-Q device.");
+    }
+
+    const result = await dependencies.core.signTransaction({
+      deviceId: input.deviceId,
+      purpose: input.purpose,
+      chain: "sui",
+      method: "sign_transaction",
+      network: input.network,
+      txBytes: input.txBytes,
+    });
+    if (result.source !== "live") {
+      throw new Error(`The device is ${result.source} (${result.reason}).`);
+    }
+    if (result.status !== "signed") {
+      throw new Error(SIGN_RESULT_ERROR_MESSAGES[result.status]);
+    }
+    if (!SUI_ED25519_SIGNATURE_BASE64_PATTERN.test(result.signature)) {
+      throw new Error("The device returned an unexpected signature shape.");
+    }
+    return result.signature;
+  } finally {
+    if (connected) {
+      await dependencies.core.disconnectDevice({ deviceId: input.deviceId, purpose: input.purpose });
+    }
+  }
+}
+
+async function loadSignerConfig(
+  dependencies: SuiSignCliDependencies,
+): Promise<SuiSignCliConfig> {
+  return dependencies.loadConfig === undefined ? {} : dependencies.loadConfig();
+}
+
+function accountToPublicKeyResponse(account: {
+  address: string;
+  publicKey: string;
+  derivationPath: string;
+}): PublicKeyResponse {
+  return {
+    key_id: account.derivationPath,
+    public_key: { Ed25519: account.publicKey },
+    sui_address: account.address,
+  };
+}
+
+function parseJsonRpcRequest(input: string): JsonRpcRequest {
+  const firstLine = input.split(/\r?\n/, 1)[0]?.trim();
+  if (firstLine === undefined || firstLine.length === 0) {
+    throw new Error("JSON-RPC request is empty.");
+  }
+  const parsed = JSON.parse(firstLine) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error("JSON-RPC request must be an object.");
+  }
+  if (
+    parsed.jsonrpc !== "2.0" ||
+    typeof parsed.method !== "string" ||
+    typeof parsed.id !== "number" ||
+    !Number.isSafeInteger(parsed.id)
+  ) {
+    throw new Error("Invalid JSON-RPC request.");
+  }
+  return {
+    jsonrpc: "2.0",
+    method: parsed.method,
+    params: parsed.params,
+    id: parsed.id,
+  };
+}
+
+function parseSignParams(params: unknown): SignParams {
+  if (!isRecord(params) || typeof params.key_id !== "string" || typeof params.msg !== "string") {
+    throw new Error("Invalid sign params.");
+  }
+  validateSignTransactionParamsInput({ network: "testnet", txBytes: params.msg }, "sign");
+  return { key_id: params.key_id, msg: params.msg };
+}
+
+function parsePublicKeyParams(params: unknown): PublicKeyParams {
+  if (!isRecord(params) || typeof params.key_id !== "string" || params.key_id.length === 0) {
+    throw new Error("Invalid public_key params.");
+  }
+  return { key_id: params.key_id };
+}
+
+function validateNetwork(value: string): SuiSignTransactionNetwork {
+  if (!SUI_SIGN_TRANSACTION_NETWORKS.includes(value as SuiSignTransactionNetwork)) {
+    throw new Error("Unsupported Sui network.");
+  }
+  return value as SuiSignTransactionNetwork;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Agent-Q signer request failed.";
+}
+
+async function writeJsonRpcResult(
+  dependencies: SuiSignCliDependencies,
+  id: number,
+  result: unknown,
+): Promise<void> {
+  await dependencies.writeStdout(`${JSON.stringify({ jsonrpc: "2.0", result, id })}\n`);
+}
+
+async function writeJsonRpcError(
+  dependencies: SuiSignCliDependencies,
+  id: number | null,
+  code: number,
+  message: string,
+): Promise<void> {
+  await dependencies.writeStdout(
+    `${JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id })}\n`,
+  );
+}
+
+function parseCliFlags(args: string[]):
+  | { values: Map<string, string> }
+  | { failure: SuiSignCliFailure } {
+  return parseAllowedFlags(args, SUI_SIGN_CLI_VALUE_FLAGS);
+}
+
+function parseAllowedFlags(
+  args: string[],
+  allowedFlags: Set<string>,
+):
   | { values: Map<string, string> }
   | { failure: SuiSignCliFailure } {
   const values = new Map<string, string>();
@@ -164,7 +510,7 @@ function parseFlags(args: string[]):
 
     const equalsIndex = arg.indexOf("=");
     const name = equalsIndex === -1 ? arg : arg.slice(0, equalsIndex);
-    if (!SUI_SIGN_CLI_VALUE_FLAGS.has(name)) {
+    if (!allowedFlags.has(name)) {
       return {
         failure: {
           code: "invalid_params",
@@ -226,7 +572,7 @@ async function writeCleanupFailure(
   try {
     await dependencies.writeStderr(
       `${JSON.stringify({
-        code: "gateway_error",
+        code: "agent_q_error",
         message: signatureProduced
           ? "Agent-Q produced a signature but could not confirm session cleanup."
           : "Agent-Q could not confirm session cleanup.",

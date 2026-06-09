@@ -6,6 +6,6 @@ export function createAgentQProvider(): AgentQSuiWalletProvider | null {
     return null;
   }
   return createAgentQSuiBrowserProvider({
-    gatewayName: "Agent-Q Sui dapp-kit Example",
+    clientName: "Agent-Q Sui dapp-kit Example",
   });
 }

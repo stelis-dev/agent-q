@@ -130,7 +130,7 @@ bool bip39_english_word_index(const char* word, uint16_t* index_out)
     return false;
 }
 
-Bip39EntropyRecoveryResult recover_bip39_entropy_12_words(
+Bip39EntropyDecodeResult decode_bip39_entropy_12_words(
     const uint16_t word_indices[kBip39MnemonicWordCount],
     size_t word_count,
     uint8_t* entropy_out,
@@ -140,17 +140,17 @@ Bip39EntropyRecoveryResult recover_bip39_entropy_12_words(
         wipe_sensitive_buffer(entropy_out, entropy_size);
     }
     if (word_indices == nullptr || entropy_out == nullptr || entropy_size != kBip39EntropyBytes) {
-        return Bip39EntropyRecoveryResult::invalid_output;
+        return Bip39EntropyDecodeResult::invalid_output;
     }
     if (word_count != kBip39MnemonicWordCount) {
-        return Bip39EntropyRecoveryResult::invalid_word_count;
+        return Bip39EntropyDecodeResult::invalid_word_count;
     }
 
     for (size_t word_position = 0; word_position < kBip39MnemonicWordCount; ++word_position) {
         const uint16_t word_index = word_indices[word_position];
         if (word_index >= kBip39WordCount || bip39_english_word(word_index) == nullptr) {
             wipe_sensitive_buffer(entropy_out, entropy_size);
-            return Bip39EntropyRecoveryResult::invalid_word_index;
+            return Bip39EntropyDecodeResult::invalid_word_index;
         }
 
         for (size_t bit_position = 0; bit_position < kBip39WordIndexBits; ++bit_position) {
@@ -168,7 +168,7 @@ Bip39EntropyRecoveryResult recover_bip39_entropy_12_words(
     if (mbedtls_sha256(entropy_out, kBip39EntropyBytes, checksum, 0) != 0) {
         wipe_sensitive_buffer(entropy_out, entropy_size);
         wipe_sensitive_buffer(checksum, sizeof(checksum));
-        return Bip39EntropyRecoveryResult::invalid_output;
+        return Bip39EntropyDecodeResult::invalid_output;
     }
 
     for (size_t checksum_bit = 0; checksum_bit < kBip39ChecksumBits; ++checksum_bit) {
@@ -181,12 +181,12 @@ Bip39EntropyRecoveryResult recover_bip39_entropy_12_words(
         if (supplied_bit != bit_at(checksum, checksum_bit)) {
             wipe_sensitive_buffer(entropy_out, entropy_size);
             wipe_sensitive_buffer(checksum, sizeof(checksum));
-            return Bip39EntropyRecoveryResult::checksum_mismatch;
+            return Bip39EntropyDecodeResult::checksum_mismatch;
         }
     }
 
     wipe_sensitive_buffer(checksum, sizeof(checksum));
-    return Bip39EntropyRecoveryResult::ok;
+    return Bip39EntropyDecodeResult::ok;
 }
 
 void wipe_sensitive_buffer(void* data, size_t size)

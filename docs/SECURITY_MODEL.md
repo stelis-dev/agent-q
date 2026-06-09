@@ -12,14 +12,14 @@ description of current behavior.
 
 This document does not restate the product boundary or the wire protocol. See
 [../README.md](../README.md) for product context, [../specs/PROTOCOL.md](../specs/PROTOCOL.md)
-for the Gateway-Firmware contract, [PROVISIONING.md](PROVISIONING.md) for
+for the host process-Firmware contract, [PROVISIONING.md](PROVISIONING.md) for
 first-install signing-material setup, and [../AGENTS.md](../AGENTS.md) for the
 contributor operating rules.
 
 ## 1. Scope
 
 Agent-Q isolates signing authority and policy from the agent runtime. A
-host-side Gateway relays requests; a separate device (Firmware) holds signing
+host-side host process relays requests; a separate device (Firmware) holds signing
 material and policy and decides whether to sign or reject.
 
 ```text
@@ -36,7 +36,7 @@ look implemented.
 Implemented today:
 
 - USB device discovery, status handshake, and identification.
-- Gateway-local device selection and registry (labels, purpose routing).
+- host-local device selection and registry (labels, purpose routing).
 - A connect/disconnect runtime session held in Firmware RAM after
   material-backed `provisioned` state. The session does not authorize signing.
 - Device-local approval on the StackChan CoreS3 target for `connect`. The
@@ -50,16 +50,16 @@ Implemented today:
   build stores that DEV_PROFILE root entropy, active policy record, and PIN
   verifier in ordinary NVS; Secure Boot, Flash Encryption, and NVS Encryption
   are not configured.
-- A DEV_PROFILE recovery phrase setup path in StackChan CoreS3 source. It can
+- A DEV_PROFILE backup phrase setup path in StackChan CoreS3 source. It can
   generate BIP-39 root entropy into RAM from an Agent-Q CSPRNG seeded from
   early boot entropy, display only up-to-4-letter word prefixes on the device,
-  accept device-local BIP-39 recovery word entry with checksum verification,
+  accept device-local BIP-39 import word entry with checksum verification,
   require a local 6-digit PIN entry/repeat after backup confirmation or
-  successful recovery verification, store root entropy plus a salt + PIN
+  successful import verification, store root entropy plus a salt + PIN
   verifier after the PIN matches, and wipe volatile scratch on local cancel,
   confirmation, display expiry, PIN setup timeout, or failure. Firmware build
   verification is required for each change. Hardware smoke coverage exists for
-  StackChan CoreS3 Generate setup, PIN entry, and Recover entry.
+  StackChan CoreS3 Generate setup, PIN entry, and Import entry.
   This is not USER_PROFILE key provisioning.
 - Source-level local settings paths for provisioned StackChan CoreS3 devices.
   They are device-local UX only: Change PIN verifies the stored PIN and replaces
@@ -93,15 +93,15 @@ Implemented today:
   cannot show clearly, and exposes policy update authorization only through the
   Firmware-owned `policy_propose` proposal flow. Policy actions do not authorize
   user-mode signing.
-- A Gateway-served local Admin Page for read-only device metadata and the
-  current policy proposal template. It uses the same Gateway core
+- A local Admin Page for read-only device metadata and the
+  current policy proposal template. It uses the same host core
   boundary as MCP and is not a policy authority.
 - A bounded persistent approval-history read path. The current StackChan CoreS3
   target stores Firmware-authored signing confirmation/terminal metadata for
   `sign_transaction` and user-mode `sign_personal_message`, plus recordable
   terminal metadata from `policy_propose`. History does not store raw txBytes,
   decoded transactions, raw policy documents, full rule content, session ids,
-  request ids, gateway names, PINs, secret material, or full policy documents.
+  request ids, client names, PINs, secret material, or full policy documents.
   Local reset and error-state erase recovery wipe the history.
 - The unified `sign_transaction` path has `source-wired-not-product-active`
   status for bounded Sui restricted transfers. Firmware derives the facts and
@@ -211,10 +211,10 @@ escalation path. This restates a non-negotiable boundary from
 This is the security-relevant summary; the full roles are in
 [../specs/PROTOCOL.md](../specs/PROTOCOL.md) and [../README.md](../README.md).
 
-Gateway (host):
+host process (host):
 
-- Local Gateway process with stdio MCP tools and a local Admin Page sharing one
-  Gateway runtime session owner.
+- Local agent-q process with stdio MCP tools and a local Admin Page sharing one
+  host runtime session owner.
 - Transport and local coordination surface.
 - Holds no signing keys.
 - Makes no signing or policy decision.
@@ -311,7 +311,7 @@ private key.
 Common rules, once provisioned into a locked device:
 
 - No export path for signing material.
-- Only the public key/address is exposed to Gateway.
+- Only the public key/address is exposed to host process.
 - Only signatures leave the device.
 - No raw private-key read, no `read_memory`, no debug command.
 - Storage uses encrypted NVS under Flash Encryption.
@@ -345,7 +345,7 @@ zkLogin material (not implemented; a different trust model):
 ## 8. Policy Protection
 
 Policy decides when signing material may be used. Firmware stores and enforces it
-as the source of truth. Gateway and the Admin Page may relay a policy-update
+as the source of truth. The host process and the Admin Page may relay a policy-update
 request but are not authority.
 
 Default policy posture (design):
@@ -369,7 +369,7 @@ Password-authorized:
 - Usable on a device without buttons or a display.
 - Weaker if the host is compromised; treat it as a local-convenience boundary,
   not a defense against a compromised host.
-- The verifier must be device-side (salt + KDF verifier). Gateway must not store
+- The verifier must be device-side (salt + KDF verifier). the host process must not store
   the password; Firmware must not store a plaintext password.
 - Repeated failures must be rate-limited, delayed, or locked out.
 
@@ -391,7 +391,7 @@ provisioning-only model.
 Policy-update contract:
 
 - A policy update is a proposal submitted to Firmware, not a state setter.
-- Gateway, Admin, CLI, and MCP clients are request sources only. They may relay a
+- The host process, Admin, CLI, and MCP clients are request sources only. They may relay a
   proposal but do not authorize or apply it.
 - Firmware validates the bounded policy document, shows device-local approval,
   and commits only after approval.
@@ -421,7 +421,7 @@ Policy-update contract:
   can claim rollback resistance.
 - Policy update history may record metadata such as result, policy hash, rule
   count, and highest-risk action, but must not record raw policy documents,
-  complete rule content, session ids, request ids, gateway names, PINs, mnemonic
+  complete rule content, session ids, request ids, client names, PINs, mnemonic
   text, seed, or private key material.
 - Once a policy update reaches the post-commit terminal phase, Firmware
   must persist a small policy-update terminal marker until both the policy commit

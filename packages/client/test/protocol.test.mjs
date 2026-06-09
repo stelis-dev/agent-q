@@ -13,7 +13,7 @@ import {
   assertStatusResponse,
   createRequestId,
   FORBIDDEN_SECRET_FIELD_NAMES,
-  isGatewayName,
+  isClientName,
   isSafeDeviceId,
   isSafeRequestId,
   isSessionId,
@@ -393,20 +393,20 @@ test("status response requires provisioning and rejects invalid provisioning sta
   }
 });
 
-test("makeConnectRequest validates gatewayName", () => {
-  const request = makeConnectRequest("Agent-Q Gateway", "req_connect_1");
+test("makeConnectRequest validates clientName", () => {
+  const request = makeConnectRequest("Agent-Q", "req_connect_1");
   assert.deepEqual(request, {
     id: "req_connect_1",
     version: 1,
     type: "connect",
     params: {
-      gatewayName: "Agent-Q Gateway",
+      clientName: "Agent-Q",
     },
   });
 
-  assert.throws(() => makeConnectRequest(""), /gatewayName/);
-  assert.throws(() => makeConnectRequest("a".repeat(65)), /gatewayName/);
-  assert.throws(() => makeConnectRequest("Hello ÿ"), /gatewayName/);
+  assert.throws(() => makeConnectRequest(""), /clientName/);
+  assert.throws(() => makeConnectRequest("a".repeat(65)), /clientName/);
+  assert.throws(() => makeConnectRequest("Hello ÿ"), /clientName/);
 });
 
 test("makeDisconnectRequest validates sessionId", () => {
@@ -1814,16 +1814,16 @@ test("parses disconnect_result", () => {
   assert.equal(typed.status, "disconnected");
 });
 
-test("isSessionId and isGatewayName accept and reject expected inputs", () => {
+test("isSessionId and isClientName accept and reject expected inputs", () => {
   assert.equal(isSessionId("session_abcdef01"), true);
   assert.equal(isSessionId("session_ABCDEF"), false);
   assert.equal(isSessionId("notsession_aa"), false);
   assert.equal(isSessionId(""), false);
 
-  assert.equal(isGatewayName("Agent-Q Gateway"), true);
-  assert.equal(isGatewayName(""), false);
-  assert.equal(isGatewayName("a".repeat(65)), false);
-  assert.equal(isGatewayName("control\tchar"), false);
+  assert.equal(isClientName("Agent-Q"), true);
+  assert.equal(isClientName(""), false);
+  assert.equal(isClientName("a".repeat(65)), false);
+  assert.equal(isClientName("control\tchar"), false);
 });
 
 const safeDeviceId = "a508d833-5c83-4680-88bb-18aee976881e";

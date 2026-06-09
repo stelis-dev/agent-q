@@ -7,7 +7,7 @@ import {
   CONFIG_SCHEMA_VERSION,
   ConfigError,
   ConfigStore,
-  defaultGatewayConfig,
+  defaultAgentQConfig,
   getConfigPath,
   isValidLabel,
   isValidPurpose,
@@ -40,17 +40,17 @@ function statusForDevice(device) {
 test("uses XDG config path with home fallback", () => {
   assert.equal(
     getConfigPath({ env: { XDG_CONFIG_HOME: "/tmp/xdg" }, homeDir: "/home/test" }),
-    "/tmp/xdg/agent-q-gateway/config.json",
+    "/tmp/xdg/agent-q/config.json",
   );
   assert.equal(
     getConfigPath({ env: {}, homeDir: "/home/test" }),
-    "/home/test/.config/agent-q-gateway/config.json",
+    "/home/test/.config/agent-q/config.json",
   );
 });
 
 test("loads defaults at current schema and remembers usb status", async () => {
   assert.equal(CONFIG_SCHEMA_VERSION, 0, "pre-release config schema marker stays at current-layout zero");
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
     assert.deepEqual(await store.load(), {
@@ -78,7 +78,7 @@ test("loads defaults at current schema and remembers usb status", async () => {
 });
 
 test("remembers provisioning status in cached usb status", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
     await store.rememberUsbStatus(
@@ -95,7 +95,7 @@ test("remembers provisioning status in cached usb status", async () => {
 });
 
 test("remembers usb status without changing active device unless requested", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
     await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
@@ -113,21 +113,21 @@ test("remembers usb status without changing active device unless requested", asy
 });
 
 test("falls back to default current schema for malformed config json", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const path = join(dir, "config.json");
     await writeFile(path, "{ not valid json", "utf8");
 
     const store = new ConfigStore(path);
     const config = await store.load();
-    assert.deepEqual(config, defaultGatewayConfig());
+    assert.deepEqual(config, defaultAgentQConfig());
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
 
 test("falls back to default current schema for unsupported schema version", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const path = join(dir, "config.json");
     await writeFile(
@@ -152,14 +152,14 @@ test("falls back to default current schema for unsupported schema version", asyn
 
     const store = new ConfigStore(path);
     const config = await store.load();
-    assert.deepEqual(config, defaultGatewayConfig());
+    assert.deepEqual(config, defaultAgentQConfig());
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
 
 test("setDeviceMetadata sets and clears label", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
     await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
@@ -183,7 +183,7 @@ test("setDeviceMetadata sets and clears label", async () => {
 });
 
 test("setDeviceMetadata rejects unknown device and oversized label", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
     await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
@@ -211,7 +211,7 @@ test("setDeviceMetadata rejects unknown device and oversized label", async () =>
 });
 
 test("label survives a subsequent rememberUsbStatus call", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
     await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
@@ -229,7 +229,7 @@ test("label survives a subsequent rememberUsbStatus call", async () => {
 });
 
 test("setActiveDevice routes by purpose and rejects reserved or invalid purpose", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
     await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
@@ -258,7 +258,7 @@ test("setActiveDevice routes by purpose and rejects reserved or invalid purpose"
 });
 
 test("getActiveDevice returns default or purpose-specific record", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
     await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
@@ -277,7 +277,7 @@ test("getActiveDevice returns default or purpose-specific record", async () => {
 });
 
 test("listDevices reports assigned purposes and default-active flag", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
     await store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1");
@@ -295,7 +295,7 @@ test("listDevices reports assigned purposes and default-active flag", async () =
 });
 
 test("rememberUsbStatus does not write sessionId to config", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const path = join(dir, "config.json");
     const store = new ConfigStore(path);
@@ -308,7 +308,7 @@ test("rememberUsbStatus does not write sessionId to config", async () => {
 });
 
 test("prunes dangling active device and purpose references on load", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const path = join(dir, "config.json");
     const danglingConfig = {
@@ -404,7 +404,7 @@ function storedConfig(devices, extra = {}) {
 }
 
 async function loadStored(config) {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   const path = join(dir, "config.json");
   await writeFile(path, JSON.stringify(config), "utf8");
   try {
@@ -571,7 +571,7 @@ test("load de-duplicates stored records that share a deviceId", async () => {
 });
 
 test("rememberUsbStatus refuses to store a device with an unsafe identity", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
     await assert.rejects(
@@ -596,7 +596,7 @@ test("normalization warning is deduped for the same unchanged config", async () 
   console.warn = (...parts) => {
     captured.push(parts.map(String).join(" "));
   };
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-gateway-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-q-test-"));
   try {
     const path = join(dir, "config.json");
     await writeFile(path, JSON.stringify(storedConfig([storedRecord({ label: "bad" + CTRL_NL + "label" })])), "utf8");

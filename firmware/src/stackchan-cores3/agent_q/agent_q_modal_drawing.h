@@ -14,7 +14,7 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_connect_review_accept_clicked = nullptr;
     lv_event_cb_t on_connect_review_reject_clicked = nullptr;
     lv_event_cb_t on_setup_generate_clicked = nullptr;
-    lv_event_cb_t on_setup_recover_clicked = nullptr;
+    lv_event_cb_t on_setup_import_clicked = nullptr;
     lv_event_cb_t on_setup_cancel_clicked = nullptr;
     lv_event_cb_t on_settings_cancel_clicked = nullptr;
     lv_event_cb_t on_settings_human_approval_input_clicked = nullptr;
@@ -24,20 +24,20 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_error_recovery_erase_clicked = nullptr;
     lv_event_cb_t on_error_recovery_cancel_clicked = nullptr;
     lv_event_cb_t on_reset_cancel_clicked = nullptr;
-    lv_event_cb_t on_recovery_phrase_cancel_clicked = nullptr;
-    lv_event_cb_t on_recovery_phrase_confirm_clicked = nullptr;
+    lv_event_cb_t on_backup_phrase_cancel_clicked = nullptr;
+    lv_event_cb_t on_backup_phrase_confirm_clicked = nullptr;
     lv_event_cb_t on_pin_digit_clicked = nullptr;
     lv_event_cb_t on_pin_clear_clicked = nullptr;
     lv_event_cb_t on_pin_backspace_clicked = nullptr;
     lv_event_cb_t on_pin_submit_clicked = nullptr;
     lv_event_cb_t on_pin_cancel_clicked = nullptr;
-    lv_event_cb_t on_recover_slot_clicked = nullptr;
-    lv_event_cb_t on_recover_letter_clicked = nullptr;
-    lv_event_cb_t on_recover_candidate_clicked = nullptr;
-    lv_event_cb_t on_recover_clear_clicked = nullptr;
-    lv_event_cb_t on_recover_previous_clicked = nullptr;
-    lv_event_cb_t on_recover_next_clicked = nullptr;
-    lv_event_cb_t on_recover_cancel_clicked = nullptr;
+    lv_event_cb_t on_import_slot_clicked = nullptr;
+    lv_event_cb_t on_import_letter_clicked = nullptr;
+    lv_event_cb_t on_import_candidate_clicked = nullptr;
+    lv_event_cb_t on_import_clear_clicked = nullptr;
+    lv_event_cb_t on_import_previous_clicked = nullptr;
+    lv_event_cb_t on_import_next_clicked = nullptr;
+    lv_event_cb_t on_import_cancel_clicked = nullptr;
     lv_event_cb_t on_policy_update_review_continue_clicked = nullptr;
     lv_event_cb_t on_policy_update_review_reject_clicked = nullptr;
     lv_event_cb_t on_user_signing_review_accept_clicked = nullptr;
@@ -56,12 +56,12 @@ struct AgentQPolicyUpdateReviewViewModel {
 void modal_drawing_set_callbacks(const AgentQModalDrawingCallbacks& callbacks);
 
 bool modal_draw_connect_review_panel(
-    const char* gateway_name,
+    const char* client_name,
     AgentQHumanApprovalInputMode input_mode,
     AgentQTimeoutWindow timeout_window);
 bool modal_draw_setup_choice_panel();
-bool modal_draw_recover_word_entry_panel(const char* notice = nullptr);
-bool modal_draw_recovery_phrase_display(const char* recovery_phrase);
+bool modal_draw_import_word_entry_panel(const char* notice = nullptr);
+bool modal_draw_backup_phrase_display(const char* backup_phrase);
 bool modal_draw_pin_setup_panel(const char* notice = nullptr);
 bool modal_draw_settings_menu_panel();
 bool modal_draw_error_recovery_panel(bool confirm);

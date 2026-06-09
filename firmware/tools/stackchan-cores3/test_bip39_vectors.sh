@@ -130,7 +130,7 @@ bool parse_expected_words(const char* mnemonic, uint16_t words[agent_q::kBip39Mn
     return word_count == agent_q::kBip39MnemonicWordCount;
 }
 
-bool run_recovery_vector(uint8_t fill, const char* mnemonic)
+bool run_decode_vector(uint8_t fill, const char* mnemonic)
 {
     uint16_t words[agent_q::kBip39MnemonicWordCount] = {};
     if (!parse_expected_words(mnemonic, words)) {
@@ -139,29 +139,29 @@ bool run_recovery_vector(uint8_t fill, const char* mnemonic)
     }
 
     uint8_t entropy[agent_q::kBip39EntropyBytes] = {};
-    const agent_q::Bip39EntropyRecoveryResult result =
-        agent_q::recover_bip39_entropy_12_words(
+    const agent_q::Bip39EntropyDecodeResult result =
+        agent_q::decode_bip39_entropy_12_words(
             words, agent_q::kBip39MnemonicWordCount, entropy, sizeof(entropy));
-    if (result != agent_q::Bip39EntropyRecoveryResult::ok) {
-        fprintf(stderr, "recover_bip39_entropy_12_words failed for fill 0x%02x\n", fill);
+    if (result != agent_q::Bip39EntropyDecodeResult::ok) {
+        fprintf(stderr, "decode_bip39_entropy_12_words failed for fill 0x%02x\n", fill);
         agent_q::wipe_sensitive_buffer(entropy, sizeof(entropy));
         return false;
     }
 
     for (size_t index = 0; index < sizeof(entropy); ++index) {
         if (entropy[index] != fill) {
-            fprintf(stderr, "Recovered entropy mismatch at byte %zu for fill 0x%02x\n", index, fill);
+            fprintf(stderr, "Decoded entropy mismatch at byte %zu for fill 0x%02x\n", index, fill);
             agent_q::wipe_sensitive_buffer(entropy, sizeof(entropy));
             return false;
         }
     }
 
     words[agent_q::kBip39MnemonicWordCount - 1] ^= 0x01;
-    const agent_q::Bip39EntropyRecoveryResult checksum_result =
-        agent_q::recover_bip39_entropy_12_words(
+    const agent_q::Bip39EntropyDecodeResult checksum_result =
+        agent_q::decode_bip39_entropy_12_words(
             words, agent_q::kBip39MnemonicWordCount, entropy, sizeof(entropy));
     agent_q::wipe_sensitive_buffer(entropy, sizeof(entropy));
-    if (checksum_result != agent_q::Bip39EntropyRecoveryResult::checksum_mismatch) {
+    if (checksum_result != agent_q::Bip39EntropyDecodeResult::checksum_mismatch) {
         fprintf(stderr, "Checksum mismatch was not rejected for fill 0x%02x\n", fill);
         return false;
     }
@@ -182,10 +182,10 @@ int main()
     if (!run_fill_vector(0xff, ff_vector)) {
         return 1;
     }
-    if (!run_recovery_vector(0x00, zero_vector)) {
+    if (!run_decode_vector(0x00, zero_vector)) {
         return 1;
     }
-    if (!run_recovery_vector(0xff, ff_vector)) {
+    if (!run_decode_vector(0xff, ff_vector)) {
         return 1;
     }
 

@@ -6,7 +6,7 @@ usage() {
 Usage: firmware/tools/stackchan-cores3/test_sign_api_activation_boundary.sh
 
 Checks the Sign API activation boundary:
-Firmware USB and Gateway client expose public sign_transaction and
+Firmware USB and Agent-Q client expose public sign_transaction and
 sign_personal_message requests. Firmware reads local signing mode and enters
 the supported policy or user authorization branch without host-selectable
 authorization request types. Provider-sui and MCP expose the same signing
@@ -271,9 +271,9 @@ for request_name in \
 done
 
 expect_tree_present "${CLIENT_SOURCE}" 'signTransaction|sign_transaction|sign_result' \
-  "Gateway client source must expose the new Sign API"
+  "Agent-Q client source must expose the new Sign API"
 expect_tree_present "${CLIENT_SOURCE}" 'signPersonalMessage|sign_personal_message|messageBytes' \
-  "Gateway client source must expose Sui personal-message signing"
+  "Agent-Q client source must expose Sui personal-message signing"
 expect_present "${PROVIDER_SOURCE}" 'signTransaction' \
   "Provider must expose signTransaction"
 expect_present "${PROVIDER_SOURCE}" 'signPersonalMessage' \

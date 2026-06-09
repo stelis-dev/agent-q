@@ -1,10 +1,10 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { type GatewayCore, type DeviceListResult } from "@stelis/agent-q-client/admin";
+import { type AgentQHostCore, type DeviceListResult } from "@stelis/agent-q-client/admin";
 import {
-  GatewayError,
-  gatewaySuccessOutputSchemas,
+  AgentQError,
+  hostSuccessOutputSchemas,
   isSafeDeviceId,
-  toGatewayError,
+  toAgentQError,
   toPublicError,
 } from "@stelis/agent-q-client/adapter-internal";
 
@@ -13,8 +13,8 @@ export const DEFAULT_ADMIN_PORT = 8787;
 const MAX_ADMIN_JSON_BYTES = 16384;
 const ADMIN_LOOPBACK_HOSTS = new Set([DEFAULT_ADMIN_HOST, "localhost", "::1"]);
 
-export type AdminGatewayCore = Pick<
-  GatewayCore,
+export type AdminAgentQHostCore = Pick<
+  AgentQHostCore,
   | "listDevices"
   | "scanDevices"
   | "connectDevice"
@@ -24,7 +24,7 @@ export type AdminGatewayCore = Pick<
   | "policyPropose"
 >;
 
-export interface StartedAdminGateway {
+export interface StartedAdminServer {
   server: Server;
   url: string;
 }
@@ -37,17 +37,17 @@ interface SuccessSchema {
   parse(raw: unknown): object;
 }
 
-export function createAdminHttpServer(core: AdminGatewayCore): Server {
+export function createAdminHttpServer(core: AdminAgentQHostCore): Server {
   return createServer((request, response) => {
     void handleAdminRequest(core, request, response);
   });
 }
 
-export async function startAdminGateway(options: {
-  core: AdminGatewayCore;
+export async function startAdminServer(options: {
+  core: AdminAgentQHostCore;
   host?: string;
   port?: number;
-}): Promise<StartedAdminGateway> {
+}): Promise<StartedAdminServer> {
   const host = validateAdminHost(options.host ?? DEFAULT_ADMIN_HOST);
   const port = options.port ?? DEFAULT_ADMIN_PORT;
   const server = createAdminHttpServer(options.core);
@@ -65,7 +65,7 @@ export async function startAdminGateway(options: {
 
 function validateAdminHost(host: string): string {
   if (!ADMIN_LOOPBACK_HOSTS.has(host)) {
-    throw new GatewayError("invalid_params", "Admin host must be loopback-only.", false);
+    throw new AgentQError("invalid_params", "Admin host must be loopback-only.", false);
   }
   return host;
 }
@@ -83,7 +83,7 @@ export function buildRejectOnlySuiPolicy(): Record<string, unknown> {
 }
 
 async function handleAdminRequest(
-  core: AdminGatewayCore,
+  core: AdminAgentQHostCore,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
@@ -114,17 +114,17 @@ async function handleAdminRequest(
     switch (request.url) {
       case "/api/list_devices":
         expectKeys(body, []);
-        sendSanitizedSuccess(response, gatewaySuccessOutputSchemas.listDevices, await core.listDevices());
+        sendSanitizedSuccess(response, hostSuccessOutputSchemas.listDevices, await core.listDevices());
         return;
       case "/api/scan_devices":
         expectKeys(body, []);
-        sendSanitizedSuccess(response, gatewaySuccessOutputSchemas.scanDevices, await core.scanDevices());
+        sendSanitizedSuccess(response, hostSuccessOutputSchemas.scanDevices, await core.scanDevices());
         return;
       case "/api/connect":
         expectKeys(body, ["deviceId"]);
         sendSanitizedSuccess(
           response,
-          gatewaySuccessOutputSchemas.connectDevice,
+          hostSuccessOutputSchemas.connectDevice,
           await core.connectDevice(deviceScopedInput(body)),
         );
         return;
@@ -132,7 +132,7 @@ async function handleAdminRequest(
         expectKeys(body, ["deviceId"]);
         sendSanitizedSuccess(
           response,
-          gatewaySuccessOutputSchemas.disconnectDevice,
+          hostSuccessOutputSchemas.disconnectDevice,
           await core.disconnectDevice(deviceScopedInput(body)),
         );
         return;
@@ -140,7 +140,7 @@ async function handleAdminRequest(
         expectKeys(body, ["deviceId"]);
         sendSanitizedSuccess(
           response,
-          gatewaySuccessOutputSchemas.policyGet,
+          hostSuccessOutputSchemas.policyGet,
           await core.policyGet(deviceScopedInput(body)),
         );
         return;
@@ -148,7 +148,7 @@ async function handleAdminRequest(
         expectKeys(body, ["deviceId"]);
         sendSanitizedSuccess(
           response,
-          gatewaySuccessOutputSchemas.getApprovalHistory,
+          hostSuccessOutputSchemas.getApprovalHistory,
           await core.getApprovalHistory({ ...deviceScopedInput(body), limit: 4 }),
         );
         return;
@@ -161,7 +161,7 @@ async function handleAdminRequest(
         const policy = buildRejectOnlySuiPolicy();
         sendSanitizedSuccess(
           response,
-          gatewaySuccessOutputSchemas.policyPropose,
+          hostSuccessOutputSchemas.policyPropose,
           await core.policyPropose({
             ...deviceScopedInput(body),
             policy,
@@ -173,10 +173,10 @@ async function handleAdminRequest(
         sendPublicError(response, 404, "unsupported_method", false);
     }
   } catch (error) {
-    const gatewayError = toGatewayError(error);
-    sendJson(response, gatewayError.retryable ? 503 : 400, {
+    const agentQError = toAgentQError(error);
+    sendJson(response, agentQError.retryable ? 503 : 400, {
       ok: false,
-      error: toPublicError(gatewayError.code, gatewayError.retryable),
+      error: toPublicError(agentQError.code, agentQError.retryable),
     });
   }
 }
@@ -184,12 +184,12 @@ async function handleAdminRequest(
 function validateAdminApiRequest(request: IncomingMessage): void {
   const contentType = singleHeader(request, "content-type");
   if (!isJsonContentType(contentType)) {
-    throw new GatewayError("invalid_params", "Admin API requests must use application/json.", false);
+    throw new AgentQError("invalid_params", "Admin API requests must use application/json.", false);
   }
 
   const fetchSite = singleHeader(request, "sec-fetch-site");
   if (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none") {
-    throw new GatewayError("invalid_params", "Admin API requests must be same-origin.", false);
+    throw new AgentQError("invalid_params", "Admin API requests must be same-origin.", false);
   }
 
   const origin = singleHeader(request, "origin");
@@ -198,7 +198,7 @@ function validateAdminApiRequest(request: IncomingMessage): void {
   }
   const host = singleHeader(request, "host");
   if (host === undefined || !isSameOrigin(origin, host)) {
-    throw new GatewayError("invalid_params", "Admin API requests must be same-origin.", false);
+    throw new AgentQError("invalid_params", "Admin API requests must be same-origin.", false);
   }
 }
 
@@ -208,7 +208,7 @@ function singleHeader(request: IncomingMessage, name: string): string | undefine
     return undefined;
   }
   if (typeof value !== "string") {
-    throw new GatewayError("invalid_params", "Admin request header is invalid.", false);
+    throw new AgentQError("invalid_params", "Admin request header is invalid.", false);
   }
   return value;
 }
@@ -231,7 +231,7 @@ async function readJsonBody(request: IncomingMessage): Promise<RequestBody> {
   for await (const chunk of request) {
     raw += chunk;
     if (Buffer.byteLength(raw, "utf8") > MAX_ADMIN_JSON_BYTES) {
-      throw new GatewayError("invalid_params", "Admin request body is too large.", false);
+      throw new AgentQError("invalid_params", "Admin request body is too large.", false);
     }
   }
   if (raw.length === 0) {
@@ -241,10 +241,10 @@ async function readJsonBody(request: IncomingMessage): Promise<RequestBody> {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new GatewayError("invalid_json", "Admin request body is not valid JSON.", false);
+    throw new AgentQError("invalid_json", "Admin request body is not valid JSON.", false);
   }
   if (!isRecord(parsed) || Array.isArray(parsed)) {
-    throw new GatewayError("invalid_params", "Admin request body must be a JSON object.", false);
+    throw new AgentQError("invalid_params", "Admin request body must be a JSON object.", false);
   }
   return parsed;
 }
@@ -254,7 +254,7 @@ function deviceScopedInput(body: RequestBody): { deviceId?: string } {
     return {};
   }
   if (!isSafeDeviceId(body.deviceId)) {
-    throw new GatewayError("invalid_device_id", "Admin request deviceId is invalid.", false);
+    throw new AgentQError("invalid_device_id", "Admin request deviceId is invalid.", false);
   }
   return { deviceId: body.deviceId };
 }
@@ -263,7 +263,7 @@ function expectKeys(body: RequestBody, allowedKeys: string[]): void {
   const allowed = new Set(allowedKeys);
   for (const key of Object.keys(body)) {
     if (!allowed.has(key)) {
-      throw new GatewayError("invalid_params", "Admin request includes an unsupported field.", false);
+      throw new AgentQError("invalid_params", "Admin request includes an unsupported field.", false);
     }
   }
 }
@@ -315,7 +315,7 @@ const ADMIN_HTML = `<!doctype html>
     <header class="topbar">
       <div>
         <h1>Agent-Q Admin</h1>
-        <p>Local device management through Gateway. Firmware owns approval and policy commit.</p>
+        <p>Local device management through Agent-Q. Firmware owns approval and policy commit.</p>
       </div>
       <button id="refreshButton" type="button">Refresh</button>
     </header>

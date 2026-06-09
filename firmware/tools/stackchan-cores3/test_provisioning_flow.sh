@@ -6,7 +6,7 @@ usage() {
 Usage: firmware/tools/stackchan-cores3/test_provisioning_flow.sh
 
 Compiles the StackChan CoreS3 provisioning-flow state machine against host
-stubs and verifies setup/recover stage transitions, scratch lifetime, panel
+stubs and verifies setup/import stage transitions, scratch lifetime, panel
 loss cleanup, and PIN setup commit readiness. This test uses only a host C++
 compiler and does NOT require ESP-IDF.
 EOF
@@ -114,25 +114,25 @@ const char* bip39_english_word(uint16_t index)
     return kWords[index];
 }
 
-Bip39EntropyRecoveryResult recover_bip39_entropy_12_words(
+Bip39EntropyDecodeResult decode_bip39_entropy_12_words(
     const uint16_t word_indices[kBip39MnemonicWordCount],
     size_t word_count,
     uint8_t* entropy_out,
     size_t entropy_size)
 {
     if (word_indices == nullptr || word_count != kBip39MnemonicWordCount) {
-        return Bip39EntropyRecoveryResult::invalid_word_count;
+        return Bip39EntropyDecodeResult::invalid_word_count;
     }
     if (entropy_out == nullptr || entropy_size != kBip39EntropyBytes) {
-        return Bip39EntropyRecoveryResult::invalid_output;
+        return Bip39EntropyDecodeResult::invalid_output;
     }
     for (size_t index = 0; index < word_count; ++index) {
         if (word_indices[index] >= sizeof(kWords) / sizeof(kWords[0])) {
-            return Bip39EntropyRecoveryResult::invalid_word_index;
+            return Bip39EntropyDecodeResult::invalid_word_index;
         }
     }
     memset(entropy_out, 0x42, entropy_size);
-    return Bip39EntropyRecoveryResult::ok;
+    return Bip39EntropyDecodeResult::ok;
 }
 
 bool is_valid_local_pin(const char* pin)
@@ -228,12 +228,12 @@ int main()
     expect(!agent_q::provisioning_flow_setup_choice_action_allowed(100), "setup choice expires at deadline");
 
     expect(agent_q::provisioning_flow_begin_generate(pin_window(100, 200)) == GenerateResult::ok, "generate starts phrase display");
-    expect(agent_q::provisioning_flow_stage_is(Stage::recovery_phrase_displayed), "phrase stage");
-    expect(strcmp(agent_q::provisioning_flow_recovery_phrase_prefix_cell(0), "aban") == 0, "prefix cell 1");
-    expect(strcmp(agent_q::provisioning_flow_recovery_phrase_prefix_cell(11), "acci") == 0, "prefix cell 12");
+    expect(agent_q::provisioning_flow_stage_is(Stage::backup_phrase_displayed), "phrase stage");
+    expect(strcmp(agent_q::provisioning_flow_backup_phrase_prefix_cell(0), "aban") == 0, "prefix cell 1");
+    expect(strcmp(agent_q::provisioning_flow_backup_phrase_prefix_cell(11), "acci") == 0, "prefix cell 12");
     expect(agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(pin_window(200, 300)), "confirm enters PIN setup");
     expect(agent_q::provisioning_flow_stage_is(Stage::pin_first_entry), "first PIN stage");
-    expect(agent_q::provisioning_flow_recovery_phrase()[0] == '\0', "phrase text wiped before PIN");
+    expect(agent_q::provisioning_flow_backup_phrase()[0] == '\0', "phrase text wiped before PIN");
 
     enter_pin("123456", pin_window(300, 310));
     expect(agent_q::provisioning_flow_submit_pin(pin_window(310, 320), 400, 420) == PinSubmitResult::advanced_to_repeat,
@@ -326,29 +326,29 @@ int main()
     expect(!agent_q::provisioning_flow_active(),
            "PIN commit timeout clears provisioning flow");
 
-    agent_q::provisioning_flow_begin_recover(pin_window(400, 500));
-    expect(agent_q::provisioning_flow_stage_is(Stage::recover_word_entry), "recover stage");
-    expect(!agent_q::provisioning_flow_recover_current_page_complete(), "empty page incomplete");
+    agent_q::provisioning_flow_begin_import_phrase(pin_window(400, 500));
+    expect(agent_q::provisioning_flow_stage_is(Stage::import_word_entry), "import stage");
+    expect(!agent_q::provisioning_flow_import_current_page_complete(), "empty page incomplete");
     for (uint16_t word = 0; word < 3; ++word) {
-        expect(agent_q::provisioning_flow_recover_select_slot(word, pin_window(500, 510)), "slot select");
-        expect(agent_q::provisioning_flow_recover_add_letter('a', pin_window(510, 520)), "letter entry");
-        expect(agent_q::provisioning_flow_recover_select_candidate(word, pin_window(520, 530)), "candidate select");
+        expect(agent_q::provisioning_flow_import_select_slot(word, pin_window(500, 510)), "slot select");
+        expect(agent_q::provisioning_flow_import_add_letter('a', pin_window(510, 520)), "letter entry");
+        expect(agent_q::provisioning_flow_import_select_candidate(word, pin_window(520, 530)), "candidate select");
     }
-    expect(agent_q::provisioning_flow_recover_current_page_complete(), "page complete");
-    expect(agent_q::provisioning_flow_recover_next_page(pin_window(530, 540)), "next page");
+    expect(agent_q::provisioning_flow_import_current_page_complete(), "page complete");
+    expect(agent_q::provisioning_flow_import_next_page(pin_window(530, 540)), "next page");
     for (uint16_t word = 3; word < 12; ++word) {
-        expect(agent_q::provisioning_flow_recover_select_slot((word - 3) % 3, pin_window(540, 550)), "slot select later");
-        expect(agent_q::provisioning_flow_recover_select_candidate(word, pin_window(550, 560)), "candidate select later");
+        expect(agent_q::provisioning_flow_import_select_slot((word - 3) % 3, pin_window(540, 550)), "slot select later");
+        expect(agent_q::provisioning_flow_import_select_candidate(word, pin_window(550, 560)), "candidate select later");
         if ((word + 1) % 3 == 0 && word + 1 < 12) {
-            expect(agent_q::provisioning_flow_recover_next_page(pin_window(560, 570)), "next later page");
+            expect(agent_q::provisioning_flow_import_next_page(pin_window(560, 570)), "next later page");
         }
     }
-    expect(agent_q::provisioning_flow_recover_all_words_complete(), "all words complete");
-    expect(agent_q::provisioning_flow_recover_entropy_from_words() ==
-               agent_q::Bip39EntropyRecoveryResult::ok,
-           "recover entropy");
-    agent_q::provisioning_flow_begin_pin_setup_after_recovery(pin_window(570, 600));
-    expect(agent_q::provisioning_flow_stage_is(Stage::pin_first_entry), "recovery enters PIN setup");
+    expect(agent_q::provisioning_flow_import_all_words_complete(), "all words complete");
+    expect(agent_q::provisioning_flow_decode_entropy_from_words() ==
+               agent_q::Bip39EntropyDecodeResult::ok,
+           "decode imported entropy");
+    agent_q::provisioning_flow_begin_pin_setup_after_import(pin_window(570, 600));
+    expect(agent_q::provisioning_flow_stage_is(Stage::pin_first_entry), "import enters PIN setup");
     expect(agent_q::provisioning_flow_handle_panel_deleted(Panel::pin_entry), "panel delete wipes setup PIN");
     expect(!agent_q::provisioning_flow_active(), "panel delete clears flow");
 

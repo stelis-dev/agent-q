@@ -16,7 +16,7 @@ import {
   consumeProtocolResponseChunk,
   MAX_PROTOCOL_RESPONSE_LINE_BYTES,
 } from "../dist/protocol.js";
-import { GatewayError } from "../dist/errors.js";
+import { AgentQError } from "../dist/errors.js";
 
 const status = {
   id: "req_1",
@@ -202,7 +202,7 @@ test("scan applies a shrinking per-candidate timeout under one shared deadline",
 test("scan surfaces a port-enumeration error instead of silently reporting no devices", async () => {
   const driver = {
     async listPorts() {
-      throw new GatewayError("transport_closed", "enumeration failed", true);
+      throw new AgentQError("transport_closed", "enumeration failed", true);
     },
     async requestStatus() {
       return status;
@@ -212,13 +212,13 @@ test("scan surfaces a port-enumeration error instead of silently reporting no de
   // caller can distinguish "enumeration failed" from "no device present".
   await assert.rejects(
     () => scanUsbDeviceStatuses(driver, 2000),
-    (error) => error instanceof GatewayError && error.code === "transport_closed",
+    (error) => error instanceof AgentQError && error.code === "transport_closed",
   );
 });
 
 test("deadlineEnforcingDriver bounds a call whose driver ignores its deadline", async () => {
   // Single enforcement boundary: a hanging call is bounded by its deadline argument
-  // even though this driver ignores it. GatewayCore wraps its driver with this, so
+  // even though this driver ignores it. AgentQHostCore wraps its driver with this, so
   // every deadline-bearing transport call is bounded in one place.
   const driver = {
     requestStatus() {
@@ -228,12 +228,12 @@ test("deadlineEnforcingDriver bounds a call whose driver ignores its deadline", 
   const bounded = deadlineEnforcingDriver(driver);
   await assert.rejects(
     () => bounded.requestStatus("/dev/cu.usbmodem1", 50),
-    (error) => error instanceof GatewayError && error.code === "timeout",
+    (error) => error instanceof AgentQError && error.code === "timeout",
   );
 });
 
 test("scanUsbDeviceStatuses self-enforces the scan budget on a raw driver", async () => {
-  // No GatewayCore wrapper here: the scan function owns its budget and must bound
+  // No AgentQHostCore wrapper here: the scan function owns its budget and must bound
   // a hanging handshake itself, so a direct/raw export caller is also safe.
   const driver = {
     async listPorts() {

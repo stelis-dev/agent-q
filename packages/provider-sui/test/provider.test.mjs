@@ -544,7 +544,7 @@ test("browser provider runtime defers Web Serial port selection until connectDev
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider({ gatewayName: "Agent-Q Sui dapp-kit Example" });
+    const provider = createAgentQSuiBrowserProvider({ clientName: "Agent-Q Sui dapp-kit Example" });
     assert.equal(provider instanceof AgentQSuiBrowserProvider, true);
     assert.equal(isAgentQSuiBrowserProviderAvailable(), true);
     assert.equal(requestPortCalls, 0);
@@ -1225,7 +1225,7 @@ test("browser provider recovery still returns the result when the ack fails", as
     const result = await provider.signTransaction({
       chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
     });
-    assert.equal(result.source, "live", "a failed ack must not turn a successful recovery into a failure");
+    assert.equal(result.source, "live", "a failed ack must not turn a successful buffered-result fetch into a failure");
     await provider.getCapabilities();
     assert.ok(port.requests.find((r) => r.type === "ack_result"), "the recovery attempted the ack");
   } finally {

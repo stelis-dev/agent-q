@@ -27,7 +27,7 @@ export { MAX_LABEL_LENGTH, PURPOSE_PATTERN, RESERVED_PURPOSES, isValidLabel, isV
 // Unknown-timestamp sentinel. A stored lastSeenAt that is missing or malformed is
 // coerced to the Unix epoch so the field always reaches MCP output as a valid ISO
 // instant. The epoch is a deliberate "unknown / not recently observed" marker:
-// Gateway does not invent a plausible current time (a false observation), and it
+// Agent-Q does not invent a plausible current time (a false observation), and it
 // does not drop the device for a bad display-only timestamp.
 const EPOCH_ISO = "1970-01-01T00:00:00.000Z";
 
@@ -40,7 +40,7 @@ export interface DeviceRecord {
   lastStatus: DeviceStatusSnapshot;
 }
 
-export interface GatewayConfig {
+export interface AgentQConfig {
   schemaVersion: typeof CONFIG_SCHEMA_VERSION;
   activeDeviceId: string | null;
   activeDeviceIdsByPurpose: Record<string, string>;
@@ -88,7 +88,7 @@ export class ConfigError extends Error {
   }
 }
 
-export function defaultGatewayConfig(): GatewayConfig {
+export function defaultAgentQConfig(): AgentQConfig {
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     activeDeviceId: null,
@@ -102,7 +102,7 @@ export function getConfigPath(options: ConfigPathOptions = {}): string {
   const base = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.length > 0
     ? env.XDG_CONFIG_HOME
     : join(options.homeDir ?? homedir(), ".config");
-  return join(base, "agent-q-gateway", "config.json");
+  return join(base, "agent-q", "config.json");
 }
 
 export class ConfigStore {
@@ -116,11 +116,11 @@ export class ConfigStore {
   // (hand-edited) config do not re-emit the normalization warning.
   private lastWarnedRaw: string | null = null;
 
-  async load(): Promise<GatewayConfig> {
+  async load(): Promise<AgentQConfig> {
     try {
       const raw = await readFile(this.path, "utf8");
       const parsed = JSON.parse(raw);
-      const normalized = normalizeGatewayConfig(parsed);
+      const normalized = normalizeAgentQConfig(parsed);
       if (normalized !== undefined) {
         // One pipeline produces the config AND the report; every transformation it
         // performs increments the report (guarded by the per-field tests and the
@@ -135,18 +135,18 @@ export class ConfigStore {
       // text, so unlike a device/Firmware string it is logged as-is to stay
       // useful for debugging.
       console.warn(
-        `agent-q-gateway: config at ${this.path} is not a recognized schema; using defaults.`,
+        `agent-q: config at ${this.path} is not a recognized schema; using defaults.`,
       );
-      return defaultGatewayConfig();
+      return defaultAgentQConfig();
     } catch (error) {
       if (isNodeError(error) && error.code === "ENOENT") {
-        return defaultGatewayConfig();
+        return defaultAgentQConfig();
       }
       if (error instanceof SyntaxError) {
         console.warn(
-          `agent-q-gateway: config at ${this.path} is not valid JSON; using defaults.`,
+          `agent-q: config at ${this.path} is not valid JSON; using defaults.`,
         );
-        return defaultGatewayConfig();
+        return defaultAgentQConfig();
       }
       throw error;
     }
@@ -157,8 +157,8 @@ export class ConfigStore {
   // dangling route regardless of how the caller built the in-memory config — the
   // boundary enforces the SoT itself rather than trusting callers. Private:
   // callers mutate config only through the methods above.
-  private async writeConfig(config: GatewayConfig): Promise<void> {
-    const normalized = normalizeGatewayConfig(config);
+  private async writeConfig(config: AgentQConfig): Promise<void> {
+    const normalized = normalizeAgentQConfig(config);
     if (normalized === undefined) {
       // Unreachable: writeConfig only ever receives a current-schema config built by
       // this store. Fail loudly rather than silently writing defaults (which
@@ -178,7 +178,7 @@ export class ConfigStore {
     }
     this.lastWarnedRaw = rawContent;
     console.warn(
-      `agent-q-gateway: normalized stored config (droppedRecords=${report.droppedRecords}, ` +
+      `agent-q: normalized stored config (droppedRecords=${report.droppedRecords}, ` +
         `droppedRoutes=${report.droppedRoutes}, clearedActiveDeviceId=${report.clearedActiveDeviceId}, ` +
         `coercedLabels=${report.coercedLabels}, coercedTimestamps=${report.coercedTimestamps}, ` +
         `sanitizedDeviceDisplayText=${report.sanitizedDeviceDisplayText}, ` +
@@ -195,7 +195,7 @@ export class ConfigStore {
     status: DeviceStatusSnapshot,
     portPath: string,
     options: RememberUsbStatusOptions = {},
-  ): Promise<GatewayConfig> {
+  ): Promise<AgentQConfig> {
     const config = await this.load();
     const lastSeenAt = (options.observedAt ?? new Date()).toISOString();
     // portPath is an OS-supplied diagnostic string; sanitize it before it is
@@ -213,7 +213,7 @@ export class ConfigStore {
     const index = config.devices.findIndex((candidate) => candidate.deviceId === safeDevice.deviceId);
 
     if (index >= 0) {
-      // Status refresh must not wipe Gateway-local metadata such as label.
+      // Status refresh must not wipe local metadata such as label.
       const existing = config.devices[index];
       config.devices[index] = {
         ...existing,
@@ -258,7 +258,7 @@ export class ConfigStore {
     const config = await this.load();
     const index = config.devices.findIndex((candidate) => candidate.deviceId === input.deviceId);
     if (index < 0) {
-      throw new ConfigError("device_not_found", "Device is not known to Gateway.");
+      throw new ConfigError("device_not_found", "Device is not known to Agent-Q.");
     }
 
     const record: DeviceRecord = {
@@ -292,7 +292,7 @@ export class ConfigStore {
     const config = await this.load();
     const record = config.devices.find((candidate) => candidate.deviceId === deviceId);
     if (record === undefined) {
-      throw new ConfigError("device_not_found", "Device is not known to Gateway.");
+      throw new ConfigError("device_not_found", "Device is not known to Agent-Q.");
     }
 
     if (purpose === undefined) {
@@ -335,7 +335,7 @@ export class ConfigStore {
   }
 }
 
-function toDeviceListing(record: DeviceRecord, config: GatewayConfig): DeviceListing {
+function toDeviceListing(record: DeviceRecord, config: AgentQConfig): DeviceListing {
   const assignedPurposes = Object.entries(config.activeDeviceIdsByPurpose)
     .filter(([, deviceId]) => deviceId === record.deviceId)
     .map(([purpose]) => purpose)
@@ -362,11 +362,11 @@ function toDeviceListing(record: DeviceRecord, config: GatewayConfig): DeviceLis
  * pipeline's reference-pruning stage ({@link pruneReferences}); load and write
  * thread a NormalizationReport through that stage instead.
  */
-export function normalizeReferences(config: GatewayConfig): GatewayConfig {
+export function normalizeReferences(config: AgentQConfig): AgentQConfig {
   return pruneReferences(config, emptyReport());
 }
 
-// Every transformation Gateway applies to a stored (possibly hand-edited) config
+// Every transformation Agent-Q applies to a stored (possibly hand-edited) config
 // is recorded here, so the operator warning can never under-report. One report is
 // threaded through the whole pipeline rather than merged from per-stage objects,
 // which removes the merge step where a newly added field could be forgotten.
@@ -417,9 +417,9 @@ interface RecognizedConfig {
 // that changes the config without recording it. Returns undefined only when the
 // envelope is not a recognized schema — a wholesale fallback to defaults, not a
 // field-level normalization, which the caller surfaces separately.
-function normalizeGatewayConfig(
+function normalizeAgentQConfig(
   input: unknown,
-): { config: GatewayConfig; report: NormalizationReport } | undefined {
+): { config: AgentQConfig; report: NormalizationReport } | undefined {
   const recognized = recognizeConfigShape(input);
   if (recognized === undefined) {
     return undefined;
@@ -459,7 +459,7 @@ function recognizeConfigShape(value: unknown): RecognizedConfig | undefined {
 // boundary, mirroring protocol.ts at the wire: records that cannot be made safe
 // are dropped, duplicates removed, salvageable records sanitized, malformed
 // routes discarded. Every change is recorded in `report`.
-function assembleConfig(recognized: RecognizedConfig, report: NormalizationReport): GatewayConfig {
+function assembleConfig(recognized: RecognizedConfig, report: NormalizationReport): AgentQConfig {
   const normalizedDevices: DeviceRecord[] = [];
   const seenDeviceIds = new Set<string>();
   for (const device of recognized.devices) {
@@ -506,7 +506,7 @@ function assembleConfig(recognized: RecognizedConfig, report: NormalizationRepor
 
 // Drop routing selections (and a dangling default active id) that point at
 // devices not present in `devices`, recording each removal in `report`.
-function pruneReferences(config: GatewayConfig, report: NormalizationReport): GatewayConfig {
+function pruneReferences(config: AgentQConfig, report: NormalizationReport): AgentQConfig {
   const knownDeviceIds = new Set(config.devices.map((device) => device.deviceId));
 
   let activeDeviceId = config.activeDeviceId;

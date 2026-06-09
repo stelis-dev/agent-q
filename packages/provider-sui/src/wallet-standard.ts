@@ -85,7 +85,7 @@ export type AgentQSuiWalletProvider = {
   connectDevice(input?: {
     deviceId?: string;
     purpose?: string;
-    gatewayName?: string;
+    clientName?: string;
   }): Promise<unknown>;
   disconnectDevice(input?: {
     deviceId?: string;

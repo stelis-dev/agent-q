@@ -4,7 +4,7 @@ This document describes the StackChan CoreS3 Agent-Q firmware target. It is the
 target-specific detail document referenced by the project-wide implementation
 status table.
 
-The common Gateway/Firmware protocol is defined in `specs/PROTOCOL.md`. This
+The common host process/Firmware protocol is defined in `specs/PROTOCOL.md`. This
 target must fit that protocol and must not define StackChan-specific product
 APIs.
 
@@ -58,8 +58,8 @@ Legend:
 | USB JSONL transport | O | Uses ESP32-S3 USB Serial/JTAG. |
 | Persistent protocol `deviceId` | O | Stored in NVS namespace `agent_q`, key `device_id`. |
 | `get_status` | O | Returns device id, current state, and provisioning status without approval UI. |
-| Provisioning status reporting | △ | Reports `unprovisioned`, material-backed `provisioned`, or `error` for persistent material inconsistency. Hardware smoke coverage exists for local setup and recovery setup reaching `provisioned`; failure and consistency-error states still need targeted hardware checks. This is not signing approval. Sign API requests still require a matching active session, the selected authorization gate, required history, signing critical section, response writer, and current-tree hardware/LVGL evidence before product-active status. |
-| Mnemonic UI flow | △ | The local setup speech bubble opens a Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and advances to local 6-digit PIN entry after local backup confirmation. Recover accepts 12 BIP-39 words through a device-local 3-word-per-page prefix/candidate UI, verifies checksum, then enters the same PIN setup path. The target stores root entropy plus an active default-reject policy plus a salt/PIN verifier plus signing authorization mode only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. The target keeps setup/recover volatile state and cleanup decisions in a provisioning-flow state module; USB/UI code routes events and renders the current state. Local controls own the setup transitions; there are no USB setup transition requests. Hardware smoke coverage exists for Generate setup, PIN entry, and Recover entry. |
+| Provisioning status reporting | △ | Reports `unprovisioned`, material-backed `provisioned`, or `error` for persistent material inconsistency. Hardware smoke coverage exists for local setup and import setup reaching `provisioned`; failure and consistency-error states still need targeted hardware checks. This is not signing approval. Sign API requests still require a matching active session, the selected authorization gate, required history, signing critical section, response writer, and current-tree hardware/LVGL evidence before product-active status. |
+| Mnemonic UI flow | △ | The local setup speech bubble opens a Generate/Import choice. Generate creates DEV_PROFILE BIP-39 root entropy in RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and advances to local 6-digit PIN entry after local backup confirmation. Import accepts 12 BIP-39 words through a device-local 3-word-per-page prefix/candidate UI, verifies checksum, then enters the same PIN setup path. The target stores root entropy plus an active default-reject policy plus a salt/PIN verifier plus signing authorization mode only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. The target keeps setup/import volatile state and cleanup decisions in a provisioning-flow state module; USB/UI code routes events and renders the current state. Local controls own the setup transitions; there are no USB setup transition requests. Hardware smoke coverage exists for Generate setup, PIN entry, and Import entry. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
 | `connect` | O | Source accepts connection only after material-backed `provisioned` state and Firmware-owned device-local approval. The target shows a connect review modal first. The device-local human approval input mode then selects either local PIN entry or physical Confirm. The session is RAM-only and does not authorize signing. Hardware smoke coverage exists for local PIN approval and fresh reconnect after USB detach/replug. |
 | `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. It returns `busy` while local setup/PIN/reset or sensitive settings subflow state is active, including Change PIN, so external session teardown cannot interleave with device-local sensitive UI. A matching disconnect cancels a pending policy update before the commit critical section, because that proposal is session-bound rather than generic local UI; the canceled policy-update request receives `invalid_session`, and the disconnect request receives `disconnect_result`. Idle Settings menu does not block disconnect. |
@@ -74,14 +74,14 @@ Legend:
 | `sign_transaction` | △ | Source is wired for Sui `sign_transaction` over the bounded restricted-transfer shape. The public USB dispatcher, `sign_result` writer, client/MCP/provider parser/API, Wallet Standard adapter, and raw `signing` capability are present in source. Host tests cover bounded request metadata parsed from `txBytes`, signable payload scratch, payload digest, policy runtime, review/PIN/history/signing stages, session ownership, terminal cleanup, review view-model rows derived from `txBytes`, host-supplied `network` handling, required history writes, signing-critical handoff, response boundaries, and payload/signature scratch wiping. Firmware reads device-local signing authorization mode and selects one gate: policy mode evaluates active policy and signs after policy authorization with speech-bubble notifications, while user mode requires clear-signing review and the current human approval input mode without applying active policy as an additional filter. Sponsored gas, arbitrary Sui transactions, and caller-controlled timing fields are not supported; Firmware-owned review/PIN input windows use a fixed internal 30-second window. Submitting a complete PIN pauses the input timer while stored-PIN cryptographic verification runs; the signing confirmation window is the review/PIN-entry admission boundary and is not the terminal timeout authority during stored-PIN processing after submit. The internal local-auth worker watchdog still fails closed as authentication unavailable, and wrong PIN results resume the remaining paused input window unless the shared lockout is active. Detailed hardware evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; final current-tree hardware and visual evidence remain pending, so product-active status is not claimed. |
 | `get_capabilities` | O | Source reports Sui Ed25519 account identity capability for account 0 and no delegated public methods over an approved session while material-backed `provisioned`. Top-level `signing` reports read-only Firmware signing authorization mode and supported signing methods. |
 | `get_accounts` | O | Source derives the Sui Ed25519 account (index 0, `m/44'/784'/0'/0'/0'`) from the stored DEV_PROFILE root entropy and returns address + public key over an approved session while `provisioned`. Read-only; private material never leaves Firmware. Derivation is verified against Sui SDK address vectors on host; hardware smoke coverage exists for this path while idle Settings is open, after Change PIN on the same session, and after reconnect. |
-| `policy_get` | △ | Source implements session-scoped read-only document readback for the committed active `agentq.policy.v0` policy record. The current product flow installs the DEV_PROFILE default-reject policy, and the target active-policy store can load canonical current-schema policy records through its internal storage boundary. Corrupt/unreadable active policy or missing policy under `provisioned` fails closed. Gateway/MCP parser tests and target policy-store host tests cover the current source/parser/store behavior, including full-document readback shape and response-size bounds. Current-tree hardware readback evidence for the full document response remains pending. |
-| `get_approval_history` | △ | Source implements a session-scoped read-only view of persistent Firmware-authored signing and policy-update terminal metadata. Records are stored in a fixed-size binary NVS ring buffer, newest-first paginated, and wiped by local reset or error-state erase recovery. `sign_transaction` records policy confirmation after policy approval, user confirmation after device-local approval, and terminal signing metadata for signed, rejected, timed-out, and failed outcomes as applicable; user-mode `sign_personal_message` records user confirmation and terminal signing metadata for supported terminal outcomes. Invalid parameter, malformed transaction/message, and unsupported-method errors are not persisted as approval history. The policy-update flow records `applied`, `rejected`, `timed_out`, and `storage_error` terminal records through a required-write path. Detailed hardware evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; Gateway/MCP parser tests, target approval-history host tests, and opt-in policy-update hardware smoke coverage cover current source behavior. |
+| `policy_get` | △ | Source implements session-scoped read-only document readback for the committed active `agentq.policy.v0` policy record. The current product flow installs the DEV_PROFILE default-reject policy, and the target active-policy store can load canonical current-schema policy records through its internal storage boundary. Corrupt/unreadable active policy or missing policy under `provisioned` fails closed. Host process and MCP parser tests and target policy-store host tests cover the current source/parser/store behavior, including full-document readback shape and response-size bounds. Current-tree hardware readback evidence for the full document response remains pending. |
+| `get_approval_history` | △ | Source implements a session-scoped read-only view of persistent Firmware-authored signing and policy-update terminal metadata. Records are stored in a fixed-size binary NVS ring buffer, newest-first paginated, and wiped by local reset or error-state erase recovery. `sign_transaction` records policy confirmation after policy approval, user confirmation after device-local approval, and terminal signing metadata for signed, rejected, timed-out, and failed outcomes as applicable; user-mode `sign_personal_message` records user confirmation and terminal signing metadata for supported terminal outcomes. Invalid parameter, malformed transaction/message, and unsupported-method errors are not persisted as approval history. The policy-update flow records `applied`, `rejected`, `timed_out`, and `storage_error` terminal records through a required-write path. Detailed hardware evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; Host process and MCP parser tests, target approval-history host tests, and opt-in policy-update hardware smoke coverage cover current source behavior. |
 | Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation plus matching PIN repeat. Public account derivation is implemented (`get_accounts`, Sui Ed25519 account 0). Internal Sui signing substrate is wired into `sign_transaction` for the bounded restricted-transfer shape and user-mode `sign_personal_message` for bounded personal-message bytes. Detailed hardware evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; final current-tree hardware and visual evidence remain pending before product-active status. USER_PROFILE secure storage and import are not implemented. |
-| Mnemonic generation/import | △ | DEV_PROFILE recovery phrase generation/display, device-local mnemonic recovery entry, local 6-digit PIN setup, and backup-confirmed/checksum-verified root entropy storage source exists. USB/Gateway/MCP mnemonic import and USER_PROFILE secure provisioning are not implemented. |
+| Mnemonic generation/import | △ | DEV_PROFILE backup phrase generation/display, device-local mnemonic import entry, local 6-digit PIN setup, and backup-confirmed/checksum-verified root entropy storage source exists. USB, host process, or MCP mnemonic import and USER_PROFILE secure provisioning are not implemented. |
 | Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat stores root entropy, initializes the active default-reject policy, stores the local PIN verifier, and initializes signing authorization mode. Public account derivation is implemented via `get_accounts`; USER_PROFILE secure provisioning is not implemented. |
 | Policy evaluation | △ | Links the common host-tested policy evaluator, stored-policy provider boundary, and Sui restricted-transfer method adapter. The common evaluator matches allowlisted namespace/field facts and owns only shared `common.*` fields; chain-specific field identifiers, descriptors, and transaction semantics stay in the method adapter. Sui `sign_transaction` consumes the committed active policy in policy authorization mode. Current active policy records may contain `reject` rules and at most one single-recipient bounded `sign` rule; broad, multi-rule, and multi-recipient sign policies are invalid. |
 | Policy storage/read | △ | Stores the active policy as canonical `agentq.policy.v0` binary records in two bounded NVS slots plus commit metadata and a pending-write marker, exposes read-only `policy_get` active policy document readback, preserves the old committed policy only for interrupted writes identified by that pending marker, treats metadata flip as the commit point, classifies each write as applied, unchanged failure, or consistency error, tolerates stale pending markers that exactly match the selected committed policy, removes stale commit metadata before slot reuse, and treats corrupt/unreadable committed records, invalid commit metadata without a matching pending marker, or pending targets that overlap active material without exactly matching it as a material-consistency error. The current product flow installs the DEV_PROFILE default-reject policy; current-schema policy records enter through the Firmware-owned `policy_propose` proposal path. |
-| Policy update | △ | Source implements a Firmware-owned `policy_propose` flow for active sessions: bounded proposal validation, broad, multi-rule, and multi-recipient sign rejection, a device-local policy summary review, local-PIN approval only after device-local Continue, canonical active-policy commit, required terminal history recording, and no direct policy setter. The target accepts current-schema reject policies and at most one single-recipient bounded sign rule. The flow uses the two-slot active-policy store plus a persistent policy-update terminal marker that makes an incomplete post-commit terminal sequence a material-consistency error on reboot. Gateway/MCP request/parser surface exists, and Gateway has a local Admin Page for the current policy proposal template. |
+| Policy update | △ | Source implements a Firmware-owned `policy_propose` flow for active sessions: bounded proposal validation, broad, multi-rule, and multi-recipient sign rejection, a device-local policy summary review, local-PIN approval only after device-local Continue, canonical active-policy commit, required terminal history recording, and no direct policy setter. The target accepts current-schema reject policies and at most one single-recipient bounded sign rule. The flow uses the two-slot active-policy store plus a persistent policy-update terminal marker that makes an incomplete post-commit terminal sequence a material-consistency error on reboot. The host-process/MCP request/parser surface exists, and the host process has a local Admin Page for the current policy proposal template. |
 | Secure user profile | X | Not implemented. |
 
 ## Chain And Method Support
@@ -159,13 +159,13 @@ Current UI behavior:
 | `unprovisioned` idle | Touchable setup speech bubble | `idle` |
 | `get_status` | No UI | `idle` unless approval UI, setup material, sensitive local subflow, or material/state error is active |
 | `identify_device` | Temporary speech bubble with short code | `idle` |
-| Local setup choice | Temporary Generate/Recover setup panel | `busy` |
-| Recovery phrase displayed | Temporary setup panel with 12 numbered up-to-4-letter prefixes in 3 columns by 4 rows and bottom Cancel/Confirm buttons | `busy` |
-| Mnemonic recovery entry | Temporary setup panel with three numbered word cells, A-Z prefix buttons, scrollable BIP-39 candidate bubbles, and local Cancel/Clear/Previous/Next controls | `busy` |
-| Local recovery phrase Confirm | Uses the recovery phrase panel's bottom Confirm button and advances to local PIN entry | `busy` |
+| Local setup choice | Temporary Generate/Import setup panel | `busy` |
+| Backup phrase displayed | Temporary setup panel with 12 numbered up-to-4-letter prefixes in 3 columns by 4 rows and bottom Cancel/Confirm buttons | `busy` |
+| Mnemonic import entry | Temporary setup panel with three numbered word cells, A-Z prefix buttons, scrollable BIP-39 candidate bubbles, and local Cancel/Clear/Previous/Next controls | `busy` |
+| Local backup phrase Confirm | Uses the backup phrase panel's bottom Confirm button and advances to local PIN entry | `busy` |
 | Local PIN setup | Temporary setup panel with numeric keypad, masked 6-digit entry, Clear, backspace icon, Cancel, and Confirm | `busy` |
 | Local settings menu | Temporary settings menu with fixed label/control rows. Current implemented actions are human approval input mode toggle, Change PIN, and Reset. Each sensitive action opens local PIN verification directly. | `idle` while the menu is idle; `busy` after entering a sensitive subflow |
-| Local generate/recover Cancel | The recovery-phrase (generate) and recover-word panels' bottom Cancel wipes setup scratch and returns to the setup-choice menu rather than ending setup; the setup-choice menu's own Cancel ends setup | `busy` (returns to setup choice) after scratch wipe |
+| Local generate/import Cancel | The backup-phrase (generate) and import-word panels' bottom Cancel wipes setup scratch and returns to the setup-choice menu rather than ending setup; the setup-choice menu's own Cancel ends setup | `busy` (returns to setup choice) after scratch wipe |
 | Local setup choice Cancel | The setup-choice menu's bottom Cancel button ends setup | `idle` after scratch wipe |
 | Approved result | Temporary success speech and emotion | `idle` |
 | Rejected result | Temporary rejected speech and emotion | `idle` |
@@ -174,7 +174,7 @@ Current UI behavior:
 `idle` means no physical approval prompt, device-only setup material, or
 sensitive local subflow is active. An idle Settings menu is local UI, but it does
 not block existing session-scoped read or cleanup requests, so status remains
-`idle`. Recovery phrase display and PIN setup report `busy` so Gateway status
+`idle`. Backup phrase display and PIN setup report `busy` so host process status
 does not imply that UI-replacing setup requests are available.
 
 The StackChan default avatar face remains visible. Agent-Q does not use the
@@ -219,11 +219,11 @@ or pending approvals.
 `connect` is defined by the shared protocol and is accepted only after the
 target is material-backed `provisioned`. The session id is generated by
 Firmware and held in RAM. A new approved `connect` replaces the previous
-Firmware session. Gateway reuses its RAM-held runtime session for
+Firmware session. The host process reuses its RAM-held runtime session for
 `connect_device` when a session-scoped read-only request confirms that the
-Firmware session is still valid. Gateway sends a fresh Firmware `connect`
+Firmware session is still valid. The host process sends a fresh Firmware `connect`
 request only when it has no valid local session or Firmware rejects the cached
-session. Gateway's RAM session mirror is not device authority; Gateway clears it
+session. The host process's RAM session mirror is not device authority; the host process clears it
 when Firmware rejects the session or when a live USB scan no longer observes the
 device.
 
@@ -241,7 +241,7 @@ uncertain source state. PIN entry is never submitted over USB.
 
 USB link loss clears the Firmware RAM session by policy. For this target,
 USB connected means USB host SOF is observed through
-`usb_serial_jtag_is_connected()`. It does not prove Gateway is running or that
+`usb_serial_jtag_is_connected()`. It does not prove The host process is running or that
 the serial port is open, so cable removal, host sleep/suspend, or SOF loss ends
 the session. The target advertises the maximum uint32 `sessionTtlMs` because
 the session is USB-link-bound instead of time-expiring.
@@ -280,7 +280,7 @@ verifier fail closed until reprovisioned.
 
 | Namespace | Key | Purpose |
 |---|---|---|
-| `agent_q` | `device_id` | Gateway reconnect and device-selection identity |
+| `agent_q` | `device_id` | host process reconnect and device-selection identity |
 | `agent_q` | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy, active policy, local PIN verifier, and signing authorization mode present |
 | `agent_q` | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
 | `agent_q` | `pol_s0`, `pol_s1` | Active policy canonical record slots |
@@ -331,7 +331,7 @@ optional policy hash, and optional rule reference for signing records.
 Policy-update terminal records store result, reason code, policy hash, rule
 count, and highest action.
 It does not store raw `txBytes`, full decoded transactions, raw policy
-documents, full rule content, session ids, raw request ids, gateway names,
+documents, full rule content, session ids, raw request ids, client names,
 mnemonic text, seed, private key material, PINs, or full policy documents.
 Local reset and error-state erase recovery wipe the history with the rest of
 the local material set.
@@ -348,44 +348,44 @@ entropy persistence are implemented in the target firmware source. Hardware
 smoke is still required. `get_status` returns `provisioning.state`.
 
 Setup transition paths are local device UX only. The target does not implement
-USB requests for setup start, setup cancel, recovery phrase backup
-confirmation, mnemonic import/recovery, factory reset, or diagnostic display
+USB requests for setup start, setup cancel, backup phrase
+confirmation, mnemonic import, factory reset, or diagnostic display
 signaling. `provisioned` is set only after local backup confirmation or
-checksum-verified local recovery, matching local PIN repeat, and successful
+checksum-verified local import, matching local PIN repeat, and successful
 root entropy, active policy, local PIN verifier, signing authorization mode,
 and provisioning-state persistence. `locked` is not used because no unlock
 model exists.
 
-Device-local recovery phrase setup starts from the local setup speech bubble shown while
-the device is `unprovisioned`, then shows local Generate and Recover choices.
+Device-local backup phrase setup starts from the local setup speech bubble shown while
+the device is `unprovisioned`, then shows local Generate and Import choices.
 Generate uses an Agent-Q CSPRNG seeded from early boot entropy before HAL
 initialization plus BIP-39 checksum logic to create a 12-word DEV_PROFILE
-recovery phrase in RAM, then displays only the up-to-4-letter word prefixes on
+backup phrase in RAM, then displays only the up-to-4-letter word prefixes on
 the device in a 3-column by 4-row grid. Three-letter BIP-39 words are displayed
-as the full word. Recover uses a device-local word-entry panel with three
+as the full word. Import uses a device-local word-entry panel with three
 numbered word cells per page for four pages. The user taps a cell, enters a
 BIP-39 prefix through local A-Z buttons, and selects a matching word from
 scrollable on-device candidate bubbles. BIP-39 English prefixes and recovered
 words are secret material. No protocol response contains the phrase, prefixes,
-recovered words, entropy, seed, private key, account data, or policy data.
+imported words, entropy, seed, private key, account data, or policy data.
 The target tracks volatile setup with RAM-only scratch substates: `none`,
-`setup_choice`, `recovery_phrase_displayed`, `recover_word_entry`,
+`setup_choice`, `backup_phrase_displayed`, `import_word_entry`,
 `pin_first_entry`, `pin_repeat_entry`, and `pin_committing`. This substate is
 separate from persistent
 `provisioning.state`, session state, display power state, and the LVGL panel
 pointer.
 
-Recover `Next` is enabled only when all three words on the current page are
+Import `Next` is enabled only when all three words on the current page are
 selected. After 12 words are selected, Firmware reconstructs 128-bit BIP-39
 entropy and verifies the checksum before entering PIN setup. Checksum failure
-stores nothing and keeps recovery entry active. Cancel, timeout, panel
-deletion, or display allocation failure wipes recovery scratch and leaves the
+stores nothing and keeps import entry active. Cancel, timeout, panel
+deletion, or display allocation failure wipes import scratch and leaves the
 target `unprovisioned`.
 
-Backup confirmation is accepted only from the recovery phrase panel's local
-Confirm button after the scratch substate is `recovery_phrase_displayed`. The
+Backup confirmation is accepted only from the backup phrase panel's local
+Confirm button after the scratch substate is `backup_phrase_displayed`. The
 device-local Confirm button advances to local PIN entry; it does not store
-persistent material by itself. The recovery path reaches the same PIN entry only
+persistent material by itself. The import path reaches the same PIN entry only
 after 12 selected BIP-39 words pass checksum validation. The PIN entry screen
 accepts exactly six digits, asks for a repeat, wipes typed PIN scratch on
 mismatch, and returns to first PIN entry while retaining root entropy scratch.
@@ -397,11 +397,11 @@ authorization mode, persists `provisioned`, and then wipes volatile scratch.
 Storage failure rolls back persistent setup
 material where possible, wipes scratch, and must not report `provisioned`.
 Hardware smoke coverage exists for StackChan CoreS3 Generate setup, PIN entry,
-and Recover entry. Targeted hardware verification remains required after setup
+and Import entry. Targeted hardware verification remains required after setup
 UI or setup-state changes.
 
 The LVGL panel is not the source of truth for setup scratch validity. If the
-recovery phrase display or PIN panel is removed or replaced while the matching
+backup phrase display or PIN panel is removed or replaced while the matching
 scratch substate is active, the target treats that UI event as a transition to
 `none` and wipes the volatile setup scratch. A later backup confirmation or PIN
 submit event must not succeed for setup material whose panel is gone. Display
@@ -482,7 +482,7 @@ signing status still requires the current hardware evidence tracked in the
 implementation status. Mnemonic import, direct policy setters, Firmware-local
 Admin UI, arbitrary Sui transaction signing, policy-authorized personal-message
 signing, and USER_PROFILE secure root-material handling are not implemented on
-this target. Full Gateway Admin policy editing beyond the current policy
+this target. Full host process Admin policy editing beyond the current policy
 proposal template is not implemented.
 
 StackChan CoreS3 has a display and touch input, so the current DEV_PROFILE local
@@ -492,7 +492,7 @@ provisioning flow can:
 - show the mnemonic on the device once for backup;
 - require local confirmation before storing it;
 - require local 6-digit PIN entry/repeat before storing it;
-- accept device-local mnemonic recovery input only through an explicitly weaker
+- accept device-local mnemonic import input only through an explicitly weaker
   DEV_PROFILE setup path;
 - expose only public keys and addresses after provisioning.
 
@@ -532,7 +532,7 @@ Current verification expectations for this target:
   PIN authorization state transitions, including lockout release and paused
   input-window resume;
 - run `firmware/tools/stackchan-cores3/test_connect_approval.sh` to check
-  physical connect approval request/gateway/deadline/choice state ownership;
+  physical connect approval request/client-name/deadline/choice state ownership;
 - run `firmware/tools/stackchan-cores3/test_protocol_pin_approval.sh` to check
   the protocol-backed local PIN approval request/session/input-deadline state
   owner;
@@ -552,14 +552,14 @@ Current verification expectations for this target:
 - run `firmware/tools/stackchan-cores3/test_ui_panel_cleanup.sh` to check
   panel-deletion cleanup routing between temporary UI and state owners;
 - run `firmware/tools/stackchan-cores3/test_modal_layout_static.sh` to check
-  bounded modal layout invariants such as the connect review Gateway name not
+  bounded modal layout invariants such as the connect review client name not
   overlapping the approval row;
 - run `firmware/tools/stackchan-cores3/test_local_reset.sh` to check local reset
   and error-state erase recovery state transitions, reset-pending marker
   behavior, destructive wipe orchestration, and failure cleanup against host
   NVS/material stubs;
 - run `firmware/tools/stackchan-cores3/test_provisioning_flow.sh` to check
-  Generate/Recover/setup-PIN volatile state transitions, scratch lifetime,
+  Generate/Import/setup-PIN volatile state transitions, scratch lifetime,
   panel-loss cleanup, and commit readiness against host stubs;
 - run `firmware/tools/stackchan-cores3/test_provisioning_runtime_state.sh` to
   check persistent provisioning runtime-state load, persist, material-ready,
@@ -582,7 +582,7 @@ Current verification expectations for this target:
 - smoke-test `identify_device`;
 - smoke-test `connect` returns `invalid_state` before `provisioned`;
 - manually enter setup from the local unprovisioned setup speech bubble;
-- visually verify the recovery phrase panel displays 12 numbered
+- visually verify the backup phrase panel displays 12 numbered
   up-to-4-letter prefixes in a 3-column by 4-row grid and that three-letter
   BIP-39 words are displayed as the full word;
 - smoke-test local Cancel wipes scratch and leaves `provisioning.state =
@@ -651,9 +651,9 @@ Current verification expectations for this target:
   power-off move the target to centered yaw and lowered pitch first;
 - visually verify touch, side-button wake, and Agent-Q request UI wake return
   the target to centered yaw and raised pitch;
-- smoke-test `get_status` reports `device.state = busy` while a recovery phrase
+- smoke-test `get_status` reports `device.state = busy` while a backup phrase
   is displayed;
-- smoke-test recovery phrase display expiry clears the setup panel, wipes
+- smoke-test backup phrase display expiry clears the setup panel, wipes
   scratch, and prevents later local confirmation;
 - visually verify that Agent-Q temporary UI does not leave the avatar in an
   Agent-Q-specific mode after completion.

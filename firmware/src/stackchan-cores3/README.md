@@ -5,6 +5,38 @@ overlay.
 
 Target-specific behavior and capability status live in `SPEC.md`.
 
+## Quick Start
+
+Use this target when building Agent-Q Firmware for StackChan CoreS3 /
+ESP32-S3-class hardware.
+
+Build:
+
+```bash
+AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+  firmware/tools/stackchan-cores3/with-idf.sh \
+  firmware/tools/stackchan-cores3/build.sh
+```
+
+After flashing a current build, verify the product path through the normal
+device UX:
+
+```text
+device-local setup or existing provisioned device
+  -> connect approval
+  -> get_capabilities
+  -> get_accounts
+  -> sign_transaction
+  -> sign_personal_message when user-mode support is reported
+  -> disconnect
+```
+
+Use development erase/reprovisioning only when explicitly approved for a
+hardware smoke pass. Setup, reset, and signing approval are device-local flows;
+they are not exposed as USB state-setter APIs.
+
+## Current Implementation
+
 The current implementation includes:
 
 - a boot-time signing self-test that proves the firmware can link the signing
@@ -72,10 +104,10 @@ The current implementation includes:
   current-tree hardware and visual evidence remain pending before product-active
   status.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
-  Generate/Recover choice. Generate creates DEV_PROFILE BIP-39 root entropy in
+  Generate/Import choice. Generate creates DEV_PROFILE BIP-39 root entropy in
   RAM, displays only the up-to-4-letter word prefixes on device in a 3-column
-  by 4-row grid, and advances to local 6-digit PIN entry after the recovery
-  phrase panel's local `Confirm` button. Recover accepts 12 BIP-39 words
+  by 4-row grid, and advances to local 6-digit PIN entry after the backup
+  phrase panel's local `Confirm` button. Import accepts 12 BIP-39 words
   through a device-local 3-word-per-page prefix/candidate UI, verifies checksum,
   and then advances to the same local PIN setup path. The target stores the root
   entropy plus active default-reject policy plus salt/PIN verifier plus signing
@@ -136,7 +168,7 @@ This target also implements the Firmware-owned `policy_propose` request
 for bounded current-schema policy proposals over an active session, a
 device-local policy summary review, local PIN approval after device-local
 Continue, canonical active-policy commit, and required policy-update terminal
-history. It does not expose MCP directly; Gateway/MCP only submit requests and
+history. It does not expose MCP directly; the host process and MCP only submit requests and
 parse Firmware responses. It does persist bounded approval-history metadata for
 signing and policy update terminal records. The
 persisted values in this target implementation are the protocol `deviceId`,
@@ -350,7 +382,7 @@ host-side state-machine check, not hardware UX proof.
 
 The StackChan provisioning-flow test is target-specific. It compiles the
 tracked `agent_q_provisioning_flow.cpp` state machine with host stubs, then
-verifies Generate/Recover/setup-PIN volatile state transitions, scratch
+verifies Generate/Import/setup-PIN volatile state transitions, scratch
 lifetime, panel-loss cleanup, and commit-readiness without LVGL or USB.
 
 The StackChan session test is target-specific. It compiles the tracked
@@ -385,7 +417,7 @@ In the hardware firmware tree:
   current Agent-Q root material, two-slot active policy store, approval-history
   ring buffer, local PIN verifier, settings, and terminal markers.
 - Call `agent_q::init_secure_random_from_early_boot_entropy()` before HAL
-  initialization so recovery phrase generation never depends on late direct
+  initialization so backup phrase generation never depends on late direct
   `esp_fill_random()` while RF/ADC entropy is unavailable.
 - Call `agent_q::run_signing_self_test()` once during boot after hardware
   initialization.
@@ -412,13 +444,13 @@ If NVS has `prov_state = provisioned` and valid root entropy but no active
 canonical policy record, local PIN verifier, or signing authorization mode,
 Firmware fails closed with a material/state consistency error. Unsupported
 current policy-history or policy-storage blobs are not accepted as product
-state; destructive local reset or error-state erase is the supported recovery
+state; destructive local reset or error-state erase is the supported import
 path. Devices missing the current local PIN verifier or signing authorization
 mode fail closed until reprovisioned.
 
 | Key | Purpose |
 |---|---|
-| `device_id` | Gateway reconnect and device-selection identity |
+| `device_id` | host process reconnect and device-selection identity |
 | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy, active policy, local PIN verifier, and signing authorization mode present |
 | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
 | `pol_s0`, `pol_s1` | Active policy canonical record slots |
@@ -430,10 +462,10 @@ mode fail closed until reprovisioned.
 | `human_approval` | Human approval input mode setting; setup initializes it to `pin`, missing or invalid read fails closed to `pin`, and local reset erases it back to the missing-key default |
 | `approval_hist` | Fixed-size 32-record binary approval-history ring buffer; local reset and error-state erase wipe it |
 
-Device-local recovery phrase setup stores generated phrase text and recovered mnemonic
+Device-local backup phrase setup stores generated phrase text and imported mnemonic
 word-entry scratch only in RAM. Generate displays only up-to-4-letter prefixes
 on device and advances to local 6-digit PIN setup on backup confirmation.
-Recover uses device-local A-Z prefix buttons and scrollable BIP-39 candidate
+Import uses device-local A-Z prefix buttons and scrollable BIP-39 candidate
 bubbles, verifies checksum, and then advances to the same PIN setup path.
 Volatile setup scratch is wiped on cancel, display expiry, PIN timeout, storage
 failure, or firmware restart. Backup-confirmed or checksum-verified root entropy

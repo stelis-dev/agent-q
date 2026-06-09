@@ -14,29 +14,29 @@ State names are defined by:
 - `specs/PROTOCOL.md`
 - `packages/client/src/safe-text.ts`
 
-Gateway wire validation is implemented in:
+host wire validation is implemented in:
 
 - `packages/client/src/protocol.ts`
 
 Firmware owns state storage, state transitions, state gates, physical approval,
 policy evaluation, and signing decisions.
 
-Gateway may cache and display Firmware-reported state. Gateway must not treat a
+the host process may cache and display Firmware-reported state. the host process must not treat a
 state as signing readiness and must not decide whether signing is safe.
 
 ## Product State Diagram
 
 This diagram shows product state, not UI state. Firmware owns these transitions.
-Gateway, MCP clients, and Admin Page requests may submit requests, but they are
+the host process, MCP clients, and Admin Page requests may submit requests, but they are
 not authority. Firmware state transitions occur only as consequences of
 Firmware-owned conditions and validated local input.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Unprovisioned: boot, no root signing material
-    Unprovisioned --> Provisioning: local setup or recovery starts
+    Unprovisioned --> Provisioning: local setup or import starts
     Provisioning --> Unprovisioned: local cancel, timeout, failure + scratch wipe
-    Provisioning --> Provisioned: backup confirm or recovery verify + PIN repeat + root/policy/PIN verifier stored
+    Provisioning --> Provisioned: backup confirm or import verify + PIN repeat + root/policy/PIN verifier stored
     Provisioned --> Unprovisioned: local settings reset + PIN verification + material wipe
     Provisioned --> PolicyUpdatePending: valid policy update proposal + local approval requested
     Provisioned --> Provisioned: invalid policy proposal rejected before pending approval
@@ -44,7 +44,7 @@ stateDiagram-v2
     PolicyUpdatePending --> Error: ambiguous policy commit state
 
     Unprovisioned: get_status, identify_device
-    Unprovisioned: device-local setup bubble and recovery phrase controls
+    Unprovisioned: device-local setup bubble and backup phrase controls
     Provisioning: get_status
     Provisioning: device-local cancel
     Provisioned: get_status, identify_device, connect, disconnect
@@ -53,7 +53,7 @@ stateDiagram-v2
 ```
 
 Current StackChan CoreS3 persistent root material flow starts from
-`unprovisioned`. It generates recovery phrase scratch in RAM, displays only
+`unprovisioned`. It generates backup phrase scratch in RAM, displays only
 up-to-4-letter BIP-39 word prefixes on the device in a 3-column by 4-row grid,
 stores the binary BIP-39 root entropy and an active policy record only
 after physical backup confirmation and local 6-digit PIN setup, and wipes
@@ -72,7 +72,7 @@ If Firmware boots with an unsupported `prov_state`, or with
 `prov_state = provisioned` but no valid active policy record, the device enters
 persistent material consistency error until either a device-local destructive
 wipe or a development flash-erase workflow clears the unsupported material set.
-After that cleanup, local setup or recovery can reprovision the device.
+After that cleanup, local setup or import can reprovision the device.
 
 If persisted state, stored root material, and stored active policy disagree,
 or if the stored local PIN verifier is missing or invalid while `provisioned`,
@@ -91,7 +91,7 @@ so an interrupted reset can resume at boot. The same destructive wipe machinery
 is also used by a device-local erase-only recovery from the `error` state.
 That recovery has no PIN requirement because the PIN verifier may be unreadable,
 but it still requires on-device confirmation and is not exposed as a USB,
-Gateway, MCP, or host-triggered API.
+the host process, MCP, or host-triggered API.
 
 ## State Layers And Owners
 
@@ -102,11 +102,11 @@ hardware and must be documented in each target's `SPEC.md`.
 | Layer | Examples | Owner | May gate protocol APIs? |
 |---|---|---|---:|
 | Persistent device state | provisioning state, stored root material, policy, local PIN verifier, signing authorization mode, approval history, policy-update terminal marker, account availability | Firmware | Yes |
-| Volatile sensitive scratch | generated recovery phrase, setup entropy, pending backup confirmation, typed PIN digits | Firmware | Yes |
+| Volatile sensitive scratch | generated backup phrase, setup entropy, pending backup confirmation, typed PIN digits | Firmware | Yes |
 | Local PIN authorization state | connect/settings/policy-update/reset PIN entry purpose, verification stage, Firmware-owned input deadline, RAM-only lockout | Firmware | Yes |
 | Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or local PIN approval; Firmware-owned deadline; requested action | Firmware | Yes |
 | Pending policy update state | validated policy proposal summary, policy hash, review/PIN/commit stage, review deadline | Firmware | Yes |
-| Runtime session state | active protocol session id and link-bound cleanup state | Firmware; Gateway mirrors its own client session state in RAM and clears that mirror when Firmware rejects it or live USB scan no longer observes the device | Yes |
+| Runtime session state | active protocol session id and link-bound cleanup state | Firmware; host process mirrors its own client session state in RAM and clears that mirror when Firmware rejects it or live USB scan no longer observes the device | Yes |
 | Target-local display state | screen on/off, brightness, screensaver replacement | Firmware target display module | No |
 | Target-local posture state | servo position, haptics, LEDs, temporary expression feedback | Firmware target UI/motion module | No |
 | UI object lifetime | speech bubble, modal, setup panel, decorator id | Firmware target UI module | No |
@@ -126,8 +126,8 @@ Allowed:
 
 - `get_status`
 - `identify_device`
-- device-local setup speech bubble, Generate/Recover choice, recovery phrase
-  Cancel/Confirm controls, and mnemonic recovery word-entry controls
+- device-local setup speech bubble, Generate/Import choice, backup phrase
+  Cancel/Confirm controls, and mnemonic import word-entry controls
 
 Rejected:
 
@@ -144,11 +144,11 @@ Rejected:
 - signing
 - external evidence or price fetch
 
-Current mnemonic setup and mnemonic recovery are volatile substates under
+Current mnemonic setup and mnemonic import are volatile substates under
 `unprovisioned` until the user physically confirms backup or completes local
 word entry, enters and repeats a 6-digit local PIN, and Firmware stores root
 material, active policy, and the PIN verifier. The host never receives the
-phrase, its up-to-4-letter prefixes, entered recovery words, or the PIN.
+phrase, its up-to-4-letter prefixes, entered imported words, or the PIN.
 
 ### `provisioning`
 
@@ -173,12 +173,12 @@ Rejected:
 - external evidence or price fetch
 
 Scratch signing material may exist only inside Firmware during setup steps.
-Canceling setup must wipe scratch material first. From `recovery_phrase_displayed`/
-`recover_word_entry`, Cancel wipes scratch and returns to `setup_choice` (re-pick; setup
+Canceling setup must wipe scratch material first. From `backup_phrase_displayed`/
+`import_word_entry`, Cancel wipes scratch and returns to `setup_choice` (re-pick; setup
 stays active); the `setup_choice` Cancel wipes scratch and returns to `unprovisioned`.
-Current StackChan CoreS3 source limits recovery phrase and typed PIN scratch to
+Current StackChan CoreS3 source limits backup phrase and typed PIN scratch to
 RAM and tracks setup with volatile substates: `none`,
-`setup_choice`, `recovery_phrase_displayed`, `recover_word_entry`,
+`setup_choice`, `backup_phrase_displayed`, `import_word_entry`,
 `pin_first_entry`, `pin_repeat_entry`, and `pin_committing`. Those scratch
 substates are separate from persistent
 `provisioning.state`, pending approval state, and UI panel state.
@@ -251,7 +251,7 @@ bounded Sui personal-message bytes in user authorization mode only; policy mode
 fails closed because policy facts and rules for personal-message signing are not
 implemented. It also remains below product-active status until final
 current-tree hardware and visual evidence are complete.
-Gateway must not evaluate policy. A corrupt, unreadable, missing,
+the host process must not evaluate policy. A corrupt, unreadable, missing,
 or invalid current active policy is a persistent-material consistency
 error, not a normal `provisioned` state. Provisioned DEV_PROFILE devices that
 lack the current local PIN verifier, active canonical policy, or signing
@@ -279,7 +279,7 @@ that produced the request. The source state must be material-backed
 terminal outcome remains `provisioned`, unless the terminal outcome detects
 persistent material inconsistency.
 
-Before these state-scoped signing gates, Gateway and Firmware may perform only
+Before these state-scoped signing gates, the host process and Firmware may perform only
 bounded, side-effect-free identification of the shared `(type, chain, method)`
 route. Unsupported or malformed routes fail without reaching state/session,
 replay, approval, policy, history, adapter, or signing work. For a supported
@@ -365,7 +365,7 @@ Failure requirements for a device-confirmed signing request:
   entry;
 - if signing, terminal history persistence, or response delivery fails after a
   durable confirmation record, terminal history and the user-visible result must
-  distinguish signature generation, signed terminal proof, and Gateway receipt;
+  distinguish signature generation, signed terminal proof, and host receipt;
 - every terminal path must wipe signable payload and signature scratch.
 
 The user-mode signing runtime models human approval for implemented
@@ -403,7 +403,7 @@ required pre-signing record uses `recordKind: "confirmation"` and
 `recordKind: "terminal"` and record whether Firmware generated a signature,
 rejected the request, timed out, or failed during signing. A `signed` terminal
 record means Firmware generated a signature after device confirmation and
-persisted the signed terminal result; it does not prove Gateway received that
+persisted the signed terminal result; it does not prove host process received that
 signature. If signature generation succeeds but the signed terminal record
 cannot be persisted, Firmware must not return a provider signature result.
 
@@ -503,7 +503,7 @@ Rejected:
 This recovery is intentionally destructive and cannot read, export, repair, or
 unlock root material. It exists only to return a fail-closed device to the
 normal local setup path when the stored material set is inconsistent. USB,
-Gateway, and MCP clients still cannot trigger reset or recovery.
+host process, and MCP clients still cannot trigger reset or recovery.
 
 ### `locked`
 
@@ -554,7 +554,7 @@ does not end the active RAM session. Other `O` operations may still return
 `busy` while a physical approval prompt or device-only setup material display is
 active.
 
-Gateway may hide unavailable operations, but Firmware must still reject them.
+the host process may hide unavailable operations, but Firmware must still reject them.
 
 The current StackChan CoreS3 target has an explicit `local_pin_auth` runtime
 substate for local PIN authorization. It records `purpose` (`connect`,
@@ -587,7 +587,7 @@ writing a terminal rejection; only review Reject is recorded as
 `user_rejected`. The internal signing PIN purpose is not a protocol
 request, signing API, or capability advertisement. The UI panel may display
 that state, but panel existence is not the source of truth. The target must not
-expose a USB/Gateway/MCP PIN submit request.
+expose a USB, host process, and MCP PIN submit request.
 
 ## Boot Flows
 
@@ -633,7 +633,7 @@ Common UI states:
 
 - welcome
 - idle avatar
-- recovery phrase display
+- backup phrase display
 - notification
 - decision prompt
 - result notification

@@ -15,11 +15,11 @@ bool provisioning_panel_for_kind(
         case AgentQUiPanelKind::setup_choice:
             *panel = AgentQProvisioningFlowPanel::setup_choice;
             return true;
-        case AgentQUiPanelKind::recovery_phrase_display:
-            *panel = AgentQProvisioningFlowPanel::recovery_phrase_display;
+        case AgentQUiPanelKind::backup_phrase_display:
+            *panel = AgentQProvisioningFlowPanel::backup_phrase_display;
             return true;
-        case AgentQUiPanelKind::recovery_word_entry:
-            *panel = AgentQProvisioningFlowPanel::recovery_word_entry;
+        case AgentQUiPanelKind::import_word_entry:
+            *panel = AgentQProvisioningFlowPanel::import_word_entry;
             return true;
         case AgentQUiPanelKind::pin_entry:
             *panel = AgentQProvisioningFlowPanel::pin_entry;

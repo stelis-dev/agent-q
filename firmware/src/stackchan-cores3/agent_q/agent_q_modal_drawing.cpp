@@ -22,9 +22,9 @@ namespace agent_q {
 namespace {
 
 
-constexpr size_t kRecoveryPhrasePrefixCellCount = kProvisioningFlowPhrasePrefixCellCount;
-constexpr size_t kRecoverWordsPerPage = kProvisioningFlowRecoverWordsPerPage;
-constexpr size_t kRecoverPageCount = kProvisioningFlowRecoverPageCount;
+constexpr size_t kBackupPhrasePrefixCellCount = kProvisioningFlowPhrasePrefixCellCount;
+constexpr size_t kImportWordsPerPage = kProvisioningFlowImportWordsPerPage;
+constexpr size_t kImportPageCount = kProvisioningFlowImportPageCount;
 constexpr int kScreenHeight = 240;
 constexpr int kScreenWidth = 320;
 // The modal panel fills the whole screen; only the rounded corners are kept (no
@@ -45,10 +45,10 @@ constexpr int kModalDescriptionY = 36;  // unified one-line description/subtitle
 constexpr int kPanelActionButtonGap = 8;
 // Single source of truth for the bottom two-button decision row (left "reject" /
 // "cancel" + right "confirm" / "sign") shared by every decision modal: connect
-// review, user-signing review, policy-update review, recovery-phrase display, PIN
+// review, user-signing review, policy-update review, backup-phrase display, PIN
 // setup, reset PIN, error recovery, and local PIN auth. Every one of those rows
 // MUST use these X/width constants together with kSetupActionButtonY (row Y) and
-// kRecoveryPhraseButtonHeight (row height) so the layout stays identical across
+// kBackupPhraseButtonHeight (row height) so the layout stays identical across
 // modals. Do NOT introduce a second decision-row constant set (that is exactly how
 // the connect modal previously drifted to a wider, gap-less layout); extend these.
 constexpr int kPanelActionButtonLeftX = kPanelGridLeft;
@@ -56,15 +56,15 @@ constexpr int kPanelActionButtonWidth =
     (kPanelGridWidth - kPanelActionButtonGap) / 2;
 constexpr int kPanelActionButtonRightX =
     kPanelActionButtonLeftX + kPanelActionButtonWidth + kPanelActionButtonGap;
-constexpr int kRecoveryPhraseButtonHeight = 28;
-constexpr int kRecoveryPhraseButtonRadius = 7;
-constexpr int kRecoveryPhraseButtonWidth = 142;
-constexpr int kRecoveryPhraseButtonLeftX = 8;
-constexpr int kRecoveryPhraseButtonRightX = 154;
-constexpr int kRecoveryPhraseButtonBottomMargin = 8;
-constexpr int kRecoveryPhraseTopMargin = kRecoveryPhraseButtonBottomMargin;
+constexpr int kBackupPhraseButtonHeight = 28;
+constexpr int kBackupPhraseButtonRadius = 7;
+constexpr int kBackupPhraseButtonWidth = 142;
+constexpr int kBackupPhraseButtonLeftX = 8;
+constexpr int kBackupPhraseButtonRightX = 154;
+constexpr int kBackupPhraseButtonBottomMargin = 8;
+constexpr int kBackupPhraseTopMargin = kBackupPhraseButtonBottomMargin;
 constexpr int kSetupActionButtonY =
-    kPanelContentHeight - kRecoveryPhraseButtonHeight - kRecoveryPhraseButtonBottomMargin;
+    kPanelContentHeight - kBackupPhraseButtonHeight - kBackupPhraseButtonBottomMargin;
 constexpr int kPinPanelButtonRadius = 6;
 constexpr int kPinPanelButtonHeight = 22;
 constexpr int kPinKeypadColumnGap = 6;  // horizontal gap between keypad columns
@@ -73,7 +73,7 @@ constexpr int kPinKeypadColumnStride = kPinKeypadButtonWidth + kPinKeypadColumnG
 constexpr int kPinKeypadGridLeft = kPanelGridLeft;
 constexpr int kPinKeypadGridTop = 78;
 constexpr int kPinKeypadRowHeight = 25;
-constexpr int kSettingsMenuButtonCenterX = (kPanelContentWidth - kRecoveryPhraseButtonWidth) / 2;
+constexpr int kSettingsMenuButtonCenterX = (kPanelContentWidth - kBackupPhraseButtonWidth) / 2;
 constexpr int kSettingsMenuRowLabelX = 24;
 constexpr int kSettingsMenuRowControlX = 218;
 constexpr int kSettingsMenuRowOneY = 54;
@@ -83,9 +83,9 @@ constexpr int kSettingsMenuRowFourY = 150;
 constexpr int kSettingsMenuActionButtonWidth = 72;
 constexpr int kSettingsMenuActionButtonHeight = 26;
 constexpr int kConnectReviewTextLeft = 24;
-constexpr int kConnectReviewGatewayValueY = 108;
-constexpr int kConnectReviewGatewayValueWidth = kInsetPanelWidth - 48;
-constexpr int kConnectReviewGatewayValueHeight = 34;
+constexpr int kConnectReviewClientNameValueY = 108;
+constexpr int kConnectReviewClientNameValueWidth = kInsetPanelWidth - 48;
+constexpr int kConnectReviewClientNameValueHeight = 34;
 constexpr int kConnectReviewApprovalRowY = 150;
 constexpr int kConnectReviewApprovalValueX = 104;
 constexpr int kUserSigningReviewRowLabelX = 18;
@@ -108,10 +108,10 @@ constexpr int kPolicyUpdateReviewSummaryTop = 132;
 constexpr int kSetupChoiceButtonHeight = 42;
 constexpr int kSetupChoiceButtonGap = 14;
 constexpr int kSetupMenuGenerateButtonY = 58;
-constexpr int kSetupMenuRecoverButtonY =
+constexpr int kSetupMenuImportButtonY =
     kSetupMenuGenerateButtonY + kSetupChoiceButtonHeight + kSetupChoiceButtonGap;
 constexpr int kSetupMenuCancelButtonY =
-    kSetupMenuRecoverButtonY + kSetupChoiceButtonHeight + kSetupChoiceButtonGap;
+    kSetupMenuImportButtonY + kSetupChoiceButtonHeight + kSetupChoiceButtonGap;
 constexpr int kMnemonicWordColumnGap = 6;  // horizontal gap between mnemonic columns
 constexpr int kMnemonicWordCellWidth = (kPanelGridWidth - 2 * kMnemonicWordColumnGap) / 3;  // 86
 constexpr int kMnemonicWordColumnStride = kMnemonicWordCellWidth + kMnemonicWordColumnGap;   // 92
@@ -120,18 +120,18 @@ constexpr int kMnemonicWordCellLeft = kPanelGridLeft;
 constexpr int kMnemonicWordIndexWidth = 22;
 constexpr int kMnemonicWordPrefixLeft = 30;
 constexpr int kMnemonicWordPrefixWidth = 54;
-constexpr int kRecoverWordCellTop = 42;
-constexpr int kRecoverAlphabetButtonWidth = 22;
-constexpr int kRecoverAlphabetButtonHeight = 18;
-constexpr int kRecoverAlphabetLeft = 9;
-constexpr int kRecoverAlphabetTop = 82;
-constexpr int kRecoverCandidateLeft = 17;
-constexpr int kRecoverCandidateTop = 124;
-constexpr int kRecoverCandidateWidth = 270;
-constexpr int kRecoverCandidateHeight = 58;
-constexpr int kRecoverCandidateButtonWidth = 84;
-constexpr int kRecoverCandidateButtonHeight = 22;
-constexpr int kRecoverNavigationButtonWidth = 68;
+constexpr int kImportWordCellTop = 42;
+constexpr int kImportAlphabetButtonWidth = 22;
+constexpr int kImportAlphabetButtonHeight = 18;
+constexpr int kImportAlphabetLeft = 9;
+constexpr int kImportAlphabetTop = 82;
+constexpr int kImportCandidateLeft = 17;
+constexpr int kImportCandidateTop = 124;
+constexpr int kImportCandidateWidth = 270;
+constexpr int kImportCandidateHeight = 58;
+constexpr int kImportCandidateButtonWidth = 84;
+constexpr int kImportCandidateButtonHeight = 22;
+constexpr int kImportNavigationButtonWidth = 68;
 constexpr int kPinProcessingOverlaySize = 50;
 constexpr int kPinProcessingOverlayX =
     (kPanelContentWidth - kPinProcessingOverlaySize) / 2;
@@ -192,7 +192,7 @@ void clear_screen_bottom_timeout_timer_bar_locked()
     }
     g_screen_bottom_timeout_timer_bar = nullptr;
 }
-uint16_t g_recover_candidate_event_indices[kBip39WordCount] = {};
+uint16_t g_import_candidate_event_indices[kBip39WordCount] = {};
 
 }  // namespace
 
@@ -312,7 +312,7 @@ static bool make_setup_button(
 
     lv_color_t label_color = color;
     if (kind == SetupButtonKind::solid_action) {
-        lv_obj_set_style_radius(button, kRecoveryPhraseButtonRadius, 0);
+        lv_obj_set_style_radius(button, kBackupPhraseButtonRadius, 0);
         lv_obj_set_style_border_width(button, 0, 0);
         lv_obj_set_style_bg_opa(button, enabled ? LV_OPA_COVER : LV_OPA_40, 0);
         label_color = lv_color_hex(enabled ? theme::kOnPrimary : kDisabledActionTextColor);
@@ -629,11 +629,11 @@ static bool make_screen_bottom_timeout_timer_bar(
 
 
 bool modal_draw_connect_review_panel(
-    const char* gateway_name,
+    const char* client_name,
     AgentQHumanApprovalInputMode input_mode,
     AgentQTimeoutWindow timeout_window)
 {
-    if (gateway_name == nullptr || gateway_name[0] == '\0') {
+    if (client_name == nullptr || client_name[0] == '\0') {
         return false;
     }
     avatar_overlay_clear();
@@ -667,35 +667,35 @@ bool modal_draw_connect_review_panel(
     lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
 
-    lv_obj_t* gateway_label = lv_label_create(panel);
-    if (gateway_label == nullptr) {
+    lv_obj_t* client_label = lv_label_create(panel);
+    if (client_label == nullptr) {
         drawing_surface_clear_panel_locked();
         return false;
     }
-    lv_label_set_text(gateway_label, "Gateway");
-    lv_obj_set_style_text_font(gateway_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(gateway_label, lv_color_hex(theme::kOnSurfaceVariant), 0);
-    lv_obj_align(gateway_label, LV_ALIGN_TOP_LEFT, kConnectReviewTextLeft, 86);
+    lv_label_set_text(client_label, "Agent-Q");
+    lv_obj_set_style_text_font(client_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(client_label, lv_color_hex(theme::kOnSurfaceVariant), 0);
+    lv_obj_align(client_label, LV_ALIGN_TOP_LEFT, kConnectReviewTextLeft, 86);
 
-    lv_obj_t* gateway_value = lv_label_create(panel);
-    if (gateway_value == nullptr) {
+    lv_obj_t* client_value = lv_label_create(panel);
+    if (client_value == nullptr) {
         drawing_surface_clear_panel_locked();
         return false;
     }
-    lv_label_set_text(gateway_value, gateway_name);
-    lv_label_set_long_mode(gateway_value, LV_LABEL_LONG_CLIP);
+    lv_label_set_text(client_value, client_name);
+    lv_label_set_long_mode(client_value, LV_LABEL_LONG_CLIP);
     lv_obj_set_size(
-        gateway_value,
-        kConnectReviewGatewayValueWidth,
-        kConnectReviewGatewayValueHeight);
-    lv_obj_set_style_text_align(gateway_value, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_font(gateway_value, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(gateway_value, lv_color_hex(theme::kOnSurface), 0);
+        client_value,
+        kConnectReviewClientNameValueWidth,
+        kConnectReviewClientNameValueHeight);
+    lv_obj_set_style_text_align(client_value, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_font(client_value, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(client_value, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(
-        gateway_value,
+        client_value,
         LV_ALIGN_TOP_LEFT,
         kConnectReviewTextLeft,
-        kConnectReviewGatewayValueY);
+        kConnectReviewClientNameValueY);
 
     lv_obj_t* mode_label = lv_label_create(panel);
     if (mode_label == nullptr) {
@@ -743,7 +743,7 @@ bool modal_draw_connect_review_panel(
             kPanelActionButtonLeftX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
             g_callbacks.on_connect_review_reject_clicked) ||
@@ -753,7 +753,7 @@ bool modal_draw_connect_review_panel(
             kPanelActionButtonRightX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kPrimary),
             g_callbacks.on_connect_review_accept_clicked)) {
@@ -806,27 +806,27 @@ bool modal_draw_setup_choice_panel()
             "Generate",
             kSettingsMenuButtonCenterX,
             kSetupMenuGenerateButtonY,
-            kRecoveryPhraseButtonWidth,
+            kBackupPhraseButtonWidth,
             kSetupChoiceButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kPrimary),
             g_callbacks.on_setup_generate_clicked) ||
         !make_setup_button(
             panel,
-            "Recover",
+            "Import",
             kSettingsMenuButtonCenterX,
-            kSetupMenuRecoverButtonY,
-            kRecoveryPhraseButtonWidth,
+            kSetupMenuImportButtonY,
+            kBackupPhraseButtonWidth,
             kSetupChoiceButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kPrimary),
-            g_callbacks.on_setup_recover_clicked) ||
+            g_callbacks.on_setup_import_clicked) ||
         !make_setup_button(
             panel,
             "Cancel",
             kSettingsMenuButtonCenterX,
             kSetupMenuCancelButtonY,
-            kRecoveryPhraseButtonWidth,
+            kBackupPhraseButtonWidth,
             kSetupChoiceButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kSecondary),
@@ -844,17 +844,17 @@ bool modal_draw_setup_choice_panel()
     return true;
 }
 
-static bool make_recover_word_cell(lv_obj_t* parent, uint8_t slot)
+static bool make_import_word_cell(lv_obj_t* parent, uint8_t slot)
 {
-    static const uint8_t kSlotUserData[kRecoverWordsPerPage] = {0, 1, 2};
-    if (slot >= kRecoverWordsPerPage) {
+    static const uint8_t kSlotUserData[kImportWordsPerPage] = {0, 1, 2};
+    if (slot >= kImportWordsPerPage) {
         return false;
     }
 
     const agent_q::AgentQProvisioningFlowSnapshot flow =
         agent_q::provisioning_flow_snapshot();
     const size_t global_slot =
-        agent_q::provisioning_flow_recover_global_word_slot_for(flow.recover_page, slot);
+        agent_q::provisioning_flow_import_global_word_slot_for(flow.import_page, slot);
     if (global_slot >= agent_q::kBip39MnemonicWordCount) {
         return false;
     }
@@ -869,9 +869,9 @@ static bool make_recover_word_cell(lv_obj_t* parent, uint8_t slot)
         cell,
         LV_ALIGN_TOP_LEFT,
         kMnemonicWordCellLeft + static_cast<int>(slot) * kMnemonicWordColumnStride,
-        kRecoverWordCellTop);
+        kImportWordCellTop);
     lv_obj_set_style_radius(cell, 4, 0);
-    const bool cell_active = (slot == flow.recover_active_slot);
+    const bool cell_active = (slot == flow.import_active_slot);
     lv_obj_set_style_border_width(cell, cell_active ? 2 : 1, 0);
     lv_obj_set_style_border_color(
         cell, lv_color_hex(cell_active ? theme::kPrimary : kSetupCellBorderColor), 0);
@@ -884,7 +884,7 @@ static bool make_recover_word_cell(lv_obj_t* parent, uint8_t slot)
     lv_obj_add_flag(cell, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(
         cell,
-        g_callbacks.on_recover_slot_clicked,
+        g_callbacks.on_import_slot_clicked,
         LV_EVENT_CLICKED,
         const_cast<uint8_t*>(&kSlotUserData[slot]));
 
@@ -908,7 +908,7 @@ static bool make_recover_word_cell(lv_obj_t* parent, uint8_t slot)
     lv_obj_add_flag(index_label, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(
         index_label,
-        g_callbacks.on_recover_slot_clicked,
+        g_callbacks.on_import_slot_clicked,
         LV_EVENT_CLICKED,
         const_cast<uint8_t*>(&kSlotUserData[slot]));
 
@@ -916,7 +916,7 @@ static bool make_recover_word_cell(lv_obj_t* parent, uint8_t slot)
     if (prefix_label == nullptr) {
         return false;
     }
-    const char* prefix = agent_q::provisioning_flow_recover_prefix(global_slot);
+    const char* prefix = agent_q::provisioning_flow_import_prefix(global_slot);
     lv_label_set_text(prefix_label, prefix[0] != '\0' ? prefix : "____");
     lv_label_set_long_mode(prefix_label, LV_LABEL_LONG_CLIP);
     lv_obj_set_width(prefix_label, kMnemonicWordPrefixWidth);
@@ -931,13 +931,13 @@ static bool make_recover_word_cell(lv_obj_t* parent, uint8_t slot)
     lv_obj_add_flag(prefix_label, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(
         prefix_label,
-        g_callbacks.on_recover_slot_clicked,
+        g_callbacks.on_import_slot_clicked,
         LV_EVENT_CLICKED,
         const_cast<uint8_t*>(&kSlotUserData[slot]));
     return true;
 }
 
-static bool make_recover_alphabet_buttons(lv_obj_t* parent)
+static bool make_import_alphabet_buttons(lv_obj_t* parent)
 {
     static const char* const kLetters[26] = {
         "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
@@ -952,13 +952,13 @@ static bool make_recover_alphabet_buttons(lv_obj_t* parent)
         if (!make_setup_button(
                 parent,
                 label,
-                kRecoverAlphabetLeft + column * kRecoverAlphabetButtonWidth,
-                kRecoverAlphabetTop + row * (kRecoverAlphabetButtonHeight + 4),
-                kRecoverAlphabetButtonWidth,
-                kRecoverAlphabetButtonHeight,
+                kImportAlphabetLeft + column * kImportAlphabetButtonWidth,
+                kImportAlphabetTop + row * (kImportAlphabetButtonHeight + 4),
+                kImportAlphabetButtonWidth,
+                kImportAlphabetButtonHeight,
                 SetupButtonKind::outlined_keypad,
                 lv_color_hex(kSetupInputPressedColor),
-                g_callbacks.on_recover_letter_clicked,
+                g_callbacks.on_import_letter_clicked,
                 kLetters[index])) {
             return false;
         }
@@ -966,29 +966,29 @@ static bool make_recover_alphabet_buttons(lv_obj_t* parent)
     return true;
 }
 
-static bool make_recover_candidate_area(lv_obj_t* parent)
+static bool make_import_candidate_area(lv_obj_t* parent)
 {
     lv_obj_t* area = lv_obj_create(parent);
     if (area == nullptr) {
         return false;
     }
     lv_obj_remove_style_all(area);
-    lv_obj_set_size(area, kRecoverCandidateWidth, kRecoverCandidateHeight);
-    lv_obj_align(area, LV_ALIGN_TOP_LEFT, kRecoverCandidateLeft, kRecoverCandidateTop);
+    lv_obj_set_size(area, kImportCandidateWidth, kImportCandidateHeight);
+    lv_obj_align(area, LV_ALIGN_TOP_LEFT, kImportCandidateLeft, kImportCandidateTop);
     lv_obj_set_scroll_dir(area, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(area, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_set_style_pad_all(area, 0, 0);
     lv_obj_set_style_bg_opa(area, LV_OPA_TRANSP, 0);
 
-    const size_t global_slot = agent_q::provisioning_flow_recover_global_word_slot();
-    const char* prefix = agent_q::provisioning_flow_recover_prefix(global_slot);
+    const size_t global_slot = agent_q::provisioning_flow_import_global_word_slot();
+    const char* prefix = agent_q::provisioning_flow_import_prefix(global_slot);
     if (prefix[0] == '\0') {
         lv_obj_t* label = lv_label_create(area);
         if (label == nullptr) {
             return false;
         }
         lv_label_set_text(label, "Tap a letter to list BIP-39 words.");
-        lv_obj_set_width(label, kRecoverCandidateWidth - 8);
+        lv_obj_set_width(label, kImportCandidateWidth - 8);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(label, lv_color_hex(theme::kOnSurfaceVariant), 0);
@@ -1005,7 +1005,7 @@ static bool make_recover_candidate_area(lv_obj_t* parent)
         if (candidate_count >= agent_q::kBip39WordCount) {
             break;
         }
-        g_recover_candidate_event_indices[candidate_count] = word_index;
+        g_import_candidate_event_indices[candidate_count] = word_index;
 
         lv_obj_t* button = lv_obj_create(area);
         if (button == nullptr) {
@@ -1014,12 +1014,12 @@ static bool make_recover_candidate_area(lv_obj_t* parent)
         const int column = static_cast<int>(candidate_count % 3);
         const int row = static_cast<int>(candidate_count / 3);
         lv_obj_remove_style_all(button);
-        lv_obj_set_size(button, kRecoverCandidateButtonWidth, kRecoverCandidateButtonHeight);
+        lv_obj_set_size(button, kImportCandidateButtonWidth, kImportCandidateButtonHeight);
         lv_obj_align(
             button,
             LV_ALIGN_TOP_LEFT,
-            column * (kRecoverCandidateButtonWidth + 6),
-            row * (kRecoverCandidateButtonHeight + 4));
+            column * (kImportCandidateButtonWidth + 6),
+            row * (kImportCandidateButtonHeight + 4));
         lv_obj_set_style_radius(button, kPinPanelButtonRadius, 0);
         lv_obj_set_style_border_width(button, 1, 0);
         lv_obj_set_style_border_color(button, lv_color_hex(kSetupCellBorderColor), 0);
@@ -1029,9 +1029,9 @@ static bool make_recover_candidate_area(lv_obj_t* parent)
         lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(
             button,
-            g_callbacks.on_recover_candidate_clicked,
+            g_callbacks.on_import_candidate_clicked,
             LV_EVENT_CLICKED,
-            &g_recover_candidate_event_indices[candidate_count]);
+            &g_import_candidate_event_indices[candidate_count]);
 
         lv_obj_t* label = lv_label_create(button);
         if (label == nullptr) {
@@ -1040,7 +1040,7 @@ static bool make_recover_candidate_area(lv_obj_t* parent)
         lv_obj_remove_style_all(label);
         lv_label_set_text_static(label, word);
         lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
-        lv_obj_set_width(label, kRecoverCandidateButtonWidth - 6);
+        lv_obj_set_width(label, kImportCandidateButtonWidth - 6);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_font(label, &lv_font_unscii_8, 0);
         lv_obj_set_style_text_color(label, lv_color_hex(theme::kOnSurface), 0);
@@ -1052,9 +1052,9 @@ static bool make_recover_candidate_area(lv_obj_t* parent)
         lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(
             label,
-            g_callbacks.on_recover_candidate_clicked,
+            g_callbacks.on_import_candidate_clicked,
             LV_EVENT_CLICKED,
-            &g_recover_candidate_event_indices[candidate_count]);
+            &g_import_candidate_event_indices[candidate_count]);
         ++candidate_count;
     }
 
@@ -1064,7 +1064,7 @@ static bool make_recover_candidate_area(lv_obj_t* parent)
             return false;
         }
         lv_label_set_text(label, "No matching BIP-39 words.");
-        lv_obj_set_width(label, kRecoverCandidateWidth - 8);
+        lv_obj_set_width(label, kImportCandidateWidth - 8);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(label, lv_color_hex(theme::kError), 0);
@@ -1109,7 +1109,7 @@ static bool make_screen_bottom_timeout_timer_bar(
     return true;
 }
 
-bool modal_draw_recover_word_entry_panel(const char* notice)
+bool modal_draw_import_word_entry_panel(const char* notice)
 {
     avatar_overlay_clear();
 
@@ -1117,7 +1117,7 @@ bool modal_draw_recover_word_entry_panel(const char* notice)
     request_display_power_wake();
     drawing_surface_clear_panel_locked();
 
-    lv_obj_t* panel = drawing_surface_create_panel_locked(AgentQUiPanelKind::recovery_word_entry);
+    lv_obj_t* panel = drawing_surface_create_panel_locked(AgentQUiPanelKind::import_word_entry);
     if (panel == nullptr) {
         return false;
     }
@@ -1135,9 +1135,9 @@ bool modal_draw_recover_word_entry_panel(const char* notice)
     const agent_q::AgentQProvisioningFlowSnapshot flow =
         agent_q::provisioning_flow_snapshot();
     char title_text[32] = {};
-    snprintf(title_text, sizeof(title_text), "Recover words %u-%u",
-             static_cast<unsigned>(flow.recover_page * kRecoverWordsPerPage + 1),
-             static_cast<unsigned>((flow.recover_page + 1) * kRecoverWordsPerPage));
+    snprintf(title_text, sizeof(title_text), "Import words %u-%u",
+             static_cast<unsigned>(flow.import_page * kImportWordsPerPage + 1),
+             static_cast<unsigned>((flow.import_page + 1) * kImportWordsPerPage));
     lv_obj_t* title = lv_label_create(panel);
     if (title == nullptr) {
         drawing_surface_clear_panel_locked();
@@ -1162,15 +1162,15 @@ bool modal_draw_recover_word_entry_panel(const char* notice)
         lv_obj_align(notice_label, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
     }
 
-    for (uint8_t slot = 0; slot < kRecoverWordsPerPage; ++slot) {
-        if (!make_recover_word_cell(panel, slot)) {
+    for (uint8_t slot = 0; slot < kImportWordsPerPage; ++slot) {
+        if (!make_import_word_cell(panel, slot)) {
             drawing_surface_clear_panel_locked();
             return false;
         }
     }
 
-    if (!make_recover_alphabet_buttons(panel) ||
-        !make_recover_candidate_area(panel)) {
+    if (!make_import_alphabet_buttons(panel) ||
+        !make_import_candidate_area(panel)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
@@ -1178,47 +1178,47 @@ bool modal_draw_recover_word_entry_panel(const char* notice)
     if (!make_setup_button(
             panel,
             "Cancel",
-            kRecoveryPhraseButtonLeftX,
+            kBackupPhraseButtonLeftX,
             kSetupActionButtonY,
-            kRecoverNavigationButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kImportNavigationButtonWidth,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
-            g_callbacks.on_recover_cancel_clicked) ||
+            g_callbacks.on_import_cancel_clicked) ||
         !make_setup_button(
             panel,
             "Clear",
-            kRecoveryPhraseButtonLeftX + kRecoverNavigationButtonWidth + 8,
+            kBackupPhraseButtonLeftX + kImportNavigationButtonWidth + 8,
             kSetupActionButtonY,
-            kRecoverNavigationButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kImportNavigationButtonWidth,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::outlined_keypad,
             lv_color_hex(theme::kSecondary),
-            g_callbacks.on_recover_clear_clicked) ||
+            g_callbacks.on_import_clear_clicked) ||
         !make_setup_button(
             panel,
             "Prev",
-            kRecoveryPhraseButtonLeftX + 2 * (kRecoverNavigationButtonWidth + 8),
+            kBackupPhraseButtonLeftX + 2 * (kImportNavigationButtonWidth + 8),
             kSetupActionButtonY,
-            kRecoverNavigationButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kImportNavigationButtonWidth,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kSecondary),
-            g_callbacks.on_recover_previous_clicked,
+            g_callbacks.on_import_previous_clicked,
             nullptr,
-            flow.recover_page > 0) ||
+            flow.import_page > 0) ||
         !make_setup_button(
             panel,
-            flow.recover_page + 1 >= kRecoverPageCount ? "Verify" : "Next",
-            kRecoveryPhraseButtonLeftX + 3 * (kRecoverNavigationButtonWidth + 8),
+            flow.import_page + 1 >= kImportPageCount ? "Verify" : "Next",
+            kBackupPhraseButtonLeftX + 3 * (kImportNavigationButtonWidth + 8),
             kSetupActionButtonY,
-            kRecoverNavigationButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kImportNavigationButtonWidth,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kPrimary),
-            g_callbacks.on_recover_next_clicked,
+            g_callbacks.on_import_next_clicked,
             nullptr,
-            flow.recover_current_page_complete)) {
+            flow.import_current_page_complete)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
@@ -1232,9 +1232,9 @@ bool modal_draw_recover_word_entry_panel(const char* notice)
     return true;
 }
 
-bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
+bool modal_draw_backup_phrase_display(const char* backup_phrase)
 {
-    if (recovery_phrase == nullptr || recovery_phrase[0] == '\0') {
+    if (backup_phrase == nullptr || backup_phrase[0] == '\0') {
         return false;
     }
 
@@ -1246,7 +1246,7 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
     LvglLockGuard lock;
     drawing_surface_clear_panel_locked();
 
-    lv_obj_t* panel = drawing_surface_create_panel_locked(AgentQUiPanelKind::recovery_phrase_display);
+    lv_obj_t* panel = drawing_surface_create_panel_locked(AgentQUiPanelKind::backup_phrase_display);
     if (panel == nullptr) {
         return false;
     }
@@ -1269,7 +1269,7 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
     lv_label_set_text(title, "BIP-39 prefixes");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kRecoveryPhraseTopMargin);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kBackupPhraseTopMargin);
 
     lv_obj_t* warning = lv_label_create(panel);
     if (warning == nullptr) {
@@ -1282,11 +1282,11 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
     lv_obj_set_style_text_align(warning, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(warning, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(warning, lv_color_hex(theme::kWarning), 0);
-    lv_obj_align(warning, LV_ALIGN_TOP_MID, 0, 22 + kRecoveryPhraseTopMargin);
+    lv_obj_align(warning, LV_ALIGN_TOP_MID, 0, 22 + kBackupPhraseTopMargin);
 
-    constexpr int kGridTop = 58 + kRecoveryPhraseTopMargin;
+    constexpr int kGridTop = 58 + kBackupPhraseTopMargin;
     constexpr int kGridRowHeight = 25;
-    for (size_t index = 0; index < kRecoveryPhrasePrefixCellCount; ++index) {
+    for (size_t index = 0; index < kBackupPhrasePrefixCellCount; ++index) {
         lv_obj_t* cell = lv_obj_create(panel);
         if (cell == nullptr) {
             drawing_surface_clear_panel_locked();
@@ -1328,7 +1328,7 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
             drawing_surface_clear_panel_locked();
             return false;
         }
-        lv_label_set_text_static(prefix_label, agent_q::provisioning_flow_recovery_phrase_prefix_cell(index));
+        lv_label_set_text_static(prefix_label, agent_q::provisioning_flow_backup_phrase_prefix_cell(index));
         lv_label_set_long_mode(prefix_label, LV_LABEL_LONG_CLIP);
         lv_obj_set_width(prefix_label, kMnemonicWordPrefixWidth);
         lv_obj_set_style_text_align(prefix_label, LV_TEXT_ALIGN_LEFT, 0);
@@ -1342,20 +1342,20 @@ bool modal_draw_recovery_phrase_display(const char* recovery_phrase)
             kPanelActionButtonLeftX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
-            g_callbacks.on_recovery_phrase_cancel_clicked) ||
+            g_callbacks.on_backup_phrase_cancel_clicked) ||
         !make_setup_button(
             panel,
             "Confirm",
             kPanelActionButtonRightX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kPrimary),
-            g_callbacks.on_recovery_phrase_confirm_clicked)) {
+            g_callbacks.on_backup_phrase_confirm_clicked)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
@@ -1450,7 +1450,7 @@ bool modal_draw_pin_setup_panel(const char* notice)
             kPanelActionButtonLeftX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
             g_callbacks.on_pin_cancel_clicked,
@@ -1462,7 +1462,7 @@ bool modal_draw_pin_setup_panel(const char* notice)
             kPanelActionButtonRightX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kPrimary),
             g_callbacks.on_pin_submit_clicked,
@@ -1589,8 +1589,8 @@ bool modal_draw_settings_menu_panel()
             "Close",
             kSettingsMenuButtonCenterX,
             kSetupActionButtonY,
-            kRecoveryPhraseButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonWidth,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::outlined_keypad,
             lv_color_hex(theme::kPrimary),
             g_callbacks.on_settings_cancel_clicked)) {
@@ -1675,7 +1675,7 @@ bool modal_draw_error_recovery_panel(bool confirm)
                 kPanelActionButtonLeftX,
                 kSetupActionButtonY,
                 kPanelActionButtonWidth,
-                kRecoveryPhraseButtonHeight,
+                kBackupPhraseButtonHeight,
                 SetupButtonKind::outlined_keypad,
                 lv_color_hex(theme::kError),
                 g_callbacks.on_error_recovery_cancel_clicked) ||
@@ -1685,7 +1685,7 @@ bool modal_draw_error_recovery_panel(bool confirm)
                 kPanelActionButtonRightX,
                 kSetupActionButtonY,
                 kPanelActionButtonWidth,
-                kRecoveryPhraseButtonHeight,
+                kBackupPhraseButtonHeight,
                 SetupButtonKind::solid_action,
                 lv_color_hex(theme::kError),
                 g_callbacks.on_error_recovery_erase_clicked)) {
@@ -1697,8 +1697,8 @@ bool modal_draw_error_recovery_panel(bool confirm)
                    "Erase",
                    kSettingsMenuButtonCenterX,
                    kSetupActionButtonY,
-                   kRecoveryPhraseButtonWidth,
-                   kRecoveryPhraseButtonHeight,
+                   kBackupPhraseButtonWidth,
+                   kBackupPhraseButtonHeight,
                    SetupButtonKind::solid_action,
                    lv_color_hex(theme::kError),
                    g_callbacks.on_error_recovery_erase_clicked)) {
@@ -1802,7 +1802,7 @@ bool modal_draw_reset_pin_panel(const char* notice)
             kPanelActionButtonLeftX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kSecondary),
             g_callbacks.on_reset_cancel_clicked,
@@ -1814,7 +1814,7 @@ bool modal_draw_reset_pin_panel(const char* notice)
             kPanelActionButtonRightX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
             g_callbacks.on_pin_submit_clicked,
@@ -2007,7 +2007,7 @@ bool modal_draw_policy_update_review_panel(
             kPanelActionButtonLeftX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
             g_callbacks.on_policy_update_review_reject_clicked) ||
@@ -2017,7 +2017,7 @@ bool modal_draw_policy_update_review_panel(
             kPanelActionButtonRightX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kPrimary),
             g_callbacks.on_policy_update_review_continue_clicked)) {
@@ -2099,7 +2099,7 @@ bool modal_draw_user_signing_review_panel(
             kPanelActionButtonLeftX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
             g_callbacks.on_user_signing_review_reject_clicked) ||
@@ -2109,7 +2109,7 @@ bool modal_draw_user_signing_review_panel(
             kPanelActionButtonRightX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kPrimary),
             g_callbacks.on_user_signing_review_accept_clicked)) {
@@ -2219,7 +2219,7 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
             kPanelActionButtonLeftX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kSecondary),
             g_callbacks.on_pin_cancel_clicked,
@@ -2231,7 +2231,7 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
             kPanelActionButtonRightX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
-            kRecoveryPhraseButtonHeight,
+            kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kPrimary),
             g_callbacks.on_pin_submit_clicked,

@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { gatewaySuccessOutputSchemas } from "../dist/adapter-internal.js";
+import { hostSuccessOutputSchemas } from "../dist/adapter-internal.js";
 import { createDefaultDeviceClientCore } from "../dist/client.js";
-import { createDefaultGatewayCore, GatewayCore } from "../dist/admin.js";
+import { createDefaultAgentQHostCore, AgentQHostCore } from "../dist/admin.js";
 import {
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
@@ -106,7 +106,7 @@ function invalidUnsupportedRejectPolicyDocument() {
   };
 }
 
-function validGatewaySuccessOutputSamples() {
+function validAgentQSuccessOutputSamples() {
   return {
     scanDevices: { source: "live", devices: [], failures: [], activeDeviceId: null },
     identifyDevices: { source: "live", devices: [], activeDeviceId: null },
@@ -217,10 +217,10 @@ function validSignPersonalMessageSignedOutput() {
   };
 }
 
-test("gateway success output schemas reject unknown top-level fields", () => {
-  const samples = validGatewaySuccessOutputSamples();
+test("agent-q success output schemas reject unknown top-level fields", () => {
+  const samples = validAgentQSuccessOutputSamples();
   for (const [name, sample] of Object.entries(samples)) {
-    const schema = gatewaySuccessOutputSchemas[name];
+    const schema = hostSuccessOutputSchemas[name];
     assert.equal(schema.safeParse(sample).success, true, `${name} sample must be valid`);
     assert.throws(
       () => schema.parse({ ...sample, sessionId: "session_should_not_leak" }),
@@ -229,20 +229,20 @@ test("gateway success output schemas reject unknown top-level fields", () => {
   }
 });
 
-test("gateway success output schemas reject unknown nested fields", () => {
-  const samples = validGatewaySuccessOutputSamples();
-  assert.throws(() => gatewaySuccessOutputSchemas.connectDevice.parse({
+test("agent-q success output schemas reject unknown nested fields", () => {
+  const samples = validAgentQSuccessOutputSamples();
+  assert.throws(() => hostSuccessOutputSchemas.connectDevice.parse({
     ...samples.connectDevice,
     device: { ...samples.connectDevice.device, sessionId: "session_should_not_leak" },
   }));
-  assert.throws(() => gatewaySuccessOutputSchemas.getDeviceStatus.parse({
+  assert.throws(() => hostSuccessOutputSchemas.getDeviceStatus.parse({
     ...samples.getDeviceStatus,
     protocolResponse: {
       ...samples.getDeviceStatus.protocolResponse,
       sessionId: "session_should_not_leak",
     },
   }));
-  assert.throws(() => gatewaySuccessOutputSchemas.listDevices.parse({
+  assert.throws(() => hostSuccessOutputSchemas.listDevices.parse({
     ...samples.listDevices,
     devices: [
       {
@@ -251,23 +251,23 @@ test("gateway success output schemas reject unknown nested fields", () => {
       },
     ],
   }));
-  assert.throws(() => gatewaySuccessOutputSchemas.policyGet.parse({
+  assert.throws(() => hostSuccessOutputSchemas.policyGet.parse({
     ...samples.policyGet,
     policy: { ...samples.policyGet.policy, sessionId: "session_should_not_leak" },
   }));
-  assert.throws(() => gatewaySuccessOutputSchemas.policyPropose.parse({
+  assert.throws(() => hostSuccessOutputSchemas.policyPropose.parse({
     ...samples.policyPropose,
     policy: { ...samples.policyPropose.policy, sessionId: "session_should_not_leak" },
   }));
 });
 
-test("gateway success output schemas reject semantically invalid policy documents", () => {
-  const samples = validGatewaySuccessOutputSamples();
-  assert.throws(() => gatewaySuccessOutputSchemas.policyGet.parse({
+test("agent-q success output schemas reject semantically invalid policy documents", () => {
+  const samples = validAgentQSuccessOutputSamples();
+  assert.throws(() => hostSuccessOutputSchemas.policyGet.parse({
     ...samples.policyGet,
     policy: invalidUnboundedSignPolicyDocument(),
   }));
-  assert.throws(() => gatewaySuccessOutputSchemas.policyGet.parse({
+  assert.throws(() => hostSuccessOutputSchemas.policyGet.parse({
     ...samples.policyGet,
     policy: invalidUnsupportedRejectPolicyDocument(),
   }));
@@ -282,9 +282,9 @@ test("client entrypoint constructs an admin-disabled device core facade", () => 
   assert.equal(core.policyPropose, undefined);
 });
 
-test("admin entrypoint constructs the admin-capable Gateway core", () => {
-  const core = createDefaultGatewayCore();
-  assert.equal(core instanceof GatewayCore, true);
+test("admin entrypoint constructs the admin-capable Agent-Q core", () => {
+  const core = createDefaultAgentQHostCore();
+  assert.equal(core instanceof AgentQHostCore, true);
 });
 
 test("client entrypoint does not import MCP or Admin adapters", async () => {
@@ -335,9 +335,9 @@ test("package self-reference resolves only client entrypoints", async () => {
   const protocol = await import("@stelis/agent-q-client/protocol");
   const providerProtocol = await import("@stelis/agent-q-client/provider-protocol");
   assert.equal(typeof root.createDefaultDeviceClientCore, "function");
-  assert.equal(root.createDefaultGatewayCore, undefined);
-  assert.equal(typeof admin.createDefaultGatewayCore, "function");
-  assert.equal(typeof adapterInternal.gatewaySuccessOutputSchemas, "object");
+  assert.equal(root.createDefaultAgentQHostCore, undefined);
+  assert.equal(typeof admin.createDefaultAgentQHostCore, "function");
+  assert.equal(typeof adapterInternal.hostSuccessOutputSchemas, "object");
   assert.equal(typeof client.createDefaultDeviceClientCore, "function");
   assert.equal(typeof protocol.makeGetStatusRequest, "function");
   assert.equal(typeof protocol.makeSignTransactionRequest, "function");
@@ -360,7 +360,7 @@ test("package self-reference resolves only client entrypoints", async () => {
   assert.equal(typeof providerProtocol.makeSignTransactionRequest, "function");
   assert.equal(typeof providerProtocol.makeSignPersonalMessageRequest, "function");
   assert.equal(typeof admin.SerialPortUsbDriver, "function");
-  for (const subpath of ["config", "core", "errors", "gateway-output-schema", "public-error", "safe-text", "usb"]) {
+  for (const subpath of ["config", "core", "errors", "agent-q-output-schema", "public-error", "safe-text", "usb"]) {
     await assert.rejects(() => import(`@stelis/agent-q-client/${subpath}`), {
       code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
     });
@@ -460,14 +460,14 @@ test("provider-protocol serializer exact-validates provider requests at runtime"
       id: requestId,
       version: 1,
       type: "connect",
-      params: { gatewayName: "Agent-Q Browser" },
+      params: { clientName: "Agent-Q Browser" },
       policy_get: true,
     },
     {
       id: requestId,
       version: 1,
       type: "connect",
-      params: { gatewayName: "Agent-Q Browser", sessionId: "session_should_not_pass" },
+      params: { clientName: "Agent-Q Browser", sessionId: "session_should_not_pass" },
     },
     {
       id: requestId,
@@ -524,8 +524,8 @@ test("provider-protocol serializer exact-validates provider requests at runtime"
 });
 
 test("adapter output schema keeps signing method result shapes exact", () => {
-  const transactionSchema = gatewaySuccessOutputSchemas.signTransaction;
-  const personalMessageSchema = gatewaySuccessOutputSchemas.signPersonalMessage;
+  const transactionSchema = hostSuccessOutputSchemas.signTransaction;
+  const personalMessageSchema = hostSuccessOutputSchemas.signPersonalMessage;
   assert.equal(transactionSchema.parse(validSignTransactionSignedOutput()).method, "sign_transaction");
   assert.equal(personalMessageSchema.parse(validSignPersonalMessageSignedOutput()).method, "sign_personal_message");
   const largeMessageBytes = Buffer.alloc(300, 7).toString("base64");
@@ -589,7 +589,7 @@ test("adapter output schema keeps terminal signing results exact", () => {
       message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
     },
   };
-  const schema = gatewaySuccessOutputSchemas.signTransaction;
+  const schema = hostSuccessOutputSchemas.signTransaction;
   assert.equal(schema.parse(userTerminal).status, "user_rejected");
   assert.equal(schema.parse(policyTerminal).status, "policy_rejected");
   assert.throws(() => schema.parse({ ...userTerminal, signature: SUI_SIGNATURE }));
@@ -605,7 +605,7 @@ test("adapter output schema keeps terminal signing results exact", () => {
 });
 
 test("adapter output schema keeps Sui account projection exact", () => {
-  const schema = gatewaySuccessOutputSchemas.getAccounts;
+  const schema = hostSuccessOutputSchemas.getAccounts;
   const output = {
     source: "live",
     deviceId: DEVICE_ID,

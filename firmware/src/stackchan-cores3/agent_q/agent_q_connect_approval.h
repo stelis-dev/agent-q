@@ -8,7 +8,7 @@
 namespace agent_q {
 
 constexpr size_t kAgentQConnectApprovalRequestIdSize = kAgentQRequestIdSize;
-constexpr size_t kAgentQConnectApprovalGatewayNameSize = 65;
+constexpr size_t kAgentQConnectApprovalClientNameSize = 65;
 
 enum class AgentQConnectApprovalChoice {
     none,
@@ -19,7 +19,7 @@ enum class AgentQConnectApprovalChoice {
 struct AgentQConnectApprovalSnapshot {
     bool active;
     const char* request_id;
-    const char* gateway_name;
+    const char* client_name;
     AgentQTimeoutWindow approval_window;
     AgentQConnectApprovalChoice choice;
 };
@@ -31,7 +31,7 @@ AgentQConnectApprovalSnapshot connect_approval_snapshot();
 
 bool connect_approval_begin(
     const char* request_id,
-    const char* gateway_name,
+    const char* client_name,
     AgentQTimeoutWindow approval_window);
 bool connect_approval_review_action_available(TickType_t now);
 bool connect_approval_choose(AgentQConnectApprovalChoice choice, TickType_t now);

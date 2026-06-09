@@ -100,13 +100,13 @@ int main()
     expect(p.provisioning_panel == ProvisioningPanel::setup_choice, "setup panel maps to setup choice");
     expect(!p.wipe_setup_if_unhandled, "external setup delete does not fallback wipe");
 
-    p = plan(Panel::recovery_phrase_display, Event::external_delete);
+    p = plan(Panel::backup_phrase_display, Event::external_delete);
     expect(p.route_provisioning_panel_deleted, "phrase delete routes to provisioning owner");
-    expect(p.provisioning_panel == ProvisioningPanel::recovery_phrase_display, "phrase panel maps");
+    expect(p.provisioning_panel == ProvisioningPanel::backup_phrase_display, "phrase panel maps");
 
-    p = plan(Panel::recovery_word_entry, Event::external_delete);
-    expect(p.route_provisioning_panel_deleted, "recovery entry delete routes to provisioning owner");
-    expect(p.provisioning_panel == ProvisioningPanel::recovery_word_entry, "recovery entry maps");
+    p = plan(Panel::import_word_entry, Event::external_delete);
+    expect(p.route_provisioning_panel_deleted, "import entry delete routes to provisioning owner");
+    expect(p.provisioning_panel == ProvisioningPanel::import_word_entry, "import entry maps");
 
     p = plan(Panel::pin_entry, Event::explicit_clear);
     expect(p.route_provisioning_panel_deleted, "explicit setup PIN clear routes to provisioning owner");

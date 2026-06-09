@@ -6,8 +6,8 @@ import {
   type DeviceListing,
   type DeviceRecord,
 } from "./config.js";
-import { GatewayError, toGatewayError } from "./errors.js";
-import { isGatewayName, isSafeDeviceId, sanitizePortHint } from "./safe-text.js";
+import { AgentQError, toAgentQError } from "./errors.js";
+import { isClientName, isSafeDeviceId, sanitizePortHint } from "./safe-text.js";
 import { normalizeErrorCode, toPublicError } from "./public-error.js";
 import {
   identifySignRoute,
@@ -72,7 +72,7 @@ export interface CachedDeviceStatus {
 
 export type DeviceStatusResult = LiveDeviceStatus | CachedDeviceStatus;
 // getDeviceStatus only ever returns a live or cached result, or throws; it never
-// returns an error-shaped value. The error surfaces as a thrown GatewayError that
+// returns an error-shaped value. The error surfaces as a thrown AgentQError that
 // the adapter boundary (run()) projects through public-error.ts.
 export type DeviceStatusToolResult = DeviceStatusResult;
 
@@ -163,7 +163,7 @@ export interface ConnectDeviceResult {
   device: StatusResponse["device"];
 }
 
-// Why a disconnect ended (or did not establish) Gateway's local session view.
+// Why a disconnect ended (or did not establish) Agent-Q's local session view.
 // Single-sourced so the MCP output schema enumerates exactly these values and a
 // different output adapter cannot invent its own.
 export const DISCONNECT_REASONS = [
@@ -209,7 +209,7 @@ export type DisconnectDeviceResult =
   | { source: "not_connected"; deviceId: string; reason: "not_connected" };
 
 // get_capabilities is read-only and session-scoped. The returned capability set
-// is Firmware-authored; Gateway only transports and validates it.
+// is Firmware-authored; Agent-Q only transports and validates it.
 export type GetCapabilitiesResult =
   | {
       source: "live";
@@ -237,7 +237,7 @@ export type PolicyGetResult =
   | { source: "session_ended"; deviceId: string; reason: PolicyGetSessionEndedReason };
 
 // get_approval_history is read-only and session-scoped. Firmware owns the
-// stored decision records; Gateway validates and transports only bounded pages.
+// stored decision records; Agent-Q validates and transports only bounded pages.
 export type GetApprovalHistoryResult =
   | { source: "live"; deviceId: string; records: ApprovalHistoryRecord[]; hasMore: boolean }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
@@ -300,9 +300,9 @@ export type SignPersonalMessageResult =
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: SignPersonalMessageSessionEndedReason };
 
-export const DEFAULT_GATEWAY_NAME = "Agent-Q Gateway";
+export const DEFAULT_CLIENT_NAME = "Agent-Q";
 
-export class GatewayCore {
+export class AgentQHostCore {
   private readonly runtimeSessions = new Map<string, RuntimeSession>();
   private readonly usbDriver: UsbSerialDriver;
 
@@ -374,14 +374,14 @@ export class GatewayCore {
           remainingMs,
         );
         if (response.device.deviceId !== liveDevice.protocolResponse.device.deviceId) {
-          throw new GatewayError(
+          throw new AgentQError(
             "handshake_failed",
             `Identify response device id did not match status response. Expected ${liveDevice.protocolResponse.device.deviceId}, got ${response.device.deviceId}.`,
             true,
           );
         }
         if (response.code !== code) {
-          throw new GatewayError("handshake_failed", "Identify response code did not match request.", true);
+          throw new AgentQError("handshake_failed", "Identify response code did not match request.", true);
         }
 
         await this.configStore.rememberUsbStatus(
@@ -397,7 +397,7 @@ export class GatewayCore {
           protocolResponse: response,
         });
       } catch (error) {
-        const gatewayError = toGatewayError(error);
+        const agentQError = toAgentQError(error);
         // Canonicalize the nested error at the source so the returned data is
         // public-safe for ANY adapter, not only after MCP re-sanitizes it.
         devices.push({
@@ -406,7 +406,7 @@ export class GatewayCore {
           portPath: sanitizePortHint(liveDevice.portPath),
           deviceId: liveDevice.protocolResponse.device.deviceId,
           status: "error",
-          error: toPublicError(gatewayError.code, gatewayError.retryable),
+          error: toPublicError(agentQError.code, agentQError.retryable),
         });
       }
     }
@@ -422,7 +422,7 @@ export class GatewayCore {
   async selectDevice(input: { deviceId: string; purpose?: string }): Promise<SelectDeviceResult> {
     rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "selectDevice");
     if (!isSafeDeviceId(input.deviceId)) {
-      throw new GatewayError("invalid_device_id", "deviceId is not a valid device identifier.", false);
+      throw new AgentQError("invalid_device_id", "deviceId is not a valid device identifier.", false);
     }
 
     let record: DeviceRecord;
@@ -461,7 +461,7 @@ export class GatewayCore {
   }): Promise<SetDeviceMetadataResult> {
     rejectUnsupportedInputFields(input, SET_DEVICE_METADATA_INPUT_KEYS, "setDeviceMetadata");
     if (!isSafeDeviceId(input.deviceId)) {
-      throw new GatewayError("invalid_device_id", "deviceId is not a valid device identifier.", false);
+      throw new AgentQError("invalid_device_id", "deviceId is not a valid device identifier.", false);
     }
 
     let record: DeviceRecord;
@@ -483,10 +483,10 @@ export class GatewayCore {
   async connectDevice(input: {
     deviceId?: string;
     purpose?: string;
-    gatewayName?: string;
+    clientName?: string;
   } = {}): Promise<ConnectDeviceResult> {
     rejectUnsupportedInputFields(input, CONNECT_DEVICE_INPUT_KEYS, "connectDevice");
-    const gatewayName = validateGatewayName(input.gatewayName);
+    const clientName = validateClientName(input.clientName);
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_USB_DEADLINE_MS;
 
@@ -532,7 +532,7 @@ export class GatewayCore {
     try {
       response = await this.usbDriver.connectDevice(
         matchingPort.portPath,
-        gatewayName,
+        clientName,
         INTERNAL_CONNECT_DEADLINE_MS,
       );
     } catch (error) {
@@ -541,7 +541,7 @@ export class GatewayCore {
     }
 
     if (response.status === "rejected") {
-      throw new GatewayError(
+      throw new AgentQError(
         response.error.code,
         response.error.message,
         response.error.code === "timeout",
@@ -549,7 +549,7 @@ export class GatewayCore {
     }
 
     if (response.device.deviceId !== target.deviceId) {
-      throw new GatewayError(
+      throw new AgentQError(
         "handshake_failed",
         `Connect response device id did not match. Expected ${target.deviceId}, got ${response.device.deviceId}.`,
         true,
@@ -588,8 +588,8 @@ export class GatewayCore {
       matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
     } catch (error) {
       // The device could not be located. clearRuntimeSessionMirrorIfEnded owns the policy
-      // for which disconnect failures end Gateway's local session view; clearing
-      // it here prevents reusing a session Gateway can no longer confirm.
+      // for which disconnect failures end Agent-Q's local session view; clearing
+      // it here prevents reusing a session Agent-Q can no longer confirm.
       const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
         return { source: "disconnected", deviceId: target.deviceId, reason };
@@ -673,7 +673,7 @@ export class GatewayCore {
     try {
       matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
     } catch (error) {
-      // A transport/session failure while locating the device may end Gateway's
+      // A transport/session failure while locating the device may end Agent-Q's
       // local session view; clearRuntimeSessionMirrorIfEnded owns that policy. get_accounts
       // is read-only, so a recognized clearing reason is reported as session_ended
       // (the firmware session is presumed gone) rather than throwing.
@@ -856,7 +856,7 @@ export class GatewayCore {
     network: unknown;
     txBytes: string;
   }): Promise<SignTransactionResult> {
-    const route = identifySignGatewayRoute("sign_transaction", input.chain, input.method);
+    const route = identifySignHostRoute("sign_transaction", input.chain, input.method);
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
     const deadlineMs = INTERNAL_SIGN_TRANSACTION_DEADLINE_MS;
@@ -867,7 +867,7 @@ export class GatewayCore {
     }
 
     rejectUnsupportedInputFields(input, SIGN_TRANSACTION_INPUT_KEYS, "signTransaction");
-    const params = validateSignGatewayInput({
+    const params = validateSignHostInput({
       requestType: "sign_transaction",
       network: input.network,
       txBytes: input.txBytes,
@@ -910,7 +910,7 @@ export class GatewayCore {
     network: unknown;
     message: string;
   }): Promise<SignPersonalMessageResult> {
-    const route = identifySignGatewayRoute("sign_personal_message", input.chain, input.method);
+    const route = identifySignHostRoute("sign_personal_message", input.chain, input.method);
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
     const deadlineMs = INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS;
@@ -921,7 +921,7 @@ export class GatewayCore {
     }
 
     rejectUnsupportedInputFields(input, SIGN_PERSONAL_MESSAGE_INPUT_KEYS, "signPersonalMessage");
-    const params = validateSignPersonalMessageGatewayInput({
+    const params = validateSignPersonalMessageHostInput({
       requestType: "sign_personal_message",
       network: input.network,
       message: input.message,
@@ -1004,14 +1004,14 @@ export class GatewayCore {
     purpose?: string;
   }): Promise<{ deviceId: string; record: DeviceRecord }> {
     if (input.purpose !== undefined && RESERVED_PURPOSES.has(input.purpose)) {
-      throw new GatewayError(
+      throw new AgentQError(
         "reserved_purpose",
         `purpose '${input.purpose}' is reserved. Omit purpose to use the default device.`,
         false,
       );
     }
     if (input.purpose !== undefined && !isValidPurpose(input.purpose)) {
-      throw new GatewayError(
+      throw new AgentQError(
         "invalid_purpose",
         "purpose must be 1-32 characters of [A-Za-z0-9_.-].",
         false,
@@ -1032,12 +1032,12 @@ export class GatewayCore {
     }
 
     if (deviceId === undefined || deviceId.length === 0) {
-      throw new GatewayError("no_active_device", "No active device is configured.", false);
+      throw new AgentQError("no_active_device", "No active device is configured.", false);
     }
 
     const record = config.devices.find((candidate) => candidate.deviceId === deviceId);
     if (record === undefined) {
-      throw new GatewayError("device_not_found", "Device is not known to Gateway.", true);
+      throw new AgentQError("device_not_found", "Device is not known to Agent-Q.", true);
     }
     return { deviceId, record };
   }
@@ -1056,7 +1056,7 @@ export class GatewayCore {
 
     const knownPortFailure = scanResult.failures.find((failure) => failure.portPath === record.lastPortHint);
     if (knownPortFailure !== undefined) {
-      throw new GatewayError(
+      throw new AgentQError(
         knownPortFailure.unavailableReason,
         `Device ${record.deviceId} is not reachable on the last known port.`,
         true,
@@ -1064,13 +1064,13 @@ export class GatewayCore {
     }
     const knownPortExists = scanResult.ports.some((port) => port.path === record.lastPortHint);
     if (!knownPortExists) {
-      throw new GatewayError(
+      throw new AgentQError(
         "port_not_found",
         `Device ${record.deviceId} is not connected.`,
         true,
       );
     }
-    throw new GatewayError(
+    throw new AgentQError(
       "handshake_failed",
       `Device ${record.deviceId} did not respond to a status handshake.`,
       true,
@@ -1155,21 +1155,21 @@ function toScanFailure(failure: UsbStatusFailure): ScanDeviceFailure {
   };
 }
 
-function validateGatewayName(value: unknown): string {
+function validateClientName(value: unknown): string {
   if (value === undefined) {
-    return DEFAULT_GATEWAY_NAME;
+    return DEFAULT_CLIENT_NAME;
   }
-  if (!isGatewayName(value)) {
-    throw new GatewayError(
-      "invalid_gateway_name",
-      "gatewayName must be 1-64 printable ASCII characters.",
+  if (!isClientName(value)) {
+    throw new AgentQError(
+      "invalid_client_name",
+      "clientName must be 1-64 printable ASCII characters.",
       false,
     );
   }
   return value;
 }
 
-function validateSignGatewayInput(input: {
+function validateSignHostInput(input: {
   requestType: "sign_transaction";
   network: unknown;
   txBytes: unknown;
@@ -1184,13 +1184,13 @@ function validateSignGatewayInput(input: {
     );
   } catch (error) {
     if (error instanceof ProtocolError) {
-      throw new GatewayError(error.code, error.message, false);
+      throw new AgentQError(error.code, error.message, false);
     }
     throw error;
   }
 }
 
-function validateSignPersonalMessageGatewayInput(input: {
+function validateSignPersonalMessageHostInput(input: {
   requestType: "sign_personal_message";
   network: unknown;
   message: unknown;
@@ -1205,23 +1205,23 @@ function validateSignPersonalMessageGatewayInput(input: {
     );
   } catch (error) {
     if (error instanceof ProtocolError) {
-      throw new GatewayError(error.code, error.message, false);
+      throw new AgentQError(error.code, error.message, false);
     }
     throw error;
   }
 }
 
-function identifySignGatewayRoute(
+function identifySignHostRoute(
   operation: "sign_transaction",
   chain: unknown,
   method: unknown,
 ): Extract<SupportedSignRoute, { operation: "sign_transaction" }>;
-function identifySignGatewayRoute(
+function identifySignHostRoute(
   operation: "sign_personal_message",
   chain: unknown,
   method: unknown,
 ): Extract<SupportedSignRoute, { operation: "sign_personal_message" }>;
-function identifySignGatewayRoute(
+function identifySignHostRoute(
   operation: "sign_transaction" | "sign_personal_message",
   chain: unknown,
   method: unknown,
@@ -1230,7 +1230,7 @@ function identifySignGatewayRoute(
     return identifySignRoute(operation, chain, method);
   } catch (error) {
     if (error instanceof ProtocolError) {
-      throw new GatewayError(error.code, error.message, false);
+      throw new AgentQError(error.code, error.message, false);
     }
     throw error;
   }
@@ -1271,7 +1271,7 @@ function toLiveSignResult(deviceId: string, response: SignResultResponse): LiveS
 
 const NO_INPUT_KEYS = new Set<string>();
 const DEVICE_SCOPED_INPUT_KEYS = new Set(["deviceId", "purpose"]);
-const CONNECT_DEVICE_INPUT_KEYS = new Set(["deviceId", "purpose", "gatewayName"]);
+const CONNECT_DEVICE_INPUT_KEYS = new Set(["deviceId", "purpose", "clientName"]);
 const SET_DEVICE_METADATA_INPUT_KEYS = new Set(["deviceId", "label"]);
 const GET_APPROVAL_HISTORY_INPUT_KEYS = new Set(["deviceId", "purpose", "limit", "beforeSeq"]);
 const POLICY_PROPOSE_INPUT_KEYS = new Set(["deviceId", "purpose", "policy"]);
@@ -1288,16 +1288,16 @@ function rejectUnsupportedInputFields(
   }
   for (const key of Object.keys(input)) {
     if (!allowedKeys.has(key)) {
-      throw new GatewayError("invalid_params", `${inputName} input contains unsupported fields.`, false);
+      throw new AgentQError("invalid_params", `${inputName} input contains unsupported fields.`, false);
     }
   }
 }
 
-function mapConfigError(error: unknown): GatewayError {
+function mapConfigError(error: unknown): AgentQError {
   if (error instanceof ConfigError) {
-    return new GatewayError(error.code, error.message, error.code === "device_not_found");
+    return new AgentQError(error.code, error.message, error.code === "device_not_found");
   }
-  return toGatewayError(error);
+  return toAgentQError(error);
 }
 
 function toRuntimeSessionView(session: RuntimeSession | null): RuntimeSessionView | null {
@@ -1311,14 +1311,14 @@ function toRuntimeSessionView(session: RuntimeSession | null): RuntimeSessionVie
 }
 
 // Single owner of the session-clearing transport policy (see specs/PROTOCOL.md):
-// these failures mean Gateway can no longer confirm the session, so it clears its
+// these failures mean Agent-Q can no longer confirm the session, so it clears its
 // local view to avoid reusing a session Firmware may have already dropped. The
 // returned reason explains why; an unrecognized error returns null, so the caller
 // rethrows and keeps the session.
 function runtimeSessionMirrorEndReason(
   error: unknown,
 ): RuntimeSessionMirrorEndReason | null {
-  if (!(error instanceof GatewayError)) {
+  if (!(error instanceof AgentQError)) {
     return null;
   }
   switch (error.code) {
@@ -1353,5 +1353,5 @@ function createUniqueIdentificationCode(usedCodes: Set<string>): string {
     }
   }
 
-  throw new GatewayError("identification_code_exhausted", "Could not create a unique identification code.", true);
+  throw new AgentQError("identification_code_exhausted", "Could not create a unique identification code.", true);
 }

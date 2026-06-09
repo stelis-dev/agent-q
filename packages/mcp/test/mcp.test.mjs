@@ -4,8 +4,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { GatewayError } from "@stelis/agent-q-client/adapter-internal";
-import { createGatewayMcpServer, gatewayToolDefinitions } from "../dist/mcp.js";
+import { AgentQError } from "@stelis/agent-q-client/adapter-internal";
+import { createAgentQMcpServer, hostToolDefinitions } from "../dist/mcp.js";
 import { FORBIDDEN_SECRET_FIELD_NAMES, MAX_SESSION_TTL_MS } from "@stelis/agent-q-client/protocol";
 
 const expectedToolNames = [
@@ -34,7 +34,7 @@ test("MCP package metadata exposes MCP and Admin adapter entrypoints", async () 
   assert.equal(packageJson.dependencies["@stelis/agent-q-client"], "0.0.0");
   assert.deepEqual(packageJson.bin, {
     "agent-q": "./dist/bin/agent-q.js",
-    "agent-q-sui-sign": "./dist/bin/agent-q-sui-sign.js",
+    "agent-q-sui-signer": "./dist/bin/agent-q-sui-signer.js",
   });
 });
 
@@ -42,8 +42,8 @@ test("MCP package self-reference resolves MCP and Admin adapters only", async ()
   const root = await import("@stelis/agent-q-mcp");
   const mcp = await import("@stelis/agent-q-mcp/mcp");
   const admin = await import("@stelis/agent-q-mcp/admin");
-  assert.equal(typeof root.createGatewayMcpServer, "function");
-  assert.equal(typeof mcp.createGatewayMcpServer, "function");
+  assert.equal(typeof root.createAgentQMcpServer, "function");
+  assert.equal(typeof mcp.createAgentQMcpServer, "function");
   assert.equal(typeof admin.createAdminHttpServer, "function");
   await assert.rejects(() => import("@stelis/agent-q-mcp/provider"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
@@ -234,14 +234,14 @@ const noOpCore = {
 
 test("registers the full device tool set", () => {
   assert.deepEqual(
-    Object.values(gatewayToolDefinitions).map((tool) => tool.name).sort(),
+    Object.values(hostToolDefinitions).map((tool) => tool.name).sort(),
     expectedToolNames,
   );
 });
 
 test("tool input schemas do not expose secret fields", () => {
   const schemaKeys = new Set();
-  for (const tool of Object.values(gatewayToolDefinitions)) {
+  for (const tool of Object.values(hostToolDefinitions)) {
     for (const key of inputSchemaKeys(tool)) {
       schemaKeys.add(key.toLowerCase());
     }
@@ -253,7 +253,7 @@ test("tool input schemas do not expose secret fields", () => {
 });
 
 test("connect_device output omits sessionId and secret fields", () => {
-  const sample = gatewayToolDefinitions.connectDevice.outputSchema.safeParse({
+  const sample = hostToolDefinitions.connectDevice.outputSchema.safeParse({
     source: "connected",
     deviceId: "device-1",
     sessionTtlMs: MAX_SESSION_TTL_MS,
@@ -268,8 +268,8 @@ test("connect_device output omits sessionId and secret fields", () => {
   });
   assert.equal(sample.success, true);
 
-  // sessionId must be rejected: it is a Firmware token Gateway keeps internal.
-  const withSessionId = gatewayToolDefinitions.connectDevice.outputSchema.safeParse({
+  // sessionId must be rejected: it is a Firmware token Agent-Q keeps internal.
+  const withSessionId = hostToolDefinitions.connectDevice.outputSchema.safeParse({
     source: "connected",
     deviceId: "device-1",
     sessionId: "session_aabbccdd",
@@ -285,15 +285,15 @@ test("connect_device output omits sessionId and secret fields", () => {
   });
   assert.equal(withSessionId.success, false);
 
-  const withExpiresAt = gatewayToolDefinitions.connectDevice.outputSchema.safeParse({
+  const withExpiresAt = hostToolDefinitions.connectDevice.outputSchema.safeParse({
     ...sample.data,
     expiresAt: "2026-05-28T00:30:00.000Z",
   });
   assert.equal(withExpiresAt.success, false);
 
   for (const shape of [
-    gatewayToolDefinitions.connectDevice.outputSchema,
-    gatewayToolDefinitions.listDevices.outputSchema,
+    hostToolDefinitions.connectDevice.outputSchema,
+    hostToolDefinitions.listDevices.outputSchema,
   ]) {
     const flat = JSON.stringify(shape).toLowerCase();
     for (const forbidden of [...FORBIDDEN_SECRET_FIELD_NAMES, "sessionId", "expiresAt"]) {
@@ -303,7 +303,7 @@ test("connect_device output omits sessionId and secret fields", () => {
 });
 
 test("status output schema rejects unreachable source combinations", () => {
-  const result = gatewayToolDefinitions.getDeviceStatus.outputSchema.safeParse({
+  const result = hostToolDefinitions.getDeviceStatus.outputSchema.safeParse({
     source: "live",
     connected: false,
     error: {
@@ -323,7 +323,7 @@ test("exported output schema rejects raw error text and unknown firmware codes",
     error: { code: "handshake_failed", message: "session_LEAK raw text", retryable: true },
   };
   assert.equal(
-    gatewayToolDefinitions.connectDevice.outputSchema.safeParse(rawError).success,
+    hostToolDefinitions.connectDevice.outputSchema.safeParse(rawError).success,
     false,
     "exported schema must reject a non-canonical (raw) error message",
   );
@@ -338,7 +338,7 @@ test("exported output schema rejects raw error text and unknown firmware codes",
     },
   };
   assert.equal(
-    gatewayToolDefinitions.connectDevice.outputSchema.safeParse(canonicalError).success,
+    hostToolDefinitions.connectDevice.outputSchema.safeParse(canonicalError).success,
     true,
     "exported schema accepts a canonical public error",
   );
@@ -353,21 +353,21 @@ test("exported output schema rejects raw error text and unknown firmware codes",
     cachedStatus: { device, provisioning: { state: "unprovisioned" } },
   };
   assert.equal(
-    gatewayToolDefinitions.getDeviceStatus.outputSchema.safeParse(cachedRawCode).success,
+    hostToolDefinitions.getDeviceStatus.outputSchema.safeParse(cachedRawCode).success,
     false,
     "exported schema must reject an unknown firmwareErrorCode",
   );
 });
 
 test("tool input schemas expose only current request fields", () => {
-  assert.deepEqual(inputSchemaKeys(gatewayToolDefinitions.scanDevices), []);
-  assert.deepEqual(inputSchemaKeys(gatewayToolDefinitions.identifyDevices), []);
-  assert.deepEqual(inputSchemaKeys(gatewayToolDefinitions.connectDevice), [
+  assert.deepEqual(inputSchemaKeys(hostToolDefinitions.scanDevices), []);
+  assert.deepEqual(inputSchemaKeys(hostToolDefinitions.identifyDevices), []);
+  assert.deepEqual(inputSchemaKeys(hostToolDefinitions.connectDevice), [
+    "clientName",
     "deviceId",
-    "gatewayName",
     "purpose",
   ]);
-  assert.deepEqual(inputSchemaKeys(gatewayToolDefinitions.signTransaction), [
+  assert.deepEqual(inputSchemaKeys(hostToolDefinitions.signTransaction), [
     "chain",
     "deviceId",
     "method",
@@ -375,7 +375,7 @@ test("tool input schemas expose only current request fields", () => {
     "purpose",
     "txBytes",
   ]);
-  assert.deepEqual(inputSchemaKeys(gatewayToolDefinitions.signPersonalMessage), [
+  assert.deepEqual(inputSchemaKeys(hostToolDefinitions.signPersonalMessage), [
     "chain",
     "deviceId",
     "message",
@@ -383,7 +383,7 @@ test("tool input schemas expose only current request fields", () => {
     "network",
     "purpose",
   ]);
-  assert.deepEqual(inputSchemaKeys(gatewayToolDefinitions.policyPropose), [
+  assert.deepEqual(inputSchemaKeys(hostToolDefinitions.policyPropose), [
     "deviceId",
     "policy",
     "purpose",
@@ -391,7 +391,7 @@ test("tool input schemas expose only current request fields", () => {
 });
 
 test("select_device input accepts purpose but rejects reserved 'default'", () => {
-  const inputSchema = gatewayToolDefinitions.selectDevice.inputSchema.shape.purpose;
+  const inputSchema = hostToolDefinitions.selectDevice.inputSchema.shape.purpose;
   assert.equal(inputSchema.safeParse("payment").success, true);
   assert.equal(inputSchema.safeParse("default").success, false);
   assert.equal(inputSchema.safeParse("has space").success, false);
@@ -400,13 +400,13 @@ test("select_device input accepts purpose but rejects reserved 'default'", () =>
 });
 
 test("can construct the MCP server with the full core", () => {
-  const server = createGatewayMcpServer(noOpCore);
+  const server = createAgentQMcpServer(noOpCore);
   assert.equal(server.isConnected(), false);
 });
 
 test("MCP tool descriptions disclose USB status handshake writes", () => {
   const byName = Object.fromEntries(
-    Object.values(gatewayToolDefinitions).map((tool) => [tool.name, tool]),
+    Object.values(hostToolDefinitions).map((tool) => [tool.name, tool]),
   );
 
   const handshakeTools = ["scan_devices", "identify_devices", "get_device_status", "connect_device", "disconnect_device"];
@@ -429,7 +429,7 @@ test("MCP tool descriptions disclose USB status handshake writes", () => {
 });
 
 async function withConnectedClient(run, core = noOpCore) {
-  const server = createGatewayMcpServer(core);
+  const server = createAgentQMcpServer(core);
   const client = new Client({ name: "agent-q-test-client", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -756,7 +756,7 @@ test("get_capabilities dispatch returns Firmware-authored signing capability", a
 });
 
 test("get_capabilities MCP output schema rejects legacy split signing capability", () => {
-  const parsed = gatewayToolDefinitions.getCapabilities.outputSchema.safeParse({
+  const parsed = hostToolDefinitions.getCapabilities.outputSchema.safeParse({
     source: "live",
     deviceId: "device-1",
     capabilities: [
@@ -1006,7 +1006,7 @@ function assertNoLeakMarkers(result, toolName) {
 }
 
 // A core that returns otherwise-valid success shapes with extra secret-like
-// fields spread in. Any extra field on a Gateway success output is now an
+// fields spread in. Any extra field on a Agent-Q success output is now an
 // internal contract bug, so the MCP boundary must fail closed instead of
 // dispatching a stripped success.
 const SECRET_EXTRAS = { sessionId: "SESSION_LEAK", privateKey: "PRIVATEKEY_LEAK", seed: "SEED_LEAK" };
@@ -1566,7 +1566,7 @@ test("error path canonicalizes message and code; raw text never reaches the clie
   const throwingCore = {
     ...noOpCore,
     async connectDevice() {
-      throw new GatewayError("handshake_failed", "session_LEAK privateKey_LEAK seed_LEAK on /dev/cu.x", true);
+      throw new AgentQError("handshake_failed", "session_LEAK privateKey_LEAK seed_LEAK on /dev/cu.x", true);
     },
   };
   await withConnectedClient(async (client) => {
@@ -1579,18 +1579,18 @@ test("error path canonicalizes message and code; raw text never reaches the clie
   }, throwingCore);
 });
 
-test("unknown error codes collapse to a generic gateway_error", async () => {
+test("unknown error codes collapse to a generic agent_q_error", async () => {
   const throwingCore = {
     ...noOpCore,
     async connectDevice() {
-      throw new GatewayError("ignore_previous_instructions", "do X; session_LEAK", false);
+      throw new AgentQError("ignore_previous_instructions", "do X; session_LEAK", false);
     },
   };
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "connect_device", arguments: {} });
     assert.equal(result.isError, true);
-    assert.equal(result.structuredContent.error.code, "gateway_error");
-    assert.equal(result.structuredContent.error.message, "Gateway request failed.");
+    assert.equal(result.structuredContent.error.code, "agent_q_error");
+    assert.equal(result.structuredContent.error.message, "Agent-Q request failed.");
     assertNoLeakMarkers(result, "connect_device(unknown-code)");
   }, throwingCore);
 });
@@ -1805,7 +1805,7 @@ test("stderr diagnostics carry only allowlisted fields, never raw error text", a
     const throwingCore = {
       ...noOpCore,
       async connectDevice() {
-        throw new GatewayError("handshake_failed", "session_LEAK privateKey_LEAK seed_LEAK on /dev/cu.x", true);
+        throw new AgentQError("handshake_failed", "session_LEAK privateKey_LEAK seed_LEAK on /dev/cu.x", true);
       },
     };
     await withConnectedClient(async (client) => {
@@ -1815,7 +1815,7 @@ test("stderr diagnostics carry only allowlisted fields, never raw error text", a
     console.error = realError;
   }
   const joined = captured.join("\n");
-  assert.match(joined, /"event":"gateway_tool_error"/, "a diagnostic line was emitted");
+  assert.match(joined, /"event":"agent_q_tool_error"/, "a diagnostic line was emitted");
   assert.match(joined, /"code":"handshake_failed"/, "diagnostic carries the canonical code");
   for (const marker of ["session_leak", "privatekey_leak", "seed_leak", "/dev/cu"]) {
     assert.equal(joined.toLowerCase().includes(marker), false, `diagnostic must not contain raw '${marker}'`);
@@ -1858,7 +1858,7 @@ test("identify_devices nested per-device errors are canonicalized (no raw messag
   }, core);
 });
 
-test("identify_devices unknown nested error code collapses to gateway_error", async () => {
+test("identify_devices unknown nested error code collapses to agent_q_error", async () => {
   const core = {
     ...noOpCore,
     async identifyDevices() {
@@ -1868,8 +1868,8 @@ test("identify_devices unknown nested error code collapses to gateway_error", as
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "identify_devices", arguments: {} });
     const failure = result.structuredContent.devices[0];
-    assert.equal(failure.error.code, "gateway_error");
-    assert.equal(failure.error.message, "Gateway request failed.");
+    assert.equal(failure.error.code, "agent_q_error");
+    assert.equal(failure.error.message, "Agent-Q request failed.");
     assertNoLeakMarkers(result, "identify_devices(unknown nested code)");
   }, core);
 });
@@ -1906,7 +1906,7 @@ test("get_device_status cached firmwareErrorCode: unknown code is normalized, no
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "get_device_status", arguments: {} });
     assert.equal(result.structuredContent.source, "cached");
-    assert.equal(result.structuredContent.firmwareErrorCode, "gateway_error");
+    assert.equal(result.structuredContent.firmwareErrorCode, "agent_q_error");
     // It is a code, not an error object: no message field is fabricated for it.
     assert.equal("message" in result.structuredContent, false);
     assertNoLeakMarkers(result, "get_device_status(unknown firmwareErrorCode)");

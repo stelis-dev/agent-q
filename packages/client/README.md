@@ -10,11 +10,56 @@ It does not store signing keys, does not make signing decisions, and does not
 apply policy. Agent-Q Firmware owns keys, policy evaluation, sensitive approval,
 and active policy commits.
 
+## Quick Start
+
+Use this package directly when a Node process needs to discover an Agent-Q
+device, open a session, read accounts, and request signatures.
+
+```ts
+import { createDefaultDeviceClientCore } from "@stelis/agent-q-client";
+
+const client = createDefaultDeviceClientCore();
+
+await client.scanDevices();
+await client.connectDevice({});
+
+const accounts = await client.getAccounts({});
+
+const result = await client.signTransaction({
+  chain: "sui",
+  method: "sign_transaction",
+  network: "testnet",
+  txBytes,
+});
+
+await client.disconnectDevice({});
+```
+
+The client request succeeds only when Firmware accepts the state, session,
+route, parameters, policy or device-confirmation gate, and signing operation.
+
+## Common Flow
+
+```text
+scanDevices
+  -> identifyDevices?
+  -> selectDevice?
+  -> connectDevice
+  -> getCapabilities
+  -> getAccounts
+  -> signTransaction or signPersonalMessage
+  -> disconnectDevice
+```
+
+Use `getCapabilities` before signing. It reports the device's current signing
+mode and supported signing methods for display and request selection. The
+client cannot choose the device signing mode.
+
 ## Entrypoints
 
 - `@stelis/agent-q-client` exposes the admin-disabled device client factory and
   device-facing result types.
-- `@stelis/agent-q-client/admin` exposes the admin-capable Gateway core for MCP
+- `@stelis/agent-q-client/admin` exposes the admin-capable host core for MCP
   and the local Admin Page.
 - `@stelis/agent-q-client/protocol` exposes the shared protocol builders,
   parsers, constants, and response types.
@@ -26,15 +71,15 @@ and active policy commits.
   approval-history, or full-protocol request serialization.
 - `@stelis/agent-q-client/adapter-internal` exposes support APIs for official
   Agent-Q adapters, including bounded output schemas, public error mapping, safe
-  text validation, and the local Gateway device registry. It is not the
+  text validation, and the local host device registry. It is not the
   dapp-facing provider API.
 
 ## Boundaries
 
-- A connection session opens a communication channel between Gateway and
+- A connection session opens a communication channel between the host process and
   Firmware. It is not signing approval.
-- Session ids are held in Gateway memory only and are not returned to callers.
-- Labels and purpose names are local Gateway metadata. They are not Firmware
+- Session ids are held in host process memory only and are not returned to callers.
+- Labels and purpose names are local host process metadata. They are not Firmware
   policy and are not authorization facts.
 - Policy update proposals are available only through the explicit admin-capable
   entrypoint. They are not part of the admin-disabled device client facade.
@@ -50,9 +95,9 @@ and active policy commits.
   personal-message outcomes. It accepts `messageBytes` only for signed
   personal-message results and rejects raw transaction bytes in results, decoded
   internals, session ids, request ids, and secret-like fields.
-- External client inputs do not accept caller-controlled timing fields. Gateway
+- External client inputs do not accept caller-controlled timing fields. The host process
   uses fixed internal transport budgets. Firmware-owned device-local approval
-  windows remain 30 seconds; Gateway waits with a non-configurable transport
+  windows remain 30 seconds; the host process waits with a non-configurable transport
   margin so a valid terminal device result can still be received at the end of
   that window.
 - Shared signing calls classify bounded `(type, chain, method)` routes before

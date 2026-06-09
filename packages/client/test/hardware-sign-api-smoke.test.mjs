@@ -38,7 +38,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ConfigStore } from "../dist/adapter-internal.js";
-import { GatewayCore, SerialPortUsbDriver } from "../dist/admin.js";
+import { AgentQHostCore, SerialPortUsbDriver } from "../dist/admin.js";
 import {
   FORBIDDEN_SECRET_FIELD_NAMES,
   MAX_APPROVAL_HISTORY_RECORDS,
@@ -89,7 +89,7 @@ const SIGN_TRANSACTION_POLICY_PURPOSE = "hw.sign_tx.policy";
 const SIGN_PERSONAL_MESSAGE_USER_PURPOSE = "hw.sign_msg.user";
 const SIGN_PERSONAL_MESSAGE_POLICY_PURPOSE = "hw.sign_msg.policy";
 const POLICY_UPDATE_PURPOSE = "client-policy-update-smoke";
-const DEVICE_VISIBLE_GATEWAY_NAME = "Agent-Q Gateway";
+const DEVICE_VISIBLE_CLIENT_NAME = "Agent-Q";
 const RECONNECT_SCAN_ATTEMPTS = 20;
 const RECONNECT_SCAN_INTERVAL_MS = 1000;
 
@@ -335,7 +335,7 @@ async function readDefaultSuiTransferTxBytes() {
 
 async function withSmokeCore(prefix, callback) {
   const dir = await mkdtemp(join(tmpdir(), prefix));
-  const core = new GatewayCore(new ConfigStore(join(dir, "config.json")), new SerialPortUsbDriver());
+  const core = new AgentQHostCore(new ConfigStore(join(dir, "config.json")), new SerialPortUsbDriver());
   try {
     return await callback(core);
   } finally {
@@ -460,7 +460,7 @@ test(
         const connect = await core.connectDevice({
           deviceId,
           purpose: SIGN_TRANSACTION_USER_PURPOSE,
-          gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
+          clientName: DEVICE_VISIBLE_CLIENT_NAME,
         });
         assert.equal(connect.source, "connected");
 
@@ -520,7 +520,7 @@ test(
           const reconnect = await core.connectDevice({
             deviceId,
             purpose: SIGN_TRANSACTION_USER_PURPOSE,
-            gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
+            clientName: DEVICE_VISIBLE_CLIENT_NAME,
           });
           assert.equal(reconnect.source, "connected");
 
@@ -600,7 +600,7 @@ test(
         const connect = await core.connectDevice({
           deviceId,
           purpose: SIGN_TRANSACTION_POLICY_PURPOSE,
-          gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
+          clientName: DEVICE_VISIBLE_CLIENT_NAME,
         });
         assert.equal(connect.source, "connected");
 
@@ -680,7 +680,7 @@ test(
         const connect = await core.connectDevice({
           deviceId,
           purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE,
-          gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
+          clientName: DEVICE_VISIBLE_CLIENT_NAME,
         });
         assert.equal(connect.source, "connected");
 
@@ -743,7 +743,7 @@ test(
           const reconnect = await core.connectDevice({
             deviceId,
             purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE,
-            gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
+            clientName: DEVICE_VISIBLE_CLIENT_NAME,
           });
           assert.equal(reconnect.source, "connected");
 
@@ -824,7 +824,7 @@ test(
         const connect = await core.connectDevice({
           deviceId,
           purpose: SIGN_PERSONAL_MESSAGE_POLICY_PURPOSE,
-          gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
+          clientName: DEVICE_VISIBLE_CLIENT_NAME,
         });
         assert.equal(connect.source, "connected");
 
@@ -892,7 +892,7 @@ test(
         const connect = await core.connectDevice({
           deviceId,
           purpose: POLICY_UPDATE_PURPOSE,
-          gatewayName: DEVICE_VISIBLE_GATEWAY_NAME,
+          clientName: DEVICE_VISIBLE_CLIENT_NAME,
         });
         assert.equal(connect.source, "connected");
 
