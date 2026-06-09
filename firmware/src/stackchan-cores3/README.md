@@ -68,9 +68,7 @@ The current implementation includes:
   terminal signing records for signed/failed/rejected/timed-out outcomes as
   applicable, user-mode `sign_personal_message` confirmation/terminal metadata,
   and recordable `policy_propose` terminal results. Detailed hardware evidence
-  status is tracked in `docs/IMPLEMENTATION_STATUS.md`; final current-tree
-  approval-history and visual evidence remain pending before product-active
-  status.
+  and product-active status are tracked in `docs/IMPLEMENTATION_STATUS.md`.
 - a USB JSONL `sign_transaction` path. It requires material-backed `provisioned`
   state plus a matching active session, keeps unknown methods rejected with
   `unsupported_method`, and validates Sui `sign_transaction` restricted SUI
@@ -83,9 +81,7 @@ The current implementation includes:
   history is durable and signing succeeds. Sponsored gas, arbitrary Sui transactions,
   caller-selected authorization, caller-controlled timing fields, and
   chain-specific top-level signing APIs are not implemented. Detailed hardware
-  evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; the full
-  current-tree hardware and visual evidence remain pending before product-active
-  status.
+  evidence and product-active status are tracked in `docs/IMPLEMENTATION_STATUS.md`.
 - a common bounded `(type, chain, method)` signing route classifier before
   state/session work. Unsupported chains return `unsupported_chain`;
   unsupported or type-mismatched Sui methods return `unsupported_method`. The
@@ -100,9 +96,7 @@ The current implementation includes:
   PersonalMessage intent digest. Policy mode fails closed with
   `unsupported_method`; policy facts and
   rules for personal-message signing are not implemented. Detailed hardware
-  evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; the full
-  current-tree hardware and visual evidence remain pending before product-active
-  status.
+  evidence and product-active status are tracked in `docs/IMPLEMENTATION_STATUS.md`.
 - a device-local mnemonic setup flow. The local setup speech bubble opens a
   Generate/Import choice. Generate creates DEV_PROFILE BIP-39 root entropy in
   RAM, displays only the up-to-4-letter word prefixes on device in a 3-column
@@ -157,8 +151,8 @@ required history. It rejects
 unsupported transactions and returns `signed`, `policy_rejected`,
 `user_rejected`, `user_timed_out`, or `signing_failed` through `sign_result` as
 applicable. Detailed hardware evidence status is recorded in
-`docs/IMPLEMENTATION_STATUS.md`; final current-tree hardware and visual evidence
-remain pending before product-active status.
+`docs/IMPLEMENTATION_STATUS.md`; do not infer product-active status from source
+paths alone.
 The target also exposes user-mode `sign_personal_message` for bounded Sui
 personal-message bytes; policy mode fails closed for that method until matching
 policy facts and rules are implemented. Detailed hardware evidence status is

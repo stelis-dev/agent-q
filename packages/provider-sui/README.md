@@ -65,7 +65,7 @@ approval-history request builders.
 
 This package narrows the dapp-facing API it presents. That is not a security
 boundary against an application that deliberately imports
-`@stelis/agent-q-core` directly. Firmware
+`@stelis/agent-q-core` or broader `@stelis/agent-q` local-server APIs directly. Firmware
 remains the authority that enforces state gates, device-local confirmation,
 policy evaluation, signing, persistence, and cleanup.
 
@@ -97,7 +97,7 @@ active policy readback, approval history, or any host-selected signing
 authorization API.
 Those APIs remain on broader core, MCP, or Admin surfaces. This is API
 projection for the provider audience, not a security claim that the same
-application cannot import the client/Admin package directly. Provider-facing
+application cannot import broader core or local-server APIs directly. Provider-facing
 signing uses `signTransaction` for transaction bytes and `signPersonalMessage`
 for bounded Sui personal-message bytes. Firmware uses its device-local signing
 mode to select the policy or user authorization gate for transaction signing,

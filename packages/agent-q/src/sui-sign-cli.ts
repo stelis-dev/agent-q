@@ -12,7 +12,7 @@ import {
 export const SUI_SIGN_CLI_HELP = `Agent-Q Sui CLI external signer
 
 Usage:
-  agent-q
+  npx -y @stelis/agent-q
   sui external-keys list-keys agent-q-sui-signer
   sui external-keys add-existing "<KEY_ID>" agent-q-sui-signer
   sui client switch --address <SUI_ADDRESS>
@@ -24,8 +24,9 @@ Advanced:
   agent-q-sui-signer --help
 
 Sui CLI calls this program as an external signer. Keep agent-q running while Sui
-CLI uses the signer. The signer calls the local Agent-Q server, and the server
-sends signing requests to Firmware. The private key stays on the device.`;
+CLI uses the signer. agent-q-sui-signer must be on PATH when Sui CLI invokes it.
+The signer calls the local Agent-Q server, and the server sends signing requests
+to Firmware. The private key stays on the device.`;
 
 export type SuiSignCliCore = Pick<
   AgentQCore,

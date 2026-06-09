@@ -26,11 +26,11 @@ const expectedToolNames = [
   "sign_transaction",
 ];
 
-test("local server package metadata exposes MCP and Admin adapter entrypoints", async () => {
+test("local server package metadata exposes MCP and local API entrypoints", async () => {
   const packagePath = fileURLToPath(new URL("../package.json", import.meta.url));
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
   assert.equal(packageJson.name, "@stelis/agent-q");
-  assert.deepEqual(Object.keys(packageJson.exports).sort(), [".", "./admin", "./mcp", "./package.json"]);
+  assert.deepEqual(Object.keys(packageJson.exports).sort(), [".", "./local-api", "./mcp", "./package.json"]);
   assert.equal(packageJson.dependencies["@stelis/agent-q-core"], "0.0.0");
   assert.deepEqual(packageJson.bin, {
     "agent-q": "./dist/bin/agent-q.js",
@@ -38,13 +38,13 @@ test("local server package metadata exposes MCP and Admin adapter entrypoints", 
   });
 });
 
-test("local server package self-reference resolves MCP and Admin adapters only", async () => {
+test("local server package self-reference resolves MCP and local API adapters only", async () => {
   const root = await import("@stelis/agent-q");
   const mcp = await import("@stelis/agent-q/mcp");
-  const admin = await import("@stelis/agent-q/admin");
+  const localApi = await import("@stelis/agent-q/local-api");
   assert.equal(typeof root.createAgentQMcpServer, "function");
   assert.equal(typeof mcp.createAgentQMcpServer, "function");
-  assert.equal(typeof admin.createAdminHttpServer, "function");
+  assert.equal(typeof localApi.createLocalApiHttpServer, "function");
   await assert.rejects(() => import("@stelis/agent-q/provider"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
   });

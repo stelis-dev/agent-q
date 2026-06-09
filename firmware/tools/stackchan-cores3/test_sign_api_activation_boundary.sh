@@ -6,11 +6,11 @@ usage() {
 Usage: firmware/tools/stackchan-cores3/test_sign_api_activation_boundary.sh
 
 Checks the Sign API activation boundary:
-Firmware USB and Agent-Q client expose public sign_transaction and
+Firmware USB and Agent-Q core expose public sign_transaction and
 sign_personal_message requests. Firmware reads local signing mode and enters
 the supported policy or user authorization branch without host-selectable
-authorization request types. Provider-sui and MCP expose the same signing
-method names and must not expose host-selectable authorization APIs.
+authorization request types. Provider-sui and Agent-Q MCP expose the same
+signing method names and must not expose host-selectable authorization APIs.
 EOF
 }
 
@@ -30,9 +30,9 @@ USER_FLOW_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_use
 USER_SIGNING_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_critical_section.h"
 SIGN_TRANSACTION_INGRESS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_sign_transaction_user_ingress.cpp"
 SIGN_PERSONAL_MESSAGE_INGRESS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_sign_personal_message_user_ingress.cpp"
-MCP_SOURCE="${REPO_ROOT}/packages/mcp/src/mcp.ts"
+MCP_SOURCE="${REPO_ROOT}/packages/agent-q/src/mcp.ts"
 PROVIDER_SOURCE="${REPO_ROOT}/packages/provider-sui/src/provider-sui.ts"
-CLIENT_SOURCE="${REPO_ROOT}/packages/client/src"
+CORE_SOURCE="${REPO_ROOT}/packages/core/src"
 
 failures=0
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sign-api-boundary.XXXXXX")"
@@ -270,10 +270,10 @@ for request_name in \
     "USB request server must exact-check ${request_name} top-level request fields"
 done
 
-expect_tree_present "${CLIENT_SOURCE}" 'signTransaction|sign_transaction|sign_result' \
-  "Agent-Q client source must expose the new Sign API"
-expect_tree_present "${CLIENT_SOURCE}" 'signPersonalMessage|sign_personal_message|messageBytes' \
-  "Agent-Q client source must expose Sui personal-message signing"
+expect_tree_present "${CORE_SOURCE}" 'signTransaction|sign_transaction|sign_result' \
+  "Agent-Q core source must expose the Sign API"
+expect_tree_present "${CORE_SOURCE}" 'signPersonalMessage|sign_personal_message|messageBytes' \
+  "Agent-Q core source must expose Sui personal-message signing"
 expect_present "${PROVIDER_SOURCE}" 'signTransaction' \
   "Provider must expose signTransaction"
 expect_present "${PROVIDER_SOURCE}" 'signPersonalMessage' \
@@ -290,9 +290,9 @@ expect_absent "${MCP_SOURCE}" 'signByUser|signByPolicy|"sign_transaction_user"|"
   "MCP source must not expose host-selected authorization request types"
 
 for source_dir in \
-  "${REPO_ROOT}/packages/client/src" \
+  "${REPO_ROOT}/packages/core/src" \
   "${REPO_ROOT}/packages/provider-sui/src" \
-  "${REPO_ROOT}/packages/mcp/src" \
+  "${REPO_ROOT}/packages/agent-q/src" \
   "${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q" \
   "${REPO_ROOT}/firmware/src/common/agent_q"; do
   expect_tree_absent "${source_dir}" 'common\.network' \
@@ -302,7 +302,7 @@ done
 while IFS= read -r source_file; do
   expect_absent "${source_file}" 'approvalTimeoutMs|durationMs|timeoutMs' \
     "Production signing source must not accept caller-controlled timing fields"
-done < <(find "${REPO_ROOT}/packages/client/src" "${REPO_ROOT}/packages/provider-sui/src" "${REPO_ROOT}/packages/mcp/src" -type f \( -name '*.ts' -o -name '*.mts' -o -name '*.cts' \))
+done < <(find "${REPO_ROOT}/packages/core/src" "${REPO_ROOT}/packages/provider-sui/src" "${REPO_ROOT}/packages/agent-q/src" -type f \( -name '*.ts' -o -name '*.mts' -o -name '*.cts' \))
 
 if [[ ${failures} -ne 0 ]]; then
   echo "${failures} Sign API activation boundary check(s) failed" >&2

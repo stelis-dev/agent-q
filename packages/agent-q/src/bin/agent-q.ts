@@ -6,11 +6,11 @@ if (args.includes("--help") || args.includes("-h")) {
 
 Usage:
   agent-q           Start the local Agent-Q process
-  agent-q --port N  Start the local Agent-Q process with the Admin Page on port N
+  agent-q --port N  Start the local Agent-Q process with the local HTTP API on port N
   agent-q --help             Show this help
 
-Exposes stdio MCP tools and a local Admin Page through one shared Agent-Q
-session owner. Connection sessions do not authorize signing.`);
+Exposes stdio MCP tools, a local HTTP API, and the Admin Page through one
+shared Agent-Q session owner. Connection sessions do not authorize signing.`);
   process.exit(0);
 }
 
@@ -22,40 +22,40 @@ if (args.length !== 0 && (args.length !== 2 || args[0] !== "--port")) {
 await startAgentQ(args);
 
 async function startAgentQ(agentQArgs: string[]): Promise<void> {
-  let adminServer: import("node:http").Server | undefined;
-  let adminServerClosed = false;
-  const closeAdminServer = async (): Promise<void> => {
-    const server = adminServer;
-    if (server === undefined || adminServerClosed) {
+  let localApiServer: import("node:http").Server | undefined;
+  let localApiServerClosed = false;
+  const closeLocalApiServer = async (): Promise<void> => {
+    const server = localApiServer;
+    if (server === undefined || localApiServerClosed) {
       return;
     }
-    adminServerClosed = true;
+    localApiServerClosed = true;
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
   };
   try {
     const { createDefaultAgentQCore } = await import("@stelis/agent-q-core");
-    const { DEFAULT_ADMIN_PORT, startAdminServer } = await import("../admin.js");
+    const { DEFAULT_LOCAL_API_PORT, startLocalApiServer } = await import("../local-api.js");
     const { startStdioMcpServer } = await import("../mcp.js");
     const core = createDefaultAgentQCore();
-    const port = parseAdminPort(agentQArgs, DEFAULT_ADMIN_PORT);
-    const admin = await startAdminServer({ core, port });
-    adminServer = admin.server;
-    console.error(`Agent-Q Admin listening on ${admin.url}`);
+    const port = parseLocalApiPort(agentQArgs, DEFAULT_LOCAL_API_PORT);
+    const localApi = await startLocalApiServer({ core, port });
+    localApiServer = localApi.server;
+    console.error(`Agent-Q local API listening on ${localApi.url}`);
     process.stdin.once("end", () => {
-      void closeAdminServer();
+      void closeLocalApiServer();
     });
     process.stdin.once("close", () => {
-      void closeAdminServer();
+      void closeLocalApiServer();
     });
     await startStdioMcpServer(core, {
       onClose: () => {
-        void closeAdminServer();
+        void closeLocalApiServer();
       },
     });
   } catch {
-    await closeAdminServer();
+    await closeLocalApiServer();
     // Do not interpolate the raw error: a startup failure can carry OS/transport
     // text, and stderr is a shared diagnostic channel. A fixed line signals the
     // failure; the non-zero exit code is the machine-readable signal.
@@ -64,7 +64,7 @@ async function startAgentQ(agentQArgs: string[]): Promise<void> {
   }
 }
 
-function parseAdminPort(agentQArgs: string[], defaultPort: number): number {
+function parseLocalApiPort(agentQArgs: string[], defaultPort: number): number {
   if (agentQArgs.length === 0) {
     return defaultPort;
   }

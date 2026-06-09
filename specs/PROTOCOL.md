@@ -70,7 +70,7 @@ authorization mode and chooses one Firmware-owned signing gate:
 Both modes return a Firmware-authored `sign_result` that records the
 authorization actually used. Adapter package surfaces may choose different UX
 around the same protocol method, but adapter projection is not a security
-boundary against direct imports of broader client/Admin package entrypoints.
+boundary against direct imports of broader core or local-server APIs.
 Firmware remains responsible for enforcing the request type, local
 authorization mode, selected signing gate, signing, persistence, and cleanup.
 

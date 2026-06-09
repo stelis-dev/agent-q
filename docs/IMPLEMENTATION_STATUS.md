@@ -33,18 +33,13 @@ Current `sign_transaction` and `sign_personal_message` statuses are
 `source-wired-not-product-active`. The signing wire requests are public in
 source. Firmware chooses the `sign_transaction` authorization gate from the
 device-local signing authorization mode, while `sign_personal_message` is
-user-mode only and fails closed in policy mode. The Sign API is source-wired but not `product-active`: current-tree hardware and
-visual evidence is pending. Pending verification covers the user-mode terminal matrix
-(positive, reject, timeout, and USB session-loss cleanup) for both `sign_transaction`
-and `sign_personal_message`; policy-mode signing and policy-mode `sign_personal_message`
-fail-closed; the two-step `policy_propose` path (proposal validation and
-canonicalization, device-local summary review, Continue-to-PIN approval, active-policy
-commit, committed-policy readback, and terminal history) together with its review Back,
-review Reject, review timeout, and PIN-negative paths; and the LVGL visual flows (bottom
-timer placement, PIN-entry countdown, no timer continuation or full reset during
-processing, wrong-PIN remaining-time resume, PIN Back review-return distinct from review
-Reject, clear review metadata, normal reject/timeout/success return, and no text overlap,
-clipping, or stale overlay).
+user-mode only and fails closed in policy mode. The Sign API is source-wired but
+not `product-active`: local current-tree hardware smoke and user-observed visual
+evidence have been recorded for the main Sign API paths, but tracked
+product-active status has not been promoted. No photo/screenshot capture was
+recorded for that pass. A later product-active promotion must state exactly
+which hardware and LVGL paths were observed, which captures exist, and which
+paths remain unchecked.
 
 The current shared signing boundary classifies bounded `(type, chain, method)`
 routes explicitly in Core, host process, and Firmware. Sui is the only executable
@@ -62,8 +57,8 @@ modals already used inline; the NES palette is a deliberate light repalette. On-
 rendering and touch — including the NES appearance of the import, error, and reset
 modals — are not yet hardware-verified.
 
-No `product-active` claim holds until current-tree batched hardware and visual evidence
-is recorded.
+No `product-active` claim holds until current-tree hardware and visual evidence
+is reviewed and promoted in tracked status docs.
 
 This document tracks implementation status only. The wire protocol is defined in
 `specs/PROTOCOL.md`. Target-specific details live under
@@ -108,7 +103,7 @@ This document tracks implementation status only. The wire protocol is defined in
 | Admin Page | △ | local Admin Page supports device discovery, connection, read-only active policy and approval-history views, and the current policy proposal template. It is not a separate product and is not a policy authority. Full policy editing is not implemented. |
 | Firmware update path | X | Not exposed through MCP. |
 | Policy update proposal path | △ | The host process and MCP expose `policy_propose` as a bounded proposal path over an active session. It is not a direct setter: Firmware validates the proposal, rejects broad, multi-rule, and multi-recipient sign policies that the current device UI cannot review clearly, shows a device-local policy summary review, starts local-PIN approval only after device-local Continue, commits through the active-policy store, and records required terminal history. The local Admin Page can submit the current policy proposal template. |
-| Signing APIs | △ | The Sign API current source surface includes provider-sui dapp-facing `signTransaction` and `signPersonalMessage`; the MCP tool surface includes `sign_transaction` and `sign_personal_message`; both signing methods return `sign_result`. The provider and MCP adapters project different caller-facing APIs, but that package-level projection is not a security barrier against direct imports of broader client/Admin entrypoints. Firmware remains the authority for state gates, policy evaluation, device-local confirmation, signing, persistence, and cleanup. Package tests, host firmware tests, and StackChan CoreS3 firmware build/flash cover the current source boundary. Hardware evidence status follows the Sign API evidence paragraph above, and this is not yet `product-active`. |
+| Signing APIs | △ | The Sign API current source surface includes provider-sui dapp-facing `signTransaction` and `signPersonalMessage`; the MCP tool surface includes `sign_transaction` and `sign_personal_message`; both signing methods return `sign_result`. The provider and MCP adapters project different caller-facing APIs, but that package-level projection is not a security barrier against direct imports of broader core or local-server APIs. Firmware remains the authority for state gates, policy evaluation, device-local confirmation, signing, persistence, and cleanup. Package tests, host firmware tests, and StackChan CoreS3 firmware build/flash cover the current source boundary. Hardware evidence status follows the Sign API evidence paragraph above, and this is not yet `product-active`. |
 
 Current MCP tools:
 

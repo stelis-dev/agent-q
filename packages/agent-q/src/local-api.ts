@@ -9,12 +9,12 @@ import {
   toPublicError,
 } from "@stelis/agent-q-core/adapter-internal";
 
-export const DEFAULT_ADMIN_HOST = "127.0.0.1";
-export const DEFAULT_ADMIN_PORT = 8787;
-const MAX_ADMIN_JSON_BYTES = 16384;
-const ADMIN_LOOPBACK_HOSTS = new Set([DEFAULT_ADMIN_HOST, "localhost", "::1"]);
+export const DEFAULT_LOCAL_API_HOST = "127.0.0.1";
+export const DEFAULT_LOCAL_API_PORT = 8787;
+const MAX_LOCAL_API_JSON_BYTES = 16384;
+const LOCAL_API_LOOPBACK_HOSTS = new Set([DEFAULT_LOCAL_API_HOST, "localhost", "::1"]);
 
-export type AdminAgentQCore = Pick<
+export type LocalApiAgentQCore = Pick<
   AgentQCore,
   | "listDevices"
   | "scanDevices"
@@ -27,7 +27,7 @@ export type AdminAgentQCore = Pick<
   | "signTransaction"
 >;
 
-export interface StartedAdminServer {
+export interface StartedLocalApiServer {
   server: Server;
   url: string;
 }
@@ -40,20 +40,20 @@ interface SuccessSchema {
   parse(raw: unknown): object;
 }
 
-export function createAdminHttpServer(core: AdminAgentQCore): Server {
+export function createLocalApiHttpServer(core: LocalApiAgentQCore): Server {
   return createServer((request, response) => {
-    void handleAdminRequest(core, request, response);
+    void handleLocalApiRequest(core, request, response);
   });
 }
 
-export async function startAdminServer(options: {
-  core: AdminAgentQCore;
+export async function startLocalApiServer(options: {
+  core: LocalApiAgentQCore;
   host?: string;
   port?: number;
-}): Promise<StartedAdminServer> {
-  const host = validateAdminHost(options.host ?? DEFAULT_ADMIN_HOST);
-  const port = options.port ?? DEFAULT_ADMIN_PORT;
-  const server = createAdminHttpServer(options.core);
+}): Promise<StartedLocalApiServer> {
+  const host = validateLocalApiHost(options.host ?? DEFAULT_LOCAL_API_HOST);
+  const port = options.port ?? DEFAULT_LOCAL_API_PORT;
+  const server = createLocalApiHttpServer(options.core);
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -63,17 +63,17 @@ export async function startAdminServer(options: {
     });
   });
 
-  return { server, url: `http://${formatAdminHostForUrl(host)}:${port}/` };
+  return { server, url: `http://${formatLocalApiHostForUrl(host)}:${port}/` };
 }
 
-function validateAdminHost(host: string): string {
-  if (!ADMIN_LOOPBACK_HOSTS.has(host)) {
-    throw new AgentQError("invalid_params", "Admin host must be loopback-only.", false);
+function validateLocalApiHost(host: string): string {
+  if (!LOCAL_API_LOOPBACK_HOSTS.has(host)) {
+    throw new AgentQError("invalid_params", "Local API host must be loopback-only.", false);
   }
   return host;
 }
 
-function formatAdminHostForUrl(host: string): string {
+function formatLocalApiHostForUrl(host: string): string {
   return host.includes(":") ? `[${host}]` : host;
 }
 
@@ -85,8 +85,8 @@ export function buildRejectOnlySuiPolicy(): Record<string, unknown> {
   };
 }
 
-async function handleAdminRequest(
-  core: AdminAgentQCore,
+async function handleLocalApiRequest(
+  core: LocalApiAgentQCore,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
@@ -111,7 +111,7 @@ async function handleAdminRequest(
       sendPublicError(response, 405, "unsupported_method", false);
       return;
     }
-    validateAdminApiRequest(request);
+    validateLocalApiRequest(request);
 
     const body = await readJsonBody(request);
     switch (request.url) {
@@ -200,15 +200,15 @@ async function handleAdminRequest(
   }
 }
 
-function validateAdminApiRequest(request: IncomingMessage): void {
+function validateLocalApiRequest(request: IncomingMessage): void {
   const contentType = singleHeader(request, "content-type");
   if (!isJsonContentType(contentType)) {
-    throw new AgentQError("invalid_params", "Admin API requests must use application/json.", false);
+    throw new AgentQError("invalid_params", "Local API requests must use application/json.", false);
   }
 
   const fetchSite = singleHeader(request, "sec-fetch-site");
   if (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none") {
-    throw new AgentQError("invalid_params", "Admin API requests must be same-origin.", false);
+    throw new AgentQError("invalid_params", "Local API requests must be same-origin.", false);
   }
 
   const origin = singleHeader(request, "origin");
@@ -217,7 +217,7 @@ function validateAdminApiRequest(request: IncomingMessage): void {
   }
   const host = singleHeader(request, "host");
   if (host === undefined || !isSameOrigin(origin, host)) {
-    throw new AgentQError("invalid_params", "Admin API requests must be same-origin.", false);
+    throw new AgentQError("invalid_params", "Local API requests must be same-origin.", false);
   }
 }
 
@@ -227,7 +227,7 @@ function singleHeader(request: IncomingMessage, name: string): string | undefine
     return undefined;
   }
   if (typeof value !== "string") {
-    throw new AgentQError("invalid_params", "Admin request header is invalid.", false);
+    throw new AgentQError("invalid_params", "Local API request header is invalid.", false);
   }
   return value;
 }
@@ -249,8 +249,8 @@ async function readJsonBody(request: IncomingMessage): Promise<RequestBody> {
   let raw = "";
   for await (const chunk of request) {
     raw += chunk;
-    if (Buffer.byteLength(raw, "utf8") > MAX_ADMIN_JSON_BYTES) {
-      throw new AgentQError("invalid_params", "Admin request body is too large.", false);
+    if (Buffer.byteLength(raw, "utf8") > MAX_LOCAL_API_JSON_BYTES) {
+      throw new AgentQError("invalid_params", "Local API request body is too large.", false);
     }
   }
   if (raw.length === 0) {
@@ -260,10 +260,10 @@ async function readJsonBody(request: IncomingMessage): Promise<RequestBody> {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new AgentQError("invalid_json", "Admin request body is not valid JSON.", false);
+    throw new AgentQError("invalid_json", "Local API request body is not valid JSON.", false);
   }
   if (!isRecord(parsed) || Array.isArray(parsed)) {
-    throw new AgentQError("invalid_params", "Admin request body must be a JSON object.", false);
+    throw new AgentQError("invalid_params", "Local API request body must be a JSON object.", false);
   }
   return parsed;
 }
@@ -314,7 +314,7 @@ function expectKeys(body: RequestBody, allowedKeys: string[]): void {
   const allowed = new Set(allowedKeys);
   for (const key of Object.keys(body)) {
     if (!allowed.has(key)) {
-      throw new AgentQError("invalid_params", "Admin request includes an unsupported field.", false);
+      throw new AgentQError("invalid_params", "Local API request includes an unsupported field.", false);
     }
   }
 }

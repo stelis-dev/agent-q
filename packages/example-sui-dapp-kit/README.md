@@ -40,7 +40,7 @@ flow. If Web Serial is unavailable, connect/read/signing fail closed as
 `unavailable` instead of hiding the wallet. The runtime implements only the
 `AgentQSuiWalletProvider` contract; broader management APIs are not part of this
 dapp-facing example. That is example/provider API projection, not a security
-barrier against direct imports of broader client/Admin entrypoints.
+barrier against direct imports of broader core or local-server APIs.
 
 The example's Wallet Standard registration path includes `sui:signTransaction`
 and `sui:signPersonalMessage` through the provider contract. It does not expose

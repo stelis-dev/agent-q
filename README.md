@@ -22,12 +22,16 @@ The agent, app, CLI, or the host process can request. The device decides.
 Use `agent-q-sui-signer` as a Sui CLI external signer:
 
 ```sh
-agent-q
+npx -y @stelis/agent-q
 sui external-keys list-keys agent-q-sui-signer
 sui external-keys add-existing "<KEY_ID>" agent-q-sui-signer
 sui client switch --address <SUI_ADDRESS>
 sui client transfer --object-id <OBJECT_ID> --to <TO_ADDRESS>
 ```
+
+`agent-q-sui-signer` must be available on `PATH` when Sui CLI invokes it. The
+same `@stelis/agent-q` package provides both `agent-q` and
+`agent-q-sui-signer`.
 
 Keep `agent-q` running while Sui CLI uses the signer. Sui CLI calls
 `agent-q-sui-signer` when a transaction needs a signature. The signer calls the
@@ -66,6 +70,19 @@ Agents submit requests only. They must not claim that they approved signing or
 that they know the user's upstream intent. Firmware enforces state, policy,
 device confirmation, signing, and cleanup.
 
+MCP client config example:
+
+```json
+{
+  "mcpServers": {
+    "agent-q": {
+      "command": "npx",
+      "args": ["-y", "@stelis/agent-q"]
+    }
+  }
+}
+```
+
 ### Use In A Sui App
 
 Use `@stelis/agent-q-provider-sui` to register an Agent-Q Wallet Standard wallet
@@ -88,12 +105,20 @@ See `packages/example-sui-dapp-kit/` for a minimal Sui dapp-kit integration.
 
 ## How Signing Works
 
-```text
-Sui CLI / MCP client / app
-  -> Agent-Q or provider
-  -> Agent-Q Firmware on the device
-  -> Firmware-owned policy or device confirmation gate
-  -> Firmware signs or rejects
+```mermaid
+flowchart LR
+  Agent[AI agent] --> MCP[MCP API]
+  Admin[Admin Page] --> HTTP[HTTP API]
+  SuiCLI[Sui CLI] --> Signer[agent-q-sui-signer]
+  App[Sui app] --> Provider[Sui provider]
+
+  MCP --> Server[agent-q local server]
+  HTTP --> Server
+  Signer --> Server
+  Provider --> Server
+
+  Server --> Core[Agent-Q core]
+  Core --> Firmware[Firmware]
 ```
 
 Current executable signing routes:

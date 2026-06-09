@@ -455,8 +455,8 @@ specs/
   PROTOCOL.md
 
 packages/
-  client/
-  mcp/
+  core/
+  agent-q/
   provider-sui/
   example-sui-dapp-kit/
 

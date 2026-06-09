@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:net";
 import test from "node:test";
 
-import { createAdminHttpServer } from "../dist/admin.js";
+import { createLocalApiHttpServer } from "../dist/local-api.js";
 import { createLocalServerSuiSignCliCore } from "../dist/sui-signer-local-client.js";
 import { runSuiSignCli } from "../dist/sui-sign-cli.js";
 
@@ -71,6 +71,8 @@ test("help describes the Sui CLI external signer", async () => {
   const harness = makeHarness();
   assert.equal(await runSuiSignCli(["--help"], harness.dependencies), 0);
   assert.match(harness.stdout.join(""), /Sui CLI external signer/);
+  assert.match(harness.stdout.join(""), /npx -y @stelis\/agent-q/);
+  assert.match(harness.stdout.join(""), /must be on PATH/);
   assert.match(harness.stdout.join(""), /private key stays on/);
   assert.doesNotMatch(harness.stdout.join(""), /offline-signing bridge/);
   assert.deepEqual(harness.calls, []);
@@ -459,7 +461,7 @@ test("disconnect failure after a failed request is reported without raw error te
 });
 
 async function withLocalServer(core, callback) {
-  const server = createAdminHttpServer(core);
+  const server = createLocalApiHttpServer(core);
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {

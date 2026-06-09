@@ -23,6 +23,19 @@ npx -y @stelis/agent-q
 
 If installed globally, use `agent-q`.
 
+MCP client config example:
+
+```json
+{
+  "mcpServers": {
+    "agent-q": {
+      "command": "npx",
+      "args": ["-y", "@stelis/agent-q"]
+    }
+  }
+}
+```
+
 Typical agent flow:
 
 ```text
@@ -45,11 +58,15 @@ they should not infer user intent from a successful signature.
 Register the Agent-Q signer with Sui CLI:
 
 ```sh
-agent-q
+npx -y @stelis/agent-q
 sui external-keys list-keys agent-q-sui-signer
 sui external-keys add-existing "<KEY_ID>" agent-q-sui-signer
 sui client switch --address <SUI_ADDRESS>
 ```
+
+`agent-q-sui-signer` must be available on `PATH` when Sui CLI invokes it. The
+same `@stelis/agent-q` package provides both `agent-q` and
+`agent-q-sui-signer`.
 
 After that, normal Sui CLI commands that need the selected address can request
 the signature from Agent-Q:

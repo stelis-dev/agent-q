@@ -6,9 +6,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   buildRejectOnlySuiPolicy,
-  createAdminHttpServer,
-  startAdminServer,
-} from "../dist/admin.js";
+  createLocalApiHttpServer,
+  startLocalApiServer,
+} from "../dist/local-api.js";
 import { AgentQError } from "@stelis/agent-q-core/adapter-internal";
 
 const deviceId = "a508d833-5c83-4680-88bb-18aee976881e";
@@ -130,7 +130,7 @@ function defaultCore(overrides = {}) {
 }
 
 async function withAdminServer(core, callback) {
-  const server = createAdminHttpServer(core);
+  const server = createLocalApiHttpServer(core);
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
@@ -180,15 +180,15 @@ test("Admin page serves the local management UI without session tokens", async (
 });
 
 test("Admin egress boundary uses shared Agent-Q output schemas without importing MCP", async () => {
-  const adminPath = fileURLToPath(new URL("../dist/admin.js", import.meta.url));
-  const source = await readFile(adminPath, "utf8");
+  const localApiPath = fileURLToPath(new URL("../dist/local-api.js", import.meta.url));
+  const source = await readFile(localApiPath, "utf8");
   assert.doesNotMatch(source, /["']\.\/mcp\.js["']/);
   assert.match(source, /["']@stelis\/agent-q-core\/adapter-internal["']/);
 });
 
 test("Admin agent-q rejects non-loopback bind hosts", async () => {
   await assert.rejects(
-    () => startAdminServer({ core: defaultCore(), host: "0.0.0.0", port: 0 }),
+    () => startLocalApiServer({ core: defaultCore(), host: "0.0.0.0", port: 0 }),
     (error) =>
       error instanceof AgentQError &&
       error.code === "invalid_params" &&
@@ -196,7 +196,7 @@ test("Admin agent-q rejects non-loopback bind hosts", async () => {
   );
 });
 
-test("Admin API rejects cross-origin or non-JSON POST before core dispatch", async () => {
+test("Local API rejects cross-origin or non-JSON POST before core dispatch", async () => {
   let called = false;
   await withAdminServer(
     defaultCore({
@@ -234,7 +234,7 @@ test("Admin API rejects cross-origin or non-JSON POST before core dispatch", asy
   );
 });
 
-test("Admin API accepts same-origin JSON requests", async () => {
+test("Local API accepts same-origin JSON requests", async () => {
   await withAdminServer(defaultCore(), async (baseUrl) => {
     const response = await postRaw(
       baseUrl,
@@ -252,7 +252,7 @@ test("Admin API accepts same-origin JSON requests", async () => {
   });
 });
 
-test("Admin API fails closed when a success result carries unsupported fields", async () => {
+test("Local API fails closed when a success result carries unsupported fields", async () => {
   await withAdminServer(
     defaultCore({
       async listDevices() {
@@ -275,7 +275,7 @@ test("Admin API fails closed when a success result carries unsupported fields", 
   );
 });
 
-test("Admin API fails closed when a core success result is malformed", async () => {
+test("Local API fails closed when a core success result is malformed", async () => {
   await withAdminServer(
     defaultCore({
       async listDevices() {
@@ -332,7 +332,7 @@ test("Admin propose path forwards a server-built proposal through Agent-Q core",
   );
 });
 
-test("Agent-Q closes the Admin listener when stdio closes", { timeout: 5000 }, async () => {
+test("Agent-Q closes the local API listener when stdio closes", { timeout: 5000 }, async () => {
   const port = await allocatePort();
   const binPath = fileURLToPath(new URL("../dist/bin/agent-q.js", import.meta.url));
   const child = spawn(process.execPath, [binPath, "--port", String(port)], {
@@ -344,7 +344,7 @@ test("Agent-Q closes the Admin listener when stdio closes", { timeout: 5000 }, a
     stderr += chunk;
   });
   try {
-    await waitForText(() => stderr, "Agent-Q Admin listening");
+    await waitForText(() => stderr, "Agent-Q local API listening");
     child.stdin.end();
     const result = await waitForExit(child);
     assert.equal(result.signal, null);
@@ -394,7 +394,7 @@ async function waitForExit(child) {
   });
 }
 
-test("Admin API rejects unsupported fields instead of silently ignoring them", async () => {
+test("Local API rejects unsupported fields instead of silently ignoring them", async () => {
   await withAdminServer(defaultCore(), async (baseUrl) => {
     const response = await postJson(baseUrl, "/api/policy_propose_reject", {
       privateKey: "must-not-forward",
@@ -466,7 +466,7 @@ test("Local API exposes signer account and transaction-signing endpoints", async
   assert.equal(calls[1][1].purpose, "sui-cli");
 });
 
-test("Admin API rejects an explicit invalid deviceId instead of using the default device", async () => {
+test("Local API rejects an explicit invalid deviceId instead of using the default device", async () => {
   await withAdminServer(defaultCore(), async (baseUrl) => {
     const response = await postJson(baseUrl, "/api/policy_get", {
       deviceId: "../unsafe",
@@ -478,7 +478,7 @@ test("Admin API rejects an explicit invalid deviceId instead of using the defaul
   });
 });
 
-test("Admin API rejects active policy documents with unsupported reject-rule methods", async () => {
+test("Local API rejects active policy documents with unsupported reject-rule methods", async () => {
   await withAdminServer(
     defaultCore({
       async policyGet() {
@@ -512,7 +512,7 @@ test("Admin API rejects active policy documents with unsupported reject-rule met
   );
 });
 
-test("Admin API projects raw core errors through the public error policy", async () => {
+test("Local API projects raw core errors through the public error policy", async () => {
   await withAdminServer(
     defaultCore({
       async scanDevices() {

@@ -1,7 +1,7 @@
 {
   "name": "@stelis/agent-q",
   "version": "0.0.0",
-  "description": "Agent-Q local server with MCP API, local Admin Page, and Sui CLI external signer support.",
+  "description": "Agent-Q local server with MCP API, local HTTP API, Admin Page, and Sui CLI external signer support.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
@@ -20,9 +20,9 @@
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js"
     },
-    "./admin": {
-      "types": "./dist/admin.d.ts",
-      "import": "./dist/admin.js"
+    "./local-api": {
+      "types": "./dist/local-api.d.ts",
+      "import": "./dist/local-api.js"
     },
     "./package.json": "./package.json"
   },
