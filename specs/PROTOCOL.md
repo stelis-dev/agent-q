@@ -1425,6 +1425,13 @@ canonical base64 syntax.
 - `sign_result.status: "signing_failed"` means the authorization source
   approved signing but Firmware could not produce a signature. It is not a
   response-delivery failure status.
+- `signing_failed` is terminal-idempotent for the signing request id. If the
+  retained result is recovered with the same `(session, request id)` and the
+  same signing-request identity, Firmware must replay the stored
+  `signing_failed` result instead of attempting to sign again. A caller that
+  wants a new signing attempt after `signing_failed` must submit a fresh
+  request id and pass through the normal route, state/session, parameter,
+  adapter, and authorization gates again.
 - If Firmware generates a signature but cannot record the required signed
   terminal history record before sending `sign_result`, Firmware must not send
   the signature. It may return a top-level `history_error`. That error means
@@ -1455,7 +1462,9 @@ canonical base64 syntax.
   request replays only when its validated signing-request identity matches the
   stored identity and the bounded RAM entry is still retained; a different
   request using the same id returns `request_id_conflict` only while the
-  original entry is still retained.
+  original entry is still retained. Because `signing_failed` is one of these
+  completed terminal `sign_result` values, same-id retry returns the stored
+  failure while retained; it is not a transient retry trigger.
 - A re-submitted signing request reaches buffered-result lookup only after its
   common envelope, supported `(type, chain, method)` route, device state, and
   active session, exact fields, and shallow method parameters succeed.

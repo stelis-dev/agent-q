@@ -578,6 +578,38 @@ int main(int argc, char** argv)
     expect_contains("matching retry response", g_retry_response_json, "\"status\":\"signed\"");
 
     reset_counters();
+    store_identity_for(
+        valid_request,
+        "{\"type\":\"sign_result\",\"status\":\"signing_failed\","
+        "\"error\":{\"code\":\"signing_failed\","
+        "\"message\":\"The device could not produce a signature.\"}}");
+    expect_case(
+        "matching signing_failed retry replays terminal failure without preparation",
+        run_transaction_preflight(valid_request, true, false),
+        PreflightOutcome::replay_match,
+        1,
+        0,
+        0);
+    if (g_retry_response_write_calls != 1) {
+        fprintf(stderr,
+                "matching signing_failed retry: expected one public JSON response, got %d\n",
+                g_retry_response_write_calls);
+        ++g_failures;
+    }
+    expect_contains(
+        "matching signing_failed retry response",
+        g_retry_response_json,
+        "\"type\":\"sign_result\"");
+    expect_contains(
+        "matching signing_failed retry response",
+        g_retry_response_json,
+        "\"status\":\"signing_failed\"");
+    expect_contains(
+        "matching signing_failed retry response",
+        g_retry_response_json,
+        "\"code\":\"signing_failed\"");
+
+    reset_counters();
     store_identity_for(valid_request, "{\"type\":\"sign_result\",\"status\":\"signed\"}");
     expect_case(
         "conflicting retry stops before preparation",
