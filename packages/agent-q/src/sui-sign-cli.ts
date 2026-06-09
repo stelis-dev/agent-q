@@ -12,6 +12,7 @@ import {
 export const SUI_SIGN_CLI_HELP = `Agent-Q Sui CLI external signer
 
 Usage:
+  agent-q
   sui external-keys list-keys agent-q-sui-signer
   sui external-keys add-existing "<KEY_ID>" agent-q-sui-signer
   sui client switch --address <SUI_ADDRESS>
@@ -22,8 +23,9 @@ Advanced:
   agent-q-sui-signer --tx-bytes <base64> --network <mainnet|testnet|devnet|localnet> [--device-id <id>] [--purpose <purpose>]
   agent-q-sui-signer --help
 
-Sui CLI calls this program as an external signer. Agent-Q lists the Sui key from
-the connected device and sends signing requests to Firmware. The private key stays on the device.`;
+Sui CLI calls this program as an external signer. Keep agent-q running while Sui
+CLI uses the signer. The signer calls the local Agent-Q server, and the server
+sends signing requests to Firmware. The private key stays on the device.`;
 
 export type SuiSignCliCore = Pick<
   AgentQCore,

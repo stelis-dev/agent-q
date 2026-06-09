@@ -59,6 +59,7 @@ export const PUBLIC_ERROR_MESSAGES: Record<string, string> = {
   port_in_use: "The device port is in use by another process.",
   port_permission_denied: "Agent-Q does not have permission to access the device port.",
   transport_closed: "The device connection was closed.",
+  local_server_unavailable: "Start the local Agent-Q server with `agent-q` before using this command.",
   identification_code_exhausted: "Could not allocate a unique identification code.",
   internal_output_error: "Agent-Q produced an unexpected internal result.",
   agent_q_error: "Agent-Q request failed.",

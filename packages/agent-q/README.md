@@ -45,6 +45,7 @@ they should not infer user intent from a successful signature.
 Register the Agent-Q signer with Sui CLI:
 
 ```sh
+agent-q
 sui external-keys list-keys agent-q-sui-signer
 sui external-keys add-existing "<KEY_ID>" agent-q-sui-signer
 sui client switch --address <SUI_ADDRESS>
@@ -58,9 +59,9 @@ sui client transfer --object-id <OBJECT_ID> --to <TO_ADDRESS>
 ```
 
 Sui CLI calls `agent-q-sui-signer` through its external signer JSON-RPC
-stdin/stdout protocol. Agent-Q lists the Sui key from the connected device and
-sends transaction signing requests to Firmware. The private key stays on the
-device.
+stdin/stdout protocol. Keep `agent-q` running while Sui CLI uses the signer.
+The signer calls the local Agent-Q server, and the server sends transaction
+signing requests to Firmware. The private key stays on the device.
 
 `agent-q-sui-signer` uses the active Sui CLI environment when it is `mainnet`,
 `testnet`, `devnet`, or `localnet`. To set it explicitly:
@@ -74,6 +75,8 @@ For low-level scripts that already have unsigned transaction bytes:
 ```sh
 agent-q-sui-signer --network testnet --tx-bytes <base64-unsigned-transaction>
 ```
+
+That low-level command also requires the local `agent-q` server to be running.
 
 ## MCP Tools
 

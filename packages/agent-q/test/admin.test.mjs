@@ -12,6 +12,8 @@ import {
 import { AgentQError } from "@stelis/agent-q-core/adapter-internal";
 
 const deviceId = "a508d833-5c83-4680-88bb-18aee976881e";
+const suiAddress = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
+const suiPublicKey = "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=";
 
 function defaultCore(overrides = {}) {
   return {
@@ -83,6 +85,32 @@ function defaultCore(overrides = {}) {
     },
     async getApprovalHistory() {
       return { source: "live", deviceId, records: [], hasMore: false };
+    },
+    async getAccounts() {
+      return {
+        source: "live",
+        deviceId,
+        accounts: [
+          {
+            chain: "sui",
+            address: suiAddress,
+            publicKey: suiPublicKey,
+            keyScheme: "ed25519",
+            derivationPath: "m/44'/784'/0'/0'/0'",
+          },
+        ],
+      };
+    },
+    async signTransaction() {
+      return {
+        source: "live",
+        deviceId,
+        status: "signed",
+        authorization: "user",
+        chain: "sui",
+        method: "sign_transaction",
+        signature: `${"A".repeat(130)}==`,
+      };
     },
     async policyPropose() {
       return {
@@ -376,6 +404,66 @@ test("Admin API rejects unsupported fields instead of silently ignoring them", a
     assert.equal(response.body.error.code, "invalid_params");
     assert.equal(response.body.error.message, "The provided method parameters are invalid.");
   });
+});
+
+test("Local API exposes signer account and transaction-signing endpoints", async () => {
+  const calls = [];
+  await withAdminServer(
+    defaultCore({
+      async getAccounts(input) {
+        calls.push(["accounts", input]);
+        return {
+          source: "live",
+          deviceId,
+          accounts: [
+            {
+              chain: "sui",
+              address: suiAddress,
+              publicKey: suiPublicKey,
+              keyScheme: "ed25519",
+              derivationPath: "m/44'/784'/0'/0'/0'",
+            },
+          ],
+        };
+      },
+      async signTransaction(input) {
+        calls.push(["sign", input]);
+        return {
+          source: "live",
+          deviceId,
+          status: "signed",
+          authorization: "user",
+          chain: "sui",
+          method: "sign_transaction",
+          signature: `${"A".repeat(130)}==`,
+        };
+      },
+    }),
+    async (baseUrl) => {
+      const accounts = await postJson(baseUrl, "/api/get_accounts", {
+        deviceId,
+        purpose: "sui-cli",
+      });
+      assert.equal(accounts.status, 200, JSON.stringify(accounts.body));
+      assert.equal(accounts.body.ok, true);
+      assert.equal(accounts.body.result.source, "live");
+
+      const sign = await postJson(baseUrl, "/api/sign_transaction", {
+        deviceId,
+        purpose: "sui-cli",
+        chain: "sui",
+        method: "sign_transaction",
+        network: "testnet",
+        txBytes: Buffer.from("tx").toString("base64"),
+      });
+      assert.equal(sign.status, 200, JSON.stringify(sign.body));
+      assert.equal(sign.body.ok, true);
+      assert.equal(sign.body.result.status, "signed");
+    },
+  );
+  assert.deepEqual(calls.map((call) => call[0]), ["accounts", "sign"]);
+  assert.equal(calls[0][1].purpose, "sui-cli");
+  assert.equal(calls[1][1].purpose, "sui-cli");
 });
 
 test("Admin API rejects an explicit invalid deviceId instead of using the default device", async () => {

@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:net";
 import test from "node:test";
 
+import { createAdminHttpServer } from "../dist/admin.js";
+import { createLocalServerSuiSignCliCore } from "../dist/sui-signer-local-client.js";
 import { runSuiSignCli } from "../dist/sui-sign-cli.js";
 
 const SIGNATURE = `${"A".repeat(130)}==`;
 const TX_BYTES = Buffer.from("test transaction").toString("base64");
+const DEVICE_ID = "a508d833-5c83-4680-88bb-18aee976881e";
 const ACCOUNT = {
   chain: "sui",
-  address: "0x20696454da2cbed8151c9672d263a895c909d2c950e95507f552aa3cf062523c",
-  publicKey: Buffer.alloc(32, 1).toString("base64"),
+  address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+  publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=",
   keyScheme: "ed25519",
   derivationPath: "m/44'/784'/0'/0'/0'",
 };
@@ -175,6 +179,100 @@ test("Sui CLI call sign returns JSON-RPC signature and signs once", async () => 
     ["sign", TX_BYTES],
     "disconnect",
   ]);
+});
+
+test("Sui CLI call sign can use the local Agent-Q server API", async () => {
+  const calls = [];
+  await withLocalServer(
+    {
+      async connectDevice(input) {
+        calls.push(["connect", input]);
+        return {
+          source: "connected",
+          deviceId: DEVICE_ID,
+          sessionTtlMs: 4294967295,
+          connectedAt: "2026-05-28T00:00:00.000Z",
+          device: {
+            deviceId: DEVICE_ID,
+            state: "idle",
+            firmwareName: "Agent-Q Firmware",
+            hardware: "stackchan-cores3",
+            firmwareVersion: "0.0.0",
+          },
+        };
+      },
+      async disconnectDevice(input) {
+        calls.push(["disconnect", input]);
+        return { source: "disconnected", deviceId: DEVICE_ID, reason: "firmware_confirmed" };
+      },
+      async getAccounts(input) {
+        calls.push(["accounts", input]);
+        return { source: "live", deviceId: DEVICE_ID, accounts: [ACCOUNT] };
+      },
+      async signTransaction(input) {
+        calls.push(["sign", input]);
+        return {
+          source: "live",
+          deviceId: DEVICE_ID,
+          status: "signed",
+          authorization: "user",
+          chain: "sui",
+          method: "sign_transaction",
+          signature: SIGNATURE,
+        };
+      },
+      async listDevices() {
+        return { source: "list", devices: [], activeDeviceId: null, activeDeviceIdsByPurpose: {} };
+      },
+      async scanDevices() {
+        return { source: "live", devices: [], failures: [], activeDeviceId: null };
+      },
+      async policyGet() {
+        return { source: "not_connected", deviceId: DEVICE_ID, reason: "not_connected" };
+      },
+      async getApprovalHistory() {
+        return { source: "not_connected", deviceId: DEVICE_ID, reason: "not_connected" };
+      },
+      async policyPropose() {
+        return { source: "not_connected", deviceId: DEVICE_ID, reason: "not_connected" };
+      },
+    },
+    async (baseUrl) => {
+      const harness = makeHarness({
+        dependencies: {
+          core: createLocalServerSuiSignCliCore({ baseUrl }),
+          async readStdin() {
+            return `{"jsonrpc":"2.0","method":"sign","params":{"key_id":"${ACCOUNT.derivationPath}","msg":"${TX_BYTES}"},"id":22}\n`;
+          },
+          async loadConfig() {
+            return { network: "testnet", deviceId: DEVICE_ID, purpose: "sui-cli" };
+          },
+        },
+      });
+      assert.equal(await runSuiSignCli(["call"], harness.dependencies), 0, harness.stdout.join(""));
+      assert.deepEqual(JSON.parse(harness.stdout.join("")).result, { signature: SIGNATURE });
+    },
+  );
+  assert.deepEqual(calls.map((call) => call[0]), ["connect", "accounts", "sign", "disconnect"]);
+  assert.equal(calls[0][1].purpose, "sui-cli");
+  assert.equal(calls[2][1].txBytes, TX_BYTES);
+});
+
+test("Sui CLI call returns a clear JSON-RPC error when the local server is absent", async () => {
+  const port = await allocatePort();
+  const harness = makeHarness({
+    dependencies: {
+      core: createLocalServerSuiSignCliCore({ baseUrl: `http://127.0.0.1:${port}` }),
+      async readStdin() {
+        return '{"jsonrpc":"2.0","method":"keys","params":null,"id":23}\n';
+      },
+    },
+  });
+  assert.equal(await runSuiSignCli(["call"], harness.dependencies), 1);
+  const response = JSON.parse(harness.stdout.join(""));
+  assert.equal(response.id, 23);
+  assert.equal(response.error.code, 1);
+  assert.match(response.error.message, /Start the local Agent-Q server/);
 });
 
 test("Sui CLI call sign requires configured network", async () => {
@@ -359,3 +457,37 @@ test("disconnect failure after a failed request is reported without raw error te
   assert.match(harness.stderr.join(""), /could not confirm session cleanup/);
   assert.doesNotMatch(harness.stderr.join(""), /secret transport detail/);
 });
+
+async function withLocalServer(core, callback) {
+  const server = createAdminHttpServer(core);
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  try {
+    await callback(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+async function allocatePort() {
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  const port = address.port;
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}

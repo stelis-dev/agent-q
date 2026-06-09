@@ -4,6 +4,7 @@ import {
   AgentQError,
   hostSuccessOutputSchemas,
   isSafeDeviceId,
+  isValidPurpose,
   toAgentQError,
   toPublicError,
 } from "@stelis/agent-q-core/adapter-internal";
@@ -19,9 +20,11 @@ export type AdminAgentQCore = Pick<
   | "scanDevices"
   | "connectDevice"
   | "disconnectDevice"
+  | "getAccounts"
   | "policyGet"
   | "getApprovalHistory"
   | "policyPropose"
+  | "signTransaction"
 >;
 
 export interface StartedAdminServer {
@@ -121,7 +124,7 @@ async function handleAdminRequest(
         sendSanitizedSuccess(response, hostSuccessOutputSchemas.scanDevices, await core.scanDevices());
         return;
       case "/api/connect":
-        expectKeys(body, ["deviceId"]);
+        expectKeys(body, ["deviceId", "purpose"]);
         sendSanitizedSuccess(
           response,
           hostSuccessOutputSchemas.connectDevice,
@@ -129,15 +132,31 @@ async function handleAdminRequest(
         );
         return;
       case "/api/disconnect":
-        expectKeys(body, ["deviceId"]);
+        expectKeys(body, ["deviceId", "purpose"]);
         sendSanitizedSuccess(
           response,
           hostSuccessOutputSchemas.disconnectDevice,
           await core.disconnectDevice(deviceScopedInput(body)),
         );
         return;
+      case "/api/get_accounts":
+        expectKeys(body, ["deviceId", "purpose"]);
+        sendSanitizedSuccess(
+          response,
+          hostSuccessOutputSchemas.getAccounts,
+          await core.getAccounts(deviceScopedInput(body)),
+        );
+        return;
+      case "/api/sign_transaction":
+        expectKeys(body, ["deviceId", "purpose", "chain", "method", "network", "txBytes"]);
+        sendSanitizedSuccess(
+          response,
+          hostSuccessOutputSchemas.signTransaction,
+          await core.signTransaction(signTransactionInput(body)),
+        );
+        return;
       case "/api/policy_get":
-        expectKeys(body, ["deviceId"]);
+        expectKeys(body, ["deviceId", "purpose"]);
         sendSanitizedSuccess(
           response,
           hostSuccessOutputSchemas.policyGet,
@@ -145,7 +164,7 @@ async function handleAdminRequest(
         );
         return;
       case "/api/get_approval_history":
-        expectKeys(body, ["deviceId"]);
+        expectKeys(body, ["deviceId", "purpose"]);
         sendSanitizedSuccess(
           response,
           hostSuccessOutputSchemas.getApprovalHistory,
@@ -157,7 +176,7 @@ async function handleAdminRequest(
         sendJson(response, 200, { ok: true, result: { policy: buildRejectOnlySuiPolicy() } });
         return;
       case "/api/policy_propose_reject": {
-        expectKeys(body, ["deviceId"]);
+        expectKeys(body, ["deviceId", "purpose"]);
         const policy = buildRejectOnlySuiPolicy();
         sendSanitizedSuccess(
           response,
@@ -249,14 +268,46 @@ async function readJsonBody(request: IncomingMessage): Promise<RequestBody> {
   return parsed;
 }
 
-function deviceScopedInput(body: RequestBody): { deviceId?: string } {
-  if (!Object.prototype.hasOwnProperty.call(body, "deviceId")) {
-    return {};
+function deviceScopedInput(body: RequestBody): { deviceId?: string; purpose?: string } {
+  const input: { deviceId?: string; purpose?: string } = {};
+  if (Object.prototype.hasOwnProperty.call(body, "deviceId")) {
+    if (!isSafeDeviceId(body.deviceId)) {
+      throw new AgentQError("invalid_device_id", "Local API request deviceId is invalid.", false);
+    }
+    input.deviceId = body.deviceId;
   }
-  if (!isSafeDeviceId(body.deviceId)) {
-    throw new AgentQError("invalid_device_id", "Admin request deviceId is invalid.", false);
+  if (Object.prototype.hasOwnProperty.call(body, "purpose")) {
+    if (typeof body.purpose !== "string" || !isValidPurpose(body.purpose)) {
+      throw new AgentQError("invalid_purpose", "Local API request purpose is invalid.", false);
+    }
+    input.purpose = body.purpose;
   }
-  return { deviceId: body.deviceId };
+  return input;
+}
+
+function signTransactionInput(body: RequestBody): {
+  deviceId?: string;
+  purpose?: string;
+  chain: string;
+  method: string;
+  network: unknown;
+  txBytes: string;
+} {
+  return {
+    ...deviceScopedInput(body),
+    chain: requiredString(body, "chain"),
+    method: requiredString(body, "method"),
+    network: body.network,
+    txBytes: requiredString(body, "txBytes"),
+  };
+}
+
+function requiredString(body: RequestBody, key: string): string {
+  const value = body[key];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new AgentQError("invalid_params", "Local API request field is invalid.", false);
+  }
+  return value;
 }
 
 function expectKeys(body: RequestBody, allowedKeys: string[]): void {

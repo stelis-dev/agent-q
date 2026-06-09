@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { createDefaultAgentQCore } from "@stelis/agent-q-core";
 import {
   SUI_SIGN_TRANSACTION_NETWORKS,
   type SuiSignTransactionNetwork,
@@ -9,9 +8,10 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { runSuiSignCli, type SuiSignCliConfig } from "../sui-sign-cli.js";
+import { createLocalServerSuiSignCliCore } from "../sui-signer-local-client.js";
 
 process.exitCode = await runSuiSignCli(process.argv.slice(2), {
-  core: createDefaultAgentQCore(),
+  core: createLocalServerSuiSignCliCore(),
   async readStdin() {
     process.stdin.setEncoding("utf8");
     return readOneStdinLine();

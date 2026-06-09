@@ -22,15 +22,17 @@ The agent, app, CLI, or the host process can request. The device decides.
 Use `agent-q-sui-signer` as a Sui CLI external signer:
 
 ```sh
+agent-q
 sui external-keys list-keys agent-q-sui-signer
 sui external-keys add-existing "<KEY_ID>" agent-q-sui-signer
 sui client switch --address <SUI_ADDRESS>
 sui client transfer --object-id <OBJECT_ID> --to <TO_ADDRESS>
 ```
 
-Sui CLI calls `agent-q-sui-signer` when a transaction needs a signature.
-Agent-Q lists the Sui key from the connected device and sends signing requests
-to Firmware. The private key stays on the device.
+Keep `agent-q` running while Sui CLI uses the signer. Sui CLI calls
+`agent-q-sui-signer` when a transaction needs a signature. The signer calls the
+local Agent-Q server, and the server sends signing requests to Firmware. The
+private key stays on the device.
 
 `agent-q-sui-signer` uses the active Sui CLI environment when it is `mainnet`,
 `testnet`, `devnet`, or `localnet`. To set it explicitly:
@@ -44,7 +46,7 @@ agent-q-sui-signer configure --network testnet
 Run the Agent-Q local server and let an MCP client call the signing tools:
 
 ```sh
-agent-q
+npx -y @stelis/agent-q
 ```
 
 Typical agent flow:

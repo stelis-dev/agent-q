@@ -8,7 +8,7 @@ function readSrc(rel) {
   return readFileSync(fileURLToPath(new URL(`../src/${rel}`, import.meta.url)), "utf8");
 }
 
-const SRC_FILES = ["admin.ts", "mcp.ts", "bin/agent-q.ts"];
+const SRC_FILES = ["admin.ts", "mcp.ts", "sui-signer-local-client.ts", "bin/agent-q.ts"];
 const LITERAL_CODE = /new AgentQError\(\s*"([a-z_]+)"/g;
 
 const producedCodes = new Set();
