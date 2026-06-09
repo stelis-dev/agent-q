@@ -118,6 +118,7 @@ AgentQPolicySigningExecutionResult handle_policy_filter_result(
     const AgentQPersistentMaterialOps& material_ops)
 {
     if (policy_result.status == AgentQSignTransactionPolicyRuntimeStatus::invalid_params ||
+        policy_result.status == AgentQSignTransactionPolicyRuntimeStatus::unsupported_method ||
         policy_result.status == AgentQSignTransactionPolicyRuntimeStatus::unsupported_transaction ||
         policy_result.status == AgentQSignTransactionPolicyRuntimeStatus::account_mismatch) {
         return make_policy_execution_result(

@@ -287,6 +287,8 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin(
     if (g_state.active()) {
         return AgentQUserSigningFlowBeginResult::active;
     }
+    // User-flow boundary assertion: a prepared value must still match the
+    // selected route before any review UI state or signable scratch is created.
     if (input.request_id == nullptr ||
         input.request_identity == nullptr ||
         input.session_id == nullptr ||
@@ -352,6 +354,8 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin_personal_message(
     if (g_state.active()) {
         return AgentQUserSigningFlowBeginResult::active;
     }
+    // User-flow boundary assertion: a prepared value must still match the
+    // selected route before any review UI state or signable scratch is created.
     if (input.request_id == nullptr ||
         input.request_identity == nullptr ||
         input.session_id == nullptr ||

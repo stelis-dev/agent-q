@@ -10,6 +10,7 @@ namespace agent_q {
 
 enum class AgentQSignTransactionPolicyRuntimeStatus {
     invalid_params,
+    unsupported_method,
     unsupported_transaction,
     account_unavailable,
     account_mismatch,

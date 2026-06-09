@@ -150,6 +150,8 @@ validate_sign_personal_message_user_params(
         return AgentQSignPersonalMessageUserValidationResult::unsupported_field;
     }
 
+    // Helper boundary assertion: USB preflight classifies the route first, but
+    // direct callers must still fail closed before method-parameter decoding.
     if (route != AgentQSupportedSignRoute::sui_sign_personal_message) {
         memset(output, 0, sizeof(*output));
         return AgentQSignPersonalMessageUserValidationResult::unsupported_method;

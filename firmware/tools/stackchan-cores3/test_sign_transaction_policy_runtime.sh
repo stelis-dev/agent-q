@@ -364,8 +364,8 @@ int main(int argc, char** argv)
     unsupported_prepared.route = agent_q::AgentQSupportedSignRoute::unsupported;
     const agent_q::AgentQSignTransactionPolicyRuntimeResult unsupported =
         agent_q::evaluate_sign_transaction_policy(unsupported_prepared);
-    expect(unsupported.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::invalid_params,
-           "unknown method returns protocol invalid params");
+    expect(unsupported.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::unsupported_method,
+           "unknown method returns unsupported method status");
     expect(strcmp(unsupported.code, "unsupported_method") == 0,
            "unknown method reports unsupported_method");
 

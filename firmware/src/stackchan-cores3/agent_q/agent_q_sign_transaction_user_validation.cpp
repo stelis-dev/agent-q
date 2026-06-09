@@ -147,6 +147,8 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_params(
         return AgentQSignTransactionUserValidationResult::unsupported_field;
     }
 
+    // Helper boundary assertion: USB preflight classifies the route first, but
+    // direct callers must still fail closed before method-parameter decoding.
     if (route != AgentQSupportedSignRoute::sui_sign_transaction) {
         memset(output, 0, sizeof(*output));
         return AgentQSignTransactionUserValidationResult::unsupported_method;

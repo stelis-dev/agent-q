@@ -82,8 +82,7 @@ const char* policy_rule_ref(const AgentQPolicyDecision& decision)
 AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
     const AgentQSuiPreparedSignTransaction& prepared)
 {
-    if (prepared.route != AgentQSupportedSignRoute::sui_sign_transaction ||
-        prepared.tx_bytes_size == 0 ||
+    if (prepared.tx_bytes_size == 0 ||
         prepared.payload_digest[0] == '\0') {
         return make_result(
             AgentQSignTransactionPolicyRuntimeStatus::invalid_params,
@@ -168,8 +167,11 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sign_transaction_policy(
     if (prepared.route == AgentQSupportedSignRoute::sui_sign_transaction) {
         return evaluate_sui_sign_transaction(prepared);
     }
+    // Policy runtime is also a direct adapter boundary in host tests and future
+    // callers. Keep this fail-closed assertion even though USB preflight
+    // normally selects the route first.
     return make_result(
-        AgentQSignTransactionPolicyRuntimeStatus::invalid_params,
+        AgentQSignTransactionPolicyRuntimeStatus::unsupported_method,
         "unsupported_method",
         "Signing route is not supported by the transaction policy adapter.");
 }

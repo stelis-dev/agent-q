@@ -67,6 +67,8 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction(
         return AgentQSuiSigningPreparationResult::invalid_argument;
     }
     clear_prepared_sui_sign_transaction(out);
+    // Adapter boundary assertion: callers may reach this helper outside the
+    // USB preflight path, so route mismatch must fail before decoding.
     if (route != AgentQSupportedSignRoute::sui_sign_transaction ||
         network == nullptr ||
         tx_bytes_base64 == nullptr ||
@@ -137,6 +139,8 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_personal_message(
         return AgentQSuiSigningPreparationResult::invalid_argument;
     }
     clear_prepared_sui_sign_personal_message(out);
+    // Adapter boundary assertion: callers may reach this helper outside the
+    // USB preflight path, so route mismatch must fail before decoding.
     if (route != AgentQSupportedSignRoute::sui_sign_personal_message ||
         network == nullptr ||
         message_base64 == nullptr ||
