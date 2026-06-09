@@ -1088,6 +1088,14 @@ APIs. Firmware and Gateway independently classify the bounded
 - the only executable routes currently are Sui `sign_transaction` and Sui
   `sign_personal_message`.
 
+`specs/sign-route-vectors.tsv` is the shared regression fixture for this
+contract. Client and Firmware tests must consume it when the route grammar,
+supported routes, or unsupported-route error classification changes. The
+current implementation intentionally keeps small explicit classifiers in
+Client and Firmware instead of generating route constants or a dynamic registry;
+adding another chain may revisit generation, but it must not replace the
+explicit switch/default routing boundary.
+
 Route classification is bounded and side-effect-free. Unsupported routes must
 not reach device/session state checks, stored-result replay, policy evaluation,
 approval UI, history writes, adapter decoding, or signing.
