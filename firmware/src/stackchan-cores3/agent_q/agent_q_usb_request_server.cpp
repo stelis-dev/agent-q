@@ -53,6 +53,7 @@
 #include "agent_q_ui_panel_cleanup.h"
 #include "agent_q_usb_response_writer.h"
 #include "agent_q_signing_retry_delivery.h"
+#include "agent_q_signing_retry_response.h"
 #include "agent_q_signing_result_store.h"
 #include "agent_q_usb_session_grace.h"
 #include "agent_q_usb_request_line.h"
@@ -652,6 +653,11 @@ bool write_sign_result_signed(
         signing_output.message_bytes_size);
 }
 
+bool write_retry_response_json(JsonDocument& response, void*)
+{
+    return agent_q::usb_response_write_json(response);
+}
+
 // A resubmitted signing request may replay only the result bound to the same
 // validated request identity. get_result uses the separate by-id lookup below.
 bool try_deliver_stored_result(
@@ -668,26 +674,24 @@ bool try_deliver_stored_result(
             agent_q::kAgentQSignRequestIdentitySize,
             stored_result,
             sizeof(stored_result));
-    if (retry.status == agent_q::AgentQSigningRetryDeliveryStatus::not_found) {
-        return false;
-    }
-    if (retry.status == agent_q::AgentQSigningRetryDeliveryStatus::request_id_conflict ||
-        retry.status == agent_q::AgentQSigningRetryDeliveryStatus::lookup_error) {
-        write_error_response(
+    const agent_q::AgentQSigningRetryResponseResult response_result =
+        agent_q::deliver_signing_retry_response(
             request_id,
-            retry.error_code,
-            retry.error_message);
-        return true;
+            retry,
+            stored_result,
+            write_retry_response_json,
+            nullptr);
+    switch (response_result) {
+        case agent_q::AgentQSigningRetryResponseResult::not_found:
+        case agent_q::AgentQSigningRetryResponseResult::invalid_stored_result:
+        case agent_q::AgentQSigningRetryResponseResult::replay_write_failed:
+            return false;
+        case agent_q::AgentQSigningRetryResponseResult::replayed_result:
+        case agent_q::AgentQSigningRetryResponseResult::error_response:
+        case agent_q::AgentQSigningRetryResponseResult::error_write_failed:
+            return true;
     }
-    if (retry.status != agent_q::AgentQSigningRetryDeliveryStatus::match) {
-        write_error_response(request_id, "protocol_error", "Stored signing result lookup failed.");
-        return true;
-    }
-    JsonDocument response;
-    if (deserializeJson(response, stored_result, retry.stored_result_len)) {
-        return false;
-    }
-    return agent_q::usb_response_write_json(response);
+    return true;
 }
 
 bool try_deliver_stored_result_by_id(const char* session_id, const char* request_id)

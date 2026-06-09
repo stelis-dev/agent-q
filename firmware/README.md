@@ -109,6 +109,7 @@ firmware/tools/common/test_sui_sign_transaction_adapter.sh
 firmware/tools/common/test_sign_route.sh
 firmware/tools/common/test_policy_v0.sh
 firmware/tools/common/test_policy_canonical.sh
+firmware/tools/stackchan-cores3/test_signing_retry_response.sh
 firmware/tools/stackchan-cores3/test_sui_signing_preparation.sh
 ```
 
