@@ -18,8 +18,6 @@ import {
   makeGetAccountsRequest,
   makeGetApprovalHistoryRequest,
   makePolicyProposeRequest,
-  makeSignPersonalMessageRequest,
-  makeSignTransactionRequest,
   makeIdentifyDeviceRequest,
   makePolicyGetRequest,
   makeGetStatusRequest,
@@ -44,6 +42,10 @@ import {
   type SupportedSignRoute,
   type StatusResponse,
 } from "./protocol.js";
+import {
+  makeSignPersonalMessageRequest,
+  makeSignTransactionRequest,
+} from "./provider-protocol.js";
 import {
   AGENT_Q_USB_PRODUCT_ID,
   AGENT_Q_USB_VENDOR_ID,

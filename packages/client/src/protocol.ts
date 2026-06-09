@@ -18,10 +18,7 @@ import {
   makeDisconnectRequest as makeProviderDisconnectRequest,
   makeGetAccountsRequest as makeProviderGetAccountsRequest,
   makeGetCapabilitiesRequest as makeProviderGetCapabilitiesRequest,
-  makeSignPersonalMessageRequest as makeProviderSignPersonalMessageRequest,
-  makeSignTransactionRequest as makeProviderSignTransactionRequest,
   parseProviderProtocolResponse as parseProviderProtocolResponseCore,
-  identifySignRoute as identifyProviderSignRoute,
   validateSignPersonalMessageParams as validateProviderSignPersonalMessageParams,
   validateSignPersonalMessageInput as validateProviderSignPersonalMessageInput,
   validateSignTransactionParams as validateProviderSignTransactionParams,
@@ -220,6 +217,15 @@ export type {
   SupportedSignRoute,
   SigningCapabilities,
   SigningCapabilityEntry,
+} from "./provider-protocol.js";
+// Signing request builders and route identification are owned by
+// provider-protocol because provider adapters and the full protocol share the
+// same top-level signing methods. The full protocol entrypoint re-exports them
+// for compatibility instead of wrapping or reclassifying the route.
+export {
+  identifySignRoute,
+  makeSignPersonalMessageRequest,
+  makeSignTransactionRequest,
 } from "./provider-protocol.js";
 
 export interface DeviceStatus {
@@ -529,32 +535,6 @@ export function makePolicyProposeRequest(
     throw new ProtocolError("invalid_params", "policy_propose request is too large for the runtime.");
   }
   return request;
-}
-
-export const makeSignTransactionRequest = makeProviderSignTransactionRequest;
-export const makeSignPersonalMessageRequest = makeProviderSignPersonalMessageRequest;
-
-export function identifySignRoute(
-  operation: "sign_transaction",
-  chain: unknown,
-  method: unknown,
-): Extract<SupportedSignRoute, { operation: "sign_transaction" }>;
-export function identifySignRoute(
-  operation: "sign_personal_message",
-  chain: unknown,
-  method: unknown,
-): Extract<SupportedSignRoute, { operation: "sign_personal_message" }>;
-export function identifySignRoute(
-  operation: SignOperationType,
-  chain: unknown,
-  method: unknown,
-): SupportedSignRoute;
-export function identifySignRoute(
-  operation: SignOperationType,
-  chain: unknown,
-  method: unknown,
-): SupportedSignRoute {
-  return identifyProviderSignRoute(operation, chain, method);
 }
 
 export function validatePolicyProposeRequestInput(

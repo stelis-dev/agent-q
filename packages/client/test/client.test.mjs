@@ -388,6 +388,23 @@ test("provider-protocol declaration stays type-bounded to provider requests", as
   assert.doesNotMatch(types, /POLICY_PROPOSE_RESULT_STATUSES/);
 });
 
+test("client internals keep provider-protocol as the signing helper owner", async () => {
+  const protocolSource = await readFile(fileURLToPath(new URL("../src/protocol.ts", import.meta.url)), "utf8");
+  const coreSource = await readFile(fileURLToPath(new URL("../src/core.ts", import.meta.url)), "utf8");
+  const usbSource = await readFile(fileURLToPath(new URL("../src/usb.ts", import.meta.url)), "utf8");
+
+  assert.match(protocolSource, /export \{\s+identifySignRoute,\s+makeSignPersonalMessageRequest,\s+makeSignTransactionRequest,\s+\} from "\.\/provider-protocol\.js";/);
+  assert.doesNotMatch(protocolSource, /identifyProviderSignRoute/);
+  assert.doesNotMatch(protocolSource, /makeProviderSignTransactionRequest/);
+  assert.doesNotMatch(protocolSource, /makeProviderSignPersonalMessageRequest/);
+
+  assert.match(coreSource, /from "\.\/provider-protocol\.js";/);
+  assert.doesNotMatch(coreSource, /validateSignTransactionParamsInput/);
+  assert.doesNotMatch(coreSource, /validateSignPersonalMessageParamsInput/);
+
+  assert.match(usbSource, /from "\.\/provider-protocol\.js";/);
+});
+
 test("provider-protocol serializer rejects non-provider requests at runtime", async () => {
   const providerProtocol = await import("@stelis/agent-q-client/provider-protocol");
   const blockedRequests = [

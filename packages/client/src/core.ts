@@ -10,6 +10,11 @@ import { GatewayError, toGatewayError } from "./errors.js";
 import { isGatewayName, isSafeDeviceId, sanitizePortHint } from "./safe-text.js";
 import { normalizeErrorCode, toPublicError } from "./public-error.js";
 import {
+  identifySignRoute,
+  validateSignPersonalMessageParams,
+  validateSignTransactionParams,
+} from "./provider-protocol.js";
+import {
   INTERNAL_CONNECT_DEADLINE_MS,
   INTERNAL_DISCONNECT_DEADLINE_MS,
   INTERNAL_POLICY_UPDATE_DEADLINE_MS,
@@ -33,12 +38,9 @@ import {
   type SupportedSignRoute,
   type SigningCapabilities,
   type StatusResponse,
-  identifySignRoute,
   validateApprovalHistoryInput,
   validatePolicyProposeInput,
   validatePolicyProposeRequestInput,
-  validateSignPersonalMessageParamsInput,
-  validateSignTransactionParamsInput,
 } from "./protocol.js";
 import {
   INTERNAL_USB_DEADLINE_MS,
@@ -1173,7 +1175,7 @@ function validateSignGatewayInput(input: {
   txBytes: unknown;
 }): SignTransactionParams {
   try {
-    return validateSignTransactionParamsInput(
+    return validateSignTransactionParams(
       {
         network: input.network,
         txBytes: input.txBytes,
@@ -1194,7 +1196,7 @@ function validateSignPersonalMessageGatewayInput(input: {
   message: unknown;
 }): SignPersonalMessageParams {
   try {
-    return validateSignPersonalMessageParamsInput(
+    return validateSignPersonalMessageParams(
       {
         network: input.network,
         message: input.message,
