@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include "agent_q_request_id.h"
+#include "agent_q_sign_request_identity.h"
 #include "agent_q_session.h"
 
 namespace agent_q {
@@ -27,6 +28,7 @@ constexpr size_t kSigningResultMaxSize = 1024;
 enum class SigningResultStoreOutcome {
     stored,     // newly stored
     duplicate,  // (session_id, request_id) already present — idempotent, left as-is
+    conflict,   // (session_id, request_id) exists with a different request identity
     too_large,  // serialized result exceeds kSigningResultMaxSize
     invalid,    // null/empty session_id or request_id, or null result
 };
@@ -37,8 +39,26 @@ enum class SigningResultStoreOutcome {
 SigningResultStoreOutcome signing_result_store(
     const char* session_id,
     const char* request_id,
+    const uint8_t* request_identity,
+    size_t request_identity_size,
     const char* serialized_result,
     size_t serialized_size);
+
+enum class SigningResultRetryLookup {
+    not_found,
+    match,
+    conflict,
+    invalid,
+};
+
+SigningResultRetryLookup signing_result_find_for_retry(
+    const char* session_id,
+    const char* request_id,
+    const uint8_t* request_identity,
+    size_t request_identity_size,
+    char* out,
+    size_t out_size,
+    size_t* out_len);
 
 // Copy a stored result for (session_id, request_id) into `out` (bounded by out_size,
 // NUL-terminated). Writes the length to out_len when non-null. Returns false if not

@@ -99,7 +99,7 @@ std::string request_with_shape(
 void expect_base64(const char* label, const char* value, size_t max_size, bool expected)
 {
     size_t decoded_size = 9999;
-    const bool actual = agent_q::validate_canonical_base64(value, max_size, 384, &decoded_size);
+    const bool actual = agent_q::validate_canonical_base64_syntax(value, max_size, &decoded_size);
     if (actual != expected) {
         fprintf(stderr, "%s: expected base64 result %s, got %s\n",
                 label, expected ? "true" : "false", actual ? "true" : "false");
@@ -174,13 +174,14 @@ void expect_params(
     const std::string& json,
     agent_q::AgentQSignTransactionUserValidationResult expected,
     size_t expected_decoded_size = 0,
-    const char* expected_network = nullptr)
+    const char* expected_network = nullptr,
+    const char* expected_tx_bytes = "AAAA")
 {
     JsonDocument document = parse_json(label, json);
     agent_q::AgentQSignTransactionUserParams output = {};
     memset(&output, 0xA5, sizeof(output));
     const agent_q::AgentQSignTransactionUserValidationResult actual =
-        agent_q::validate_sign_transaction_user_params(document, &output);
+        agent_q::validate_sign_transaction_user_params(document, agent_q::AgentQSupportedSignRoute::sui_sign_transaction, &output);
     if (actual != expected) {
         fprintf(stderr, "%s: expected params result %d, got %d\n",
                 label, static_cast<int>(expected), static_cast<int>(actual));
@@ -188,10 +189,8 @@ void expect_params(
         return;
     }
     if (actual != agent_q::AgentQSignTransactionUserValidationResult::ok &&
-        (output.chain[0] != '\0' ||
-         output.method[0] != '\0' ||
-         output.network[0] != '\0' ||
-         output.tx_bytes_base64[0] != '\0' ||
+        (output.network[0] != '\0' ||
+         output.tx_bytes_base64 != nullptr ||
          output.tx_bytes_decoded_size != 0)) {
         fprintf(stderr, "%s: params failure did not clear output\n", label);
         ++failures;
@@ -203,10 +202,8 @@ void expect_params(
     }
     if (actual == agent_q::AgentQSignTransactionUserValidationResult::ok &&
         expected_network != nullptr &&
-        (strcmp(output.chain, "sui") != 0 ||
-         strcmp(output.method, "sign_transaction") != 0 ||
-         strcmp(output.network, expected_network) != 0 ||
-         strcmp(output.tx_bytes_base64, "AAAA") != 0 ||
+        (strcmp(output.network, expected_network) != 0 ||
+         strcmp(output.tx_bytes_base64, expected_tx_bytes) != 0 ||
          output.tx_bytes_decoded_size != expected_decoded_size)) {
         fprintf(stderr, "%s: params output fields did not match\n", label);
         ++failures;
@@ -379,26 +376,32 @@ int main()
                                   "\"requestAuthority\":\"user_confirmed\"}"),
         Result::unsupported_field);
     expect_params(
-        "missing chain",
+        "selected route owns identity when raw chain is absent",
         request_with_shape(
             nullptr,
             "\"method\":\"sign_transaction\",",
             "{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
-        Result::unsupported_method);
+        Result::ok,
+        3,
+        "devnet");
     expect_params(
-        "wrong chain",
+        "selected route owns identity when raw chain differs",
         request_with_shape(
             "\"chain\":\"evm\",",
             "\"method\":\"sign_transaction\",",
             "{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
-        Result::unsupported_method);
+        Result::ok,
+        3,
+        "devnet");
     expect_params(
-        "wrong method",
+        "selected route owns identity when raw method differs",
         request_with_shape(
             "\"chain\":\"sui\",",
             "\"method\":\"sign_personal_message\",",
             "{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
-        Result::unsupported_method);
+        Result::ok,
+        3,
+        "devnet");
     expect_params(
         "network missing",
         valid_request_with_params("{\"txBytes\":\"AAAA\"}"),
@@ -427,12 +430,16 @@ int main()
         "txBytes embedded nul",
         valid_request_with_params("{\"network\":\"devnet\",\"txBytes\":\"AAAA\\u0000x\"}"),
         Result::invalid_tx_bytes);
+    const std::string above_adapter_capacity(516, 'A');
     expect_params(
-        "txBytes too large",
+        "txBytes above adapter capacity remains valid request format",
         valid_request_with_params(std::string("{\"network\":\"devnet\",\"txBytes\":\"") +
-                                  std::string(agent_q::kAgentQSuiSignTransactionTxBytesMaxBase64Size + 4, 'A') +
+                                  above_adapter_capacity +
                                   "\"}"),
-        Result::invalid_tx_bytes);
+        Result::ok,
+        387,
+        "devnet",
+        above_adapter_capacity.c_str());
     if (strcmp(agent_q::sign_transaction_user_validation_result_name(Result::ok), "ok") != 0 ||
         strcmp(agent_q::sign_transaction_user_validation_result_name(Result::unsupported_type),
                "unsupported_type") != 0 ||
@@ -459,6 +466,7 @@ CPP
   -I"${ARDUINOJSON_ROOT}" \
   -I"${AGENT_Q_DIR}" \
   -I"${REPO_ROOT}/firmware/src/common" \
+  -I"${REPO_ROOT}/firmware/src/common/agent_q" \
   "${TMP_DIR}/sign_transaction_user_validation_test.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \

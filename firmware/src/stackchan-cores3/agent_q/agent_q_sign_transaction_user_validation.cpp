@@ -121,6 +121,7 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_session
 
 AgentQSignTransactionUserValidationResult validate_sign_transaction_user_params(
     JsonDocument& request,
+    AgentQSupportedSignRoute route,
     AgentQSignTransactionUserParams* output)
 {
     if (output != nullptr) {
@@ -146,14 +147,7 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_params(
         return AgentQSignTransactionUserValidationResult::unsupported_field;
     }
 
-    const char* chain = nullptr;
-    const char* method = nullptr;
-    if (!agent_q_json_value_c_string(request_object["chain"], &chain) ||
-        !agent_q_json_value_c_string(request_object["method"], &method) ||
-        !copy_nonempty_c_string(chain, output->chain, sizeof(output->chain)) ||
-        !copy_nonempty_c_string(method, output->method, sizeof(output->method)) ||
-        strcmp(output->chain, "sui") != 0 ||
-        strcmp(output->method, "sign_transaction") != 0) {
+    if (route != AgentQSupportedSignRoute::sui_sign_transaction) {
         memset(output, 0, sizeof(*output));
         return AgentQSignTransactionUserValidationResult::unsupported_method;
     }
@@ -168,18 +162,14 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_params(
 
     const char* tx_bytes_base64 = nullptr;
     if (!agent_q_json_value_c_string(params["txBytes"], &tx_bytes_base64) ||
-        !copy_nonempty_c_string(
+        !validate_canonical_base64_syntax(
             tx_bytes_base64,
-            output->tx_bytes_base64,
-            sizeof(output->tx_bytes_base64)) ||
-        !validate_canonical_base64(
-            output->tx_bytes_base64,
-            kAgentQSuiSignTransactionTxBytesMaxBase64Size,
-            kAgentQSuiSignTransactionTxBytesMaxBytes,
+            kAgentQSignRequestBase64MaxSize,
             &output->tx_bytes_decoded_size)) {
         memset(output, 0, sizeof(*output));
         return AgentQSignTransactionUserValidationResult::invalid_tx_bytes;
     }
+    output->tx_bytes_base64 = tx_bytes_base64;
 
     return AgentQSignTransactionUserValidationResult::ok;
 }

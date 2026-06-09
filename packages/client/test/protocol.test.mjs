@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   assertAccountsResponse,
@@ -17,6 +18,7 @@ import {
   isSafeRequestId,
   isSessionId,
   isSuiAddressForPublicKey,
+  identifySignRoute,
   makeConnectRequest,
   makeDisconnectRequest,
   makeGetCapabilitiesRequest,
@@ -33,6 +35,17 @@ import {
   sanitizeDisplayText,
   serializeRequest,
 } from "../dist/protocol.js";
+
+const SIGN_ROUTE_VECTORS = readFileSync(
+  new URL("../../../specs/sign-route-vectors.tsv", import.meta.url),
+  "utf8",
+)
+  .split(/\r?\n/)
+  .filter((line) => line && !line.startsWith("#"))
+  .map((line) => {
+    const [operation, chain, method, expected] = line.split("\t");
+    return { operation, chain, method, expected };
+  });
 
 const CANONICAL_TX_BYTES_BASE64 = "AQID";
 const VALID_DEVICE_STATUS = {
@@ -63,6 +76,23 @@ test("rejects unsafe request ids", () => {
   assert.equal(isSafeRequestId("req/unsafe"), false);
   assert.equal(isSafeRequestId("a".repeat(80)), false);
   assert.throws(() => makeGetStatusRequest("req/unsafe"), /Invalid request id/);
+});
+
+test("identifySignRoute matches the shared protocol route vectors", () => {
+  for (const vector of SIGN_ROUTE_VECTORS) {
+    if (vector.expected === "ok") {
+      const route = identifySignRoute(vector.operation, vector.chain, vector.method);
+      assert.equal(route.operation, vector.operation);
+      assert.equal(route.chain, vector.chain);
+      assert.equal(route.method, vector.method);
+      continue;
+    }
+    assert.throws(
+      () => identifySignRoute(vector.operation, vector.chain, vector.method),
+      { code: vector.expected },
+      `${vector.operation}/${vector.chain}/${vector.method}`,
+    );
+  }
 });
 
 test("creates and parses identify_device messages", () => {
@@ -105,7 +135,11 @@ test("preserves Firmware protocol error codes", () => {
     "invalid_state",
     "invalid_method",
     "invalid_params",
+    "request_id_conflict",
+    "unsupported_chain",
     "unsupported_method",
+    "unsupported_payload_size",
+    "malformed_transaction",
     "policy_error",
     "rng_error",
     "account_error",
@@ -464,8 +498,12 @@ test("makeSignTransactionRequest builds bounded signing params without caller-se
 
   assert.throws(() => makeSignTransactionRequest("not_a_session", "sui", "sign_transaction", params), /sessionId/);
   assert.throws(
+    () => makeSignTransactionRequest("not_a_session", "evm", "sign_transaction", params),
+    { code: "unsupported_chain" },
+  );
+  assert.throws(
     () => makeSignTransactionRequest("session_abcdef0123456789", "sui", "sign_personal_message", params),
-    /unsupported/,
+    { code: "unsupported_method" },
   );
   assert.throws(
     () => makeSignTransactionRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, timeoutMs: 30000 }),
@@ -482,6 +520,16 @@ test("makeSignTransactionRequest builds bounded signing params without caller-se
   assert.throws(
     () => makeSignTransactionRequest("session_abcdef0123456789", "sui", "sign_transaction", { ...params, privateKey: "must-not-forward" }),
     /secret material/,
+  );
+  const aboveCurrentAdapterCapacity = Buffer.alloc(385, 1).toString("base64");
+  assert.equal(
+    makeSignTransactionRequest(
+      "session_abcdef0123456789",
+      "sui",
+      "sign_transaction",
+      { network: "devnet", txBytes: aboveCurrentAdapterCapacity },
+    ).params.txBytes,
+    aboveCurrentAdapterCapacity,
   );
 });
 
@@ -507,7 +555,7 @@ test("makeSignPersonalMessageRequest builds bounded personal-message params with
   assert.throws(() => makeSignPersonalMessageRequest("not_a_session", "sui", "sign_personal_message", params), /sessionId/);
   assert.throws(
     () => makeSignPersonalMessageRequest("session_abcdef0123456789", "sui", "sign_transaction", params),
-    /unsupported/,
+    { code: "unsupported_method" },
   );
   assert.throws(
     () => makeSignPersonalMessageRequest("session_abcdef0123456789", "sui", "sign_personal_message", { ...params, timeoutMs: 30000 }),
@@ -521,9 +569,15 @@ test("makeSignPersonalMessageRequest builds bounded personal-message params with
     () => makeSignPersonalMessageRequest("session_abcdef0123456789", "sui", "sign_personal_message", { ...params, seed: "must-not-forward" }),
     /secret material/,
   );
-  assert.throws(
-    () => makeSignPersonalMessageRequest("session_abcdef0123456789", "sui", "sign_personal_message", { network: "devnet", message: Buffer.alloc(257, 1).toString("base64") }),
-    /outside the supported size/,
+  const aboveCurrentAdapterCapacity = Buffer.alloc(257, 1).toString("base64");
+  assert.equal(
+    makeSignPersonalMessageRequest(
+      "session_abcdef0123456789",
+      "sui",
+      "sign_personal_message",
+      { network: "devnet", message: aboveCurrentAdapterCapacity },
+    ).params.message,
+    aboveCurrentAdapterCapacity,
   );
 });
 
@@ -1404,6 +1458,24 @@ test("parseProtocolResponse accepts signed sign_result responses for user and po
   assert.equal(personalMessageSigned.method, "sign_personal_message");
   assert.equal(personalMessageSigned.signature, personalMessageSignature);
   assert.equal(personalMessageSigned.messageBytes, messageBytes);
+
+  const largerThanCurrentAdapterCapacity = Buffer.alloc(300, 7).toString("base64");
+  const largerPersonalMessageSigned = assertSignResultResponse(
+    parseProtocolResponse(
+      signResultLine({
+        authorization: "user",
+        status: "signed",
+        chain: "sui",
+        method: "sign_personal_message",
+        signature: personalMessageSignature,
+        messageBytes: largerThanCurrentAdapterCapacity,
+        error: undefined,
+      }),
+      "req_sign",
+    ),
+  );
+  assert.equal(largerPersonalMessageSigned.method, "sign_personal_message");
+  assert.equal(largerPersonalMessageSigned.messageBytes, largerThanCurrentAdapterCapacity);
 });
 
 test("parseProtocolResponse accepts bounded sign_result terminal outcomes", () => {

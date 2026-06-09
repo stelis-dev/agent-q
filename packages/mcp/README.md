@@ -50,6 +50,20 @@ reports the read-only current signing authorization mode for UX/display only;
 the request never selects it. This is MCP adapter projection, not signing
 authority.
 
+MCP accepts bounded signing route identifiers and delegates route
+classification to the shared Client/Gateway boundary. It does not maintain a
+separate chain registry. Sui is currently the only executable chain;
+unsupported chains and methods fail explicitly. MCP validates transport-safe
+request shape but does not enforce the current Sui Firmware adapter's decoded
+payload capacities.
+
+The package also provides `agent-q-sui-sign`, a Sui offline-signing bridge that
+submits the shared `sign_transaction` request and prints only a
+Firmware-authored serialized signature to stdout. Diagnostics use stderr, and
+the command performs best-effort session disconnect after a successful
+connection. It is not an implementation of the Sui CLI JSON-RPC
+external-signer protocol.
+
 MCP tool inputs do not expose caller-controlled timing fields. Firmware-owned
 device-local physical-input windows remain 30 seconds; Gateway uses fixed
 internal transport budgets for PIN retry/lockout handling plus a

@@ -21,7 +21,10 @@ import {
   makeSignPersonalMessageRequest as makeProviderSignPersonalMessageRequest,
   makeSignTransactionRequest as makeProviderSignTransactionRequest,
   parseProviderProtocolResponse as parseProviderProtocolResponseCore,
+  identifySignRoute as identifyProviderSignRoute,
+  validateSignPersonalMessageParams as validateProviderSignPersonalMessageParams,
   validateSignPersonalMessageInput as validateProviderSignPersonalMessageInput,
+  validateSignTransactionParams as validateProviderSignTransactionParams,
   validateSignTransactionInput as validateProviderSignTransactionInput,
   type Account,
   type AccountsResponse,
@@ -40,6 +43,7 @@ import {
   type SignPersonalMessageParams,
   type SignPersonalMessageRequest,
   type SignPersonalMessageSignedResponse,
+  type SignOperationType,
   type SignResultAuthorization,
   type SignResultPolicyRejectedResponse,
   type SignResultResponse,
@@ -50,6 +54,7 @@ import {
   type SignTransactionParams,
   type SignTransactionRequest,
   type SignTransactionSignedResponse,
+  type SupportedSignRoute,
   type SigningCapabilities,
   type SigningCapabilityEntry,
 } from "./provider-protocol.js";
@@ -199,6 +204,7 @@ export type {
   SignPersonalMessageParams,
   SignPersonalMessageRequest,
   SignPersonalMessageSignedResponse,
+  SignOperationType,
   SignResultAuthorization,
   SignResultPolicyRejectedResponse,
   SignResultResponse,
@@ -209,6 +215,7 @@ export type {
   SignTransactionParams,
   SignTransactionRequest,
   SignTransactionSignedResponse,
+  SupportedSignRoute,
   SigningCapabilities,
   SigningCapabilityEntry,
 } from "./provider-protocol.js";
@@ -525,6 +532,29 @@ export function makePolicyProposeRequest(
 export const makeSignTransactionRequest = makeProviderSignTransactionRequest;
 export const makeSignPersonalMessageRequest = makeProviderSignPersonalMessageRequest;
 
+export function identifySignRoute(
+  operation: "sign_transaction",
+  chain: unknown,
+  method: unknown,
+): Extract<SupportedSignRoute, { operation: "sign_transaction" }>;
+export function identifySignRoute(
+  operation: "sign_personal_message",
+  chain: unknown,
+  method: unknown,
+): Extract<SupportedSignRoute, { operation: "sign_personal_message" }>;
+export function identifySignRoute(
+  operation: SignOperationType,
+  chain: unknown,
+  method: unknown,
+): SupportedSignRoute;
+export function identifySignRoute(
+  operation: SignOperationType,
+  chain: unknown,
+  method: unknown,
+): SupportedSignRoute {
+  return identifyProviderSignRoute(operation, chain, method);
+}
+
 export function validatePolicyProposeRequestInput(
   sessionId: string,
   policy: Record<string, unknown>,
@@ -541,6 +571,13 @@ export function validateSignRequestInput(
   return validateProviderSignTransactionInput(chain, method, params, requestType);
 }
 
+export function validateSignTransactionParamsInput(
+  params: unknown,
+  requestType = "sign_transaction",
+): SignTransactionParams {
+  return validateProviderSignTransactionParams(params, requestType);
+}
+
 export function validateSignPersonalMessageRequestInput(
   chain: unknown,
   method: unknown,
@@ -548,6 +585,13 @@ export function validateSignPersonalMessageRequestInput(
   requestType = "sign_personal_message",
 ): SignPersonalMessageParams {
   return validateProviderSignPersonalMessageInput(chain, method, params, requestType);
+}
+
+export function validateSignPersonalMessageParamsInput(
+  params: unknown,
+  requestType = "sign_personal_message",
+): SignPersonalMessageParams {
+  return validateProviderSignPersonalMessageParams(params, requestType);
 }
 
 export function validatePolicyProposeInput(policy: unknown): asserts policy is Record<string, unknown> {

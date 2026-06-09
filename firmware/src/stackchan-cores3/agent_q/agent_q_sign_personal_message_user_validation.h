@@ -5,14 +5,11 @@
 
 #include <ArduinoJson.h>
 
-#include "agent_q_sign_personal_message_limits.h"
 #include "agent_q_session.h"
+#include "agent_q_sign_route.h"
 #include "agent_q_user_signing_limits.h"
 
 namespace agent_q {
-
-constexpr size_t kAgentQUserSigningPersonalMessageBase64Size =
-    kAgentQSuiSignPersonalMessageMaxBase64Size + 1;
 
 enum class AgentQSignPersonalMessageUserValidationResult {
     ok,
@@ -36,10 +33,8 @@ struct AgentQSignPersonalMessageUserSessionRef {
 };
 
 struct AgentQSignPersonalMessageUserParams {
-    char chain[kAgentQUserSigningChainSize];
-    char method[kAgentQUserSigningMethodSize];
     char network[kAgentQUserSigningNetworkSize];
-    char message_base64[kAgentQUserSigningPersonalMessageBase64Size];
+    const char* message_base64;
     size_t message_decoded_size;
 };
 
@@ -56,6 +51,7 @@ validate_sign_personal_message_user_session_format(
 AgentQSignPersonalMessageUserValidationResult
 validate_sign_personal_message_user_params(
     JsonDocument& request,
+    AgentQSupportedSignRoute route,
     AgentQSignPersonalMessageUserParams* output);
 
 const char* sign_personal_message_user_validation_result_name(

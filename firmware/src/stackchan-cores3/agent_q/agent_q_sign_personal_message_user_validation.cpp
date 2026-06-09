@@ -124,6 +124,7 @@ validate_sign_personal_message_user_session_format(
 AgentQSignPersonalMessageUserValidationResult
 validate_sign_personal_message_user_params(
     JsonDocument& request,
+    AgentQSupportedSignRoute route,
     AgentQSignPersonalMessageUserParams* output)
 {
     if (output != nullptr) {
@@ -149,14 +150,7 @@ validate_sign_personal_message_user_params(
         return AgentQSignPersonalMessageUserValidationResult::unsupported_field;
     }
 
-    const char* chain = nullptr;
-    const char* method = nullptr;
-    if (!agent_q_json_value_c_string(request_object["chain"], &chain) ||
-        !agent_q_json_value_c_string(request_object["method"], &method) ||
-        !copy_nonempty_c_string(chain, output->chain, sizeof(output->chain)) ||
-        !copy_nonempty_c_string(method, output->method, sizeof(output->method)) ||
-        strcmp(output->chain, "sui") != 0 ||
-        strcmp(output->method, "sign_personal_message") != 0) {
+    if (route != AgentQSupportedSignRoute::sui_sign_personal_message) {
         memset(output, 0, sizeof(*output));
         return AgentQSignPersonalMessageUserValidationResult::unsupported_method;
     }
@@ -171,18 +165,14 @@ validate_sign_personal_message_user_params(
 
     const char* message_base64 = nullptr;
     if (!agent_q_json_value_c_string(params["message"], &message_base64) ||
-        !copy_nonempty_c_string(
+        !validate_canonical_base64_syntax(
             message_base64,
-            output->message_base64,
-            sizeof(output->message_base64)) ||
-        !validate_canonical_base64(
-            output->message_base64,
-            kAgentQSuiSignPersonalMessageMaxBase64Size,
-            kAgentQSuiSignPersonalMessageMaxBytes,
+            kAgentQSignRequestBase64MaxSize,
             &output->message_decoded_size)) {
         memset(output, 0, sizeof(*output));
         return AgentQSignPersonalMessageUserValidationResult::invalid_message;
     }
+    output->message_base64 = message_base64;
 
     return AgentQSignPersonalMessageUserValidationResult::ok;
 }

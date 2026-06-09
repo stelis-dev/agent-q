@@ -84,6 +84,7 @@ validate_sign_personal_message_user_identity(
 AgentQSignPersonalMessageUserIngressResult
 evaluate_sign_personal_message_user_ingress(
     JsonDocument& request,
+    AgentQSupportedSignRoute route,
     const AgentQSignPersonalMessageUserIngressState& state,
     AgentQSignPersonalMessageUserIngressOutput* output)
 {
@@ -125,7 +126,7 @@ evaluate_sign_personal_message_user_ingress(
     }
 
     AgentQSignPersonalMessageUserParams params = {};
-    validation = validate_sign_personal_message_user_params(request, &params);
+    validation = validate_sign_personal_message_user_params(request, route, &params);
     if (validation != AgentQSignPersonalMessageUserValidationResult::ok) {
         return map_validation_result(validation);
     }

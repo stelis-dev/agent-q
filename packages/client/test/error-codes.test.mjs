@@ -30,6 +30,10 @@ const firmwareProtocolCodes = [
   "account_error",
   "policy_error",
   "history_error",
+  "request_id_conflict",
+  "unsupported_chain",
+  "unsupported_payload_size",
+  "malformed_transaction",
 ];
 
 test("every literal Gateway error code is registered in the public-error allowlist", () => {

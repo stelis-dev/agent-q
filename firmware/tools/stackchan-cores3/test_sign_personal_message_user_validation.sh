@@ -134,25 +134,22 @@ void expect_params(
     const char* label,
     const std::string& json,
     agent_q::AgentQSignPersonalMessageUserValidationResult expected,
-    size_t expected_decoded_size = 0)
+    size_t expected_decoded_size = 0,
+    const char* expected_message = "aGVsbG8=")
 {
     JsonDocument document = parse_json(label, json);
     agent_q::AgentQSignPersonalMessageUserParams output = {};
     memset(&output, 0xA5, sizeof(output));
     const agent_q::AgentQSignPersonalMessageUserValidationResult actual =
-        agent_q::validate_sign_personal_message_user_params(document, &output);
+        agent_q::validate_sign_personal_message_user_params(document, agent_q::AgentQSupportedSignRoute::sui_sign_personal_message, &output);
     expect(actual == expected, label);
     if (actual == agent_q::AgentQSignPersonalMessageUserValidationResult::ok) {
-        expect(strcmp(output.chain, "sui") == 0, "params copies chain");
-        expect(strcmp(output.method, "sign_personal_message") == 0, "params copies method");
         expect(strcmp(output.network, "devnet") == 0, "params copies network");
-        expect(strcmp(output.message_base64, "aGVsbG8=") == 0, "params copies message");
+        expect(strcmp(output.message_base64, expected_message) == 0, "params references message");
         expect(output.message_decoded_size == expected_decoded_size, "params records decoded size");
     } else {
-        expect(output.chain[0] == '\0' &&
-                   output.method[0] == '\0' &&
-                   output.network[0] == '\0' &&
-                   output.message_base64[0] == '\0' &&
+        expect(output.network[0] == '\0' &&
+                   output.message_base64 == nullptr &&
                    output.message_decoded_size == 0,
                "params failure clears output");
     }
@@ -192,12 +189,13 @@ int main()
                    "\"chain\":\"sui\",\"method\":\"sign_personal_message\","
                    "\"params\":{\"network\":\"devnet\",\"message\":\"aGVsbG8=\"}}",
                    Result::invalid_session);
-    expect_params("wrong method rejected",
+    expect_params("selected route owns identity when raw method differs",
                   "{\"id\":\"req_sign_msg_1\",\"version\":1,\"type\":\"sign_personal_message\","
                   "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\","
                   "\"chain\":\"sui\",\"method\":\"sign_message\","
                   "\"params\":{\"network\":\"devnet\",\"message\":\"aGVsbG8=\"}}",
-                  Result::unsupported_method);
+                  Result::ok,
+                  5);
     expect_params("bad network rejected",
                   valid_request_with_params("{\"network\":\"staging\",\"message\":\"aGVsbG8=\"}"),
                   Result::invalid_network);
@@ -207,6 +205,15 @@ int main()
     expect_params("noncanonical message rejected",
                   valid_request_with_params("{\"network\":\"devnet\",\"message\":\"aGVsbG9\"}"),
                   Result::invalid_message);
+    const std::string above_adapter_capacity(344, 'A');
+    expect_params(
+        "message above adapter capacity remains valid request format",
+        valid_request_with_params(std::string("{\"network\":\"devnet\",\"message\":\"") +
+                                  above_adapter_capacity +
+                                  "\"}"),
+        Result::ok,
+        258,
+        above_adapter_capacity.c_str());
 
     expect(strcmp(agent_q::sign_personal_message_user_validation_result_name(Result::invalid_message),
                   "invalid_message") == 0,
@@ -224,6 +231,7 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${AGENT_Q_DIR}" \
+  -I"${AGENT_Q_DIR}/../../common/agent_q" \
   "${TMP_DIR}/sign_personal_message_user_validation_test.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_validation.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \

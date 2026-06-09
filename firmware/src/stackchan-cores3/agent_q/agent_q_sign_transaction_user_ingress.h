@@ -40,6 +40,7 @@ struct AgentQSignTransactionUserIngressOutput {
 
 AgentQSignTransactionUserIngressResult evaluate_sign_transaction_user_ingress(
     JsonDocument& request,
+    AgentQSupportedSignRoute route,
     const AgentQSignTransactionUserIngressState& state,
     AgentQSignTransactionUserIngressOutput* output);
 

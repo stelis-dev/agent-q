@@ -41,6 +41,7 @@ struct AgentQSignPersonalMessageUserIngressOutput {
 AgentQSignPersonalMessageUserIngressResult
 evaluate_sign_personal_message_user_ingress(
     JsonDocument& request,
+    AgentQSupportedSignRoute route,
     const AgentQSignPersonalMessageUserIngressState& state,
     AgentQSignPersonalMessageUserIngressOutput* output);
 

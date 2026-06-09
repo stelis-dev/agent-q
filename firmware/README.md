@@ -13,6 +13,12 @@ authorization for transaction signing from its device-local signing mode, but
 current-tree target hardware smoke and visual evidence remain pending before
 any product-active signing claim.
 
+Common Firmware signing ingress explicitly classifies bounded
+`(type, chain, method)` routes before stateful work. Sui is currently the only
+executable chain. The selected Sui adapter owns decoded-payload capacity,
+semantic parsing, account binding, and signing preparation; those limits are
+not shared host request-format rules.
+
 ## Folder Policy
 
 ### `src/common/`
@@ -88,9 +94,19 @@ run directly, while ESP-IDF-dependent target checks should be passed through the
 same launcher.
 
 ```bash
+AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+  firmware/tools/stackchan-cores3/with-idf.sh \
+  firmware/tools/stackchan-cores3/test_signing_preflight_order.sh
+```
+
+```bash
 firmware/tools/common/generate_sui_transaction_fixtures.mjs
 firmware/tools/common/test_sui_transaction_facts.sh
+firmware/tools/common/test_sui_sign_transaction_adapter.sh
+firmware/tools/common/test_sign_route.sh
 firmware/tools/common/test_policy_v0.sh
+firmware/tools/common/test_policy_canonical.sh
+firmware/tools/stackchan-cores3/test_sui_signing_preparation.sh
 ```
 
 The build script downloads the pinned host firmware and signing source into the

@@ -409,19 +409,17 @@ function createFakeBrowserProtocolResponse(request) {
   }
 }
 
-function makeBrowserTerminalSignResult(status, method, messageBytes = PERSONAL_MESSAGE_BYTES) {
+function makeBrowserTerminalSignResult(status) {
   if (status === "policy_rejected") {
     return {
       type: "sign_result",
       status: "policy_rejected",
       authorization: "policy",
-      chain: "sui",
-      method,
       policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
       ruleRef: "default",
       error: {
         code: "policy_rejected",
-        message: "The signing request was rejected by device policy.",
+        message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
       },
     };
   }
@@ -429,16 +427,11 @@ function makeBrowserTerminalSignResult(status, method, messageBytes = PERSONAL_M
     type: "sign_result",
     status,
     authorization: "user",
-    chain: "sui",
-    method,
     error: {
       code: status,
-      message: `The signing request was ${status}.`,
+      message: SIGN_RESULT_ERROR_MESSAGES[status],
     },
   };
-  if (method === "sign_personal_message") {
-    terminal.messageBytes = messageBytes;
-  }
   return terminal;
 }
 
@@ -974,7 +967,7 @@ for (const status of ["user_rejected", "user_timed_out", "signing_failed", "poli
         return {
           id: request.id,
           version: 1,
-          ...makeBrowserTerminalSignResult(status, "sign_transaction"),
+          ...makeBrowserTerminalSignResult(status),
         };
       }
       if (request.type === "ack_result") {
@@ -1006,9 +999,11 @@ for (const status of ["user_rejected", "user_timed_out", "signing_failed", "poli
       if (status === "policy_rejected") {
         assert.equal(result.authorization, "policy");
         assert.equal(result.error.code, "policy_rejected");
+        assert.equal(result.error.message, SIGN_RESULT_ERROR_MESSAGES.policy_rejected);
       } else {
         assert.equal(result.authorization, "user");
         assert.equal(result.error.code, status);
+        assert.equal(result.error.message, SIGN_RESULT_ERROR_MESSAGES[status]);
       }
     } finally {
       if (previousNavigator === undefined) {
@@ -1030,7 +1025,7 @@ for (const status of ["user_rejected", "user_timed_out", "signing_failed"]) {
         return {
           id: request.id,
           version: 1,
-          ...makeBrowserTerminalSignResult(status, "sign_personal_message"),
+          ...makeBrowserTerminalSignResult(status),
         };
       }
       if (request.type === "ack_result") {
@@ -1054,6 +1049,7 @@ for (const status of ["user_rejected", "user_timed_out", "signing_failed"]) {
       assert.equal(result.status, status);
       assert.equal(result.authorization, "user");
       assert.equal(result.error.code, status);
+      assert.equal(result.error.message, SIGN_RESULT_ERROR_MESSAGES[status]);
       const signReq = port.requests.find((r) => r.type === "sign_personal_message");
       const getResultReq = port.requests.find((r) => r.type === "get_result");
       const ackReq = port.requests.find((r) => r.type === "ack_result");

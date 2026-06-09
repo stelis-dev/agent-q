@@ -169,6 +169,13 @@ policy model for personal-message signing is designed.
 Chains, transports, and hardware targets must fit this protocol instead of
 creating separate product-level APIs.
 
+The shared signing boundary explicitly classifies bounded
+`(type, chain, method)` routes in Gateway/Client and Firmware. Sui is currently
+the only executable chain; unsupported chains and methods fail explicitly
+without reaching signing authority. Common host-side request validation owns
+transport bounds and canonical base64 syntax, while the selected Firmware
+chain adapter owns decoded-payload capacity and chain semantics.
+
 Firmware request UI should preserve the device's current state. Agent-Q should
 use temporary identification, approval, and result layers instead of forcing the
 device into a dedicated Agent-Q mode for normal requests.

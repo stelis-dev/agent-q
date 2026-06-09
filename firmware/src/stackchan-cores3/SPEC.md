@@ -30,6 +30,9 @@ have `source-wired-not-product-active` status in the current tree. Detailed
 hardware evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; final
 current-tree Sign API hardware and visual evidence remain pending, so
 product-active status is not claimed.
+The target classifies bounded shared `(type, chain, method)` signing routes
+before state/session work. Sui is currently the only executable chain, and the
+selected Sui adapter owns decoded-payload capacity and semantic classification.
 Policy updates enter only through the Firmware-owned `policy_propose`
 proposal flow; there is no direct policy setter. It links a
 restricted host-tested Sui transaction facts parser plus a common policy

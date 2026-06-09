@@ -5,14 +5,11 @@
 
 #include <ArduinoJson.h>
 
-#include "agent_q_sign_transaction_limits.h"
 #include "agent_q_session.h"
+#include "agent_q_sign_route.h"
 #include "agent_q_user_signing_limits.h"
 
 namespace agent_q {
-
-constexpr size_t kAgentQUserSigningTxBytesBase64Size =
-    kAgentQSuiSignTransactionTxBytesMaxBase64Size + 1;
 
 enum class AgentQSignTransactionUserValidationResult {
     ok,
@@ -36,10 +33,8 @@ struct AgentQSignTransactionUserSessionRef {
 };
 
 struct AgentQSignTransactionUserParams {
-    char chain[kAgentQUserSigningChainSize];
-    char method[kAgentQUserSigningMethodSize];
     char network[kAgentQUserSigningNetworkSize];
-    char tx_bytes_base64[kAgentQUserSigningTxBytesBase64Size];
+    const char* tx_bytes_base64;
     size_t tx_bytes_decoded_size;
 };
 
@@ -53,6 +48,7 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_session
 
 AgentQSignTransactionUserValidationResult validate_sign_transaction_user_params(
     JsonDocument& request,
+    AgentQSupportedSignRoute route,
     AgentQSignTransactionUserParams* output);
 
 const char* sign_transaction_user_validation_result_name(

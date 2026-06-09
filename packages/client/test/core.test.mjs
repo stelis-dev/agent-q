@@ -1594,6 +1594,42 @@ test("signTransaction without a runtime session returns not_connected before val
   });
 });
 
+test("signing route identity is selected before runtime-session lookup", async () => {
+  await withStore(async (store) => {
+    const core = new GatewayCore(store, defaultDriver());
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+
+    await assert.rejects(
+      () => core.signTransaction({
+        chain: "evm",
+        method: "sign_transaction",
+        network: "devnet",
+        txBytes: "not-base64",
+      }),
+      { code: "unsupported_chain" },
+    );
+    await assert.rejects(
+      () => core.signTransaction({
+        chain: "sui",
+        method: "sign_personal_message",
+        network: "devnet",
+        txBytes: "not-base64",
+      }),
+      { code: "unsupported_method" },
+    );
+    await assert.rejects(
+      () => core.signPersonalMessage({
+        chain: "SUI",
+        method: "sign_personal_message",
+        network: "devnet",
+        message: "not-base64",
+      }),
+      { code: "invalid_params" },
+    );
+  });
+});
+
 test("signTransaction returns Firmware's policy_rejected sign_result and keeps the session", async () => {
   await withStore(async (store) => {
     const core = new GatewayCore(
@@ -1642,7 +1678,7 @@ test("signTransaction uses the internal request deadline by default", async () =
     const core = new GatewayCore(
       store,
       defaultDriver({
-        async signTransaction(_portPath, _sessionId, _chain, _method, _params, deadlineMs) {
+        async signTransaction(_portPath, _sessionId, _route, _params, deadlineMs) {
           observedTimeoutMs = deadlineMs;
           return {
             id: "req_sign_policy",
@@ -1849,8 +1885,8 @@ test("signTransaction forwards a bounded provider signing request with internal 
             },
           };
         },
-        async signTransaction(portPath, sessionId, chain, method, params, deadlineMs) {
-          observed = { portPath, sessionId, chain, method, params, deadlineMs };
+        async signTransaction(portPath, sessionId, route, params, deadlineMs) {
+          observed = { portPath, sessionId, route, params, deadlineMs };
           return {
             id: "req_sign_user",
             version: 1,
@@ -1893,14 +1929,57 @@ test("signTransaction forwards a bounded provider signing request with internal 
     assert.deepEqual(observed, {
       portPath: "/dev/cu.usbmodem1",
       sessionId: "session_aabbccdd",
-      chain: "sui",
-      method: "sign_transaction",
+      route: {
+        operation: "sign_transaction",
+        chain: "sui",
+        method: "sign_transaction",
+        route: "sui_sign_transaction",
+      },
       params: {
         network: "devnet",
         txBytes: CANONICAL_TX_BYTES_BASE64,
       },
       deadlineMs: 185000,
     });
+  });
+});
+
+test("signTransaction forwards canonical payload above the current Firmware adapter capacity", async () => {
+  await withStore(async (store) => {
+    const txBytes = Buffer.alloc(385, 1).toString("base64");
+    let observedTxBytes = null;
+    const core = new GatewayCore(
+      store,
+      defaultDriver({
+        async signTransaction(_portPath, _sessionId, _route, params) {
+          observedTxBytes = params.txBytes;
+          return {
+            id: "req_sign_policy",
+            version: 1,
+            type: "sign_result",
+            authorization: "policy",
+            status: "policy_rejected",
+            policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+            ruleRef: "default",
+            error: {
+              code: "policy_rejected",
+              message: "The signing request was rejected by device policy.",
+            },
+          };
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    await core.signTransaction({
+      chain: "sui",
+      method: "sign_transaction",
+      network: "devnet",
+      txBytes,
+    });
+    assert.equal(observedTxBytes, txBytes);
   });
 });
 
@@ -2078,8 +2157,8 @@ test("signPersonalMessage forwards a bounded user signing request with internal 
     const core = new GatewayCore(
       store,
       defaultDriver({
-        async signPersonalMessage(portPath, sessionId, chain, method, params, deadlineMs) {
-          observed = { portPath, sessionId, chain, method, params, deadlineMs };
+        async signPersonalMessage(portPath, sessionId, route, params, deadlineMs) {
+          observed = { portPath, sessionId, route, params, deadlineMs };
           return {
             id: "req_sign_personal_message",
             version: 1,
@@ -2117,8 +2196,12 @@ test("signPersonalMessage forwards a bounded user signing request with internal 
     assert.deepEqual(observed, {
       portPath: "/dev/cu.usbmodem1",
       sessionId: "session_aabbccdd",
-      chain: "sui",
-      method: "sign_personal_message",
+      route: {
+        operation: "sign_personal_message",
+        chain: "sui",
+        method: "sign_personal_message",
+        route: "sui_sign_personal_message",
+      },
       params: {
         network: "devnet",
         message: messageBytes,

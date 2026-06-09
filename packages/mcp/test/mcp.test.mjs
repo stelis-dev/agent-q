@@ -32,7 +32,10 @@ test("MCP package metadata exposes MCP and Admin adapter entrypoints", async () 
   assert.equal(packageJson.name, "@stelis/agent-q-mcp");
   assert.deepEqual(Object.keys(packageJson.exports).sort(), [".", "./admin", "./mcp", "./package.json"]);
   assert.equal(packageJson.dependencies["@stelis/agent-q-client"], "0.0.0");
-  assert.deepEqual(packageJson.bin, { "agent-q": "./dist/bin/agent-q.js" });
+  assert.deepEqual(packageJson.bin, {
+    "agent-q": "./dist/bin/agent-q.js",
+    "agent-q-sui-sign": "./dist/bin/agent-q-sui-sign.js",
+  });
 });
 
 test("MCP package self-reference resolves MCP and Admin adapters only", async () => {
@@ -891,6 +894,103 @@ test("sign_transaction dispatch lets core own state-first validation", async () 
     assert.equal(result.isError, false);
     assert.equal(result.structuredContent.source, "not_connected");
     assert.equal(signTransactionCalls, 1);
+  }, core);
+});
+
+test("signing tools delegate route and method-param classification to core", async () => {
+  const observed = [];
+  const core = {
+    ...noOpCore,
+    async signTransaction(input) {
+      observed.push(input);
+      return { source: "not_connected", deviceId: "device-1", reason: "not_connected" };
+    },
+    async signPersonalMessage(input) {
+      observed.push(input);
+      return { source: "not_connected", deviceId: "device-1", reason: "not_connected" };
+    },
+  };
+
+  await withConnectedClient(async (client) => {
+    const transactionResult = await client.callTool({
+      name: "sign_transaction",
+      arguments: {
+        chain: "evm",
+        method: "future_method",
+        network: "future_network",
+        txBytes: "not-base64",
+      },
+    });
+    const messageResult = await client.callTool({
+      name: "sign_personal_message",
+      arguments: {
+        chain: "solana",
+        method: "future_message",
+        network: "future_network",
+        message: "not-base64",
+      },
+    });
+
+    assert.equal(transactionResult.structuredContent.source, "not_connected");
+    assert.equal(messageResult.structuredContent.source, "not_connected");
+    assert.deepEqual(observed, [
+      {
+        deviceId: undefined,
+        purpose: undefined,
+        chain: "evm",
+        method: "future_method",
+        network: "future_network",
+        txBytes: "not-base64",
+      },
+      {
+        deviceId: undefined,
+        purpose: undefined,
+        chain: "solana",
+        method: "future_message",
+        network: "future_network",
+        message: "not-base64",
+      },
+    ]);
+  }, core);
+});
+
+test("signing tools reject malformed route identifiers before core dispatch", async () => {
+  let signingCalls = 0;
+  const core = {
+    ...noOpCore,
+    async signTransaction() {
+      signingCalls += 1;
+      return { source: "not_connected", deviceId: "device-1", reason: "not_connected" };
+    },
+    async signPersonalMessage() {
+      signingCalls += 1;
+      return { source: "not_connected", deviceId: "device-1", reason: "not_connected" };
+    },
+  };
+
+  await withConnectedClient(async (client) => {
+    const invalidChain = await client.callTool({
+      name: "sign_transaction",
+      arguments: {
+        chain: "not valid",
+        method: "sign_transaction",
+        network: "devnet",
+        txBytes: "AQID",
+      },
+    });
+    const oversizedMethod = await client.callTool({
+      name: "sign_personal_message",
+      arguments: {
+        chain: "sui",
+        method: "m".repeat(65),
+        network: "devnet",
+        message: "AQID",
+      },
+    });
+
+    assert.equal(invalidChain.isError, true);
+    assert.equal(oversizedMethod.isError, true);
+    assert.equal(signingCalls, 0);
   }, core);
 });
 

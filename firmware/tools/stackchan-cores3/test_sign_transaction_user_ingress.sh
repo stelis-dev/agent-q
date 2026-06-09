@@ -158,7 +158,7 @@ void expect_ingress(
     agent_q::AgentQSignTransactionUserIngressOutput output = {};
     memset(&output, 0xA5, sizeof(output));
     const agent_q::AgentQSignTransactionUserIngressResult actual =
-        agent_q::evaluate_sign_transaction_user_ingress(document, input_state, &output);
+        agent_q::evaluate_sign_transaction_user_ingress(document, agent_q::AgentQSupportedSignRoute::sui_sign_transaction, input_state, &output);
     if (actual != expected) {
         fprintf(stderr, "%s: expected ingress result %d, got %d\n",
                 label, static_cast<int>(expected), static_cast<int>(actual));
@@ -176,10 +176,8 @@ void expect_ingress(
     if (actual != agent_q::AgentQSignTransactionUserIngressResult::ok &&
         (output.envelope.request_id[0] != '\0' ||
          output.session.session_id[0] != '\0' ||
-         output.params.chain[0] != '\0' ||
-         output.params.method[0] != '\0' ||
          output.params.network[0] != '\0' ||
-         output.params.tx_bytes_base64[0] != '\0' ||
+         output.params.tx_bytes_base64 != nullptr ||
          output.params.tx_bytes_decoded_size != 0)) {
         fprintf(stderr, "%s: ingress failure did not clear output\n", label);
         ++failures;
@@ -187,8 +185,6 @@ void expect_ingress(
     if (expect_valid_output &&
         (strcmp(output.envelope.request_id, "req_sign_1") != 0 ||
          strcmp(output.session.session_id, "session_aaaaaaaaaaaaaaaa") != 0 ||
-         strcmp(output.params.chain, "sui") != 0 ||
-         strcmp(output.params.method, "sign_transaction") != 0 ||
          strcmp(output.params.network, "devnet") != 0 ||
          strcmp(output.params.tx_bytes_base64, "AAAA") != 0 ||
          output.params.tx_bytes_decoded_size != 3)) {
@@ -357,7 +353,7 @@ int main()
         JsonDocument document = parse_json("null output", valid_request());
         SessionCheck check{"session_aaaaaaaaaaaaaaaa", SessionResult::ok, 0};
         const IngressResult result =
-            agent_q::evaluate_sign_transaction_user_ingress(document, state(true, false, &check), nullptr);
+            agent_q::evaluate_sign_transaction_user_ingress(document, agent_q::AgentQSupportedSignRoute::sui_sign_transaction, state(true, false, &check), nullptr);
         if (result != IngressResult::invalid_request_shape || check.calls != 0) {
             fprintf(stderr, "null output should fail before session validation\n");
             ++failures;
@@ -386,6 +382,7 @@ CPP
   -Werror \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${AGENT_Q_DIR}" \
+  -I"${AGENT_Q_DIR}/../../common/agent_q" \
   "${TMP_DIR}/sign_transaction_user_ingress_test.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \

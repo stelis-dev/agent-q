@@ -5,6 +5,7 @@
 
 #include <ArduinoJson.h>
 #include <memory>
+#include "agent_q_sign_route.h"
 #include "agent_q_u64_decimal.h"
 #include "agent_q_avatar_overlay_drawing.h"
 #include "agent_q_approval_history.h"
@@ -45,11 +46,13 @@
 #include "agent_q_signing_mode.h"
 #include "agent_q_sui_account.h"
 #include "agent_q_sui_account_store.h"
+#include "agent_q_sui_signing_preparation.h"
 #include "agent_q_sui_signing_service.h"
 #include "agent_q_timeout_window.h"
 #include "agent_q_usb_link_state.h"
 #include "agent_q_ui_panel_cleanup.h"
 #include "agent_q_usb_response_writer.h"
+#include "agent_q_signing_retry_delivery.h"
 #include "agent_q_signing_result_store.h"
 #include "agent_q_usb_session_grace.h"
 #include "agent_q_usb_request_line.h"
@@ -521,6 +524,7 @@ const char* sign_result_user_error_message(
 
 bool write_sign_result_signed_fields(
     const char* id,
+    const uint8_t* request_identity,
     const char* authorization,
     agent_q::AgentQSigningMethod signing_method,
     const uint8_t* signature,
@@ -588,26 +592,42 @@ bool write_sign_result_signed_fields(
     if (agent_q::signing_method_requires_message_bytes(signing_method)) {
         response["messageBytes"] = message_base64;
     }
-    // W4: buffer the signed result for durable redelivery (get_result / idempotent
-    // re-request) before sending it, so a link drop between signing and delivery does
-    // not lose the signature. Best-effort: a too-large result is simply not buffered.
+    // W4: buffer the signed result for bounded RAM redelivery (get_result /
+    // idempotent re-request) before sending it, so a link drop between signing
+    // and delivery can recover the result while the entry remains retained.
+    // Best-effort: a too-large result is simply not buffered.
     // The static scratch holds only a public signature; the store copies it out.
     static char serialized_result[agent_q::kSigningResultMaxSize];
     const size_t serialized_len = serializeJson(response, serialized_result, sizeof(serialized_result));
     if (serialized_len > 0 && serialized_len < sizeof(serialized_result)) {
-        agent_q::signing_result_store(agent_q::session_id(), id, serialized_result, serialized_len);
+        agent_q::signing_result_store(
+            agent_q::session_id(),
+            id,
+            request_identity,
+            agent_q::kAgentQSignRequestIdentitySize,
+            serialized_result,
+            serialized_len);
     }
     return agent_q::usb_response_write_json(response);
 }
 
-bool buffer_sign_result_for_retry(const char* request_id, const JsonDocument& response)
+bool buffer_sign_result_for_retry(
+    const char* request_id,
+    const uint8_t* request_identity,
+    const JsonDocument& response)
 {
     static char serialized_result[agent_q::kSigningResultMaxSize];
     const size_t serialized_len = serializeJson(response, serialized_result, sizeof(serialized_result));
     if (serialized_len == 0 || serialized_len >= sizeof(serialized_result)) {
         return false;
     }
-    return agent_q::signing_result_store(agent_q::session_id(), request_id, serialized_result, serialized_len) !=
+    return agent_q::signing_result_store(
+               agent_q::session_id(),
+               request_id,
+               request_identity,
+               agent_q::kAgentQSignRequestIdentitySize,
+               serialized_result,
+               serialized_len) !=
            agent_q::SigningResultStoreOutcome::invalid;
 }
 
@@ -623,6 +643,7 @@ bool write_sign_result_signed(
     }
     return write_sign_result_signed_fields(
         id,
+        snapshot.request_identity,
         authorization,
         snapshot.signing_method,
         signing_output.signature,
@@ -631,22 +652,51 @@ bool write_sign_result_signed(
         signing_output.message_bytes_size);
 }
 
-// W4: re-deliver a buffered signing result for (session_id, request_id) if present, so
-// a retried sign_transaction/sign_personal_message or a get_result returns the stored
-// signature instead of re-signing. Returns true when a stored result was written.
-//
-// Keyed by request_id only, with no request-content check: the host owns id uniqueness,
-// so reusing an id returns the prior result. This is safe by construction because the
-// buffer only ever holds already-authorized results — every store is gated by user
-// approval or policy execution — so a reused id can resurface an authorized result but
-// can never fabricate an unauthorized one. (Do not add content hashing here: it would put
-// state and branches into the signing path for no security gain.)
-bool try_deliver_stored_result(const char* session_id, const char* request_id)
+// A resubmitted signing request may replay only the result bound to the same
+// validated request identity. get_result uses the separate by-id lookup below.
+bool try_deliver_stored_result(
+    const char* session_id,
+    const char* request_id,
+    const uint8_t* request_identity)
+{
+    const agent_q::AgentQSigningRetryDeliveryResult retry =
+        agent_q::evaluate_signing_retry_delivery(
+            session_id,
+            request_id,
+            request_identity,
+            agent_q::kAgentQSignRequestIdentitySize);
+    if (retry.status == agent_q::AgentQSigningRetryDeliveryStatus::not_found) {
+        return false;
+    }
+    if (retry.status == agent_q::AgentQSigningRetryDeliveryStatus::request_id_conflict ||
+        retry.status == agent_q::AgentQSigningRetryDeliveryStatus::lookup_error) {
+        write_error_response(
+            request_id,
+            retry.error_code,
+            retry.error_message);
+        return true;
+    }
+    if (retry.status != agent_q::AgentQSigningRetryDeliveryStatus::match) {
+        write_error_response(request_id, "protocol_error", "Stored signing result lookup failed.");
+        return true;
+    }
+    JsonDocument response;
+    if (deserializeJson(response, retry.stored_result, retry.stored_result_len)) {
+        return false;
+    }
+    return agent_q::usb_response_write_json(response);
+}
+
+bool try_deliver_stored_result_by_id(const char* session_id, const char* request_id)
 {
     static char stored_result[agent_q::kSigningResultMaxSize];
     size_t stored_len = 0;
     if (!agent_q::signing_result_find(
-            session_id, request_id, stored_result, sizeof(stored_result), &stored_len)) {
+            session_id,
+            request_id,
+            stored_result,
+            sizeof(stored_result),
+            &stored_len)) {
         return false;
     }
     JsonDocument response;
@@ -658,6 +708,7 @@ bool try_deliver_stored_result(const char* session_id, const char* request_id)
 
 bool write_sign_result_user_terminal(
     const char* id,
+    const uint8_t* request_identity,
     agent_q::AgentQUserSigningTerminalResult result)
 {
     const char* status = agent_q::user_signing_flow_terminal_status(result);
@@ -677,12 +728,13 @@ bool write_sign_result_user_terminal(
     response["status"] = status;
     response["error"]["code"] = reason;
     response["error"]["message"] = message;
-    buffer_sign_result_for_retry(id, response);
+    buffer_sign_result_for_retry(id, request_identity, response);
     return agent_q::usb_response_write_json(response);
 }
 
 bool write_sign_result_policy_rejected(
     const char* id,
+    const uint8_t* request_identity,
     const char* policy_hash,
     const char* rule_ref)
 {
@@ -700,12 +752,13 @@ bool write_sign_result_policy_rejected(
     response["ruleRef"] = rule_ref;
     response["error"]["code"] = "policy_rejected";
     response["error"]["message"] = "The signing request was rejected by device policy.";
-    buffer_sign_result_for_retry(id, response);
+    buffer_sign_result_for_retry(id, request_identity, response);
     return agent_q::usb_response_write_json(response);
 }
 
 bool write_sign_result_signing_failed(
     const char* id,
+    const uint8_t* request_identity,
     const char* authorization)
 {
     if (authorization == nullptr ||
@@ -720,12 +773,13 @@ bool write_sign_result_signing_failed(
     response["status"] = "signing_failed";
     response["error"]["code"] = "signing_failed";
     response["error"]["message"] = "The device could not produce a signature.";
-    buffer_sign_result_for_retry(id, response);
+    buffer_sign_result_for_retry(id, request_identity, response);
     return agent_q::usb_response_write_json(response);
 }
 
 bool write_policy_execution_response(
     const char* id,
+    const uint8_t* request_identity,
     const agent_q::AgentQPolicySigningExecutionResult& result)
 {
     switch (result.status) {
@@ -736,13 +790,15 @@ bool write_policy_execution_response(
         case agent_q::AgentQPolicySigningExecutionStatus::policy_rejected:
             return write_sign_result_policy_rejected(
                 id,
+                request_identity,
                 result.policy_hash,
                 result.rule_ref);
         case agent_q::AgentQPolicySigningExecutionStatus::signing_failed:
-            return write_sign_result_signing_failed(id, "policy");
+            return write_sign_result_signing_failed(id, request_identity, "policy");
         case agent_q::AgentQPolicySigningExecutionStatus::signed_success:
             return write_sign_result_signed_fields(
                 id,
+                request_identity,
                 "policy",
                 result.signing_method,
                 result.signature,
@@ -1283,17 +1339,20 @@ void finish_user_signing_terminal(
         delivery_failed_message = "Signed; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::success : AgentQMessageKind::error;
     } else if (result == agent_q::AgentQUserSigningTerminalResult::rejected) {
-        wrote_response = write_sign_result_user_terminal(request_id, result);
+        wrote_response = write_sign_result_user_terminal(
+            request_id, snapshot.request_identity, result);
         display_message = wrote_response ? "Signing rejected" : "Rejected; USB failed";
         delivery_failed_message = "Rejected; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::rejected : AgentQMessageKind::error;
     } else if (result == agent_q::AgentQUserSigningTerminalResult::timed_out) {
-        wrote_response = write_sign_result_user_terminal(request_id, result);
+        wrote_response = write_sign_result_user_terminal(
+            request_id, snapshot.request_identity, result);
         display_message = wrote_response ? "Signing timed out" : "Timeout; USB failed";
         delivery_failed_message = "Timeout; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::timeout : AgentQMessageKind::error;
     } else if (result == agent_q::AgentQUserSigningTerminalResult::signing_failed) {
-        wrote_response = write_sign_result_user_terminal(request_id, result);
+        wrote_response = write_sign_result_user_terminal(
+            request_id, snapshot.request_identity, result);
         display_message = wrote_response ? "Signing failed" : "Failure; USB failed";
         delivery_failed_message = "Failure; USB failed";
     } else if (request_id != nullptr && request_id[0] != '\0') {
@@ -1793,10 +1852,9 @@ const char* signature_begin_error_code(
             return "busy";
         case agent_q::AgentQUserSigningFlowBeginResult::invalid_session:
             return "invalid_session";
-        case agent_q::AgentQUserSigningFlowBeginResult::unsupported_method:
-            return "unsupported_method";
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_transaction:
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_summary:
+        case agent_q::AgentQUserSigningFlowBeginResult::malformed_transaction:
+            return "malformed_transaction";
+        case agent_q::AgentQUserSigningFlowBeginResult::unsupported_transaction:
             return "unsupported_transaction";
         case agent_q::AgentQUserSigningFlowBeginResult::account_unavailable:
         case agent_q::AgentQUserSigningFlowBeginResult::invalid_account:
@@ -1822,10 +1880,9 @@ const char* signature_begin_error_message(
             return "Device has a pending signing request.";
         case agent_q::AgentQUserSigningFlowBeginResult::invalid_session:
             return "Session is unknown or already ended.";
-        case agent_q::AgentQUserSigningFlowBeginResult::unsupported_method:
-            return "Signing method is not supported.";
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_transaction:
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_summary:
+        case agent_q::AgentQUserSigningFlowBeginResult::malformed_transaction:
+            return "Transaction bytes are malformed.";
+        case agent_q::AgentQUserSigningFlowBeginResult::unsupported_transaction:
             return "Transaction shape is not supported.";
         case agent_q::AgentQUserSigningFlowBeginResult::account_unavailable:
             return "Signing account is unavailable.";
@@ -1838,6 +1895,54 @@ const char* signature_begin_error_message(
         case agent_q::AgentQUserSigningFlowBeginResult::invalid_argument:
         case agent_q::AgentQUserSigningFlowBeginResult::invalid_deadline:
         case agent_q::AgentQUserSigningFlowBeginResult::ok:
+        default:
+            return "Signing request params are invalid.";
+    }
+}
+
+const char* sui_preparation_error_code(
+    agent_q::AgentQSuiSigningPreparationResult result)
+{
+    switch (result) {
+        case agent_q::AgentQSuiSigningPreparationResult::invalid_params:
+        case agent_q::AgentQSuiSigningPreparationResult::invalid_argument:
+            return "invalid_params";
+        case agent_q::AgentQSuiSigningPreparationResult::unsupported_payload_size:
+            return "unsupported_payload_size";
+        case agent_q::AgentQSuiSigningPreparationResult::malformed_transaction:
+            return "malformed_transaction";
+        case agent_q::AgentQSuiSigningPreparationResult::unsupported_transaction:
+            return "unsupported_transaction";
+        case agent_q::AgentQSuiSigningPreparationResult::account_unavailable:
+        case agent_q::AgentQSuiSigningPreparationResult::invalid_account:
+            return "account_error";
+        case agent_q::AgentQSuiSigningPreparationResult::digest_error:
+            return "history_error";
+        case agent_q::AgentQSuiSigningPreparationResult::ok:
+        default:
+            return "invalid_state";
+    }
+}
+
+const char* sui_preparation_error_message(
+    agent_q::AgentQSuiSigningPreparationResult result)
+{
+    switch (result) {
+        case agent_q::AgentQSuiSigningPreparationResult::unsupported_payload_size:
+            return "Signing payload exceeds the current Sui adapter capacity.";
+        case agent_q::AgentQSuiSigningPreparationResult::malformed_transaction:
+            return "Transaction bytes are malformed.";
+        case agent_q::AgentQSuiSigningPreparationResult::unsupported_transaction:
+            return "Transaction shape is not supported.";
+        case agent_q::AgentQSuiSigningPreparationResult::account_unavailable:
+            return "Signing account is unavailable.";
+        case agent_q::AgentQSuiSigningPreparationResult::invalid_account:
+            return "Transaction sender does not match the device account.";
+        case agent_q::AgentQSuiSigningPreparationResult::digest_error:
+            return "Could not digest signing request.";
+        case agent_q::AgentQSuiSigningPreparationResult::invalid_params:
+        case agent_q::AgentQSuiSigningPreparationResult::invalid_argument:
+        case agent_q::AgentQSuiSigningPreparationResult::ok:
         default:
             return "Signing request params are invalid.";
     }
@@ -5601,51 +5706,55 @@ void show_policy_signing_notification(
         kAgentQResultDisplayMs);
 }
 
-void handle_sign_transaction_policy_mode(const char* id, JsonDocument& request)
+bool write_sign_route_error_if_unsupported(
+    const char* id,
+    JsonDocument& request,
+    agent_q::AgentQSignOperation operation,
+    agent_q::AgentQSupportedSignRoute* supported_route)
 {
-    if (!provisioned_material_ready()) {
-        write_error_response(id, "invalid_state", "sign_transaction is available only after provisioning is complete.");
-        return;
+    if (supported_route != nullptr) {
+        *supported_route = agent_q::AgentQSupportedSignRoute::unsupported;
     }
-    if (write_busy_if_pending_or_local_flow_active(id)) {
-        return;
-    }
-
-    const char* session_id = nullptr;
-    if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-        write_error_response(id, "invalid_session", "Invalid session.");
-        return;
-    }
-    if (!require_active_matching_session(id, session_id)) {
-        return;
-    }
-
-    const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "chain", "method", "params"};
-    if (write_invalid_params_if_unsupported_request_fields(
-            id,
-            request,
-            allowed_request_fields,
-            7,
-            "sign_transaction request contains unsupported fields.")) {
-        return;
-    }
-
     const char* chain = nullptr;
     const char* method = nullptr;
-    if (!agent_q::agent_q_json_value_c_string(request["chain"], &chain) ||
-        !agent_q::agent_q_json_value_c_string(request["method"], &method)) {
-        write_error_response(id, "unsupported_method", "Signing method is not supported.");
-        return;
+    agent_q::agent_q_json_value_c_string(request["chain"], &chain);
+    agent_q::agent_q_json_value_c_string(request["method"], &method);
+    const agent_q::AgentQSignRouteClassification classification =
+        agent_q::classify_sign_route(operation, chain, method);
+    switch (classification.result) {
+        case agent_q::AgentQSignRouteResult::ok:
+            if (supported_route != nullptr) {
+                *supported_route = classification.route;
+            }
+            return false;
+        case agent_q::AgentQSignRouteResult::invalid_params:
+            write_error_response(id, "invalid_params", "Signing route identifiers are invalid.");
+            return true;
+        case agent_q::AgentQSignRouteResult::unsupported_chain:
+            write_error_response(id, "unsupported_chain", "Signing chain is unsupported.");
+            return true;
+        case agent_q::AgentQSignRouteResult::unsupported_method:
+            write_error_response(id, "unsupported_method", "Signing method is unsupported.");
+            return true;
     }
+    write_error_response(id, "protocol_error", "Signing route classification failed.");
+    return true;
+}
 
+void handle_sign_transaction_policy_mode(
+    const char* id,
+    const agent_q::AgentQSuiPreparedSignTransaction& prepared,
+    const uint8_t* request_identity)
+{
     agent_q::AgentQSignTransactionPolicyRuntimeResult sign_result =
-        agent_q::evaluate_sign_transaction_policy(chain, method, request["params"]);
+        agent_q::evaluate_sign_transaction_policy(prepared);
     if (sign_result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized) {
         show_policy_signing_notification("Policy signing", AgentQMessageKind::info);
     }
     agent_q::AgentQPolicySigningExecutionResult execution_result =
         agent_q::execute_policy_sign_transaction(sign_result, persistent_material_ops());
-    const bool wrote_response = write_policy_execution_response(id, execution_result);
+    const bool wrote_response =
+        write_policy_execution_response(id, request_identity, execution_result);
     switch (execution_result.status) {
         case agent_q::AgentQPolicySigningExecutionStatus::policy_rejected:
             if (wrote_response) {
@@ -5832,53 +5941,20 @@ void handle_line(const char* line)
     }
 
     if (strcmp(type, "sign_transaction") == 0) {
-        if (!provisioned_material_ready()) {
-            write_error_response(id, "invalid_state", "sign_transaction is available only after provisioning is complete.");
-            return;
-        }
-        if (write_busy_if_pending_or_local_flow_active(id)) {
-            return;
-        }
-
-        const char* session_id = nullptr;
-        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid session.");
-            return;
-        }
-        if (!require_active_matching_session(id, session_id)) {
-            return;
-        }
-        // W4: idempotent re-request — return the buffered result if this (session, id)
-        // was already signed, instead of re-running the signing flow.
-        if (try_deliver_stored_result(session_id, id)) {
-            return;
-        }
-
-        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "chain", "method", "params"};
-        if (write_invalid_params_if_unsupported_request_fields(
+        agent_q::AgentQSupportedSignRoute route =
+            agent_q::AgentQSupportedSignRoute::unsupported;
+        if (write_sign_route_error_if_unsupported(
                 id,
                 request,
-                allowed_request_fields,
-                7,
-                "sign_transaction request contains unsupported fields.")) {
+                agent_q::AgentQSignOperation::sign_transaction,
+                &route)) {
             return;
         }
-
-        agent_q::AgentQSigningAuthorizationMode signing_mode =
-            agent_q::AgentQSigningAuthorizationMode::user;
-        if (!agent_q::read_signing_authorization_mode(&signing_mode)) {
-            write_error_response(id, "invalid_state", "Signing authorization mode is unavailable.");
-            return;
-        }
-        if (signing_mode == agent_q::AgentQSigningAuthorizationMode::policy) {
-            handle_sign_transaction_policy_mode(id, request);
-            return;
-        }
-
         agent_q::AgentQSignTransactionUserIngressOutput ingress = {};
         const agent_q::AgentQSignTransactionUserIngressResult ingress_result =
             agent_q::evaluate_sign_transaction_user_ingress(
                 request,
+                route,
                 agent_q::AgentQSignTransactionUserIngressState{
                     provisioned_material_ready(),
                     user_signing_ingress_busy(),
@@ -5893,14 +5969,54 @@ void handle_line(const char* line)
                 signature_ingress_error_message(ingress_result));
             return;
         }
-
-        uint8_t tx_bytes[agent_q::kAgentQSuiSignTransactionTxBytesMaxBytes] = {};
-        if (base64_to_bytes(
+        uint8_t request_identity[agent_q::kAgentQSignRequestIdentitySize] = {};
+        if (!agent_q::sign_request_identity(
+                route,
+                ingress.params.network,
                 ingress.params.tx_bytes_base64,
-                strlen(ingress.params.tx_bytes_base64),
-                tx_bytes,
-                sizeof(tx_bytes)) != 0) {
-            write_error_response(id, "invalid_params", "Invalid sui/sign_transaction txBytes.");
+                request_identity,
+                sizeof(request_identity))) {
+            write_error_response(id, "protocol_error", "Could not bind signing request identity.");
+            return;
+        }
+        if (try_deliver_stored_result(
+                ingress.session.session_id,
+                ingress.envelope.request_id,
+                request_identity)) {
+            return;
+        }
+
+        agent_q::AgentQSigningAuthorizationMode signing_mode =
+            agent_q::AgentQSigningAuthorizationMode::user;
+        if (!agent_q::read_signing_authorization_mode(&signing_mode)) {
+            write_error_response(id, "invalid_state", "Signing authorization mode is unavailable.");
+            return;
+        }
+        agent_q::AgentQSuiPreparedSignTransaction prepared = {};
+        const agent_q::AgentQSuiSigningPreparationResult preparation_result =
+            agent_q::prepare_sui_sign_transaction(
+                route,
+                ingress.params.network,
+                ingress.params.tx_bytes_base64,
+                ingress.params.tx_bytes_decoded_size,
+                &prepared);
+        if (preparation_result != agent_q::AgentQSuiSigningPreparationResult::ok) {
+            if (preparation_result ==
+                agent_q::AgentQSuiSigningPreparationResult::account_unavailable) {
+                agent_q::persistent_material_record_runtime_failure(
+                    agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
+                    persistent_material_ops());
+            }
+            agent_q::clear_prepared_sui_sign_transaction(&prepared);
+            write_error_response(
+                id,
+                sui_preparation_error_code(preparation_result),
+                sui_preparation_error_message(preparation_result));
+            return;
+        }
+        if (signing_mode == agent_q::AgentQSigningAuthorizationMode::policy) {
+            handle_sign_transaction_policy_mode(id, prepared, request_identity);
+            agent_q::clear_prepared_sui_sign_transaction(&prepared);
             return;
         }
 
@@ -5912,21 +6028,14 @@ void handle_line(const char* line)
             agent_q::user_signing_flow_begin(
                 agent_q::AgentQUserSigningTransactionBeginInput{
                     ingress.envelope.request_id,
+                    request_identity,
                     ingress.session.session_id,
-                    ingress.params.chain,
-                    ingress.params.method,
-                    ingress.params.network,
-                    tx_bytes,
-                    ingress.params.tx_bytes_decoded_size,
+                    route,
+                    &prepared,
                     signing_window,
                 });
-        agent_q::wipe_sensitive_buffer(tx_bytes, sizeof(tx_bytes));
+        agent_q::clear_prepared_sui_sign_transaction(&prepared);
         if (begin_result != agent_q::AgentQUserSigningFlowBeginResult::ok) {
-            if (begin_result == agent_q::AgentQUserSigningFlowBeginResult::account_unavailable) {
-                agent_q::persistent_material_record_runtime_failure(
-                    agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
-                    persistent_material_ops());
-            }
             write_error_response(
                 id,
                 signature_begin_error_code(begin_result),
@@ -5949,53 +6058,20 @@ void handle_line(const char* line)
     }
 
     if (strcmp(type, "sign_personal_message") == 0) {
-        if (!provisioned_material_ready()) {
-            write_error_response(id, "invalid_state", "sign_personal_message is available only after provisioning is complete.");
-            return;
-        }
-        if (write_busy_if_pending_or_local_flow_active(id)) {
-            return;
-        }
-
-        const char* session_id = nullptr;
-        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid session.");
-            return;
-        }
-        if (!require_active_matching_session(id, session_id)) {
-            return;
-        }
-        // W4: idempotent re-request — return the buffered result if this (session, id)
-        // was already signed, instead of re-running the signing flow.
-        if (try_deliver_stored_result(session_id, id)) {
-            return;
-        }
-
-        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "chain", "method", "params"};
-        if (write_invalid_params_if_unsupported_request_fields(
+        agent_q::AgentQSupportedSignRoute route =
+            agent_q::AgentQSupportedSignRoute::unsupported;
+        if (write_sign_route_error_if_unsupported(
                 id,
                 request,
-                allowed_request_fields,
-                7,
-                "sign_personal_message request contains unsupported fields.")) {
+                agent_q::AgentQSignOperation::sign_personal_message,
+                &route)) {
             return;
         }
-
-        agent_q::AgentQSigningAuthorizationMode signing_mode =
-            agent_q::AgentQSigningAuthorizationMode::user;
-        if (!agent_q::read_signing_authorization_mode(&signing_mode)) {
-            write_error_response(id, "invalid_state", "Signing authorization mode is unavailable.");
-            return;
-        }
-        if (signing_mode == agent_q::AgentQSigningAuthorizationMode::policy) {
-            write_error_response(id, "unsupported_method", "sign_personal_message is not available in policy authorization mode.");
-            return;
-        }
-
         agent_q::AgentQSignPersonalMessageUserIngressOutput ingress = {};
         const agent_q::AgentQSignPersonalMessageUserIngressResult ingress_result =
             agent_q::evaluate_sign_personal_message_user_ingress(
                 request,
+                route,
                 agent_q::AgentQSignPersonalMessageUserIngressState{
                     provisioned_material_ready(),
                     user_signing_ingress_busy(),
@@ -6010,15 +6086,54 @@ void handle_line(const char* line)
                 signature_ingress_error_message(ingress_result));
             return;
         }
-
-        uint8_t message[agent_q::kAgentQSuiSignPersonalMessageMaxBytes] = {};
-        if (base64_to_bytes(
+        uint8_t request_identity[agent_q::kAgentQSignRequestIdentitySize] = {};
+        if (!agent_q::sign_request_identity(
+                route,
+                ingress.params.network,
                 ingress.params.message_base64,
-                strlen(ingress.params.message_base64),
-                message,
-                sizeof(message)) != 0) {
-            agent_q::wipe_sensitive_buffer(message, sizeof(message));
-            write_error_response(id, "invalid_params", "sign_personal_message params are invalid.");
+                request_identity,
+                sizeof(request_identity))) {
+            write_error_response(id, "protocol_error", "Could not bind signing request identity.");
+            return;
+        }
+        if (try_deliver_stored_result(
+                ingress.session.session_id,
+                ingress.envelope.request_id,
+                request_identity)) {
+            return;
+        }
+
+        agent_q::AgentQSigningAuthorizationMode signing_mode =
+            agent_q::AgentQSigningAuthorizationMode::user;
+        if (!agent_q::read_signing_authorization_mode(&signing_mode)) {
+            write_error_response(id, "invalid_state", "Signing authorization mode is unavailable.");
+            return;
+        }
+        if (signing_mode == agent_q::AgentQSigningAuthorizationMode::policy) {
+            write_error_response(id, "unsupported_method", "sign_personal_message is not available in policy authorization mode.");
+            return;
+        }
+
+        agent_q::AgentQSuiPreparedPersonalMessage prepared = {};
+        const agent_q::AgentQSuiSigningPreparationResult preparation_result =
+            agent_q::prepare_sui_sign_personal_message(
+                route,
+                ingress.params.network,
+                ingress.params.message_base64,
+                ingress.params.message_decoded_size,
+                &prepared);
+        if (preparation_result != agent_q::AgentQSuiSigningPreparationResult::ok) {
+            if (preparation_result ==
+                agent_q::AgentQSuiSigningPreparationResult::account_unavailable) {
+                agent_q::persistent_material_record_runtime_failure(
+                    agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
+                    persistent_material_ops());
+            }
+            agent_q::clear_prepared_sui_sign_personal_message(&prepared);
+            write_error_response(
+                id,
+                sui_preparation_error_code(preparation_result),
+                sui_preparation_error_message(preparation_result));
             return;
         }
 
@@ -6030,21 +6145,14 @@ void handle_line(const char* line)
             agent_q::user_signing_flow_begin_personal_message(
                 agent_q::AgentQUserSigningPersonalMessageBeginInput{
                     ingress.envelope.request_id,
+                    request_identity,
                     ingress.session.session_id,
-                    ingress.params.chain,
-                    ingress.params.method,
-                    ingress.params.network,
-                    message,
-                    ingress.params.message_decoded_size,
+                    route,
+                    &prepared,
                     signing_window,
                 });
-        agent_q::wipe_sensitive_buffer(message, sizeof(message));
+        agent_q::clear_prepared_sui_sign_personal_message(&prepared);
         if (begin_result != agent_q::AgentQUserSigningFlowBeginResult::ok) {
-            if (begin_result == agent_q::AgentQUserSigningFlowBeginResult::account_unavailable) {
-                agent_q::persistent_material_record_runtime_failure(
-                    agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
-                    persistent_material_ops());
-            }
             write_error_response(
                 id,
                 signature_begin_error_code(begin_result),
@@ -6090,7 +6198,7 @@ void handle_line(const char* line)
         }
         // Re-deliver the buffered result for this request id, or report it is gone so
         // the host re-issues the original signing request.
-        if (try_deliver_stored_result(session_id, id)) {
+        if (try_deliver_stored_result_by_id(session_id, id)) {
             return;
         }
         write_error_response(id, "unknown_request", "No buffered signing result for this request id.");

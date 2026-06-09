@@ -1,9 +1,9 @@
 #pragma once
 
-#include <ArduinoJson.h>
-
 #include "agent_q_approval_history.h"
+#include "agent_q_sign_route.h"
 #include "agent_q_sign_transaction_limits.h"
+#include "agent_q_sui_signing_preparation.h"
 #include "agent_q_user_signing_limits.h"
 
 namespace agent_q {
@@ -33,9 +33,7 @@ struct AgentQSignTransactionPolicyRuntimeResult {
 };
 
 AgentQSignTransactionPolicyRuntimeResult evaluate_sign_transaction_policy(
-    const char* chain,
-    const char* method,
-    JsonVariant params);
+    const AgentQSuiPreparedSignTransaction& prepared);
 void clear_sign_transaction_policy_runtime_result(AgentQSignTransactionPolicyRuntimeResult* result);
 
 }  // namespace agent_q

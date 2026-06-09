@@ -179,6 +179,8 @@ agent_q::AgentQTimeoutWindow timeout_window(TickType_t started_at, TickType_t de
     return agent_q::timeout_window_from_deadline(started_at, deadline);
 }
 
+const uint8_t kRequestIdentity[agent_q::kAgentQSignRequestIdentitySize] = {};
+
 agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
     const char* request_id,
     const char* session_id,
@@ -186,14 +188,23 @@ agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
     size_t payload_size,
     TickType_t deadline = 300)
 {
+    static agent_q::AgentQSuiPreparedSignTransaction prepared = {};
+    prepared = {};
+    prepared.route = agent_q::AgentQSupportedSignRoute::sui_sign_transaction;
+    snprintf(prepared.network, sizeof(prepared.network), "%s", "devnet");
+    if (payload != nullptr && payload_size <= sizeof(prepared.tx_bytes)) {
+        memcpy(prepared.tx_bytes, payload, payload_size);
+        prepared.tx_bytes_size = payload_size;
+        snprintf(prepared.payload_digest, sizeof(prepared.payload_digest),
+                 "%s", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        agent_q::parse_sui_transfer_facts(payload, payload_size, &prepared.sui_transfer);
+    }
     return agent_q::AgentQUserSigningTransactionBeginInput{
         request_id,
+        kRequestIdentity,
         session_id,
-        "sui",
-        "sign_transaction",
-        "devnet",
-        payload,
-        payload_size,
+        agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+        &prepared,
         request_window(deadline),
     };
 }
@@ -205,22 +216,25 @@ agent_q::AgentQUserSigningPersonalMessageBeginInput make_valid_message_input(
     size_t message_size,
     TickType_t deadline = 300)
 {
+    static agent_q::AgentQSuiPreparedPersonalMessage prepared = {};
+    prepared = {};
+    prepared.route = agent_q::AgentQSupportedSignRoute::sui_sign_personal_message;
+    snprintf(prepared.network, sizeof(prepared.network), "%s", "devnet");
+    if (message != nullptr && message_size <= sizeof(prepared.message)) {
+        memcpy(prepared.message, message, message_size);
+        prepared.message_size = message_size;
+        snprintf(prepared.payload_digest, sizeof(prepared.payload_digest),
+                 "%s", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        snprintf(prepared.account_address, sizeof(prepared.account_address), "%s", kDefaultStoredSigner);
+    }
     return agent_q::AgentQUserSigningPersonalMessageBeginInput{
         request_id,
+        kRequestIdentity,
         session_id,
-        "sui",
-        "sign_personal_message",
-        "devnet",
-        message,
-        message_size,
+        agent_q::AgentQSupportedSignRoute::sui_sign_personal_message,
+        &prepared,
         request_window(deadline),
     };
-}
-
-void reset_account_stub()
-{
-    g_account_result = agent_q::SuiAccountDerivationResult::ok;
-    snprintf(g_account_address, sizeof(g_account_address), "%s", kDefaultStoredSigner);
 }
 
 void reset_history_writer_stub()
@@ -951,16 +965,9 @@ int main()
            "complete session loss cannot downgrade generated signature");
 
     agent_q::user_signing_flow_clear();
-    g_digest_result = false;
     expect(agent_q::session_replace(random_bytes, nullptr) ==
                agent_q::AgentQSessionStartResult::ok,
-           "test session restarts");
-    expect(agent_q::user_signing_flow_begin(
-               make_valid_input("req_digest_fail", agent_q::session_id(), payload.data(), payload.size())) ==
-               Begin::digest_error,
-           "digest failure prevents begin");
-    expect(!agent_q::user_signing_flow_active(), "digest failure leaves flow inactive");
-    g_digest_result = true;
+           "test session restarts for invalid begin cases");
 
     agent_q::AgentQUserSigningTransactionBeginInput invalid_deadline =
         make_valid_input("req_bad_deadline", agent_q::session_id(), payload.data(), payload.size());
@@ -986,83 +993,29 @@ int main()
            "already expired personal-message review window rejected");
     expect(!agent_q::user_signing_flow_active(), "expired personal-message deadline leaves flow inactive");
 
-    static const uint8_t unrelated_payload[] = {0x01, 0x02, 0x03, 0x04};
-    expect(agent_q::user_signing_flow_begin(
-               make_valid_input("req_unparsed_payload", agent_q::session_id(), unrelated_payload, sizeof(unrelated_payload))) ==
-               Begin::invalid_transaction,
-           "payload without parser-derived transfer facts is rejected");
-    expect(!agent_q::user_signing_flow_active(), "invalid transaction leaves flow inactive");
-
-    snprintf(
-        g_account_address,
-        sizeof(g_account_address),
-        "%s",
-        "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
-    expect(agent_q::user_signing_flow_begin(
-               make_valid_input("req_wrong_stored_account", agent_q::session_id(), payload.data(), payload.size())) ==
-               Begin::invalid_account,
-           "parsed sender must match Firmware-derived stored signer");
-    expect(!agent_q::user_signing_flow_active(), "stored account mismatch leaves flow inactive");
-    reset_account_stub();
-
-    g_account_result = agent_q::SuiAccountDerivationResult::root_material_unavailable;
-    expect(agent_q::user_signing_flow_begin(
-               make_valid_input("req_missing_account", agent_q::session_id(), payload.data(), payload.size())) ==
-               Begin::account_unavailable,
-           "missing stored account prevents begin");
-    expect(!agent_q::user_signing_flow_active(), "missing account leaves flow inactive");
-    reset_account_stub();
-
-    const std::vector<uint8_t> sponsored_gas_payload =
-        read_hex_fixture(AGENT_Q_TEST_SPONSORED_GAS_OWNER_TX_HEX);
-    expect(agent_q::user_signing_flow_begin(
-               make_valid_input(
-                   "req_sponsored_gas_owner",
-                   agent_q::session_id(),
-                   sponsored_gas_payload.data(),
-                   sponsored_gas_payload.size())) ==
-               Begin::invalid_account,
-           "gas owner must match Firmware-derived stored signer");
-    expect(!agent_q::user_signing_flow_active(), "gas owner mismatch leaves flow inactive");
-
     agent_q::AgentQUserSigningTransactionBeginInput invalid_network =
         make_valid_input("req_bad_network", agent_q::session_id(), payload.data(), payload.size());
-    invalid_network.network = "staging";
+    snprintf(
+        const_cast<agent_q::AgentQSuiPreparedSignTransaction*>(
+            invalid_network.prepared)->network,
+        agent_q::kAgentQUserSigningNetworkSize,
+        "%s",
+        "staging");
     expect(agent_q::user_signing_flow_begin(invalid_network) == Begin::invalid_network,
-           "unsupported network rejected");
+           "invalid prepared network rejected");
 
-    char unterminated_chain[agent_q::kAgentQUserSigningChainSize] = {};
-    memset(unterminated_chain, 's', sizeof(unterminated_chain));
-    agent_q::AgentQUserSigningTransactionBeginInput unterminated_chain_input =
-        make_valid_input("req_unterminated_chain", agent_q::session_id(), payload.data(), payload.size());
-    unterminated_chain_input.chain = unterminated_chain;
-    expect(agent_q::user_signing_flow_begin(unterminated_chain_input) == Begin::invalid_argument,
-           "unterminated chain is rejected before method validation");
-    expect(!agent_q::user_signing_flow_active(), "unterminated chain leaves flow inactive");
-
-    char unterminated_method[agent_q::kAgentQUserSigningMethodSize] = {};
-    memset(unterminated_method, 'm', sizeof(unterminated_method));
-    agent_q::AgentQUserSigningTransactionBeginInput unterminated_method_input =
-        make_valid_input("req_unterminated_method", agent_q::session_id(), payload.data(), payload.size());
-    unterminated_method_input.method = unterminated_method;
-    expect(agent_q::user_signing_flow_begin(unterminated_method_input) == Begin::invalid_argument,
-           "unterminated method is rejected before method validation");
-    expect(!agent_q::user_signing_flow_active(), "unterminated method leaves flow inactive");
-
-    char unterminated_network[agent_q::kAgentQUserSigningNetworkSize] = {};
-    memset(unterminated_network, 'd', sizeof(unterminated_network));
     agent_q::AgentQUserSigningTransactionBeginInput unterminated_network_input =
         make_valid_input("req_unterminated_network", agent_q::session_id(), payload.data(), payload.size());
-    unterminated_network_input.network = unterminated_network;
+    unterminated_network_input.prepared = nullptr;
     expect(agent_q::user_signing_flow_begin(unterminated_network_input) == Begin::invalid_argument,
-           "unterminated network is rejected before network validation");
-    expect(!agent_q::user_signing_flow_active(), "unterminated network leaves flow inactive");
+           "missing prepared transaction is rejected");
+    expect(!agent_q::user_signing_flow_active(), "missing prepared transaction leaves flow inactive");
 
     agent_q::AgentQUserSigningTransactionBeginInput unsupported_method =
         make_valid_input("req_bad_method", agent_q::session_id(), payload.data(), payload.size());
-    unsupported_method.method = "sign_object";
-    expect(agent_q::user_signing_flow_begin(unsupported_method) == Begin::unsupported_method,
-           "unsupported method rejected");
+    unsupported_method.route = agent_q::AgentQSupportedSignRoute::sui_sign_personal_message;
+    expect(agent_q::user_signing_flow_begin(unsupported_method) == Begin::invalid_argument,
+           "wrong selected route rejected");
 
     agent_q::AgentQUserSigningTransactionBeginInput empty_payload =
         make_valid_input("req_empty_payload", agent_q::session_id(), payload.data(), 0);
@@ -1088,6 +1041,7 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -DAGENT_Q_TEST_VALID_SUI_TRANSFER_TX_HEX=\"${COMMON_ROOT}/sui/testdata/sui_transaction_facts/valid_sui_transfer_tx.bcs.hex\" \
+  -DAGENT_Q_TEST_MALFORMED_SUI_TX_HEX=\"${COMMON_ROOT}/sui/testdata/sui_transaction_facts/malformed_short_tx.bcs.hex\" \
   -DAGENT_Q_TEST_SPONSORED_GAS_OWNER_TX_HEX=\"${COMMON_ROOT}/sui/testdata/sui_transaction_facts/sponsored_gas_owner_tx.bcs.hex\" \
   -I"${TMP_DIR}" \
   -I"${AGENT_Q_DIR}" \
@@ -1097,6 +1051,7 @@ CPP
   "${AGENT_Q_DIR}/agent_q_user_signing_flow.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_signing_authority.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
+  "${COMMON_ROOT}/sui/agent_q_sui_sign_transaction_adapter.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_bcs_reader.cpp" \
   -o "${TMP_DIR}/user_signing_flow_test"

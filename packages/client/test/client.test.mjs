@@ -506,6 +506,14 @@ test("adapter output schema keeps signing method result shapes exact", () => {
   const personalMessageSchema = gatewaySuccessOutputSchemas.signPersonalMessage;
   assert.equal(transactionSchema.parse(validSignTransactionSignedOutput()).method, "sign_transaction");
   assert.equal(personalMessageSchema.parse(validSignPersonalMessageSignedOutput()).method, "sign_personal_message");
+  const largeMessageBytes = Buffer.alloc(300, 7).toString("base64");
+  assert.equal(
+    personalMessageSchema.parse({
+      ...validSignPersonalMessageSignedOutput(),
+      messageBytes: largeMessageBytes,
+    }).messageBytes,
+    largeMessageBytes,
+  );
 
   assert.throws(() => transactionSchema.parse({
     ...validSignTransactionSignedOutput(),

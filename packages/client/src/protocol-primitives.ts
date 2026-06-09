@@ -144,22 +144,23 @@ export function rejectSecretPayload(value: Record<string, unknown>, label: strin
   }
 }
 
-export function validateCanonicalBase64Payload(
+export function validateCanonicalBase64Syntax(
   value: unknown,
   maxChars: number,
-  maxBytes: number,
   label: string,
   errorCode = "invalid_params",
 ): string {
   if (typeof value !== "string") {
     throw new ProtocolError(errorCode, `${label} must be base64.`);
   }
-  if (value.length === 0 || value.length > maxChars || !BASE64_CANONICAL_PATTERN.test(value)) {
+  if (
+    value.length === 0 ||
+    value.length > maxChars ||
+    value.length % 4 !== 0 ||
+    !BASE64_CANONICAL_PATTERN.test(value) ||
+    !hasCanonicalBase64PaddingBits(value)
+  ) {
     throw new ProtocolError(errorCode, `${label} must be canonical base64.`);
-  }
-  const decoded = decodeCanonicalBase64(value);
-  if (decoded === null || decoded.length === 0 || decoded.length > maxBytes) {
-    throw new ProtocolError(errorCode, `${label} is outside the supported size.`);
   }
   return value;
 }
@@ -235,6 +236,16 @@ export function utf8ByteLength(value: string): number {
 
 export function hexLower(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function hasCanonicalBase64PaddingBits(value: string): boolean {
+  if (value.endsWith("==")) {
+    return (decodeBase64Char(value.charCodeAt(value.length - 3)) & 0x0f) === 0;
+  }
+  if (value.endsWith("=")) {
+    return (decodeBase64Char(value.charCodeAt(value.length - 2)) & 0x03) === 0;
+  }
+  return true;
 }
 
 function decodeBase64Char(code: number): number {

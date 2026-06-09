@@ -54,6 +54,12 @@ The current implementation includes:
   evidence status is tracked in `docs/IMPLEMENTATION_STATUS.md`; the full
   current-tree hardware and visual evidence remain pending before product-active
   status.
+- a common bounded `(type, chain, method)` signing route classifier before
+  state/session work. Unsupported chains return `unsupported_chain`;
+  unsupported or type-mismatched Sui methods return `unsupported_method`. The
+  Sui transaction and personal-message adapters retain their decoded-payload
+  capacities; common ingress no longer treats those capacities as
+  request-format limits.
 - a USB JSONL `sign_personal_message` path. It requires material-backed
   `provisioned` state plus a matching active session, validates bounded Sui
   personal-message bytes, and is available only when the device-local signing
@@ -182,6 +188,9 @@ specific command:
 AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stackchan-cores3/with-idf.sh \
   firmware/tools/stackchan-cores3/test_policy_store.sh
+AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+  firmware/tools/stackchan-cores3/with-idf.sh \
+  firmware/tools/stackchan-cores3/test_signing_preflight_order.sh
 ```
 
 Other checks can be run directly when their script header says ESP-IDF is not
@@ -190,7 +199,11 @@ required:
 ```bash
 firmware/tools/common/generate_sui_transaction_fixtures.mjs
 firmware/tools/common/test_sui_transaction_facts.sh
+firmware/tools/common/test_sui_sign_transaction_adapter.sh
+firmware/tools/common/test_sign_route.sh
 firmware/tools/common/test_policy_v0.sh
+firmware/tools/common/test_policy_canonical.sh
+firmware/tools/stackchan-cores3/test_sui_signing_preparation.sh
 firmware/tools/stackchan-cores3/test_sign_transaction_policy_runtime.sh
 firmware/tools/stackchan-cores3/test_policy_proposal_parser.sh
 firmware/tools/stackchan-cores3/test_policy_update_flow.sh

@@ -55,6 +55,11 @@ and active policy commits.
   windows remain 30 seconds; Gateway waits with a non-configurable transport
   margin so a valid terminal device result can still be received at the end of
   that window.
+- Shared signing calls classify bounded `(type, chain, method)` routes before
+  resolving state/session. Sui is currently the only executable chain.
+  Method-parameter validation remains after a runtime session exists. Common
+  Client validation owns transport bounds and canonical base64 syntax, not the
+  current Sui Firmware adapter's decoded-payload capacities.
 
 ## Development
 

@@ -27,7 +27,8 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "agent-q": "./dist/bin/agent-q.js"
+    "agent-q": "./dist/bin/agent-q.js",
+    "agent-q-sui-sign": "./dist/bin/agent-q-sui-sign.js"
   },
   "files": [
     "dist",
@@ -36,7 +37,7 @@
   "scripts": {
     "prebuild": "npm --workspace @stelis/agent-q-client run build",
     "build": "npm run build:self",
-    "build:self": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && chmod +x dist/bin/agent-q.js",
+    "build:self": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && chmod +x dist/bin/agent-q.js dist/bin/agent-q-sui-sign.js",
     "test": "npm run build && npm run test:self",
     "test:self": "node --test test/*.test.mjs"
   },

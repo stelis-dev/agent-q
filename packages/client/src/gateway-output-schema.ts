@@ -22,8 +22,7 @@ import {
   MAX_APPROVAL_HISTORY_RECORDS,
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
-  MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS,
-  MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
+  MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_POLICY_RULE_COUNT,
   POLICY_ID_PATTERN,
   POLICY_PROPOSE_RESULT_STATUSES,
@@ -538,12 +537,11 @@ const canonicalBase64Shape = z
   .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/);
 const personalMessageBytesShape = canonicalBase64Shape
   .min(1)
-  .max(MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS)
+  .max(MAX_RAW_PROTOCOL_JSON_BYTES)
   .refine((value) => {
     const decoded = Buffer.from(value, "base64");
     return (
       decoded.length > 0 &&
-      decoded.length <= MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES &&
       decoded.toString("base64") === value
     );
   }, {

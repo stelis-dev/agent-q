@@ -63,6 +63,8 @@ import {
 } from "@stelis/agent-q-client/adapter-internal";
 import {
   MAX_APPROVAL_HISTORY_RECORDS,
+  SIGN_CHAIN_PATTERN,
+  SIGN_METHOD_PATTERN,
   UINT_DECIMAL_STRING_PATTERN,
   isUint64DecimalString,
 } from "@stelis/agent-q-client/protocol";
@@ -228,9 +230,9 @@ export const gatewayToolDefinitions = {
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
-      chain: z.literal("sui"),
-      method: z.literal("sign_transaction"),
-      network: z.enum(["mainnet", "testnet", "devnet", "localnet"]),
+      chain: z.string().regex(SIGN_CHAIN_PATTERN),
+      method: z.string().regex(SIGN_METHOD_PATTERN),
+      network: z.string(),
       txBytes: z.string(),
     }),
     outputSchema: signTransactionToolOutputShape,
@@ -244,9 +246,9 @@ export const gatewayToolDefinitions = {
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
-      chain: z.literal("sui"),
-      method: z.literal("sign_personal_message"),
-      network: z.enum(["mainnet", "testnet", "devnet", "localnet"]),
+      chain: z.string().regex(SIGN_CHAIN_PATTERN),
+      method: z.string().regex(SIGN_METHOD_PATTERN),
+      network: z.string(),
       message: z.string(),
     }),
     outputSchema: signPersonalMessageToolOutputShape,
@@ -493,7 +495,14 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
     },
     async ({ deviceId, purpose, chain, method, network, txBytes }) =>
       run(gatewayToolDefinitions.signTransaction.successOutputSchema, () =>
-        core.signTransaction({ deviceId, purpose, chain: chain as "sui", method: method as "sign_transaction", network, txBytes }),
+        core.signTransaction({
+          deviceId,
+          purpose,
+          chain,
+          method,
+          network: network as "mainnet" | "testnet" | "devnet" | "localnet",
+          txBytes,
+        }),
       ),
   );
 
@@ -512,9 +521,9 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
         core.signPersonalMessage({
           deviceId,
           purpose,
-          chain: chain as "sui",
-          method: method as "sign_personal_message",
-          network,
+          chain,
+          method,
+          network: network as "mainnet" | "testnet" | "devnet" | "localnet",
           message,
         }),
       ),

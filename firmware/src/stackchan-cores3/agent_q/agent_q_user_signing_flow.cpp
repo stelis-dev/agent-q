@@ -7,7 +7,6 @@
 
 #include "agent_q_bip39.h"
 #include "agent_q_sui_account_store.h"
-#include "agent_q_sui_signing_authority.h"
 
 namespace agent_q {
 namespace {
@@ -18,6 +17,7 @@ struct AgentQUserSigningFlowState {
         AgentQUserSigningTerminalResult::none;
     AgentQSigningMethod signing_method = AgentQSigningMethod::unsupported;
     char request_id[kAgentQUserSigningIdSize] = {};
+    uint8_t request_identity[kAgentQSignRequestIdentitySize] = {};
     char session_id[kAgentQSessionIdSize] = {};
     char chain[kAgentQUserSigningChainSize] = {};
     char method[kAgentQUserSigningMethodSize] = {};
@@ -52,6 +52,7 @@ struct AgentQUserSigningFlowState {
         terminal_result = AgentQUserSigningTerminalResult::none;
         signing_method = AgentQSigningMethod::unsupported;
         request_id[0] = '\0';
+        wipe_sensitive_buffer(request_identity, sizeof(request_identity));
         session_id[0] = '\0';
         chain[0] = '\0';
         method[0] = '\0';
@@ -77,11 +78,6 @@ struct AgentQUserSigningFlowState {
 };
 
 AgentQUserSigningFlowState g_state;
-constexpr const char* kSuiAsset = "0x2::sui::SUI";
-constexpr size_t kSuiAddressHexLength = 64;
-constexpr size_t kSuiAddressStringLength = 2 + kSuiAddressHexLength;
-constexpr uint16_t kRestrictedSuiTransferCommandCount = 2;
-
 bool supported_network(const char* network)
 {
     return network != nullptr &&
@@ -118,65 +114,6 @@ void make_message_preview(const uint8_t* message, size_t message_size, char* out
         output[written++] = '.';
     }
     output[written < output_size ? written : output_size - 1] = '\0';
-}
-
-bool bounded_string_present(const char* value, size_t value_size)
-{
-    return value != nullptr &&
-           value_size > 0 &&
-           value[0] != '\0' &&
-           memchr(value, '\0', value_size) != nullptr;
-}
-
-bool decimal_string_valid(const char* value, size_t value_size)
-{
-    if (!bounded_string_present(value, value_size)) {
-        return false;
-    }
-    for (size_t index = 0; value[index] != '\0'; ++index) {
-        if (value[index] < '0' || value[index] > '9') {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool hex_char(char value)
-{
-    return (value >= '0' && value <= '9') ||
-           (value >= 'a' && value <= 'f') ||
-           (value >= 'A' && value <= 'F');
-}
-
-bool sui_address_valid(const char* value, size_t value_size)
-{
-    if (!bounded_string_present(value, value_size)) {
-        return false;
-    }
-    if (strlen(value) != kSuiAddressStringLength ||
-        value[0] != '0' ||
-        value[1] != 'x') {
-        return false;
-    }
-    for (size_t index = 2; value[index] != '\0'; ++index) {
-        if (!hex_char(value[index])) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool summary_valid(const SuiTransferFacts& facts)
-{
-    return sui_address_valid(facts.sender, sizeof(facts.sender)) &&
-           sui_address_valid(facts.gas_owner, sizeof(facts.gas_owner)) &&
-           sui_address_valid(facts.recipient, sizeof(facts.recipient)) &&
-           bounded_string_present(facts.asset, sizeof(facts.asset)) &&
-           strcmp(facts.asset, kSuiAsset) == 0 &&
-           decimal_string_valid(facts.amount, sizeof(facts.amount)) &&
-           decimal_string_valid(facts.gas_budget, sizeof(facts.gas_budget)) &&
-           decimal_string_valid(facts.gas_price, sizeof(facts.gas_price)) &&
-           facts.command_count == kRestrictedSuiTransferCommandCount;
 }
 
 bool any_deadline_reached(TickType_t now)
@@ -264,6 +201,10 @@ bool same_history_write_request(const AgentQUserSigningFlowSnapshot& snapshot)
            snapshot.stage == AgentQUserSigningStage::history_write &&
            g_state.stage == AgentQUserSigningStage::history_write &&
            strcmp(g_state.request_id, snapshot.request_id) == 0 &&
+           memcmp(
+               g_state.request_identity,
+               snapshot.request_identity,
+               sizeof(g_state.request_identity)) == 0 &&
            strcmp(g_state.session_id, snapshot.session_id) == 0 &&
            strcmp(g_state.chain, snapshot.chain) == 0 &&
            strcmp(g_state.method, snapshot.method) == 0 &&
@@ -321,6 +262,10 @@ AgentQUserSigningFlowSnapshot user_signing_flow_snapshot()
     snapshot.terminal_result = g_state.terminal_result;
     snapshot.signing_method = g_state.signing_method;
     memcpy(snapshot.request_id, g_state.request_id, sizeof(snapshot.request_id));
+    memcpy(
+        snapshot.request_identity,
+        g_state.request_identity,
+        sizeof(snapshot.request_identity));
     memcpy(snapshot.session_id, g_state.session_id, sizeof(snapshot.session_id));
     memcpy(snapshot.chain, g_state.chain, sizeof(snapshot.chain));
     memcpy(snapshot.method, g_state.method, sizeof(snapshot.method));
@@ -343,11 +288,11 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin(
         return AgentQUserSigningFlowBeginResult::active;
     }
     if (input.request_id == nullptr ||
+        input.request_identity == nullptr ||
         input.session_id == nullptr ||
-        input.chain == nullptr ||
-        input.method == nullptr ||
-        input.network == nullptr ||
-        input.signable_payload == nullptr) {
+        input.route != AgentQSupportedSignRoute::sui_sign_transaction ||
+        input.prepared == nullptr ||
+        input.prepared->route != input.route) {
         return AgentQUserSigningFlowBeginResult::invalid_argument;
     }
     if (!timeout_window_valid(input.request_window)) {
@@ -360,63 +305,41 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin(
     char network[kAgentQUserSigningNetworkSize] = {};
     if (!copy_nonempty_c_string(input.request_id, request_id, sizeof(request_id)) ||
         !copy_nonempty_c_string(input.session_id, session_id, sizeof(session_id)) ||
-        !copy_nonempty_c_string(input.chain, chain, sizeof(chain)) ||
-        !copy_nonempty_c_string(input.method, method, sizeof(method)) ||
-        !copy_nonempty_c_string(input.network, network, sizeof(network))) {
+        !copy_nonempty_c_string(sign_route_wire_chain(input.route), chain, sizeof(chain)) ||
+        !copy_nonempty_c_string(sign_route_wire_method(input.route), method, sizeof(method)) ||
+        !copy_nonempty_c_string(input.prepared->network, network, sizeof(network))) {
         return AgentQUserSigningFlowBeginResult::invalid_argument;
     }
     if (session_validate(session_id) != AgentQSessionValidationResult::ok) {
         return AgentQUserSigningFlowBeginResult::invalid_session;
     }
-    if (strcmp(chain, "sui") != 0 ||
-        strcmp(method, "sign_transaction") != 0) {
-        return AgentQUserSigningFlowBeginResult::unsupported_method;
-    }
     if (!supported_network(network)) {
         return AgentQUserSigningFlowBeginResult::invalid_network;
     }
-    if (input.signable_payload_size == 0 ||
-        input.signable_payload_size > kAgentQSuiSignTransactionTxBytesMaxBytes) {
+    if (input.prepared->tx_bytes_size == 0 ||
+        input.prepared->tx_bytes_size > kAgentQSuiSignTransactionTxBytesMaxBytes) {
         return AgentQUserSigningFlowBeginResult::invalid_payload;
     }
-
-    SuiTransferFacts parsed_facts = {};
-    if (parse_sui_transfer_facts(
-            input.signable_payload,
-            input.signable_payload_size,
-            &parsed_facts) != SuiTransactionFactsResult::ok) {
-        return AgentQUserSigningFlowBeginResult::invalid_transaction;
-    }
-    if (!summary_valid(parsed_facts)) {
-        return AgentQUserSigningFlowBeginResult::invalid_summary;
-    }
-    const AgentQSuiSigningAccountBindingResult account_result =
-        verify_sui_signing_stored_account_binding(parsed_facts);
-    if (account_result != AgentQSuiSigningAccountBindingResult::ok) {
-        return account_result == AgentQSuiSigningAccountBindingResult::account_unavailable
-                   ? AgentQUserSigningFlowBeginResult::account_unavailable
-                   : AgentQUserSigningFlowBeginResult::invalid_account;
+    if (input.prepared->payload_digest[0] == '\0') {
+        return AgentQUserSigningFlowBeginResult::digest_error;
     }
 
     g_state.clear();
-    g_state.signing_method = AgentQSigningMethod::sui_sign_transaction;
+    g_state.signing_method = input.route;
     memcpy(g_state.request_id, request_id, sizeof(g_state.request_id));
+    memcpy(
+        g_state.request_identity,
+        input.request_identity,
+        sizeof(g_state.request_identity));
     memcpy(g_state.session_id, session_id, sizeof(g_state.session_id));
     memcpy(g_state.chain, chain, sizeof(g_state.chain));
     memcpy(g_state.method, method, sizeof(g_state.method));
     memcpy(g_state.network, network, sizeof(g_state.network));
-    if (!approval_history_digest_payload(
-            input.signable_payload,
-            input.signable_payload_size,
-            g_state.payload_digest,
-            sizeof(g_state.payload_digest))) {
-        g_state.clear();
-        return AgentQUserSigningFlowBeginResult::digest_error;
-    }
-    memcpy(g_state.signable_payload, input.signable_payload, input.signable_payload_size);
-    g_state.signable_payload_size = input.signable_payload_size;
+    memcpy(g_state.payload_digest, input.prepared->payload_digest, sizeof(g_state.payload_digest));
+    memcpy(g_state.signable_payload, input.prepared->tx_bytes, input.prepared->tx_bytes_size);
+    g_state.signable_payload_size = input.prepared->tx_bytes_size;
     g_state.signable_payload_available = true;
-    g_state.sui_transfer = parsed_facts;
+    g_state.sui_transfer = input.prepared->sui_transfer;
     g_state.request_window = input.request_window;
     g_state.pin_input_window = kAgentQTimeoutWindowNone;
     g_state.stage = AgentQUserSigningStage::reviewing;
@@ -430,11 +353,11 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin_personal_message(
         return AgentQUserSigningFlowBeginResult::active;
     }
     if (input.request_id == nullptr ||
+        input.request_identity == nullptr ||
         input.session_id == nullptr ||
-        input.chain == nullptr ||
-        input.method == nullptr ||
-        input.network == nullptr ||
-        input.message == nullptr) {
+        input.route != AgentQSupportedSignRoute::sui_sign_personal_message ||
+        input.prepared == nullptr ||
+        input.prepared->route != input.route) {
         return AgentQUserSigningFlowBeginResult::invalid_argument;
     }
     if (!timeout_window_valid(input.request_window)) {
@@ -447,63 +370,45 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin_personal_message(
     char network[kAgentQUserSigningNetworkSize] = {};
     if (!copy_nonempty_c_string(input.request_id, request_id, sizeof(request_id)) ||
         !copy_nonempty_c_string(input.session_id, session_id, sizeof(session_id)) ||
-        !copy_nonempty_c_string(input.chain, chain, sizeof(chain)) ||
-        !copy_nonempty_c_string(input.method, method, sizeof(method)) ||
-        !copy_nonempty_c_string(input.network, network, sizeof(network))) {
+        !copy_nonempty_c_string(sign_route_wire_chain(input.route), chain, sizeof(chain)) ||
+        !copy_nonempty_c_string(sign_route_wire_method(input.route), method, sizeof(method)) ||
+        !copy_nonempty_c_string(input.prepared->network, network, sizeof(network))) {
         return AgentQUserSigningFlowBeginResult::invalid_argument;
     }
     if (session_validate(session_id) != AgentQSessionValidationResult::ok) {
         return AgentQUserSigningFlowBeginResult::invalid_session;
     }
-    if (strcmp(chain, "sui") != 0 ||
-        strcmp(method, "sign_personal_message") != 0) {
-        return AgentQUserSigningFlowBeginResult::unsupported_method;
-    }
     if (!supported_network(network)) {
         return AgentQUserSigningFlowBeginResult::invalid_network;
     }
-    if (input.message_size == 0 ||
-        input.message_size > kAgentQSuiSignPersonalMessageMaxBytes) {
+    if (input.prepared->message_size == 0 ||
+        input.prepared->message_size > kAgentQSuiSignPersonalMessageMaxBytes) {
         return AgentQUserSigningFlowBeginResult::invalid_payload;
     }
-
-    uint8_t public_key[kSuiEd25519PublicKeyBytes] = {};
-    char account_address[kSuiAddressBufferSize] = {};
-    const SuiAccountDerivationResult account_result =
-        derive_sui_ed25519_account_from_stored_root(
-            public_key,
-            account_address,
-            sizeof(account_address));
-    wipe_sensitive_buffer(public_key, sizeof(public_key));
-    if (account_result != SuiAccountDerivationResult::ok) {
-        memset(account_address, 0, sizeof(account_address));
-        return AgentQUserSigningFlowBeginResult::account_unavailable;
+    if (input.prepared->payload_digest[0] == '\0') {
+        return AgentQUserSigningFlowBeginResult::digest_error;
     }
 
     g_state.clear();
-    g_state.signing_method = AgentQSigningMethod::sui_sign_personal_message;
+    g_state.signing_method = input.route;
     memcpy(g_state.request_id, request_id, sizeof(g_state.request_id));
+    memcpy(
+        g_state.request_identity,
+        input.request_identity,
+        sizeof(g_state.request_identity));
     memcpy(g_state.session_id, session_id, sizeof(g_state.session_id));
     memcpy(g_state.chain, chain, sizeof(g_state.chain));
     memcpy(g_state.method, method, sizeof(g_state.method));
     memcpy(g_state.network, network, sizeof(g_state.network));
-    memcpy(g_state.account_address, account_address, sizeof(g_state.account_address));
+    memcpy(g_state.account_address, input.prepared->account_address, sizeof(g_state.account_address));
     make_message_preview(
-        input.message,
-        input.message_size,
+        input.prepared->message,
+        input.prepared->message_size,
         g_state.message_preview,
         sizeof(g_state.message_preview));
-    memset(account_address, 0, sizeof(account_address));
-    if (!approval_history_digest_payload(
-            input.message,
-            input.message_size,
-            g_state.payload_digest,
-            sizeof(g_state.payload_digest))) {
-        g_state.clear();
-        return AgentQUserSigningFlowBeginResult::digest_error;
-    }
-    memcpy(g_state.signable_payload, input.message, input.message_size);
-    g_state.signable_payload_size = input.message_size;
+    memcpy(g_state.payload_digest, input.prepared->payload_digest, sizeof(g_state.payload_digest));
+    memcpy(g_state.signable_payload, input.prepared->message, input.prepared->message_size);
+    g_state.signable_payload_size = input.prepared->message_size;
     g_state.signable_payload_available = true;
     g_state.request_window = input.request_window;
     g_state.pin_input_window = kAgentQTimeoutWindowNone;

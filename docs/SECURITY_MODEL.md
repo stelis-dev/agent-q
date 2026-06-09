@@ -122,6 +122,14 @@ Implemented today:
   this method are not implemented. Detailed hardware evidence status is tracked in
   `docs/IMPLEMENTATION_STATUS.md`. Final current-tree hardware and visual
   evidence remain pending, so product-active status is not claimed.
+- Completed signing results are buffered in Firmware RAM for bounded recovery.
+  A repeated signing request replays a result only when its session, public
+  request id, selected route, and validated method parameters match the
+  versioned internal request identity stored with that result. Conflicting
+  reuse returns `request_id_conflict` before adapter or authorization work.
+  `get_result` and `ack_result` address an already-stored result by session and
+  request id; this recovery contract is not persistent anti-replay protection
+  across device reset.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 

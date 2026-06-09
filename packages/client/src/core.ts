@@ -30,13 +30,15 @@ import {
   type SignPersonalMessageParams,
   type SignResultResponse,
   type SignTransactionParams,
+  type SupportedSignRoute,
   type SigningCapabilities,
   type StatusResponse,
+  identifySignRoute,
   validateApprovalHistoryInput,
   validatePolicyProposeInput,
   validatePolicyProposeRequestInput,
-  validateSignPersonalMessageRequestInput,
-  validateSignRequestInput,
+  validateSignPersonalMessageParamsInput,
+  validateSignTransactionParamsInput,
 } from "./protocol.js";
 import {
   INTERNAL_USB_DEADLINE_MS,
@@ -847,11 +849,12 @@ export class GatewayCore {
   async signTransaction(input: {
     deviceId?: string;
     purpose?: string;
-    chain: "sui";
-    method: "sign_transaction";
+    chain: string;
+    method: string;
     network: SignTransactionParams["network"];
     txBytes: string;
   }): Promise<SignTransactionResult> {
+    const route = identifySignGatewayRoute("sign_transaction", input.chain, input.method);
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
     const deadlineMs = INTERNAL_SIGN_TRANSACTION_DEADLINE_MS;
@@ -864,8 +867,6 @@ export class GatewayCore {
     rejectUnsupportedInputFields(input, SIGN_TRANSACTION_INPUT_KEYS, "signTransaction");
     const params = validateSignGatewayInput({
       requestType: "sign_transaction",
-      chain: input.chain,
-      method: input.method,
       network: input.network,
       txBytes: input.txBytes,
     });
@@ -885,8 +886,7 @@ export class GatewayCore {
       const response = await this.usbDriver.signTransaction(
         matchingPort.portPath,
         session.sessionId,
-        input.chain,
-        input.method,
+        route,
         params,
         deadlineMs,
       );
@@ -903,11 +903,12 @@ export class GatewayCore {
   async signPersonalMessage(input: {
     deviceId?: string;
     purpose?: string;
-    chain: "sui";
-    method: "sign_personal_message";
+    chain: string;
+    method: string;
     network: SignPersonalMessageParams["network"];
     message: string;
   }): Promise<SignPersonalMessageResult> {
+    const route = identifySignGatewayRoute("sign_personal_message", input.chain, input.method);
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
     const deadlineMs = INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS;
@@ -920,8 +921,6 @@ export class GatewayCore {
     rejectUnsupportedInputFields(input, SIGN_PERSONAL_MESSAGE_INPUT_KEYS, "signPersonalMessage");
     const params = validateSignPersonalMessageGatewayInput({
       requestType: "sign_personal_message",
-      chain: input.chain,
-      method: input.method,
       network: input.network,
       message: input.message,
     });
@@ -941,8 +940,7 @@ export class GatewayCore {
       const response = await this.usbDriver.signPersonalMessage(
         matchingPort.portPath,
         session.sessionId,
-        input.chain,
-        input.method,
+        route,
         params,
         deadlineMs,
       );
@@ -1171,15 +1169,11 @@ function validateGatewayName(value: unknown): string {
 
 function validateSignGatewayInput(input: {
   requestType: "sign_transaction";
-  chain: unknown;
-  method: unknown;
   network: unknown;
   txBytes: unknown;
 }): SignTransactionParams {
   try {
-    return validateSignRequestInput(
-      input.chain,
-      input.method,
+    return validateSignTransactionParamsInput(
       {
         network: input.network,
         txBytes: input.txBytes,
@@ -1196,21 +1190,42 @@ function validateSignGatewayInput(input: {
 
 function validateSignPersonalMessageGatewayInput(input: {
   requestType: "sign_personal_message";
-  chain: unknown;
-  method: unknown;
   network: unknown;
   message: unknown;
 }): SignPersonalMessageParams {
   try {
-    return validateSignPersonalMessageRequestInput(
-      input.chain,
-      input.method,
+    return validateSignPersonalMessageParamsInput(
       {
         network: input.network,
         message: input.message,
       },
       input.requestType,
     );
+  } catch (error) {
+    if (error instanceof ProtocolError) {
+      throw new GatewayError(error.code, error.message, false);
+    }
+    throw error;
+  }
+}
+
+function identifySignGatewayRoute(
+  operation: "sign_transaction",
+  chain: unknown,
+  method: unknown,
+): Extract<SupportedSignRoute, { operation: "sign_transaction" }>;
+function identifySignGatewayRoute(
+  operation: "sign_personal_message",
+  chain: unknown,
+  method: unknown,
+): Extract<SupportedSignRoute, { operation: "sign_personal_message" }>;
+function identifySignGatewayRoute(
+  operation: "sign_transaction" | "sign_personal_message",
+  chain: unknown,
+  method: unknown,
+): SupportedSignRoute {
+  try {
+    return identifySignRoute(operation, chain, method);
   } catch (error) {
     if (error instanceof ProtocolError) {
       throw new GatewayError(error.code, error.message, false);

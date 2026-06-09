@@ -41,10 +41,9 @@ bool bounded_c_string_length(const char* value, size_t max_size, size_t* output)
 
 }  // namespace
 
-bool validate_canonical_base64(
+bool validate_canonical_base64_syntax(
     const char* value,
     size_t max_base64_size,
-    size_t max_decoded_size,
     size_t* decoded_size)
 {
     if (decoded_size != nullptr) {
@@ -99,7 +98,7 @@ bool validate_canonical_base64(
     }
 
     const size_t output_size = ((length / 4) * 3) - padding;
-    if (output_size == 0 || output_size > max_decoded_size) {
+    if (output_size == 0) {
         return false;
     }
     if (decoded_size != nullptr) {

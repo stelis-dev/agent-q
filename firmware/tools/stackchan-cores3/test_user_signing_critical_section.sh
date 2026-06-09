@@ -171,19 +171,28 @@ agent_q::AgentQTimeoutWindow request_window(TickType_t deadline)
     return agent_q::timeout_window_from_deadline(kDefaultRequestWindowStart, deadline);
 }
 
+const uint8_t kRequestIdentity[agent_q::kAgentQSignRequestIdentitySize] = {};
+
 agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
     const char* request_id,
     const char* session_id)
 {
     const std::vector<uint8_t>& payload = valid_payload();
+    static agent_q::AgentQSuiPreparedSignTransaction prepared = {};
+    prepared = {};
+    prepared.route = agent_q::AgentQSupportedSignRoute::sui_sign_transaction;
+    snprintf(prepared.network, sizeof(prepared.network), "%s", "devnet");
+    memcpy(prepared.tx_bytes, payload.data(), payload.size());
+    prepared.tx_bytes_size = payload.size();
+    snprintf(prepared.payload_digest, sizeof(prepared.payload_digest),
+             "%s", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    agent_q::parse_sui_transfer_facts(payload.data(), payload.size(), &prepared.sui_transfer);
     return agent_q::AgentQUserSigningTransactionBeginInput{
         request_id,
+        kRequestIdentity,
         session_id,
-        "sui",
-        "sign_transaction",
-        "devnet",
-        payload.data(),
-        payload.size(),
+        agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+        &prepared,
         request_window(100),
     };
 }
@@ -202,14 +211,22 @@ agent_q::AgentQUserSigningPersonalMessageBeginInput make_valid_personal_message_
     const char* session_id)
 {
     const std::vector<uint8_t>& message = valid_message();
+    static agent_q::AgentQSuiPreparedPersonalMessage prepared = {};
+    prepared = {};
+    prepared.route = agent_q::AgentQSupportedSignRoute::sui_sign_personal_message;
+    snprintf(prepared.network, sizeof(prepared.network), "%s", "devnet");
+    memcpy(prepared.message, message.data(), message.size());
+    prepared.message_size = message.size();
+    snprintf(prepared.payload_digest, sizeof(prepared.payload_digest),
+             "%s", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    snprintf(prepared.account_address, sizeof(prepared.account_address),
+             "%s", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     return agent_q::AgentQUserSigningPersonalMessageBeginInput{
         request_id,
+        kRequestIdentity,
         session_id,
-        "sui",
-        "sign_personal_message",
-        "devnet",
-        message.data(),
-        message.size(),
+        agent_q::AgentQSupportedSignRoute::sui_sign_personal_message,
+        &prepared,
         request_window(100),
     };
 }
@@ -632,6 +649,7 @@ CPP
   "${AGENT_Q_DIR}/agent_q_user_signing_flow.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_signing_authority.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
+  "${COMMON_ROOT}/sui/agent_q_sui_sign_transaction_adapter.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_bcs_reader.cpp" \
   -o "${TMP_DIR}/user_signing_test"

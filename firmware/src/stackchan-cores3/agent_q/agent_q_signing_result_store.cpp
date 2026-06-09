@@ -12,6 +12,7 @@ struct SigningResultEntry {
     bool active = false;
     char session_id[kAgentQSessionIdSize] = {};
     char request_id[kAgentQRequestIdSize] = {};
+    uint8_t request_identity[kAgentQSignRequestIdentitySize] = {};
     char result[kSigningResultMaxSize] = {};
     size_t result_len = 0;
     uint32_t stored_seq = 0;
@@ -32,11 +33,15 @@ bool entry_matches(const SigningResultEntry& entry, const char* session_id, cons
 SigningResultStoreOutcome signing_result_store(
     const char* session_id,
     const char* request_id,
+    const uint8_t* request_identity,
+    size_t request_identity_size,
     const char* serialized_result,
     size_t serialized_size)
 {
     if (session_id == nullptr || session_id[0] == '\0' ||
         request_id == nullptr || request_id[0] == '\0' ||
+        request_identity == nullptr ||
+        request_identity_size != kAgentQSignRequestIdentitySize ||
         serialized_result == nullptr) {
         return SigningResultStoreOutcome::invalid;
     }
@@ -46,7 +51,12 @@ SigningResultStoreOutcome signing_result_store(
 
     for (SigningResultEntry& entry : g_entries) {
         if (entry_matches(entry, session_id, request_id)) {
-            return SigningResultStoreOutcome::duplicate;
+            return memcmp(
+                       entry.request_identity,
+                       request_identity,
+                       kAgentQSignRequestIdentitySize) == 0
+                       ? SigningResultStoreOutcome::duplicate
+                       : SigningResultStoreOutcome::conflict;
         }
     }
 
@@ -73,12 +83,56 @@ SigningResultStoreOutcome signing_result_store(
         return SigningResultStoreOutcome::invalid;
     }
     memcpy(next.result, serialized_result, serialized_size);
+    memcpy(
+        next.request_identity,
+        request_identity,
+        kAgentQSignRequestIdentitySize);
     next.result[serialized_size] = '\0';
     next.result_len = serialized_size;
     next.active = true;
     next.stored_seq = ++g_store_seq;
     *slot = next;
     return SigningResultStoreOutcome::stored;
+}
+
+SigningResultRetryLookup signing_result_find_for_retry(
+    const char* session_id,
+    const char* request_id,
+    const uint8_t* request_identity,
+    size_t request_identity_size,
+    char* out,
+    size_t out_size,
+    size_t* out_len)
+{
+    if (session_id == nullptr ||
+        request_id == nullptr ||
+        request_identity == nullptr ||
+        request_identity_size != kAgentQSignRequestIdentitySize ||
+        out == nullptr ||
+        out_size == 0) {
+        return SigningResultRetryLookup::invalid;
+    }
+    for (const SigningResultEntry& entry : g_entries) {
+        if (!entry_matches(entry, session_id, request_id)) {
+            continue;
+        }
+        if (memcmp(
+                entry.request_identity,
+                request_identity,
+                kAgentQSignRequestIdentitySize) != 0) {
+            return SigningResultRetryLookup::conflict;
+        }
+        if (entry.result_len >= out_size) {
+            return SigningResultRetryLookup::invalid;
+        }
+        memcpy(out, entry.result, entry.result_len);
+        out[entry.result_len] = '\0';
+        if (out_len != nullptr) {
+            *out_len = entry.result_len;
+        }
+        return SigningResultRetryLookup::match;
+    }
+    return SigningResultRetryLookup::not_found;
 }
 
 bool signing_result_find(

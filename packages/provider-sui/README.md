@@ -82,6 +82,10 @@ The current signing methods are Sui `sign_transaction` and user-confirmed Sui
 `sign_personal_message`. Transaction execution and policy-authorized personal
 message signing are not implemented and must not be advertised.
 
+Provider-sui remains a Sui-specific projection. It does not own a shared chain
+router or registry; the common Client/Gateway and Firmware boundaries enforce
+the shared route contract.
+
 ## Wallet Standard
 
 The Wallet Standard adapter exposes the current Agent-Q-supported wallet

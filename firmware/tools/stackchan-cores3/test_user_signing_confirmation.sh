@@ -227,6 +227,8 @@ agent_q::AgentQTimeoutWindow request_window(TickType_t deadline)
     return agent_q::timeout_window_from_deadline(kDefaultRequestWindowStart, deadline);
 }
 
+const uint8_t kRequestIdentity[agent_q::kAgentQSignRequestIdentitySize] = {};
+
 agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
     const char* request_id,
     const char* session_id,
@@ -235,14 +237,21 @@ agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
     size_t payload_size,
     TickType_t deadline = 300)
 {
+    static agent_q::AgentQSuiPreparedSignTransaction prepared = {};
+    prepared = {};
+    prepared.route = agent_q::AgentQSupportedSignRoute::sui_sign_transaction;
+    snprintf(prepared.network, sizeof(prepared.network), "%s", network);
+    memcpy(prepared.tx_bytes, payload, payload_size);
+    prepared.tx_bytes_size = payload_size;
+    snprintf(prepared.payload_digest, sizeof(prepared.payload_digest),
+             "%s", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    agent_q::parse_sui_transfer_facts(payload, payload_size, &prepared.sui_transfer);
     return agent_q::AgentQUserSigningTransactionBeginInput{
         request_id,
+        kRequestIdentity,
         session_id,
-        "sui",
-        "sign_transaction",
-        network,
-        payload,
-        payload_size,
+        agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+        &prepared,
         request_window(deadline),
     };
 }
@@ -937,6 +946,7 @@ CPP
   "${AGENT_Q_DIR}/agent_q_local_pin_auth.cpp" \
   "${AGENT_Q_DIR}/agent_q_pin_attempt.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
+  "${COMMON_ROOT}/sui/agent_q_sui_sign_transaction_adapter.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_bcs_reader.cpp" \
   -o "${TMP_DIR}/user_signing_confirmation_test"

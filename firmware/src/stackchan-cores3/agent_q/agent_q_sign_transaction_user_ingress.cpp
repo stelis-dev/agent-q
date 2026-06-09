@@ -82,6 +82,7 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_identit
 
 AgentQSignTransactionUserIngressResult evaluate_sign_transaction_user_ingress(
     JsonDocument& request,
+    AgentQSupportedSignRoute route,
     const AgentQSignTransactionUserIngressState& state,
     AgentQSignTransactionUserIngressOutput* output)
 {
@@ -123,7 +124,7 @@ AgentQSignTransactionUserIngressResult evaluate_sign_transaction_user_ingress(
     }
 
     AgentQSignTransactionUserParams params = {};
-    validation = validate_sign_transaction_user_params(request, &params);
+    validation = validate_sign_transaction_user_params(request, route, &params);
     if (validation != AgentQSignTransactionUserValidationResult::ok) {
         return map_validation_result(validation);
     }

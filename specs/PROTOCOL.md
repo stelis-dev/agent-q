@@ -135,6 +135,7 @@ Protocol error codes:
 
 - `invalid_json`
 - `invalid_id`
+- `request_id_conflict`
 - `invalid_code`
 - `invalid_gateway_name`
 - `invalid_session`
@@ -144,8 +145,11 @@ Protocol error codes:
 - `protocol_error`
 - `unsupported_version`
 - `unsupported_type`
+- `unsupported_chain`
 - `unsupported_method`
 - `unsupported_transaction`
+- `unsupported_payload_size`
+- `malformed_transaction`
 - `busy`
 - `rejected`
 - `timeout`
@@ -1048,9 +1052,10 @@ Rules:
   time.
 - Current StackChan CoreS3 source records required signing confirmation and
   terminal metadata plus recordable terminal metadata from
-  `policy_propose`. Invalid parameter, malformed transaction,
-  unsupported-method, and unsupported policy-action errors are not persisted as
-  approval history.
+  `policy_propose`. Invalid parameter, request-id conflict, malformed
+  transaction, unsupported chain, unsupported method, unsupported payload
+  size, unsupported transaction, and unsupported policy-action errors are not
+  persisted as approval history.
 - Approval-history persistence is part of the terminal decision contract for
   decisions that are recorded. If Firmware cannot persist a required history
   record or its write budget is exhausted, `sign_transaction` returns the top-level
@@ -1067,6 +1072,60 @@ Rules:
   unexpected `sessionId`, preserves protocol integers as strings, and does not
   evaluate policy or signing safety.
 - The Gateway MCP `get_approval_history` tool never exposes the session id.
+
+## Shared Signing Route And Validation Order
+
+Signing uses shared top-level request types rather than chain-specific product
+APIs. Firmware and Gateway independently classify the bounded
+`(type, chain, method)` route:
+
+- chain identifiers use `[a-z][a-z0-9_.-]*` and are at most 32 characters;
+- method identifiers use `[a-z][a-z0-9_.-]*` and are at most 64 characters;
+- malformed or missing route identifiers return `invalid_params`;
+- a syntactically valid unsupported chain returns `unsupported_chain`;
+- a supported chain with an unsupported or type-mismatched method returns
+  `unsupported_method`;
+- the only executable routes currently are Sui `sign_transaction` and Sui
+  `sign_personal_message`.
+
+Route classification is bounded and side-effect-free. Unsupported routes must
+not reach device/session state checks, stored-result replay, policy evaluation,
+approval UI, history writes, adapter decoding, or signing.
+
+For a supported signing route, validation order is:
+
+```text
+common envelope
+  -> (type, chain, method) route
+  -> device state and active session
+  -> shallow method parameters
+  -> versioned signing-request identity
+  -> matching stored-result replay or `request_id_conflict`
+  -> selected chain-method adapter capacity and semantics
+  -> selected Firmware authorization gate
+```
+
+An explicit same-id signing retry replays a stored result only when its
+versioned signing-request identity matches the stored identity. The identity
+binds the supported route and every validated method parameter through a
+length-delimited canonical serialization and SHA-256 fingerprint. A different
+validated signing request using the same `(session, request id)` returns
+`request_id_conflict` without adapter, policy, approval, history, or signing
+work. `get_result`, `ack_result`, and session-bound result cleanup remain keyed
+by `(session, request id)` and unchanged.
+
+Stored signing results are bounded RAM recovery state, not persistent replay
+protection. Retry match and `request_id_conflict` behavior apply only while the
+original `(session, request id)` entry remains buffered. After eviction, ack,
+session end, or reset, `get_result` returns `unknown_request` and a same-id
+signing submission is evaluated as a normal new request through the current
+route, state/session, parameter, adapter, and authorization gates.
+
+Common Client, Gateway, MCP, and CLI request validation owns canonical base64
+syntax and the chain-independent transport/frame bound. It must not reject a
+request using the current Sui adapter's decoded-payload capacity. Firmware's
+selected Sui adapter owns base64 decoding, its current implementation capacity,
+transaction or message semantics, account binding, and signing preparation.
 
 ## Transaction Signing Request
 
@@ -1119,9 +1178,13 @@ Rules for the first implementation:
   `devnet`, or `localnet`. Current Sui `txBytes` do not carry network identity,
   so Firmware validates this only as request context and does not expose it as a
   policy fact or transaction-derived history proof.
-- `params.txBytes` must be canonical base64 and remain within the current Sui
-  signing request bounds unless a later spec change widens the bound with
-  matching parser, scratch, UI, and tests.
+- `params.txBytes` must be canonical base64 and fit the shared transport/frame
+  bound. The current Sui Firmware adapter has a 384-byte decoded transaction
+  implementation capacity. Capacity overflow returns
+  `unsupported_payload_size`; malformed decoded bytes return
+  `malformed_transaction`; a decoded but unsupported transaction shape returns
+  `unsupported_transaction`. These are adapter outcomes, not common
+  Client/Gateway/MCP/CLI request-format limits.
 - Firmware must derive the signing account from stored device material, and
   the parsed sender and gas owner must both match that device-derived account.
   Sponsored gas and request-supplied expected-signer bindings are unsupported
@@ -1213,7 +1276,10 @@ Rules for the first implementation:
   `sessionId`, or signing material.
 - The first implementation is limited to `chain: "sui"` and
   `method: "sign_personal_message"` with canonical base64 `params.message`
-  bytes inside the current target's bounded message-size limit.
+  that fits the shared transport/frame bound. The current Sui Firmware adapter
+  has a 256-byte decoded personal-message implementation capacity. Capacity
+  overflow returns `unsupported_payload_size`; this is an adapter outcome, not
+  a common Client/Gateway/MCP/CLI request-format limit.
 - `params.network` is required and must be one of `mainnet`, `testnet`,
   `devnet`, or `localnet`. Current Sui personal-message bytes do not carry
   network identity, so Firmware validates this only as request context and does
@@ -1359,20 +1425,29 @@ requests.
   `signing_failed`, and it must not claim that Firmware did not generate a
   signature. A later `get_approval_history` read may show the durable `signed`
   terminal record.
-- Firmware buffers each completed `sign_result` in RAM, keyed by `(session, request
-  id)`, so a result whose response delivery failed can be recovered. The host recovers
-  it by re-sending the same request id (Firmware returns the buffered result instead of
-  signing again — idempotent) or by a `get_result` request (standard envelope +
-  `sessionId`, with `id` set to the original signing request's id), which returns the
-  buffered `sign_result` or an `unknown_request` error if none is buffered. An
-  `ack_result` request releases a buffered result. The buffer is session-bound (another
-  session cannot read it), survives a transient link drop via a short session grace
-  window, and is cleared on session end or device reset. A device reset clears it, so a
-  later re-request re-runs the normal signing gates — a lost signature surfaces as an
-  explicit re-authorization, never as a silent vanished signature. The host owns request
-  id uniqueness — an id names one request — so reusing an id returns that prior result;
-  because the buffer only ever holds already-authorized results, a reused id can resurface
-  an authorized result but never produce an unauthorized one.
+- Firmware buffers each completed `sign_result` in bounded RAM, keyed by
+  `(session, request id)`, so a result whose response delivery failed can be
+  recovered while the entry is still retained. The current Firmware store is a
+  small fixed-size buffer and evicts the oldest entry when full. The host
+  recovers a retained result by re-sending the same request id (Firmware returns
+  the buffered result instead of signing again) or by a `get_result` request
+  (standard envelope + `sessionId`, with `id` set to the original signing
+  request's id), which returns the buffered `sign_result` or an
+  `unknown_request` error if none is buffered. An `ack_result` request releases
+  a buffered result. The buffer is session-bound (another session cannot read
+  it), survives a transient link drop via a short session grace window, and is
+  cleared on ack, session end, disconnect/session cleanup, wipe, or device
+  reset. A device reset clears it, so a later re-request re-runs the normal
+  signing gates. The host owns request id uniqueness. A re-submitted signing
+  request replays only when its validated signing-request identity matches the
+  stored identity and the bounded RAM entry is still retained; a different
+  request using the same id returns `request_id_conflict` only while the
+  original entry is still retained.
+- A re-submitted signing request reaches buffered-result lookup only after its
+  common envelope, supported `(type, chain, method)` route, device state, and
+  active session, exact fields, and shallow method parameters succeed.
+  Unsupported routes and malformed requests cannot access buffered signing
+  results.
 - The provider `signTransaction` API and MCP `sign_transaction` tool return
   discriminated results for Firmware-authored terminal `sign_result` statuses.
   Device rejection, device timeout, policy rejection, and signing failure are

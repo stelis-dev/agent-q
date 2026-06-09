@@ -279,6 +279,22 @@ that produced the request. The source state must be material-backed
 terminal outcome remains `provisioned`, unless the terminal outcome detects
 persistent material inconsistency.
 
+Before these state-scoped signing gates, Gateway and Firmware may perform only
+bounded, side-effect-free identification of the shared `(type, chain, method)`
+route. Unsupported or malformed routes fail without reaching state/session,
+replay, approval, policy, history, adapter, or signing work. For a supported
+route, state/session checks occur before method-parameter validation and
+chain-adapter decoding. After shallow method-parameter validation, Firmware
+computes a versioned internal signing-request identity from the selected route
+and validated method parameters. A same-id retry replays only when that
+identity matches and the bounded RAM result entry is still retained; a
+different request reusing the id fails with `request_id_conflict` before
+adapter, approval, policy, history, or signing work only while the original
+entry is still buffered. Stored signing results are runtime recovery state, not
+persistent replay protection. They are cleared by ack, session cleanup,
+disconnect/session end, wipe, or reset, and the fixed-size store evicts the
+oldest entry when full.
+
 #### Human Approval Input Mode
 
 `human approval input mode` is a device-local setting with current values

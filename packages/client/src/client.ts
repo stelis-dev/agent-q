@@ -70,16 +70,16 @@ export interface DeviceClientCore {
   signTransaction(input: {
     deviceId?: string;
     purpose?: string;
-    chain: "sui";
-    method: "sign_transaction";
+    chain: string;
+    method: string;
     network: "mainnet" | "testnet" | "devnet" | "localnet";
     txBytes: string;
   }): Promise<SignTransactionResult>;
   signPersonalMessage(input: {
     deviceId?: string;
     purpose?: string;
-    chain: "sui";
-    method: "sign_personal_message";
+    chain: string;
+    method: string;
     network: "mainnet" | "testnet" | "devnet" | "localnet";
     message: string;
   }): Promise<SignPersonalMessageResult>;
