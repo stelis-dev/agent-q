@@ -14,7 +14,7 @@ process.exitCode = await runSuiSignCli(process.argv.slice(2), {
   core: createLocalServerSuiSignCliCore(),
   async readStdin() {
     process.stdin.setEncoding("utf8");
-    return readOneStdinLine();
+    return readOneJsonRpcObject();
   },
   writeStdout: (text) =>
     new Promise<void>((resolve, reject) => {
@@ -40,7 +40,7 @@ process.exitCode = await runSuiSignCli(process.argv.slice(2), {
   saveConfig: saveSignerConfig,
 });
 
-function readOneStdinLine(): Promise<string> {
+function readOneJsonRpcObject(): Promise<string> {
   return new Promise((resolve, reject) => {
     let buffer = "";
     let settled = false;
@@ -51,6 +51,7 @@ function readOneStdinLine(): Promise<string> {
       process.stdin.off("close", onEnd);
       process.stdin.off("error", onError);
       process.stdin.pause();
+      process.stdin.destroy();
     };
     const finish = (value: string): void => {
       if (settled) {
@@ -65,6 +66,11 @@ function readOneStdinLine(): Promise<string> {
       const newlineIndex = buffer.search(/\r?\n/);
       if (newlineIndex !== -1) {
         finish(buffer.slice(0, newlineIndex + 1));
+        return;
+      }
+      const objectEnd = completeJsonObjectEnd(buffer);
+      if (objectEnd !== -1) {
+        finish(buffer.slice(0, objectEnd));
       }
     };
     const onEnd = (): void => finish(buffer);
@@ -83,6 +89,60 @@ function readOneStdinLine(): Promise<string> {
     process.stdin.once("error", onError);
     process.stdin.resume();
   });
+}
+
+function completeJsonObjectEnd(input: string): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let started = false;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const value = input[index]!;
+    if (!started) {
+      if (/\s/.test(value)) {
+        continue;
+      }
+      if (value !== "{") {
+        return -1;
+      }
+      started = true;
+      depth = 1;
+      continue;
+    }
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (value === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (value === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (value === "\"") {
+      inString = true;
+      continue;
+    }
+    if (value === "{") {
+      depth += 1;
+      continue;
+    }
+    if (value === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return index + 1;
+      }
+    }
+  }
+
+  return -1;
 }
 
 async function loadSignerConfig(): Promise<SuiSignCliConfig> {

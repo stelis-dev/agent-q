@@ -18,10 +18,13 @@ device signing mode.
 Run the local server as an MCP server:
 
 ```sh
-npx -y @stelis/agent-q
+npx -y @stelis/agent-q serve --request-connect
 ```
 
 If installed globally, use `agent-q`.
+
+Confirm the connection request on the device when the server starts. The server
+can request a connection, but only Firmware can approve it on the device.
 
 MCP client config example:
 
@@ -30,7 +33,7 @@ MCP client config example:
   "mcpServers": {
     "agent-q": {
       "command": "npx",
-      "args": ["-y", "@stelis/agent-q"]
+      "args": ["-y", "@stelis/agent-q", "serve", "--request-connect"]
     }
   }
 }
@@ -58,21 +61,31 @@ they should not infer user intent from a successful signature.
 Register the Agent-Q signer with Sui CLI:
 
 ```sh
-npx -y @stelis/agent-q
+npm install -g @stelis/agent-q
+agent-q serve --request-connect
 sui external-keys list-keys agent-q-sui-signer
 sui external-keys add-existing "<KEY_ID>" agent-q-sui-signer
 sui client switch --address <SUI_ADDRESS>
 ```
 
-`agent-q-sui-signer` must be available on `PATH` when Sui CLI invokes it. The
-same `@stelis/agent-q` package provides both `agent-q` and
-`agent-q-sui-signer`.
+Sui CLI later runs the signer by command name. `agent-q-sui-signer` must
+therefore be installed, linked, or otherwise available on `PATH` when Sui CLI
+invokes it. The same `@stelis/agent-q` package provides both `agent-q` and
+`agent-q-sui-signer`. From a source checkout, link the package before using Sui
+CLI as an external signer.
 
 After that, normal Sui CLI commands that need the selected address can request
-the signature from Agent-Q:
+the signature from Agent-Q. For example, pick a SUI coin and send SUI:
 
 ```sh
-sui client transfer --object-id <OBJECT_ID> --to <TO_ADDRESS>
+sui client gas <SUI_ADDRESS> --json
+sui client pay-sui \
+  --input-coins <SUI_COIN_OBJECT_ID> \
+  --recipients <TO_ADDRESS> \
+  --amounts <MIST_AMOUNT> \
+  --gas-budget <GAS_BUDGET> \
+  --sender <SUI_ADDRESS> \
+  --json
 ```
 
 Sui CLI calls `agent-q-sui-signer` through its external signer JSON-RPC

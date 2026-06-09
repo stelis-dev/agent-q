@@ -9,14 +9,33 @@ import {
   validateSignTransactionParamsInput,
 } from "@stelis/agent-q-core/protocol";
 
+import {
+  formatSuiExternalSignerJsonRpcError,
+  formatSuiExternalSignerJsonRpcResult,
+  parseSuiExternalSignerJsonRpcRequest,
+  parseSuiExternalSignerKeysParams,
+  parseSuiExternalSignerPublicKeyParams,
+  parseSuiExternalSignerSignParams,
+  type SuiExternalSignerJsonRpcRequest,
+  type SuiExternalSignerPublicKeyResponse,
+} from "./sui-external-signer-jsonrpc.js";
+
 export const SUI_SIGN_CLI_HELP = `Agent-Q Sui CLI external signer
 
 Usage:
-  npx -y @stelis/agent-q
+  npm install -g @stelis/agent-q
+  agent-q serve --request-connect
   sui external-keys list-keys agent-q-sui-signer
   sui external-keys add-existing "<KEY_ID>" agent-q-sui-signer
   sui client switch --address <SUI_ADDRESS>
-  sui client transfer --object-id <OBJECT_ID> --to <TO_ADDRESS>
+  sui client gas <SUI_ADDRESS> --json
+  sui client pay-sui \\
+    --input-coins <SUI_COIN_OBJECT_ID> \\
+    --recipients <TO_ADDRESS> \\
+    --amounts <MIST_AMOUNT> \\
+    --gas-budget <GAS_BUDGET> \\
+    --sender <SUI_ADDRESS> \\
+    --json
 
 Advanced:
   agent-q-sui-signer configure --network <mainnet|testnet|devnet|localnet> [--device-id <id>] [--purpose <purpose>]
@@ -52,28 +71,6 @@ export interface SuiSignCliConfig {
   network?: SuiSignTransactionNetwork;
   deviceId?: string;
   purpose?: string;
-}
-
-interface JsonRpcRequest {
-  jsonrpc: string;
-  method: string;
-  params: unknown;
-  id: number;
-}
-
-interface SignParams {
-  key_id: string;
-  msg: string;
-}
-
-interface PublicKeyParams {
-  key_id: string;
-}
-
-interface PublicKeyResponse {
-  key_id: string;
-  public_key: { Ed25519: string };
-  sui_address: string;
 }
 
 const SUI_SIGN_CLI_VALUE_FLAGS = new Set(["--network", "--tx-bytes", "--device-id", "--purpose"]);
@@ -241,9 +238,9 @@ async function runConfigure(
 }
 
 async function runSuiExternalSignerCall(dependencies: SuiSignCliDependencies): Promise<number> {
-  let request: JsonRpcRequest;
+  let request: SuiExternalSignerJsonRpcRequest;
   try {
-    request = parseJsonRpcRequest(await dependencies.readStdin());
+    request = parseSuiExternalSignerJsonRpcRequest(await dependencies.readStdin());
   } catch (error) {
     await writeJsonRpcError(dependencies, null, -32700, errorMessage(error));
     return 1;
@@ -252,6 +249,7 @@ async function runSuiExternalSignerCall(dependencies: SuiSignCliDependencies): P
   try {
     switch (request.method) {
       case "keys": {
+        parseSuiExternalSignerKeysParams(request.params);
         const accounts = await readDeviceAccounts(dependencies);
         await writeJsonRpcResult(dependencies, request.id, {
           keys: accounts.map(accountToPublicKeyResponse),
@@ -259,13 +257,13 @@ async function runSuiExternalSignerCall(dependencies: SuiSignCliDependencies): P
         return 0;
       }
       case "public_key": {
-        const params = parsePublicKeyParams(request.params);
-        const account = await findDeviceAccount(dependencies, params.key_id);
+        const params = parseSuiExternalSignerPublicKeyParams(request.params);
+        const account = await findDeviceAccount(dependencies, params.keyId);
         await writeJsonRpcResult(dependencies, request.id, accountToPublicKeyResponse(account));
         return 0;
       }
       case "sign": {
-        const params = parseSignParams(request.params);
+        const params = parseSuiExternalSignerSignParams(request.params);
         const config = await loadSignerConfig(dependencies);
         const network = config.network;
         if (network === undefined) {
@@ -277,8 +275,8 @@ async function runSuiExternalSignerCall(dependencies: SuiSignCliDependencies): P
           deviceId: config.deviceId,
           purpose: config.purpose,
           network,
-          txBytes: params.msg,
-          expectedKeyId: params.key_id,
+          txBytes: params.txBytes,
+          expectedKeyId: params.keyId,
         });
         await writeJsonRpcResult(dependencies, request.id, { signature: result });
         return 0;
@@ -405,7 +403,7 @@ function accountToPublicKeyResponse(account: {
   address: string;
   publicKey: string;
   derivationPath: string;
-}): PublicKeyResponse {
+}): SuiExternalSignerPublicKeyResponse {
   return {
     key_id: account.derivationPath,
     public_key: { Ed25519: account.publicKey },
@@ -413,55 +411,11 @@ function accountToPublicKeyResponse(account: {
   };
 }
 
-function parseJsonRpcRequest(input: string): JsonRpcRequest {
-  const firstLine = input.split(/\r?\n/, 1)[0]?.trim();
-  if (firstLine === undefined || firstLine.length === 0) {
-    throw new Error("JSON-RPC request is empty.");
-  }
-  const parsed = JSON.parse(firstLine) as unknown;
-  if (!isRecord(parsed)) {
-    throw new Error("JSON-RPC request must be an object.");
-  }
-  if (
-    parsed.jsonrpc !== "2.0" ||
-    typeof parsed.method !== "string" ||
-    typeof parsed.id !== "number" ||
-    !Number.isSafeInteger(parsed.id)
-  ) {
-    throw new Error("Invalid JSON-RPC request.");
-  }
-  return {
-    jsonrpc: "2.0",
-    method: parsed.method,
-    params: parsed.params,
-    id: parsed.id,
-  };
-}
-
-function parseSignParams(params: unknown): SignParams {
-  if (!isRecord(params) || typeof params.key_id !== "string" || typeof params.msg !== "string") {
-    throw new Error("Invalid sign params.");
-  }
-  validateSignTransactionParamsInput({ network: "testnet", txBytes: params.msg }, "sign");
-  return { key_id: params.key_id, msg: params.msg };
-}
-
-function parsePublicKeyParams(params: unknown): PublicKeyParams {
-  if (!isRecord(params) || typeof params.key_id !== "string" || params.key_id.length === 0) {
-    throw new Error("Invalid public_key params.");
-  }
-  return { key_id: params.key_id };
-}
-
 function validateNetwork(value: string): SuiSignTransactionNetwork {
   if (!SUI_SIGN_TRANSACTION_NETWORKS.includes(value as SuiSignTransactionNetwork)) {
     throw new Error("Unsupported Sui network.");
   }
   return value as SuiSignTransactionNetwork;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function errorMessage(error: unknown): string {
@@ -473,7 +427,7 @@ async function writeJsonRpcResult(
   id: number,
   result: unknown,
 ): Promise<void> {
-  await dependencies.writeStdout(`${JSON.stringify({ jsonrpc: "2.0", result, id })}\n`);
+  await dependencies.writeStdout(formatSuiExternalSignerJsonRpcResult(id, result));
 }
 
 async function writeJsonRpcError(
@@ -482,9 +436,7 @@ async function writeJsonRpcError(
   code: number,
   message: string,
 ): Promise<void> {
-  await dependencies.writeStdout(
-    `${JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id })}\n`,
-  );
+  await dependencies.writeStdout(formatSuiExternalSignerJsonRpcError(id, code, message));
 }
 
 function parseCliFlags(args: string[]):
