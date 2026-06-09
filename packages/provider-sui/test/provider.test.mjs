@@ -25,8 +25,8 @@ import {
   createAgentQSuiBrowserProvider,
   isAgentQSuiBrowserProviderAvailable,
 } from "../dist/browser.js";
-import { FORBIDDEN_SECRET_FIELD_NAMES, SIGN_RESULT_ERROR_MESSAGES, SUI_DERIVATION_PATH } from "@stelis/agent-q-client/protocol";
-import { parseProviderProtocolResponse } from "@stelis/agent-q-client/provider-protocol";
+import { FORBIDDEN_SECRET_FIELD_NAMES, SIGN_RESULT_ERROR_MESSAGES, SUI_DERIVATION_PATH } from "@stelis/agent-q-core/protocol";
+import { parseProviderProtocolResponse } from "@stelis/agent-q-core/provider-protocol";
 
 const SUI_ADDRESS = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
 const SUI_PUBLIC_KEY = "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=";
@@ -440,10 +440,10 @@ test("provider-sui package metadata exposes only Sui provider and Wallet Standar
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
   assert.equal(packageJson.name, "@stelis/agent-q-provider-sui");
   assert.deepEqual(Object.keys(packageJson.exports).sort(), [".", "./browser", "./package.json", "./provider-sui", "./wallet-standard"]);
-  assert.equal(packageJson.dependencies["@stelis/agent-q-client"], "0.0.0");
+  assert.equal(packageJson.dependencies["@stelis/agent-q-core"], "0.0.0");
   assert.equal(packageJson.dependencies["@mysten/wallet-standard"], "^0.20.3");
   assert.equal(packageJson.dependencies["@mysten/sui"], "^2.17.0");
-  assert.equal(packageJson.dependencies["@stelis/agent-q-mcp"], undefined);
+  assert.equal(packageJson.dependencies["@stelis/agent-q"], undefined);
   assert.equal(packageJson.bin, undefined);
 });
 
@@ -475,7 +475,7 @@ test("provider-sui package self-reference resolves Sui provider only", async () 
 test("provider does not import MCP or Admin adapters", async () => {
   const providerPath = fileURLToPath(new URL("../dist/provider-sui.js", import.meta.url));
   const source = await readFile(providerPath, "utf8");
-  assert.doesNotMatch(source, /@stelis\/agent-q-mcp/);
+  assert.doesNotMatch(source, /@stelis\/agent-q(?!-core)/);
   assert.doesNotMatch(source, /mcp/i);
   assert.doesNotMatch(source, /admin/i);
 });
@@ -483,23 +483,23 @@ test("provider does not import MCP or Admin adapters", async () => {
 test("Wallet Standard entrypoint stays separated from Node device transport", async () => {
   const walletStandardPath = fileURLToPath(new URL("../dist/wallet-standard.js", import.meta.url));
   const source = await readFile(walletStandardPath, "utf8");
-  assert.doesNotMatch(source, /@stelis\/agent-q-client/);
+  assert.doesNotMatch(source, /@stelis\/agent-q-core/);
   assert.doesNotMatch(source, /\.\/provider-sui\.js/);
   assert.doesNotMatch(source, /node:buffer/);
 
   const walletStandardTypesPath = fileURLToPath(new URL("../dist/wallet-standard.d.ts", import.meta.url));
   const types = await readFile(walletStandardTypesPath, "utf8");
-  assert.doesNotMatch(types, /@stelis\/agent-q-client/);
+  assert.doesNotMatch(types, /@stelis\/agent-q-core/);
   assert.doesNotMatch(types, /\.\/provider-sui\.js/);
 });
 
 test("browser provider runtime stays separated from Admin, MCP, and Node serial transports", async () => {
   const browserPath = fileURLToPath(new URL("../dist/browser.js", import.meta.url));
   const source = await readFile(browserPath, "utf8");
-  assert.match(source, /@stelis\/agent-q-client\/provider-protocol/);
-  assert.doesNotMatch(source, /@stelis\/agent-q-client\/protocol/);
-  assert.doesNotMatch(source, /@stelis\/agent-q-client\/admin/);
-  assert.doesNotMatch(source, /@stelis\/agent-q-mcp/);
+  assert.match(source, /@stelis\/agent-q-core\/provider-protocol/);
+  assert.doesNotMatch(source, /@stelis\/agent-q-core\/protocol/);
+  assert.doesNotMatch(source, /@stelis\/agent-q-core\/admin/);
+  assert.doesNotMatch(source, /@stelis\/agent-q(?!-core)/);
   assert.doesNotMatch(source, /adapter-internal/);
   assert.doesNotMatch(source, /serialport/);
   assert.doesNotMatch(source, /node:/);
@@ -511,8 +511,8 @@ test("browser provider runtime stays separated from Admin, MCP, and Node serial 
 
   const browserTypesPath = fileURLToPath(new URL("../dist/browser.d.ts", import.meta.url));
   const types = await readFile(browserTypesPath, "utf8");
-  assert.doesNotMatch(types, /@stelis\/agent-q-client\/admin/);
-  assert.doesNotMatch(types, /@stelis\/agent-q-mcp/);
+  assert.doesNotMatch(types, /@stelis\/agent-q-core\/admin/);
+  assert.doesNotMatch(types, /@stelis\/agent-q(?!-core)/);
   assert.doesNotMatch(types, /requestTimeoutMs/);
   assert.doesNotMatch(types, /requestPort/);
   assert.doesNotMatch(types, /serial\?/);
@@ -1408,7 +1408,7 @@ test("browser provider connect fails closed when Web Serial is unavailable", asy
 });
 
 test("browser provider rejects oversized Web Serial response lines", async () => {
-  const { MAX_PROTOCOL_RESPONSE_LINE_BYTES } = await import("@stelis/agent-q-client/provider-protocol");
+  const { MAX_PROTOCOL_RESPONSE_LINE_BYTES } = await import("@stelis/agent-q-core/provider-protocol");
   const port = new FakeBrowserSerialPort(() => `{"${"x".repeat(MAX_PROTOCOL_RESPONSE_LINE_BYTES)}":0}\n`);
   const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
   try {

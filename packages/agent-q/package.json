@@ -1,13 +1,13 @@
 {
-  "name": "@stelis/agent-q-mcp",
+  "name": "@stelis/agent-q",
   "version": "0.0.0",
-  "description": "Agent-Q MCP server, CLI, and local Admin Page for the Agent-Q client.",
+  "description": "Agent-Q local server with MCP API, local Admin Page, and Sui CLI external signer support.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "https://github.com/stelis-dev/agent-q.git",
-    "directory": "packages/mcp"
+    "directory": "packages/agent-q"
   },
   "main": "./dist/mcp.js",
   "types": "./dist/mcp.d.ts",
@@ -35,7 +35,7 @@
     "README.md"
   ],
   "scripts": {
-    "prebuild": "npm --workspace @stelis/agent-q-client run build",
+    "prebuild": "npm --workspace @stelis/agent-q-core run build",
     "build": "npm run build:self",
     "build:self": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && chmod +x dist/bin/agent-q.js dist/bin/agent-q-sui-signer.js",
     "test": "npm run build && npm run test:self",
@@ -43,7 +43,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@stelis/agent-q-client": "0.0.0",
+    "@stelis/agent-q-core": "0.0.0",
     "zod": "4.4.3"
   },
   "devDependencies": {

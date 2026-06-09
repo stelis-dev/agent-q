@@ -9,7 +9,7 @@ import {
   createAdminHttpServer,
   startAdminServer,
 } from "../dist/admin.js";
-import { AgentQError } from "@stelis/agent-q-client/adapter-internal";
+import { AgentQError } from "@stelis/agent-q-core/adapter-internal";
 
 const deviceId = "a508d833-5c83-4680-88bb-18aee976881e";
 
@@ -155,7 +155,7 @@ test("Admin egress boundary uses shared Agent-Q output schemas without importing
   const adminPath = fileURLToPath(new URL("../dist/admin.js", import.meta.url));
   const source = await readFile(adminPath, "utf8");
   assert.doesNotMatch(source, /["']\.\/mcp\.js["']/);
-  assert.match(source, /["']@stelis\/agent-q-client\/adapter-internal["']/);
+  assert.match(source, /["']@stelis\/agent-q-core\/adapter-internal["']/);
 });
 
 test("Admin agent-q rejects non-loopback bind hosts", async () => {

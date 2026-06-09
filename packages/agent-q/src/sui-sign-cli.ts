@@ -1,5 +1,5 @@
-import type { AgentQHostCore } from "@stelis/agent-q-client/admin";
-import { toAgentQError, toPublicError } from "@stelis/agent-q-client/adapter-internal";
+import type { AgentQCore } from "@stelis/agent-q-core";
+import { toAgentQError, toPublicError } from "@stelis/agent-q-core/adapter-internal";
 import {
   SIGN_RESULT_ERROR_MESSAGES,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
@@ -7,7 +7,7 @@ import {
   type Account,
   type SuiSignTransactionNetwork,
   validateSignTransactionParamsInput,
-} from "@stelis/agent-q-client/protocol";
+} from "@stelis/agent-q-core/protocol";
 
 export const SUI_SIGN_CLI_HELP = `Agent-Q Sui CLI external signer
 
@@ -26,7 +26,7 @@ Sui CLI calls this program as an external signer. Agent-Q lists the Sui key from
 the connected device and sends signing requests to Firmware. The private key stays on the device.`;
 
 export type SuiSignCliCore = Pick<
-  AgentQHostCore,
+  AgentQCore,
   "connectDevice" | "disconnectDevice" | "getAccounts" | "signTransaction"
 >;
 

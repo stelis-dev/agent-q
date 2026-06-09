@@ -1,5 +1,5 @@
 import { ConfigStore } from "./config.js";
-import { AgentQHostCore } from "./core.js";
+import { AgentQCore } from "./core.js";
 import { SerialPortUsbDriver } from "./usb.js";
 import type {
   ConnectDeviceResult,
@@ -35,7 +35,7 @@ export type {
   SelectDeviceResult,
 } from "./core.js";
 
-export interface DeviceClientCore {
+export interface AgentQDeviceClient {
   scanDevices(input?: Record<string, never>): Promise<ScanDevicesResult>;
   identifyDevices(input?: Record<string, never>): Promise<IdentifyDevicesResult>;
   selectDevice(input: { deviceId: string; purpose?: string }): Promise<SelectDeviceResult>;
@@ -85,7 +85,7 @@ export interface DeviceClientCore {
   }): Promise<SignPersonalMessageResult>;
 }
 
-function deviceClientFromCore(core: AgentQHostCore): DeviceClientCore {
+function deviceApiFromCore(core: AgentQCore): AgentQDeviceClient {
   return {
     scanDevices: (input = {}) => core.scanDevices(input),
     identifyDevices: (input = {}) => core.identifyDevices(input),
@@ -102,6 +102,6 @@ function deviceClientFromCore(core: AgentQHostCore): DeviceClientCore {
   };
 }
 
-export function createDefaultDeviceClientCore(): DeviceClientCore {
-  return deviceClientFromCore(new AgentQHostCore(new ConfigStore(), new SerialPortUsbDriver()));
+export function createDefaultAgentQDeviceClient(): AgentQDeviceClient {
+  return deviceApiFromCore(new AgentQCore(new ConfigStore(), new SerialPortUsbDriver()));
 }

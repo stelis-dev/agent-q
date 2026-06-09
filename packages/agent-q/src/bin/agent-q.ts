@@ -35,10 +35,10 @@ async function startAgentQ(agentQArgs: string[]): Promise<void> {
     });
   };
   try {
-    const { createDefaultAgentQHostCore } = await import("@stelis/agent-q-client/admin");
+    const { createDefaultAgentQCore } = await import("@stelis/agent-q-core");
     const { DEFAULT_ADMIN_PORT, startAdminServer } = await import("../admin.js");
     const { startStdioMcpServer } = await import("../mcp.js");
-    const core = createDefaultAgentQHostCore();
+    const core = createDefaultAgentQCore();
     const port = parseAdminPort(agentQArgs, DEFAULT_ADMIN_PORT);
     const admin = await startAdminServer({ core, port });
     adminServer = admin.server;

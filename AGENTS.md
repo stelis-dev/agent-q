@@ -161,7 +161,7 @@ For non-trivial work:
    tests, and user flows.
 
 For non-trivial work that touches protocol behavior, device state, Firmware
-state storage, host-process/MCP API surface, provisioning, accounts, policy, signing,
+state storage, local server API surface, provisioning, accounts, policy, signing,
 or product-boundary documentation, the plan must also classify the affected
 device states before implementation starts. Use `docs/STATE_MODEL.md` as the
 baseline for state names and state-gated behavior.
@@ -186,7 +186,7 @@ Do not implement a new API, state transition, account path, signing path, policy
 path, or provisioning step unless its allowed and forbidden states are
 explicitly classified.
 
-the host process may hide unavailable operations, but Firmware must enforce device-state
+The host process may hide unavailable operations, but Firmware must enforce device-state
 gates.
 
 External APIs must not directly command Firmware state transitions. A protocol
@@ -270,7 +270,7 @@ specification baseline, or an affected shared invariant.
 Inspect `package.json` before running project commands. Do not invent scripts.
 
 This repository has a root `package.json` with npm workspaces. Package-local
-commands also work from `packages/client/`, `packages/mcp/`, and
+commands also work from `packages/core/`, `packages/agent-q/`, and
 `packages/provider-sui/`.
 
 Current root commands:
@@ -278,15 +278,15 @@ Current root commands:
 - Build host process: `npm run build`
 - Test host process: `npm test`
 
-Current client package commands:
+Current core package commands:
 
-- Build: `cd packages/client && npm run build`
-- Test: `cd packages/client && npm test`
+- Build: `cd packages/core && npm run build`
+- Test: `cd packages/core && npm test`
 
-Current MCP package commands:
+Current local server package commands:
 
-- Build: `cd packages/mcp && npm run build`
-- Test: `cd packages/mcp && npm test`
+- Build: `cd packages/agent-q && npm run build`
+- Test: `cd packages/agent-q && npm test`
 
 Current provider package commands:
 

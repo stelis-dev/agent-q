@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { PUBLIC_ERROR_MESSAGES } from "@stelis/agent-q-client/adapter-internal";
+import { PUBLIC_ERROR_MESSAGES } from "@stelis/agent-q-core/adapter-internal";
 
 function readSrc(rel) {
   return readFileSync(fileURLToPath(new URL(`../src/${rel}`, import.meta.url)), "utf8");

@@ -33,7 +33,7 @@ import {
   type ProviderProtocolRequest,
   type ProviderProtocolResponse,
   type SignResultResponse,
-} from "@stelis/agent-q-client/provider-protocol";
+} from "@stelis/agent-q-core/provider-protocol";
 import type {
   AgentQSuiWalletGetAccountsResult,
   AgentQSuiWalletGetCapabilitiesResult,

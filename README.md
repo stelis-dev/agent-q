@@ -41,7 +41,7 @@ agent-q-sui-signer configure --network testnet
 
 ### Use With MCP
 
-Run the Agent-Q MCP server and let an MCP client call the signing tools:
+Run the Agent-Q local server and let an MCP client call the signing tools:
 
 ```sh
 agent-q
@@ -79,8 +79,8 @@ See `packages/example-sui-dapp-kit/` for a minimal Sui dapp-kit integration.
 
 | Package | Use it when you want to... |
 | --- | --- |
-| `@stelis/agent-q-client` | discover devices, open sessions, call the Agent-Q protocol, and parse Firmware results. |
-| `@stelis/agent-q-mcp` | run the local MCP server, Admin Page, and `agent-q-sui-signer`. |
+| `@stelis/agent-q-core` | discover devices, open sessions, call the Agent-Q protocol, and parse Firmware results. |
+| `@stelis/agent-q` | run the local MCP server, Admin Page, and `agent-q-sui-signer`. |
 | `@stelis/agent-q-provider-sui` | connect a Sui app to an Agent-Q device through a provider / Wallet Standard adapter. |
 | `packages/example-sui-dapp-kit` | run a small dapp-kit example that signs through Agent-Q. |
 

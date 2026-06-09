@@ -1,7 +1,9 @@
-# Agent-Q MCP
+# Agent-Q Local Server
 
-`@stelis/agent-q-mcp` provides the local Agent-Q MCP server, local Admin Page,
-and `agent-q-sui-signer`.
+`@stelis/agent-q` provides the local Agent-Q server package.
+
+It exposes MCP tools for AI agents, a local HTTP API for the Admin Page, and the
+`agent-q-sui-signer` executable for Sui CLI external signer compatibility.
 
 Use this package when an MCP-capable agent needs to request signatures from an
 Agent-Q device, or when a Sui CLI workflow needs an Agent-Q device as its
@@ -11,13 +13,15 @@ Firmware remains the signing authority. MCP tools and CLI commands submit
 requests; they do not store keys, apply policy, approve signing, or select the
 device signing mode.
 
-## Quick Start: MCP Server
+## Quick Start: MCP
 
-Run the local MCP server:
+Run the local server as an MCP server:
 
 ```sh
-agent-q
+npx -y @stelis/agent-q
 ```
+
+If installed globally, use `agent-q`.
 
 Typical agent flow:
 
@@ -121,7 +125,7 @@ Do not:
 
 ## Signing Behavior
 
-MCP exposes transaction signing through `sign_transaction` and user-mode
+The MCP API exposes transaction signing through `sign_transaction` and user-mode
 personal-message signing through `sign_personal_message`.
 
 For Sui transaction signing, Firmware reads its device-local signing mode and
@@ -134,8 +138,8 @@ uses exactly one gate:
 Personal-message signing is user-mode only in the current implementation.
 Policy mode fails closed for `sign_personal_message`.
 
-MCP accepts bounded signing route identifiers and delegates route
-classification to the shared Client/host-process boundary. It does not maintain a
+The MCP API accepts bounded signing route identifiers and delegates route
+classification to the shared core/host-process boundary. It does not maintain a
 separate chain registry. Sui is currently the only executable chain.
 
 ## Admin Page
@@ -151,6 +155,6 @@ The Admin Page is a host process capability. It is not a policy authority.
 From the repository root:
 
 ```sh
-npm --workspace @stelis/agent-q-mcp run build
-npm --workspace @stelis/agent-q-mcp test
+npm --workspace @stelis/agent-q run build
+npm --workspace @stelis/agent-q test
 ```

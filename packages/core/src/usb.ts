@@ -92,7 +92,7 @@ export interface UsbStatusScanResult {
 }
 
 // Transport contract: each call should resolve or reject within its internal
-// deadline. AgentQHostCore wraps the driver in deadlineEnforcingDriver, so a driver
+// deadline. AgentQCore wraps the driver in deadlineEnforcingDriver, so a driver
 // that ignores the deadline argument still cannot exceed the budget. listPorts
 // has no deadline argument and is bounded by the shared scan deadline in
 // scanUsbDeviceStatuses.
@@ -332,7 +332,7 @@ function raceDeadline<T>(work: Promise<T>, remainingMs: number, timeoutMessage: 
 // Single enforcement boundary for the transport deadline contract. Wrapping a
 // driver here races every deadline-bearing call against its own deadline argument,
 // so a driver that ignores the argument still cannot exceed the budget. Applied
-// once in AgentQHostCore, this bounds deadline-bearing calls in one place instead
+// once in AgentQCore, this bounds deadline-bearing calls in one place instead
 // of relying on each call site to remember to race.
 // listPorts has no deadline argument and is bounded by the shared scan deadline in
 // scanUsbDeviceStatuses.
@@ -443,7 +443,7 @@ export async function scanUsbDeviceStatuses(
     try {
       // scanUsbDeviceStatuses OWNS the total scan budget, so it bounds each
       // handshake itself by the time remaining until the deadline. A raw/direct
-      // caller is therefore safe even without the AgentQHostCore driver wrapper; the
+      // caller is therefore safe even without the AgentQCore driver wrapper; the
       // wrapper adds the same bound for Core's non-scan transport calls and the
       // overlap on this path is harmless (same timeout, whichever fires first).
       const protocolResponse = await raceDeadline(

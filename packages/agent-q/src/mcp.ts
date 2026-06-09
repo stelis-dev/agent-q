@@ -1,9 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
-import { createDefaultAgentQHostCore } from "@stelis/agent-q-client/admin";
+import { createDefaultAgentQCore } from "@stelis/agent-q-core";
 import {
-  AgentQHostCore,
+  AgentQCore,
   type ConnectDeviceResult,
   type DeviceListResult,
   type DeviceStatusToolResult,
@@ -16,7 +16,7 @@ import {
   type SetDeviceMetadataResult,
   type SignPersonalMessageResult,
   type SignTransactionResult,
-} from "@stelis/agent-q-client/admin";
+} from "@stelis/agent-q-core";
 import {
   DEVICE_ID_PATTERN,
   CLIENT_NAME_PATTERN,
@@ -60,14 +60,14 @@ import {
   normalizeErrorCode,
   toAgentQError,
   toPublicError,
-} from "@stelis/agent-q-client/adapter-internal";
+} from "@stelis/agent-q-core/adapter-internal";
 import {
   MAX_APPROVAL_HISTORY_RECORDS,
   SIGN_CHAIN_PATTERN,
   SIGN_METHOD_PATTERN,
   UINT_DECIMAL_STRING_PATTERN,
   isUint64DecimalString,
-} from "@stelis/agent-q-client/protocol";
+} from "@stelis/agent-q-core/protocol";
 
 // Input purpose uses the same SoT predicate as egress, so reserved ("default")
 // and prototype-sensitive ("__proto__"/"prototype"/"constructor") names are
@@ -272,7 +272,7 @@ export const hostToolDefinitions = {
   },
 } as const;
 
-export function createAgentQMcpServer(core = createDefaultAgentQHostCore()): McpServer {
+export function createAgentQMcpServer(core = createDefaultAgentQCore()): McpServer {
   const server = new McpServer({
     name: "agent-q",
     version: "0.0.0",
@@ -552,7 +552,7 @@ export function createAgentQMcpServer(core = createDefaultAgentQHostCore()): Mcp
 }
 
 export async function startStdioMcpServer(
-  core = createDefaultAgentQHostCore(),
+  core = createDefaultAgentQCore(),
   options: { onClose?: () => void } = {},
 ): Promise<void> {
   const server = createAgentQMcpServer(core);

@@ -21,6 +21,8 @@ import {
   INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS,
   INTERNAL_SIGN_TRANSACTION_DEADLINE_MS,
 } from "./transport-invariants.js";
+import { SerialPortUsbDriver } from "./usb.js";
+export { SerialPortUsbDriver } from "./usb.js";
 import {
   createIdentificationCode,
   type Account,
@@ -302,7 +304,7 @@ export type SignPersonalMessageResult =
 
 export const DEFAULT_CLIENT_NAME = "Agent-Q";
 
-export class AgentQHostCore {
+export class AgentQCore {
   private readonly runtimeSessions = new Map<string, RuntimeSession>();
   private readonly usbDriver: UsbSerialDriver;
 
@@ -1354,4 +1356,8 @@ function createUniqueIdentificationCode(usedCodes: Set<string>): string {
   }
 
   throw new AgentQError("identification_code_exhausted", "Could not create a unique identification code.", true);
+}
+
+export function createDefaultAgentQCore(): AgentQCore {
+  return new AgentQCore(new ConfigStore(), new SerialPortUsbDriver());
 }

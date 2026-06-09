@@ -540,7 +540,7 @@ Response:
 
 Identification codes are four decimal digits. Identification display duration is
 Firmware-owned temporary UI with a fixed internal `30000` millisecond window; it
-is not a request parameter. the host process may stop waiting before the device clears
+is not a request parameter. The host process may stop waiting before the device clears
 the temporary layer; there is no cancel message.
 
 Identification display is temporary UI. Firmware must return to the previous
@@ -1134,7 +1134,7 @@ session end, or reset, `get_result` returns `unknown_request` and a same-id
 signing submission is evaluated as a normal new request through the current
 route, state/session, parameter, adapter, and authorization gates.
 
-Common Client, the host process, MCP, and CLI request validation owns canonical base64
+Common core, the host process, MCP, and CLI request validation owns canonical base64
 syntax and the chain-independent transport/frame bound. It must not reject a
 request using the current Sui adapter's decoded-payload capacity. Firmware's
 selected Sui adapter owns base64 decoding, its current implementation capacity,
@@ -1197,7 +1197,7 @@ Rules for the first implementation:
   `unsupported_payload_size`; malformed decoded bytes return
   `malformed_transaction`; a decoded but unsupported transaction shape returns
   `unsupported_transaction`. These are adapter outcomes, not common
-  Client, host process, MCP, and CLI request-format limits.
+  Core, host process, MCP, and CLI request-format limits.
 - Firmware must derive the signing account from stored device material, and
   the parsed sender and gas owner must both match that device-derived account.
   Sponsored gas and request-supplied expected-signer bindings are unsupported
@@ -1292,7 +1292,7 @@ Rules for the first implementation:
   that fits the shared transport/frame bound. The current Sui Firmware adapter
   has a 256-byte decoded personal-message implementation capacity. Capacity
   overflow returns `unsupported_payload_size`; this is an adapter outcome, not
-  a common Client, host process, MCP, and CLI request-format limit.
+  a common Core, host process, MCP, and CLI request-format limit.
 - `params.network` is required and must be one of `mainnet`, `testnet`,
   `devnet`, or `localnet`. Current Sui personal-message bytes do not carry
   network identity, so Firmware validates this only as request context and does

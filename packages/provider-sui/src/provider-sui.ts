@@ -1,4 +1,7 @@
-import { createDefaultDeviceClientCore } from "@stelis/agent-q-client";
+import {
+  createDefaultAgentQDeviceClient,
+  type AgentQDeviceClient,
+} from "@stelis/agent-q-core/device";
 import {
   connectDeviceSuccessOutputShape,
   disconnectDeviceSuccessOutputShape,
@@ -10,8 +13,8 @@ import {
   selectDeviceSuccessOutputShape,
   signPersonalMessageSuccessOutputShape,
   signTransactionSuccessOutputShape,
-} from "@stelis/agent-q-client/adapter-internal";
-import { FORBIDDEN_SECRET_FIELD_NAMES } from "@stelis/agent-q-client/protocol";
+} from "@stelis/agent-q-core/adapter-internal";
+import { FORBIDDEN_SECRET_FIELD_NAMES } from "@stelis/agent-q-core/protocol";
 import type {
   ConnectDeviceResult,
   DeviceListResult,
@@ -25,15 +28,14 @@ import type {
   SelectDeviceResult,
   SignPersonalMessageResult,
   SignTransactionResult,
-  DeviceClientCore,
-} from "@stelis/agent-q-client";
+} from "@stelis/agent-q-core";
 
 export type GetCapabilitiesResult =
   | Extract<CoreGetCapabilitiesResult, { source: "live" }>
   | Exclude<CoreGetCapabilitiesResult, { source: "live" }>;
 
 export type AgentQSuiProviderCore = Pick<
-  DeviceClientCore,
+  AgentQDeviceClient,
   | "scanDevices"
   | "identifyDevices"
   | "selectDevice"
@@ -95,7 +97,7 @@ export class AgentQSuiProvider {
   private readonly core: AgentQSuiProviderCore;
 
   constructor(options: AgentQSuiProviderOptions = {}) {
-    this.core = options.core ?? createDefaultDeviceClientCore();
+    this.core = options.core ?? createDefaultAgentQDeviceClient();
   }
 
   async scanDevices(input: Record<string, never> = {}): Promise<ScanDevicesResult> {

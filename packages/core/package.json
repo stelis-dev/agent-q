@@ -1,28 +1,24 @@
 {
-  "name": "@stelis/agent-q-client",
+  "name": "@stelis/agent-q-core",
   "version": "0.0.0",
-  "description": "Device-facing Agent-Q client for USB-connected Firmware discovery, sessions, and protocol requests.",
+  "description": "Agent-Q core for device transport, protocol requests, session state, config, and result parsing.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "https://github.com/stelis-dev/agent-q.git",
-    "directory": "packages/client"
+    "directory": "packages/core"
   },
-  "main": "./dist/client.js",
-  "types": "./dist/client.d.ts",
+  "main": "./dist/core.js",
+  "types": "./dist/core.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/client.d.ts",
-      "import": "./dist/client.js"
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
     },
-    "./client": {
-      "types": "./dist/client.d.ts",
-      "import": "./dist/client.js"
-    },
-    "./admin": {
-      "types": "./dist/admin.d.ts",
-      "import": "./dist/admin.js"
+    "./device": {
+      "types": "./dist/device.d.ts",
+      "import": "./dist/device.js"
     },
     "./adapter-internal": {
       "types": "./dist/adapter-internal.d.ts",

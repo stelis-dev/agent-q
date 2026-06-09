@@ -55,17 +55,17 @@ Wallet Standard adapter or Web Serial runtime as evidence that browser hardware
 signing has been verified; product-active status still requires current-tree
 hardware smoke and LVGL visual evidence.
 
-The current package still depends on `@stelis/agent-q-client` because the root
+The current package still depends on `@stelis/agent-q-core` because the root
 provider factory is Node/host-local. The `./wallet-standard` subpath remains
 runtime-separated from that Node transport, and the `./browser` subpath uses the
-client package's provider protocol projection needed to satisfy
+core package's provider protocol projection needed to satisfy
 `AgentQSuiWalletProvider` over Web Serial. That projection exact-validates
 provider requests at runtime and does not expose Admin, policy read/update, or
 approval-history request builders.
 
 This package narrows the dapp-facing API it presents. That is not a security
 boundary against an application that deliberately imports
-`@stelis/agent-q-client` or `@stelis/agent-q-client/admin` directly. Firmware
+`@stelis/agent-q-core` directly. Firmware
 remains the authority that enforces state gates, device-local confirmation,
 policy evaluation, signing, persistence, and cleanup.
 
@@ -95,7 +95,7 @@ policy evaluation, signing, persistence, and cleanup.
 The dapp-facing provider object does not include policy update proposals,
 active policy readback, approval history, or any host-selected signing
 authorization API.
-Those APIs remain on broader client, MCP, or Admin surfaces. This is API
+Those APIs remain on broader core, MCP, or Admin surfaces. This is API
 projection for the provider audience, not a security claim that the same
 application cannot import the client/Admin package directly. Provider-facing
 signing uses `signTransaction` for transaction bytes and `signPersonalMessage`
@@ -110,7 +110,7 @@ The current signing methods are Sui `sign_transaction` and user-confirmed Sui
 message signing are not implemented and must not be advertised.
 
 Provider-sui remains a Sui-specific projection. It does not own a shared chain
-router or registry; the common Client, host process, and Firmware boundaries enforce
+router or registry; the common Core, host process, and Firmware boundaries enforce
 the shared route contract.
 
 ## Wallet Standard
@@ -238,14 +238,14 @@ npm --workspace @stelis/agent-q-provider-sui test
 ```
 
 The current source tree tracks opt-in hardware smoke tests for
-`source-wired-not-product-active` signing in the client package, where the
+`source-wired-not-product-active` signing in the core package, where the
 direct USB/Firmware boundary lives:
 
 ```sh
 AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER=1 \
 AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive \
 AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES=<base64> \
-node --test packages/client/test/hardware-sign-api-smoke.test.mjs
+node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 ```
 
 Supported scenarios are `positive`, `reject`, `timeout`, and `disconnect`.

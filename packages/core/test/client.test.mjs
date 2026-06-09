@@ -3,8 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { hostSuccessOutputSchemas } from "../dist/adapter-internal.js";
-import { createDefaultDeviceClientCore } from "../dist/client.js";
-import { createDefaultAgentQHostCore, AgentQHostCore } from "../dist/admin.js";
+import { createDefaultAgentQDeviceClient } from "../dist/device.js";
+import { createDefaultAgentQCore, AgentQCore } from "../dist/core.js";
 import {
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
@@ -273,8 +273,8 @@ test("agent-q success output schemas reject semantically invalid policy document
   }));
 });
 
-test("client entrypoint constructs an admin-disabled device core facade", () => {
-  const core = createDefaultDeviceClientCore();
+test("device entrypoint constructs a limited device API facade", () => {
+  const core = createDefaultAgentQDeviceClient();
   assert.equal(typeof core.scanDevices, "function");
   assert.equal(typeof core.signTransaction, "function");
   assert.equal(core.signByUser, undefined);
@@ -282,44 +282,39 @@ test("client entrypoint constructs an admin-disabled device core facade", () => 
   assert.equal(core.policyPropose, undefined);
 });
 
-test("admin entrypoint constructs the admin-capable Agent-Q core", () => {
-  const core = createDefaultAgentQHostCore();
-  assert.equal(core instanceof AgentQHostCore, true);
+test("root entrypoint constructs the full Agent-Q core", () => {
+  const core = createDefaultAgentQCore();
+  assert.equal(core instanceof AgentQCore, true);
 });
 
-test("client entrypoint does not import MCP or Admin adapters", async () => {
-  const clientPath = fileURLToPath(new URL("../dist/client.js", import.meta.url));
+test("device entrypoint does not import server adapters", async () => {
+  const clientPath = fileURLToPath(new URL("../dist/device.js", import.meta.url));
   const source = await readFile(clientPath, "utf8");
   assert.doesNotMatch(source, /["']\.\/mcp\.js["']/);
   assert.doesNotMatch(source, /["']\.\/admin\.js["']/);
 });
 
-test("package metadata exposes the current client entrypoints", async () => {
+test("package metadata exposes the current core entrypoints", async () => {
   const packagePath = fileURLToPath(new URL("../package.json", import.meta.url));
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
-  assert.equal(packageJson.name, "@stelis/agent-q-client");
-  assert.equal(packageJson.main, "./dist/client.js");
-  assert.equal(packageJson.types, "./dist/client.d.ts");
+  assert.equal(packageJson.name, "@stelis/agent-q-core");
+  assert.equal(packageJson.main, "./dist/core.js");
+  assert.equal(packageJson.types, "./dist/core.d.ts");
   assert.deepEqual(Object.keys(packageJson.exports).sort(), [
     ".",
     "./adapter-internal",
-    "./admin",
-    "./client",
+    "./device",
     "./package.json",
     "./protocol",
     "./provider-protocol",
   ]);
   assert.deepEqual(packageJson.exports["."], {
-    types: "./dist/client.d.ts",
-    import: "./dist/client.js",
+    types: "./dist/core.d.ts",
+    import: "./dist/core.js",
   });
-  assert.deepEqual(packageJson.exports["./client"], {
-    types: "./dist/client.d.ts",
-    import: "./dist/client.js",
-  });
-  assert.deepEqual(packageJson.exports["./admin"], {
-    types: "./dist/admin.d.ts",
-    import: "./dist/admin.js",
+  assert.deepEqual(packageJson.exports["./device"], {
+    types: "./dist/device.d.ts",
+    import: "./dist/device.js",
   });
   assert.equal(packageJson.exports["./usb"], undefined);
   assert.equal(packageJson.bin, undefined);
@@ -327,18 +322,16 @@ test("package metadata exposes the current client entrypoints", async () => {
   assert.equal(packageJson.exports["./provider"], undefined);
 });
 
-test("package self-reference resolves only client entrypoints", async () => {
-  const root = await import("@stelis/agent-q-client");
-  const admin = await import("@stelis/agent-q-client/admin");
-  const adapterInternal = await import("@stelis/agent-q-client/adapter-internal");
-  const client = await import("@stelis/agent-q-client/client");
-  const protocol = await import("@stelis/agent-q-client/protocol");
-  const providerProtocol = await import("@stelis/agent-q-client/provider-protocol");
-  assert.equal(typeof root.createDefaultDeviceClientCore, "function");
-  assert.equal(root.createDefaultAgentQHostCore, undefined);
-  assert.equal(typeof admin.createDefaultAgentQHostCore, "function");
+test("package self-reference resolves only core entrypoints", async () => {
+  const root = await import("@stelis/agent-q-core");
+  const adapterInternal = await import("@stelis/agent-q-core/adapter-internal");
+  const device = await import("@stelis/agent-q-core/device");
+  const protocol = await import("@stelis/agent-q-core/protocol");
+  const providerProtocol = await import("@stelis/agent-q-core/provider-protocol");
+  assert.equal(typeof root.createDefaultAgentQCore, "function");
+  assert.equal(root.createDefaultAgentQDeviceClient, undefined);
   assert.equal(typeof adapterInternal.hostSuccessOutputSchemas, "object");
-  assert.equal(typeof client.createDefaultDeviceClientCore, "function");
+  assert.equal(typeof device.createDefaultAgentQDeviceClient, "function");
   assert.equal(typeof protocol.makeGetStatusRequest, "function");
   assert.equal(typeof protocol.makeSignTransactionRequest, "function");
   assert.equal(providerProtocol.makeGetStatusRequest, undefined);
@@ -359,16 +352,16 @@ test("package self-reference resolves only client entrypoints", async () => {
   assert.equal(typeof providerProtocol.makeGetAccountsRequest, "function");
   assert.equal(typeof providerProtocol.makeSignTransactionRequest, "function");
   assert.equal(typeof providerProtocol.makeSignPersonalMessageRequest, "function");
-  assert.equal(typeof admin.SerialPortUsbDriver, "function");
+  assert.equal(typeof root.SerialPortUsbDriver, "function");
   for (const subpath of ["config", "core", "errors", "agent-q-output-schema", "public-error", "safe-text", "usb"]) {
-    await assert.rejects(() => import(`@stelis/agent-q-client/${subpath}`), {
+    await assert.rejects(() => import(`@stelis/agent-q-core/${subpath}`), {
       code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
     });
   }
-  await assert.rejects(() => import("@stelis/agent-q-client/mcp"), {
+  await assert.rejects(() => import("@stelis/agent-q-core/mcp"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
   });
-  await assert.rejects(() => import("@stelis/agent-q-client/provider"), {
+  await assert.rejects(() => import("@stelis/agent-q-core/provider"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
   });
 });
@@ -406,7 +399,7 @@ test("client internals keep provider-protocol as the signing helper owner", asyn
 });
 
 test("provider-protocol serializer rejects non-provider requests at runtime", async () => {
-  const providerProtocol = await import("@stelis/agent-q-client/provider-protocol");
+  const providerProtocol = await import("@stelis/agent-q-core/provider-protocol");
   const blockedRequests = [
     {
       id: "req_policy_get",
@@ -439,7 +432,7 @@ test("provider-protocol serializer rejects non-provider requests at runtime", as
 });
 
 test("provider-protocol serializer exact-validates provider requests at runtime", async () => {
-  const providerProtocol = await import("@stelis/agent-q-client/provider-protocol");
+  const providerProtocol = await import("@stelis/agent-q-core/provider-protocol");
   const requestId = "req_1234567890abcdef12345678";
   const sessionId = "session_abcdef0123456789";
 

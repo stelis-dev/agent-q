@@ -4,9 +4,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { AgentQError } from "@stelis/agent-q-client/adapter-internal";
+import { AgentQError } from "@stelis/agent-q-core/adapter-internal";
 import { createAgentQMcpServer, hostToolDefinitions } from "../dist/mcp.js";
-import { FORBIDDEN_SECRET_FIELD_NAMES, MAX_SESSION_TTL_MS } from "@stelis/agent-q-client/protocol";
+import { FORBIDDEN_SECRET_FIELD_NAMES, MAX_SESSION_TTL_MS } from "@stelis/agent-q-core/protocol";
 
 const expectedToolNames = [
   "connect_device",
@@ -26,26 +26,26 @@ const expectedToolNames = [
   "sign_transaction",
 ];
 
-test("MCP package metadata exposes MCP and Admin adapter entrypoints", async () => {
+test("local server package metadata exposes MCP and Admin adapter entrypoints", async () => {
   const packagePath = fileURLToPath(new URL("../package.json", import.meta.url));
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
-  assert.equal(packageJson.name, "@stelis/agent-q-mcp");
+  assert.equal(packageJson.name, "@stelis/agent-q");
   assert.deepEqual(Object.keys(packageJson.exports).sort(), [".", "./admin", "./mcp", "./package.json"]);
-  assert.equal(packageJson.dependencies["@stelis/agent-q-client"], "0.0.0");
+  assert.equal(packageJson.dependencies["@stelis/agent-q-core"], "0.0.0");
   assert.deepEqual(packageJson.bin, {
     "agent-q": "./dist/bin/agent-q.js",
     "agent-q-sui-signer": "./dist/bin/agent-q-sui-signer.js",
   });
 });
 
-test("MCP package self-reference resolves MCP and Admin adapters only", async () => {
-  const root = await import("@stelis/agent-q-mcp");
-  const mcp = await import("@stelis/agent-q-mcp/mcp");
-  const admin = await import("@stelis/agent-q-mcp/admin");
+test("local server package self-reference resolves MCP and Admin adapters only", async () => {
+  const root = await import("@stelis/agent-q");
+  const mcp = await import("@stelis/agent-q/mcp");
+  const admin = await import("@stelis/agent-q/admin");
   assert.equal(typeof root.createAgentQMcpServer, "function");
   assert.equal(typeof mcp.createAgentQMcpServer, "function");
   assert.equal(typeof admin.createAdminHttpServer, "function");
-  await assert.rejects(() => import("@stelis/agent-q-mcp/provider"), {
+  await assert.rejects(() => import("@stelis/agent-q/provider"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
   });
 });

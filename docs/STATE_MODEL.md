@@ -12,22 +12,22 @@ contract lives in `specs/PROTOCOL.md`.
 State names are defined by:
 
 - `specs/PROTOCOL.md`
-- `packages/client/src/safe-text.ts`
+- `packages/core/src/safe-text.ts`
 
-host wire validation is implemented in:
+Host wire validation is implemented in:
 
-- `packages/client/src/protocol.ts`
+- `packages/core/src/protocol.ts`
 
 Firmware owns state storage, state transitions, state gates, physical approval,
 policy evaluation, and signing decisions.
 
-the host process may cache and display Firmware-reported state. the host process must not treat a
+The host process may cache and display Firmware-reported state. The host process must not treat a
 state as signing readiness and must not decide whether signing is safe.
 
 ## Product State Diagram
 
 This diagram shows product state, not UI state. Firmware owns these transitions.
-the host process, MCP clients, and Admin Page requests may submit requests, but they are
+The host process, MCP clients, and Admin Page requests may submit requests, but they are
 not authority. Firmware state transitions occur only as consequences of
 Firmware-owned conditions and validated local input.
 
@@ -554,7 +554,7 @@ does not end the active RAM session. Other `O` operations may still return
 `busy` while a physical approval prompt or device-only setup material display is
 active.
 
-the host process may hide unavailable operations, but Firmware must still reject them.
+The host process may hide unavailable operations, but Firmware must still reject them.
 
 The current StackChan CoreS3 target has an explicit `local_pin_auth` runtime
 substate for local PIN authorization. It records `purpose` (`connect`,

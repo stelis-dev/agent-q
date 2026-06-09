@@ -218,7 +218,7 @@ test("scan surfaces a port-enumeration error instead of silently reporting no de
 
 test("deadlineEnforcingDriver bounds a call whose driver ignores its deadline", async () => {
   // Single enforcement boundary: a hanging call is bounded by its deadline argument
-  // even though this driver ignores it. AgentQHostCore wraps its driver with this, so
+  // even though this driver ignores it. AgentQCore wraps its driver with this, so
   // every deadline-bearing transport call is bounded in one place.
   const driver = {
     requestStatus() {
@@ -233,7 +233,7 @@ test("deadlineEnforcingDriver bounds a call whose driver ignores its deadline", 
 });
 
 test("scanUsbDeviceStatuses self-enforces the scan budget on a raw driver", async () => {
-  // No AgentQHostCore wrapper here: the scan function owns its budget and must bound
+  // No AgentQCore wrapper here: the scan function owns its budget and must bound
   // a hanging handshake itself, so a direct/raw export caller is also safe.
   const driver = {
     async listPorts() {

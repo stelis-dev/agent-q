@@ -1,20 +1,20 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { type AgentQHostCore, type DeviceListResult } from "@stelis/agent-q-client/admin";
+import { type AgentQCore, type DeviceListResult } from "@stelis/agent-q-core";
 import {
   AgentQError,
   hostSuccessOutputSchemas,
   isSafeDeviceId,
   toAgentQError,
   toPublicError,
-} from "@stelis/agent-q-client/adapter-internal";
+} from "@stelis/agent-q-core/adapter-internal";
 
 export const DEFAULT_ADMIN_HOST = "127.0.0.1";
 export const DEFAULT_ADMIN_PORT = 8787;
 const MAX_ADMIN_JSON_BYTES = 16384;
 const ADMIN_LOOPBACK_HOSTS = new Set([DEFAULT_ADMIN_HOST, "localhost", "::1"]);
 
-export type AdminAgentQHostCore = Pick<
-  AgentQHostCore,
+export type AdminAgentQCore = Pick<
+  AgentQCore,
   | "listDevices"
   | "scanDevices"
   | "connectDevice"
@@ -37,14 +37,14 @@ interface SuccessSchema {
   parse(raw: unknown): object;
 }
 
-export function createAdminHttpServer(core: AdminAgentQHostCore): Server {
+export function createAdminHttpServer(core: AdminAgentQCore): Server {
   return createServer((request, response) => {
     void handleAdminRequest(core, request, response);
   });
 }
 
 export async function startAdminServer(options: {
-  core: AdminAgentQHostCore;
+  core: AdminAgentQCore;
   host?: string;
   port?: number;
 }): Promise<StartedAdminServer> {
@@ -83,7 +83,7 @@ export function buildRejectOnlySuiPolicy(): Record<string, unknown> {
 }
 
 async function handleAdminRequest(
-  core: AdminAgentQHostCore,
+  core: AdminAgentQCore,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
