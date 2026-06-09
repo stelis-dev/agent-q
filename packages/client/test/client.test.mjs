@@ -5,7 +5,12 @@ import { fileURLToPath } from "node:url";
 import { gatewaySuccessOutputSchemas } from "../dist/adapter-internal.js";
 import { createDefaultDeviceClientCore } from "../dist/client.js";
 import { createDefaultGatewayCore, GatewayCore } from "../dist/admin.js";
-import { SIGN_RESULT_ERROR_MESSAGES, SUI_DERIVATION_PATH } from "../dist/protocol.js";
+import {
+  MAX_RAW_PROTOCOL_JSON_BYTES,
+  MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
+  SIGN_RESULT_ERROR_MESSAGES,
+  SUI_DERIVATION_PATH,
+} from "../dist/protocol.js";
 
 const SUI_ADDRESS = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
 const SUI_PUBLIC_KEY = "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=";
@@ -513,6 +518,16 @@ test("adapter output schema keeps signing method result shapes exact", () => {
       messageBytes: largeMessageBytes,
     }).messageBytes,
     largeMessageBytes,
+  );
+  const responseLineBoundMessageBytes = Buffer.alloc(3500, 8).toString("base64");
+  assert.ok(responseLineBoundMessageBytes.length > MAX_RAW_PROTOCOL_JSON_BYTES);
+  assert.ok(responseLineBoundMessageBytes.length < MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS);
+  assert.equal(
+    personalMessageSchema.parse({
+      ...validSignPersonalMessageSignedOutput(),
+      messageBytes: responseLineBoundMessageBytes,
+    }).messageBytes,
+    responseLineBoundMessageBytes,
   );
 
   assert.throws(() => transactionSchema.parse({

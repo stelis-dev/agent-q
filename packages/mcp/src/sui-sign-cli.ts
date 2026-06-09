@@ -10,6 +10,7 @@ export const SUI_SIGN_CLI_HELP = `Agent-Q Sui offline-signing bridge
 
 Usage:
   agent-q-sui-sign --tx-bytes <base64> --network <mainnet|testnet|devnet|localnet> [--device-id <id>] [--purpose <purpose>]
+  agent-q-sui-sign --tx-bytes=<base64> --network=<mainnet|testnet|devnet|localnet>
   <unsigned-tx-command> | agent-q-sui-sign --network <network> --tx-bytes -
   agent-q-sui-sign --help
 
@@ -35,6 +36,8 @@ interface SuiSignCliFailure {
   retryable?: boolean;
 }
 
+const SUI_SIGN_CLI_VALUE_FLAGS = new Set(["--network", "--tx-bytes", "--device-id", "--purpose"]);
+
 export async function runSuiSignCli(
   args: string[],
   dependencies: SuiSignCliDependencies,
@@ -44,10 +47,15 @@ export async function runSuiSignCli(
     return 0;
   }
 
-  const network = flagValue(args, "--network");
-  const deviceId = flagValue(args, "--device-id");
-  const purpose = flagValue(args, "--purpose");
-  let txBytes = flagValue(args, "--tx-bytes");
+  const parsedFlags = parseFlags(args);
+  if ("failure" in parsedFlags) {
+    return writeFailure(dependencies, parsedFlags.failure);
+  }
+
+  const network = parsedFlags.values.get("--network");
+  const deviceId = parsedFlags.values.get("--device-id");
+  const purpose = parsedFlags.values.get("--purpose");
+  let txBytes = parsedFlags.values.get("--tx-bytes");
   txBytes = txBytes === "-" ? (await dependencies.readStdin()).trim() : txBytes?.trim();
 
   if (txBytes === undefined || txBytes.length === 0) {
@@ -133,26 +141,74 @@ export async function runSuiSignCli(
       try {
         await dependencies.core.disconnectDevice({ deviceId, purpose });
       } catch {
-        if (!signatureProduced) {
-          await dependencies.writeStderr(
-            `${JSON.stringify({
-              code: "gateway_error",
-              message: "Agent-Q could not confirm session cleanup.",
-              retryable: true,
-            })}\n`,
-          );
-        }
+        await writeCleanupFailure(dependencies, signatureProduced);
       }
     }
   }
 }
 
-function flagValue(args: string[], name: string): string | undefined {
-  const index = args.indexOf(name);
-  if (index === -1 || index + 1 >= args.length) {
-    return undefined;
+function parseFlags(args: string[]):
+  | { values: Map<string, string> }
+  | { failure: SuiSignCliFailure } {
+  const values = new Map<string, string>();
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg.startsWith("--")) {
+      return {
+        failure: {
+          code: "invalid_params",
+          message: `Unsupported argument: ${arg}. Use --help for usage.`,
+        },
+      };
+    }
+
+    const equalsIndex = arg.indexOf("=");
+    const name = equalsIndex === -1 ? arg : arg.slice(0, equalsIndex);
+    if (!SUI_SIGN_CLI_VALUE_FLAGS.has(name)) {
+      return {
+        failure: {
+          code: "invalid_params",
+          message: `Unsupported flag: ${name}. Use --help for usage.`,
+        },
+      };
+    }
+    if (values.has(name)) {
+      return {
+        failure: {
+          code: "invalid_params",
+          message: `Duplicate flag: ${name}.`,
+        },
+      };
+    }
+
+    let value: string | undefined;
+    if (equalsIndex === -1) {
+      value = args[index + 1];
+      const isStdinTxBytes = name === "--tx-bytes" && value === "-";
+      if (value === undefined || (value.startsWith("-") && !isStdinTxBytes)) {
+        return {
+          failure: {
+            code: "invalid_params",
+            message: `Provide a value for ${name}.`,
+          },
+        };
+      }
+      index += 1;
+    } else {
+      value = arg.slice(equalsIndex + 1);
+      if (value.length === 0) {
+        return {
+          failure: {
+            code: "invalid_params",
+            message: `Provide a value for ${name}.`,
+          },
+        };
+      }
+    }
+
+    values.set(name, value);
   }
-  return args[index + 1];
+  return { values };
 }
 
 async function writeFailure(
@@ -161,4 +217,23 @@ async function writeFailure(
 ): Promise<number> {
   await dependencies.writeStderr(`${JSON.stringify(failure)}\n`);
   return 1;
+}
+
+async function writeCleanupFailure(
+  dependencies: SuiSignCliDependencies,
+  signatureProduced: boolean,
+): Promise<void> {
+  try {
+    await dependencies.writeStderr(
+      `${JSON.stringify({
+        code: "gateway_error",
+        message: signatureProduced
+          ? "Agent-Q produced a signature but could not confirm session cleanup."
+          : "Agent-Q could not confirm session cleanup.",
+        retryable: true,
+      })}\n`,
+    );
+  } catch {
+    // Cleanup diagnostics must not overwrite the primary signing outcome.
+  }
 }

@@ -61,7 +61,8 @@ The package also provides `agent-q-sui-sign`, a Sui offline-signing bridge that
 submits the shared `sign_transaction` request and prints only a
 Firmware-authored serialized signature to stdout. Diagnostics use stderr, and
 the command performs best-effort session disconnect after a successful
-connection. It is not an implementation of the Sui CLI JSON-RPC
+connection. It accepts both `--flag value` and `--flag=value` forms and rejects
+duplicate or value-less flags. It is not an implementation of the Sui CLI JSON-RPC
 external-signer protocol.
 
 MCP tool inputs do not expose caller-controlled timing fields. Firmware-owned

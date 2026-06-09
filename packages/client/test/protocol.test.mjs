@@ -30,7 +30,9 @@ import {
   makePolicyProposeRequest,
   makeSignPersonalMessageRequest,
   makeSignTransactionRequest,
+  MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
+  MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
   parseProtocolResponse,
   sanitizeDisplayText,
   serializeRequest,
@@ -1476,6 +1478,26 @@ test("parseProtocolResponse accepts signed sign_result responses for user and po
   );
   assert.equal(largerPersonalMessageSigned.method, "sign_personal_message");
   assert.equal(largerPersonalMessageSigned.messageBytes, largerThanCurrentAdapterCapacity);
+
+  const largerThanRawRequestBound = Buffer.alloc(3500, 8).toString("base64");
+  assert.ok(largerThanRawRequestBound.length > MAX_RAW_PROTOCOL_JSON_BYTES);
+  assert.ok(largerThanRawRequestBound.length < MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS);
+  const responseLineBoundPersonalMessageSigned = assertSignResultResponse(
+    parseProtocolResponse(
+      signResultLine({
+        authorization: "user",
+        status: "signed",
+        chain: "sui",
+        method: "sign_personal_message",
+        signature: personalMessageSignature,
+        messageBytes: largerThanRawRequestBound,
+        error: undefined,
+      }),
+      "req_sign",
+    ),
+  );
+  assert.equal(responseLineBoundPersonalMessageSigned.method, "sign_personal_message");
+  assert.equal(responseLineBoundPersonalMessageSigned.messageBytes, largerThanRawRequestBound);
 });
 
 test("parseProtocolResponse accepts bounded sign_result terminal outcomes", () => {

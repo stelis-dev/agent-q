@@ -1404,6 +1404,15 @@ fields. Current adapter projections may expose only a subset of signing paths,
 but Firmware remains responsible for rejecting unavailable or invalid signing
 requests.
 
+Firmware-authored `sign_result` output fields are bounded by their output
+contract, not by request-frame limits or the current Sui adapter input
+capacity. The current Sui `signature` is a fixed-format Ed25519 Sui signature
+envelope; `policyHash`, `ruleRef`, and terminal `error` objects are fixed by
+their protocol patterns and canonical messages. The current variable-size
+signed-result payload field is personal-message `messageBytes`; host parsers
+bound it by the protocol response-line transport limit while still requiring
+canonical base64 syntax.
+
 ## Response Delivery And Provider Boundary
 
 - Firmware signature generation, terminal history persistence, USB response

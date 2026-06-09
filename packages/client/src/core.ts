@@ -851,7 +851,7 @@ export class GatewayCore {
     purpose?: string;
     chain: string;
     method: string;
-    network: SignTransactionParams["network"];
+    network: unknown;
     txBytes: string;
   }): Promise<SignTransactionResult> {
     const route = identifySignGatewayRoute("sign_transaction", input.chain, input.method);
@@ -905,7 +905,7 @@ export class GatewayCore {
     purpose?: string;
     chain: string;
     method: string;
-    network: SignPersonalMessageParams["network"];
+    network: unknown;
     message: string;
   }): Promise<SignPersonalMessageResult> {
     const route = identifySignGatewayRoute("sign_personal_message", input.chain, input.method);

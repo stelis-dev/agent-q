@@ -75,6 +75,9 @@ import {
 const purposeSchema = z.string().regex(PURPOSE_PATTERN).refine((value) => isValidPurpose(value), {
   message: "purpose must be 1-32 characters of [A-Za-z0-9_.-] and not a reserved or prototype-sensitive name.",
 });
+const signNetworkSchema = z.string().describe(
+  "Network identifier for the selected chain and method. Current executable Sui signing accepts mainnet, testnet, devnet, or localnet; Client Core and Firmware validate the value.",
+);
 
 function strictInputSchema<Shape extends z.ZodRawShape>(shape: Shape) {
   return z.object(shape).strict();
@@ -232,7 +235,7 @@ export const gatewayToolDefinitions = {
       purpose: purposeSchema.optional(),
       chain: z.string().regex(SIGN_CHAIN_PATTERN),
       method: z.string().regex(SIGN_METHOD_PATTERN),
-      network: z.string(),
+      network: signNetworkSchema,
       txBytes: z.string(),
     }),
     outputSchema: signTransactionToolOutputShape,
@@ -248,7 +251,7 @@ export const gatewayToolDefinitions = {
       purpose: purposeSchema.optional(),
       chain: z.string().regex(SIGN_CHAIN_PATTERN),
       method: z.string().regex(SIGN_METHOD_PATTERN),
-      network: z.string(),
+      network: signNetworkSchema,
       message: z.string(),
     }),
     outputSchema: signPersonalMessageToolOutputShape,
@@ -500,7 +503,7 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
           purpose,
           chain,
           method,
-          network: network as "mainnet" | "testnet" | "devnet" | "localnet",
+          network,
           txBytes,
         }),
       ),
@@ -523,7 +526,7 @@ export function createGatewayMcpServer(core = createDefaultGatewayCore()): McpSe
           purpose,
           chain,
           method,
-          network: network as "mainnet" | "testnet" | "devnet" | "localnet",
+          network,
           message,
         }),
       ),

@@ -20,6 +20,7 @@ import {
   MAX_CAPABILITY_CHAINS,
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
+  MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
   MAX_SIGNING_CAPABILITIES,
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS,
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
@@ -64,6 +65,7 @@ export {
   MAX_CAPABILITY_CHAINS,
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
+  MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
   MAX_SIGNING_CAPABILITIES,
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS,
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
@@ -1037,7 +1039,7 @@ function sanitizeSignResultResponse(value: Record<string, unknown>): SignResultR
       }
       const messageBytes = validateCanonicalBase64Syntax(
         value.messageBytes,
-        MAX_RAW_PROTOCOL_JSON_BYTES,
+        MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
         "sui/sign_personal_message messageBytes",
         "protocol_error",
       );

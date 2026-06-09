@@ -94,6 +94,31 @@ test("stdin input is forwarded and success prints only the signature to stdout",
   assert.deepEqual(harness.calls.at(-1), "disconnect");
 });
 
+test("equals-form flags are accepted", async () => {
+  const harness = makeHarness();
+  assert.equal(
+    await runSuiSignCli([`--network=testnet`, `--tx-bytes=${TX_BYTES}`], harness.dependencies),
+    0,
+  );
+  assert.equal(harness.stdout.join(""), `${SIGNATURE}\n`);
+  assert.deepEqual(harness.calls.find((call) => Array.isArray(call)), ["sign", TX_BYTES]);
+});
+
+for (const [name, args, pattern] of [
+  ["duplicate flag", ["--network", "testnet", "--network", "devnet", "--tx-bytes", TX_BYTES], /Duplicate flag: --network/],
+  ["flag as value", ["--network", "--tx-bytes", TX_BYTES], /Provide a value for --network/],
+  ["unknown positional argument", ["--network", "testnet", "--tx-bytes", TX_BYTES, "extra"], /Unsupported argument: extra/],
+  ["unknown flag", ["--network", "testnet", "--tx-bytes", TX_BYTES, "--wat", "1"], /Unsupported flag: --wat/],
+]) {
+  test(`${name} fails before connecting`, async () => {
+    const harness = makeHarness();
+    assert.equal(await runSuiSignCli(args, harness.dependencies), 1);
+    assert.equal(harness.stdout.join(""), "");
+    assert.match(JSON.parse(harness.stderr.join("")).message, pattern);
+    assert.deepEqual(harness.calls, []);
+  });
+}
+
 for (const [name, core] of [
   ["account-read failure", { async getAccounts() { throw new Error("lost"); } }],
   ["terminal signing result", { async signTransaction() { return { source: "live", status: "user_rejected" }; } }],
@@ -157,7 +182,7 @@ test("disconnect failure does not replace a produced signature", async () => {
     0,
   );
   assert.equal(harness.stdout.join(""), `${SIGNATURE}\n`);
-  assert.equal(harness.stderr.filter((line) => line.includes("session cleanup")).length, 0);
+  assert.equal(harness.stderr.filter((line) => line.includes("session cleanup")).length, 1);
 });
 
 test("disconnect failure after a failed request is reported without raw error text", async () => {

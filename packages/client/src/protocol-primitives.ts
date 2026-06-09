@@ -6,6 +6,9 @@ export const PROTOCOL_VERSION = 1;
 // authority; it is bounded here only to reject malformed Firmware responses.
 export const MAX_SESSION_TTL_MS = 4_294_967_295;
 export const MAX_RAW_PROTOCOL_JSON_BYTES = 4096;
+// Variable-size Firmware-authored sign_result payload fields are bounded by the
+// response line transport cap, not by request-frame or current adapter capacity.
+export const MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS = MAX_PROTOCOL_RESPONSE_LINE_BYTES;
 export { MAX_PROTOCOL_RESPONSE_LINE_BYTES };
 
 export const SUI_CHAIN_ID = "sui";
