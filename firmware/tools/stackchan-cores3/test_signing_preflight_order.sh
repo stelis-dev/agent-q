@@ -54,6 +54,7 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_request_identity.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_preflight.cpp" \
+  "${AGENT_Q_DIR}/agent_q_signing_retry_response.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_ingress.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_validation.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_retry_delivery.cpp" \
@@ -96,6 +97,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "agent_q_sign_transaction_user_ingress.h"
 #include "agent_q_signing_preflight.h"
 #include "agent_q_sign_request_identity.h"
+#include "agent_q_signing_retry_response.h"
 #include "agent_q_signing_result_store.h"
 #include "agent_q_sui_account_store.h"
 #include "agent_q_sui_signing_authority.h"
@@ -120,6 +122,8 @@ agent_q::AgentQSigningAuthorizationMode g_signing_mode =
     agent_q::AgentQSigningAuthorizationMode::user;
 agent_q::AgentQSigningRetryDeliveryStatus g_retry_status =
     agent_q::AgentQSigningRetryDeliveryStatus::not_found;
+int g_retry_response_write_calls = 0;
+std::string g_retry_response_json;
 
 enum class PreflightOutcome {
     ok_prepared,
@@ -278,16 +282,39 @@ bool read_signing_mode(
     return true;
 }
 
+bool capture_retry_response(JsonDocument& response, void*)
+{
+    ++g_retry_response_write_calls;
+    g_retry_response_json.clear();
+    serializeJson(response, g_retry_response_json);
+    return true;
+}
+
 agent_q::AgentQSigningPreflightRetryDisposition respond_to_retry(
-    const char*,
+    const char* request_id,
     const agent_q::AgentQSigningRetryDeliveryResult& retry,
-    const char*,
+    const char* stored_result,
     void*)
 {
     g_retry_status = retry.status;
-    return retry.status == agent_q::AgentQSigningRetryDeliveryStatus::not_found
-               ? agent_q::AgentQSigningPreflightRetryDisposition::continue_preflight
-               : agent_q::AgentQSigningPreflightRetryDisposition::consumed;
+    const agent_q::AgentQSigningRetryResponseResult response_result =
+        agent_q::deliver_signing_retry_response(
+            request_id,
+            retry,
+            stored_result,
+            capture_retry_response,
+            nullptr);
+    switch (response_result) {
+        case agent_q::AgentQSigningRetryResponseResult::not_found:
+        case agent_q::AgentQSigningRetryResponseResult::invalid_stored_result:
+        case agent_q::AgentQSigningRetryResponseResult::replay_write_failed:
+            return agent_q::AgentQSigningPreflightRetryDisposition::continue_preflight;
+        case agent_q::AgentQSigningRetryResponseResult::replayed_result:
+        case agent_q::AgentQSigningRetryResponseResult::error_response:
+        case agent_q::AgentQSigningRetryResponseResult::error_write_failed:
+            return agent_q::AgentQSigningPreflightRetryDisposition::consumed;
+    }
+    return agent_q::AgentQSigningPreflightRetryDisposition::consumed;
 }
 
 PreflightOutcome run_transaction_preflight(
@@ -325,6 +352,8 @@ void reset_counters()
     g_binding_result = agent_q::AgentQSuiSigningAccountBindingResult::ok;
     g_signing_mode = agent_q::AgentQSigningAuthorizationMode::user;
     g_retry_status = agent_q::AgentQSigningRetryDeliveryStatus::not_found;
+    g_retry_response_write_calls = 0;
+    g_retry_response_json.clear();
     agent_q::signing_result_clear_all();
 }
 
@@ -351,6 +380,32 @@ void expect_case(
                 expected_session_calls,
                 expected_digest_calls,
                 expected_binding_calls);
+        ++g_failures;
+    }
+}
+
+void expect_contains(const char* label, const std::string& value, const char* expected)
+{
+    if (value.find(expected) == std::string::npos) {
+        fprintf(stderr, "%s: expected JSON to contain %s, got %s\n",
+                label,
+                expected,
+                value.c_str());
+        ++g_failures;
+    }
+}
+
+void expect_no_stored_result(const char* label, const char* session_id, const char* request_id)
+{
+    char stored[agent_q::kSigningResultMaxSize] = {};
+    size_t stored_len = 0;
+    if (agent_q::signing_result_find(
+            session_id,
+            request_id,
+            stored,
+            sizeof(stored),
+            &stored_len)) {
+        fprintf(stderr, "%s: unexpected stored signing result\n", label);
         ++g_failures;
     }
 }
@@ -514,6 +569,13 @@ int main(int argc, char** argv)
         1,
         0,
         0);
+    if (g_retry_response_write_calls != 1) {
+        fprintf(stderr, "matching retry: expected one public JSON response, got %d\n",
+                g_retry_response_write_calls);
+        ++g_failures;
+    }
+    expect_contains("matching retry response", g_retry_response_json, "\"type\":\"sign_result\"");
+    expect_contains("matching retry response", g_retry_response_json, "\"status\":\"signed\"");
 
     reset_counters();
     store_identity_for(valid_request, "{\"type\":\"sign_result\",\"status\":\"signed\"}");
@@ -533,6 +595,38 @@ int main(int argc, char** argv)
         1,
         0,
         0);
+    if (g_retry_response_write_calls != 1) {
+        fprintf(stderr, "conflicting retry: expected one public JSON response, got %d\n",
+                g_retry_response_write_calls);
+        ++g_failures;
+    }
+    expect_contains("conflicting retry response", g_retry_response_json, "\"type\":\"error\"");
+    expect_contains("conflicting retry response", g_retry_response_json, "request_id_conflict");
+
+    reset_counters();
+    store_identity_for(valid_request, "{\"type\":\"sign_result\",\"status\":\"signed\"}");
+    expect_case(
+        "invalid current request shape cannot replay a stored result",
+        run_transaction_preflight(
+            request_json(
+                "req_sign_1",
+                "session_aaaaaaaaaaaaaaaa",
+                "sui",
+                "sign_transaction",
+                "devnet",
+                "%%%"),
+            true,
+            false),
+        PreflightOutcome::ingress_invalid_tx_bytes,
+        1,
+        0,
+        0);
+    if (g_retry_response_write_calls != 0) {
+        fprintf(stderr,
+                "invalid current request shape: unexpected retry response count %d\n",
+                g_retry_response_write_calls);
+        ++g_failures;
+    }
 
     reset_counters();
     expect_case(
@@ -542,6 +636,30 @@ int main(int argc, char** argv)
         1,
         1,
         1);
+
+    reset_counters();
+    const std::vector<uint8_t> oversized_tx(385, 0x42);
+    const std::string oversized_b64 = base64(oversized_tx);
+    expect_case(
+        "oversized prepared payload fails without buffering a result",
+        run_transaction_preflight(
+            request_json(
+                "req_sign_oversized",
+                "session_aaaaaaaaaaaaaaaa",
+                "sui",
+                "sign_transaction",
+                "devnet",
+                oversized_b64.c_str()),
+            true,
+            false),
+        PreflightOutcome::preparation_error,
+        1,
+        0,
+        0);
+    expect_no_stored_result(
+        "oversized prepared payload",
+        "session_aaaaaaaaaaaaaaaa",
+        "req_sign_oversized");
 
     if (g_failures != 0) {
         fprintf(stderr, "signing preflight order tests failed: %d\n", g_failures);
@@ -576,6 +694,7 @@ CPP
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_request_identity.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_preflight.cpp" \
+  "${AGENT_Q_DIR}/agent_q_signing_retry_response.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_ingress.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_validation.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_retry_delivery.cpp" \
