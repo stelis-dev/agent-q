@@ -8,7 +8,9 @@ AgentQSigningRetryDeliveryResult evaluate_signing_retry_delivery(
     const char* session_id,
     const char* request_id,
     const uint8_t* request_identity,
-    size_t request_identity_size)
+    size_t request_identity_size,
+    char* stored_result,
+    size_t stored_result_size)
 {
     AgentQSigningRetryDeliveryResult result = {};
     result.status = AgentQSigningRetryDeliveryStatus::lookup_error;
@@ -21,8 +23,8 @@ AgentQSigningRetryDeliveryResult evaluate_signing_retry_delivery(
             request_id,
             request_identity,
             request_identity_size,
-            result.stored_result,
-            sizeof(result.stored_result),
+            stored_result,
+            stored_result_size,
             &result.stored_result_len);
 
     switch (lookup) {
@@ -30,7 +32,9 @@ AgentQSigningRetryDeliveryResult evaluate_signing_retry_delivery(
             result.status = AgentQSigningRetryDeliveryStatus::not_found;
             result.error_code = nullptr;
             result.error_message = nullptr;
-            memset(result.stored_result, 0, sizeof(result.stored_result));
+            if (stored_result != nullptr && stored_result_size > 0) {
+                memset(stored_result, 0, stored_result_size);
+            }
             result.stored_result_len = 0;
             return result;
         case SigningResultRetryLookup::match:
@@ -42,14 +46,18 @@ AgentQSigningRetryDeliveryResult evaluate_signing_retry_delivery(
             result.status = AgentQSigningRetryDeliveryStatus::request_id_conflict;
             result.error_code = "request_id_conflict";
             result.error_message = "Request id is already bound to a different signing request.";
-            memset(result.stored_result, 0, sizeof(result.stored_result));
+            if (stored_result != nullptr && stored_result_size > 0) {
+                memset(stored_result, 0, stored_result_size);
+            }
             result.stored_result_len = 0;
             return result;
         case SigningResultRetryLookup::invalid:
             break;
     }
 
-    memset(result.stored_result, 0, sizeof(result.stored_result));
+    if (stored_result != nullptr && stored_result_size > 0) {
+        memset(stored_result, 0, stored_result_size);
+    }
     result.stored_result_len = 0;
     return result;
 }

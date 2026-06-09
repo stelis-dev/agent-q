@@ -16,7 +16,6 @@ enum class AgentQSigningRetryDeliveryStatus {
 
 struct AgentQSigningRetryDeliveryResult {
     AgentQSigningRetryDeliveryStatus status;
-    char stored_result[kSigningResultMaxSize];
     size_t stored_result_len;
     const char* error_code;
     const char* error_message;
@@ -26,6 +25,8 @@ AgentQSigningRetryDeliveryResult evaluate_signing_retry_delivery(
     const char* session_id,
     const char* request_id,
     const uint8_t* request_identity,
-    size_t request_identity_size);
+    size_t request_identity_size,
+    char* stored_result,
+    size_t stored_result_size);
 
 }  // namespace agent_q

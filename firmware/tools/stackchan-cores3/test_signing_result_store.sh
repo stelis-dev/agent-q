@@ -70,24 +70,66 @@ int main()
                &out_len) == SigningResultRetryLookup::match);
     assert(signing_result_find("sess_a", "req_1", out, sizeof(out), &out_len));
     assert(strcmp(out, "RESULT_1") == 0);
+    char retry_out[64] = {};
+    size_t retry_out_len = 0;
     const AgentQSigningRetryDeliveryResult retry_match =
-        evaluate_signing_retry_delivery("sess_a", "req_1", identity, sizeof(identity));
+        evaluate_signing_retry_delivery(
+            "sess_a",
+            "req_1",
+            identity,
+            sizeof(identity),
+            retry_out,
+            sizeof(retry_out));
     assert(retry_match.status == AgentQSigningRetryDeliveryStatus::match);
-    assert(retry_match.stored_result_len == 8 && strcmp(retry_match.stored_result, "RESULT_1") == 0);
+    assert(retry_match.stored_result_len == 8 && strcmp(retry_out, "RESULT_1") == 0);
     assert(retry_match.error_code == nullptr && retry_match.error_message == nullptr);
     const AgentQSigningRetryDeliveryResult retry_conflict =
-        evaluate_signing_retry_delivery("sess_a", "req_1", conflicting_identity, sizeof(conflicting_identity));
+        evaluate_signing_retry_delivery(
+            "sess_a",
+            "req_1",
+            conflicting_identity,
+            sizeof(conflicting_identity),
+            retry_out,
+            sizeof(retry_out));
     assert(retry_conflict.status == AgentQSigningRetryDeliveryStatus::request_id_conflict);
+    assert(retry_out[0] == '\0');
     assert(strcmp(retry_conflict.error_code, "request_id_conflict") == 0);
     assert(strcmp(retry_conflict.error_message, "Request id is already bound to a different signing request.") == 0);
     const AgentQSigningRetryDeliveryResult retry_not_found =
-        evaluate_signing_retry_delivery("sess_a", "req_missing", identity, sizeof(identity));
+        evaluate_signing_retry_delivery(
+            "sess_a",
+            "req_missing",
+            identity,
+            sizeof(identity),
+            retry_out,
+            sizeof(retry_out));
     assert(retry_not_found.status == AgentQSigningRetryDeliveryStatus::not_found);
     assert(retry_not_found.error_code == nullptr && retry_not_found.stored_result_len == 0);
+    assert(retry_out[0] == '\0');
     const AgentQSigningRetryDeliveryResult retry_invalid =
-        evaluate_signing_retry_delivery("sess_a", "req_1", identity, sizeof(identity) - 1);
+        evaluate_signing_retry_delivery(
+            "sess_a",
+            "req_1",
+            identity,
+            sizeof(identity) - 1,
+            retry_out,
+            sizeof(retry_out));
     assert(retry_invalid.status == AgentQSigningRetryDeliveryStatus::lookup_error);
     assert(strcmp(retry_invalid.error_code, "protocol_error") == 0);
+    assert(retry_out[0] == '\0');
+
+    const AgentQSigningRetryDeliveryResult retry_small =
+        evaluate_signing_retry_delivery(
+            "sess_a",
+            "req_1",
+            identity,
+            sizeof(identity),
+            retry_out,
+            4);
+    assert(retry_small.status == AgentQSigningRetryDeliveryStatus::lookup_error);
+    assert(strcmp(retry_small.error_code, "protocol_error") == 0);
+    retry_out_len = retry_small.stored_result_len;
+    assert(retry_out_len == 0);
 
     // session-scoping: same request_id under a different session is a distinct entry
     assert(store_result("sess_b", "req_1", "RESULT_B", 8) == SigningResultStoreOutcome::stored);

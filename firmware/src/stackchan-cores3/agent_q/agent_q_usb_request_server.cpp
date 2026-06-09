@@ -659,12 +659,15 @@ bool try_deliver_stored_result(
     const char* request_id,
     const uint8_t* request_identity)
 {
+    static char stored_result[agent_q::kSigningResultMaxSize];
     const agent_q::AgentQSigningRetryDeliveryResult retry =
         agent_q::evaluate_signing_retry_delivery(
             session_id,
             request_id,
             request_identity,
-            agent_q::kAgentQSignRequestIdentitySize);
+            agent_q::kAgentQSignRequestIdentitySize,
+            stored_result,
+            sizeof(stored_result));
     if (retry.status == agent_q::AgentQSigningRetryDeliveryStatus::not_found) {
         return false;
     }
@@ -681,7 +684,7 @@ bool try_deliver_stored_result(
         return true;
     }
     JsonDocument response;
-    if (deserializeJson(response, retry.stored_result, retry.stored_result_len)) {
+    if (deserializeJson(response, stored_result, retry.stored_result_len)) {
         return false;
     }
     return agent_q::usb_response_write_json(response);
