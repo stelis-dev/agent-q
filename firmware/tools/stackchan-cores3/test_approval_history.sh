@@ -312,8 +312,8 @@ int main()
 
     expect(agent_q::approval_history_append_required_signing(policy_signing_rejected_input(), 100),
            "append first policy signing rejection");
-    expect(g_blob.size() > 4 && g_blob[4] == 0,
-           "approval history current format marker is zero");
+    expect(g_blob.size() > 4 && g_blob[4] == 1,
+           "approval history current format marker is one");
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
            "read first page");
     expect(page.count == 1 && !page.has_more, "one record page shape");
@@ -330,11 +330,11 @@ int main()
     expect(strcmp(page.records[0].chain, "sui") == 0, "first record chain");
 
     const std::vector<uint8_t> valid_enum_blob = g_blob;
-    g_blob[4] = 1;
+    g_blob[4] = 0;
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
-           "stored nonzero approval history format marker fails closed");
+           "stored legacy approval history format marker fails closed");
     g_blob = valid_enum_blob;
-    expect(mutate_first_method_record_byte(17, 0xFF), "mutate stored confirmation enum");
+    expect(mutate_first_method_record_byte(16, 0xFF), "mutate stored confirmation enum");
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
            "stored unsupported confirmation enum fails closed");
     g_blob = valid_enum_blob;
@@ -561,7 +561,7 @@ int main()
                1303),
            "append user_signing before enum corruption");
     const std::vector<uint8_t> valid_signature_blob = g_blob;
-    expect(mutate_first_method_record_byte(19, 0xFF), "mutate stored event enum");
+    expect(mutate_first_method_record_byte(18, 0xFF), "mutate stored event enum");
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
            "stored unsupported event enum fails closed");
     g_blob = valid_signature_blob;
@@ -577,7 +577,7 @@ int main()
                1400),
            "append user terminal before stored matrix corruption");
     const std::vector<uint8_t> valid_user_terminal_blob = g_blob;
-    expect(mutate_first_method_record_byte(17, 1), "mutate user terminal to policy authorization");
+    expect(mutate_first_method_record_byte(16, 1), "mutate user terminal to policy authorization");
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
            "stored user terminal with policy authorization fails closed");
     g_blob = valid_user_terminal_blob;
@@ -589,7 +589,7 @@ int main()
     expect(agent_q::approval_history_append_required_signing(policy_signing_rejected_input(), 1410),
            "append policy terminal before stored policy metadata corruption");
     const std::vector<uint8_t> valid_policy_terminal_blob = g_blob;
-    expect(mutate_first_method_record_byte(18, 1), "drop stored policy digest flag");
+    expect(mutate_first_method_record_byte(17, 1), "drop stored policy digest flag");
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
            "stored policy terminal without policy metadata fails closed");
     g_blob = valid_policy_terminal_blob;

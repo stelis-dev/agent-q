@@ -13,8 +13,10 @@ namespace {
 constexpr const char* kTag = "AgentQApprovalHist";
 constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kApprovalHistoryKey = "approval_hist";
-constexpr uint8_t kStoredApprovalHistoryFormatVersion = 0;
-constexpr uint8_t kStoredDecisionPolicyUpdatePlaceholder = 0;
+// Current-only storage layout. Version 1 removes the pre-release placeholder
+// decision byte; older blobs are unsupported and fail closed through the
+// normal invalid-history path rather than being migrated.
+constexpr uint8_t kStoredApprovalHistoryFormatVersion = 1;
 constexpr uint8_t kStoredConfirmationNone = 0;
 constexpr uint8_t kStoredConfirmationPolicy = 1;
 constexpr uint8_t kStoredConfirmationLocalPin = 2;
@@ -36,7 +38,6 @@ constexpr uint8_t kStoredSigningTerminalPolicyRejected = 5;
 struct StoredApprovalHistoryRecord {
     uint64_t sequence;
     uint64_t uptime_ms;
-    uint8_t decision;
     uint8_t confirmation_kind;
     uint8_t flags;
     uint8_t event_kind;
@@ -138,13 +139,11 @@ bool stored_record_metadata_valid(const StoredApprovalHistoryRecord& record)
         return false;
     }
     if (record.event_kind == kStoredEventPolicyUpdate) {
-        return record.decision == kStoredDecisionPolicyUpdatePlaceholder &&
-               record.confirmation_kind == kStoredConfirmationPolicy &&
+        return record.confirmation_kind == kStoredConfirmationPolicy &&
                record.signing_record_kind == kStoredSigningRecordNone &&
                record.signing_terminal_result == kStoredSigningTerminalNone;
     }
-    if (record.decision != kStoredDecisionPolicyUpdatePlaceholder ||
-        !stored_signing_record_kind_valid(record.signing_record_kind) ||
+    if (!stored_signing_record_kind_valid(record.signing_record_kind) ||
         (record.flags & kStoredDigestPayload) == 0) {
         return false;
     }
@@ -748,7 +747,6 @@ bool approval_history_append_required_policy_update(
     }
     record->uptime_ms = uptime_ms;
     record->event_kind = kStoredEventPolicyUpdate;
-    record->decision = kStoredDecisionPolicyUpdatePlaceholder;
     record->confirmation_kind = kStoredConfirmationPolicy;
     if (input.rule_count > kAgentQPolicyMaxRules ||
         !policy_update_result_supported(input.result) ||
@@ -831,7 +829,6 @@ static bool append_signing_history(
     }
     record->uptime_ms = uptime_ms;
     record->event_kind = kStoredEventSigning;
-    record->decision = kStoredDecisionPolicyUpdatePlaceholder;
     record->confirmation_kind = stored_confirmation(input.confirmation_kind);
     record->signing_record_kind = stored_signing_record_kind(input.record_kind);
     record->signing_terminal_result =

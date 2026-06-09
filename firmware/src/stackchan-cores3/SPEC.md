@@ -325,10 +325,11 @@ session, request validation, and device-local approval gates before it can emit
 them. If a required signing history record cannot be persisted, the signing path
 returns top-level
 `history_error` rather than claiming the decision result was delivered.
-It stores sequence, uptime in milliseconds, decision kind, confirmation kind,
-chain, method, reason code, optional payload digest, optional policy hash, and
-optional rule reference for signing records. Policy-update terminal records
-store result, reason code, policy hash, rule count, and highest action.
+It stores sequence, uptime in milliseconds, signing record kind, terminal
+result, confirmation kind, chain, method, reason code, optional payload digest,
+optional policy hash, and optional rule reference for signing records.
+Policy-update terminal records store result, reason code, policy hash, rule
+count, and highest action.
 It does not store raw `txBytes`, full decoded transactions, raw policy
 documents, full rule content, session ids, raw request ids, gateway names,
 mnemonic text, seed, private key material, PINs, or full policy documents.
