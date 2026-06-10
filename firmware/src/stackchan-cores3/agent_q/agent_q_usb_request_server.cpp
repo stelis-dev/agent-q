@@ -34,7 +34,6 @@
 #include "agent_q_provisioning_runtime_state.h"
 #include "agent_q_request_id.h"
 #include "agent_q_session.h"
-#include "agent_q_sign_personal_message_limits.h"
 #include "agent_q_sign_personal_message_user_ingress.h"
 #include "agent_q_sign_transaction_policy_runtime.h"
 #include "agent_q_policy_signing_execution.h"
@@ -66,6 +65,7 @@
 #include "agent_q_usb_retained_result_handlers.h"
 #include "agent_q_usb_session_read_handlers.h"
 #include "agent_q_usb_signing_handlers.h"
+#include "agent_q_usb_signing_result_writer.h"
 #include "agent_q_usb_response_writer.h"
 #include "agent_q_signing_retry_delivery.h"
 #include "agent_q_signing_retry_response.h"
@@ -442,155 +442,6 @@ bool write_connect_approved_response(const char* id)
         info);
 }
 
-const char* sign_result_user_error_message(
-    agent_q::AgentQUserSigningTerminalResult result)
-{
-    switch (result) {
-        case agent_q::AgentQUserSigningTerminalResult::rejected:
-            return "The signing request was rejected on the device.";
-        case agent_q::AgentQUserSigningTerminalResult::timed_out:
-            return "The signing request timed out on the device.";
-        case agent_q::AgentQUserSigningTerminalResult::signing_failed:
-            return "The device could not produce a signature.";
-        case agent_q::AgentQUserSigningTerminalResult::signed_success:
-        case agent_q::AgentQUserSigningTerminalResult::canceled:
-        case agent_q::AgentQUserSigningTerminalResult::history_error:
-        case agent_q::AgentQUserSigningTerminalResult::none:
-        default:
-            return "";
-    }
-}
-
-bool write_sign_result_signed_fields(
-    const char* id,
-    const uint8_t* request_identity,
-    const char* authorization,
-    agent_q::AgentQSigningRoute signing_route,
-    const uint8_t* signature,
-    size_t signature_size,
-    const uint8_t* message_bytes,
-    size_t message_bytes_size)
-{
-    if (authorization == nullptr ||
-        (strcmp(authorization, "user") != 0 && strcmp(authorization, "policy") != 0) ||
-        signature == nullptr ||
-        signature_size != agent_q::kSuiEd25519SignatureBytes) {
-        return false;
-    }
-    if (signing_route == agent_q::AgentQSigningRoute::unsupported) {
-        return false;
-    }
-    const char* chain = agent_q::signing_route_wire_chain(signing_route);
-    const char* method = agent_q::signing_route_wire_method(signing_route);
-    if (chain == nullptr || chain[0] == '\0' ||
-        method == nullptr || method[0] == '\0') {
-        return false;
-    }
-    const agent_q::AgentQSigningAuthorizationMode authorization_mode =
-        strcmp(authorization, "policy") == 0
-            ? agent_q::AgentQSigningAuthorizationMode::policy
-            : agent_q::AgentQSigningAuthorizationMode::user;
-    if (!agent_q::signing_route_allowed_for_authorization_mode(
-            signing_route,
-            authorization_mode)) {
-        return false;
-    }
-    char signature_base64[agent_q::kSuiEd25519SignatureBase64Chars + 1] = {};
-    if (bytes_to_base64(
-            signature,
-            signature_size,
-            signature_base64,
-            sizeof(signature_base64)) != 0) {
-        return false;
-    }
-    char message_base64[agent_q::kAgentQSuiSignPersonalMessageMaxBase64Size + 1] = {};
-    if (agent_q::signing_route_requires_message_bytes(signing_route)) {
-        if (message_bytes == nullptr ||
-            message_bytes_size == 0 ||
-            message_bytes_size > agent_q::kAgentQSuiSignPersonalMessageMaxBytes ||
-            bytes_to_base64(
-                message_bytes,
-                message_bytes_size,
-                message_base64,
-                sizeof(message_base64)) != 0) {
-            return false;
-        }
-    } else if (message_bytes != nullptr || message_bytes_size != 0) {
-        return false;
-    }
-
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "sign_result";
-    response["authorization"] = authorization;
-    response["status"] = "signed";
-    response["chain"] = chain;
-    response["method"] = method;
-    response["signature"] = signature_base64;
-    if (agent_q::signing_route_requires_message_bytes(signing_route)) {
-        response["messageBytes"] = message_base64;
-    }
-    // W4: buffer the signed result for bounded RAM redelivery (get_result /
-    // idempotent re-request) before sending it, so a link drop between signing
-    // and delivery can recover the result while the entry remains retained.
-    // Best-effort: a too-large result is simply not buffered.
-    // The static scratch holds only a public signature; the store copies it out.
-    static char serialized_result[agent_q::kSigningResultMaxSize];
-    const size_t serialized_len = serializeJson(response, serialized_result, sizeof(serialized_result));
-    if (serialized_len > 0 && serialized_len < sizeof(serialized_result)) {
-        agent_q::signing_result_store(
-            agent_q::session_id(),
-            id,
-            request_identity,
-            agent_q::kAgentQSignRequestIdentitySize,
-            serialized_result,
-            serialized_len);
-    }
-    return agent_q::usb_response_write_json(response);
-}
-
-bool buffer_sign_result_for_retry(
-    const char* request_id,
-    const uint8_t* request_identity,
-    const JsonDocument& response)
-{
-    static char serialized_result[agent_q::kSigningResultMaxSize];
-    const size_t serialized_len = serializeJson(response, serialized_result, sizeof(serialized_result));
-    if (serialized_len == 0 || serialized_len >= sizeof(serialized_result)) {
-        return false;
-    }
-    return agent_q::signing_result_store(
-               agent_q::session_id(),
-               request_id,
-               request_identity,
-               agent_q::kAgentQSignRequestIdentitySize,
-               serialized_result,
-               serialized_len) !=
-           agent_q::SigningResultStoreOutcome::invalid;
-}
-
-bool write_sign_result_signed(
-    const char* id,
-    const char* authorization,
-    const agent_q::AgentQUserSigningFlowSnapshot& snapshot,
-    const agent_q::AgentQUserSigningOutput& signing_output)
-{
-    if (snapshot.signing_route == agent_q::AgentQSigningRoute::unsupported ||
-        signing_output.signing_route != snapshot.signing_route) {
-        return false;
-    }
-    return write_sign_result_signed_fields(
-        id,
-        snapshot.request_identity,
-        authorization,
-        snapshot.signing_route,
-        signing_output.signature,
-        signing_output.signature_size,
-        signing_output.message_bytes_size > 0 ? signing_output.message_bytes : nullptr,
-        signing_output.message_bytes_size);
-}
-
 bool write_retry_response_json(JsonDocument& response, void*)
 {
     return agent_q::usb_response_write_json(response);
@@ -655,108 +506,16 @@ void ack_stored_result_by_id(const char* session_id, const char* request_id)
     agent_q::signing_result_ack(session_id, request_id);
 }
 
-bool write_sign_result_user_terminal(
-    const char* id,
-    const uint8_t* request_identity,
-    agent_q::AgentQUserSigningTerminalResult result)
-{
-    const char* status = agent_q::user_signing_flow_terminal_status(result);
-    const char* reason = agent_q::user_signing_flow_terminal_reason(result);
-    const char* message = sign_result_user_error_message(result);
-    if (status == nullptr || status[0] == '\0' ||
-        reason == nullptr || reason[0] == '\0' ||
-        message == nullptr || message[0] == '\0') {
-        return false;
-    }
-
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "sign_result";
-    response["authorization"] = "user";
-    response["status"] = status;
-    response["error"]["code"] = reason;
-    response["error"]["message"] = message;
-    buffer_sign_result_for_retry(id, request_identity, response);
-    return agent_q::usb_response_write_json(response);
-}
-
-bool write_sign_result_policy_rejected(
-    const char* id,
-    const uint8_t* request_identity,
-    const char* policy_hash,
-    const char* rule_ref)
-{
-    if (policy_hash == nullptr || policy_hash[0] == '\0' ||
-        rule_ref == nullptr || rule_ref[0] == '\0') {
-        return false;
-    }
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "sign_result";
-    response["authorization"] = "policy";
-    response["status"] = "policy_rejected";
-    response["policyHash"] = policy_hash;
-    response["ruleRef"] = rule_ref;
-    response["error"]["code"] = "policy_rejected";
-    response["error"]["message"] = "The signing request was rejected by device policy.";
-    buffer_sign_result_for_retry(id, request_identity, response);
-    return agent_q::usb_response_write_json(response);
-}
-
-bool write_sign_result_signing_failed(
-    const char* id,
-    const uint8_t* request_identity,
-    const char* authorization)
-{
-    if (authorization == nullptr ||
-        (strcmp(authorization, "user") != 0 && strcmp(authorization, "policy") != 0)) {
-        return false;
-    }
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "sign_result";
-    response["authorization"] = authorization;
-    response["status"] = "signing_failed";
-    response["error"]["code"] = "signing_failed";
-    response["error"]["message"] = "The device could not produce a signature.";
-    buffer_sign_result_for_retry(id, request_identity, response);
-    return agent_q::usb_response_write_json(response);
-}
-
 bool write_policy_execution_response(
     const char* id,
     const uint8_t* request_identity,
     const agent_q::AgentQPolicySigningExecutionResult& result)
 {
-    switch (result.status) {
-        case agent_q::AgentQPolicySigningExecutionStatus::request_error:
-        case agent_q::AgentQPolicySigningExecutionStatus::history_error:
-        case agent_q::AgentQPolicySigningExecutionStatus::account_error:
-            return agent_q::usb_response_write_error(id, result.code, result.message);
-        case agent_q::AgentQPolicySigningExecutionStatus::policy_rejected:
-            return write_sign_result_policy_rejected(
-                id,
-                request_identity,
-                result.policy_hash,
-                result.rule_ref);
-        case agent_q::AgentQPolicySigningExecutionStatus::signing_failed:
-            return write_sign_result_signing_failed(id, request_identity, "policy");
-        case agent_q::AgentQPolicySigningExecutionStatus::signed_success:
-            return write_sign_result_signed_fields(
-                id,
-                request_identity,
-                "policy",
-                result.signing_route,
-                result.signature,
-                result.signature_size,
-                nullptr,
-                0);
-        default:
-            return agent_q::usb_response_write_error(id, "protocol_error", "Policy signing request is invalid.");
-    }
+    return agent_q::usb_signing_result_write_policy_execution(
+        id,
+        agent_q::session_id(),
+        request_identity,
+        result);
 }
 
 enum class PolicyResponseWriteResult {
@@ -1158,25 +917,30 @@ void finish_user_signing_terminal(
     const char* delivery_failed_message = "Signing failed; USB failed";
     if (result == agent_q::AgentQUserSigningTerminalResult::signed_success) {
         wrote_response = signing_output != nullptr &&
-            write_sign_result_signed(request_id, "user", snapshot, *signing_output);
+            agent_q::usb_signing_result_write_user_signed(
+                request_id,
+                agent_q::session_id(),
+                "user",
+                snapshot,
+                *signing_output);
         display_message = wrote_response ? "Signed" : "Signed; USB failed";
         delivery_failed_message = "Signed; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::success : AgentQMessageKind::error;
     } else if (result == agent_q::AgentQUserSigningTerminalResult::rejected) {
-        wrote_response = write_sign_result_user_terminal(
-            request_id, snapshot.request_identity, result);
+        wrote_response = agent_q::usb_signing_result_write_user_terminal(
+            request_id, agent_q::session_id(), snapshot.request_identity, result);
         display_message = wrote_response ? "Signing rejected" : "Rejected; USB failed";
         delivery_failed_message = "Rejected; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::rejected : AgentQMessageKind::error;
     } else if (result == agent_q::AgentQUserSigningTerminalResult::timed_out) {
-        wrote_response = write_sign_result_user_terminal(
-            request_id, snapshot.request_identity, result);
+        wrote_response = agent_q::usb_signing_result_write_user_terminal(
+            request_id, agent_q::session_id(), snapshot.request_identity, result);
         display_message = wrote_response ? "Signing timed out" : "Timeout; USB failed";
         delivery_failed_message = "Timeout; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::timeout : AgentQMessageKind::error;
     } else if (result == agent_q::AgentQUserSigningTerminalResult::signing_failed) {
-        wrote_response = write_sign_result_user_terminal(
-            request_id, snapshot.request_identity, result);
+        wrote_response = agent_q::usb_signing_result_write_user_terminal(
+            request_id, agent_q::session_id(), snapshot.request_identity, result);
         display_message = wrote_response ? "Signing failed" : "Failure; USB failed";
         delivery_failed_message = "Failure; USB failed";
     } else if (request_id != nullptr && request_id[0] != '\0') {

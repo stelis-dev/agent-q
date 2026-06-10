@@ -32,6 +32,7 @@ USB_LINE_RECEIVER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/age
 USB_LINE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_line_handler.cpp"
 USB_DEVICE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_device_handlers.cpp"
 USB_DISCONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_disconnect_handler.cpp"
+USB_SIGNING_RESULT_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_signing_result_writer.cpp"
 USB_RETAINED_RESULT_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_retained_result_handlers.cpp"
 USB_SESSION_READ_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_session_read_handlers.cpp"
 USB_POLICY_PROPOSE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_policy_propose_handler.cpp"
@@ -133,8 +134,10 @@ expect_present "${USB_OPERATION_TYPE_HEADER}" '"sign_transaction"' \
   "USB operation classifier must accept public sign_transaction messages"
 expect_absent "${USB_OPERATION_TYPE_HEADER}" '"sign_transaction_user"|"sign_transaction_policy"' \
   "USB operation classifier must not accept host-selected authorization request types"
-expect_present "${USB_SERVER}" '"sign_result"|write_sign_result' \
-  "USB request server must write public sign_result responses"
+expect_present "${USB_SIGNING_RESULT_WRITER_SOURCE}" '"sign_result"|usb_signing_result_write' \
+  "USB signing result writer must own public sign_result responses"
+expect_absent "${USB_SERVER}" 'response\["type"\][[:space:]]*=[[:space:]]*"sign_result"|write_sign_result_signed|write_sign_result_user_terminal|write_sign_result_policy_rejected|write_sign_result_signing_failed' \
+  "USB request server must not own public sign_result response JSON"
 expect_present "${USB_SERVER}" '"signing"' \
   "USB request server must advertise shared signing capabilities"
 expect_present "${USB_OPERATION_RESPONSE_WRITER_HEADER}" 'AgentQUsbOperationResponseWriter' \
