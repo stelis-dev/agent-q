@@ -1836,6 +1836,23 @@ void clear_pin_setup_if_needed()
     }
 }
 
+bool redraw_pin_setup_panel_or_wipe(const char* message, const char* wipe_reason)
+{
+    const bool shown = message == nullptr
+        ? agent_q::modal_draw_pin_setup_panel()
+        : agent_q::modal_draw_pin_setup_panel(message);
+    if (shown) {
+        return true;
+    }
+    wipe_setup_scratch(wipe_reason);
+    agent_q::avatar_overlay_show_message(
+        "Display error",
+        AgentQMessageKind::error,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+    return false;
+}
+
 void handle_pin_digit_from_local_ui(char digit)
 {
     const TickType_t now = xTaskGetTickCount();
@@ -1844,10 +1861,7 @@ void handle_pin_digit_from_local_ui(char digit)
             timeout_window_from_now_ms(now, kLocalPinSetupMs))) {
         return;
     }
-    if (!agent_q::modal_draw_pin_setup_panel()) {
-        wipe_setup_scratch("local PIN setup display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    redraw_pin_setup_panel_or_wipe(nullptr, "local PIN setup display allocation failed");
 }
 
 void handle_pin_clear_from_local_ui()
@@ -1857,10 +1871,7 @@ void handle_pin_clear_from_local_ui()
             timeout_window_from_now_ms(now, kLocalPinSetupMs))) {
         return;
     }
-    if (!agent_q::modal_draw_pin_setup_panel()) {
-        wipe_setup_scratch("local PIN setup display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    redraw_pin_setup_panel_or_wipe(nullptr, "local PIN setup display allocation failed");
 }
 
 void handle_pin_backspace_from_local_ui()
@@ -1870,10 +1881,7 @@ void handle_pin_backspace_from_local_ui()
             timeout_window_from_now_ms(now, kLocalPinSetupMs))) {
         return;
     }
-    if (!agent_q::modal_draw_pin_setup_panel()) {
-        wipe_setup_scratch("local PIN setup display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    redraw_pin_setup_panel_or_wipe(nullptr, "local PIN setup display allocation failed");
 }
 
 void handle_pin_submit_from_local_ui()
@@ -1889,31 +1897,25 @@ void handle_pin_submit_from_local_ui()
             now + pdMS_TO_TICKS(kLocalProcessingDisplayMs),
             now + pdMS_TO_TICKS(agent_q::kAgentQLocalAuthWorkerMaxMs));
     if (result == ProvisioningFlowPinSubmitResult::invalid_pin) {
-        if (!agent_q::modal_draw_pin_setup_panel("Enter exactly 6 digits.")) {
-            wipe_setup_scratch("local PIN setup display allocation failed");
-            agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
+        redraw_pin_setup_panel_or_wipe(
+            "Enter exactly 6 digits.",
+            "local PIN setup display allocation failed");
         return;
     }
     if (result == ProvisioningFlowPinSubmitResult::worker_unavailable) {
-        if (!agent_q::modal_draw_pin_setup_panel("Auth worker busy. Try again.")) {
-            wipe_setup_scratch("local PIN setup worker unavailable display allocation failed");
-            agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
+        redraw_pin_setup_panel_or_wipe(
+            "Auth worker busy. Try again.",
+            "local PIN setup worker unavailable display allocation failed");
         return;
     }
     if (result == ProvisioningFlowPinSubmitResult::advanced_to_repeat) {
-        if (!agent_q::modal_draw_pin_setup_panel()) {
-            wipe_setup_scratch("local PIN setup display allocation failed");
-            agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
+        redraw_pin_setup_panel_or_wipe(nullptr, "local PIN setup display allocation failed");
         return;
     }
     if (result == ProvisioningFlowPinSubmitResult::mismatch_restart) {
-        if (!agent_q::modal_draw_pin_setup_panel("PINs did not match.")) {
-            wipe_setup_scratch("local PIN setup display allocation failed");
-            agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
+        redraw_pin_setup_panel_or_wipe(
+            "PINs did not match.",
+            "local PIN setup display allocation failed");
         return;
     }
     if (result != ProvisioningFlowPinSubmitResult::commit_started) {
