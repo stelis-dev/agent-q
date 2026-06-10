@@ -29,6 +29,7 @@
 #include "agent_q_protocol_constants.h"
 #include "agent_q_protocol_pin_approval.h"
 #include "agent_q_provisioning_flow.h"
+#include "agent_q_provisioning_ui_flow.h"
 #include "agent_q_provisioning_runtime_state.h"
 #include "agent_q_request_id.h"
 #include "agent_q_session.h"
@@ -98,9 +99,7 @@ using ConnectApprovalChoice = agent_q::AgentQConnectApprovalChoice;
 using LocalPinAuthPurpose = agent_q::AgentQLocalPinAuthPurpose;
 using LocalPinAuthStage = agent_q::AgentQLocalPinAuthStage;
 using AgentQUsbOperationResponseWriter = agent_q::AgentQUsbOperationResponseWriter;
-using ProvisioningFlowGenerateResult = agent_q::AgentQProvisioningFlowGenerateResult;
 using ProvisioningFlowPanel = agent_q::AgentQProvisioningFlowPanel;
-using ProvisioningFlowPinSubmitResult = agent_q::AgentQProvisioningFlowPinSubmitResult;
 using ProvisioningFlowStage = agent_q::AgentQProvisioningFlowStage;
 using ProvisioningRuntimeState = agent_q::AgentQProvisioningRuntimeState;
 using SensitiveUiClearPolicy = agent_q::SensitiveUiClearPolicy;
@@ -1553,11 +1552,6 @@ bool disconnect_pending_user_signing_for_session(const char* id, const char* ses
     return true;
 }
 
-bool backup_phrase_backup_confirmation_ready()
-{
-    return agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::backup_phrase_displayed);
-}
-
 void clear_panel_locked(SensitiveUiClearPolicy policy)
 {
     const AgentQUiPanelKind panel_kind = agent_q::drawing_surface_clear_panel_locked();
@@ -1728,8 +1722,6 @@ void show_connect_review()
     ESP_LOGW(kTag, "connect could not show Agent-Q review UI");
 }
 
-using SetupCommitResult = agent_q::AgentQPersistentMaterialCommitResult;
-
 bool setup_choice_action_allowed()
 {
     if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::setup_choice) ||
@@ -1745,190 +1737,123 @@ bool setup_choice_action_allowed()
     return agent_q::provisioning_runtime_state_is_unprovisioned();
 }
 
-void clear_provisioning_panel_if_needed(
-    ProvisioningFlowStage stage,
-    AgentQUiPanelKind panel_kind,
-    const char* lost_reason,
-    const char* expired_message)
+TickType_t provisioning_ui_now()
 {
-    if (!agent_q::provisioning_flow_stage_is(stage)) {
-        return;
-    }
+    return xTaskGetTickCount();
+}
 
-    const bool panel_active = agent_q_panel_active(panel_kind);
-    const bool expired = agent_q::provisioning_flow_stage_expired(xTaskGetTickCount());
-    if (panel_active && !expired) {
-        return;
-    }
+bool draw_import_word_entry_panel_for_provisioning(const char* notice)
+{
+    return agent_q::modal_draw_import_word_entry_panel(notice);
+}
 
-    if (panel_active) {
-        clear_agent_q_panel_if_kind(panel_kind);
-    } else {
-        wipe_setup_scratch(lost_reason);
-    }
+bool draw_pin_setup_panel_for_provisioning(const char* notice)
+{
+    return agent_q::modal_draw_pin_setup_panel(notice);
+}
 
-    if (expired) {
-        agent_q::avatar_overlay_show_message(
-            expired_message,
-            AgentQMessageKind::timeout,
-            AgentQUiMode::result,
-            kAgentQResultDisplayMs);
-    }
+bool draw_pin_setup_processing_or_panel_for_provisioning()
+{
+    return agent_q::modal_draw_processing_overlay_on_current_panel(AgentQUiPanelKind::pin_entry) ||
+           agent_q::modal_draw_pin_setup_panel();
+}
+
+void provisioning_ui_show_message(const char* message, AgentQMessageKind kind)
+{
+    agent_q::avatar_overlay_show_message(
+        message,
+        kind,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+}
+
+agent_q::AgentQPersistentMaterialCommitResult commit_setup_with_prepared_auth_for_provisioning(
+    const uint8_t* root_material,
+    size_t root_material_size,
+    const agent_q::AgentQLocalAuthPreparedRecord* prepared_auth)
+{
+    return agent_q::persistent_material_commit_setup_with_prepared_auth(
+        root_material,
+        root_material_size,
+        prepared_auth,
+        persistent_material_ops());
+}
+
+void provisioning_ui_log_info(const char* message)
+{
+    ESP_LOGI(kTag, "%s", message != nullptr ? message : "");
+}
+
+void provisioning_ui_log_warn(const char* message)
+{
+    ESP_LOGW(kTag, "%s", message != nullptr ? message : "");
+}
+
+const agent_q::AgentQProvisioningUiFlowOps& provisioning_ui_ops()
+{
+    static const agent_q::AgentQProvisioningUiFlowOps ops = {
+        provisioning_ui_now,
+        local_setup_start_allowed,
+        setup_choice_action_allowed,
+        agent_q_panel_active,
+        clear_agent_q_panel_if_kind,
+        agent_q::modal_draw_setup_choice_panel,
+        agent_q::modal_draw_backup_phrase_display,
+        draw_import_word_entry_panel_for_provisioning,
+        draw_pin_setup_panel_for_provisioning,
+        draw_pin_setup_processing_or_panel_for_provisioning,
+        agent_q::avatar_overlay_clear,
+        provisioning_ui_show_message,
+        commit_setup_with_prepared_auth_for_provisioning,
+        provisioning_ui_log_info,
+        provisioning_ui_log_warn,
+        kProvisioningApprovalMaxMs,
+        kBackupPhraseDisplayMs,
+        kLocalPinSetupMs,
+        kLocalProcessingDisplayMs,
+        agent_q::kAgentQLocalAuthWorkerMaxMs,
+    };
+    return ops;
 }
 
 void clear_setup_choice_if_needed()
 {
-    clear_provisioning_panel_if_needed(
-        ProvisioningFlowStage::setup_choice,
-        AgentQUiPanelKind::setup_choice,
-        "setup choice panel lost",
-        "Setup expired");
+    agent_q::provisioning_ui_clear_setup_choice_if_needed(provisioning_ui_ops());
 }
 
 void clear_import_word_entry_if_needed()
 {
-    clear_provisioning_panel_if_needed(
-        ProvisioningFlowStage::import_word_entry,
-        AgentQUiPanelKind::import_word_entry,
-        "import word entry panel lost",
-        "Import expired");
+    agent_q::provisioning_ui_clear_import_word_entry_if_needed(provisioning_ui_ops());
 }
 
 void clear_backup_phrase_if_needed()
 {
-    clear_provisioning_panel_if_needed(
-        ProvisioningFlowStage::backup_phrase_displayed,
-        AgentQUiPanelKind::backup_phrase_display,
-        "backup phrase display lost",
-        "Phrase expired");
+    agent_q::provisioning_ui_clear_backup_phrase_if_needed(provisioning_ui_ops());
 }
 
 void clear_pin_setup_if_needed()
 {
-    const TickType_t now = xTaskGetTickCount();
-    if (agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::pin_committing)) {
-        if (!agent_q::provisioning_flow_fail_pin_commit_if_expired(now)) {
-            return;
-        }
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::pin_entry, SensitiveUiClearPolicy::preserve);
-        agent_q::avatar_overlay_show_message("Setup timed out", AgentQMessageKind::timeout, AgentQUiMode::result, kAgentQResultDisplayMs);
-        return;
-    }
-
-    if (!agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
-        return;
-    }
-
-    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::pin_entry);
-    const bool expired = agent_q::provisioning_flow_stage_expired(now);
-    if (panel_active && !expired) {
-        return;
-    }
-
-    if (panel_active) {
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::pin_entry);
-    } else {
-        wipe_setup_scratch("local PIN setup panel lost");
-    }
-
-    if (expired) {
-        agent_q::avatar_overlay_show_message("Setup expired", AgentQMessageKind::timeout, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
-}
-
-bool redraw_pin_setup_panel_or_wipe(const char* message, const char* wipe_reason)
-{
-    const bool shown = message == nullptr
-        ? agent_q::modal_draw_pin_setup_panel()
-        : agent_q::modal_draw_pin_setup_panel(message);
-    if (shown) {
-        return true;
-    }
-    wipe_setup_scratch(wipe_reason);
-    agent_q::avatar_overlay_show_message(
-        "Display error",
-        AgentQMessageKind::error,
-        AgentQUiMode::result,
-        kAgentQResultDisplayMs);
-    return false;
+    agent_q::provisioning_ui_clear_pin_setup_if_needed(provisioning_ui_ops());
 }
 
 void handle_pin_digit_from_local_ui(char digit)
 {
-    const TickType_t now = xTaskGetTickCount();
-    if (!agent_q::provisioning_flow_add_pin_digit(
-            digit,
-            timeout_window_from_now_ms(now, kLocalPinSetupMs))) {
-        return;
-    }
-    redraw_pin_setup_panel_or_wipe(nullptr, "local PIN setup display allocation failed");
+    agent_q::provisioning_ui_handle_pin_digit(digit, provisioning_ui_ops());
 }
 
 void handle_pin_clear_from_local_ui()
 {
-    const TickType_t now = xTaskGetTickCount();
-    if (!agent_q::provisioning_flow_clear_pin_entry(
-            timeout_window_from_now_ms(now, kLocalPinSetupMs))) {
-        return;
-    }
-    redraw_pin_setup_panel_or_wipe(nullptr, "local PIN setup display allocation failed");
+    agent_q::provisioning_ui_handle_pin_clear(provisioning_ui_ops());
 }
 
 void handle_pin_backspace_from_local_ui()
 {
-    const TickType_t now = xTaskGetTickCount();
-    if (!agent_q::provisioning_flow_backspace_pin(
-            timeout_window_from_now_ms(now, kLocalPinSetupMs))) {
-        return;
-    }
-    redraw_pin_setup_panel_or_wipe(nullptr, "local PIN setup display allocation failed");
+    agent_q::provisioning_ui_handle_pin_backspace(provisioning_ui_ops());
 }
 
 void handle_pin_submit_from_local_ui()
 {
-    if (!agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
-        ESP_LOGW(kTag, "Stale local PIN submit ignored");
-        return;
-    }
-    const TickType_t now = xTaskGetTickCount();
-    const ProvisioningFlowPinSubmitResult result =
-        agent_q::provisioning_flow_submit_pin(
-            timeout_window_from_now_ms(now, kLocalPinSetupMs),
-            now + pdMS_TO_TICKS(kLocalProcessingDisplayMs),
-            now + pdMS_TO_TICKS(agent_q::kAgentQLocalAuthWorkerMaxMs));
-    if (result == ProvisioningFlowPinSubmitResult::invalid_pin) {
-        redraw_pin_setup_panel_or_wipe(
-            "Enter exactly 6 digits.",
-            "local PIN setup display allocation failed");
-        return;
-    }
-    if (result == ProvisioningFlowPinSubmitResult::worker_unavailable) {
-        redraw_pin_setup_panel_or_wipe(
-            "Auth worker busy. Try again.",
-            "local PIN setup worker unavailable display allocation failed");
-        return;
-    }
-    if (result == ProvisioningFlowPinSubmitResult::advanced_to_repeat) {
-        redraw_pin_setup_panel_or_wipe(nullptr, "local PIN setup display allocation failed");
-        return;
-    }
-    if (result == ProvisioningFlowPinSubmitResult::mismatch_restart) {
-        redraw_pin_setup_panel_or_wipe(
-            "PINs did not match.",
-            "local PIN setup display allocation failed");
-        return;
-    }
-    if (result != ProvisioningFlowPinSubmitResult::commit_started) {
-        ESP_LOGW(kTag, "Stale local PIN submit ignored");
-        return;
-    }
-
-    if (!agent_q::modal_draw_processing_overlay_on_current_panel(AgentQUiPanelKind::pin_entry) &&
-        !agent_q::modal_draw_pin_setup_panel()) {
-        ESP_LOGW(kTag, "Local setup committing panel could not be shown");
-        wipe_setup_scratch("local PIN setup committing display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::provisioning_ui_handle_pin_submit(provisioning_ui_ops());
 }
 
 void clear_local_reset_if_needed()
@@ -3168,51 +3093,9 @@ void commit_local_pin_setting_if_ready()
 
 void handle_setup_auth_worker_result(agent_q::AgentQLocalAuthWorkerResult& worker_result)
 {
-    if (!agent_q::provisioning_flow_commit_job_active(worker_result.job_id)) {
-        return;
-    }
-
-    const uint8_t* root_material = nullptr;
-    size_t root_material_size = 0;
-    const agent_q::AgentQLocalAuthPreparedRecord* prepared_auth = nullptr;
-    if (!agent_q::provisioning_flow_commit_worker_result(
-            worker_result,
-            &root_material,
-            &root_material_size,
-            &prepared_auth)) {
-        wipe_setup_scratch("local setup PIN verifier preparation failed");
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::pin_entry, SensitiveUiClearPolicy::preserve);
-        agent_q::avatar_overlay_show_message("Storage error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        return;
-    }
-
-    const SetupCommitResult result =
-        agent_q::persistent_material_commit_setup_with_prepared_auth(
-            root_material,
-            root_material_size,
-            prepared_auth,
-            persistent_material_ops());
-    wipe_setup_scratch("local backup phrase and PIN committed");
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::pin_entry, SensitiveUiClearPolicy::preserve);
-    switch (result) {
-        case SetupCommitResult::ok:
-            ESP_LOGI(kTag, "Local setup PIN confirmed and provisioned");
-            agent_q::avatar_overlay_show_message("Provisioned", AgentQMessageKind::success, AgentQUiMode::result, kAgentQResultDisplayMs);
-            break;
-        case SetupCommitResult::missing_input:
-            ESP_LOGW(kTag, "Local PIN confirmation missing scratch");
-            agent_q::avatar_overlay_show_message("Setup unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-            break;
-        case SetupCommitResult::root_storage_error:
-        case SetupCommitResult::policy_storage_error:
-        case SetupCommitResult::local_auth_storage_error:
-        case SetupCommitResult::signing_mode_storage_error:
-        case SetupCommitResult::human_approval_setting_storage_error:
-        case SetupCommitResult::state_storage_error:
-            ESP_LOGW(kTag, "Local PIN confirmation storage error");
-            agent_q::avatar_overlay_show_message("Storage error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-            break;
-    }
+    agent_q::provisioning_ui_handle_setup_auth_worker_result(
+        worker_result,
+        provisioning_ui_ops());
 }
 
 void handle_local_reset_auth_worker_result(const agent_q::AgentQLocalAuthWorkerResult& worker_result)
@@ -4043,236 +3926,62 @@ void drain_connect_review_choice_events()
 
 void start_local_provisioning_from_setup_touch()
 {
-    if (!setup_choice_action_allowed()) {
-        ESP_LOGW(kTag, "Stale local setup generate action ignored");
-        return;
-    }
-
-    const ProvisioningFlowGenerateResult generation_result =
-        agent_q::provisioning_flow_begin_generate(
-            timeout_window_from_now_ms(xTaskGetTickCount(), kBackupPhraseDisplayMs));
-    if (generation_result == ProvisioningFlowGenerateResult::ok) {
-        if (agent_q::modal_draw_backup_phrase_display(agent_q::provisioning_flow_backup_phrase())) {
-            ESP_LOGI(kTag, "Local setup backup phrase displayed");
-        } else {
-            wipe_setup_scratch("local setup backup phrase display allocation failed");
-            ESP_LOGW(kTag, "Local setup display failed");
-            agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-
-    if (generation_result == ProvisioningFlowGenerateResult::rng_error) {
-        ESP_LOGW(kTag, "Local setup RNG failed");
-        agent_q::avatar_overlay_show_message("RNG error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        return;
-    }
-
-    ESP_LOGW(kTag, "Local setup phrase generation failed");
-    agent_q::avatar_overlay_show_message("Generation error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
+    agent_q::provisioning_ui_start_generate_from_setup_choice(provisioning_ui_ops());
 }
 
 void show_setup_choice_from_setup_touch()
 {
-    if (!local_setup_start_allowed()) {
-        ESP_LOGW(kTag, "Local setup touch ignored because setup is unavailable");
-        agent_q::avatar_overlay_clear();
-        agent_q::avatar_overlay_show_message("Setup unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        return;
-    }
-
-    agent_q::provisioning_flow_begin_setup_choice(
-        timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs));
-    if (!agent_q::modal_draw_setup_choice_panel()) {
-        wipe_setup_scratch("setup choice display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::provisioning_ui_show_setup_choice_from_touch(provisioning_ui_ops());
 }
 
 void start_local_import_from_setup_choice()
 {
-    if (!setup_choice_action_allowed()) {
-        ESP_LOGW(kTag, "Stale local import action ignored");
-        return;
-    }
-
-    agent_q::provisioning_flow_begin_import_phrase(
-        timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs));
-    if (!agent_q::modal_draw_import_word_entry_panel()) {
-        wipe_setup_scratch("import word entry display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::provisioning_ui_start_import_from_setup_choice(provisioning_ui_ops());
 }
 
 void cancel_setup_from_local_ui()
 {
-    if (agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::none) ||
-        agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::pin_committing)) {
-        ESP_LOGW(kTag, "Stale local setup cancel ignored");
-        return;
-    }
-
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::setup_choice, SensitiveUiClearPolicy::preserve);
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::backup_phrase_display, SensitiveUiClearPolicy::preserve);
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::import_word_entry, SensitiveUiClearPolicy::preserve);
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::pin_entry, SensitiveUiClearPolicy::preserve);
-    wipe_setup_scratch("provisioning scratch wipe");
-    ESP_LOGI(kTag, "Local setup canceled from backup phrase UI");
-    agent_q::avatar_overlay_show_message("Setup canceled", AgentQMessageKind::rejected, AgentQUiMode::result, kAgentQResultDisplayMs);
+    agent_q::provisioning_ui_cancel_from_local_ui(provisioning_ui_ops());
 }
 
-// Cancel inside the generate (backup_phrase_displayed) or import (import_word_entry)
-// screen goes BACK to the setup-choice menu rather than ending setup. The in-progress
-// phrase is wiped first (same protection as a full cancel) so nothing leaks across the
-// re-pick. Setup is entirely device-local (SPEC: local controls own the setup transitions,
-// there are no USB setup transition requests), and status stays `busy` throughout, so
-// returning to the menu changes nothing a host can observe beyond the unchanged `busy`.
-// NOTE: built but NOT yet exercised on hardware — verify nav + scratch wipe + re-pick.
 void return_to_setup_choice_from_local_ui()
 {
-    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::backup_phrase_displayed) &&
-        !agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::import_word_entry)) {
-        ESP_LOGW(kTag, "Stale local back-to-choice ignored");
-        return;
-    }
-
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::backup_phrase_display, SensitiveUiClearPolicy::preserve);
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::import_word_entry, SensitiveUiClearPolicy::preserve);
-    wipe_setup_scratch("provisioning back-to-choice wipe");
-    ESP_LOGI(kTag, "Returned to setup choice from generate/import UI");
-
-    agent_q::provisioning_flow_begin_setup_choice(
-        timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs));
-    if (!agent_q::modal_draw_setup_choice_panel()) {
-        wipe_setup_scratch("setup choice display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::provisioning_ui_return_to_setup_choice(provisioning_ui_ops());
 }
 
 void confirm_backup_phrase_from_local_ui()
 {
-    if (!backup_phrase_backup_confirmation_ready()) {
-        ESP_LOGW(kTag, "Stale local backup confirmation ignored");
-        return;
-    }
-
-    if (!agent_q::provisioning_flow_begin_pin_setup_from_displayed_phrase(
-            timeout_window_from_now_ms(xTaskGetTickCount(), kLocalPinSetupMs))) {
-        ESP_LOGW(kTag, "Local backup confirmation could not enter setup PIN state");
-        return;
-    }
-
-    if (!agent_q::modal_draw_pin_setup_panel()) {
-        wipe_setup_scratch("local PIN setup display allocation failed");
-        ESP_LOGW(kTag, "Local backup confirmation could not start setup PIN entry");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        return;
-    }
-
-    ESP_LOGI(kTag, "Local backup confirmed; setup PIN entry started");
+    agent_q::provisioning_ui_confirm_backup_phrase(provisioning_ui_ops());
 }
 
 void handle_import_slot_from_local_ui(uint8_t slot)
 {
-    if (!agent_q::provisioning_flow_import_select_slot(
-            slot,
-            timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs))) {
-        return;
-    }
-    if (!agent_q::modal_draw_import_word_entry_panel()) {
-        wipe_setup_scratch("import word entry display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::provisioning_ui_handle_import_slot(slot, provisioning_ui_ops());
 }
 
 void handle_import_letter_from_local_ui(char letter)
 {
-    if (!agent_q::provisioning_flow_import_add_letter(
-            letter,
-            timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs))) {
-        return;
-    }
-    if (!agent_q::modal_draw_import_word_entry_panel()) {
-        wipe_setup_scratch("import word entry display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::provisioning_ui_handle_import_letter(letter, provisioning_ui_ops());
 }
 
 void handle_import_clear_from_local_ui()
 {
-    if (agent_q::provisioning_flow_import_clear_active(
-            timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs)) &&
-        !agent_q::modal_draw_import_word_entry_panel()) {
-        wipe_setup_scratch("import word entry display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::provisioning_ui_handle_import_clear(provisioning_ui_ops());
 }
 
 void handle_import_candidate_from_local_ui(uint16_t word_index)
 {
-    if (agent_q::provisioning_flow_import_select_candidate(
-            word_index,
-            timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs)) &&
-        !agent_q::modal_draw_import_word_entry_panel()) {
-        wipe_setup_scratch("import word entry display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::provisioning_ui_handle_import_candidate(word_index, provisioning_ui_ops());
 }
 
 void handle_import_previous_from_local_ui()
 {
-    if (agent_q::provisioning_flow_import_previous_page(
-            timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs)) &&
-        !agent_q::modal_draw_import_word_entry_panel()) {
-        wipe_setup_scratch("import word entry display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
-}
-
-void start_pin_setup_after_imported_entropy()
-{
-    agent_q::provisioning_flow_begin_pin_setup_after_import(
-        timeout_window_from_now_ms(xTaskGetTickCount(), kLocalPinSetupMs));
-
-    if (!agent_q::modal_draw_pin_setup_panel()) {
-        wipe_setup_scratch("local PIN setup display allocation failed after import");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::provisioning_ui_handle_import_previous(provisioning_ui_ops());
 }
 
 void handle_import_next_from_local_ui()
 {
-    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::import_word_entry) ||
-        !agent_q::provisioning_flow_import_current_page_complete()) {
-        return;
-    }
-
-    if (agent_q::provisioning_flow_import_next_page(
-            timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs))) {
-        if (!agent_q::modal_draw_import_word_entry_panel()) {
-            wipe_setup_scratch("import word entry display allocation failed");
-            agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-
-    if (!agent_q::provisioning_flow_import_all_words_complete()) {
-        return;
-    }
-
-    const agent_q::Bip39EntropyDecodeResult result =
-        agent_q::provisioning_flow_decode_entropy_from_words();
-    if (result != agent_q::Bip39EntropyDecodeResult::ok) {
-        agent_q::provisioning_flow_import_refresh_deadline(
-            timeout_window_from_now_ms(xTaskGetTickCount(), kProvisioningApprovalMaxMs));
-        if (!agent_q::modal_draw_import_word_entry_panel("Checksum failed. Recheck words.")) {
-            wipe_setup_scratch("import checksum failure display allocation failed");
-            agent_q::avatar_overlay_show_message("Import error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-
-    start_pin_setup_after_imported_entropy();
+    agent_q::provisioning_ui_handle_import_next(provisioning_ui_ops());
 }
 
 void drain_ui_events()
