@@ -394,6 +394,23 @@ expect_absent "${HANDLE_LINE_SNIPPET}" 'strcmp\(type' \
 expect_absent "${HANDLE_LINE_SNIPPET}" 'handle_(get_status|identify_device|connect|sign_transaction|sign_personal_message|get_result|ack_result|disconnect|get_capabilities|get_accounts|policy_get|get_approval_history|policy_propose)_request' \
   "handle_line must not call operation handlers directly"
 
+USB_TICK_SNIPPET="${TMP_DIR}/usb-request-server-tick.cpp"
+awk '
+  /void run_usb_request_server_tick/ { capture = 1 }
+  capture { print }
+  /void usb_request_task/ { capture = 0 }
+' "${USB_SERVER}" >"${USB_TICK_SNIPPET}"
+expect_present "${USB_TICK_SNIPPET}" 'send_connect_review_response_if_needed' \
+  "USB request server tick must resolve pending connect review responses"
+expect_present "${USB_TICK_SNIPPET}" 'poll_usb_host_connection' \
+  "USB request server tick must poll host-link state before line input"
+expect_present "${USB_TICK_SNIPPET}" 'poll_usb_input' \
+  "USB request server tick must poll request-line input"
+expect_order "${USB_TICK_SNIPPET}" 'send_connect_review_response_if_needed' 'poll_usb_input' \
+  "USB request server tick must write pending connect review response before reading new input"
+expect_order "${USB_TICK_SNIPPET}" 'poll_usb_host_connection' 'poll_usb_input' \
+  "USB request server tick must poll host-link state before reading new input"
+
 expect_present "${USB_CONNECT_HANDLER_SOURCE}" "connect request contains unsupported fields" \
   "extracted connect handler must exact-check top-level request fields"
 expect_present "${USB_POLICY_PROPOSE_HANDLER_SOURCE}" "policy_propose request contains unsupported fields" \
