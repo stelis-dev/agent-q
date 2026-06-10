@@ -41,6 +41,7 @@ USB_POLICY_PROPOSE_RESULT_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cor
 USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_signing_handlers.cpp"
 LOCAL_SETTINGS_RESET_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_local_settings_reset_ui_flow.cpp"
 REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_request_backed_local_pin_context.cpp"
+TRANSIENT_UI_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_transient_ui_flow.cpp"
 SIGNING_PREFLIGHT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_signing_preflight.cpp"
 POLICY_SIGNING_EXECUTION_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_policy_signing_execution.cpp"
 USER_REVIEW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_review_view_model.cpp"
@@ -456,6 +457,35 @@ expect_present "${USB_TRANSPORT_PHASE_SNIPPET}" 'poll_usb_input' \
   "USB transport phase must poll request-line input"
 expect_order "${USB_TRANSPORT_PHASE_SNIPPET}" 'poll_usb_host_connection' 'poll_usb_input' \
   "USB transport phase must poll host-link state before reading new input"
+
+expect_present "${TRANSIENT_UI_FLOW_SOURCE}" 'transient_ui_show_identification_code' \
+  "temporary identification display lifecycle must live in transient UI flow"
+expect_present "${TRANSIENT_UI_FLOW_SOURCE}" 'transient_ui_clear_identification_if_needed' \
+  "temporary identification expiry must live in transient UI flow"
+expect_present "${TRANSIENT_UI_FLOW_SOURCE}" 'transient_ui_clear_message_if_needed' \
+  "temporary message expiry must live in transient UI flow"
+expect_present "${USB_SERVER}" 'transient_ui_show_identification_code' \
+  "USB request server must delegate identification display to transient UI flow"
+expect_present "${USB_SERVER}" 'transient_ui_clear_identification_if_needed' \
+  "USB request server must delegate identification expiry to transient UI flow"
+expect_present "${USB_SERVER}" 'transient_ui_clear_message_if_needed' \
+  "USB request server must delegate message expiry to transient UI flow"
+USB_CLEAR_IDENTIFICATION_SNIPPET="${TMP_DIR}/usb-clear-identification.cpp"
+awk '
+  /void clear_identification_if_needed/ { capture = 1 }
+  capture { print }
+  /void clear_agent_q_message_if_needed/ { capture = 0 }
+' "${USB_SERVER}" >"${USB_CLEAR_IDENTIFICATION_SNIPPET}"
+expect_absent "${USB_CLEAR_IDENTIFICATION_SNIPPET}" 'identification_display_deadline_reached|avatar_overlay_mode\(\)|avatar_overlay_clear' \
+  "USB clear_identification_if_needed must not inline temporary identification expiry logic"
+USB_CLEAR_MESSAGE_SNIPPET="${TMP_DIR}/usb-clear-message.cpp"
+awk '
+  /void clear_agent_q_message_if_needed/ { capture = 1 }
+  capture { print }
+  /void clear_connect_review_state/ { capture = 0 }
+' "${USB_SERVER}" >"${USB_CLEAR_MESSAGE_SNIPPET}"
+expect_absent "${USB_CLEAR_MESSAGE_SNIPPET}" 'avatar_overlay_message_deadline_reached|avatar_overlay_clear' \
+  "USB clear_agent_q_message_if_needed must not inline temporary message expiry logic"
 
 expect_present "${USB_CONNECT_HANDLER_SOURCE}" "connect request contains unsupported fields" \
   "extracted connect handler must exact-check top-level request fields"

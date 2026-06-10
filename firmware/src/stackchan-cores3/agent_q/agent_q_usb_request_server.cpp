@@ -50,6 +50,7 @@
 #include "agent_q_sui_signing_preparation.h"
 #include "agent_q_sui_signing_service.h"
 #include "agent_q_timeout_window.h"
+#include "agent_q_transient_ui_flow.h"
 #include "agent_q_usb_link_state.h"
 #include "agent_q_usb_approval_history_handler.h"
 #include "agent_q_usb_connect_handler.h"
@@ -307,19 +308,6 @@ void apply_panel_cleanup_plan(
     if (plan.recover_user_signing_review_panel) {
         ESP_LOGW(kTag, "Signature review panel deleted; state loop will recover if active");
     }
-}
-
-bool is_safe_identification_code(const char* value)
-{
-    if (value == nullptr) {
-        return false;
-    }
-    for (size_t index = 0; index < 4; ++index) {
-        if (value[index] < '0' || value[index] > '9') {
-            return false;
-        }
-    }
-    return value[4] == '\0';
 }
 
 const char* current_device_state()
@@ -1457,18 +1445,62 @@ bool provisioning_welcome_available()
            ui_display_idle;
 }
 
+void clear_request_ui_for_identification();
+
+TickType_t transient_ui_now()
+{
+    return xTaskGetTickCount();
+}
+
+AgentQUiMode transient_ui_overlay_mode()
+{
+    LvglLockGuard lock;
+    return agent_q::avatar_overlay_mode();
+}
+
+bool transient_ui_show_message(
+    const char* message,
+    AgentQMessageKind kind,
+    AgentQUiMode mode,
+    uint32_t duration_ms,
+    lv_event_cb_t click_callback)
+{
+    return agent_q::avatar_overlay_show_message(
+        message,
+        kind,
+        mode,
+        duration_ms,
+        click_callback);
+}
+
+void transient_ui_log_warn(const char* message)
+{
+    ESP_LOGW(kTag, "%s", message != nullptr ? message : "Agent-Q transient UI warning");
+}
+
+const agent_q::AgentQTransientUiFlowOps& transient_ui_flow_ops()
+{
+    static const agent_q::AgentQTransientUiFlowOps ops = {
+        transient_ui_now,
+        provisioning_welcome_available,
+        clear_request_ui_for_identification,
+        agent_q::identification_display_begin,
+        agent_q::identification_display_deadline_reached,
+        agent_q::identification_display_clear,
+        transient_ui_overlay_mode,
+        agent_q::avatar_overlay_clear,
+        agent_q::avatar_overlay_message_deadline_reached,
+        transient_ui_show_message,
+        agent_q::ui_event_bridge_setup_clicked_callback,
+        transient_ui_log_warn,
+    };
+    return ops;
+}
+
 void show_provisioning_welcome_if_available()
 {
-    if (!provisioning_welcome_available()) {
-        return;
-    }
-
-    agent_q::avatar_overlay_show_message(
-        "Set up Agent-Q",
-        AgentQMessageKind::info,
-        AgentQUiMode::identification,
-        0,
-        agent_q::ui_event_bridge_setup_clicked_callback());
+    agent_q::transient_ui_show_provisioning_welcome_if_available(
+        transient_ui_flow_ops());
 }
 
 void show_idle_agent_q_ui_for_current_state()
@@ -1519,43 +1551,20 @@ void clear_request_ui_for_identification()
 
 void show_identification_code(const char* code, uint32_t duration_ms)
 {
-    clear_request_ui_for_identification();
-    agent_q::identification_display_begin(
-        xTaskGetTickCount() + pdMS_TO_TICKS(duration_ms));
-
-    char message[40];
-    snprintf(message, sizeof(message), "Device code: %s", code);
-    if (!agent_q::avatar_overlay_show_message(message, AgentQMessageKind::info, AgentQUiMode::identification, duration_ms)) {
-        ESP_LOGW(kTag, "identify_device could not show Agent-Q speech bubble");
-    }
+    agent_q::transient_ui_show_identification_code(
+        code,
+        duration_ms,
+        transient_ui_flow_ops());
 }
 
 void clear_identification_if_needed()
 {
-    if (!agent_q::identification_display_deadline_reached(xTaskGetTickCount())) {
-        return;
-    }
-
-    bool identification_visible = false;
-    {
-        LvglLockGuard lock;
-        identification_visible =
-            agent_q::avatar_overlay_mode() == AgentQUiMode::identification;
-    }
-    agent_q::identification_display_clear();
-    if (identification_visible) {
-        agent_q::avatar_overlay_clear();
-        show_provisioning_welcome_if_available();
-    }
+    agent_q::transient_ui_clear_identification_if_needed(transient_ui_flow_ops());
 }
 
 void clear_agent_q_message_if_needed()
 {
-    if (!agent_q::avatar_overlay_message_deadline_reached(xTaskGetTickCount())) {
-        return;
-    }
-    agent_q::avatar_overlay_clear();
-    show_provisioning_welcome_if_available();
+    agent_q::transient_ui_clear_message_if_needed(transient_ui_flow_ops());
 }
 
 void clear_connect_review_state()
@@ -3914,7 +3923,7 @@ const agent_q::AgentQUsbIdentifyDeviceHandlerOps& usb_identify_device_handler_op
 {
     static const agent_q::AgentQUsbIdentifyDeviceHandlerOps ops = {
         write_busy_if_pending_or_local_flow_active_default,
-        is_safe_identification_code,
+        agent_q::transient_ui_identification_code_safe,
         show_identification_code,
         usb_device_response_info,
         kIdentifyDisplayDefaultMs,
