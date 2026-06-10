@@ -1745,73 +1745,62 @@ bool setup_choice_action_allowed()
     return agent_q::provisioning_runtime_state_is_unprovisioned();
 }
 
-void clear_setup_choice_if_needed()
+void clear_provisioning_panel_if_needed(
+    ProvisioningFlowStage stage,
+    AgentQUiPanelKind panel_kind,
+    const char* lost_reason,
+    const char* expired_message)
 {
-    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::setup_choice)) {
+    if (!agent_q::provisioning_flow_stage_is(stage)) {
         return;
     }
 
-    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::setup_choice);
+    const bool panel_active = agent_q_panel_active(panel_kind);
     const bool expired = agent_q::provisioning_flow_stage_expired(xTaskGetTickCount());
     if (panel_active && !expired) {
         return;
     }
 
     if (panel_active) {
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::setup_choice);
+        clear_agent_q_panel_if_kind(panel_kind);
     } else {
-        wipe_setup_scratch("setup choice panel lost");
+        wipe_setup_scratch(lost_reason);
     }
 
     if (expired) {
-        agent_q::avatar_overlay_show_message("Setup expired", AgentQMessageKind::timeout, AgentQUiMode::result, kAgentQResultDisplayMs);
+        agent_q::avatar_overlay_show_message(
+            expired_message,
+            AgentQMessageKind::timeout,
+            AgentQUiMode::result,
+            kAgentQResultDisplayMs);
     }
+}
+
+void clear_setup_choice_if_needed()
+{
+    clear_provisioning_panel_if_needed(
+        ProvisioningFlowStage::setup_choice,
+        AgentQUiPanelKind::setup_choice,
+        "setup choice panel lost",
+        "Setup expired");
 }
 
 void clear_import_word_entry_if_needed()
 {
-    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::import_word_entry)) {
-        return;
-    }
-
-    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::import_word_entry);
-    const bool expired = agent_q::provisioning_flow_stage_expired(xTaskGetTickCount());
-    if (panel_active && !expired) {
-        return;
-    }
-
-    if (panel_active) {
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::import_word_entry);
-    } else {
-        wipe_setup_scratch("import word entry panel lost");
-    }
-
-    if (expired) {
-        agent_q::avatar_overlay_show_message("Import expired", AgentQMessageKind::timeout, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    clear_provisioning_panel_if_needed(
+        ProvisioningFlowStage::import_word_entry,
+        AgentQUiPanelKind::import_word_entry,
+        "import word entry panel lost",
+        "Import expired");
 }
 
 void clear_backup_phrase_if_needed()
 {
-    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::backup_phrase_displayed)) {
-        return;
-    }
-
-    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::backup_phrase_display);
-    const bool expired = agent_q::provisioning_flow_stage_expired(xTaskGetTickCount());
-    if (panel_active && !expired) {
-        return;
-    }
-
-    if (panel_active) {
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::backup_phrase_display);
-    } else {
-        wipe_setup_scratch("backup phrase display lost");
-    }
-
-    if (expired) {
-        agent_q::avatar_overlay_show_message("Phrase expired", AgentQMessageKind::timeout, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    clear_provisioning_panel_if_needed(
+        ProvisioningFlowStage::backup_phrase_displayed,
+        AgentQUiPanelKind::backup_phrase_display,
+        "backup phrase display lost",
+        "Phrase expired");
 }
 
 void clear_pin_setup_if_needed()
