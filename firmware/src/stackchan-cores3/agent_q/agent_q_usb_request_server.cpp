@@ -55,6 +55,7 @@
 #include "agent_q_usb_operation_dispatch.h"
 #include "agent_q_usb_operation_response_writer.h"
 #include "agent_q_usb_policy_propose_handler.h"
+#include "agent_q_usb_policy_propose_result_writer.h"
 #include "agent_q_ui_panel_cleanup.h"
 #include "agent_q_usb_operation_type.h"
 #include "agent_q_usb_line_receiver.h"
@@ -442,27 +443,14 @@ bool write_policy_execution_response(
         result);
 }
 
-bool write_policy_propose_result_response(
+bool write_policy_propose_result_with_current_policy(
     const char* id,
     const char* status,
-    const char* reason_code,
-    bool include_policy)
+    const char* reason_code)
 {
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "policy_propose_result";
-    response["status"] = status;
-    response["reasonCode"] = reason_code;
-    if (include_policy) {
-        const agent_q::AgentQPolicyUpdateFlowSnapshot snapshot =
-            agent_q::policy_update_flow_snapshot();
-        JsonObject policy = response["policy"].to<JsonObject>();
-        policy["policyHash"] = snapshot.policy_hash;
-        policy["ruleCount"] = snapshot.rule_count;
-        policy["highestAction"] = snapshot.highest_action;
-    }
-    return agent_q::usb_response_write_json(response);
+    const agent_q::AgentQPolicyUpdateFlowSnapshot snapshot =
+        agent_q::policy_update_flow_snapshot();
+    return agent_q::usb_policy_propose_result_write(id, status, reason_code, &snapshot);
 }
 
 void clear_active_session()
@@ -2284,11 +2272,10 @@ void finish_policy_propose_result_terminal(
     AgentQMessageKind display_kind,
     bool refresh_material_consistency = false)
 {
-    if (!write_policy_propose_result_response(
+    if (!write_policy_propose_result_with_current_policy(
             request_id,
             agent_q::policy_update_flow_terminal_status(result),
-            agent_q::policy_update_flow_terminal_reason(result),
-            true)) {
+            agent_q::policy_update_flow_terminal_reason(result))) {
         agent_q::usb_response_log_write_failure("policy_propose_result", request_id);
     }
     clear_policy_update_terminal_state();
@@ -3462,7 +3449,7 @@ void handle_local_pin_auth_verify_worker_result(
             wipe_local_pin_auth_scratch("local PIN authorization verifier unavailable");
             clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
             if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
-                if (!write_policy_propose_result_response(request_id, "consistency_error", "consistency_error", true)) {
+                if (!write_policy_propose_result_with_current_policy(request_id, "consistency_error", "consistency_error")) {
                     agent_q::usb_response_log_write_failure("policy_propose_result", request_id);
                 }
                 agent_q::policy_update_flow_clear();
@@ -3709,7 +3696,7 @@ void clear_local_pin_auth_if_needed()
                 agent_q::AgentQPersistentMaterialRuntimeFailure::local_pin_auth_unavailable,
                 persistent_material_ops());
             if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
-                if (!write_policy_propose_result_response(request_id, "consistency_error", "consistency_error", true)) {
+                if (!write_policy_propose_result_with_current_policy(request_id, "consistency_error", "consistency_error")) {
                     agent_q::usb_response_log_write_failure("policy_propose_result", request_id);
                 }
                 agent_q::policy_update_flow_clear();
@@ -4877,7 +4864,6 @@ const agent_q::AgentQUsbPolicyProposeHandlerOps& policy_propose_handler_ops()
         make_policy_update_review_window,
         agent_q::policy_update_flow_begin,
         agent_q::policy_update_flow_begin_result_reason,
-        write_policy_propose_result_response,
         show_policy_update_review,
         agent_q::policy_update_flow_record_ui_error,
         finish_policy_update_terminal,

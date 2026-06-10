@@ -1,6 +1,7 @@
 #include "agent_q_usb_policy_propose_handler.h"
 
 #include "agent_q_json_input.h"
+#include "agent_q_usb_policy_propose_result_writer.h"
 
 namespace agent_q {
 
@@ -54,7 +55,6 @@ void handle_usb_policy_propose_request(
     if (ops.make_review_window == nullptr ||
         ops.begin_policy_update == nullptr ||
         ops.begin_result_reason == nullptr ||
-        ops.write_policy_propose_result_response == nullptr ||
         ops.show_policy_update_review == nullptr ||
         ops.record_ui_error == nullptr ||
         ops.finish_policy_update_terminal == nullptr) {
@@ -70,11 +70,11 @@ void handle_usb_policy_propose_request(
             session_id,
             review_window);
     if (begin_result != AgentQPolicyUpdateFlowBeginResult::ok) {
-        if (!ops.write_policy_propose_result_response(
+        if (!usb_policy_propose_result_write(
                 id,
                 "invalid_policy",
                 ops.begin_result_reason(begin_result),
-                false)) {
+                nullptr)) {
             writer.log_write_failure("policy_propose_result", id);
         }
         return;

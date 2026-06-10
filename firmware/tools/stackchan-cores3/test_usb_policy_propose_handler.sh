@@ -28,7 +28,10 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.h" \
+  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_result_writer.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_result_writer.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h" \
+  "${AGENT_Q_DIR}/agent_q_usb_response_writer.h" \
   "${AGENT_Q_DIR}/agent_q_policy_update_flow.h" \
   "${AGENT_Q_DIR}/agent_q_timeout_window.h" \
   "${COMMON_POLICY_DIR}/agent_q_policy_schema.h"; do
@@ -63,6 +66,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string.h>
 
 #include "agent_q_usb_policy_propose_handler.h"
+#include "agent_q_usb_policy_propose_result_writer.h"
 
 namespace {
 
@@ -74,7 +78,7 @@ int g_require_session_calls = 0;
 int g_make_window_calls = 0;
 int g_begin_calls = 0;
 int g_reason_calls = 0;
-int g_write_policy_result_calls = 0;
+int g_json_write_calls = 0;
 int g_show_review_calls = 0;
 int g_record_ui_error_calls = 0;
 int g_finish_terminal_calls = 0;
@@ -82,7 +86,7 @@ int g_record_waiting_calls = 0;
 bool g_material_ready = true;
 bool g_busy = false;
 bool g_session_valid = true;
-bool g_write_policy_result_ok = true;
+bool g_json_write_ok = true;
 bool g_show_review_ok = true;
 agent_q::AgentQPolicyUpdateFlowBeginResult g_begin_result =
     agent_q::AgentQPolicyUpdateFlowBeginResult::ok;
@@ -92,9 +96,14 @@ const char* g_last_id = nullptr;
 const char* g_last_session = nullptr;
 const char* g_last_error_code = nullptr;
 const char* g_last_error_message = nullptr;
-const char* g_last_policy_status = nullptr;
-const char* g_last_policy_reason = nullptr;
-bool g_last_policy_applied = true;
+char g_last_response_id[32] = {};
+char g_last_response_type[40] = {};
+char g_last_policy_status[40] = {};
+char g_last_policy_reason[40] = {};
+bool g_last_policy_included = false;
+char g_last_policy_hash[80] = {};
+size_t g_last_policy_rule_count = 0;
+char g_last_policy_highest_action[16] = {};
 agent_q::AgentQTimeoutWindow g_last_window = {};
 
 void reset_state()
@@ -107,7 +116,7 @@ void reset_state()
     g_make_window_calls = 0;
     g_begin_calls = 0;
     g_reason_calls = 0;
-    g_write_policy_result_calls = 0;
+    g_json_write_calls = 0;
     g_show_review_calls = 0;
     g_record_ui_error_calls = 0;
     g_finish_terminal_calls = 0;
@@ -115,7 +124,7 @@ void reset_state()
     g_material_ready = true;
     g_busy = false;
     g_session_valid = true;
-    g_write_policy_result_ok = true;
+    g_json_write_ok = true;
     g_show_review_ok = true;
     g_begin_result = agent_q::AgentQPolicyUpdateFlowBeginResult::ok;
     g_ui_error_result = agent_q::AgentQPolicyUpdateFlowTerminalResult::ui_error;
@@ -123,9 +132,14 @@ void reset_state()
     g_last_session = nullptr;
     g_last_error_code = nullptr;
     g_last_error_message = nullptr;
-    g_last_policy_status = nullptr;
-    g_last_policy_reason = nullptr;
-    g_last_policy_applied = true;
+    g_last_response_id[0] = '\0';
+    g_last_response_type[0] = '\0';
+    g_last_policy_status[0] = '\0';
+    g_last_policy_reason[0] = '\0';
+    g_last_policy_included = false;
+    g_last_policy_hash[0] = '\0';
+    g_last_policy_rule_count = 0;
+    g_last_policy_highest_action[0] = '\0';
     g_last_window = agent_q::AgentQTimeoutWindow{0, 0};
 }
 
@@ -199,20 +213,6 @@ const char* begin_result_reason(agent_q::AgentQPolicyUpdateFlowBeginResult resul
     }
 }
 
-bool write_policy_propose_result_response(
-    const char* id,
-    const char* status,
-    const char* reason,
-    bool applied)
-{
-    g_write_policy_result_calls += 1;
-    g_last_id = id;
-    g_last_policy_status = status;
-    g_last_policy_reason = reason;
-    g_last_policy_applied = applied;
-    return g_write_policy_result_ok;
-}
-
 bool show_policy_update_review()
 {
     g_show_review_calls += 1;
@@ -257,7 +257,6 @@ agent_q::AgentQUsbPolicyProposeHandlerOps make_ops()
         make_review_window,
         begin_policy_update,
         begin_result_reason,
-        write_policy_propose_result_response,
         show_policy_update_review,
         record_ui_error,
         finish_policy_update_terminal,
@@ -279,6 +278,27 @@ const char* valid_request()
 }
 
 }  // namespace
+
+namespace agent_q {
+
+bool usb_response_write_json(JsonDocument& response)
+{
+    g_json_write_calls += 1;
+    snprintf(g_last_response_id, sizeof(g_last_response_id), "%s", response["id"].as<const char*>());
+    snprintf(g_last_response_type, sizeof(g_last_response_type), "%s", response["type"].as<const char*>());
+    snprintf(g_last_policy_status, sizeof(g_last_policy_status), "%s", response["status"].as<const char*>());
+    snprintf(g_last_policy_reason, sizeof(g_last_policy_reason), "%s", response["reasonCode"].as<const char*>());
+    g_last_policy_included = !response["policy"].isNull();
+    if (g_last_policy_included) {
+        JsonObject policy = response["policy"].as<JsonObject>();
+        snprintf(g_last_policy_hash, sizeof(g_last_policy_hash), "%s", policy["policyHash"].as<const char*>());
+        g_last_policy_rule_count = policy["ruleCount"].as<size_t>();
+        snprintf(g_last_policy_highest_action, sizeof(g_last_policy_highest_action), "%s", policy["highestAction"].as<const char*>());
+    }
+    return g_json_write_ok;
+}
+
+}  // namespace agent_q
 
 int main()
 {
@@ -375,10 +395,12 @@ int main()
         assert(g_make_window_calls == 1);
         assert(g_begin_calls == 1);
         assert(g_reason_calls == 1);
-        assert(g_write_policy_result_calls == 1);
+        assert(g_json_write_calls == 1);
+        assert(strcmp(g_last_response_id, "req") == 0);
+        assert(strcmp(g_last_response_type, "policy_propose_result") == 0);
         assert(strcmp(g_last_policy_status, "invalid_policy") == 0);
         assert(strcmp(g_last_policy_reason, "too_large") == 0);
-        assert(g_last_policy_applied == false);
+        assert(!g_last_policy_included);
         assert(g_show_review_calls == 0);
         assert(g_finish_terminal_calls == 0);
     }
@@ -386,12 +408,39 @@ int main()
     {
         reset_state();
         g_begin_result = agent_q::AgentQPolicyUpdateFlowBeginResult::invalid_policy;
-        g_write_policy_result_ok = false;
+        g_json_write_ok = false;
         JsonDocument request = parse_request(valid_request());
         agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
-        assert(g_write_policy_result_calls == 1);
+        assert(g_json_write_calls == 1);
         assert(g_log_write_failure_calls == 1);
         assert(g_show_review_calls == 0);
+    }
+
+    {
+        reset_state();
+        const agent_q::AgentQPolicyUpdateFlowSnapshot snapshot{
+            true,
+            agent_q::AgentQPolicyUpdateFlowStage::committing,
+            "req",
+            "session",
+            agent_q::AgentQTimeoutWindow{10, 20},
+            "sha256:policy",
+            3,
+            "reject",
+            "reject",
+            "policy_update",
+            "Update policy",
+        };
+        assert(agent_q::usb_policy_propose_result_write("req", "applied", "applied", &snapshot));
+        assert(g_json_write_calls == 1);
+        assert(strcmp(g_last_response_id, "req") == 0);
+        assert(strcmp(g_last_response_type, "policy_propose_result") == 0);
+        assert(strcmp(g_last_policy_status, "applied") == 0);
+        assert(strcmp(g_last_policy_reason, "applied") == 0);
+        assert(g_last_policy_included);
+        assert(strcmp(g_last_policy_hash, "sha256:policy") == 0);
+        assert(g_last_policy_rule_count == 3);
+        assert(strcmp(g_last_policy_highest_action, "reject") == 0);
     }
 
     {
@@ -416,7 +465,7 @@ int main()
         assert(g_show_review_calls == 1);
         assert(g_record_waiting_calls == 1);
         assert(g_write_error_calls == 0);
-        assert(g_write_policy_result_calls == 0);
+        assert(g_json_write_calls == 0);
         assert(g_finish_terminal_calls == 0);
     }
 
@@ -431,6 +480,7 @@ CPP
   -I"${AGENT_Q_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_result_writer.cpp" \
   -o "${TMP_DIR}/test_usb_policy_propose_handler"
 
 "${TMP_DIR}/test_usb_policy_propose_handler"

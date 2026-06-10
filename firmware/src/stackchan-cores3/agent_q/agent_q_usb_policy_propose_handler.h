@@ -19,11 +19,6 @@ struct AgentQUsbPolicyProposeHandlerOps {
         const char* session_id,
         AgentQTimeoutWindow review_window);
     const char* (*begin_result_reason)(AgentQPolicyUpdateFlowBeginResult result);
-    bool (*write_policy_propose_result_response)(
-        const char* id,
-        const char* status,
-        const char* reason,
-        bool applied);
     bool (*show_policy_update_review)();
     AgentQPolicyUpdateFlowTerminalResult (*record_ui_error)();
     void (*finish_policy_update_terminal)(const char* id, AgentQPolicyUpdateFlowTerminalResult result);

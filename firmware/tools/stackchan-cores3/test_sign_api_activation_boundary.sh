@@ -37,6 +37,7 @@ USB_SIGNING_RESULT_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/age
 USB_RETAINED_RESULT_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_retained_result_handlers.cpp"
 USB_SESSION_READ_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_session_read_handlers.cpp"
 USB_POLICY_PROPOSE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_policy_propose_handler.cpp"
+USB_POLICY_PROPOSE_RESULT_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_policy_propose_result_writer.cpp"
 USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_signing_handlers.cpp"
 SIGNING_PREFLIGHT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_signing_preflight.cpp"
 POLICY_SIGNING_EXECUTION_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_policy_signing_execution.cpp"
@@ -229,6 +230,10 @@ expect_present "${USB_SERVER}" 'handle_policy_propose_request' \
   "USB request server must route policy_propose through an operation handler"
 expect_present "${USB_POLICY_PROPOSE_HANDLER_SOURCE}" 'handle_usb_policy_propose_request' \
   "policy_propose operation handler must live outside the USB server"
+expect_present "${USB_POLICY_PROPOSE_RESULT_WRITER_SOURCE}" 'response\["type"\][[:space:]]*=[[:space:]]*"policy_propose_result"' \
+  "policy_propose result writer must own policy_propose_result response JSON"
+expect_absent "${USB_SERVER}" 'response\["type"\][[:space:]]*=[[:space:]]*"policy_propose_result"|write_policy_propose_result_response' \
+  "USB request server must not own policy_propose_result response JSON"
 expect_present "${USB_SERVER}" 'handle_sign_transaction_request' \
   "USB request server must route sign_transaction through an operation handler"
 expect_present "${USB_SERVER}" 'handle_sign_personal_message_request' \
