@@ -41,6 +41,7 @@ USB_POLICY_PROPOSE_RESULT_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cor
 USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_signing_handlers.cpp"
 CONNECT_REVIEW_RESPONSE_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_connect_review_response_flow.cpp"
 LOCAL_SETTINGS_RESET_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_local_settings_reset_ui_flow.cpp"
+LOCAL_PIN_AUTH_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_local_pin_auth_ui_flow.cpp"
 REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_request_backed_local_pin_context.cpp"
 TRANSIENT_UI_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_transient_ui_flow.cpp"
 SIGNING_PREFLIGHT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_signing_preflight.cpp"
@@ -180,6 +181,20 @@ expect_present "${USB_SERVER}" 'local_settings_reset_ui_handle_auth_worker_resul
   "USB request server must delegate local reset auth worker results"
 expect_absent "${USB_SERVER}" 'local_reset_submit_pin_for_verification|local_reset_complete_pin_verify_job|local_reset_commit_material' \
   "USB request server must not own local reset PIN verification or destructive reset commit logic"
+expect_present "${LOCAL_PIN_AUTH_UI_SOURCE}" 'local_pin_auth_ui_handle_verify_worker_result' \
+  "local PIN auth UI flow must own PIN verifier worker-result handling"
+expect_present "${LOCAL_PIN_AUTH_UI_SOURCE}" 'local_pin_auth_ui_clear_if_needed' \
+  "local PIN auth UI flow must own timeout and panel-loss cleanup"
+expect_present "${LOCAL_PIN_AUTH_UI_SOURCE}" 'local_pin_auth_ui_commit_setting_if_ready' \
+  "local PIN auth UI flow must own local PIN setting commit handling"
+expect_present "${LOCAL_PIN_AUTH_UI_SOURCE}" 'local_pin_auth_ui_cancel' \
+  "local PIN auth UI flow must own local PIN cancellation terminal effects"
+expect_present "${USB_SERVER}" 'local_pin_auth_ui_handle_verify_worker_result' \
+  "USB request server must delegate local PIN auth verifier worker results"
+expect_present "${USB_SERVER}" 'local_pin_auth_ui_clear_if_needed' \
+  "USB request server maintenance phase must delegate local PIN auth cleanup"
+expect_absent "${USB_SERVER}" 'local_pin_auth_complete_verify_job|user_signing_confirmation_complete_pin_verify_job_and_write_history|local_pin_auth_fail_processing_if_expired|local_pin_auth_release_lockout_if_elapsed|request_backed_local_pin_deadline_reached|request_backed_local_pin_resume_input_window|request_backed_local_pin_pause_input_window' \
+  "USB request server must not own local PIN verification, lockout, timeout, or request-backed input-window effects"
 expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_local_pin_owner_for_purpose' \
   "request-backed local PIN context must own purpose-to-owner classification"
 expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_local_pin_cap_input_window' \

@@ -19,21 +19,21 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-USB_SERVER="${AGENT_Q_DIR}/agent_q_usb_request_server.cpp"
+LOCAL_PIN_AUTH_UI_SOURCE="${AGENT_Q_DIR}/agent_q_local_pin_auth_ui_flow.cpp"
 CXX_BIN="${CXX:-c++}"
 
-check_usb_server_deadline_order() {
+check_local_pin_ui_deadline_order() {
   local deadline_line
   local lockout_line
 
   deadline_line="$(awk '
-    /void clear_local_pin_auth_if_needed\(\)/ { in_fn = 1 }
+    /void local_pin_auth_ui_clear_if_needed\(/ { in_fn = 1 }
     in_fn && /request_backed_local_pin_input_deadline_reached/ { print NR; exit }
-  ' "${USB_SERVER}")"
+  ' "${LOCAL_PIN_AUTH_UI_SOURCE}")"
   lockout_line="$(awk '
-    /void clear_local_pin_auth_if_needed\(\)/ { in_fn = 1 }
+    /void local_pin_auth_ui_clear_if_needed\(/ { in_fn = 1 }
     in_fn && /local_pin_auth_release_lockout_if_elapsed/ { print NR; exit }
-  ' "${USB_SERVER}")"
+  ' "${LOCAL_PIN_AUTH_UI_SOURCE}")"
 
   if [[ -z "${deadline_line}" || -z "${lockout_line}" || "${deadline_line}" -ge "${lockout_line}" ]]; then
     echo "FAILED: protocol-backed PIN input timeout must be handled before lockout retry UI recovery" >&2
@@ -54,7 +54,7 @@ check_local_pin_ui_handler_timeout_order() {
     $0 ~ "void " fn "\\(" { in_fn = 1 }
     in_fn { print }
     in_fn && /^}/ { exit }
-  ' "${USB_SERVER}" >"${snippet}"
+  ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
 
   timeout_line="$(grep -En 'finish_request_backed_local_pin_input_timeout_if_reached' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
   second_line="$(grep -En "${second_pattern}" "${snippet}" | head -n 1 | cut -d: -f1 || true)"
@@ -72,12 +72,12 @@ check_local_pin_worker_timeout_order() {
   local complete_line
 
   awk '
-    /void handle_local_pin_auth_verify_worker_result\(/ { in_fn = 1 }
+    /void local_pin_auth_ui_handle_verify_worker_result\(/ { in_fn = 1 }
     in_fn { print }
     in_fn && /^}/ { exit }
-  ' "${USB_SERVER}" >"${snippet}"
+  ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
 
-  complete_line="$(grep -En 'agent_q::local_pin_auth_complete_verify_job\(' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  complete_line="$(grep -En 'local_pin_auth_complete_verify_job\(' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
   timeout_line="$(grep -En 'finish_request_backed_local_pin_input_timeout_if_reached' "${snippet}" | awk -F: -v complete="${complete_line:-0}" '$1 < complete { line = $1 } END { print line }')"
 
   if [[ -z "${timeout_line}" || -z "${complete_line}" || "${timeout_line}" -ge "${complete_line}" ]]; then
@@ -322,25 +322,25 @@ CPP
   -o "${TMP_DIR}/protocol_pin_approval_test"
 
 "${TMP_DIR}/protocol_pin_approval_test"
-check_usb_server_deadline_order
+check_local_pin_ui_deadline_order
 check_local_pin_ui_handler_timeout_order \
-  handle_local_pin_auth_digit_from_ui \
+  local_pin_auth_ui_handle_digit \
   'local_pin_auth_add_digit' \
   "request-backed PIN digit handler must timeout before local PIN mutation"
 check_local_pin_ui_handler_timeout_order \
-  handle_local_pin_auth_clear_from_ui \
+  local_pin_auth_ui_handle_clear \
   'local_pin_auth_clear_pin' \
   "request-backed PIN clear handler must timeout before local PIN mutation"
 check_local_pin_ui_handler_timeout_order \
-  handle_local_pin_auth_backspace_from_ui \
+  local_pin_auth_ui_handle_backspace \
   'local_pin_auth_backspace_pin' \
   "request-backed PIN backspace handler must timeout before local PIN mutation"
 check_local_pin_ui_handler_timeout_order \
-  handle_local_pin_auth_submit_from_ui \
-  'agent_q::local_pin_auth_submit' \
+  local_pin_auth_ui_handle_submit \
+  'local_pin_auth_submit' \
   "request-backed PIN submit handler must timeout before verification start"
 check_local_pin_ui_handler_timeout_order \
-  cancel_local_pin_auth_from_ui \
+  local_pin_auth_ui_cancel \
   'policy_update_flow_return_to_review|usb_response_write_connect_rejected|user_signing_confirmation_return_to_review_from_pin' \
   "request-backed PIN cancel handler must timeout before cancel/back action"
 check_local_pin_worker_timeout_order
