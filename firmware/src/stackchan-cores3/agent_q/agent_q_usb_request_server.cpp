@@ -9,7 +9,6 @@
 #include "agent_q_u64_decimal.h"
 #include "agent_q_avatar_overlay_drawing.h"
 #include "agent_q_approval_history.h"
-#include "agent_q_base64.h"
 #include "agent_q_bip39.h"
 #include "agent_q_bip39_wordlist.h"
 #include "agent_q_connect_approval.h"
@@ -85,10 +84,6 @@
 #include "hal/hal.h"
 #include "lvgl.h"
 #include "nvs.h"
-
-extern "C" {
-#include "byte_conversions.h"
-}
 
 #include "stackchan/stackchan.h"
 
@@ -448,59 +443,6 @@ bool write_policy_execution_response(
         result);
 }
 
-enum class PolicyResponseWriteResult {
-    ok,
-    active_policy_unavailable,
-    response_write_failed,
-};
-
-PolicyResponseWriteResult write_policy_response(const char* id)
-{
-    agent_q::AgentQStoredPolicyDocument policy = {};
-    if (!agent_q::read_active_policy_document(&policy) || policy.document == nullptr) {
-        return PolicyResponseWriteResult::active_policy_unavailable;
-    }
-
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "policy";
-    JsonObject policy_json = response["policy"].to<JsonObject>();
-    policy_json["schema"] = policy.schema;
-    policy_json["policyId"] = policy.policy_id;
-    policy_json["defaultAction"] = policy.default_action;
-    policy_json["ruleCount"] = policy.rule_count;
-    JsonArray rules = policy_json["rules"].to<JsonArray>();
-    const agent_q::AgentQPolicyDocument& document = *policy.document;
-    for (size_t rule_index = 0; rule_index < document.rule_count; ++rule_index) {
-        const agent_q::AgentQPolicyRule& source_rule = document.rules[rule_index];
-        JsonObject rule = rules.add<JsonObject>();
-        rule["id"] = source_rule.id;
-        rule["chain"] = source_rule.chain;
-        rule["method"] = source_rule.operation;
-        rule["action"] = agent_q::agent_q_policy_action_name(source_rule.action);
-        JsonArray criteria = rule["criteria"].to<JsonArray>();
-        for (size_t criterion_index = 0; criterion_index < source_rule.criterion_count; ++criterion_index) {
-            const agent_q::AgentQPolicyCriterion& source_criterion =
-                source_rule.criteria[criterion_index];
-            JsonObject criterion = criteria.add<JsonObject>();
-            criterion["field"] = source_criterion.field;
-            criterion["op"] = agent_q::agent_q_policy_operator_name(source_criterion.op);
-            if (source_criterion.op == agent_q::AgentQPolicyOperator::in) {
-                JsonArray values = criterion["values"].to<JsonArray>();
-                for (size_t value_index = 0; value_index < source_criterion.value_count; ++value_index) {
-                    values.add(source_criterion.values[value_index]);
-                }
-            } else {
-                criterion["value"] = source_criterion.value;
-            }
-        }
-    }
-    return agent_q::usb_response_write_json(response)
-               ? PolicyResponseWriteResult::ok
-               : PolicyResponseWriteResult::response_write_failed;
-}
-
 bool write_approval_history_response(const char* id, uint64_t before_sequence, size_t limit)
 {
     agent_q::AgentQApprovalHistoryPage page = {};
@@ -640,52 +582,6 @@ agent_q::AgentQPersistentMaterialOps persistent_material_ops()
         persist_persistent_material_state,
         handle_persistent_material_consistency_error,
     };
-}
-
-// Writes the Sui Ed25519 account (index 0, m/44'/784'/0'/0'/0') response after
-// account derivation has completed inside the account module. Returns false
-// without writing when stored root material is unavailable or derivation fails,
-// so the caller emits a single error response (no partial account).
-bool write_accounts_response(const char* id)
-{
-    uint8_t public_key[agent_q::kSuiEd25519PublicKeyBytes] = {};
-    char address[agent_q::kSuiAddressBufferSize] = {};
-    const agent_q::SuiAccountDerivationResult account_result =
-        agent_q::derive_sui_ed25519_account_from_stored_root(public_key, address, sizeof(address));
-    if (account_result == agent_q::SuiAccountDerivationResult::root_material_unavailable) {
-        // A provisioned device whose stored root material is no longer readable
-        // is inconsistent. Fail closed so get_status reports "error" and
-        // connect/get_accounts stop treating it as provisioned until a local
-        // recovery/reset flow exists, instead of silently staying provisioned
-        // until reboot.
-        agent_q::persistent_material_record_runtime_failure(
-            agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
-            persistent_material_ops());
-        return false;
-    }
-    if (account_result != agent_q::SuiAccountDerivationResult::ok) {
-        return false;
-    }
-
-    // Raw 32-byte Ed25519 public key as base64 (44 chars + NUL). The scheme is
-    // reported separately as keyScheme, matching Sui SDK getPublicKey().toBase64().
-    char public_key_base64[48] = {};
-    if (bytes_to_base64(public_key, sizeof(public_key), public_key_base64, sizeof(public_key_base64)) != 0) {
-        return false;
-    }
-
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "accounts";
-    JsonArray accounts = response["accounts"].to<JsonArray>();
-    JsonObject account = accounts.add<JsonObject>();
-    account["chain"] = "sui";
-    account["address"] = address;
-    account["publicKey"] = public_key_base64;
-    account["keyScheme"] = "ed25519";
-    account["derivationPath"] = "m/44'/784'/0'/0'/0'";
-    return agent_q::usb_response_write_json(response);
 }
 
 agent_q::AgentQSigningHistoryTerminalResult signing_history_terminal_result(
@@ -4889,17 +4785,55 @@ void handle_ack_result_request(
     agent_q::handle_usb_ack_result_request(id, request, writer, retained_result_handler_ops());
 }
 
-agent_q::AgentQUsbPolicyResponseWriteResult write_policy_response_for_session_read(const char* id)
+agent_q::SuiAccountDerivationResult derive_sui_account_for_session_read(
+    uint8_t public_key_out[agent_q::kSuiEd25519PublicKeyBytes],
+    char* address_out,
+    size_t address_out_size)
 {
-    switch (write_policy_response(id)) {
-        case PolicyResponseWriteResult::ok:
-            return agent_q::AgentQUsbPolicyResponseWriteResult::ok;
-        case PolicyResponseWriteResult::active_policy_unavailable:
-            return agent_q::AgentQUsbPolicyResponseWriteResult::active_policy_unavailable;
-        case PolicyResponseWriteResult::response_write_failed:
-            return agent_q::AgentQUsbPolicyResponseWriteResult::response_write_failed;
+    return agent_q::derive_sui_ed25519_account_from_stored_root(
+        public_key_out,
+        address_out,
+        address_out_size);
+}
+
+void record_root_material_unreadable_for_session_read()
+{
+    // A provisioned device whose stored root material is no longer readable is
+    // inconsistent. Fail closed so status/connect/account reads stop treating
+    // it as provisioned until local recovery/reset handles the condition.
+    agent_q::persistent_material_record_runtime_failure(
+        agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
+        persistent_material_ops());
+}
+
+bool read_active_policy_for_session_read(
+    const char** schema,
+    char* policy_id_out,
+    size_t policy_id_out_size,
+    const char** default_action,
+    size_t* rule_count,
+    const agent_q::AgentQPolicyDocument** document)
+{
+    if (schema == nullptr ||
+        policy_id_out == nullptr ||
+        policy_id_out_size == 0 ||
+        default_action == nullptr ||
+        rule_count == nullptr ||
+        document == nullptr) {
+        return false;
     }
-    return agent_q::AgentQUsbPolicyResponseWriteResult::response_write_failed;
+
+    agent_q::AgentQStoredPolicyDocument stored_policy = {};
+    if (!agent_q::read_active_policy_document(&stored_policy) ||
+        stored_policy.document == nullptr) {
+        return false;
+    }
+    *schema = stored_policy.schema;
+    snprintf(policy_id_out, policy_id_out_size, "%s", stored_policy.policy_id);
+    *default_action = stored_policy.default_action;
+    *rule_count = stored_policy.rule_count;
+    *document = stored_policy.document;
+    return true;
 }
 
 void record_active_policy_unavailable_for_session_read()
@@ -4916,8 +4850,9 @@ const agent_q::AgentQUsbSessionReadHandlerOps& session_read_handler_ops()
         write_busy_if_pending_or_local_flow_active_allow_settings,
         require_active_matching_session,
         agent_q::read_signing_authorization_mode,
-        write_accounts_response,
-        write_policy_response_for_session_read,
+        derive_sui_account_for_session_read,
+        record_root_material_unreadable_for_session_read,
+        read_active_policy_for_session_read,
         record_active_policy_unavailable_for_session_read,
     };
     return ops;

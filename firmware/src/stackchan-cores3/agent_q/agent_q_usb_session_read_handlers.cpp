@@ -5,9 +5,23 @@
 #include "agent_q_signing_route.h"
 #include "agent_q_usb_response_writer.h"
 
+extern "C" {
+#include "byte_conversions.h"
+}
+
 namespace agent_q {
 
 namespace {
+
+constexpr size_t kPolicyIdBufferSize = 80;
+
+struct SessionReadPolicyDocument {
+    const char* schema = nullptr;
+    char policy_id[kPolicyIdBufferSize] = {};
+    const char* default_action = nullptr;
+    size_t rule_count = 0;
+    const AgentQPolicyDocument* document = nullptr;
+};
 
 bool session_read_material_ready(const AgentQUsbSessionReadHandlerOps& ops)
 {
@@ -118,6 +132,113 @@ bool write_capabilities_response(
     return usb_response_write_json(response);
 }
 
+bool write_accounts_response(
+    const char* id,
+    const AgentQUsbSessionReadHandlerOps& ops,
+    bool* root_material_unavailable)
+{
+    if (root_material_unavailable != nullptr) {
+        *root_material_unavailable = false;
+    }
+    if (ops.derive_sui_account == nullptr) {
+        return false;
+    }
+
+    uint8_t public_key[kSuiEd25519PublicKeyBytes] = {};
+    char address[kSuiAddressBufferSize] = {};
+    const SuiAccountDerivationResult account_result =
+        ops.derive_sui_account(public_key, address, sizeof(address));
+    if (account_result == SuiAccountDerivationResult::root_material_unavailable) {
+        if (root_material_unavailable != nullptr) {
+            *root_material_unavailable = true;
+        }
+        return false;
+    }
+    if (account_result != SuiAccountDerivationResult::ok) {
+        return false;
+    }
+
+    char public_key_base64[48] = {};
+    if (bytes_to_base64(public_key, sizeof(public_key), public_key_base64, sizeof(public_key_base64)) != 0) {
+        return false;
+    }
+
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kAgentQProtocolVersion;
+    response["type"] = "accounts";
+    JsonArray accounts = response["accounts"].to<JsonArray>();
+    JsonObject account = accounts.add<JsonObject>();
+    account["chain"] = "sui";
+    account["address"] = address;
+    account["publicKey"] = public_key_base64;
+    account["keyScheme"] = "ed25519";
+    account["derivationPath"] = "m/44'/784'/0'/0'/0'";
+    return usb_response_write_json(response);
+}
+
+bool write_policy_response(
+    const char* id,
+    const SessionReadPolicyDocument& policy)
+{
+    if (policy.document == nullptr) {
+        return false;
+    }
+
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kAgentQProtocolVersion;
+    response["type"] = "policy";
+    JsonObject policy_json = response["policy"].to<JsonObject>();
+    policy_json["schema"] = policy.schema;
+    policy_json["policyId"] = policy.policy_id;
+    policy_json["defaultAction"] = policy.default_action;
+    policy_json["ruleCount"] = policy.rule_count;
+    JsonArray rules = policy_json["rules"].to<JsonArray>();
+    const AgentQPolicyDocument& document = *policy.document;
+    for (size_t rule_index = 0; rule_index < document.rule_count; ++rule_index) {
+        const AgentQPolicyRule& source_rule = document.rules[rule_index];
+        JsonObject rule = rules.add<JsonObject>();
+        rule["id"] = source_rule.id;
+        rule["chain"] = source_rule.chain;
+        rule["method"] = source_rule.operation;
+        rule["action"] = agent_q_policy_action_name(source_rule.action);
+        JsonArray criteria = rule["criteria"].to<JsonArray>();
+        for (size_t criterion_index = 0; criterion_index < source_rule.criterion_count; ++criterion_index) {
+            const AgentQPolicyCriterion& source_criterion =
+                source_rule.criteria[criterion_index];
+            JsonObject criterion = criteria.add<JsonObject>();
+            criterion["field"] = source_criterion.field;
+            criterion["op"] = agent_q_policy_operator_name(source_criterion.op);
+            if (source_criterion.op == AgentQPolicyOperator::in) {
+                JsonArray values = criterion["values"].to<JsonArray>();
+                for (size_t value_index = 0; value_index < source_criterion.value_count; ++value_index) {
+                    values.add(source_criterion.values[value_index]);
+                }
+            } else {
+                criterion["value"] = source_criterion.value;
+            }
+        }
+    }
+    return usb_response_write_json(response);
+}
+
+bool read_active_policy(
+    const AgentQUsbSessionReadHandlerOps& ops,
+    SessionReadPolicyDocument* policy)
+{
+    if (policy == nullptr || ops.read_active_policy == nullptr) {
+        return false;
+    }
+    return ops.read_active_policy(
+        &policy->schema,
+        policy->policy_id,
+        sizeof(policy->policy_id),
+        &policy->default_action,
+        &policy->rule_count,
+        &policy->document);
+}
+
 }  // namespace
 
 void handle_usb_get_capabilities_request(
@@ -169,9 +290,12 @@ void handle_usb_get_accounts_request(
     }
     (void)session_id;
 
-    if (ops.write_accounts_response != nullptr &&
-        ops.write_accounts_response(id)) {
+    bool root_material_unavailable = false;
+    if (write_accounts_response(id, ops, &root_material_unavailable)) {
         return;
+    }
+    if (root_material_unavailable && ops.record_root_material_unreadable != nullptr) {
+        ops.record_root_material_unreadable();
     }
     writer.write_error(id, "account_error", "Could not derive accounts.");
 }
@@ -195,23 +319,19 @@ void handle_usb_policy_get_request(
     }
     (void)session_id;
 
-    if (ops.write_policy_response == nullptr) {
-        writer.log_write_failure("policy", id);
+    SessionReadPolicyDocument policy;
+    if (!read_active_policy(ops, &policy) ||
+        policy.document == nullptr) {
+        if (ops.record_active_policy_unavailable != nullptr) {
+            ops.record_active_policy_unavailable();
+        }
+        writer.write_error(id, "policy_error", "Active policy is unavailable.");
         return;
     }
-    switch (ops.write_policy_response(id)) {
-        case AgentQUsbPolicyResponseWriteResult::ok:
-            return;
-        case AgentQUsbPolicyResponseWriteResult::active_policy_unavailable:
-            if (ops.record_active_policy_unavailable != nullptr) {
-                ops.record_active_policy_unavailable();
-            }
-            writer.write_error(id, "policy_error", "Active policy is unavailable.");
-            return;
-        case AgentQUsbPolicyResponseWriteResult::response_write_failed:
-            writer.log_write_failure("policy", id);
-            return;
+    if (write_policy_response(id, policy)) {
+        return;
     }
+    writer.log_write_failure("policy", id);
 }
 
 }  // namespace agent_q
