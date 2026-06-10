@@ -17,6 +17,6 @@ enum class AgentQSuiSignTransactionAdapterResult {
 AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
     const uint8_t* tx_bytes,
     size_t tx_bytes_size,
-    SuiTransferFacts* out);
+    SuiTransactionPolicyFacts* out);
 
 }  // namespace agent_q

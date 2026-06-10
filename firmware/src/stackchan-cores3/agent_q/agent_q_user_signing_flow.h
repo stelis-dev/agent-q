@@ -104,7 +104,7 @@ struct AgentQUserSigningFlowSnapshot {
     AgentQTimeoutWindow pin_input_window;
     size_t signable_payload_size;
     bool signable_payload_available;
-    SuiTransferFacts sui_transfer;
+    SuiTransactionPolicyFacts sui_facts;
     char account_address[kSuiAddressBufferSize];
     char message_preview[kAgentQSignPersonalMessagePreviewSize];
 };

@@ -76,21 +76,22 @@ agent_q::AgentQUserSigningFlowSnapshot valid_snapshot()
     copy_field(snapshot.network, sizeof(snapshot.network), "devnet");
     copy_field(snapshot.payload_digest, sizeof(snapshot.payload_digest),
                "sha256:1111111111111111111111111111111111111111111111111111111111111111");
-    copy_field(snapshot.sui_transfer.sender, sizeof(snapshot.sui_transfer.sender),
+    copy_field(snapshot.sui_facts.sender, sizeof(snapshot.sui_facts.sender),
                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    copy_field(snapshot.sui_transfer.gas_owner, sizeof(snapshot.sui_transfer.gas_owner),
+    copy_field(snapshot.sui_facts.gas_owner, sizeof(snapshot.sui_facts.gas_owner),
                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    copy_field(snapshot.sui_transfer.recipient, sizeof(snapshot.sui_transfer.recipient),
+    snapshot.sui_facts.has_restricted_transfer = true;
+    copy_field(snapshot.sui_facts.restricted_transfer.recipient, sizeof(snapshot.sui_facts.restricted_transfer.recipient),
                kFullRecipient);
-    copy_field(snapshot.sui_transfer.asset, sizeof(snapshot.sui_transfer.asset),
+    copy_field(snapshot.sui_facts.restricted_transfer.asset, sizeof(snapshot.sui_facts.restricted_transfer.asset),
                "0x2::sui::SUI");
-    copy_field(snapshot.sui_transfer.amount, sizeof(snapshot.sui_transfer.amount),
+    copy_field(snapshot.sui_facts.restricted_transfer.amount, sizeof(snapshot.sui_facts.restricted_transfer.amount),
                "1000000000");
-    copy_field(snapshot.sui_transfer.gas_budget, sizeof(snapshot.sui_transfer.gas_budget),
+    copy_field(snapshot.sui_facts.gas_budget, sizeof(snapshot.sui_facts.gas_budget),
                "5000000");
-    copy_field(snapshot.sui_transfer.gas_price, sizeof(snapshot.sui_transfer.gas_price),
+    copy_field(snapshot.sui_facts.gas_price, sizeof(snapshot.sui_facts.gas_price),
                "1000");
-    snapshot.sui_transfer.command_count = 2;
+    snapshot.sui_facts.restricted_transfer.command_count = 2;
     snapshot.signable_payload_available = true;
     snapshot.signable_payload_size = 128;
     return snapshot;
@@ -197,12 +198,12 @@ int main()
            "non-reviewing snapshot is rejected");
 
     snapshot = valid_snapshot();
-    snapshot.sui_transfer.amount[0] = '\0';
+    snapshot.sui_facts.restricted_transfer.amount[0] = '\0';
     expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "missing amount is rejected");
 
     snapshot = valid_snapshot();
-    snapshot.sui_transfer.gas_budget[0] = '\0';
+    snapshot.sui_facts.gas_budget[0] = '\0';
     expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "missing gas budget is rejected");
 
@@ -246,12 +247,12 @@ int main()
            "host-supplied network is ignored by the clear-signing view model");
 
     snapshot = valid_snapshot();
-    memset(snapshot.sui_transfer.asset, 'S', sizeof(snapshot.sui_transfer.asset));
+    memset(snapshot.sui_facts.restricted_transfer.asset, 'S', sizeof(snapshot.sui_facts.restricted_transfer.asset));
     expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unterminated asset is rejected instead of overread");
 
     snapshot = valid_snapshot();
-    memset(snapshot.sui_transfer.recipient, 'b', sizeof(snapshot.sui_transfer.recipient));
+    memset(snapshot.sui_facts.restricted_transfer.recipient, 'b', sizeof(snapshot.sui_facts.restricted_transfer.recipient));
     expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unterminated overlong recipient is rejected instead of truncated");
 

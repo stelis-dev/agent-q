@@ -141,8 +141,8 @@ after material-backed provisioning. Sessions do not authorize signing.
 
 This target reports read-only identity capability with no delegated public
 methods plus top-level `signing`, derives read-only public account identity
-(`get_accounts`), and links a restricted host-tested Sui transaction facts
-parser plus a common stored-policy runtime boundary. The current
+(`get_accounts`), and links a host-tested Sui `TransactionData` facts extractor
+plus a common stored-policy runtime boundary. The current
 `sign_transaction` path reads the Firmware-local signing authorization mode and
 uses exactly one gate: policy mode evaluates the committed active policy, while
 user mode performs device confirmation for the bounded restricted transfer
@@ -291,9 +291,12 @@ signature verification, invalid-input output wiping, and the stored-root
 signing boundary with host stubs. This is not a protocol signing test.
 
 The Sui transaction facts parser test is a common host-side check. It compiles
-`firmware/src/common/agent_q/sui` and verifies tracked BCS fixtures for
-the restricted SUI transfer parser. StackChan CoreS3 connects the parser to Sui
-`sign_transaction` policy and user authorization gates.
+`firmware/src/common/agent_q/sui` and verifies tracked BCS fixtures for the Sui
+`TransactionData` facts extractor, command argument refs, top-level TypeTag
+facts, MoveCall package/module/function facts, malformed ref rejection, and the
+currently signable derived restricted SUI transfer fact. StackChan CoreS3
+connects the extractor to Sui `sign_transaction` policy and user authorization
+gates.
 
 The policy test is also a common host-side check. It compiles
 `firmware/src/common/agent_q/policy` plus the Sui method adapter and

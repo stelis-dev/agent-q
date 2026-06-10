@@ -245,7 +245,7 @@ agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
     prepared.tx_bytes_size = payload_size;
     snprintf(prepared.payload_digest, sizeof(prepared.payload_digest),
              "%s", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-    agent_q::parse_sui_transfer_facts(payload, payload_size, &prepared.sui_transfer);
+    agent_q::parse_sui_transaction_policy_facts(payload, payload_size, &prepared.sui_facts);
     return agent_q::AgentQUserSigningTransactionBeginInput{
         request_id,
         kRequestIdentity,

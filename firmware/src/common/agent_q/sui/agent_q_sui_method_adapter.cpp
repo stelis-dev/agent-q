@@ -25,7 +25,7 @@ bool string_present(const char* value)
 }  // namespace
 
 bool make_sui_sign_transaction_policy_facts(
-    const SuiTransferFacts& sui_facts,
+    const SuiTransactionPolicyFacts& sui_facts,
     AgentQSuiSignTransactionPolicyFacts* out)
 {
     if (out == nullptr) {
@@ -33,15 +33,17 @@ bool make_sui_sign_transaction_policy_facts(
     }
     *out = {};
 
-    if (!string_present(sui_facts.sender) ||
+    const SuiRestrictedTransferFact& transfer = sui_facts.restricted_transfer;
+    if (!sui_facts.has_restricted_transfer ||
+        !string_present(sui_facts.sender) ||
         !string_present(sui_facts.gas_owner) ||
-        !string_present(sui_facts.recipient) ||
-        !string_present(sui_facts.amount) ||
+        !string_present(transfer.recipient) ||
+        !string_present(transfer.amount) ||
         !string_present(sui_facts.gas_budget) ||
         !string_present(sui_facts.gas_price) ||
         strcmp(sui_facts.gas_owner, sui_facts.sender) != 0 ||
-        strcmp(sui_facts.asset, kSuiAsset) != 0 ||
-        sui_facts.command_count != 2) {
+        strcmp(transfer.asset, kSuiAsset) != 0 ||
+        transfer.command_count != 2) {
         return false;
     }
 
@@ -74,17 +76,17 @@ bool make_sui_sign_transaction_policy_facts(
     out->entries[index++] = AgentQPolicyFact{
         "sui.recipient_address",
         AgentQPolicyValueType::string,
-        sui_facts.recipient,
+        transfer.recipient,
     };
     out->entries[index++] = AgentQPolicyFact{
         "sui.coin_type",
         AgentQPolicyValueType::string,
-        sui_facts.asset,
+        transfer.asset,
     };
     out->entries[index++] = AgentQPolicyFact{
         "sui.amount_raw",
         AgentQPolicyValueType::u64_decimal,
-        sui_facts.amount,
+        transfer.amount,
     };
     out->entries[index++] = AgentQPolicyFact{
         "sui.gas_budget",

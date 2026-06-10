@@ -104,8 +104,9 @@ Implemented today:
   request ids, client names, PINs, secret material, or full policy documents.
   Local reset and error-state erase recovery wipe the history.
 - The unified `sign_transaction` path has `source-wired-not-product-active`
-  status for bounded Sui restricted transfers. Firmware derives the facts and
-  account binding from `txBytes` and stored material, reads its device-local
+  status for bounded Sui restricted transfers derived from full Sui
+  `TransactionData`. Firmware derives offline-provable facts and account
+  binding from `txBytes` and stored material, reads its device-local
   signing authorization mode, selects the policy or user signing gate, requires
   history before signing, emits terminal metadata, and owns cleanup. Policy
   mode evaluates active policy and signs after policy authorization with

@@ -300,12 +300,12 @@ int main(int argc, char** argv)
     }
 
     const std::vector<uint8_t> tx_bytes = read_hex_fixture(argv[1]);
-    agent_q::SuiTransferFacts sui_facts = {};
+    agent_q::SuiTransactionPolicyFacts sui_facts = {};
     const agent_q::SuiTransactionFactsResult facts_result =
-        agent_q::parse_sui_transfer_facts(tx_bytes.data(), tx_bytes.size(), &sui_facts);
+        agent_q::parse_sui_transaction_policy_facts(tx_bytes.data(), tx_bytes.size(), &sui_facts);
     expect(facts_result == agent_q::SuiTransactionFactsResult::ok,
            "fixture parses as supported restricted transfer");
-    ::g_allowed_recipient = sui_facts.recipient;
+    ::g_allowed_recipient = sui_facts.restricted_transfer.recipient;
     ::g_gas_price_bound = sui_facts.gas_price;
     ::g_account_available = true;
     ::g_stored_address = sui_facts.sender;
@@ -316,7 +316,7 @@ int main(int argc, char** argv)
     memcpy(prepared.tx_bytes, tx_bytes.data(), tx_bytes.size());
     prepared.tx_bytes_size = tx_bytes.size();
     snprintf(prepared.payload_digest, sizeof(prepared.payload_digest), "%s", kPayloadDigest);
-    prepared.sui_transfer = sui_facts;
+    prepared.sui_facts = sui_facts;
 
     ::g_policy_has_rule = false;
     ::g_policy_action = agent_q::AgentQPolicyAction::reject;

@@ -83,6 +83,10 @@ function byteVector(bytes) {
   return concat(uleb(bytes.length), bytes);
 }
 
+function stringBytes(value) {
+  return byteVector(new TextEncoder().encode(value));
+}
+
 function hexToBytes(hex) {
   const normalized = hex.startsWith('0x') ? hex.slice(2) : hex;
   if (normalized.length % 2 !== 0) {
@@ -135,6 +139,40 @@ function unsupportedResultReferenceTransferObjectsCommand() {
   return enumVariant(1, concat(vector([argResult(0)]), argInput(1)));
 }
 
+function mergeCoinsCommand() {
+  return enumVariant(3, concat(argGasCoin(), vector([])));
+}
+
+function typeTagU64() {
+  return enumVariant(2);
+}
+
+function moveCallCommand() {
+  return enumVariant(
+    0,
+    concat(
+      hexToBytes('0x' + '22'.repeat(32)),
+      stringBytes('pay'),
+      stringBytes('spend'),
+      vector([typeTagU64()]),
+      vector([argInput(0)]),
+    ),
+  );
+}
+
+function moveCallOutOfRangeInputCommand() {
+  return enumVariant(
+    0,
+    concat(
+      hexToBytes('0x' + '22'.repeat(32)),
+      stringBytes('pay'),
+      stringBytes('spend'),
+      vector([typeTagU64()]),
+      vector([argInput(9)]),
+    ),
+  );
+}
+
 function suiObjectRef() {
   return concat(hexToBytes(gasObjectId), u64(gasVersion), byteVector(hexToBytes(gasDigest)));
 }
@@ -161,14 +199,18 @@ function transactionData(commands, gasOwner = sender) {
 }
 
 function unsupportedMergeCoinsTx() {
+  return transactionData([mergeCoinsCommand()]);
+}
+
+function moveCallTx() {
   return enumVariant(
     0,
     concat(
       enumVariant(
         0,
         concat(
-          vector([pure(u64(amount)), pure(hexToBytes(recipient))]),
-          vector([enumVariant(3), transferObjectsCommand()]),
+          vector([pure(u64(amount))]),
+          vector([moveCallCommand()]),
         ),
       ),
       hexToBytes(sender),
@@ -176,6 +218,28 @@ function unsupportedMergeCoinsTx() {
       enumVariant(0),
     ),
   );
+}
+
+function moveCallOutOfRangeInputTx() {
+  return enumVariant(
+    0,
+    concat(
+      enumVariant(
+        0,
+        concat(
+          vector([pure(u64(amount))]),
+          vector([moveCallOutOfRangeInputCommand()]),
+        ),
+      ),
+      hexToBytes(sender),
+      gasData(),
+      enumVariant(0),
+    ),
+  );
+}
+
+function transactionKindOnlyTransfer() {
+  return programmableTransaction([splitCoinsCommand(), transferObjectsCommand()]);
 }
 
 function wrongCommandOrderTx() {
@@ -244,6 +308,9 @@ async function main() {
   await writeText('malformed_short_tx.bcs.hex', bytesToHex(valid.slice(0, 12)));
   await writeText('trailing_bytes_tx.bcs.hex', `${bytesToHex(valid)}00`);
   await writeText('unsupported_merge_coins_tx.bcs.hex', bytesToHex(unsupportedMergeCoinsTx()));
+  await writeText('move_call_tx.bcs.hex', bytesToHex(moveCallTx()));
+  await writeText('move_call_out_of_range_input_tx.bcs.hex', bytesToHex(moveCallOutOfRangeInputTx()));
+  await writeText('transaction_kind_only_sui_transfer_tx.bcs.hex', bytesToHex(transactionKindOnlyTransfer()));
   await writeText(
     'sponsored_gas_owner_tx.bcs.hex',
     bytesToHex(transactionData([splitCoinsCommand(), transferObjectsCommand()], sponsoredGasOwner)),

@@ -30,7 +30,7 @@ struct AgentQUserSigningFlowState {
     uint8_t signable_payload[kAgentQUserSigningPayloadMaxBytes] = {};
     size_t signable_payload_size = 0;
     bool signable_payload_available = false;
-    SuiTransferFacts sui_transfer = {};
+    SuiTransactionPolicyFacts sui_facts = {};
     char account_address[kSuiAddressBufferSize] = {};
     char message_preview[kAgentQSignPersonalMessagePreviewSize] = {};
 
@@ -53,7 +53,7 @@ struct AgentQUserSigningFlowState {
         request_window = kAgentQTimeoutWindowNone;
         pin_input_window = kAgentQTimeoutWindowNone;
         paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
-        memset(&sui_transfer, 0, sizeof(sui_transfer));
+        memset(&sui_facts, 0, sizeof(sui_facts));
         wipe_sensitive_buffer(account_address, sizeof(account_address));
         wipe_sensitive_buffer(message_preview, sizeof(message_preview));
     }
@@ -413,7 +413,7 @@ AgentQUserSigningFlowSnapshot user_signing_flow_snapshot()
     snapshot.pin_input_window = g_state.pin_input_window;
     snapshot.signable_payload_size = g_state.signable_payload_size;
     snapshot.signable_payload_available = g_state.signable_payload_available;
-    snapshot.sui_transfer = g_state.sui_transfer;
+    snapshot.sui_facts = g_state.sui_facts;
     memcpy(snapshot.account_address, g_state.account_address, sizeof(snapshot.account_address));
     memcpy(snapshot.message_preview, g_state.message_preview, sizeof(snapshot.message_preview));
     return snapshot;
@@ -456,7 +456,7 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin(
         return begin_result;
     }
 
-    g_state.sui_transfer = input.prepared->sui_transfer;
+    g_state.sui_facts = input.prepared->sui_facts;
     return AgentQUserSigningFlowBeginResult::ok;
 }
 

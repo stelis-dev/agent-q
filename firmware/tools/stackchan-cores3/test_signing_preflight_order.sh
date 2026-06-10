@@ -473,7 +473,7 @@ bool approval_history_digest_payload(
 }
 
 AgentQSuiSigningAccountBindingResult verify_sui_signing_stored_account_binding(
-    const SuiTransferFacts&)
+    const SuiTransactionPolicyFacts&)
 {
     ++g_binding_calls;
     return g_binding_result;

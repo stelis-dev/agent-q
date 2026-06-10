@@ -46,7 +46,7 @@ int main(int argc, char** argv)
 {
     assert(argc == 2);
     const std::string root = argv[1];
-    agent_q::SuiTransferFacts facts = {};
+    agent_q::SuiTransactionPolicyFacts facts = {};
 
     const auto valid = read_hex(root + "/valid_sui_transfer_tx.bcs.hex");
     assert(agent_q::classify_sui_sign_transaction(valid.data(), valid.size(), &facts) ==

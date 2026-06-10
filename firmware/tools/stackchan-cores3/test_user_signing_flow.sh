@@ -197,7 +197,7 @@ agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
         prepared.tx_bytes_size = payload_size;
         snprintf(prepared.payload_digest, sizeof(prepared.payload_digest),
                  "%s", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-        agent_q::parse_sui_transfer_facts(payload, payload_size, &prepared.sui_transfer);
+        agent_q::parse_sui_transaction_policy_facts(payload, payload_size, &prepared.sui_facts);
     }
     return agent_q::AgentQUserSigningTransactionBeginInput{
         request_id,
@@ -327,14 +327,14 @@ void expect_terminal_review_metadata_wiped(
            "terminal cleanup clears review window");
     expect(snapshot.pin_input_window.started_at == 0 && snapshot.pin_input_window.deadline == 0,
            "terminal cleanup clears PIN window");
-    expect(snapshot.sui_transfer.sender[0] == '\0' &&
-               snapshot.sui_transfer.gas_owner[0] == '\0' &&
-               snapshot.sui_transfer.recipient[0] == '\0' &&
-               snapshot.sui_transfer.asset[0] == '\0' &&
-               snapshot.sui_transfer.amount[0] == '\0' &&
-               snapshot.sui_transfer.gas_budget[0] == '\0' &&
-               snapshot.sui_transfer.gas_price[0] == '\0' &&
-               snapshot.sui_transfer.command_count == 0,
+    expect(snapshot.sui_facts.sender[0] == '\0' &&
+               snapshot.sui_facts.gas_owner[0] == '\0' &&
+               snapshot.sui_facts.restricted_transfer.recipient[0] == '\0' &&
+               snapshot.sui_facts.restricted_transfer.asset[0] == '\0' &&
+               snapshot.sui_facts.restricted_transfer.amount[0] == '\0' &&
+               snapshot.sui_facts.gas_budget[0] == '\0' &&
+               snapshot.sui_facts.gas_price[0] == '\0' &&
+               snapshot.sui_facts.restricted_transfer.command_count == 0,
            "terminal cleanup wipes transfer facts");
     expect(snapshot.account_address[0] == '\0',
            "terminal cleanup wipes personal-message account address");
@@ -502,15 +502,15 @@ int main()
            "request starts without a PIN input deadline");
     expect(snapshot.signable_payload_available, "payload initially available to owner");
     expect(snapshot.signable_payload_size == payload.size(), "payload size stored");
-    expect(strcmp(snapshot.sui_transfer.sender, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0,
+    expect(strcmp(snapshot.sui_facts.sender, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0,
            "summary sender is parsed from payload");
-    expect(strcmp(snapshot.sui_transfer.gas_owner, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0,
+    expect(strcmp(snapshot.sui_facts.gas_owner, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0,
            "summary gas owner is parsed from payload");
-    expect(strcmp(snapshot.sui_transfer.recipient, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == 0,
+    expect(strcmp(snapshot.sui_facts.restricted_transfer.recipient, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == 0,
            "summary recipient is parsed from payload");
-    expect(strcmp(snapshot.sui_transfer.amount, "1000000") == 0, "summary amount is parsed from payload");
-    expect(strcmp(snapshot.sui_transfer.gas_budget, "50000000") == 0, "summary gas budget is parsed from payload");
-    expect(strcmp(snapshot.sui_transfer.gas_price, "1000") == 0, "summary gas price is parsed from payload");
+    expect(strcmp(snapshot.sui_facts.restricted_transfer.amount, "1000000") == 0, "summary amount is parsed from payload");
+    expect(strcmp(snapshot.sui_facts.gas_budget, "50000000") == 0, "summary gas budget is parsed from payload");
+    expect(strcmp(snapshot.sui_facts.gas_price, "1000") == 0, "summary gas price is parsed from payload");
     expect(agent_q::user_signing_flow_validate_session() == SessionValidation::ok,
            "matching active session validates");
     expect(agent_q::user_signing_flow_session_matches(agent_q::session_id()),

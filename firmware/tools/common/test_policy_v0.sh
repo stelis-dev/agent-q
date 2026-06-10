@@ -252,9 +252,9 @@ int main(int argc, char** argv)
 
     const std::vector<uint8_t> valid =
         read_hex_fixture((fixture_dir + "/valid_sui_transfer_tx.bcs.hex").c_str());
-    agent_q::SuiTransferFacts sui_facts = {};
+    agent_q::SuiTransactionPolicyFacts sui_facts = {};
     const agent_q::SuiTransactionFactsResult parse_result =
-        agent_q::parse_sui_transfer_facts(valid.data(), valid.size(), &sui_facts);
+        agent_q::parse_sui_transaction_policy_facts(valid.data(), valid.size(), &sui_facts);
     if (parse_result != agent_q::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "valid Sui transfer fixture did not parse\n");
         return 1;
@@ -298,7 +298,7 @@ int main(int argc, char** argv)
         nullptr,
         &failures);
 
-    agent_q::SuiTransferFacts missing_gas_owner_facts = sui_facts;
+    agent_q::SuiTransactionPolicyFacts missing_gas_owner_facts = sui_facts;
     missing_gas_owner_facts.gas_owner[0] = '\0';
     agent_q::AgentQSuiSignTransactionPolicyFacts invalid_owner_facts = {};
     if (agent_q::make_sui_sign_transaction_policy_facts(
@@ -307,7 +307,7 @@ int main(int argc, char** argv)
         fprintf(stderr, "Sui method adapter accepted missing gas owner\n");
         failures += 1;
     }
-    agent_q::SuiTransferFacts sponsored_gas_owner_facts = sui_facts;
+    agent_q::SuiTransactionPolicyFacts sponsored_gas_owner_facts = sui_facts;
     snprintf(
         sponsored_gas_owner_facts.gas_owner,
         sizeof(sponsored_gas_owner_facts.gas_owner),
@@ -320,7 +320,7 @@ int main(int argc, char** argv)
         failures += 1;
     }
 
-    const char* allowed_recipients[] = {sui_facts.recipient};
+    const char* allowed_recipients[] = {sui_facts.restricted_transfer.recipient};
     const char* other_recipients[] = {
         "0x1111111111111111111111111111111111111111111111111111111111111111",
     };
@@ -378,7 +378,7 @@ int main(int argc, char** argv)
         &failures);
 
     const char* multiple_recipients[] = {
-        sui_facts.recipient,
+        sui_facts.restricted_transfer.recipient,
         "0x1111111111111111111111111111111111111111111111111111111111111111",
     };
     const agent_q::AgentQPolicyCriterion multi_recipient_sign_criteria[] = {
@@ -665,7 +665,7 @@ int main(int argc, char** argv)
         &failures);
 
     const agent_q::AgentQPolicyCriterion in_with_scalar[] = {
-        {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, sui_facts.recipient, allowed_recipients, 1},
+        {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, sui_facts.restricted_transfer.recipient, allowed_recipients, 1},
     };
     const agent_q::AgentQPolicyRule in_with_scalar_rule = {
         "in-with-scalar",
@@ -803,9 +803,10 @@ int main(int argc, char** argv)
         read_hex_fixture((fixture_dir + "/unsupported_merge_coins_tx.bcs.hex").c_str());
     sui_facts = {};
     const agent_q::SuiTransactionFactsResult unsupported_parse_result =
-        agent_q::parse_sui_transfer_facts(unsupported_tx.data(), unsupported_tx.size(), &sui_facts);
-    if (unsupported_parse_result != agent_q::SuiTransactionFactsResult::unsupported) {
-        fprintf(stderr, "unsupported Sui fixture should be rejected by facts parser\n");
+        agent_q::parse_sui_transaction_policy_facts(unsupported_tx.data(), unsupported_tx.size(), &sui_facts);
+    if (unsupported_parse_result == agent_q::SuiTransactionFactsResult::ok &&
+        sui_facts.has_restricted_transfer) {
+        fprintf(stderr, "unsupported Sui fixture should not derive restricted transfer facts\n");
         failures += 1;
     }
 

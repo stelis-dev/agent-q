@@ -270,8 +270,9 @@ The normal product flow still installs the DEV_PROFILE default-reject policy.
 `get_approval_history` is implemented as a read-only, session-scoped
 view of Firmware-owned persistent decision metadata. The current Sign API
 runtime paths are session-scoped: unknown methods are rejected, Sui
-`sign_transaction` validates bounded restricted SUI transfer request inputs and
-uses the Firmware-local signing authorization mode, and Sui
+`sign_transaction` parses full Sui `TransactionData`, derives offline-provable
+facts, accepts signing only for the currently supported restricted SUI transfer
+projection, and uses the Firmware-local signing authorization mode. Sui
 `sign_personal_message` validates bounded personal-message bytes in user
 authorization mode only. Both methods return `sign_result` for supported
 terminal outcomes. Hardware verification remains required for product-active
@@ -1185,8 +1186,11 @@ Rules for the first implementation:
   `approvalTimeoutMs`, `durationMs`, raw session tokens beyond the envelope
   `sessionId`, or signing material.
 - The first implementation is limited to `chain: "sui"` and
-  `method: "sign_transaction"` for the restricted SUI transfer shape accepted
-  by the current Sui transaction-facts parser.
+  `method: "sign_transaction"` for the restricted SUI transfer projection
+  derived by the current Sui transaction-facts extractor. Firmware parses full
+  Sui `TransactionData`; well-formed transaction shapes outside the supported
+  projection remain fail-closed until policy and review support are
+  implemented.
 - `params.network` is required and must be one of `mainnet`, `testnet`,
   `devnet`, or `localnet`. Current Sui `txBytes` do not carry network identity,
   so Firmware validates this only as request context and does not expose it as a

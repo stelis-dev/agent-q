@@ -109,7 +109,7 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction(
         classify_sui_sign_transaction(
             out->tx_bytes,
             out->tx_bytes_size,
-            &out->sui_transfer);
+            &out->sui_facts);
     if (adapter_result != AgentQSuiSignTransactionAdapterResult::ok) {
         clear_prepared_sui_sign_transaction(out);
         return adapter_result ==
@@ -118,7 +118,7 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction(
                    : AgentQSuiSigningPreparationResult::unsupported_transaction;
     }
     const AgentQSuiSigningAccountBindingResult account_result =
-        verify_sui_signing_stored_account_binding(out->sui_transfer);
+        verify_sui_signing_stored_account_binding(out->sui_facts);
     if (account_result != AgentQSuiSigningAccountBindingResult::ok) {
         clear_prepared_sui_sign_transaction(out);
         return account_result == AgentQSuiSigningAccountBindingResult::account_unavailable

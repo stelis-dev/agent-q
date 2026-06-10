@@ -91,7 +91,7 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
     }
 
     AgentQSuiSignTransactionPolicyFacts policy_facts = {};
-    if (!make_sui_sign_transaction_policy_facts(prepared.sui_transfer, &policy_facts)) {
+    if (!make_sui_sign_transaction_policy_facts(prepared.sui_facts, &policy_facts)) {
         return make_result(
             AgentQSignTransactionPolicyRuntimeStatus::unsupported_transaction,
             "unsupported_transaction",

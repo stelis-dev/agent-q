@@ -67,7 +67,7 @@ namespace {
 constexpr const char* kMnemonic =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 constexpr const char* kExpectedSignatureBase64 =
-    "APVIJpnz3mvPY6JfCEYG16jOFZVV2IT+kaoNTGPkTZasc/989+xjNylO5SNNA0xdxFtWgRvufBM3WVLu185V0gGQC02B7s6j3y90sUIAxPTPP0mvrKemNP/Sz2/4K9rs8g==";
+    "ADqTxIgkfDWyvltJXwoGfXTzoxW1BLyq3C1tf9Gmsu1B+8yKrZNS4LBeU97uB7nRMJOwuHGYCmpfea3xI2H2HAWQC02B7s6j3y90sUIAxPTPP0mvrKemNP/Sz2/4K9rs8g==";
 constexpr const uint8_t kPersonalMessage[] =
     "Agent-Q personal message test";
 constexpr const uint8_t kExpectedPersonalMessageDigest[32] = {

@@ -27,6 +27,9 @@ for required in \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
+  "${FIXTURE_DIR}/move_call_tx.bcs.hex" \
+  "${FIXTURE_DIR}/move_call_out_of_range_input_tx.bcs.hex" \
+  "${FIXTURE_DIR}/transaction_kind_only_sui_transfer_tx.bcs.hex" \
   "${FIXTURE_DIR}/unsupported_result_reference_transfer_tx.bcs.hex" \
   "${FIXTURE_DIR}/sponsored_gas_owner_tx.bcs.hex" \
   "${FIXTURE_DIR}/valid_sui_transfer_facts.json"; do
@@ -177,14 +180,83 @@ void expect_reject(
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiTransferFacts facts = {};
+    agent_q::SuiTransactionPolicyFacts facts = {};
     const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_transfer_facts(bytes.data(), bytes.size(), &facts);
+        agent_q::parse_sui_transaction_policy_facts(bytes.data(), bytes.size(), &facts);
     if (result != expected) {
         fprintf(stderr, "%s expected %s, got %s\n",
                 fixture_path,
                 agent_q::sui_transaction_facts_result_name(expected),
                 agent_q::sui_transaction_facts_result_name(result));
+        *failures += 1;
+    }
+}
+
+void expect_supported_non_restricted(
+    const char* fixture_path,
+    int* failures)
+{
+    const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
+    agent_q::SuiTransactionPolicyFacts facts = {};
+    const agent_q::SuiTransactionFactsResult result =
+        agent_q::parse_sui_transaction_policy_facts(bytes.data(), bytes.size(), &facts);
+    if (result != agent_q::SuiTransactionFactsResult::ok) {
+        fprintf(stderr, "%s expected ok parse, got %s\n",
+                fixture_path,
+                agent_q::sui_transaction_facts_result_name(result));
+        *failures += 1;
+        return;
+    }
+    if (facts.has_restricted_transfer) {
+        fprintf(stderr, "%s unexpectedly derived restricted transfer facts\n", fixture_path);
+        *failures += 1;
+    }
+}
+
+void expect_move_call_metadata(
+    const char* fixture_path,
+    int* failures)
+{
+    const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
+    agent_q::SuiTransactionPolicyFacts facts = {};
+    const agent_q::SuiTransactionFactsResult result =
+        agent_q::parse_sui_transaction_policy_facts(bytes.data(), bytes.size(), &facts);
+    if (result != agent_q::SuiTransactionFactsResult::ok) {
+        fprintf(stderr, "%s expected ok parse, got %s\n",
+                fixture_path,
+                agent_q::sui_transaction_facts_result_name(result));
+        *failures += 1;
+        return;
+    }
+    if (facts.command_count != 1 || facts.commands[0].kind != agent_q::SuiCommandFactKind::move_call) {
+        fprintf(stderr, "%s did not expose one MoveCall command\n", fixture_path);
+        *failures += 1;
+        return;
+    }
+    expect_equal(
+        "MoveCall package",
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+        facts.commands[0].move_call.package,
+        failures);
+    expect_equal("MoveCall module", "pay", facts.commands[0].move_call.module, failures);
+    expect_equal("MoveCall function", "spend", facts.commands[0].move_call.function, failures);
+    if (facts.commands[0].move_call.type_argument_count != 1 ||
+        facts.commands[0].move_call.argument_count != 1) {
+        fprintf(stderr, "%s MoveCall arg counts mismatch\n", fixture_path);
+        *failures += 1;
+    }
+    if (facts.commands[0].move_call.type_arguments[0].kind != agent_q::SuiTypeTagFactKind::u64) {
+        fprintf(stderr, "%s MoveCall type argument was not exposed as u64\n", fixture_path);
+        *failures += 1;
+    }
+    if (facts.commands[0].argument_count != 1 ||
+        facts.commands[0].arguments[0].kind != agent_q::SuiArgumentFactKind::input ||
+        facts.commands[0].arguments[0].index != 0) {
+        fprintf(stderr, "%s MoveCall argument ref was not exposed as Input(0)\n", fixture_path);
+        *failures += 1;
+    }
+    if (facts.has_restricted_transfer) {
+        fprintf(stderr, "%s unexpectedly derived restricted transfer facts\n", fixture_path);
         *failures += 1;
     }
 }
@@ -206,24 +278,28 @@ int main(int argc, char** argv)
     const std::string expected_json =
         read_file((fixture_dir + "/valid_sui_transfer_facts.json").c_str());
 
-    agent_q::SuiTransferFacts facts = {};
+    agent_q::SuiTransactionPolicyFacts facts = {};
     const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_transfer_facts(valid.data(), valid.size(), &facts);
+        agent_q::parse_sui_transaction_policy_facts(valid.data(), valid.size(), &facts);
     if (result != agent_q::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "valid fixture returned %s\n", agent_q::sui_transaction_facts_result_name(result));
         failures += 1;
     } else {
+        if (!facts.has_restricted_transfer) {
+            fprintf(stderr, "valid fixture did not derive restricted transfer facts\n");
+            failures += 1;
+        }
         expect_equal("sender", json_string_field(expected_json, "sender").c_str(), facts.sender, &failures);
         expect_equal("gasOwner", json_string_field(expected_json, "gasOwner").c_str(), facts.gas_owner, &failures);
-        expect_equal("recipient", json_string_field(expected_json, "recipient").c_str(), facts.recipient, &failures);
-        expect_equal("asset", json_string_field(expected_json, "asset").c_str(), facts.asset, &failures);
-        expect_equal("amount", json_string_field(expected_json, "amount").c_str(), facts.amount, &failures);
+        expect_equal("recipient", json_string_field(expected_json, "recipient").c_str(), facts.restricted_transfer.recipient, &failures);
+        expect_equal("asset", json_string_field(expected_json, "asset").c_str(), facts.restricted_transfer.asset, &failures);
+        expect_equal("amount", json_string_field(expected_json, "amount").c_str(), facts.restricted_transfer.amount, &failures);
         expect_equal("gasBudget", json_string_field(expected_json, "gasBudget").c_str(), facts.gas_budget, &failures);
         expect_equal("gasPrice", json_string_field(expected_json, "gasPrice").c_str(), facts.gas_price, &failures);
         const uint16_t expected_command_count = json_u16_field(expected_json, "commandCount");
-        if (facts.command_count != expected_command_count) {
+        if (facts.restricted_transfer.command_count != expected_command_count) {
             fprintf(stderr, "commandCount mismatch\n  expected: %u\n  actual:   %u\n",
-                    expected_command_count, facts.command_count);
+                    expected_command_count, facts.restricted_transfer.command_count);
             failures += 1;
         }
     }
@@ -232,7 +308,7 @@ int main(int argc, char** argv)
         read_hex_fixture((fixture_dir + "/sponsored_gas_owner_tx.bcs.hex").c_str());
     facts = {};
     const agent_q::SuiTransactionFactsResult sponsored_result =
-        agent_q::parse_sui_transfer_facts(
+        agent_q::parse_sui_transaction_policy_facts(
             sponsored_gas_owner.data(),
             sponsored_gas_owner.size(),
             &facts);
@@ -257,26 +333,35 @@ int main(int argc, char** argv)
         agent_q::SuiTransactionFactsResult::malformed,
         &failures);
     expect_reject(
+        (fixture_dir + "/transaction_kind_only_sui_transfer_tx.bcs.hex").c_str(),
+        agent_q::SuiTransactionFactsResult::transaction_kind_only,
+        &failures);
+    expect_supported_non_restricted(
         (fixture_dir + "/unsupported_merge_coins_tx.bcs.hex").c_str(),
-        agent_q::SuiTransactionFactsResult::unsupported,
+        &failures);
+    expect_move_call_metadata(
+        (fixture_dir + "/move_call_tx.bcs.hex").c_str(),
+        &failures);
+    expect_reject(
+        (fixture_dir + "/move_call_out_of_range_input_tx.bcs.hex").c_str(),
+        agent_q::SuiTransactionFactsResult::malformed,
         &failures);
     expect_reject(
         (fixture_dir + "/wrong_command_order_tx.bcs.hex").c_str(),
-        agent_q::SuiTransactionFactsResult::unsupported,
+        agent_q::SuiTransactionFactsResult::malformed,
         &failures);
-    expect_reject(
+    expect_supported_non_restricted(
         (fixture_dir + "/unsupported_result_reference_transfer_tx.bcs.hex").c_str(),
-        agent_q::SuiTransactionFactsResult::unsupported,
         &failures);
     expect_reject(
         (fixture_dir + "/too_many_commands_tx.bcs.hex").c_str(),
-        agent_q::SuiTransactionFactsResult::too_large,
+        agent_q::SuiTransactionFactsResult::malformed,
         &failures);
 
     std::vector<uint8_t> oversized(4097, 0);
     facts = {};
     const agent_q::SuiTransactionFactsResult oversized_result =
-        agent_q::parse_sui_transfer_facts(oversized.data(), oversized.size(), &facts);
+        agent_q::parse_sui_transaction_policy_facts(oversized.data(), oversized.size(), &facts);
     if (oversized_result != agent_q::SuiTransactionFactsResult::too_large) {
         fprintf(stderr, "oversized tx expected too_large, got %s\n",
                 agent_q::sui_transaction_facts_result_name(oversized_result));

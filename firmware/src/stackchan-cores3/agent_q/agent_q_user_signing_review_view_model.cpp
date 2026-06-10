@@ -96,12 +96,14 @@ bool common_summary_fields_valid(const AgentQUserSigningFlowSnapshot& snapshot)
 
 bool summary_fields_valid(const AgentQUserSigningFlowSnapshot& snapshot)
 {
-    const SuiTransferFacts& facts = snapshot.sui_transfer;
+    const SuiTransactionPolicyFacts& facts = snapshot.sui_facts;
+    const SuiRestrictedTransferFact& transfer = facts.restricted_transfer;
     return common_summary_fields_valid(snapshot) &&
-           bounded_string_present(facts.recipient, sizeof(facts.recipient)) &&
-           bounded_string_present(facts.asset, sizeof(facts.asset)) &&
-           strcmp(facts.asset, kSuiAsset) == 0 &&
-           decimal_string_valid(facts.amount, sizeof(facts.amount)) &&
+           facts.has_restricted_transfer &&
+           bounded_string_present(transfer.recipient, sizeof(transfer.recipient)) &&
+           bounded_string_present(transfer.asset, sizeof(transfer.asset)) &&
+           strcmp(transfer.asset, kSuiAsset) == 0 &&
+           decimal_string_valid(transfer.amount, sizeof(transfer.amount)) &&
            decimal_string_valid(facts.gas_budget, sizeof(facts.gas_budget)) &&
            decimal_string_valid(facts.gas_price, sizeof(facts.gas_price));
 }
@@ -156,12 +158,13 @@ AgentQUserSigningReviewBuildResult user_signing_review_view_model_build(
         if (!summary_fields_valid(snapshot)) {
             return AgentQUserSigningReviewBuildResult::invalid_summary;
         }
+        const SuiRestrictedTransferFact& transfer = snapshot.sui_facts.restricted_transfer;
         if (!add_review_header(output, kReviewTitle, wire_chain, wire_method) ||
-            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Amount", snapshot.sui_transfer.amount) ||
-            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Asset", snapshot.sui_transfer.asset) ||
-            !add_row(output, AgentQUserSigningReviewRowKind::wrapped_value, "Recipient", snapshot.sui_transfer.recipient) ||
-            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Gas budget", snapshot.sui_transfer.gas_budget) ||
-            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Gas price", snapshot.sui_transfer.gas_price)) {
+            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Amount", transfer.amount) ||
+            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Asset", transfer.asset) ||
+            !add_row(output, AgentQUserSigningReviewRowKind::wrapped_value, "Recipient", transfer.recipient) ||
+            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Gas budget", snapshot.sui_facts.gas_budget) ||
+            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Gas price", snapshot.sui_facts.gas_price)) {
             memset(output, 0, sizeof(*output));
             return AgentQUserSigningReviewBuildResult::output_too_small;
         }

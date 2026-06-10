@@ -19,7 +19,7 @@ struct AgentQSuiSignTransactionPolicyFacts {
 };
 
 bool make_sui_sign_transaction_policy_facts(
-    const SuiTransferFacts& sui_facts,
+    const SuiTransactionPolicyFacts& sui_facts,
     AgentQSuiSignTransactionPolicyFacts* out);
 
 AgentQPolicyMethodDescriptor sui_sign_transaction_policy_method_descriptor();

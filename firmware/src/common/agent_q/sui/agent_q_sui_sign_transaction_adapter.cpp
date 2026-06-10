@@ -54,7 +54,7 @@ bool sui_address_valid(const char* value, size_t value_size)
     return true;
 }
 
-bool supported_transfer_facts(const SuiTransferFacts& facts)
+bool supported_transfer_facts(const SuiRestrictedTransferFact& facts)
 {
     return sui_address_valid(facts.sender, sizeof(facts.sender)) &&
            sui_address_valid(facts.gas_owner, sizeof(facts.gas_owner)) &&
@@ -72,20 +72,21 @@ bool supported_transfer_facts(const SuiTransferFacts& facts)
 AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
     const uint8_t* tx_bytes,
     size_t tx_bytes_size,
-    SuiTransferFacts* out)
+    SuiTransactionPolicyFacts* out)
 {
     if (tx_bytes == nullptr || tx_bytes_size == 0 || out == nullptr) {
         return AgentQSuiSignTransactionAdapterResult::invalid_argument;
     }
     *out = {};
     const SuiTransactionFactsResult parse_result =
-        parse_sui_transfer_facts(tx_bytes, tx_bytes_size, out);
+        parse_sui_transaction_policy_facts(tx_bytes, tx_bytes_size, out);
     if (parse_result == SuiTransactionFactsResult::malformed) {
         *out = {};
         return AgentQSuiSignTransactionAdapterResult::malformed_transaction;
     }
     if (parse_result != SuiTransactionFactsResult::ok ||
-        !supported_transfer_facts(*out)) {
+        !out->has_restricted_transfer ||
+        !supported_transfer_facts(out->restricted_transfer)) {
         *out = {};
         return AgentQSuiSignTransactionAdapterResult::unsupported_transaction;
     }
