@@ -180,10 +180,16 @@ expect_present "${USB_SERVER}" 'handle_get_result_request' \
   "USB request server must route get_result through an injected operation wrapper"
 expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" 'handle_usb_get_result_request' \
   "get_result operation handler must live outside the USB server"
+expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" 'signing_result_find' \
+  "retained-result handler must own stored-result lookup"
 expect_present "${USB_SERVER}" 'handle_ack_result_request' \
   "USB request server must route ack_result through an injected operation wrapper"
 expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" 'handle_usb_ack_result_request' \
   "ack_result operation handler must live outside the USB server"
+expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" 'signing_result_ack' \
+  "retained-result handler must own stored-result ack"
+expect_absent "${USB_SERVER}" 'try_deliver_stored_result_by_id|ack_stored_result_by_id' \
+  "USB request server must not own retained signing-result store adapters"
 expect_present "${USB_SERVER}" 'handle_get_capabilities_request' \
   "USB request server must route get_capabilities through an operation handler"
 expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" 'handle_usb_get_capabilities_request' \

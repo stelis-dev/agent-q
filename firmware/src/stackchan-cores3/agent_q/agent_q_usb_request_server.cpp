@@ -482,30 +482,6 @@ bool read_signing_mode_for_preflight(
     return agent_q::read_signing_authorization_mode(mode);
 }
 
-bool try_deliver_stored_result_by_id(const char* session_id, const char* request_id)
-{
-    static char stored_result[agent_q::kSigningResultMaxSize];
-    size_t stored_len = 0;
-    if (!agent_q::signing_result_find(
-            session_id,
-            request_id,
-            stored_result,
-            sizeof(stored_result),
-            &stored_len)) {
-        return false;
-    }
-    JsonDocument response;
-    if (deserializeJson(response, stored_result, stored_len)) {
-        return false;
-    }
-    return agent_q::usb_response_write_json(response);
-}
-
-void ack_stored_result_by_id(const char* session_id, const char* request_id)
-{
-    agent_q::signing_result_ack(session_id, request_id);
-}
-
 bool write_policy_execution_response(
     const char* id,
     const uint8_t* request_identity,
@@ -5179,8 +5155,6 @@ const agent_q::AgentQUsbRetainedResultHandlerOps& retained_result_handler_ops()
     static const agent_q::AgentQUsbRetainedResultHandlerOps ops = {
         provisioned_material_ready,
         require_active_matching_session,
-        try_deliver_stored_result_by_id,
-        ack_stored_result_by_id,
     };
     return ops;
 }

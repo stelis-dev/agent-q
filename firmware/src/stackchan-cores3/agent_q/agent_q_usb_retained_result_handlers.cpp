@@ -1,6 +1,7 @@
 #include "agent_q_usb_retained_result_handlers.h"
 
 #include "agent_q_json_input.h"
+#include "agent_q_signing_result_store.h"
 #include "agent_q_usb_response_writer.h"
 
 namespace agent_q {
@@ -30,6 +31,25 @@ bool retained_result_request_fields_supported(JsonDocument& request)
         4);
 }
 
+bool deliver_stored_result_by_id(const char* session_id, const char* request_id)
+{
+    static char stored_result[kSigningResultMaxSize];
+    size_t stored_len = 0;
+    if (!signing_result_find(
+            session_id,
+            request_id,
+            stored_result,
+            sizeof(stored_result),
+            &stored_len)) {
+        return false;
+    }
+    JsonDocument response;
+    if (deserializeJson(response, stored_result, stored_len)) {
+        return false;
+    }
+    return usb_response_write_json(response);
+}
+
 }  // namespace
 
 void handle_usb_get_result_request(
@@ -54,8 +74,7 @@ void handle_usb_get_result_request(
         writer.write_error(id, "invalid_params", "get_result request contains unsupported fields.");
         return;
     }
-    if (ops.deliver_stored_result != nullptr &&
-        ops.deliver_stored_result(session_id, id)) {
+    if (deliver_stored_result_by_id(session_id, id)) {
         return;
     }
     writer.write_error(id, "unknown_request", "No buffered signing result for this request id.");
@@ -83,9 +102,7 @@ void handle_usb_ack_result_request(
         writer.write_error(id, "invalid_params", "ack_result request contains unsupported fields.");
         return;
     }
-    if (ops.ack_stored_result != nullptr) {
-        ops.ack_stored_result(session_id, id);
-    }
+    signing_result_ack(session_id, id);
     if (!usb_response_write_ack_result(id)) {
         writer.log_write_failure("ack_result", id);
     }
