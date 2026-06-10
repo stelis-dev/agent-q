@@ -28,6 +28,7 @@ USB_OPERATION_TYPE_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/ag
 USB_OPERATION_RESPONSE_WRITER_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_operation_response_writer.h"
 USB_OPERATION_DISPATCH_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_operation_dispatch.cpp"
 USB_ENVELOPE_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_envelope.cpp"
+USB_LINE_RECEIVER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_line_receiver.cpp"
 USB_LINE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_line_handler.cpp"
 USB_DEVICE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_device_handlers.cpp"
 USB_DISCONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_disconnect_handler.cpp"
@@ -146,6 +147,12 @@ expect_present "${USB_SERVER}" 'usb_operation_handlers' \
   "USB request server must provide its public operation handler table"
 expect_present "${USB_SERVER}" 'handle_usb_request_line' \
   "USB request server must route public request lines through the extracted line handler"
+expect_present "${USB_LINE_RECEIVER_SOURCE}" 'usb_serial_jtag_read_bytes' \
+  "USB line receiver must own physical USB serial reads"
+expect_present "${USB_SERVER}" 'usb_line_receiver_poll' \
+  "USB request server must delegate physical line receive to the extracted line receiver"
+expect_absent "${USB_SERVER}" 'usb_request_line_feed|g_line_buffer|g_line_size|g_discarding_invalid_line' \
+  "USB request server must not own line-framing accumulator state"
 expect_present "${USB_LINE_HANDLER_SOURCE}" 'parse_usb_request_envelope' \
   "USB line handler must parse request envelopes through the extracted helper"
 expect_present "${USB_LINE_HANDLER_SOURCE}" 'dispatch_usb_operation' \

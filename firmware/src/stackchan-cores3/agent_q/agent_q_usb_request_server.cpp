@@ -60,6 +60,7 @@
 #include "agent_q_usb_policy_propose_handler.h"
 #include "agent_q_ui_panel_cleanup.h"
 #include "agent_q_usb_operation_type.h"
+#include "agent_q_usb_line_receiver.h"
 #include "agent_q_usb_request_envelope.h"
 #include "agent_q_usb_request_line_handler.h"
 #include "agent_q_usb_retained_result_handlers.h"
@@ -71,7 +72,6 @@
 #include "agent_q_signing_preflight.h"
 #include "agent_q_signing_result_store.h"
 #include "agent_q_usb_session_grace.h"
-#include "agent_q_usb_request_line.h"
 #include "agent_q_usb_session_loss.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
@@ -125,8 +125,6 @@ constexpr uint32_t kLocalProcessingRenderDelayMs = 250;
 constexpr uint32_t kLocalProcessingDisplayMs = 900;
 constexpr uint32_t kSettingsTouchEntryMs = 900;
 constexpr uint32_t kUsbHostLinkCheckMs = 10;
-constexpr size_t kMaxRawJsonObjectBytes = 4096;
-constexpr size_t kLineBufferSize = kMaxRawJsonObjectBytes + 1;
 constexpr uint32_t kUsbRequestTaskStackBytes = 8192;
 constexpr size_t kPolicyReadbackEnvelopeReserveBytes = 1024;
 constexpr size_t kMaxRequestIdSize = agent_q::kAgentQRequestIdSize;
@@ -189,9 +187,6 @@ struct AgentQUiEvent {
     uint16_t word_index = 0;
 };
 
-char g_line_buffer[kLineBufferSize];
-size_t g_line_size = 0;
-bool g_discarding_invalid_line = false;
 char g_device_id[kDeviceIdSize];
 static_assert(
     kMaxRequestIdSize == agent_q::kAgentQProtocolPinRequestIdSize,
@@ -1414,8 +1409,7 @@ void poll_usb_host_connection()
             // Edge: the grace window is now open and the session is held; stay quiet so
             // a quick resume is seamless. A sustained drop confirms above. Reset the line
             // framing here so a resume parses cleanly even if the drop cut a partial line.
-            g_line_size = 0;
-            g_discarding_invalid_line = false;
+            agent_q::usb_line_receiver_reset();
             return;
     }
 }
@@ -5776,34 +5770,14 @@ void handle_line(const char* line)
         usb_operation_handlers());
 }
 
+void write_usb_line_error(const char* code, const char* message)
+{
+    agent_q::usb_response_write_error(nullptr, code, message);
+}
+
 void poll_usb_input()
 {
-    uint8_t buffer[64];
-    const int read_count = usb_serial_jtag_read_bytes(buffer, sizeof(buffer), 0);
-    if (read_count <= 0) {
-        return;
-    }
-
-    for (int index = 0; index < read_count; ++index) {
-        switch (agent_q::usb_request_line_feed(
-            static_cast<char>(buffer[index]),
-            g_line_buffer,
-            sizeof(g_line_buffer),
-            &g_line_size,
-            &g_discarding_invalid_line)) {
-            case agent_q::AgentQUsbLineFeedResult::line_ready:
-                handle_line(g_line_buffer);
-                break;
-            case agent_q::AgentQUsbLineFeedResult::rejected_nul:
-                agent_q::usb_response_write_error(nullptr, "invalid_json", "JSON line contains a NUL byte.");
-                break;
-            case agent_q::AgentQUsbLineFeedResult::rejected_too_long:
-                agent_q::usb_response_write_error(nullptr, "invalid_json", "JSON line is too long.");
-                break;
-            case agent_q::AgentQUsbLineFeedResult::none:
-                break;
-        }
-    }
+    agent_q::usb_line_receiver_poll(handle_line, write_usb_line_error);
 }
 
 void usb_request_task(void*)
