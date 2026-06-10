@@ -400,16 +400,38 @@ awk '
   capture { print }
   /void usb_request_task/ { capture = 0 }
 ' "${USB_SERVER}" >"${USB_TICK_SNIPPET}"
-expect_present "${USB_TICK_SNIPPET}" 'send_connect_review_response_if_needed' \
-  "USB request server tick must resolve pending connect review responses"
-expect_present "${USB_TICK_SNIPPET}" 'poll_usb_host_connection' \
-  "USB request server tick must poll host-link state before line input"
-expect_present "${USB_TICK_SNIPPET}" 'poll_usb_input' \
-  "USB request server tick must poll request-line input"
-expect_order "${USB_TICK_SNIPPET}" 'send_connect_review_response_if_needed' 'poll_usb_input' \
-  "USB request server tick must write pending connect review response before reading new input"
-expect_order "${USB_TICK_SNIPPET}" 'poll_usb_host_connection' 'poll_usb_input' \
-  "USB request server tick must poll host-link state before reading new input"
+expect_order "${USB_TICK_SNIPPET}" 'run_usb_request_server_maintenance_phase' 'run_usb_request_server_local_ui_phase' \
+  "USB request server tick must run maintenance before local UI events"
+expect_order "${USB_TICK_SNIPPET}" 'run_usb_request_server_local_ui_phase' 'run_usb_request_server_connect_response_phase' \
+  "USB request server tick must process local UI state before connect responses"
+expect_order "${USB_TICK_SNIPPET}" 'run_usb_request_server_connect_response_phase' 'run_usb_request_server_transport_phase' \
+  "USB request server tick must resolve connect responses before USB transport polling"
+
+USB_CONNECT_RESPONSE_PHASE_SNIPPET="${TMP_DIR}/usb-connect-response-phase.cpp"
+awk '
+  /void run_usb_request_server_connect_response_phase/ { capture = 1 }
+  capture { print }
+  /void run_usb_request_server_transport_phase/ { capture = 0 }
+' "${USB_SERVER}" >"${USB_CONNECT_RESPONSE_PHASE_SNIPPET}"
+expect_present "${USB_CONNECT_RESPONSE_PHASE_SNIPPET}" 'send_connect_review_response_if_needed' \
+  "USB connect-response phase must resolve pending connect review responses"
+expect_present "${USB_CONNECT_RESPONSE_PHASE_SNIPPET}" 'ensure_connect_review_ui' \
+  "USB connect-response phase must recover connect review UI after response handling"
+expect_order "${USB_CONNECT_RESPONSE_PHASE_SNIPPET}" 'send_connect_review_response_if_needed' 'ensure_connect_review_ui' \
+  "USB connect-response phase must write terminal response before recovering connect review UI"
+
+USB_TRANSPORT_PHASE_SNIPPET="${TMP_DIR}/usb-transport-phase.cpp"
+awk '
+  /void run_usb_request_server_transport_phase/ { capture = 1 }
+  capture { print }
+  /void run_usb_request_server_tick/ { capture = 0 }
+' "${USB_SERVER}" >"${USB_TRANSPORT_PHASE_SNIPPET}"
+expect_present "${USB_TRANSPORT_PHASE_SNIPPET}" 'poll_usb_host_connection' \
+  "USB transport phase must poll host-link state before line input"
+expect_present "${USB_TRANSPORT_PHASE_SNIPPET}" 'poll_usb_input' \
+  "USB transport phase must poll request-line input"
+expect_order "${USB_TRANSPORT_PHASE_SNIPPET}" 'poll_usb_host_connection' 'poll_usb_input' \
+  "USB transport phase must poll host-link state before reading new input"
 
 expect_present "${USB_CONNECT_HANDLER_SOURCE}" "connect request contains unsupported fields" \
   "extracted connect handler must exact-check top-level request fields"
