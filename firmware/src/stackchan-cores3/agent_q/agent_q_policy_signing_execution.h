@@ -6,7 +6,7 @@
 #include "agent_q_approval_history.h"
 #include "agent_q_persistent_material.h"
 #include "agent_q_sign_transaction_policy_runtime.h"
-#include "agent_q_signing_method.h"
+#include "agent_q_signing_route.h"
 #include "agent_q_sui_signing_service.h"
 
 namespace agent_q {
@@ -22,7 +22,7 @@ enum class AgentQPolicySigningExecutionStatus {
 
 struct AgentQPolicySigningExecutionResult {
     AgentQPolicySigningExecutionStatus status;
-    AgentQSigningMethod signing_method;
+    AgentQSigningRoute signing_route;
     const char* code;
     const char* message;
     char policy_hash[kAgentQApprovalHistoryDigestSize];

@@ -6,19 +6,12 @@
 
 #include "agent_q_base64.h"
 #include "agent_q_json_input.h"
+#include "agent_q_protocol_constants.h"
 #include "agent_q_request_id.h"
+#include "agent_q_sui_network.h"
 
 namespace agent_q {
 namespace {
-
-bool supported_network(const char* network)
-{
-    return network != nullptr &&
-           (strcmp(network, "mainnet") == 0 ||
-            strcmp(network, "testnet") == 0 ||
-            strcmp(network, "devnet") == 0 ||
-            strcmp(network, "localnet") == 0);
-}
 
 bool request_top_level_fields_supported(JsonObjectConst request)
 {
@@ -78,7 +71,8 @@ validate_sign_personal_message_user_envelope(
     }
 
     JsonVariantConst version = request_object["version"];
-    if (!version.is<uint32_t>() || version.as<uint32_t>() != 1) {
+    if (!version.is<uint32_t>() ||
+        version.as<uint32_t>() != kAgentQProtocolVersion) {
         memset(output, 0, sizeof(*output));
         return AgentQSignPersonalMessageUserValidationResult::unsupported_version;
     }
@@ -160,7 +154,7 @@ validate_sign_personal_message_user_params(
     const char* network = nullptr;
     if (!agent_q_json_value_c_string(params["network"], &network) ||
         !copy_nonempty_c_string(network, output->network, sizeof(output->network)) ||
-        !supported_network(output->network)) {
+        !sui_network_supported(output->network)) {
         memset(output, 0, sizeof(*output));
         return AgentQSignPersonalMessageUserValidationResult::invalid_network;
     }

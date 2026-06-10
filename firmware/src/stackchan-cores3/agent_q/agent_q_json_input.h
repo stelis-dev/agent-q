@@ -121,4 +121,28 @@ inline bool agent_q_json_optional_c_string(
     return agent_q_json_value_c_string(value, output);
 }
 
+inline bool agent_q_json_object_fields_supported(
+    JsonVariantConst value,
+    const char* const* allowed_keys,
+    size_t allowed_key_count)
+{
+    JsonObjectConst object = value.as<JsonObjectConst>();
+    if (object.isNull()) {
+        return false;
+    }
+    for (JsonPairConst pair : object) {
+        bool supported = false;
+        for (size_t index = 0; index < allowed_key_count; ++index) {
+            if (agent_q_json_string_equals(pair.key(), allowed_keys[index])) {
+                supported = true;
+                break;
+            }
+        }
+        if (!supported) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace agent_q

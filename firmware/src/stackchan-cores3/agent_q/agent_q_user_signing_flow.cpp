@@ -7,6 +7,7 @@
 
 #include "agent_q_bip39.h"
 #include "agent_q_sui_account_store.h"
+#include "agent_q_sui_network.h"
 
 namespace agent_q {
 namespace {
@@ -15,7 +16,7 @@ struct AgentQUserSigningFlowState {
     AgentQUserSigningStage stage = AgentQUserSigningStage::none;
     AgentQUserSigningTerminalResult terminal_result =
         AgentQUserSigningTerminalResult::none;
-    AgentQSigningMethod signing_method = AgentQSigningMethod::unsupported;
+    AgentQSigningRoute signing_route = AgentQSigningRoute::unsupported;
     char request_id[kAgentQUserSigningIdSize] = {};
     uint8_t request_identity[kAgentQSignRequestIdentitySize] = {};
     char session_id[kAgentQSessionIdSize] = {};
@@ -45,47 +46,53 @@ struct AgentQUserSigningFlowState {
         signable_payload_available = false;
     }
 
+    void wipe_review_metadata()
+    {
+        wipe_sensitive_buffer(session_id, sizeof(session_id));
+        wipe_sensitive_buffer(network, sizeof(network));
+        request_window = kAgentQTimeoutWindowNone;
+        pin_input_window = kAgentQTimeoutWindowNone;
+        paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
+        memset(&sui_transfer, 0, sizeof(sui_transfer));
+        wipe_sensitive_buffer(account_address, sizeof(account_address));
+        wipe_sensitive_buffer(message_preview, sizeof(message_preview));
+    }
+
     void clear()
     {
         wipe_payload();
         stage = AgentQUserSigningStage::none;
         terminal_result = AgentQUserSigningTerminalResult::none;
-        signing_method = AgentQSigningMethod::unsupported;
-        request_id[0] = '\0';
+        signing_route = AgentQSigningRoute::unsupported;
+        wipe_sensitive_buffer(request_id, sizeof(request_id));
         wipe_sensitive_buffer(request_identity, sizeof(request_identity));
-        session_id[0] = '\0';
-        chain[0] = '\0';
-        method[0] = '\0';
-        network[0] = '\0';
-        payload_digest[0] = '\0';
-        request_window = kAgentQTimeoutWindowNone;
-        pin_input_window = kAgentQTimeoutWindowNone;
-        paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
-        memset(&sui_transfer, 0, sizeof(sui_transfer));
-        account_address[0] = '\0';
-        message_preview[0] = '\0';
+        wipe_sensitive_buffer(chain, sizeof(chain));
+        wipe_sensitive_buffer(method, sizeof(method));
+        wipe_sensitive_buffer(payload_digest, sizeof(payload_digest));
+        wipe_review_metadata();
     }
 
     void terminalize(AgentQUserSigningTerminalResult result)
     {
         wipe_payload();
+        wipe_review_metadata();
         terminal_result = result;
         stage = AgentQUserSigningStage::terminal;
-        request_window = kAgentQTimeoutWindowNone;
-        pin_input_window = kAgentQTimeoutWindowNone;
-        paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
     }
 };
 
 AgentQUserSigningFlowState g_state;
-bool supported_network(const char* network)
-{
-    return network != nullptr &&
-           (strcmp(network, "mainnet") == 0 ||
-            strcmp(network, "testnet") == 0 ||
-            strcmp(network, "devnet") == 0 ||
-            strcmp(network, "localnet") == 0);
-}
+
+struct AgentQUserSigningBeginMetadata {
+    AgentQSigningRoute route = AgentQSigningRoute::unsupported;
+    char request_id[kAgentQUserSigningIdSize] = {};
+    uint8_t request_identity[kAgentQSignRequestIdentitySize] = {};
+    char session_id[kAgentQSessionIdSize] = {};
+    char chain[kAgentQUserSigningChainSize] = {};
+    char method[kAgentQUserSigningMethodSize] = {};
+    char network[kAgentQUserSigningNetworkSize] = {};
+    AgentQTimeoutWindow request_window = kAgentQTimeoutWindowNone;
+};
 
 bool printable_ascii(uint8_t value)
 {
@@ -114,6 +121,112 @@ void make_message_preview(const uint8_t* message, size_t message_size, char* out
         output[written++] = '.';
     }
     output[written < output_size ? written : output_size - 1] = '\0';
+}
+
+AgentQUserSigningFlowBeginResult prepare_common_begin_metadata(
+    const char* request_id,
+    const uint8_t* request_identity,
+    const char* session_id,
+    AgentQSigningRoute route,
+    const char* network,
+    AgentQTimeoutWindow request_window,
+    AgentQUserSigningBeginMetadata* output)
+{
+    if (output == nullptr) {
+        return AgentQUserSigningFlowBeginResult::invalid_argument;
+    }
+    memset(output, 0, sizeof(*output));
+    output->route = AgentQSigningRoute::unsupported;
+    if (request_id == nullptr ||
+        request_identity == nullptr ||
+        session_id == nullptr ||
+        route == AgentQSigningRoute::unsupported ||
+        network == nullptr) {
+        return AgentQUserSigningFlowBeginResult::invalid_argument;
+    }
+    if (!timeout_window_valid(request_window)) {
+        return AgentQUserSigningFlowBeginResult::invalid_deadline;
+    }
+    if (!copy_nonempty_c_string(request_id, output->request_id, sizeof(output->request_id)) ||
+        !copy_nonempty_c_string(session_id, output->session_id, sizeof(output->session_id)) ||
+        !copy_nonempty_c_string(sign_route_wire_chain(route), output->chain, sizeof(output->chain)) ||
+        !copy_nonempty_c_string(sign_route_wire_method(route), output->method, sizeof(output->method)) ||
+        !copy_nonempty_c_string(network, output->network, sizeof(output->network))) {
+        memset(output, 0, sizeof(*output));
+        return AgentQUserSigningFlowBeginResult::invalid_argument;
+    }
+    if (session_validate(output->session_id) != AgentQSessionValidationResult::ok) {
+        memset(output, 0, sizeof(*output));
+        return AgentQUserSigningFlowBeginResult::invalid_session;
+    }
+    if (!sui_network_supported(output->network)) {
+        memset(output, 0, sizeof(*output));
+        return AgentQUserSigningFlowBeginResult::invalid_network;
+    }
+    output->route = route;
+    memcpy(output->request_identity, request_identity, sizeof(output->request_identity));
+    output->request_window = request_window;
+    return AgentQUserSigningFlowBeginResult::ok;
+}
+
+void apply_common_begin_metadata(
+    const AgentQUserSigningBeginMetadata& metadata,
+    const char* payload_digest)
+{
+    g_state.signing_route = metadata.route;
+    memcpy(g_state.request_id, metadata.request_id, sizeof(g_state.request_id));
+    memcpy(
+        g_state.request_identity,
+        metadata.request_identity,
+        sizeof(g_state.request_identity));
+    memcpy(g_state.session_id, metadata.session_id, sizeof(g_state.session_id));
+    memcpy(g_state.chain, metadata.chain, sizeof(g_state.chain));
+    memcpy(g_state.method, metadata.method, sizeof(g_state.method));
+    memcpy(g_state.network, metadata.network, sizeof(g_state.network));
+    memcpy(g_state.payload_digest, payload_digest, sizeof(g_state.payload_digest));
+    g_state.request_window = metadata.request_window;
+    g_state.pin_input_window = kAgentQTimeoutWindowNone;
+    g_state.stage = AgentQUserSigningStage::reviewing;
+}
+
+void apply_signable_payload(const uint8_t* payload, size_t payload_size)
+{
+    memcpy(g_state.signable_payload, payload, payload_size);
+    g_state.signable_payload_size = payload_size;
+    g_state.signable_payload_available = true;
+}
+
+AgentQUserSigningFlowBeginResult validate_prepared_payload_metadata(
+    size_t payload_size,
+    size_t max_payload_size,
+    const char* payload_digest)
+{
+    if (payload_size == 0 || payload_size > max_payload_size) {
+        return AgentQUserSigningFlowBeginResult::invalid_payload;
+    }
+    if (payload_digest == nullptr || payload_digest[0] == '\0') {
+        return AgentQUserSigningFlowBeginResult::digest_error;
+    }
+    return AgentQUserSigningFlowBeginResult::ok;
+}
+
+AgentQUserSigningFlowBeginResult begin_common_review_state(
+    const AgentQUserSigningBeginMetadata& metadata,
+    const uint8_t* payload,
+    size_t payload_size,
+    size_t max_payload_size,
+    const char* payload_digest)
+{
+    const AgentQUserSigningFlowBeginResult payload_result =
+        validate_prepared_payload_metadata(payload_size, max_payload_size, payload_digest);
+    if (payload_result != AgentQUserSigningFlowBeginResult::ok) {
+        return payload_result;
+    }
+
+    g_state.clear();
+    apply_common_begin_metadata(metadata, payload_digest);
+    apply_signable_payload(payload, payload_size);
+    return AgentQUserSigningFlowBeginResult::ok;
 }
 
 bool any_deadline_reached(TickType_t now)
@@ -208,11 +321,36 @@ bool same_history_write_request(const AgentQUserSigningFlowSnapshot& snapshot)
            strcmp(g_state.session_id, snapshot.session_id) == 0 &&
            strcmp(g_state.chain, snapshot.chain) == 0 &&
            strcmp(g_state.method, snapshot.method) == 0 &&
-           g_state.signing_method == snapshot.signing_method &&
+           g_state.signing_route == snapshot.signing_route &&
            strcmp(g_state.network, snapshot.network) == 0 &&
            strcmp(g_state.payload_digest, snapshot.payload_digest) == 0 &&
            g_state.signable_payload_size == snapshot.signable_payload_size &&
            g_state.signable_payload_available == snapshot.signable_payload_available;
+}
+
+struct AgentQUserSigningTerminalWireFields {
+    const char* status;
+    const char* reason;
+};
+
+AgentQUserSigningTerminalWireFields terminal_wire_fields(
+    AgentQUserSigningTerminalResult result)
+{
+    switch (result) {
+        case AgentQUserSigningTerminalResult::signed_success:
+            return {"signed", "device_confirmed"};
+        case AgentQUserSigningTerminalResult::rejected:
+            return {"user_rejected", "user_rejected"};
+        case AgentQUserSigningTerminalResult::timed_out:
+            return {"user_timed_out", "user_timed_out"};
+        case AgentQUserSigningTerminalResult::signing_failed:
+            return {"signing_failed", "signing_failed"};
+        case AgentQUserSigningTerminalResult::canceled:
+        case AgentQUserSigningTerminalResult::history_error:
+        case AgentQUserSigningTerminalResult::none:
+        default:
+            return {"", ""};
+    }
 }
 
 }  // namespace
@@ -260,7 +398,7 @@ AgentQUserSigningFlowSnapshot user_signing_flow_snapshot()
     snapshot.active = g_state.active();
     snapshot.stage = g_state.stage;
     snapshot.terminal_result = g_state.terminal_result;
-    snapshot.signing_method = g_state.signing_method;
+    snapshot.signing_route = g_state.signing_route;
     memcpy(snapshot.request_id, g_state.request_id, sizeof(snapshot.request_id));
     memcpy(
         snapshot.request_identity,
@@ -289,62 +427,36 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin(
     }
     // User-flow boundary assertion: a prepared value must still match the
     // selected route before any review UI state or signable scratch is created.
-    if (input.request_id == nullptr ||
-        input.request_identity == nullptr ||
-        input.session_id == nullptr ||
-        input.route != AgentQSupportedSignRoute::sui_sign_transaction ||
+    if (input.route != AgentQSigningRoute::sui_sign_transaction ||
         input.prepared == nullptr ||
         input.prepared->route != input.route) {
         return AgentQUserSigningFlowBeginResult::invalid_argument;
     }
-    if (!timeout_window_valid(input.request_window)) {
-        return AgentQUserSigningFlowBeginResult::invalid_deadline;
+    AgentQUserSigningBeginMetadata metadata = {};
+    const AgentQUserSigningFlowBeginResult metadata_result =
+        prepare_common_begin_metadata(
+            input.request_id,
+            input.request_identity,
+            input.session_id,
+            input.route,
+            input.prepared->network,
+            input.request_window,
+            &metadata);
+    if (metadata_result != AgentQUserSigningFlowBeginResult::ok) {
+        return metadata_result;
     }
-    char request_id[kAgentQUserSigningIdSize] = {};
-    char session_id[kAgentQSessionIdSize] = {};
-    char chain[kAgentQUserSigningChainSize] = {};
-    char method[kAgentQUserSigningMethodSize] = {};
-    char network[kAgentQUserSigningNetworkSize] = {};
-    if (!copy_nonempty_c_string(input.request_id, request_id, sizeof(request_id)) ||
-        !copy_nonempty_c_string(input.session_id, session_id, sizeof(session_id)) ||
-        !copy_nonempty_c_string(sign_route_wire_chain(input.route), chain, sizeof(chain)) ||
-        !copy_nonempty_c_string(sign_route_wire_method(input.route), method, sizeof(method)) ||
-        !copy_nonempty_c_string(input.prepared->network, network, sizeof(network))) {
-        return AgentQUserSigningFlowBeginResult::invalid_argument;
-    }
-    if (session_validate(session_id) != AgentQSessionValidationResult::ok) {
-        return AgentQUserSigningFlowBeginResult::invalid_session;
-    }
-    if (!supported_network(network)) {
-        return AgentQUserSigningFlowBeginResult::invalid_network;
-    }
-    if (input.prepared->tx_bytes_size == 0 ||
-        input.prepared->tx_bytes_size > kAgentQSuiSignTransactionTxBytesMaxBytes) {
-        return AgentQUserSigningFlowBeginResult::invalid_payload;
-    }
-    if (input.prepared->payload_digest[0] == '\0') {
-        return AgentQUserSigningFlowBeginResult::digest_error;
+    const AgentQUserSigningFlowBeginResult begin_result =
+        begin_common_review_state(
+            metadata,
+            input.prepared->tx_bytes,
+            input.prepared->tx_bytes_size,
+            kAgentQSuiSignTransactionTxBytesMaxBytes,
+            input.prepared->payload_digest);
+    if (begin_result != AgentQUserSigningFlowBeginResult::ok) {
+        return begin_result;
     }
 
-    g_state.clear();
-    g_state.signing_method = input.route;
-    memcpy(g_state.request_id, request_id, sizeof(g_state.request_id));
-    memcpy(
-        g_state.request_identity,
-        input.request_identity,
-        sizeof(g_state.request_identity));
-    memcpy(g_state.session_id, session_id, sizeof(g_state.session_id));
-    memcpy(g_state.chain, chain, sizeof(g_state.chain));
-    memcpy(g_state.method, method, sizeof(g_state.method));
-    memcpy(g_state.network, network, sizeof(g_state.network));
-    memcpy(g_state.payload_digest, input.prepared->payload_digest, sizeof(g_state.payload_digest));
-    memcpy(g_state.signable_payload, input.prepared->tx_bytes, input.prepared->tx_bytes_size);
-    g_state.signable_payload_size = input.prepared->tx_bytes_size;
-    g_state.signable_payload_available = true;
     g_state.sui_transfer = input.prepared->sui_transfer;
-    g_state.request_window = input.request_window;
-    g_state.pin_input_window = kAgentQTimeoutWindowNone;
-    g_state.stage = AgentQUserSigningStage::reviewing;
     return AgentQUserSigningFlowBeginResult::ok;
 }
 
@@ -356,67 +468,41 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin_personal_message(
     }
     // User-flow boundary assertion: a prepared value must still match the
     // selected route before any review UI state or signable scratch is created.
-    if (input.request_id == nullptr ||
-        input.request_identity == nullptr ||
-        input.session_id == nullptr ||
-        input.route != AgentQSupportedSignRoute::sui_sign_personal_message ||
+    if (input.route != AgentQSigningRoute::sui_sign_personal_message ||
         input.prepared == nullptr ||
         input.prepared->route != input.route) {
         return AgentQUserSigningFlowBeginResult::invalid_argument;
     }
-    if (!timeout_window_valid(input.request_window)) {
-        return AgentQUserSigningFlowBeginResult::invalid_deadline;
+    AgentQUserSigningBeginMetadata metadata = {};
+    const AgentQUserSigningFlowBeginResult metadata_result =
+        prepare_common_begin_metadata(
+            input.request_id,
+            input.request_identity,
+            input.session_id,
+            input.route,
+            input.prepared->network,
+            input.request_window,
+            &metadata);
+    if (metadata_result != AgentQUserSigningFlowBeginResult::ok) {
+        return metadata_result;
     }
-    char request_id[kAgentQUserSigningIdSize] = {};
-    char session_id[kAgentQSessionIdSize] = {};
-    char chain[kAgentQUserSigningChainSize] = {};
-    char method[kAgentQUserSigningMethodSize] = {};
-    char network[kAgentQUserSigningNetworkSize] = {};
-    if (!copy_nonempty_c_string(input.request_id, request_id, sizeof(request_id)) ||
-        !copy_nonempty_c_string(input.session_id, session_id, sizeof(session_id)) ||
-        !copy_nonempty_c_string(sign_route_wire_chain(input.route), chain, sizeof(chain)) ||
-        !copy_nonempty_c_string(sign_route_wire_method(input.route), method, sizeof(method)) ||
-        !copy_nonempty_c_string(input.prepared->network, network, sizeof(network))) {
-        return AgentQUserSigningFlowBeginResult::invalid_argument;
-    }
-    if (session_validate(session_id) != AgentQSessionValidationResult::ok) {
-        return AgentQUserSigningFlowBeginResult::invalid_session;
-    }
-    if (!supported_network(network)) {
-        return AgentQUserSigningFlowBeginResult::invalid_network;
-    }
-    if (input.prepared->message_size == 0 ||
-        input.prepared->message_size > kAgentQSuiSignPersonalMessageMaxBytes) {
-        return AgentQUserSigningFlowBeginResult::invalid_payload;
-    }
-    if (input.prepared->payload_digest[0] == '\0') {
-        return AgentQUserSigningFlowBeginResult::digest_error;
+    const AgentQUserSigningFlowBeginResult begin_result =
+        begin_common_review_state(
+            metadata,
+            input.prepared->message,
+            input.prepared->message_size,
+            kAgentQSuiSignPersonalMessageMaxBytes,
+            input.prepared->payload_digest);
+    if (begin_result != AgentQUserSigningFlowBeginResult::ok) {
+        return begin_result;
     }
 
-    g_state.clear();
-    g_state.signing_method = input.route;
-    memcpy(g_state.request_id, request_id, sizeof(g_state.request_id));
-    memcpy(
-        g_state.request_identity,
-        input.request_identity,
-        sizeof(g_state.request_identity));
-    memcpy(g_state.session_id, session_id, sizeof(g_state.session_id));
-    memcpy(g_state.chain, chain, sizeof(g_state.chain));
-    memcpy(g_state.method, method, sizeof(g_state.method));
-    memcpy(g_state.network, network, sizeof(g_state.network));
     memcpy(g_state.account_address, input.prepared->account_address, sizeof(g_state.account_address));
     make_message_preview(
         input.prepared->message,
         input.prepared->message_size,
         g_state.message_preview,
         sizeof(g_state.message_preview));
-    memcpy(g_state.payload_digest, input.prepared->payload_digest, sizeof(g_state.payload_digest));
-    memcpy(g_state.signable_payload, input.prepared->message, input.prepared->message_size);
-    g_state.signable_payload_size = input.prepared->message_size;
-    g_state.signable_payload_available = true;
-    g_state.request_window = input.request_window;
-    g_state.pin_input_window = kAgentQTimeoutWindowNone;
-    g_state.stage = AgentQUserSigningStage::reviewing;
     return AgentQUserSigningFlowBeginResult::ok;
 }
 
@@ -771,43 +857,13 @@ bool user_signing_flow_consume_terminal_result(
 const char* user_signing_flow_terminal_status(
     AgentQUserSigningTerminalResult result)
 {
-    switch (result) {
-        case AgentQUserSigningTerminalResult::signed_success:
-            return "signed";
-        case AgentQUserSigningTerminalResult::rejected:
-            return "user_rejected";
-        case AgentQUserSigningTerminalResult::timed_out:
-            return "user_timed_out";
-        case AgentQUserSigningTerminalResult::signing_failed:
-            return "signing_failed";
-        case AgentQUserSigningTerminalResult::canceled:
-        case AgentQUserSigningTerminalResult::history_error:
-            return "";
-        case AgentQUserSigningTerminalResult::none:
-        default:
-            return "";
-    }
+    return terminal_wire_fields(result).status;
 }
 
 const char* user_signing_flow_terminal_reason(
     AgentQUserSigningTerminalResult result)
 {
-    switch (result) {
-        case AgentQUserSigningTerminalResult::signed_success:
-            return "device_confirmed";
-        case AgentQUserSigningTerminalResult::rejected:
-            return "user_rejected";
-        case AgentQUserSigningTerminalResult::timed_out:
-            return "user_timed_out";
-        case AgentQUserSigningTerminalResult::signing_failed:
-            return "signing_failed";
-        case AgentQUserSigningTerminalResult::canceled:
-        case AgentQUserSigningTerminalResult::history_error:
-            return "";
-        case AgentQUserSigningTerminalResult::none:
-        default:
-            return "";
-    }
+    return terminal_wire_fields(result).reason;
 }
 
 }  // namespace agent_q

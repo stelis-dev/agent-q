@@ -315,6 +315,33 @@ bool begin_valid_flow(const char* request_id = "req_signature_1")
            agent_q::AgentQUserSigningFlowBeginResult::ok;
 }
 
+void expect_terminal_review_metadata_wiped(
+    const agent_q::AgentQUserSigningFlowSnapshot& snapshot,
+    const char* label)
+{
+    expect(snapshot.signable_payload_size == 0 && !snapshot.signable_payload_available,
+           label);
+    expect(snapshot.session_id[0] == '\0', "terminal cleanup wipes session id");
+    expect(snapshot.network[0] == '\0', "terminal cleanup wipes network");
+    expect(snapshot.request_window.started_at == 0 && snapshot.request_window.deadline == 0,
+           "terminal cleanup clears review window");
+    expect(snapshot.pin_input_window.started_at == 0 && snapshot.pin_input_window.deadline == 0,
+           "terminal cleanup clears PIN window");
+    expect(snapshot.sui_transfer.sender[0] == '\0' &&
+               snapshot.sui_transfer.gas_owner[0] == '\0' &&
+               snapshot.sui_transfer.recipient[0] == '\0' &&
+               snapshot.sui_transfer.asset[0] == '\0' &&
+               snapshot.sui_transfer.amount[0] == '\0' &&
+               snapshot.sui_transfer.gas_budget[0] == '\0' &&
+               snapshot.sui_transfer.gas_price[0] == '\0' &&
+               snapshot.sui_transfer.command_count == 0,
+           "terminal cleanup wipes transfer facts");
+    expect(snapshot.account_address[0] == '\0',
+           "terminal cleanup wipes personal-message account address");
+    expect(snapshot.message_preview[0] == '\0',
+           "terminal cleanup wipes personal-message preview");
+}
+
 }  // namespace
 
 namespace agent_q {
@@ -376,6 +403,8 @@ int main()
     using Terminal = agent_q::AgentQUserSigningTerminalResult;
     using SessionValidation = agent_q::AgentQSessionValidationResult;
 
+    Terminal terminal = Terminal::none;
+
     agent_q::session_init();
     expect(agent_q::session_replace(random_bytes, nullptr) ==
                agent_q::AgentQSessionStartResult::ok,
@@ -400,8 +429,8 @@ int main()
         agent_q::user_signing_flow_snapshot();
     expect(personal_snapshot.active, "personal-message snapshot is active");
     expect(personal_snapshot.stage == Stage::reviewing, "personal-message begin starts at reviewing");
-    expect(personal_snapshot.signing_method == agent_q::AgentQSigningMethod::sui_sign_personal_message,
-           "personal-message snapshot carries verified method enum");
+    expect(personal_snapshot.signing_route == agent_q::AgentQSigningRoute::sui_sign_personal_message,
+           "personal-message snapshot carries verified route enum");
     expect(strcmp(personal_snapshot.request_id, "req_personal_message") == 0,
            "personal-message request id stored");
     expect(strcmp(personal_snapshot.method, "sign_personal_message") == 0,
@@ -421,6 +450,32 @@ int main()
     expect(agent_q::user_signing_flow_clear() == Transition::ok,
            "personal-message flow clears before critical section");
 
+    expect(agent_q::user_signing_flow_begin_personal_message(
+               make_valid_message_input(
+                   "req_personal_message_reject",
+                   agent_q::session_id(),
+                   message,
+                   sizeof(message) - 1)) ==
+               Begin::ok,
+           "personal-message request begins before rejection cleanup test");
+    expect(agent_q::user_signing_flow_record_device_rejected() == Transition::ok,
+           "personal-message rejection terminalizes");
+    personal_snapshot = agent_q::user_signing_flow_snapshot();
+    expect(personal_snapshot.stage == Stage::terminal &&
+               personal_snapshot.terminal_result == Terminal::rejected,
+           "personal-message rejection reaches terminal stage");
+    expect(strcmp(personal_snapshot.request_id, "req_personal_message_reject") == 0 &&
+               strcmp(personal_snapshot.chain, "sui") == 0 &&
+               strcmp(personal_snapshot.method, "sign_personal_message") == 0 &&
+               strcmp(personal_snapshot.payload_digest, "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == 0,
+           "personal-message terminal keeps response/history metadata");
+    expect_terminal_review_metadata_wiped(
+        personal_snapshot,
+        "personal-message terminal wipes signable payload");
+    expect(agent_q::user_signing_flow_consume_terminal_result(&terminal) &&
+               terminal == Terminal::rejected,
+           "personal-message rejected terminal consumed");
+
     const std::vector<uint8_t>& payload = valid_payload();
     expect(agent_q::user_signing_flow_begin(
                make_valid_input("req_signature_1", agent_q::session_id(), payload.data(), payload.size())) ==
@@ -430,8 +485,8 @@ int main()
         agent_q::user_signing_flow_snapshot();
     expect(snapshot.active, "snapshot is active");
     expect(snapshot.stage == Stage::reviewing, "begin starts at reviewing");
-    expect(snapshot.signing_method == agent_q::AgentQSigningMethod::sui_sign_transaction,
-           "transaction snapshot carries verified method enum");
+    expect(snapshot.signing_route == agent_q::AgentQSigningRoute::sui_sign_transaction,
+           "transaction snapshot carries verified route enum");
     expect(strcmp(snapshot.request_id, "req_signature_1") == 0, "request id stored");
     expect(strcmp(snapshot.session_id, agent_q::session_id()) == 0, "session id stored");
     expect(strcmp(snapshot.chain, "sui") == 0, "chain stored");
@@ -541,7 +596,6 @@ int main()
     expect(agent_q::user_signing_flow_complete_signed() == Transition::ok,
            "signed terminal is recorded");
     expect(agent_q::user_signing_flow_terminal_pending(), "signed terminal is pending");
-    Terminal terminal = Terminal::none;
     expect(agent_q::user_signing_flow_consume_terminal_result(&terminal) &&
                terminal == Terminal::signed_success,
            "signed terminal is one-shot consumable");
@@ -581,6 +635,7 @@ int main()
                snapshot.terminal_result == Terminal::rejected &&
                !snapshot.signable_payload_available,
            "reject terminal wipes payload");
+    expect_terminal_review_metadata_wiped(snapshot, "reject terminal clears review metadata");
     expect(agent_q::user_signing_flow_consume_terminal_result(&terminal) &&
                terminal == Terminal::rejected,
            "rejected terminal consumed");
@@ -607,6 +662,7 @@ int main()
     expect(snapshot.stage == Stage::terminal &&
                snapshot.terminal_result == Terminal::rejected,
            "review Reject after PIN Back records user_rejected terminal");
+    expect_terminal_review_metadata_wiped(snapshot, "PIN Back rejection clears review metadata");
 
     agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_timeout"), "begin before timeout");
@@ -617,6 +673,7 @@ int main()
                snapshot.terminal_result == Terminal::timed_out &&
                !snapshot.signable_payload_available,
            "timeout terminal wipes payload");
+    expect_terminal_review_metadata_wiped(snapshot, "timeout terminal clears review metadata");
     expect(strcmp(agent_q::user_signing_flow_terminal_status(Terminal::timed_out), "user_timed_out") == 0 &&
                strcmp(agent_q::user_signing_flow_terminal_reason(Terminal::timed_out), "user_timed_out") == 0,
            "timeout terminal mapping");
@@ -637,6 +694,7 @@ int main()
                snapshot.terminal_result == Terminal::history_error &&
                !snapshot.signable_payload_available,
            "history error terminal wipes payload");
+    expect_terminal_review_metadata_wiped(snapshot, "history error terminal clears review metadata");
     expect(strcmp(agent_q::user_signing_flow_terminal_status(Terminal::history_error), "") == 0 &&
                strcmp(agent_q::user_signing_flow_terminal_reason(Terminal::history_error), "") == 0,
            "history error is cleanup-only, not a sign_result status");
@@ -659,6 +717,7 @@ int main()
                snapshot.terminal_result == Terminal::canceled &&
                !snapshot.signable_payload_available,
            "disconnect cancel terminal wipes payload");
+    expect_terminal_review_metadata_wiped(snapshot, "disconnect terminal clears review metadata");
     expect(strcmp(agent_q::user_signing_flow_terminal_status(Terminal::canceled), "") == 0 &&
                strcmp(agent_q::user_signing_flow_terminal_reason(Terminal::canceled), "") == 0,
            "canceled is cleanup-only, not a sign_result status");
@@ -672,6 +731,7 @@ int main()
                snapshot.terminal_result == Terminal::canceled &&
                !snapshot.signable_payload_available,
            "review UI loss terminalizes canceled and wipes payload");
+    expect_terminal_review_metadata_wiped(snapshot, "UI loss terminal clears review metadata");
 
     agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_signing_failed"), "begin before signing failure");
@@ -686,6 +746,7 @@ int main()
                snapshot.terminal_result == Terminal::signing_failed &&
                !snapshot.signable_payload_available,
            "signing failure wipes payload");
+    expect_terminal_review_metadata_wiped(snapshot, "signing failure terminal clears review metadata");
     expect(strcmp(agent_q::user_signing_flow_terminal_status(Terminal::signing_failed), "signing_failed") == 0 &&
                strcmp(agent_q::user_signing_flow_terminal_reason(Terminal::signing_failed), "signing_failed") == 0,
            "signing failure terminal mapping");
@@ -702,6 +763,7 @@ int main()
                snapshot.terminal_result == Terminal::timed_out &&
                !snapshot.signable_payload_available,
            "expired review wipes payload");
+    expect_terminal_review_metadata_wiped(snapshot, "expired review terminal clears review metadata");
 
     agent_q::user_signing_flow_clear();
     expect(agent_q::user_signing_flow_begin(
@@ -780,6 +842,7 @@ int main()
                snapshot.terminal_result == Terminal::timed_out &&
                !snapshot.signable_payload_available,
            "expired PIN handoff wipes payload");
+    expect_terminal_review_metadata_wiped(snapshot, "expired PIN terminal clears review metadata");
 
     agent_q::user_signing_flow_clear();
     char saved_session_id[agent_q::kAgentQSessionIdSize] = {};
@@ -803,6 +866,7 @@ int main()
                snapshot.terminal_result == Terminal::canceled &&
                !snapshot.signable_payload_available,
            "review session loss cancels and wipes payload");
+    expect_terminal_review_metadata_wiped(snapshot, "review session loss clears review metadata");
 
     expect(agent_q::session_replace(random_bytes, nullptr) ==
                agent_q::AgentQSessionStartResult::ok,
@@ -820,6 +884,7 @@ int main()
                snapshot.terminal_result == Terminal::canceled &&
                !snapshot.signable_payload_available,
            "PIN session loss cancels and wipes payload");
+    expect_terminal_review_metadata_wiped(snapshot, "PIN session loss clears review metadata");
 
     expect(agent_q::session_replace(random_bytes, nullptr) ==
                agent_q::AgentQSessionStartResult::ok,
@@ -837,6 +902,7 @@ int main()
                snapshot.terminal_result == Terminal::canceled &&
                !snapshot.signable_payload_available,
            "history session loss cancels and wipes payload");
+    expect_terminal_review_metadata_wiped(snapshot, "history session loss clears review metadata");
 
     expect(agent_q::session_replace(random_bytes, nullptr) ==
                agent_q::AgentQSessionStartResult::ok,
@@ -963,6 +1029,7 @@ int main()
     expect(snapshot.stage == Stage::terminal &&
                snapshot.terminal_result == Terminal::signed_success,
            "complete session loss cannot downgrade generated signature");
+    expect_terminal_review_metadata_wiped(snapshot, "signed terminal clears review metadata");
 
     agent_q::user_signing_flow_clear();
     expect(agent_q::session_replace(random_bytes, nullptr) ==

@@ -5,6 +5,7 @@
 #include "agent_q_protocol_input_copy.h"
 
 #include "agent_q_json_input.h"
+#include "agent_q_protocol_constants.h"
 #include "agent_q_request_id.h"
 
 namespace agent_q {
@@ -63,7 +64,8 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_identit
     }
 
     JsonVariantConst version = request_object["version"];
-    if (!version.is<uint32_t>() || version.as<uint32_t>() != 1) {
+    if (!version.is<uint32_t>() ||
+        version.as<uint32_t>() != kAgentQProtocolVersion) {
         memset(output, 0, sizeof(*output));
         return AgentQSignTransactionUserValidationResult::unsupported_version;
     }

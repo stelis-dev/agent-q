@@ -140,6 +140,22 @@ int main()
     assert(signing_result_ack("sess_a", "req_1"));
     assert(!signing_result_find("sess_a", "req_1", out, sizeof(out), &out_len));
     assert(!signing_result_ack("sess_a", "req_1"));
+    assert(signing_result_store(
+               "sess_a",
+               "req_1",
+               conflicting_identity,
+               sizeof(conflicting_identity),
+               "RESULT_AFTER_ACK",
+               16) == SigningResultStoreOutcome::stored);
+    assert(signing_result_find_for_retry(
+               "sess_a",
+               "req_1",
+               conflicting_identity,
+               sizeof(conflicting_identity),
+               out,
+               sizeof(out),
+               &out_len) == SigningResultRetryLookup::match);
+    assert(out_len == 16 && strcmp(out, "RESULT_AFTER_ACK") == 0);
 
     // not found / invalid / too large
     assert(!signing_result_find("sess_a", "nope", out, sizeof(out), &out_len));
@@ -171,6 +187,21 @@ int main()
     signing_result_clear_session("sx");
     assert(!signing_result_find("sx", "r1", out, sizeof(out), &out_len));
     assert(signing_result_find("sy", "r1", out, sizeof(out), &out_len));
+    assert(signing_result_store(
+               "sx",
+               "r1",
+               conflicting_identity,
+               sizeof(conflicting_identity),
+               "c",
+               1) == SigningResultStoreOutcome::stored);
+    assert(signing_result_find_for_retry(
+               "sx",
+               "r1",
+               conflicting_identity,
+               sizeof(conflicting_identity),
+               out,
+               sizeof(out),
+               &out_len) == SigningResultRetryLookup::match);
 
     printf("Signing result store tests passed\n");
     return 0;

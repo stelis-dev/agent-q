@@ -71,6 +71,40 @@ bool retry_allows_preflight_to_continue(
            AgentQSigningPreflightRetryDisposition::continue_preflight;
 }
 
+AgentQSigningPreflightResult evaluate_common_post_ingress_preflight(
+    AgentQSupportedSignRoute route,
+    const char* request_id,
+    const char* session_id,
+    const char* network,
+    const char* payload_base64,
+    const AgentQSigningPreflightRuntime& runtime,
+    uint8_t* request_identity,
+    size_t request_identity_size,
+    AgentQSigningAuthorizationMode* signing_mode)
+{
+    if (!sign_request_identity(
+            route,
+            network,
+            payload_base64,
+            request_identity,
+            request_identity_size)) {
+        return AgentQSigningPreflightResult::identity_error;
+    }
+
+    if (!retry_allows_preflight_to_continue(
+            request_id,
+            session_id,
+            request_identity,
+            runtime)) {
+        return AgentQSigningPreflightResult::retry_consumed;
+    }
+
+    if (!read_signing_mode(runtime, signing_mode)) {
+        return AgentQSigningPreflightResult::signing_mode_unavailable;
+    }
+    return AgentQSigningPreflightResult::ok;
+}
+
 }  // namespace
 
 AgentQSigningPreflightResult evaluate_sign_transaction_preflight(
@@ -110,25 +144,19 @@ AgentQSigningPreflightResult evaluate_sign_transaction_preflight(
         return AgentQSigningPreflightResult::transaction_ingress_error;
     }
 
-    if (!sign_request_identity(
+    const AgentQSigningPreflightResult common_result =
+        evaluate_common_post_ingress_preflight(
             classification.route,
-            output->ingress.params.network,
-            output->ingress.params.tx_bytes_base64,
-            output->request_identity,
-            sizeof(output->request_identity))) {
-        return AgentQSigningPreflightResult::identity_error;
-    }
-
-    if (!retry_allows_preflight_to_continue(
             output->ingress.envelope.request_id,
             output->ingress.session.session_id,
+            output->ingress.params.network,
+            output->ingress.params.tx_bytes_base64,
+            runtime,
             output->request_identity,
-            runtime)) {
-        return AgentQSigningPreflightResult::retry_consumed;
-    }
-
-    if (!read_signing_mode(runtime, &output->signing_mode)) {
-        return AgentQSigningPreflightResult::signing_mode_unavailable;
+            sizeof(output->request_identity),
+            &output->signing_mode);
+    if (common_result != AgentQSigningPreflightResult::ok) {
+        return common_result;
     }
 
     output->preparation_result =
@@ -183,25 +211,19 @@ AgentQSigningPreflightResult evaluate_sign_personal_message_preflight(
         return AgentQSigningPreflightResult::personal_message_ingress_error;
     }
 
-    if (!sign_request_identity(
+    const AgentQSigningPreflightResult common_result =
+        evaluate_common_post_ingress_preflight(
             classification.route,
-            output->ingress.params.network,
-            output->ingress.params.message_base64,
-            output->request_identity,
-            sizeof(output->request_identity))) {
-        return AgentQSigningPreflightResult::identity_error;
-    }
-
-    if (!retry_allows_preflight_to_continue(
             output->ingress.envelope.request_id,
             output->ingress.session.session_id,
+            output->ingress.params.network,
+            output->ingress.params.message_base64,
+            runtime,
             output->request_identity,
-            runtime)) {
-        return AgentQSigningPreflightResult::retry_consumed;
-    }
-
-    if (!read_signing_mode(runtime, &output->signing_mode)) {
-        return AgentQSigningPreflightResult::signing_mode_unavailable;
+            sizeof(output->request_identity),
+            &output->signing_mode);
+    if (common_result != AgentQSigningPreflightResult::ok) {
+        return common_result;
     }
     if (output->signing_mode == AgentQSigningAuthorizationMode::policy) {
         return AgentQSigningPreflightResult::personal_message_policy_mode;

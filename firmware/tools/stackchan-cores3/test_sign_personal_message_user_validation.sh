@@ -135,6 +135,7 @@ void expect_params(
     const std::string& json,
     agent_q::AgentQSignPersonalMessageUserValidationResult expected,
     size_t expected_decoded_size = 0,
+    const char* expected_network = "devnet",
     const char* expected_message = "aGVsbG8=")
 {
     JsonDocument document = parse_json(label, json);
@@ -144,7 +145,7 @@ void expect_params(
         agent_q::validate_sign_personal_message_user_params(document, agent_q::AgentQSupportedSignRoute::sui_sign_personal_message, &output);
     expect(actual == expected, label);
     if (actual == agent_q::AgentQSignPersonalMessageUserValidationResult::ok) {
-        expect(strcmp(output.network, "devnet") == 0, "params copies network");
+        expect(strcmp(output.network, expected_network) == 0, "params copies network");
         expect(strcmp(output.message_base64, expected_message) == 0, "params references message");
         expect(output.message_decoded_size == expected_decoded_size, "params records decoded size");
     } else {
@@ -178,6 +179,15 @@ int main()
     expect_envelope("valid envelope", valid, Result::ok);
     expect_session("valid session", valid, Result::ok);
     expect_params("valid params", valid, Result::ok, 5);
+    for (const char* network : {"mainnet", "testnet", "devnet", "localnet"}) {
+        const std::string label = std::string("valid network ") + network;
+        expect_params(
+            label.c_str(),
+            valid_request_with_params(std::string("{\"network\":\"") + network + "\",\"message\":\"aGVsbG8=\"}"),
+            Result::ok,
+            5,
+            network);
+    }
 
     expect_envelope("wrong type rejected", request_with_type("sign_transaction"), Result::unsupported_type);
     expect_envelope("extra top-level rejected",
@@ -213,6 +223,7 @@ int main()
                                   "\"}"),
         Result::ok,
         258,
+        "devnet",
         above_adapter_capacity.c_str());
 
     expect(strcmp(agent_q::sign_personal_message_user_validation_result_name(Result::invalid_message),

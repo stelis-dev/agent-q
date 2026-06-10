@@ -10,7 +10,7 @@ Firmware USB and Agent-Q core expose public sign_transaction and
 sign_personal_message requests. Firmware reads local signing mode and enters
 the supported policy or user authorization branch without host-selectable
 authorization request types. Provider-sui and Agent-Q MCP expose the same
-signing method names and must not expose host-selectable authorization APIs.
+signing route names and must not expose host-selectable authorization APIs.
 EOF
 }
 
@@ -22,6 +22,19 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 USB_SERVER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_server.cpp"
+USB_APPROVAL_HISTORY_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_approval_history_handler.cpp"
+USB_CONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_connect_handler.cpp"
+USB_OPERATION_TYPE_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_operation_type.h"
+USB_OPERATION_RESPONSE_WRITER_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_operation_response_writer.h"
+USB_OPERATION_DISPATCH_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_operation_dispatch.cpp"
+USB_ENVELOPE_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_envelope.cpp"
+USB_LINE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_line_handler.cpp"
+USB_DEVICE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_device_handlers.cpp"
+USB_DISCONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_disconnect_handler.cpp"
+USB_RETAINED_RESULT_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_retained_result_handlers.cpp"
+USB_SESSION_READ_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_session_read_handlers.cpp"
+USB_POLICY_PROPOSE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_policy_propose_handler.cpp"
+USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_signing_handlers.cpp"
 SIGNING_PREFLIGHT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_signing_preflight.cpp"
 POLICY_SIGNING_EXECUTION_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_policy_signing_execution.cpp"
 USER_REVIEW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_review_view_model.cpp"
@@ -115,20 +128,90 @@ expect_tree_present() {
   rm -f "${matches}"
 }
 
-expect_present "${USB_SERVER}" '"sign_transaction"' \
-  "USB request server must accept public sign_transaction messages"
-expect_absent "${USB_SERVER}" '"sign_transaction_user"|"sign_transaction_policy"' \
-  "USB request server must not accept host-selected authorization request types"
+expect_present "${USB_OPERATION_TYPE_HEADER}" '"sign_transaction"' \
+  "USB operation classifier must accept public sign_transaction messages"
+expect_absent "${USB_OPERATION_TYPE_HEADER}" '"sign_transaction_user"|"sign_transaction_policy"' \
+  "USB operation classifier must not accept host-selected authorization request types"
 expect_present "${USB_SERVER}" '"sign_result"|write_sign_result' \
   "USB request server must write public sign_result responses"
 expect_present "${USB_SERVER}" '"signing"' \
   "USB request server must advertise shared signing capabilities"
-expect_present "${USB_SERVER}" 'user_signing_(flow|confirmation)|user_signing_execute_critical_section' \
-  "USB request server must call user-confirmed authorization state owners"
-expect_present "${USB_SERVER}" 'evaluate_sign_transaction_policy' \
-  "USB request server must call policy authorization runtime"
-expect_present "${USB_SERVER}" 'execute_policy_sign_transaction' \
-  "USB request server must delegate policy signing execution to the execution owner"
+expect_present "${USB_OPERATION_RESPONSE_WRITER_HEADER}" 'AgentQUsbOperationResponseWriter' \
+  "USB operation response writer boundary must be shared outside the USB server"
+expect_present "${USB_OPERATION_DISPATCH_SOURCE}" 'dispatch_usb_operation' \
+  "USB operation dispatch boundary must live outside the USB server"
+expect_present "${USB_OPERATION_DISPATCH_SOURCE}" 'AgentQUsbOperationHandlers' \
+  "USB operation dispatch boundary must route through an explicit handler table"
+expect_present "${USB_SERVER}" 'usb_operation_handlers' \
+  "USB request server must provide its public operation handler table"
+expect_present "${USB_SERVER}" 'handle_usb_request_line' \
+  "USB request server must route public request lines through the extracted line handler"
+expect_present "${USB_LINE_HANDLER_SOURCE}" 'parse_usb_request_envelope' \
+  "USB line handler must parse request envelopes through the extracted helper"
+expect_present "${USB_LINE_HANDLER_SOURCE}" 'dispatch_usb_operation' \
+  "USB line handler must delegate to the extracted dispatch helper"
+expect_present "${USB_ENVELOPE_SOURCE}" 'classify_usb_operation_type' \
+  "USB envelope parser must use the public operation classifier"
+expect_present "${USB_LINE_HANDLER_SOURCE}" 'operation_type' \
+  "USB line handler dispatch must use typed operation ids from the parsed envelope"
+expect_present "${USB_DEVICE_HANDLERS_SOURCE}" 'handle_usb_get_status_request' \
+  "get_status operation handler must live outside the USB server"
+expect_present "${USB_SERVER}" 'handle_usb_get_status_request' \
+  "USB request server handler table must route get_status to the extracted handler"
+expect_present "${USB_SERVER}" 'handle_identify_device_request' \
+  "USB request server must route identify_device through an injected operation wrapper"
+expect_present "${USB_DEVICE_HANDLERS_SOURCE}" 'handle_usb_identify_device_request' \
+  "identify_device operation handler must live outside the USB server"
+expect_present "${USB_SERVER}" 'handle_connect_request' \
+  "USB request server must route connect through an operation handler"
+expect_present "${USB_CONNECT_HANDLER_SOURCE}" 'handle_usb_connect_request' \
+  "connect operation handler must live outside the USB server"
+expect_present "${USB_SERVER}" 'handle_get_result_request' \
+  "USB request server must route get_result through an injected operation wrapper"
+expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" 'handle_usb_get_result_request' \
+  "get_result operation handler must live outside the USB server"
+expect_present "${USB_SERVER}" 'handle_ack_result_request' \
+  "USB request server must route ack_result through an injected operation wrapper"
+expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" 'handle_usb_ack_result_request' \
+  "ack_result operation handler must live outside the USB server"
+expect_present "${USB_SERVER}" 'handle_get_capabilities_request' \
+  "USB request server must route get_capabilities through an operation handler"
+expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" 'handle_usb_get_capabilities_request' \
+  "get_capabilities operation handler must live outside the USB server"
+expect_present "${USB_SERVER}" 'handle_get_accounts_request' \
+  "USB request server must route get_accounts through an operation handler"
+expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" 'handle_usb_get_accounts_request' \
+  "get_accounts operation handler must live outside the USB server"
+expect_present "${USB_SERVER}" 'handle_policy_get_request' \
+  "USB request server must route policy_get through an operation handler"
+expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" 'handle_usb_policy_get_request' \
+  "policy_get operation handler must live outside the USB server"
+expect_present "${USB_SERVER}" 'handle_disconnect_request' \
+  "USB request server must route disconnect through an operation handler"
+expect_present "${USB_DISCONNECT_HANDLER_SOURCE}" 'handle_usb_disconnect_request' \
+  "disconnect operation handler must live outside the USB server"
+expect_present "${USB_SERVER}" 'handle_get_approval_history_request' \
+  "USB request server must route get_approval_history through an operation handler"
+expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" 'handle_usb_get_approval_history_request' \
+  "get_approval_history operation handler must live outside the USB server"
+expect_present "${USB_SERVER}" 'handle_policy_propose_request' \
+  "USB request server must route policy_propose through an operation handler"
+expect_present "${USB_POLICY_PROPOSE_HANDLER_SOURCE}" 'handle_usb_policy_propose_request' \
+  "policy_propose operation handler must live outside the USB server"
+expect_present "${USB_SERVER}" 'handle_sign_transaction_request' \
+  "USB request server must route sign_transaction through an operation handler"
+expect_present "${USB_SERVER}" 'handle_sign_personal_message_request' \
+  "USB request server must route sign_personal_message through an operation handler"
+expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'handle_usb_sign_transaction_request' \
+  "sign_transaction operation handler must live outside the USB server"
+expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'handle_usb_sign_personal_message_request' \
+  "sign_personal_message operation handler must live outside the USB server"
+expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'begin_transaction_user_signing|begin_personal_message_user_signing' \
+  "extracted signing handler must enter user-confirmed authorization through injected state owners"
+expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'evaluate_transaction_policy' \
+  "extracted signing handler must call policy authorization runtime through injected dependencies"
+expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'execute_policy_transaction' \
+  "extracted signing handler must delegate policy signing execution through injected dependencies"
 expect_present "${POLICY_SIGNING_EXECUTION_SOURCE}" 'write_policy_signing_confirmation_history' \
   "policy signing execution owner must own policy confirmation history writes"
 expect_present "${POLICY_SIGNING_EXECUTION_SOURCE}" 'sign_sui_ed25519_transaction_from_stored_root' \
@@ -136,39 +219,45 @@ expect_present "${POLICY_SIGNING_EXECUTION_SOURCE}" 'sign_sui_ed25519_transactio
 expect_absent "${USB_SERVER}" 'write_policy_signing_confirmation_history|write_policy_signing_terminal_history|sign_sui_ed25519_transaction_from_stored_root' \
   "USB request server must not assemble policy signing history/signing directly"
 expect_present "${USB_SERVER}" 'read_signing_authorization_mode' \
-  "USB request server must read Firmware-local signing authorization mode"
+  "USB request server must supply Firmware-local signing authorization mode"
 expect_present "${USB_SERVER}" 'user_signing_flow_begin' \
-  "USB request server user branch must enter user-confirmed flow"
+  "USB request server must supply user-confirmed flow dependencies"
 
 SIGN_TRANSACTION_BRANCH_SNIPPET="${TMP_DIR}/sign-transaction-branch.cpp"
 SIGN_TRANSACTION_PREFLIGHT_SNIPPET="${TMP_DIR}/sign-transaction-preflight.cpp"
+COMMON_POST_INGRESS_PREFLIGHT_SNIPPET="${TMP_DIR}/common-post-ingress-preflight.cpp"
+awk '
+  /AgentQSigningPreflightResult evaluate_common_post_ingress_preflight/ { capture = 1 }
+  capture { print }
+  /^}  \/\/ namespace/ { capture = 0 }
+' "${SIGNING_PREFLIGHT_SOURCE}" >"${COMMON_POST_INGRESS_PREFLIGHT_SNIPPET}"
 awk '
   /AgentQSigningPreflightResult evaluate_sign_transaction_preflight/ { capture = 1 }
   capture { print }
   /AgentQSigningPreflightResult evaluate_sign_personal_message_preflight/ { capture = 0 }
 ' "${SIGNING_PREFLIGHT_SOURCE}" >"${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}"
 awk '
-  /if \(strcmp\(type, "sign_transaction"\) == 0\)/ { capture = 1 }
+  /void handle_usb_sign_transaction_request/ { capture = 1 }
   capture { print }
-  /ESP_LOGI\(kTag, "sign_transaction waiting for device review/ { capture = 0 }
-' "${USB_SERVER}" >"${SIGN_TRANSACTION_BRANCH_SNIPPET}"
-expect_present "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'read_signing_mode_for_preflight' \
-  "USB request server sign_transaction branch snippet must be captured"
-expect_present "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'evaluate_sign_transaction_preflight' \
-  "sign_transaction branch must delegate signing preflight to the extracted helper"
-expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'evaluate_sign_transaction_preflight' 'handle_sign_transaction_policy_mode' \
+  /void handle_usb_sign_personal_message_request/ { capture = 0 }
+' "${USB_SIGNING_HANDLER_SOURCE}" >"${SIGN_TRANSACTION_BRANCH_SNIPPET}"
+expect_present "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'make_preflight_runtime\(ops\)' \
+  "sign_transaction handler snippet must be captured"
+expect_present "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'evaluate_transaction_preflight' \
+  "sign_transaction handler must delegate signing preflight to the extracted helper"
+expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'evaluate_transaction_preflight' 'handle_sign_transaction_policy_mode' \
   "sign_transaction policy authorization must consume prepared Sui transaction data"
-expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'evaluate_sign_transaction_preflight' 'user_signing_flow_begin' \
+expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'evaluate_transaction_preflight' 'begin_transaction_user_signing' \
   "sign_transaction user authorization must consume prepared Sui transaction data"
 expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'classify_sign_route\(AgentQSignOperation::sign_transaction' 'evaluate_sign_transaction_user_ingress' \
   "sign_transaction preflight must identify the route before state/session work"
-expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'evaluate_sign_transaction_user_ingress' 'sign_request_identity' \
-  "sign_transaction preflight must complete before request identity"
-expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'sign_request_identity' 'retry_allows_preflight_to_continue' \
-  "sign_transaction must bind request identity before stored-result replay"
-expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'retry_allows_preflight_to_continue' 'read_signing_mode' \
-  "sign_transaction replay must complete before reading signing mode"
-expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'retry_allows_preflight_to_continue' 'prepare_sui_sign_transaction' \
+expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'evaluate_sign_transaction_user_ingress' 'evaluate_common_post_ingress_preflight' \
+  "sign_transaction preflight must complete before common request identity/retry work"
+expect_order "${COMMON_POST_INGRESS_PREFLIGHT_SNIPPET}" 'sign_request_identity' 'retry_allows_preflight_to_continue' \
+  "common signing preflight must bind request identity before stored-result replay"
+expect_order "${COMMON_POST_INGRESS_PREFLIGHT_SNIPPET}" 'retry_allows_preflight_to_continue' 'read_signing_mode' \
+  "common signing preflight replay must complete before reading signing mode"
+expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'evaluate_common_post_ingress_preflight' 'prepare_sui_sign_transaction' \
   "sign_transaction replay must complete before Sui adapter preparation"
 expect_order "${SIGN_TRANSACTION_INGRESS_SOURCE}" 'if \(!state\.material_ready\)' 'validate_sign_transaction_user_session_format' \
   "sign_transaction preflight must check state before session format"
@@ -185,25 +274,21 @@ awk '
   /^\}  \/\/ namespace agent_q/ { capture = 0 }
 ' "${SIGNING_PREFLIGHT_SOURCE}" >"${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}"
 awk '
-  /if \(strcmp\(type, "sign_personal_message"\) == 0\)/ { capture = 1 }
+  /void handle_usb_sign_personal_message_request/ { capture = 1 }
   capture { print }
-  /show_user_signing_review\(\)/ { capture = 0 }
-' "${USB_SERVER}" >"${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}"
-expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'read_signing_mode_for_preflight' \
-  "USB request server sign_personal_message branch snippet must be captured"
-expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'evaluate_sign_personal_message_preflight' \
-  "sign_personal_message branch must delegate signing preflight to the extracted helper"
-expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'evaluate_sign_personal_message_preflight' 'user_signing_flow_begin_personal_message' \
+  /^}  \/\/ namespace agent_q/ { capture = 0 }
+' "${USB_SIGNING_HANDLER_SOURCE}" >"${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}"
+expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'make_preflight_runtime\(ops\)' \
+  "sign_personal_message handler snippet must be captured"
+expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'evaluate_personal_message_preflight' \
+  "sign_personal_message handler must delegate signing preflight to the extracted helper"
+expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'evaluate_personal_message_preflight' 'begin_personal_message_user_signing' \
   "sign_personal_message user authorization must consume prepared Sui message data"
 expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'classify_sign_route\(AgentQSignOperation::sign_personal_message' 'evaluate_sign_personal_message_user_ingress' \
   "sign_personal_message must identify the route before state/session work"
-expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'evaluate_sign_personal_message_user_ingress' 'sign_request_identity' \
-  "sign_personal_message preflight must complete before request identity"
-expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'sign_request_identity' 'retry_allows_preflight_to_continue' \
-  "sign_personal_message must bind request identity before stored-result replay"
-expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'retry_allows_preflight_to_continue' 'read_signing_mode' \
-  "sign_personal_message replay must complete before reading signing mode"
-expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'retry_allows_preflight_to_continue' 'prepare_sui_sign_personal_message' \
+expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'evaluate_sign_personal_message_user_ingress' 'evaluate_common_post_ingress_preflight' \
+  "sign_personal_message preflight must complete before common request identity/retry work"
+expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'evaluate_common_post_ingress_preflight' 'prepare_sui_sign_personal_message' \
   "sign_personal_message replay must complete before Sui adapter preparation"
 expect_order "${SIGN_PERSONAL_MESSAGE_INGRESS_SOURCE}" 'if \(!state\.material_ready\)' 'validate_sign_personal_message_user_session_format' \
   "sign_personal_message preflight must check state before session format"
@@ -213,32 +298,32 @@ expect_order "${SIGN_PERSONAL_MESSAGE_INGRESS_SOURCE}" 'validate_sign_personal_m
   "sign_personal_message preflight must exact-check the request before shallow params"
 expect_present "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'AgentQSigningAuthorizationMode::policy' \
   "sign_personal_message branch must explicitly handle policy mode"
-expect_present "${USB_SERVER}" 'sign_personal_message is not available in policy authorization mode' \
+expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'sign_personal_message is not available in policy authorization mode' \
   "sign_personal_message policy mode must fail closed as unsupported"
 expect_present "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'evaluate_sign_personal_message_user_ingress' \
   "sign_personal_message user mode must use the method-specific ingress owner"
 expect_absent "${USB_SERVER}" 'decode_sign_personal_message_request' \
   "USB request server must not inline-decode sign_personal_message params"
-expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'user_signing_flow_begin_personal_message' \
+expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'begin_personal_message_user_signing' \
   "sign_personal_message user mode must enter the user-confirmed flow owner"
 
-expect_present "${USER_FLOW_HEADER}" 'AgentQSigningMethod signing_method' \
-  "user signing flow snapshot must carry verified signing method identity"
-expect_present "${USER_SIGNING_HEADER}" 'AgentQSigningMethod signing_method' \
-  "user signing output must carry verified signing method identity"
-expect_present "${USER_REVIEW_SOURCE}" 'snapshot\.signing_method' \
-  "clear-signing review must branch on verified signing method identity"
+expect_present "${USER_FLOW_HEADER}" 'AgentQSigningRoute signing_route' \
+  "user signing flow snapshot must carry verified signing route identity"
+expect_present "${USER_SIGNING_HEADER}" 'AgentQSigningRoute signing_route' \
+  "user signing output must carry verified signing route identity"
+expect_present "${USER_REVIEW_SOURCE}" 'snapshot\.signing_route' \
+  "clear-signing review must branch on verified signing route identity"
 expect_absent "${USER_REVIEW_SOURCE}" 'strcmp\(snapshot\.method' \
   "clear-signing review must not branch on raw snapshot method strings"
-expect_absent "${USER_REVIEW_SOURCE}" 'classify_signing_method' \
+expect_absent "${USER_REVIEW_SOURCE}" 'classify_signing_route' \
   "clear-signing review must not reclassify raw method strings"
-expect_present "${USER_SIGNING_SOURCE}" 'snapshot\.signing_method' \
-  "signing critical section must branch on verified signing method identity"
+expect_present "${USER_SIGNING_SOURCE}" 'snapshot\.signing_route' \
+  "signing critical section must branch on verified signing route identity"
 expect_absent "${USER_SIGNING_SOURCE}" 'strcmp\(snapshot\.method' \
   "signing critical section must not branch on raw snapshot method strings"
-expect_absent "${USER_SIGNING_SOURCE}" 'classify_signing_method' \
+expect_absent "${USER_SIGNING_SOURCE}" 'classify_signing_route' \
   "signing critical section must not reclassify raw method strings"
-expect_absent "${USB_SERVER}" 'classify_signing_method' \
+expect_absent "${USB_SERVER}" 'classify_signing_route' \
   "sign_result writer must not reclassify raw method strings"
 expect_absent "${POLICY_SIGNING_EXECUTION_SOURCE}" 'classify_sui_sign_transaction|base64_to_bytes|approval_history_digest_payload' \
   "policy signing execution must consume prepared signing data, not re-prepare transaction bytes"
@@ -247,28 +332,54 @@ expect_absent "${USER_SIGNING_SOURCE}" 'classify_sui_sign_transaction|base64_to_
 
 USER_BRANCH_SNIPPET="${TMP_DIR}/sign-transaction-user-branch.cpp"
 awk '
-  /evaluate_sign_transaction_preflight/ { capture = 1 }
+  /evaluate_transaction_preflight/ { capture = 1 }
   capture { print }
-  /show_user_signing_review\(\)/ { capture = 0 }
-' "${USB_SERVER}" >"${USER_BRANCH_SNIPPET}"
-expect_present "${USER_BRANCH_SNIPPET}" 'user_signing_flow_begin' \
-  "USB request server user branch snippet must be captured"
-expect_absent "${USER_BRANCH_SNIPPET}" 'evaluate_sign_transaction_policy|write_policy_signing_confirmation_history' \
-  "USB request server user branch must not apply or record policy authorization"
+  /show_user_signing_review/ { capture = 0 }
+' "${USB_SIGNING_HANDLER_SOURCE}" >"${USER_BRANCH_SNIPPET}"
+expect_present "${USER_BRANCH_SNIPPET}" 'begin_transaction_user_signing' \
+  "extracted signing handler user branch snippet must be captured"
+expect_absent "${USER_BRANCH_SNIPPET}" 'write_policy_signing_confirmation_history' \
+  "extracted signing handler user branch must not record policy authorization"
 
-for request_name in \
-  get_status \
-  identify_device \
-  connect \
-  disconnect \
-  get_capabilities \
-  get_accounts \
-  policy_get \
-  get_approval_history \
-  policy_propose; do
-  expect_present "${USB_SERVER}" "${request_name} request contains unsupported fields" \
-    "USB request server must exact-check ${request_name} top-level request fields"
-done
+HANDLE_LINE_SNIPPET="${TMP_DIR}/handle-line.cpp"
+awk '
+  /void handle_line/ { capture = 1 }
+  capture { print }
+  /void poll_usb_input/ { capture = 0 }
+' "${USB_SERVER}" >"${HANDLE_LINE_SNIPPET}"
+expect_present "${HANDLE_LINE_SNIPPET}" 'handle_usb_request_line' \
+  "handle_line must delegate line-level envelope parsing and operation dispatch"
+expect_absent "${HANDLE_LINE_SNIPPET}" 'classify_usb_operation_type' \
+  "handle_line must not directly classify raw type strings"
+expect_absent "${HANDLE_LINE_SNIPPET}" 'parse_usb_request_envelope|dispatch_usb_operation' \
+  "handle_line must not own envelope parsing or operation dispatch"
+expect_absent "${HANDLE_LINE_SNIPPET}" 'strcmp\(type' \
+  "handle_line must not own request-specific operation branching"
+expect_absent "${HANDLE_LINE_SNIPPET}" 'handle_(get_status|identify_device|connect|sign_transaction|sign_personal_message|get_result|ack_result|disconnect|get_capabilities|get_accounts|policy_get|get_approval_history|policy_propose)_request' \
+  "handle_line must not call operation handlers directly"
+
+expect_present "${USB_CONNECT_HANDLER_SOURCE}" "connect request contains unsupported fields" \
+  "extracted connect handler must exact-check top-level request fields"
+expect_present "${USB_POLICY_PROPOSE_HANDLER_SOURCE}" "policy_propose request contains unsupported fields" \
+  "extracted policy_propose handler must exact-check top-level request fields"
+expect_present "${USB_DEVICE_HANDLERS_SOURCE}" "get_status request contains unsupported fields" \
+  "extracted get_status handler must exact-check top-level request fields"
+expect_present "${USB_DEVICE_HANDLERS_SOURCE}" "identify_device request contains unsupported fields" \
+  "extracted identify_device handler must exact-check top-level request fields"
+expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" "get_result request contains unsupported fields" \
+  "extracted get_result handler must exact-check top-level request fields"
+expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" "ack_result request contains unsupported fields" \
+  "extracted ack_result handler must exact-check top-level request fields"
+expect_present "${USB_DISCONNECT_HANDLER_SOURCE}" "disconnect request contains unsupported fields" \
+  "extracted disconnect handler must exact-check top-level request fields"
+expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" "get_approval_history request contains unsupported fields" \
+  "extracted get_approval_history handler must exact-check top-level request fields"
+expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" "get_capabilities request contains unsupported fields" \
+  "extracted get_capabilities handler must exact-check top-level request fields"
+expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" "get_accounts request contains unsupported fields" \
+  "extracted get_accounts handler must exact-check top-level request fields"
+expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" "policy_get request contains unsupported fields" \
+  "extracted policy_get handler must exact-check top-level request fields"
 
 expect_tree_present "${CORE_SOURCE}" 'signTransaction|sign_transaction|sign_result' \
   "Agent-Q core source must expose the Sign API"

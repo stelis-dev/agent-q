@@ -27,8 +27,9 @@
 #include "agent_q_persistent_material.h"
 #include "agent_q_policy_proposal_parser.h"
 #include "agent_q_policy_store.h"
-#include "agent_q_protocol_pin_approval.h"
 #include "agent_q_policy_update_flow.h"
+#include "agent_q_protocol_constants.h"
+#include "agent_q_protocol_pin_approval.h"
 #include "agent_q_provisioning_flow.h"
 #include "agent_q_provisioning_runtime_state.h"
 #include "agent_q_request_id.h"
@@ -42,7 +43,7 @@
 #include "agent_q_sign_transaction_user_ingress.h"
 #include "agent_q_user_signing_review_view_model.h"
 #include "agent_q_user_signing_critical_section.h"
-#include "agent_q_signing_method.h"
+#include "agent_q_signing_route.h"
 #include "agent_q_signing_mode.h"
 #include "agent_q_sui_account.h"
 #include "agent_q_sui_account_store.h"
@@ -50,7 +51,20 @@
 #include "agent_q_sui_signing_service.h"
 #include "agent_q_timeout_window.h"
 #include "agent_q_usb_link_state.h"
+#include "agent_q_usb_approval_history_handler.h"
+#include "agent_q_usb_connect_handler.h"
+#include "agent_q_usb_device_handlers.h"
+#include "agent_q_usb_disconnect_handler.h"
+#include "agent_q_usb_operation_dispatch.h"
+#include "agent_q_usb_operation_response_writer.h"
+#include "agent_q_usb_policy_propose_handler.h"
 #include "agent_q_ui_panel_cleanup.h"
+#include "agent_q_usb_operation_type.h"
+#include "agent_q_usb_request_envelope.h"
+#include "agent_q_usb_request_line_handler.h"
+#include "agent_q_usb_retained_result_handlers.h"
+#include "agent_q_usb_session_read_handlers.h"
+#include "agent_q_usb_signing_handlers.h"
 #include "agent_q_usb_response_writer.h"
 #include "agent_q_signing_retry_delivery.h"
 #include "agent_q_signing_retry_response.h"
@@ -86,6 +100,7 @@ using AgentQUiMode = agent_q::AgentQUiMode;
 using ConnectApprovalChoice = agent_q::AgentQConnectApprovalChoice;
 using LocalPinAuthPurpose = agent_q::AgentQLocalPinAuthPurpose;
 using LocalPinAuthStage = agent_q::AgentQLocalPinAuthStage;
+using AgentQUsbOperationResponseWriter = agent_q::AgentQUsbOperationResponseWriter;
 using ProvisioningFlowGenerateResult = agent_q::AgentQProvisioningFlowGenerateResult;
 using ProvisioningFlowPanel = agent_q::AgentQProvisioningFlowPanel;
 using ProvisioningFlowPinSubmitResult = agent_q::AgentQProvisioningFlowPinSubmitResult;
@@ -94,7 +109,7 @@ using ProvisioningRuntimeState = agent_q::AgentQProvisioningRuntimeState;
 using SensitiveUiClearPolicy = agent_q::SensitiveUiClearPolicy;
 
 constexpr const char* kTag = "UsbRequestServer";
-constexpr int kProtocolVersion = 1;
+constexpr int kProtocolVersion = agent_q::kAgentQProtocolVersion;
 constexpr const char* kFirmwareName = "Agent-Q Firmware";
 constexpr const char* kHardwareId = "stackchan-cores3";
 constexpr const char* kFirmwareVersion = "0.0.0";
@@ -368,45 +383,6 @@ bool is_safe_identification_code(const char* value)
     return value[4] == '\0';
 }
 
-bool is_printable_ascii_client_name(const char* value)
-{
-    if (value == nullptr || value[0] == '\0') {
-        return false;
-    }
-    size_t length = 0;
-    for (const char* cursor = value; *cursor != '\0'; ++cursor) {
-        if (++length >= kClientNameSize) {
-            return false;
-        }
-        const unsigned char c = static_cast<unsigned char>(*cursor);
-        if (c < 0x20 || c > 0x7E) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool write_error_response(const char* id, const char* code, const char* message)
-{
-    JsonDocument response;
-    if (id != nullptr && id[0] != '\0') {
-        response["id"] = id;
-    }
-    response["version"] = kProtocolVersion;
-    response["type"] = "error";
-    response["error"]["code"] = code;
-    response["error"]["message"] = message;
-    return agent_q::usb_response_write_json(response);
-}
-
-void log_response_write_failure(const char* response_type, const char* id)
-{
-    ESP_LOGW(kTag,
-             "USB response write failed: type=%s id=%s",
-             response_type != nullptr ? response_type : "",
-             id != nullptr ? id : "");
-}
-
 const char* current_device_state()
 {
     if (agent_q::persistent_material_consistency_error_active()) {
@@ -433,76 +409,42 @@ const char* current_device_state()
     return "idle";
 }
 
-bool write_status_response(const char* id)
+const AgentQUsbOperationResponseWriter& usb_operation_response_writer()
 {
-    refresh_persistent_material_consistency();
-
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "status";
-    response["device"]["deviceId"] = g_device_id;
-    response["device"]["state"] = current_device_state();
-    response["device"]["firmwareName"] = kFirmwareName;
-    response["device"]["hardware"] = kHardwareId;
-    response["device"]["firmwareVersion"] = kFirmwareVersion;
-    response["provisioning"]["state"] = agent_q::provisioning_runtime_state_reported();
-    return agent_q::usb_response_write_json(response);
+    static const AgentQUsbOperationResponseWriter writer = {
+        agent_q::usb_response_write_error,
+        agent_q::usb_response_log_write_failure,
+    };
+    return writer;
 }
 
-bool write_identify_device_result(const char* id, const char* code)
+agent_q::AgentQUsbDeviceResponseInfo usb_device_response_info()
 {
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "identify_device_result";
-    response["status"] = "displayed";
-    response["code"] = code;
-    response["device"]["deviceId"] = g_device_id;
-    response["device"]["state"] = current_device_state();
-    response["device"]["firmwareName"] = kFirmwareName;
-    response["device"]["hardware"] = kHardwareId;
-    response["device"]["firmwareVersion"] = kFirmwareVersion;
-    return agent_q::usb_response_write_json(response);
+    return agent_q::AgentQUsbDeviceResponseInfo{
+        g_device_id,
+        current_device_state(),
+        kFirmwareName,
+        kHardwareId,
+        kFirmwareVersion,
+        agent_q::provisioning_runtime_state_reported(),
+    };
 }
 
 bool write_connect_approved_response(const char* id)
 {
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "connect_result";
-    response["status"] = "approved";
-    response["sessionId"] = agent_q::session_id();
-    response["sessionTtlMs"] = agent_q::kAgentQSessionAdvertisedTtlMs;
-    response["device"]["deviceId"] = g_device_id;
-    response["device"]["state"] = "idle";
-    response["device"]["firmwareName"] = kFirmwareName;
-    response["device"]["hardware"] = kHardwareId;
-    response["device"]["firmwareVersion"] = kFirmwareVersion;
-    return agent_q::usb_response_write_json(response);
-}
-
-bool write_connect_rejected_response(const char* id, const char* error_code, const char* error_message)
-{
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "connect_result";
-    response["status"] = "rejected";
-    response["error"]["code"] = error_code;
-    response["error"]["message"] = error_message;
-    return agent_q::usb_response_write_json(response);
-}
-
-bool write_disconnect_result(const char* id)
-{
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "disconnect_result";
-    response["status"] = "disconnected";
-    return agent_q::usb_response_write_json(response);
+    const agent_q::AgentQUsbDeviceResponseInfo info{
+        g_device_id,
+        "idle",
+        kFirmwareName,
+        kHardwareId,
+        kFirmwareVersion,
+        nullptr,
+    };
+    return agent_q::usb_response_write_connect_approved(
+        id,
+        agent_q::session_id(),
+        agent_q::kAgentQSessionAdvertisedTtlMs,
+        info);
 }
 
 const char* sign_result_user_error_message(
@@ -528,7 +470,7 @@ bool write_sign_result_signed_fields(
     const char* id,
     const uint8_t* request_identity,
     const char* authorization,
-    agent_q::AgentQSigningMethod signing_method,
+    agent_q::AgentQSigningRoute signing_route,
     const uint8_t* signature,
     size_t signature_size,
     const uint8_t* message_bytes,
@@ -540,11 +482,11 @@ bool write_sign_result_signed_fields(
         signature_size != agent_q::kSuiEd25519SignatureBytes) {
         return false;
     }
-    if (signing_method == agent_q::AgentQSigningMethod::unsupported) {
+    if (signing_route == agent_q::AgentQSigningRoute::unsupported) {
         return false;
     }
-    const char* chain = agent_q::signing_method_wire_chain(signing_method);
-    const char* method = agent_q::signing_method_wire_method(signing_method);
+    const char* chain = agent_q::signing_route_wire_chain(signing_route);
+    const char* method = agent_q::signing_route_wire_method(signing_route);
     if (chain == nullptr || chain[0] == '\0' ||
         method == nullptr || method[0] == '\0') {
         return false;
@@ -553,8 +495,8 @@ bool write_sign_result_signed_fields(
         strcmp(authorization, "policy") == 0
             ? agent_q::AgentQSigningAuthorizationMode::policy
             : agent_q::AgentQSigningAuthorizationMode::user;
-    if (!agent_q::signing_method_allowed_for_authorization_mode(
-            signing_method,
+    if (!agent_q::signing_route_allowed_for_authorization_mode(
+            signing_route,
             authorization_mode)) {
         return false;
     }
@@ -567,7 +509,7 @@ bool write_sign_result_signed_fields(
         return false;
     }
     char message_base64[agent_q::kAgentQSuiSignPersonalMessageMaxBase64Size + 1] = {};
-    if (agent_q::signing_method_requires_message_bytes(signing_method)) {
+    if (agent_q::signing_route_requires_message_bytes(signing_route)) {
         if (message_bytes == nullptr ||
             message_bytes_size == 0 ||
             message_bytes_size > agent_q::kAgentQSuiSignPersonalMessageMaxBytes ||
@@ -591,7 +533,7 @@ bool write_sign_result_signed_fields(
     response["chain"] = chain;
     response["method"] = method;
     response["signature"] = signature_base64;
-    if (agent_q::signing_method_requires_message_bytes(signing_method)) {
+    if (agent_q::signing_route_requires_message_bytes(signing_route)) {
         response["messageBytes"] = message_base64;
     }
     // W4: buffer the signed result for bounded RAM redelivery (get_result /
@@ -639,15 +581,15 @@ bool write_sign_result_signed(
     const agent_q::AgentQUserSigningFlowSnapshot& snapshot,
     const agent_q::AgentQUserSigningOutput& signing_output)
 {
-    if (snapshot.signing_method == agent_q::AgentQSigningMethod::unsupported ||
-        signing_output.signing_method != snapshot.signing_method) {
+    if (snapshot.signing_route == agent_q::AgentQSigningRoute::unsupported ||
+        signing_output.signing_route != snapshot.signing_route) {
         return false;
     }
     return write_sign_result_signed_fields(
         id,
         snapshot.request_identity,
         authorization,
-        snapshot.signing_method,
+        snapshot.signing_route,
         signing_output.signature,
         signing_output.signature_size,
         signing_output.message_bytes_size > 0 ? signing_output.message_bytes : nullptr,
@@ -711,6 +653,11 @@ bool try_deliver_stored_result_by_id(const char* session_id, const char* request
         return false;
     }
     return agent_q::usb_response_write_json(response);
+}
+
+void ack_stored_result_by_id(const char* session_id, const char* request_id)
+{
+    agent_q::signing_result_ack(session_id, request_id);
 }
 
 bool write_sign_result_user_terminal(
@@ -793,7 +740,7 @@ bool write_policy_execution_response(
         case agent_q::AgentQPolicySigningExecutionStatus::request_error:
         case agent_q::AgentQPolicySigningExecutionStatus::history_error:
         case agent_q::AgentQPolicySigningExecutionStatus::account_error:
-            return write_error_response(id, result.code, result.message);
+            return agent_q::usb_response_write_error(id, result.code, result.message);
         case agent_q::AgentQPolicySigningExecutionStatus::policy_rejected:
             return write_sign_result_policy_rejected(
                 id,
@@ -807,52 +754,14 @@ bool write_policy_execution_response(
                 id,
                 request_identity,
                 "policy",
-                result.signing_method,
+                result.signing_route,
                 result.signature,
                 result.signature_size,
                 nullptr,
                 0);
         default:
-            return write_error_response(id, "protocol_error", "Policy signing request is invalid.");
+            return agent_q::usb_response_write_error(id, "protocol_error", "Policy signing request is invalid.");
     }
-}
-
-bool write_capabilities_response(
-    const char* id,
-    agent_q::AgentQSigningAuthorizationMode signing_mode)
-{
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "capabilities";
-    JsonArray chains = response["chains"].to<JsonArray>();
-    JsonObject sui = chains.add<JsonObject>();
-    sui["id"] = "sui";
-    JsonArray accounts = sui["accounts"].to<JsonArray>();
-    JsonObject account = accounts.add<JsonObject>();
-    account["keyScheme"] = "ed25519";
-    account["derivationPath"] = "m/44'/784'/0'/0'/0'";
-    sui["methods"].to<JsonArray>();
-    JsonObject signing = response["signing"].to<JsonObject>();
-    signing["authorization"] = agent_q::signing_authorization_mode_name(signing_mode);
-    JsonArray signing_methods = signing["methods"].to<JsonArray>();
-    if (agent_q::signing_method_allowed_for_authorization_mode(
-            agent_q::AgentQSigningMethod::sui_sign_transaction,
-            signing_mode)) {
-        JsonObject signing_entry = signing_methods.add<JsonObject>();
-        signing_entry["chain"] = "sui";
-        signing_entry["method"] = agent_q::signing_method_wire_method(
-            agent_q::AgentQSigningMethod::sui_sign_transaction);
-    }
-    if (agent_q::signing_method_allowed_for_authorization_mode(
-            agent_q::AgentQSigningMethod::sui_sign_personal_message,
-            signing_mode)) {
-        JsonObject personal_message_entry = signing_methods.add<JsonObject>();
-        personal_message_entry["chain"] = "sui";
-        personal_message_entry["method"] = agent_q::signing_method_wire_method(
-            agent_q::AgentQSigningMethod::sui_sign_personal_message);
-    }
-    return agent_q::usb_response_write_json(response);
 }
 
 enum class PolicyResponseWriteResult {
@@ -996,93 +905,6 @@ bool write_policy_propose_result_response(
         policy["highestAction"] = snapshot.highest_action;
     }
     return agent_q::usb_response_write_json(response);
-}
-
-bool parse_approval_history_params(JsonDocument& request, size_t* limit, uint64_t* before_sequence)
-{
-    if (limit == nullptr || before_sequence == nullptr) {
-        return false;
-    }
-    *limit = agent_q::kAgentQApprovalHistoryPageMax;
-    *before_sequence = 0;
-
-    JsonVariant params = request["params"];
-    if (params.isNull()) {
-        return true;
-    }
-    if (!params.is<JsonObject>()) {
-        return false;
-    }
-
-    JsonObject params_object = params.as<JsonObject>();
-    for (JsonPair pair : params_object) {
-        JsonVariant value = pair.value();
-        if (agent_q::agent_q_json_string_equals(pair.key(), "limit")) {
-            if (!value.is<unsigned int>()) {
-                return false;
-            }
-            const unsigned int requested_limit = value.as<unsigned int>();
-            if (requested_limit == 0 ||
-                requested_limit > agent_q::kAgentQApprovalHistoryPageMax) {
-                return false;
-            }
-            *limit = requested_limit;
-            continue;
-        }
-        if (agent_q::agent_q_json_string_equals(pair.key(), "beforeSeq")) {
-            const char* before_value = nullptr;
-            if (!agent_q::agent_q_json_value_c_string(value, &before_value)) {
-                return false;
-            }
-            if (!agent_q::approval_history_parse_sequence(before_value, before_sequence)) {
-                return false;
-            }
-            continue;
-        }
-        return false;
-    }
-    return true;
-}
-
-bool json_object_fields_supported(
-    JsonVariantConst value,
-    const char* const* allowed_keys,
-    size_t allowed_key_count)
-{
-    JsonObjectConst object = value.as<JsonObjectConst>();
-    if (object.isNull()) {
-        return false;
-    }
-    for (JsonPairConst pair : object) {
-        bool supported = false;
-        for (size_t index = 0; index < allowed_key_count; ++index) {
-            if (agent_q::agent_q_json_string_equals(pair.key(), allowed_keys[index])) {
-                supported = true;
-                break;
-            }
-        }
-        if (!supported) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool write_invalid_params_if_unsupported_request_fields(
-    const char* id,
-    JsonDocument& request,
-    const char* const* allowed_keys,
-    size_t allowed_key_count,
-    const char* message)
-{
-    if (json_object_fields_supported(
-            request.as<JsonVariantConst>(),
-            allowed_keys,
-            allowed_key_count)) {
-        return false;
-    }
-    write_error_response(id, "invalid_params", message);
-    return true;
 }
 
 void clear_active_session()
@@ -1285,7 +1107,7 @@ void finish_user_signing_error_terminal(
     const char* display_message)
 {
     if (request_id != nullptr && request_id[0] != '\0') {
-        write_error_response(request_id, error_code, error_message);
+        agent_q::usb_response_write_error(request_id, error_code, error_message);
     }
     consume_user_signing_terminal_if_pending();
     agent_q::user_signing_flow_clear();
@@ -1308,7 +1130,7 @@ void finish_user_signing_terminal(
         snapshot.stage != agent_q::AgentQUserSigningStage::terminal ||
         result == agent_q::AgentQUserSigningTerminalResult::none) {
         if (request_id != nullptr && request_id[0] != '\0') {
-            write_error_response(request_id, "invalid_state", "Signing request is unavailable.");
+            agent_q::usb_response_write_error(request_id, "invalid_state", "Signing request is unavailable.");
         }
         agent_q::avatar_overlay_show_message(
             "Signing unavailable",
@@ -1320,7 +1142,7 @@ void finish_user_signing_terminal(
 
     if (!write_user_signing_terminal_history(snapshot, result)) {
         if (request_id != nullptr && request_id[0] != '\0') {
-            write_error_response(request_id, "history_error", "Could not record signing terminal result.");
+            agent_q::usb_response_write_error(request_id, "history_error", "Could not record signing terminal result.");
         }
         consume_user_signing_terminal_if_pending();
         ESP_LOGW(kTag, "user_signing terminal history write failed: id=%s", request_id);
@@ -1363,14 +1185,14 @@ void finish_user_signing_terminal(
         display_message = wrote_response ? "Signing failed" : "Failure; USB failed";
         delivery_failed_message = "Failure; USB failed";
     } else if (request_id != nullptr && request_id[0] != '\0') {
-        wrote_response = write_error_response(request_id, "invalid_session", "Signing request session ended.");
+        wrote_response = agent_q::usb_response_write_error(request_id, "invalid_session", "Signing request session ended.");
         response_type = "error";
         display_message = wrote_response ? "Session ended" : "Session; USB failed";
         delivery_failed_message = "Session; USB failed";
     }
 
     if (!wrote_response) {
-        log_response_write_failure(response_type, request_id);
+        agent_q::usb_response_log_write_failure(response_type, request_id);
         display_message = delivery_failed_message;
     }
     consume_user_signing_terminal_if_pending();
@@ -1729,232 +1551,6 @@ bool user_signing_ingress_busy()
            agent_q::user_signing_flow_active();
 }
 
-const char* signature_ingress_error_code(
-    agent_q::AgentQSignTransactionUserIngressResult result)
-{
-    switch (result) {
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_request_shape:
-            return "invalid_id";
-        case agent_q::AgentQSignTransactionUserIngressResult::unsupported_version:
-            return "unsupported_version";
-        case agent_q::AgentQSignTransactionUserIngressResult::unsupported_type:
-            return "unsupported_type";
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_state:
-            return "invalid_state";
-        case agent_q::AgentQSignTransactionUserIngressResult::busy:
-            return "busy";
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_session:
-            return "invalid_session";
-        case agent_q::AgentQSignTransactionUserIngressResult::unsupported_method:
-            return "unsupported_method";
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_params_shape:
-        case agent_q::AgentQSignTransactionUserIngressResult::unsupported_field:
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_network:
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_tx_bytes:
-            return "invalid_params";
-        case agent_q::AgentQSignTransactionUserIngressResult::ok:
-        default:
-            return "protocol_error";
-    }
-}
-
-const char* signature_ingress_error_message(
-    agent_q::AgentQSignTransactionUserIngressResult result)
-{
-    switch (result) {
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_state:
-            return "sign_transaction is available only after provisioning is complete.";
-        case agent_q::AgentQSignTransactionUserIngressResult::busy:
-            return "Device is busy with another request.";
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_session:
-            return "Session is unknown or already ended.";
-        case agent_q::AgentQSignTransactionUserIngressResult::unsupported_method:
-            return "Signing method is not supported.";
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_network:
-            return "Signing network is unsupported.";
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_tx_bytes:
-            return "Signing txBytes are invalid.";
-        case agent_q::AgentQSignTransactionUserIngressResult::unsupported_field:
-            return "Signing request contains unsupported fields.";
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_params_shape:
-            return "Signing request params are invalid.";
-        case agent_q::AgentQSignTransactionUserIngressResult::unsupported_version:
-            return "Unsupported protocol version.";
-        case agent_q::AgentQSignTransactionUserIngressResult::unsupported_type:
-            return "Unsupported request type.";
-        case agent_q::AgentQSignTransactionUserIngressResult::invalid_request_shape:
-            return "Signing request envelope is invalid.";
-        case agent_q::AgentQSignTransactionUserIngressResult::ok:
-        default:
-            return "Signing request is invalid.";
-    }
-}
-
-const char* signature_ingress_error_code(
-    agent_q::AgentQSignPersonalMessageUserIngressResult result)
-{
-    switch (result) {
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::invalid_request_shape:
-            return "invalid_id";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::unsupported_version:
-            return "unsupported_version";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::unsupported_type:
-            return "unsupported_type";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::invalid_state:
-            return "invalid_state";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::busy:
-            return "busy";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::invalid_session:
-            return "invalid_session";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::unsupported_method:
-            return "unsupported_method";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::invalid_params_shape:
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::unsupported_field:
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::invalid_network:
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::invalid_message:
-            return "invalid_params";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::ok:
-        default:
-            return "protocol_error";
-    }
-}
-
-const char* signature_ingress_error_message(
-    agent_q::AgentQSignPersonalMessageUserIngressResult result)
-{
-    switch (result) {
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::invalid_state:
-            return "sign_personal_message is available only after provisioning is complete.";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::busy:
-            return "Device is busy with another request.";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::invalid_session:
-            return "Session is unknown or already ended.";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::unsupported_method:
-            return "Signing method is not supported.";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::invalid_network:
-            return "Signing network is unsupported.";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::invalid_message:
-            return "Signing message is invalid.";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::unsupported_field:
-            return "Signing request contains unsupported fields.";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::invalid_params_shape:
-            return "Signing request params are invalid.";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::unsupported_version:
-            return "Unsupported protocol version.";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::unsupported_type:
-            return "Unsupported request type.";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::invalid_request_shape:
-            return "Signing request envelope is invalid.";
-        case agent_q::AgentQSignPersonalMessageUserIngressResult::ok:
-        default:
-            return "Signing request is invalid.";
-    }
-}
-
-const char* signature_begin_error_code(
-    agent_q::AgentQUserSigningFlowBeginResult result)
-{
-    switch (result) {
-        case agent_q::AgentQUserSigningFlowBeginResult::active:
-            return "busy";
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_session:
-            return "invalid_session";
-        case agent_q::AgentQUserSigningFlowBeginResult::malformed_transaction:
-            return "malformed_transaction";
-        case agent_q::AgentQUserSigningFlowBeginResult::unsupported_transaction:
-            return "unsupported_transaction";
-        case agent_q::AgentQUserSigningFlowBeginResult::account_unavailable:
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_account:
-            return "account_error";
-        case agent_q::AgentQUserSigningFlowBeginResult::digest_error:
-            return "history_error";
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_network:
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_payload:
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_argument:
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_deadline:
-            return "invalid_params";
-        case agent_q::AgentQUserSigningFlowBeginResult::ok:
-        default:
-            return "invalid_state";
-    }
-}
-
-const char* signature_begin_error_message(
-    agent_q::AgentQUserSigningFlowBeginResult result)
-{
-    switch (result) {
-        case agent_q::AgentQUserSigningFlowBeginResult::active:
-            return "Device has a pending signing request.";
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_session:
-            return "Session is unknown or already ended.";
-        case agent_q::AgentQUserSigningFlowBeginResult::malformed_transaction:
-            return "Transaction bytes are malformed.";
-        case agent_q::AgentQUserSigningFlowBeginResult::unsupported_transaction:
-            return "Transaction shape is not supported.";
-        case agent_q::AgentQUserSigningFlowBeginResult::account_unavailable:
-            return "Signing account is unavailable.";
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_account:
-            return "Transaction sender does not match the device account.";
-        case agent_q::AgentQUserSigningFlowBeginResult::digest_error:
-            return "Could not digest signing request.";
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_network:
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_payload:
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_argument:
-        case agent_q::AgentQUserSigningFlowBeginResult::invalid_deadline:
-        case agent_q::AgentQUserSigningFlowBeginResult::ok:
-        default:
-            return "Signing request params are invalid.";
-    }
-}
-
-const char* sui_preparation_error_code(
-    agent_q::AgentQSuiSigningPreparationResult result)
-{
-    switch (result) {
-        case agent_q::AgentQSuiSigningPreparationResult::invalid_params:
-        case agent_q::AgentQSuiSigningPreparationResult::invalid_argument:
-            return "invalid_params";
-        case agent_q::AgentQSuiSigningPreparationResult::unsupported_payload_size:
-            return "unsupported_payload_size";
-        case agent_q::AgentQSuiSigningPreparationResult::malformed_transaction:
-            return "malformed_transaction";
-        case agent_q::AgentQSuiSigningPreparationResult::unsupported_transaction:
-            return "unsupported_transaction";
-        case agent_q::AgentQSuiSigningPreparationResult::account_unavailable:
-        case agent_q::AgentQSuiSigningPreparationResult::invalid_account:
-            return "account_error";
-        case agent_q::AgentQSuiSigningPreparationResult::digest_error:
-            return "history_error";
-        case agent_q::AgentQSuiSigningPreparationResult::ok:
-        default:
-            return "invalid_state";
-    }
-}
-
-const char* sui_preparation_error_message(
-    agent_q::AgentQSuiSigningPreparationResult result)
-{
-    switch (result) {
-        case agent_q::AgentQSuiSigningPreparationResult::unsupported_payload_size:
-            return "Signing payload exceeds the current Sui adapter capacity.";
-        case agent_q::AgentQSuiSigningPreparationResult::malformed_transaction:
-            return "Transaction bytes are malformed.";
-        case agent_q::AgentQSuiSigningPreparationResult::unsupported_transaction:
-            return "Transaction shape is not supported.";
-        case agent_q::AgentQSuiSigningPreparationResult::account_unavailable:
-            return "Signing account is unavailable.";
-        case agent_q::AgentQSuiSigningPreparationResult::invalid_account:
-            return "Transaction sender does not match the device account.";
-        case agent_q::AgentQSuiSigningPreparationResult::digest_error:
-            return "Could not digest signing request.";
-        case agent_q::AgentQSuiSigningPreparationResult::invalid_params:
-        case agent_q::AgentQSuiSigningPreparationResult::invalid_argument:
-        case agent_q::AgentQSuiSigningPreparationResult::ok:
-        default:
-            return "Signing request params are invalid.";
-    }
-}
-
 bool show_user_signing_review()
 {
     const agent_q::AgentQUserSigningFlowSnapshot snapshot =
@@ -2013,19 +1609,19 @@ bool local_settings_touch_entry_candidate_allowed()
 bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_settings_menu = false)
 {
     if (agent_q::connect_approval_active()) {
-        write_error_response(id, "busy", "Device is awaiting local input.");
+        agent_q::usb_response_write_error(id, "busy", "Device is awaiting local input.");
         return true;
     }
     if (agent_q::protocol_pin_approval_active()) {
-        write_error_response(id, "busy", "Device is awaiting local PIN approval.");
+        agent_q::usb_response_write_error(id, "busy", "Device is awaiting local PIN approval.");
         return true;
     }
     if (agent_q::policy_update_flow_active()) {
-        write_error_response(id, "busy", "Device has a pending policy update.");
+        agent_q::usb_response_write_error(id, "busy", "Device has a pending policy update.");
         return true;
     }
     if (agent_q::provisioning_flow_active()) {
-        write_error_response(id, "busy", "Device is showing setup material.");
+        agent_q::usb_response_write_error(id, "busy", "Device is showing setup material.");
         return true;
     }
     const agent_q::AgentQLocalResetSnapshot reset =
@@ -2035,7 +1631,7 @@ bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_setti
             reset.stage == agent_q::AgentQLocalResetStage::settings_menu) {
             return false;
         }
-        write_error_response(
+        agent_q::usb_response_write_error(
             id,
             "busy",
             reset.stage == agent_q::AgentQLocalResetStage::settings_menu
@@ -2044,14 +1640,24 @@ bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_setti
         return true;
     }
     if (agent_q::local_pin_auth_flow_active()) {
-        write_error_response(id, "busy", "Device is showing local PIN UI.");
+        agent_q::usb_response_write_error(id, "busy", "Device is showing local PIN UI.");
         return true;
     }
     if (agent_q::user_signing_flow_active()) {
-        write_error_response(id, "busy", "Device has a pending signing request.");
+        agent_q::usb_response_write_error(id, "busy", "Device has a pending signing request.");
         return true;
     }
     return false;
+}
+
+bool write_busy_if_pending_or_local_flow_active_default(const char* id)
+{
+    return write_busy_if_pending_or_local_flow_active(id);
+}
+
+bool write_busy_if_pending_or_local_flow_active_allow_settings(const char* id)
+{
+    return write_busy_if_pending_or_local_flow_active(id, true);
 }
 
 bool require_active_matching_session(const char* id, const char* session_id)
@@ -2060,16 +1666,16 @@ bool require_active_matching_session(const char* id, const char* session_id)
         case agent_q::AgentQSessionValidationResult::ok:
             return true;
         case agent_q::AgentQSessionValidationResult::invalid_format:
-            write_error_response(id, "invalid_session", "Invalid sessionId.");
+            agent_q::usb_response_write_error(id, "invalid_session", "Invalid sessionId.");
             return false;
         case agent_q::AgentQSessionValidationResult::missing:
             cancel_policy_update_after_session_loss("active session missing during request validation");
             cancel_user_signing_after_session_loss("active session missing during request validation");
-            write_error_response(id, "invalid_session", "Session is unknown or already ended.");
+            agent_q::usb_response_write_error(id, "invalid_session", "Session is unknown or already ended.");
             return false;
         case agent_q::AgentQSessionValidationResult::mismatch:
         default:
-            write_error_response(id, "invalid_session", "Session is unknown or already ended.");
+            agent_q::usb_response_write_error(id, "invalid_session", "Session is unknown or already ended.");
             return false;
     }
 }
@@ -2077,7 +1683,7 @@ bool require_active_matching_session(const char* id, const char* session_id)
 void write_policy_update_invalid_session_and_clear(const char* request_id, const char* log_reason)
 {
     if (request_id != nullptr && request_id[0] != '\0') {
-        write_error_response(request_id, "invalid_session", "Policy update session is unknown or already ended.");
+        agent_q::usb_response_write_error(request_id, "invalid_session", "Policy update session is unknown or already ended.");
     }
     agent_q::policy_update_flow_clear();
     agent_q::protocol_pin_approval_clear();
@@ -2355,17 +1961,17 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
         if (policy_snapshot.request_id != nullptr &&
             policy_snapshot.request_id[0] != '\0' &&
             (id == nullptr || strcmp(policy_snapshot.request_id, id) != 0)) {
-            write_error_response(
+            agent_q::usb_response_write_error(
                 policy_snapshot.request_id,
                 "invalid_session",
                 "Policy update session is unknown or already ended.");
         }
         agent_q::policy_update_flow_clear();
         clear_active_session();
-        if (write_disconnect_result(id)) {
+        if (agent_q::usb_response_write_disconnect_result(id)) {
             ESP_LOGI(kTag, "disconnect canceled pending policy update review: id=%s", id);
         } else {
-            log_response_write_failure("disconnect_result", id);
+            agent_q::usb_response_log_write_failure("disconnect_result", id);
         }
         return true;
     }
@@ -2387,7 +1993,7 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
     }
     if (policy_request_id[0] != '\0' &&
         (id == nullptr || strcmp(policy_request_id, id) != 0)) {
-        write_error_response(
+        agent_q::usb_response_write_error(
             policy_request_id,
             "invalid_session",
             "Policy update session is unknown or already ended.");
@@ -2395,10 +2001,10 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
     agent_q::policy_update_flow_clear();
     agent_q::protocol_pin_approval_clear();
     clear_active_session();
-    if (write_disconnect_result(id)) {
+    if (agent_q::usb_response_write_disconnect_result(id)) {
         ESP_LOGI(kTag, "disconnect canceled pending policy update: id=%s", id);
     } else {
-        log_response_write_failure("disconnect_result", id);
+        agent_q::usb_response_log_write_failure("disconnect_result", id);
     }
     return true;
 }
@@ -2415,7 +2021,7 @@ bool disconnect_pending_user_signing_for_session(const char* id, const char* ses
     const agent_q::AgentQUserSigningConfirmationResult result =
         agent_q::user_signing_confirmation_cancel_for_disconnect(session_id);
     if (result == agent_q::AgentQUserSigningConfirmationResult::busy) {
-        write_error_response(id, "busy", "Device is signing a request.");
+        agent_q::usb_response_write_error(id, "busy", "Device is signing a request.");
         return true;
     }
 
@@ -2423,17 +2029,17 @@ bool disconnect_pending_user_signing_for_session(const char* id, const char* ses
     clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
     if (snapshot.request_id[0] != '\0' &&
         (id == nullptr || strcmp(snapshot.request_id, id) != 0)) {
-        write_error_response(
+        agent_q::usb_response_write_error(
             snapshot.request_id,
             "invalid_session",
             "Signing request session is unknown or already ended.");
     }
     consume_user_signing_terminal_if_pending();
     clear_active_session();
-    if (write_disconnect_result(id)) {
+    if (agent_q::usb_response_write_disconnect_result(id)) {
         ESP_LOGI(kTag, "disconnect canceled pending user_signing: id=%s", id);
     } else {
-        log_response_write_failure("disconnect_result", id);
+        agent_q::usb_response_log_write_failure("disconnect_result", id);
     }
     agent_q::avatar_overlay_show_message(
         "Signing canceled",
@@ -3356,13 +2962,13 @@ bool begin_connect_pin_auth(const char* id, const char* client_name)
     const agent_q::AgentQTimeoutWindow request_window =
         timeout_window_from_now_ms(started_at, kConnectApprovalDefaultMs);
     if (!agent_q::protocol_pin_approval_begin_connect(id, request_window)) {
-        write_connect_rejected_response(id, "invalid_state", "Connect is unavailable.");
+        agent_q::usb_response_write_connect_rejected(id, "invalid_state", "Connect is unavailable.");
         agent_q::connect_approval_clear();
         agent_q::avatar_overlay_show_message("Connect unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
         return false;
     }
     if (!agent_q::local_pin_auth_begin_connect(request_window)) {
-        write_connect_rejected_response(id, "invalid_state", "Connect PIN is unavailable.");
+        agent_q::usb_response_write_connect_rejected(id, "invalid_state", "Connect PIN is unavailable.");
         agent_q::connect_approval_clear();
         agent_q::protocol_pin_approval_clear();
         agent_q::avatar_overlay_show_message("Connect unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
@@ -3370,7 +2976,7 @@ bool begin_connect_pin_auth(const char* id, const char* client_name)
     }
 
     if (!agent_q::modal_draw_local_pin_auth_panel()) {
-        write_connect_rejected_response(id, "ui_error", "Could not show local PIN UI.");
+        agent_q::usb_response_write_connect_rejected(id, "ui_error", "Could not show local PIN UI.");
         wipe_local_pin_auth_scratch("connect PIN display allocation failed");
         agent_q::connect_approval_clear();
         agent_q::protocol_pin_approval_clear();
@@ -3398,7 +3004,7 @@ void finish_policy_propose_result_terminal(
             agent_q::policy_update_flow_terminal_status(result),
             agent_q::policy_update_flow_terminal_reason(result),
             true)) {
-        log_response_write_failure("policy_propose_result", request_id);
+        agent_q::usb_response_log_write_failure("policy_propose_result", request_id);
     }
     clear_policy_update_terminal_state();
     if (refresh_material_consistency) {
@@ -3417,7 +3023,7 @@ void finish_policy_update_error_terminal(
     const char* error_message,
     const char* display_message)
 {
-    write_error_response(request_id, error_code, error_message);
+    agent_q::usb_response_write_error(request_id, error_code, error_message);
     clear_policy_update_terminal_state();
     agent_q::avatar_overlay_show_message(
         display_message,
@@ -3742,7 +3348,7 @@ void handle_local_pin_auth_display_failure(const char* reason, bool clear_panel)
         if (clear_panel) {
             clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
         }
-        write_connect_rejected_response(request_id, "ui_error", "Could not show local PIN UI.");
+        agent_q::usb_response_write_connect_rejected(request_id, "ui_error", "Could not show local PIN UI.");
         agent_q::connect_approval_clear();
         agent_q::protocol_pin_approval_clear();
         agent_q::avatar_overlay_show_message(
@@ -3786,7 +3392,7 @@ bool finish_request_backed_local_pin_input_timeout_if_reached(
                 return true;
             }
             if (purpose == LocalPinAuthPurpose::connect && request_id[0] != '\0') {
-                write_connect_rejected_response(request_id, "timeout", "Connection PIN timed out.");
+                agent_q::usb_response_write_connect_rejected(request_id, "timeout", "Connection PIN timed out.");
                 agent_q::connect_approval_clear();
                 agent_q::protocol_pin_approval_clear();
                 agent_q::avatar_overlay_show_message(
@@ -3981,7 +3587,7 @@ void cancel_local_pin_auth_from_ui(const char* message)
         agent_q::protocol_pin_approval_clear();
         if (!agent_q::connect_approval_return_to_review(
                 timeout_window_from_now_ms(now, kConnectApprovalDefaultMs))) {
-            write_connect_rejected_response(request_id, "invalid_state", "Connect is unavailable.");
+            agent_q::usb_response_write_connect_rejected(request_id, "invalid_state", "Connect is unavailable.");
             agent_q::connect_approval_clear();
             agent_q::avatar_overlay_show_message("Connect unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
             return;
@@ -4513,7 +4119,7 @@ void handle_local_pin_auth_verify_worker_result(
         wipe_local_pin_auth_scratch("local PIN authorization material state unavailable");
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
         if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
-            write_error_response(request_id, "invalid_state", "Policy update is unavailable.");
+            agent_q::usb_response_write_error(request_id, "invalid_state", "Policy update is unavailable.");
             agent_q::policy_update_flow_clear();
             agent_q::protocol_pin_approval_clear();
         }
@@ -4522,7 +4128,7 @@ void handle_local_pin_auth_verify_worker_result(
                 agent_q::avatar_overlay_show_message("PIN unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
                 return;
             }
-            write_connect_rejected_response(request_id, "invalid_state", "Connect is unavailable.");
+            agent_q::usb_response_write_connect_rejected(request_id, "invalid_state", "Connect is unavailable.");
             agent_q::connect_approval_clear();
             agent_q::protocol_pin_approval_clear();
         }
@@ -4572,7 +4178,7 @@ void handle_local_pin_auth_verify_worker_result(
             clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
             if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
                 if (!write_policy_propose_result_response(request_id, "consistency_error", "consistency_error", true)) {
-                    log_response_write_failure("policy_propose_result", request_id);
+                    agent_q::usb_response_log_write_failure("policy_propose_result", request_id);
                 }
                 agent_q::policy_update_flow_clear();
                 agent_q::protocol_pin_approval_clear();
@@ -4580,7 +4186,7 @@ void handle_local_pin_auth_verify_worker_result(
                 return;
             }
             if (request_id[0] != '\0') {
-                write_connect_rejected_response(request_id, "auth_unavailable", "Local PIN verifier unavailable.");
+                agent_q::usb_response_write_connect_rejected(request_id, "auth_unavailable", "Local PIN verifier unavailable.");
                 agent_q::connect_approval_clear();
                 agent_q::protocol_pin_approval_clear();
             }
@@ -4636,7 +4242,7 @@ void handle_local_pin_auth_verify_worker_result(
             pending_request_id_for_local_pin_purpose(LocalPinAuthPurpose::connect, request_id, sizeof(request_id));
             if (!replace_active_session()) {
                 if (request_id[0] != '\0') {
-                    write_error_response(request_id, "rng_error", "Could not create session id.");
+                    agent_q::usb_response_write_error(request_id, "rng_error", "Could not create session id.");
                 }
                 ESP_LOGE(kTag, "connect PIN could not create session id: id=%s", request_id);
                 wipe_local_pin_auth_scratch("connect PIN session creation failed");
@@ -4651,7 +4257,7 @@ void handle_local_pin_auth_verify_worker_result(
             agent_q::connect_approval_clear();
             if (request_id[0] != '\0') {
                 if (!write_connect_approved_response(request_id)) {
-                    log_response_write_failure("connect_result", request_id);
+                    agent_q::usb_response_log_write_failure("connect_result", request_id);
                 }
             }
             agent_q::protocol_pin_approval_clear();
@@ -4819,7 +4425,7 @@ void clear_local_pin_auth_if_needed()
                 persistent_material_ops());
             if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
                 if (!write_policy_propose_result_response(request_id, "consistency_error", "consistency_error", true)) {
-                    log_response_write_failure("policy_propose_result", request_id);
+                    agent_q::usb_response_log_write_failure("policy_propose_result", request_id);
                 }
                 agent_q::policy_update_flow_clear();
                 agent_q::protocol_pin_approval_clear();
@@ -4827,7 +4433,7 @@ void clear_local_pin_auth_if_needed()
                 return;
             }
             if (request_id[0] != '\0') {
-                write_connect_rejected_response(request_id, "auth_unavailable", "Local PIN verifier unavailable.");
+                agent_q::usb_response_write_connect_rejected(request_id, "auth_unavailable", "Local PIN verifier unavailable.");
                 agent_q::connect_approval_clear();
                 agent_q::protocol_pin_approval_clear();
             }
@@ -4842,7 +4448,7 @@ void clear_local_pin_auth_if_needed()
             return;
         }
         if (request_id[0] != '\0') {
-            write_connect_rejected_response(request_id, "timeout", "Connection PIN timed out.");
+            agent_q::usb_response_write_connect_rejected(request_id, "timeout", "Connection PIN timed out.");
             agent_q::connect_approval_clear();
             agent_q::protocol_pin_approval_clear();
             agent_q::avatar_overlay_show_message("Connection timed out",
@@ -4989,7 +4595,7 @@ void clear_local_pin_auth_if_needed()
                 return;
             }
             if (purpose == LocalPinAuthPurpose::connect && request_id[0] != '\0') {
-                write_connect_rejected_response(request_id, "ui_error", "Could not restore local PIN UI.");
+                agent_q::usb_response_write_connect_rejected(request_id, "ui_error", "Could not restore local PIN UI.");
                 agent_q::connect_approval_clear();
                 agent_q::protocol_pin_approval_clear();
             }
@@ -5016,7 +4622,7 @@ void clear_local_pin_auth_if_needed()
                     static_cast<uint64_t>(esp_timer_get_time() / 1000LL)));
             return;
         }
-        write_connect_rejected_response(request_id,
+        agent_q::usb_response_write_connect_rejected(request_id,
                                         expired ? "timeout" : "rejected",
                                         expired ? "Connection PIN timed out." : "Connection PIN UI closed.");
         agent_q::connect_approval_clear();
@@ -5052,7 +4658,7 @@ void clear_user_signing_review_if_needed()
         }
         if (!show_user_signing_review()) {
             agent_q::user_signing_flow_clear();
-            write_error_response(
+            agent_q::usb_response_write_error(
                 snapshot.request_id,
                 "ui_error",
                 "Could not restore signing review UI.");
@@ -5668,7 +5274,7 @@ void send_connect_review_response_if_needed()
             agent_q::connect_approval_request_id(request_id, sizeof(request_id));
             // Device leaves awaiting_approval before reporting the result.
             agent_q::connect_approval_clear();
-            write_connect_rejected_response(request_id, "timeout", "Connection approval timed out.");
+            agent_q::usb_response_write_connect_rejected(request_id, "timeout", "Connection approval timed out.");
             ESP_LOGI(kTag, "connect timed out: id=%s", request_id);
             show_result_and_clear_connect_review("Connection timed out", AgentQMessageKind::timeout);
         }
@@ -5681,7 +5287,7 @@ void send_connect_review_response_if_needed()
     agent_q::connect_approval_clear();
     if (approved) {
         if (!replace_active_session()) {
-            write_error_response(request_id, "rng_error", "Could not create session id.");
+            agent_q::usb_response_write_error(request_id, "rng_error", "Could not create session id.");
             ESP_LOGE(kTag, "connect could not create session id: id=%s", request_id);
             show_result_and_clear_connect_review("RNG error", AgentQMessageKind::error);
             return;
@@ -5689,14 +5295,14 @@ void send_connect_review_response_if_needed()
         if (write_connect_approved_response(request_id)) {
             ESP_LOGI(kTag, "connect approved: id=%s", request_id);
         } else {
-            log_response_write_failure("connect_result", request_id);
+            agent_q::usb_response_log_write_failure("connect_result", request_id);
         }
         show_result_and_clear_connect_review("Connected", AgentQMessageKind::success);
     } else {
-        if (write_connect_rejected_response(request_id, "rejected", "Connection rejected.")) {
+        if (agent_q::usb_response_write_connect_rejected(request_id, "rejected", "Connection rejected.")) {
             ESP_LOGI(kTag, "connect rejected: id=%s", request_id);
         } else {
-            log_response_write_failure("connect_result", request_id);
+            agent_q::usb_response_log_write_failure("connect_result", request_id);
         }
         show_result_and_clear_connect_review("Connection rejected", AgentQMessageKind::rejected);
     }
@@ -5713,798 +5319,461 @@ void show_policy_signing_notification(
         kAgentQResultDisplayMs);
 }
 
-bool write_sign_route_preflight_error(
-    const char* id,
-    agent_q::AgentQSigningPreflightResult result)
+const agent_q::AgentQUsbGetStatusHandlerOps& usb_get_status_handler_ops()
 {
-    switch (result) {
-        case agent_q::AgentQSigningPreflightResult::route_invalid_params:
-            write_error_response(id, "invalid_params", "Signing route identifiers are invalid.");
-            return true;
-        case agent_q::AgentQSigningPreflightResult::route_unsupported_chain:
-            write_error_response(id, "unsupported_chain", "Signing chain is unsupported.");
-            return true;
-        case agent_q::AgentQSigningPreflightResult::route_unsupported_method:
-            write_error_response(id, "unsupported_method", "Signing method is unsupported.");
-            return true;
-        default:
-            break;
-    }
-    return false;
+    static const agent_q::AgentQUsbGetStatusHandlerOps ops = {
+        refresh_persistent_material_consistency,
+        usb_device_response_info,
+    };
+    return ops;
 }
 
-bool write_sign_transaction_preflight_error(
+void handle_get_status_request(
     const char* id,
-    agent_q::AgentQSigningPreflightResult result,
-    const agent_q::AgentQSignTransactionPreflightOutput& output)
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
 {
-    if (write_sign_route_preflight_error(id, result)) {
-        return true;
-    }
-    switch (result) {
-        case agent_q::AgentQSigningPreflightResult::transaction_ingress_error:
-            write_error_response(
-                id,
-                signature_ingress_error_code(output.ingress_result),
-                signature_ingress_error_message(output.ingress_result));
-            return true;
-        case agent_q::AgentQSigningPreflightResult::identity_error:
-            write_error_response(id, "protocol_error", "Could not bind signing request identity.");
-            return true;
-        case agent_q::AgentQSigningPreflightResult::retry_consumed:
-            return true;
-        case agent_q::AgentQSigningPreflightResult::signing_mode_unavailable:
-            write_error_response(id, "invalid_state", "Signing authorization mode is unavailable.");
-            return true;
-        case agent_q::AgentQSigningPreflightResult::transaction_preparation_error:
-            if (output.preparation_result ==
-                agent_q::AgentQSuiSigningPreparationResult::account_unavailable) {
-                agent_q::persistent_material_record_runtime_failure(
-                    agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
-                    persistent_material_ops());
-            }
-            write_error_response(
-                id,
-                sui_preparation_error_code(output.preparation_result),
-                sui_preparation_error_message(output.preparation_result));
-            return true;
-        default:
-            break;
-    }
-    write_error_response(id, "protocol_error", "Signing preflight failed.");
-    return true;
+    agent_q::handle_usb_get_status_request(
+        id,
+        request,
+        writer,
+        usb_get_status_handler_ops());
 }
 
-bool write_sign_personal_message_preflight_error(
-    const char* id,
-    agent_q::AgentQSigningPreflightResult result,
-    const agent_q::AgentQSignPersonalMessagePreflightOutput& output)
+const agent_q::AgentQUsbIdentifyDeviceHandlerOps& usb_identify_device_handler_ops()
 {
-    if (write_sign_route_preflight_error(id, result)) {
-        return true;
-    }
-    switch (result) {
-        case agent_q::AgentQSigningPreflightResult::personal_message_ingress_error:
-            write_error_response(
-                id,
-                signature_ingress_error_code(output.ingress_result),
-                signature_ingress_error_message(output.ingress_result));
-            return true;
-        case agent_q::AgentQSigningPreflightResult::identity_error:
-            write_error_response(id, "protocol_error", "Could not bind signing request identity.");
-            return true;
-        case agent_q::AgentQSigningPreflightResult::retry_consumed:
-            return true;
-        case agent_q::AgentQSigningPreflightResult::signing_mode_unavailable:
-            write_error_response(id, "invalid_state", "Signing authorization mode is unavailable.");
-            return true;
-        case agent_q::AgentQSigningPreflightResult::personal_message_policy_mode:
-            write_error_response(id, "unsupported_method", "sign_personal_message is not available in policy authorization mode.");
-            return true;
-        case agent_q::AgentQSigningPreflightResult::personal_message_preparation_error:
-            if (output.preparation_result ==
-                agent_q::AgentQSuiSigningPreparationResult::account_unavailable) {
-                agent_q::persistent_material_record_runtime_failure(
-                    agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
-                    persistent_material_ops());
-            }
-            write_error_response(
-                id,
-                sui_preparation_error_code(output.preparation_result),
-                sui_preparation_error_message(output.preparation_result));
-            return true;
-        default:
-            break;
-    }
-    write_error_response(id, "protocol_error", "Signing preflight failed.");
-    return true;
+    static const agent_q::AgentQUsbIdentifyDeviceHandlerOps ops = {
+        write_busy_if_pending_or_local_flow_active_default,
+        is_safe_identification_code,
+        show_identification_code,
+        usb_device_response_info,
+        kIdentifyDisplayDefaultMs,
+    };
+    return ops;
 }
 
-void handle_sign_transaction_policy_mode(
+void handle_identify_device_request(
     const char* id,
-    const agent_q::AgentQSuiPreparedSignTransaction& prepared,
-    const uint8_t* request_identity)
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
 {
-    agent_q::AgentQSignTransactionPolicyRuntimeResult sign_result =
-        agent_q::evaluate_sign_transaction_policy(prepared);
-    if (sign_result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized) {
-        show_policy_signing_notification("Policy signing", AgentQMessageKind::info);
+    agent_q::handle_usb_identify_device_request(
+        id,
+        request,
+        writer,
+        usb_identify_device_handler_ops());
+}
+
+agent_q::AgentQTimeoutWindow make_connect_approval_window()
+{
+    const TickType_t started_at = xTaskGetTickCount();
+    return agent_q::timeout_window_from_deadline(
+        started_at,
+        started_at + pdMS_TO_TICKS(kConnectApprovalDefaultMs));
+}
+
+void show_connect_unavailable()
+{
+    agent_q::avatar_overlay_show_message(
+        "Connect unavailable",
+        AgentQMessageKind::error,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+}
+
+void reset_connect_review_choice_queue()
+{
+    if (g_connect_review_choice_queue != nullptr) {
+        xQueueReset(g_connect_review_choice_queue);
     }
-    agent_q::AgentQPolicySigningExecutionResult execution_result =
-        agent_q::execute_policy_sign_transaction(sign_result, persistent_material_ops());
-    const bool wrote_response =
-        write_policy_execution_response(id, request_identity, execution_result);
-    switch (execution_result.status) {
-        case agent_q::AgentQPolicySigningExecutionStatus::policy_rejected:
-            if (wrote_response) {
-                ESP_LOGI(kTag, "sign_transaction policy rejected: id=%s chain=%s method=%s rule=%s",
-                         id,
-                         sign_result.chain,
-                         sign_result.method,
-                         sign_result.rule_ref);
-                show_policy_signing_notification("Policy rejected", AgentQMessageKind::rejected);
-            } else {
-                log_response_write_failure("sign_result", id);
-                show_policy_signing_notification("Rejected; USB failed", AgentQMessageKind::error);
-            }
+}
+
+void record_connect_waiting_for_review(const char* id, const char* client_name)
+{
+    ESP_LOGI(kTag, "connect waiting for review: id=%s agent-q=%s", id, client_name);
+}
+
+const agent_q::AgentQUsbConnectHandlerOps& connect_handler_ops()
+{
+    static const agent_q::AgentQUsbConnectHandlerOps ops = {
+        provisioned_material_ready,
+        write_busy_if_pending_or_local_flow_active_default,
+        make_connect_approval_window,
+        agent_q::connect_approval_begin,
+        show_connect_unavailable,
+        reset_connect_review_choice_queue,
+        show_connect_review,
+        record_connect_waiting_for_review,
+    };
+    return ops;
+}
+
+void handle_connect_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_connect_request(id, request, writer, connect_handler_ops());
+}
+
+const agent_q::AgentQUsbRetainedResultHandlerOps& retained_result_handler_ops()
+{
+    static const agent_q::AgentQUsbRetainedResultHandlerOps ops = {
+        provisioned_material_ready,
+        require_active_matching_session,
+        try_deliver_stored_result_by_id,
+        ack_stored_result_by_id,
+    };
+    return ops;
+}
+
+void handle_get_result_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_get_result_request(id, request, writer, retained_result_handler_ops());
+}
+
+void handle_ack_result_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_ack_result_request(id, request, writer, retained_result_handler_ops());
+}
+
+agent_q::AgentQUsbPolicyResponseWriteResult write_policy_response_for_session_read(const char* id)
+{
+    switch (write_policy_response(id)) {
+        case PolicyResponseWriteResult::ok:
+            return agent_q::AgentQUsbPolicyResponseWriteResult::ok;
+        case PolicyResponseWriteResult::active_policy_unavailable:
+            return agent_q::AgentQUsbPolicyResponseWriteResult::active_policy_unavailable;
+        case PolicyResponseWriteResult::response_write_failed:
+            return agent_q::AgentQUsbPolicyResponseWriteResult::response_write_failed;
+    }
+    return agent_q::AgentQUsbPolicyResponseWriteResult::response_write_failed;
+}
+
+void record_active_policy_unavailable_for_session_read()
+{
+    agent_q::persistent_material_record_runtime_failure(
+        agent_q::AgentQPersistentMaterialRuntimeFailure::active_policy_unavailable,
+        persistent_material_ops());
+}
+
+const agent_q::AgentQUsbSessionReadHandlerOps& session_read_handler_ops()
+{
+    static const agent_q::AgentQUsbSessionReadHandlerOps ops = {
+        provisioned_material_ready,
+        write_busy_if_pending_or_local_flow_active_allow_settings,
+        require_active_matching_session,
+        agent_q::read_signing_authorization_mode,
+        write_accounts_response,
+        write_policy_response_for_session_read,
+        record_active_policy_unavailable_for_session_read,
+    };
+    return ops;
+}
+
+void handle_get_capabilities_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_get_capabilities_request(id, request, writer, session_read_handler_ops());
+}
+
+void handle_get_accounts_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_get_accounts_request(id, request, writer, session_read_handler_ops());
+}
+
+void handle_policy_get_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_policy_get_request(id, request, writer, session_read_handler_ops());
+}
+
+const agent_q::AgentQUsbDisconnectHandlerOps& disconnect_handler_ops()
+{
+    static const agent_q::AgentQUsbDisconnectHandlerOps ops = {
+        require_active_matching_session,
+        disconnect_pending_policy_update_for_session,
+        disconnect_pending_user_signing_for_session,
+        write_busy_if_pending_or_local_flow_active_allow_settings,
+        clear_active_session,
+    };
+    return ops;
+}
+
+void handle_disconnect_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_disconnect_request(id, request, writer, disconnect_handler_ops());
+}
+
+const agent_q::AgentQUsbApprovalHistoryHandlerOps& approval_history_handler_ops()
+{
+    static const agent_q::AgentQUsbApprovalHistoryHandlerOps ops = {
+        provisioned_material_ready,
+        write_busy_if_pending_or_local_flow_active_allow_settings,
+        require_active_matching_session,
+        write_approval_history_response,
+    };
+    return ops;
+}
+
+void handle_get_approval_history_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_get_approval_history_request(
+        id,
+        request,
+        writer,
+        approval_history_handler_ops());
+}
+
+agent_q::AgentQTimeoutWindow make_policy_update_review_window()
+{
+    const TickType_t review_started_at = xTaskGetTickCount();
+    return timeout_window_from_now_ms(review_started_at, kProvisioningApprovalMaxMs);
+}
+
+void record_policy_update_waiting_for_review(const char* id)
+{
+    ESP_LOGI(kTag, "policy update waiting for local review: id=%s", id);
+}
+
+const agent_q::AgentQUsbPolicyProposeHandlerOps& policy_propose_handler_ops()
+{
+    static const agent_q::AgentQUsbPolicyProposeHandlerOps ops = {
+        provisioned_material_ready,
+        write_busy_if_pending_or_local_flow_active_default,
+        require_active_matching_session,
+        make_policy_update_review_window,
+        agent_q::policy_update_flow_begin,
+        agent_q::policy_update_flow_begin_result_reason,
+        write_policy_propose_result_response,
+        show_policy_update_review,
+        agent_q::policy_update_flow_record_ui_error,
+        finish_policy_update_terminal,
+        record_policy_update_waiting_for_review,
+    };
+    return ops;
+}
+
+void handle_policy_propose_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_policy_propose_request(id, request, writer, policy_propose_handler_ops());
+}
+
+void record_signing_account_unavailable_runtime_failure()
+{
+    agent_q::persistent_material_record_runtime_failure(
+        agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
+        persistent_material_ops());
+}
+
+agent_q::AgentQPolicySigningExecutionResult execute_policy_sign_transaction_for_usb(
+    const agent_q::AgentQSignTransactionPolicyRuntimeResult& policy_result)
+{
+    return agent_q::execute_policy_sign_transaction(policy_result, persistent_material_ops());
+}
+
+agent_q::AgentQTimeoutWindow make_user_signing_window()
+{
+    const TickType_t signing_started_at = xTaskGetTickCount();
+    return agent_q::timeout_window_from_deadline(
+        signing_started_at,
+        signing_started_at + pdMS_TO_TICKS(agent_q::kAgentQUserSigningApprovalWindowMs));
+}
+
+void show_user_signing_display_error()
+{
+    agent_q::avatar_overlay_show_message(
+        "Display error",
+        AgentQMessageKind::error,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+}
+
+void show_policy_signing_notice(
+    const char* message,
+    agent_q::AgentQUsbSigningNoticeKind kind)
+{
+    AgentQMessageKind message_kind = AgentQMessageKind::info;
+    switch (kind) {
+        case agent_q::AgentQUsbSigningNoticeKind::rejected:
+            message_kind = AgentQMessageKind::rejected;
             break;
-        case agent_q::AgentQPolicySigningExecutionStatus::signing_failed:
-            if (wrote_response) {
-                ESP_LOGW(kTag, "sign_transaction policy signing failed: id=%s chain=%s method=%s",
-                         id,
-                         sign_result.chain,
-                         sign_result.method);
-                show_policy_signing_notification("Signing failed", AgentQMessageKind::error);
-            } else {
-                log_response_write_failure("sign_result", id);
-                show_policy_signing_notification("Failure; USB failed", AgentQMessageKind::error);
-            }
+        case agent_q::AgentQUsbSigningNoticeKind::error:
+            message_kind = AgentQMessageKind::error;
             break;
-        case agent_q::AgentQPolicySigningExecutionStatus::signed_success:
-            if (wrote_response) {
-                ESP_LOGI(kTag, "sign_transaction policy signed: id=%s chain=%s method=%s rule=%s",
-                         id,
-                         sign_result.chain,
-                         sign_result.method,
-                         sign_result.rule_ref);
-                show_policy_signing_notification("Policy signed", AgentQMessageKind::success);
-            } else {
-                log_response_write_failure("sign_result", id);
-                show_policy_signing_notification("Signed; USB failed", AgentQMessageKind::error);
-            }
+        case agent_q::AgentQUsbSigningNoticeKind::success:
+            message_kind = AgentQMessageKind::success;
             break;
+        case agent_q::AgentQUsbSigningNoticeKind::info:
         default:
+            message_kind = AgentQMessageKind::info;
             break;
     }
-    agent_q::clear_policy_signing_execution_result(&execution_result);
-    agent_q::clear_sign_transaction_policy_runtime_result(&sign_result);
+    show_policy_signing_notification(message, message_kind);
+}
+
+void log_policy_rejected(
+    const char* id,
+    const char* chain,
+    const char* method,
+    const char* rule_ref)
+{
+    ESP_LOGI(kTag, "sign_transaction policy rejected: id=%s chain=%s method=%s rule=%s",
+             id,
+             chain,
+             method,
+             rule_ref);
+}
+
+void log_policy_signing_failed(
+    const char* id,
+    const char* chain,
+    const char* method)
+{
+    ESP_LOGW(kTag, "sign_transaction policy signing failed: id=%s chain=%s method=%s",
+             id,
+             chain,
+             method);
+}
+
+void log_policy_signed(
+    const char* id,
+    const char* chain,
+    const char* method,
+    const char* rule_ref)
+{
+    ESP_LOGI(kTag, "sign_transaction policy signed: id=%s chain=%s method=%s rule=%s",
+             id,
+             chain,
+             method,
+             rule_ref);
+}
+
+void record_user_signing_waiting_for_review(
+    const char* id,
+    agent_q::AgentQSigningRoute signing_route)
+{
+    switch (signing_route) {
+        case agent_q::AgentQSigningRoute::unsupported:
+            ESP_LOGW(kTag, "unsupported signing route reached review wait log: id=%s", id);
+            break;
+        case agent_q::AgentQSigningRoute::sui_sign_transaction:
+            ESP_LOGI(kTag, "sign_transaction waiting for device review: id=%s", id);
+            break;
+        case agent_q::AgentQSigningRoute::sui_sign_personal_message:
+            ESP_LOGI(kTag, "sign_personal_message waiting for device review: id=%s", id);
+            break;
+    }
+}
+
+void clear_user_signing_flow_for_usb()
+{
+    agent_q::user_signing_flow_clear();
+}
+
+const agent_q::AgentQUsbSigningHandlerOps& usb_signing_handler_ops()
+{
+    static const agent_q::AgentQUsbSigningHandlerOps ops = {
+        provisioned_material_ready,
+        user_signing_ingress_busy,
+        validate_session_for_user_signing,
+        nullptr,
+        read_signing_mode_for_preflight,
+        nullptr,
+        respond_to_signing_retry,
+        nullptr,
+        g_signing_preflight_retry_stored_result,
+        sizeof(g_signing_preflight_retry_stored_result),
+        agent_q::evaluate_sign_transaction_preflight,
+        agent_q::evaluate_sign_personal_message_preflight,
+        record_signing_account_unavailable_runtime_failure,
+        agent_q::evaluate_sign_transaction_policy,
+        execute_policy_sign_transaction_for_usb,
+        write_policy_execution_response,
+        agent_q::clear_policy_signing_execution_result,
+        agent_q::clear_sign_transaction_policy_runtime_result,
+        make_user_signing_window,
+        agent_q::user_signing_flow_begin,
+        agent_q::user_signing_flow_begin_personal_message,
+        agent_q::clear_prepared_sui_sign_transaction,
+        agent_q::clear_prepared_sui_sign_personal_message,
+        show_user_signing_review,
+        clear_user_signing_flow_for_usb,
+        show_user_signing_display_error,
+        record_user_signing_waiting_for_review,
+        show_policy_signing_notice,
+        log_policy_rejected,
+        log_policy_signing_failed,
+        log_policy_signed,
+        agent_q::usb_response_log_write_failure,
+    };
+    return ops;
+}
+
+void handle_sign_transaction_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_sign_transaction_request(id, request, writer, usb_signing_handler_ops());
+}
+
+void handle_sign_personal_message_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_sign_personal_message_request(id, request, writer, usb_signing_handler_ops());
+}
+
+const agent_q::AgentQUsbOperationHandlers& usb_operation_handlers()
+{
+    static const agent_q::AgentQUsbOperationHandlers handlers = {
+        handle_get_status_request,
+        handle_identify_device_request,
+        handle_connect_request,
+        handle_sign_transaction_request,
+        handle_sign_personal_message_request,
+        handle_get_result_request,
+        handle_ack_result_request,
+        handle_disconnect_request,
+        handle_get_capabilities_request,
+        handle_get_accounts_request,
+        handle_policy_get_request,
+        handle_get_approval_history_request,
+        handle_policy_propose_request,
+    };
+    return handlers;
 }
 
 void handle_line(const char* line)
 {
-    if (!agent_q::agent_q_json_line_is_single_object(line)) {
-        write_error_response(nullptr, "invalid_json", "Invalid JSON.");
-        return;
-    }
-
-    JsonDocument request;
-    const DeserializationError error = deserializeJson(request, line);
-    if (error) {
-        write_error_response(nullptr, "invalid_json", "Invalid JSON.");
-        return;
-    }
-
-    const char* id = nullptr;
-    if (!agent_q::agent_q_json_value_c_string(request["id"], &id)) {
-        write_error_response(nullptr, "invalid_id", "Invalid request id.");
-        return;
-    }
-    if (!agent_q::request_id_format_valid(id)) {
-        write_error_response(nullptr, "invalid_id", "Invalid request id.");
-        return;
-    }
-
-    const int version = request["version"] | 0;
-    if (version != kProtocolVersion) {
-        write_error_response(id, "unsupported_version", "Unsupported protocol version.");
-        return;
-    }
-
-    const char* type = nullptr;
-    if (!agent_q::agent_q_json_optional_c_string(request["type"], "", &type)) {
-        write_error_response(id, "unsupported_type", "Unsupported request type.");
-        return;
-    }
-    if (strcmp(type, "get_status") == 0) {
-        const char* const allowed_request_fields[] = {"id", "version", "type"};
-        if (write_invalid_params_if_unsupported_request_fields(
-                id,
-                request,
-                allowed_request_fields,
-                3,
-                "get_status request contains unsupported fields.")) {
-            return;
-        }
-        if (!write_status_response(id)) {
-            log_response_write_failure("status", id);
-        }
-        return;
-    }
-
-    if (strcmp(type, "identify_device") == 0) {
-        if (write_busy_if_pending_or_local_flow_active(id)) {
-            return;
-        }
-        const char* const allowed_request_fields[] = {"id", "version", "type", "params"};
-        if (write_invalid_params_if_unsupported_request_fields(
-                id,
-                request,
-                allowed_request_fields,
-                4,
-                "identify_device request contains unsupported fields.")) {
-            return;
-        }
-        const char* const allowed_identify_params[] = {"code"};
-        if (!json_object_fields_supported(request["params"], allowed_identify_params, 1)) {
-            write_error_response(id, "invalid_params", "identify_device params contain unsupported fields.");
-            return;
-        }
-
-        const char* code = nullptr;
-        if (!agent_q::agent_q_json_optional_c_string(request["params"]["code"], "", &code)) {
-            write_error_response(id, "invalid_code", "Invalid identification code.");
-            return;
-        }
-        if (!is_safe_identification_code(code)) {
-            write_error_response(id, "invalid_code", "Invalid identification code.");
-            return;
-        }
-
-        show_identification_code(code, kIdentifyDisplayDefaultMs);
-        if (write_identify_device_result(id, code)) {
-            ESP_LOGI(kTag, "identify_device displayed: id=%s code=%s", id, code);
-        } else {
-            log_response_write_failure("identify_device_result", id);
-        }
-        return;
-    }
-
-    if (strcmp(type, "connect") == 0) {
-        if (!provisioned_material_ready()) {
-            write_error_response(id, "invalid_state", "Connect is available only after provisioning is complete.");
-            return;
-        }
-        if (write_busy_if_pending_or_local_flow_active(id)) {
-            return;
-        }
-        const char* const allowed_request_fields[] = {"id", "version", "type", "params"};
-        if (write_invalid_params_if_unsupported_request_fields(
-                id,
-                request,
-                allowed_request_fields,
-                4,
-                "connect request contains unsupported fields.")) {
-            return;
-        }
-        const char* const allowed_connect_params[] = {"clientName"};
-        if (!json_object_fields_supported(request["params"], allowed_connect_params, 1)) {
-            write_error_response(id, "invalid_params", "connect params contain unsupported fields.");
-            return;
-        }
-
-        const char* client_name = nullptr;
-        if (!agent_q::agent_q_json_optional_c_string(request["params"]["clientName"], "", &client_name)) {
-            write_error_response(id, "invalid_client_name", "clientName must be 1-64 printable ASCII characters.");
-            return;
-        }
-        if (!is_printable_ascii_client_name(client_name)) {
-            write_error_response(id, "invalid_client_name", "clientName must be 1-64 printable ASCII characters.");
-            return;
-        }
-
-        const TickType_t started_at = xTaskGetTickCount();
-        const agent_q::AgentQTimeoutWindow approval_window = agent_q::timeout_window_from_deadline(
-            started_at,
-            started_at + pdMS_TO_TICKS(kConnectApprovalDefaultMs));
-        if (!agent_q::connect_approval_begin(id, client_name, approval_window)) {
-            write_connect_rejected_response(id, "invalid_state", "Connect is unavailable.");
-            agent_q::avatar_overlay_show_message("Connect unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-            return;
-        }
-        if (g_connect_review_choice_queue != nullptr) {
-            xQueueReset(g_connect_review_choice_queue);
-        }
-        show_connect_review();
-        ESP_LOGI(kTag, "connect waiting for review: id=%s agent-q=%s", id, client_name);
-        return;
-    }
-
-    if (strcmp(type, "sign_transaction") == 0) {
-        agent_q::AgentQSignTransactionPreflightOutput preflight = {};
-        const agent_q::AgentQSigningPreflightResult preflight_result =
-            agent_q::evaluate_sign_transaction_preflight(
-                request,
-                agent_q::AgentQSignTransactionUserIngressState{
-                    provisioned_material_ready(),
-                    user_signing_ingress_busy(),
-                    validate_session_for_user_signing,
-                    nullptr,
-                },
-                agent_q::AgentQSigningPreflightRuntime{
-                    read_signing_mode_for_preflight,
-                    nullptr,
-                    respond_to_signing_retry,
-                    nullptr,
-                    g_signing_preflight_retry_stored_result,
-                    sizeof(g_signing_preflight_retry_stored_result),
-                },
-                &preflight);
-        if (preflight_result != agent_q::AgentQSigningPreflightResult::ok) {
-            write_sign_transaction_preflight_error(id, preflight_result, preflight);
-            return;
-        }
-        if (preflight.signing_mode == agent_q::AgentQSigningAuthorizationMode::policy) {
-            handle_sign_transaction_policy_mode(
-                id,
-                preflight.prepared,
-                preflight.request_identity);
-            agent_q::clear_prepared_sui_sign_transaction(&preflight.prepared);
-            return;
-        }
-
-        const TickType_t signing_started_at = xTaskGetTickCount();
-        const agent_q::AgentQTimeoutWindow signing_window = agent_q::timeout_window_from_deadline(
-            signing_started_at,
-            signing_started_at + pdMS_TO_TICKS(agent_q::kAgentQUserSigningApprovalWindowMs));
-        const agent_q::AgentQUserSigningFlowBeginResult begin_result =
-            agent_q::user_signing_flow_begin(
-                agent_q::AgentQUserSigningTransactionBeginInput{
-                    preflight.ingress.envelope.request_id,
-                    preflight.request_identity,
-                    preflight.ingress.session.session_id,
-                    preflight.route,
-                    &preflight.prepared,
-                    signing_window,
-                });
-        agent_q::clear_prepared_sui_sign_transaction(&preflight.prepared);
-        if (begin_result != agent_q::AgentQUserSigningFlowBeginResult::ok) {
-            write_error_response(
-                id,
-                signature_begin_error_code(begin_result),
-                signature_begin_error_message(begin_result));
-            return;
-        }
-
-        if (!show_user_signing_review()) {
-            agent_q::user_signing_flow_clear();
-            write_error_response(id, "ui_error", "Could not show signing review UI.");
-            agent_q::avatar_overlay_show_message(
-                "Display error",
-                AgentQMessageKind::error,
-                AgentQUiMode::result,
-                kAgentQResultDisplayMs);
-            return;
-        }
-        ESP_LOGI(kTag, "sign_transaction waiting for device review: id=%s", id);
-        return;
-    }
-
-    if (strcmp(type, "sign_personal_message") == 0) {
-        agent_q::AgentQSignPersonalMessagePreflightOutput preflight = {};
-        const agent_q::AgentQSigningPreflightResult preflight_result =
-            agent_q::evaluate_sign_personal_message_preflight(
-                request,
-                agent_q::AgentQSignPersonalMessageUserIngressState{
-                    provisioned_material_ready(),
-                    user_signing_ingress_busy(),
-                    validate_session_for_user_signing,
-                    nullptr,
-                },
-                agent_q::AgentQSigningPreflightRuntime{
-                    read_signing_mode_for_preflight,
-                    nullptr,
-                    respond_to_signing_retry,
-                    nullptr,
-                    g_signing_preflight_retry_stored_result,
-                    sizeof(g_signing_preflight_retry_stored_result),
-                },
-                &preflight);
-        if (preflight_result != agent_q::AgentQSigningPreflightResult::ok) {
-            write_sign_personal_message_preflight_error(id, preflight_result, preflight);
-            return;
-        }
-
-        const TickType_t signing_started_at = xTaskGetTickCount();
-        const agent_q::AgentQTimeoutWindow signing_window = agent_q::timeout_window_from_deadline(
-            signing_started_at,
-            signing_started_at + pdMS_TO_TICKS(agent_q::kAgentQUserSigningApprovalWindowMs));
-        const agent_q::AgentQUserSigningFlowBeginResult begin_result =
-            agent_q::user_signing_flow_begin_personal_message(
-                agent_q::AgentQUserSigningPersonalMessageBeginInput{
-                    preflight.ingress.envelope.request_id,
-                    preflight.request_identity,
-                    preflight.ingress.session.session_id,
-                    preflight.route,
-                    &preflight.prepared,
-                    signing_window,
-                });
-        agent_q::clear_prepared_sui_sign_personal_message(&preflight.prepared);
-        if (begin_result != agent_q::AgentQUserSigningFlowBeginResult::ok) {
-            write_error_response(
-                id,
-                signature_begin_error_code(begin_result),
-                signature_begin_error_message(begin_result));
-            return;
-        }
-
-        if (!show_user_signing_review()) {
-            agent_q::user_signing_flow_clear();
-            write_error_response(id, "ui_error", "Could not show signing review UI.");
-            agent_q::avatar_overlay_show_message(
-                "Display error",
-                AgentQMessageKind::error,
-                AgentQUiMode::result,
-                kAgentQResultDisplayMs);
-            return;
-        }
-        ESP_LOGI(kTag, "sign_personal_message waiting for device review: id=%s", id);
-        return;
-    }
-
-    if (strcmp(type, "get_result") == 0) {
-        if (!provisioned_material_ready()) {
-            write_error_response(id, "invalid_state", "get_result is available only after provisioning is complete.");
-            return;
-        }
-        const char* session_id = nullptr;
-        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid session.");
-            return;
-        }
-        if (!require_active_matching_session(id, session_id)) {
-            return;
-        }
-        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
-        if (write_invalid_params_if_unsupported_request_fields(
-                id,
-                request,
-                allowed_request_fields,
-                4,
-                "get_result request contains unsupported fields.")) {
-            return;
-        }
-        // Re-deliver the buffered result for this request id, or report it is gone so
-        // the host re-issues the original signing request.
-        if (try_deliver_stored_result_by_id(session_id, id)) {
-            return;
-        }
-        write_error_response(id, "unknown_request", "No buffered signing result for this request id.");
-        return;
-    }
-
-    if (strcmp(type, "ack_result") == 0) {
-        if (!provisioned_material_ready()) {
-            write_error_response(id, "invalid_state", "ack_result is available only after provisioning is complete.");
-            return;
-        }
-        const char* session_id = nullptr;
-        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid session.");
-            return;
-        }
-        if (!require_active_matching_session(id, session_id)) {
-            return;
-        }
-        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
-        if (write_invalid_params_if_unsupported_request_fields(
-                id,
-                request,
-                allowed_request_fields,
-                4,
-                "ack_result request contains unsupported fields.")) {
-            return;
-        }
-        // Releasing a buffered result is idempotent: acking an already-released or
-        // unknown id still reports success so the host can stop retrying.
-        agent_q::signing_result_ack(session_id, id);
-        JsonDocument response;
-        response["id"] = id;
-        response["version"] = kProtocolVersion;
-        response["type"] = "ack_result";
-        response["status"] = "acked";
-        agent_q::usb_response_write_json(response);
-        return;
-    }
-
-    if (strcmp(type, "disconnect") == 0) {
-        const char* session_id = nullptr;
-        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid session.");
-            return;
-        }
-        if (!require_active_matching_session(id, session_id)) {
-            return;
-        }
-        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
-        if (write_invalid_params_if_unsupported_request_fields(
-                id,
-                request,
-                allowed_request_fields,
-                4,
-                "disconnect request contains unsupported fields.")) {
-            return;
-        }
-        if (disconnect_pending_policy_update_for_session(id, session_id)) {
-            return;
-        }
-        if (disconnect_pending_user_signing_for_session(id, session_id)) {
-            return;
-        }
-        if (write_busy_if_pending_or_local_flow_active(id, true)) {
-            return;
-        }
-        clear_active_session();
-        if (write_disconnect_result(id)) {
-            ESP_LOGI(kTag, "disconnect: id=%s", id);
-        } else {
-            log_response_write_failure("disconnect_result", id);
-        }
-        return;
-    }
-
-    if (strcmp(type, "get_capabilities") == 0) {
-        // get_capabilities is read-only and session-scoped. Firmware is the
-        // capability authority; Agent-Q must not infer or extend this response.
-        if (!provisioned_material_ready()) {
-            write_error_response(id, "invalid_state", "Capabilities are available only after provisioning is complete.");
-            return;
-        }
-        if (write_busy_if_pending_or_local_flow_active(id, true)) {
-            return;
-        }
-
-        const char* session_id = nullptr;
-        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid session.");
-            return;
-        }
-        if (!require_active_matching_session(id, session_id)) {
-            return;
-        }
-
-        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
-        if (write_invalid_params_if_unsupported_request_fields(
-                id,
-                request,
-                allowed_request_fields,
-                4,
-                "get_capabilities request contains unsupported fields.")) {
-            return;
-        }
-
-        agent_q::AgentQSigningAuthorizationMode signing_mode =
-            agent_q::AgentQSigningAuthorizationMode::user;
-        if (!agent_q::read_signing_authorization_mode(&signing_mode)) {
-            write_error_response(id, "invalid_state", "Signing authorization mode is unavailable.");
-            return;
-        }
-
-        if (write_capabilities_response(id, signing_mode)) {
-            ESP_LOGI(kTag, "get_capabilities: id=%s", id);
-        } else {
-            log_response_write_failure("capabilities", id);
-        }
-        return;
-    }
-
-    if (strcmp(type, "get_accounts") == 0) {
-        // get_accounts is a session-scoped read-only request. State and session
-        // guards are checked before deriving; no approval UI and no pending
-        // state are involved.
-        if (!provisioned_material_ready()) {
-            write_error_response(id, "invalid_state", "Accounts are available only after provisioning is complete.");
-            return;
-        }
-        if (write_busy_if_pending_or_local_flow_active(id, true)) {
-            return;
-        }
-
-        const char* session_id = nullptr;
-        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid session.");
-            return;
-        }
-        if (!require_active_matching_session(id, session_id)) {
-            return;
-        }
-
-        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
-        if (write_invalid_params_if_unsupported_request_fields(
-                id,
-                request,
-                allowed_request_fields,
-                4,
-                "get_accounts request contains unsupported fields.")) {
-            return;
-        }
-
-        if (!write_accounts_response(id)) {
-            write_error_response(id, "account_error", "Could not derive accounts.");
-            ESP_LOGW(kTag, "get_accounts derivation failed: id=%s", id);
-            return;
-        }
-        ESP_LOGI(kTag, "get_accounts: id=%s", id);
-        return;
-    }
-
-    if (strcmp(type, "policy_get") == 0) {
-        // policy_get is a session-scoped read-only request. Firmware returns
-        // the committed active policy document it will use for method
-        // decisions; Agent-Q must not infer policy state from local defaults.
-        if (!provisioned_material_ready()) {
-            write_error_response(id, "invalid_state", "Policy is available only after provisioning is complete.");
-            return;
-        }
-        if (write_busy_if_pending_or_local_flow_active(id, true)) {
-            return;
-        }
-
-        const char* session_id = nullptr;
-        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid session.");
-            return;
-        }
-        if (!require_active_matching_session(id, session_id)) {
-            return;
-        }
-
-        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
-        if (write_invalid_params_if_unsupported_request_fields(
-                id,
-                request,
-                allowed_request_fields,
-                4,
-                "policy_get request contains unsupported fields.")) {
-            return;
-        }
-
-        switch (write_policy_response(id)) {
-            case PolicyResponseWriteResult::ok:
-                ESP_LOGI(kTag, "policy_get: id=%s", id);
-                return;
-            case PolicyResponseWriteResult::active_policy_unavailable:
-                agent_q::persistent_material_record_runtime_failure(
-                    agent_q::AgentQPersistentMaterialRuntimeFailure::active_policy_unavailable,
-                    persistent_material_ops());
-                write_error_response(id, "policy_error", "Active policy is unavailable.");
-                ESP_LOGW(kTag, "policy_get active policy unavailable: id=%s", id);
-                return;
-            case PolicyResponseWriteResult::response_write_failed:
-                log_response_write_failure("policy", id);
-                return;
-        }
-    }
-
-    if (strcmp(type, "get_approval_history") == 0) {
-        // get_approval_history is read-only and session-scoped. It returns
-        // Firmware-authored signing and policy-update metadata; raw requests,
-        // session ids, private material, PINs, and policy documents are never
-        // stored or returned.
-        if (!provisioned_material_ready()) {
-            write_error_response(id, "invalid_state", "Approval history is available only after provisioning is complete.");
-            return;
-        }
-        if (write_busy_if_pending_or_local_flow_active(id, true)) {
-            return;
-        }
-
-        const char* session_id = nullptr;
-        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid session.");
-            return;
-        }
-        if (!require_active_matching_session(id, session_id)) {
-            return;
-        }
-
-        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "params"};
-        if (write_invalid_params_if_unsupported_request_fields(
-                id,
-                request,
-                allowed_request_fields,
-                5,
-                "get_approval_history request contains unsupported fields.")) {
-            return;
-        }
-
-        size_t limit = agent_q::kAgentQApprovalHistoryPageMax;
-        uint64_t before_sequence = 0;
-        if (!parse_approval_history_params(request, &limit, &before_sequence)) {
-            write_error_response(id, "invalid_params", "Approval history params are invalid.");
-            return;
-        }
-
-        if (!write_approval_history_response(id, before_sequence, limit)) {
-            write_error_response(id, "history_error", "Approval history is unavailable.");
-            ESP_LOGW(kTag, "get_approval_history unavailable: id=%s", id);
-            return;
-        }
-        ESP_LOGI(kTag, "get_approval_history: id=%s", id);
-        return;
-    }
-
-    if (strcmp(type, "policy_propose") == 0) {
-        if (!provisioned_material_ready()) {
-            write_error_response(id, "invalid_state", "Policy update is available only after provisioning is complete.");
-            return;
-        }
-        if (write_busy_if_pending_or_local_flow_active(id)) {
-            return;
-        }
-
-        const char* session_id = nullptr;
-        if (!agent_q::agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-            write_error_response(id, "invalid_session", "Invalid session.");
-            return;
-        }
-        if (!require_active_matching_session(id, session_id)) {
-            return;
-        }
-
-        const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "params"};
-        if (write_invalid_params_if_unsupported_request_fields(
-                id,
-                request,
-                allowed_request_fields,
-                5,
-                "policy_propose request contains unsupported fields.")) {
-            return;
-        }
-
-        JsonVariant params = request["params"];
-        if (!params.is<JsonObject>()) {
-            write_error_response(id, "invalid_params", "Policy update params must be an object.");
-            return;
-        }
-        JsonObject params_object = params.as<JsonObject>();
-        const char* const allowed_policy_params[] = {"policy"};
-        if (!json_object_fields_supported(params, allowed_policy_params, 1) ||
-            params_object["policy"].isNull()) {
-            write_error_response(id, "invalid_params", "Policy update params require policy.");
-            return;
-        }
-
-        const TickType_t review_started_at = xTaskGetTickCount();
-        const agent_q::AgentQTimeoutWindow review_window =
-            timeout_window_from_now_ms(review_started_at, kProvisioningApprovalMaxMs);
-        const agent_q::AgentQPolicyUpdateFlowBeginResult begin_result =
-            agent_q::policy_update_flow_begin(
-                params_object["policy"],
-                id,
-                session_id,
-                review_window);
-        if (begin_result != agent_q::AgentQPolicyUpdateFlowBeginResult::ok) {
-            if (!write_policy_propose_result_response(
-                    id,
-                    "invalid_policy",
-                    agent_q::policy_update_flow_begin_result_reason(begin_result),
-                    false)) {
-                log_response_write_failure("policy_propose_result", id);
-            }
-            return;
-        }
-
-        if (!show_policy_update_review()) {
-            finish_policy_update_terminal(
-                id,
-                agent_q::policy_update_flow_record_ui_error());
-            return;
-        }
-        ESP_LOGI(kTag, "policy update waiting for local review: id=%s", id);
-        return;
-    }
-
-    write_error_response(id, "unsupported_type", "Unsupported request type.");
+    agent_q::handle_usb_request_line(
+        line,
+        usb_operation_response_writer(),
+        usb_operation_handlers());
 }
 
 void poll_usb_input()
@@ -6526,10 +5795,10 @@ void poll_usb_input()
                 handle_line(g_line_buffer);
                 break;
             case agent_q::AgentQUsbLineFeedResult::rejected_nul:
-                write_error_response(nullptr, "invalid_json", "JSON line contains a NUL byte.");
+                agent_q::usb_response_write_error(nullptr, "invalid_json", "JSON line contains a NUL byte.");
                 break;
             case agent_q::AgentQUsbLineFeedResult::rejected_too_long:
-                write_error_response(nullptr, "invalid_json", "JSON line is too long.");
+                agent_q::usb_response_write_error(nullptr, "invalid_json", "JSON line is too long.");
                 break;
             case agent_q::AgentQUsbLineFeedResult::none:
                 break;

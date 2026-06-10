@@ -1,0 +1,23 @@
+#pragma once
+
+#include <ArduinoJson.h>
+
+#include "agent_q_usb_operation_response_writer.h"
+
+namespace agent_q {
+
+struct AgentQUsbDisconnectHandlerOps {
+    bool (*require_active_matching_session)(const char* id, const char* session_id);
+    bool (*disconnect_pending_policy_update_for_session)(const char* id, const char* session_id);
+    bool (*disconnect_pending_user_signing_for_session)(const char* id, const char* session_id);
+    bool (*write_busy_if_pending_or_local_flow_active)(const char* id);
+    void (*clear_active_session)();
+};
+
+void handle_usb_disconnect_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer,
+    const AgentQUsbDisconnectHandlerOps& ops);
+
+}  // namespace agent_q

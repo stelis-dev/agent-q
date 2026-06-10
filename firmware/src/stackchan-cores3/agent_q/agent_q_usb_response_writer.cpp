@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "agent_q_protocol_constants.h"
+
 #include "driver/usb_serial_jtag.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -83,6 +85,17 @@ private:
 
 }  // namespace
 
+void usb_response_write_device_fields(
+    JsonObject device,
+    const AgentQUsbDeviceResponseInfo& info)
+{
+    device["deviceId"] = info.device_id;
+    device["state"] = info.device_state;
+    device["firmwareName"] = info.firmware_name;
+    device["hardware"] = info.hardware;
+    device["firmwareVersion"] = info.firmware_version;
+}
+
 bool usb_response_write_json(JsonDocument& response)
 {
     if (response.overflowed()) {
@@ -122,6 +135,79 @@ bool usb_response_write_json(JsonDocument& response)
     ESP_LOGW(kTag, "USB JSON response write failed after %u attempts",
              static_cast<unsigned>(kUsbResponseWriteAttempts));
     return false;
+}
+
+bool usb_response_write_error(const char* id, const char* code, const char* message)
+{
+    JsonDocument response;
+    if (id != nullptr && id[0] != '\0') {
+        response["id"] = id;
+    }
+    response["version"] = kAgentQProtocolVersion;
+    response["type"] = "error";
+    response["error"]["code"] = code;
+    response["error"]["message"] = message;
+    return usb_response_write_json(response);
+}
+
+void usb_response_log_write_failure(const char* response_type, const char* id)
+{
+    ESP_LOGW(kTag,
+             "USB response write failed: type=%s id=%s",
+             response_type != nullptr ? response_type : "",
+             id != nullptr ? id : "");
+}
+
+bool usb_response_write_ack_result(const char* id)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kAgentQProtocolVersion;
+    response["type"] = "ack_result";
+    response["status"] = "acked";
+    return usb_response_write_json(response);
+}
+
+bool usb_response_write_connect_approved(
+    const char* id,
+    const char* session_id,
+    uint32_t session_ttl_ms,
+    const AgentQUsbDeviceResponseInfo& info)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kAgentQProtocolVersion;
+    response["type"] = "connect_result";
+    response["status"] = "approved";
+    response["sessionId"] = session_id;
+    response["sessionTtlMs"] = session_ttl_ms;
+    usb_response_write_device_fields(response["device"].to<JsonObject>(), info);
+    return usb_response_write_json(response);
+}
+
+bool usb_response_write_connect_rejected(
+    const char* id,
+    const char* error_code,
+    const char* error_message)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kAgentQProtocolVersion;
+    response["type"] = "connect_result";
+    response["status"] = "rejected";
+    response["error"]["code"] = error_code;
+    response["error"]["message"] = error_message;
+    return usb_response_write_json(response);
+}
+
+bool usb_response_write_disconnect_result(const char* id)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kAgentQProtocolVersion;
+    response["type"] = "disconnect_result";
+    response["status"] = "disconnected";
+    return usb_response_write_json(response);
 }
 
 }  // namespace agent_q

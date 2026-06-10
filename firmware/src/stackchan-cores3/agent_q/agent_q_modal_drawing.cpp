@@ -93,7 +93,7 @@ constexpr int kUserSigningReviewRowValueX = 90;
 constexpr int kUserSigningReviewRowTop = 34;
 constexpr int kUserSigningReviewRowWidth = 206;
 constexpr int kUserSigningReviewNormalRowHeight = 16;
-constexpr int kUserSigningReviewRecipientRowHeight = 34;
+constexpr int kUserSigningReviewWrappedValueRowHeight = 34;
 constexpr int kPolicyUpdateReviewRowTop = 50;
 constexpr int kPolicyUpdateReviewRowHeight = 16;
 constexpr int kPolicyUpdateReviewRowWidth = kInsetPanelWidth - 36;
@@ -446,8 +446,7 @@ static bool make_settings_row_label(lv_obj_t* parent, const char* text, int y)
 static bool make_user_signing_review_row(
     lv_obj_t* parent,
     const AgentQUserSigningReviewRow& row,
-    int y,
-    bool recipient_row)
+    int y)
 {
     lv_obj_t* label = lv_label_create(parent);
     if (label == nullptr) {
@@ -466,7 +465,11 @@ static bool make_user_signing_review_row(
         return false;
     }
     lv_label_set_text(value, row.value);
-    lv_label_set_long_mode(value, recipient_row ? LV_LABEL_LONG_WRAP : LV_LABEL_LONG_CLIP);
+    const bool wrapped_value =
+        row.kind == AgentQUserSigningReviewRowKind::wrapped_value;
+    lv_label_set_long_mode(
+        value,
+        wrapped_value ? LV_LABEL_LONG_WRAP : LV_LABEL_LONG_CLIP);
     lv_obj_set_width(value, kUserSigningReviewRowWidth);
     lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(value, &lv_font_unscii_8, 0);
@@ -2075,13 +2078,14 @@ bool modal_draw_user_signing_review_panel(
 
     int row_y = kUserSigningReviewRowTop;
     for (size_t index = 0; index < model.row_count; ++index) {
-        const bool recipient_row = strcmp(model.rows[index].label, "Recipient") == 0;
-        if (!make_user_signing_review_row(panel, model.rows[index], row_y, recipient_row)) {
+        const bool wrapped_value =
+            model.rows[index].kind == AgentQUserSigningReviewRowKind::wrapped_value;
+        if (!make_user_signing_review_row(panel, model.rows[index], row_y)) {
             drawing_surface_clear_panel_locked();
             return false;
         }
-        row_y += recipient_row
-            ? kUserSigningReviewRecipientRowHeight
+        row_y += wrapped_value
+            ? kUserSigningReviewWrappedValueRowHeight
             : kUserSigningReviewNormalRowHeight;
     }
 

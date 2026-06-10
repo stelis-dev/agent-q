@@ -40,7 +40,7 @@ AgentQPolicySigningExecutionResult make_policy_execution_result(
 {
     AgentQPolicySigningExecutionResult result = {};
     result.status = status;
-    result.signing_method = AgentQSigningMethod::sui_sign_transaction;
+    result.signing_route = AgentQSigningRoute::sui_sign_transaction;
     result.code = code;
     result.message = message;
     return result;

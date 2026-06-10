@@ -70,7 +70,7 @@ agent_q::AgentQUserSigningFlowSnapshot valid_snapshot()
     agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
     snapshot.active = true;
     snapshot.stage = agent_q::AgentQUserSigningStage::reviewing;
-    snapshot.signing_method = agent_q::AgentQSigningMethod::sui_sign_transaction;
+    snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_transaction;
     copy_field(snapshot.chain, sizeof(snapshot.chain), "sui");
     copy_field(snapshot.method, sizeof(snapshot.method), "sign_transaction");
     copy_field(snapshot.network, sizeof(snapshot.network), "devnet");
@@ -108,6 +108,18 @@ const char* row_value(
     return nullptr;
 }
 
+agent_q::AgentQUserSigningReviewRowKind row_kind(
+    const agent_q::AgentQUserSigningReviewViewModel& model,
+    const char* label)
+{
+    for (size_t index = 0; index < model.row_count; ++index) {
+        if (strcmp(model.rows[index].label, label) == 0) {
+            return model.rows[index].kind;
+        }
+    }
+    return agent_q::AgentQUserSigningReviewRowKind::normal;
+}
+
 }  // namespace
 
 int main()
@@ -138,10 +150,14 @@ int main()
            "gas price row included");
     expect(strcmp(row_value(model, "Recipient"), kFullRecipient) == 0,
            "full recipient row included without tail-only truncation");
+    expect(row_kind(model, "Recipient") == agent_q::AgentQUserSigningReviewRowKind::wrapped_value,
+           "recipient row carries wrapped-value layout kind");
+    expect(row_kind(model, "Amount") == agent_q::AgentQUserSigningReviewRowKind::normal,
+           "amount row carries normal layout kind");
 
     snapshot = valid_snapshot();
     copy_field(snapshot.method, sizeof(snapshot.method), "sign_personal_message");
-    snapshot.signing_method = agent_q::AgentQSigningMethod::sui_sign_personal_message;
+    snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
     copy_field(snapshot.account_address, sizeof(snapshot.account_address),
                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     copy_field(snapshot.message_preview, sizeof(snapshot.message_preview), "Agent-Q personal message");
@@ -161,6 +177,10 @@ int main()
            "personal-message account row included");
     expect(strcmp(row_value(model, "Preview"), "Agent-Q personal message") == 0,
            "personal-message preview row included");
+    expect(row_kind(model, "Preview") == agent_q::AgentQUserSigningReviewRowKind::wrapped_value,
+           "personal-message preview row carries wrapped-value layout kind");
+    expect(row_kind(model, "Account") == agent_q::AgentQUserSigningReviewRowKind::normal,
+           "personal-message account row carries normal layout kind");
     expect(strcmp(row_value(model, "Payload digest"),
                   "sha256:1111111111111111111111111111111111111111111111111111111111111111") == 0,
            "personal-message payload digest row included");
@@ -199,16 +219,16 @@ int main()
     snapshot = valid_snapshot();
     memset(snapshot.chain, 's', sizeof(snapshot.chain));
     expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
-           "review model uses verified method enum instead of raw snapshot chain");
+           "review model uses verified route enum instead of raw snapshot chain");
     expect(strcmp(row_value(model, "Chain"), "sui") == 0,
-           "chain row is derived from method enum");
+           "chain row is derived from route enum");
 
     snapshot = valid_snapshot();
     memset(snapshot.method, 'm', sizeof(snapshot.method));
     expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
-           "review model uses verified method enum instead of raw snapshot method");
+           "review model uses verified route enum instead of raw snapshot method");
     expect(strcmp(row_value(model, "Method"), "sign_transaction") == 0,
-           "method row is derived from method enum");
+           "method row is derived from route enum");
 
     snapshot = valid_snapshot();
     copy_field(snapshot.method, sizeof(snapshot.method), "sign_unknown");
@@ -216,9 +236,9 @@ int main()
            "raw method metadata does not drive review branching");
 
     snapshot = valid_snapshot();
-    snapshot.signing_method = agent_q::AgentQSigningMethod::unsupported;
+    snapshot.signing_route = agent_q::AgentQSigningRoute::unsupported;
     expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
-           "unsupported method enum is rejected instead of falling through");
+           "unsupported route enum is rejected instead of falling through");
 
     snapshot = valid_snapshot();
     memset(snapshot.network, 'd', sizeof(snapshot.network));
@@ -253,6 +273,7 @@ CPP
   -I"${TMP_DIR}" \
   -I"${AGENT_Q_DIR}" \
   -I"${REPO_ROOT}/firmware/src/common" \
+  -I"${REPO_ROOT}/firmware/src/common/agent_q" \
   "${TMP_DIR}/user_signing_review_view_model_test.cpp" \
   "${AGENT_Q_DIR}/agent_q_user_signing_review_view_model.cpp" \
   -o "${TMP_DIR}/user_signing_review_view_model_test"

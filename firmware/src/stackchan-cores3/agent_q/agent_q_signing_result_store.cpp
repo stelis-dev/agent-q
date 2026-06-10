@@ -21,6 +21,26 @@ struct SigningResultEntry {
 SigningResultEntry g_entries[kSigningResultStoreCapacity];
 uint32_t g_store_seq = 0;
 
+void clear_buffer(void* data, size_t size)
+{
+    volatile uint8_t* cursor = static_cast<volatile uint8_t*>(data);
+    while (cursor != nullptr && size > 0) {
+        *cursor++ = 0;
+        --size;
+    }
+}
+
+void clear_entry(SigningResultEntry& entry)
+{
+    clear_buffer(entry.session_id, sizeof(entry.session_id));
+    clear_buffer(entry.request_id, sizeof(entry.request_id));
+    clear_buffer(entry.request_identity, sizeof(entry.request_identity));
+    clear_buffer(entry.result, sizeof(entry.result));
+    entry.result_len = 0;
+    entry.stored_seq = 0;
+    entry.active = false;
+}
+
 bool entry_matches(const SigningResultEntry& entry, const char* session_id, const char* request_id)
 {
     return entry.active &&
@@ -75,6 +95,10 @@ SigningResultStoreOutcome signing_result_store(
                 slot = &entry;
             }
         }
+    }
+
+    if (slot != nullptr) {
+        clear_entry(*slot);
     }
 
     SigningResultEntry next = {};
@@ -168,7 +192,7 @@ bool signing_result_ack(const char* session_id, const char* request_id)
     }
     for (SigningResultEntry& entry : g_entries) {
         if (entry_matches(entry, session_id, request_id)) {
-            entry = SigningResultEntry{};
+            clear_entry(entry);
             return true;
         }
     }
@@ -182,7 +206,7 @@ void signing_result_clear_session(const char* session_id)
     }
     for (SigningResultEntry& entry : g_entries) {
         if (entry.active && strcmp(entry.session_id, session_id) == 0) {
-            entry = SigningResultEntry{};
+            clear_entry(entry);
         }
     }
 }
@@ -190,7 +214,7 @@ void signing_result_clear_session(const char* session_id)
 void signing_result_clear_all()
 {
     for (SigningResultEntry& entry : g_entries) {
-        entry = SigningResultEntry{};
+        clear_entry(entry);
     }
 }
 

@@ -20,7 +20,13 @@ enum class AgentQUserSigningReviewBuildResult {
     output_too_small,
 };
 
+enum class AgentQUserSigningReviewRowKind {
+    normal,
+    wrapped_value,
+};
+
 struct AgentQUserSigningReviewRow {
+    AgentQUserSigningReviewRowKind kind;
     char label[kAgentQUserSigningReviewLabelSize];
     char value[kAgentQUserSigningReviewValueSize];
 };

@@ -63,4 +63,14 @@ if (( client_name_y + client_name_height > approval_y )); then
   fail "connect review agent-q value region overlaps the approval row"
 fi
 
+grep -Fq 'AgentQUserSigningReviewRowKind::wrapped_value' "${MODAL_SOURCE}" ||
+  fail "signing review layout must use row kind for wrapped-value rows"
+
+grep -Fq 'kUserSigningReviewWrappedValueRowHeight' "${MODAL_SOURCE}" ||
+  fail "signing review wrapped rows must use a named layout height"
+
+if grep -Fq 'strcmp(model.rows[index].label, "Recipient")' "${MODAL_SOURCE}"; then
+  fail "signing review layout must not depend on the visible Recipient label"
+fi
+
 printf 'Modal layout static checks passed\n'

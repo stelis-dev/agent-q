@@ -7,7 +7,7 @@
 #include "agent_q_sign_personal_message_limits.h"
 #include "agent_q_sign_request_identity.h"
 #include "agent_q_sign_transaction_limits.h"
-#include "agent_q_signing_method.h"
+#include "agent_q_signing_route.h"
 #include "agent_q_session.h"
 #include "agent_q_timeout_window.h"
 #include "agent_q_user_signing_limits.h"
@@ -74,7 +74,7 @@ struct AgentQUserSigningTransactionBeginInput {
     const char* request_id;
     const uint8_t* request_identity;
     const char* session_id;
-    AgentQSupportedSignRoute route;
+    AgentQSigningRoute route;
     const AgentQSuiPreparedSignTransaction* prepared;
     AgentQTimeoutWindow request_window;
 };
@@ -83,7 +83,7 @@ struct AgentQUserSigningPersonalMessageBeginInput {
     const char* request_id;
     const uint8_t* request_identity;
     const char* session_id;
-    AgentQSupportedSignRoute route;
+    AgentQSigningRoute route;
     const AgentQSuiPreparedPersonalMessage* prepared;
     AgentQTimeoutWindow request_window;
 };
@@ -92,7 +92,7 @@ struct AgentQUserSigningFlowSnapshot {
     bool active;
     AgentQUserSigningStage stage;
     AgentQUserSigningTerminalResult terminal_result;
-    AgentQSigningMethod signing_method;
+    AgentQSigningRoute signing_route;
     char request_id[kAgentQUserSigningIdSize];
     uint8_t request_identity[kAgentQSignRequestIdentitySize];
     char session_id[kAgentQSessionIdSize];

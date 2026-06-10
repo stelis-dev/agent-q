@@ -316,7 +316,7 @@ void enter_personal_message_critical_section(const char* request_id)
 
 void poison_output(agent_q::AgentQUserSigningOutput& output)
 {
-    output.signing_method = agent_q::AgentQSigningMethod::sui_sign_personal_message;
+    output.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
     memset(output.signature, 0xCC, sizeof(output.signature));
     output.signature_size = 999;
     memset(output.message_bytes, 0xCC, sizeof(output.message_bytes));
@@ -325,7 +325,7 @@ void poison_output(agent_q::AgentQUserSigningOutput& output)
 
 bool output_is_wiped(const agent_q::AgentQUserSigningOutput& output)
 {
-    if (output.signing_method != agent_q::AgentQSigningMethod::unsupported ||
+    if (output.signing_route != agent_q::AgentQSigningRoute::unsupported ||
         output.signature_size != 0 ||
         output.message_bytes_size != 0) {
         return false;
@@ -525,8 +525,8 @@ int main()
            "signing service receives exact request payload");
     expect(output_matches_stub_signature(output),
            "successful signing returns caller-owned signature output");
-    expect(output.signing_method == aq::AgentQSigningMethod::sui_sign_transaction,
-           "transaction signing output carries verified method enum");
+    expect(output.signing_route == aq::AgentQSigningRoute::sui_sign_transaction,
+           "transaction signing output carries verified route enum");
     expect(output_has_no_message_bytes(output),
            "transaction signing does not return messageBytes");
     aq::AgentQUserSigningFlowSnapshot snapshot = aq::user_signing_flow_snapshot();
@@ -556,8 +556,8 @@ int main()
            "personal-message signing service receives exact message bytes");
     expect(output_matches_stub_signature(output),
            "personal-message signing returns caller-owned signature output");
-    expect(output.signing_method == aq::AgentQSigningMethod::sui_sign_personal_message,
-           "personal-message signing output carries verified method enum");
+    expect(output.signing_route == aq::AgentQSigningRoute::sui_sign_personal_message,
+           "personal-message signing output carries verified route enum");
     expect(output.message_bytes_size == expected_message.size(),
            "personal-message signing returns messageBytes size");
     expect(memcmp(output.message_bytes, expected_message.data(), expected_message.size()) == 0,

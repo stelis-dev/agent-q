@@ -341,6 +341,6 @@ check_local_pin_ui_handler_timeout_order \
   "request-backed PIN submit handler must timeout before verification start"
 check_local_pin_ui_handler_timeout_order \
   cancel_local_pin_auth_from_ui \
-  'policy_update_flow_return_to_review|write_connect_rejected_response|user_signing_confirmation_return_to_review_from_pin' \
+  'policy_update_flow_return_to_review|usb_response_write_connect_rejected|user_signing_confirmation_return_to_review_from_pin' \
   "request-backed PIN cancel handler must timeout before cancel/back action"
 check_local_pin_worker_timeout_order

@@ -1,9 +1,9 @@
 #include "agent_q_signing_retry_response.h"
 
+#include "agent_q_protocol_constants.h"
+
 namespace agent_q {
 namespace {
-
-constexpr int kProtocolVersion = 1;
 
 bool write_error(
     const char* request_id,
@@ -19,7 +19,7 @@ bool write_error(
     if (request_id != nullptr && request_id[0] != '\0') {
         response["id"] = request_id;
     }
-    response["version"] = kProtocolVersion;
+    response["version"] = kAgentQProtocolVersion;
     response["type"] = "error";
     response["error"]["code"] = code != nullptr ? code : "protocol_error";
     response["error"]["message"] =

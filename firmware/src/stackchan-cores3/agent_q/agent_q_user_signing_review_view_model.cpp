@@ -50,6 +50,7 @@ bool copy_exact_c_string(const char* input, char* output, size_t output_size)
 
 bool add_row(
     AgentQUserSigningReviewViewModel* output,
+    AgentQUserSigningReviewRowKind kind,
     const char* label,
     const char* value)
 {
@@ -58,6 +59,7 @@ bool add_row(
         return false;
     }
     AgentQUserSigningReviewRow& row = output->rows[output->row_count];
+    row.kind = kind;
     if (!copy_exact_c_string(label, row.label, sizeof(row.label)) ||
         !copy_exact_c_string(value, row.value, sizeof(row.value))) {
         return false;
@@ -66,12 +68,36 @@ bool add_row(
     return true;
 }
 
+bool add_chain_method_rows(
+    AgentQUserSigningReviewViewModel* output,
+    const char* wire_chain,
+    const char* wire_method)
+{
+    return add_row(output, AgentQUserSigningReviewRowKind::normal, "Chain", wire_chain) &&
+           add_row(output, AgentQUserSigningReviewRowKind::normal, "Method", wire_method);
+}
+
+bool add_review_header(
+    AgentQUserSigningReviewViewModel* output,
+    const char* title,
+    const char* wire_chain,
+    const char* wire_method)
+{
+    return copy_exact_c_string(title, output->title, sizeof(output->title)) &&
+           add_chain_method_rows(output, wire_chain, wire_method);
+}
+
+bool common_summary_fields_valid(const AgentQUserSigningFlowSnapshot& snapshot)
+{
+    return snapshot.signable_payload_available &&
+           snapshot.signable_payload_size > 0 &&
+           bounded_string_present(snapshot.payload_digest, sizeof(snapshot.payload_digest));
+}
+
 bool summary_fields_valid(const AgentQUserSigningFlowSnapshot& snapshot)
 {
     const SuiTransferFacts& facts = snapshot.sui_transfer;
-    return snapshot.signable_payload_available &&
-           snapshot.signable_payload_size > 0 &&
-           bounded_string_present(snapshot.payload_digest, sizeof(snapshot.payload_digest)) &&
+    return common_summary_fields_valid(snapshot) &&
            bounded_string_present(facts.recipient, sizeof(facts.recipient)) &&
            bounded_string_present(facts.asset, sizeof(facts.asset)) &&
            strcmp(facts.asset, kSuiAsset) == 0 &&
@@ -82,10 +108,8 @@ bool summary_fields_valid(const AgentQUserSigningFlowSnapshot& snapshot)
 
 bool personal_message_summary_fields_valid(const AgentQUserSigningFlowSnapshot& snapshot)
 {
-    return snapshot.signable_payload_available &&
-           snapshot.signable_payload_size > 0 &&
+    return common_summary_fields_valid(snapshot) &&
            snapshot.signable_payload_size <= kAgentQSuiSignPersonalMessageMaxBytes &&
-           bounded_string_present(snapshot.payload_digest, sizeof(snapshot.payload_digest)) &&
            bounded_string_present(snapshot.account_address, sizeof(snapshot.account_address)) &&
            bounded_string_present(snapshot.message_preview, sizeof(snapshot.message_preview));
 }
@@ -107,45 +131,37 @@ AgentQUserSigningReviewBuildResult user_signing_review_view_model_build(
     if (snapshot.stage != AgentQUserSigningStage::reviewing) {
         return AgentQUserSigningReviewBuildResult::wrong_stage;
     }
-    const AgentQSigningMethod method = snapshot.signing_method;
-    if (method == AgentQSigningMethod::unsupported) {
+    const AgentQSigningRoute route = snapshot.signing_route;
+    if (route == AgentQSigningRoute::unsupported) {
         return AgentQUserSigningReviewBuildResult::invalid_summary;
     }
-    const char* wire_chain = signing_method_wire_chain(method);
-    const char* wire_method = signing_method_wire_method(method);
+    const char* wire_chain = signing_route_wire_chain(route);
+    const char* wire_method = signing_route_wire_method(route);
     if (wire_chain == nullptr || wire_chain[0] == '\0' ||
         wire_method == nullptr || wire_method[0] == '\0') {
         return AgentQUserSigningReviewBuildResult::invalid_summary;
     }
-    if (method == AgentQSigningMethod::sui_sign_personal_message) {
+    if (route == AgentQSigningRoute::sui_sign_personal_message) {
         if (!personal_message_summary_fields_valid(snapshot)) {
             return AgentQUserSigningReviewBuildResult::invalid_summary;
         }
-        if (!copy_exact_c_string(kPersonalMessageReviewTitle, output->title, sizeof(output->title))) {
-            return AgentQUserSigningReviewBuildResult::output_too_small;
-        }
-        if (!add_row(output, "Chain", wire_chain) ||
-            !add_row(output, "Method", wire_method) ||
-            !add_row(output, "Account", snapshot.account_address) ||
-            !add_row(output, "Preview", snapshot.message_preview) ||
-            !add_row(output, "Payload digest", snapshot.payload_digest)) {
+        if (!add_review_header(output, kPersonalMessageReviewTitle, wire_chain, wire_method) ||
+            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Account", snapshot.account_address) ||
+            !add_row(output, AgentQUserSigningReviewRowKind::wrapped_value, "Preview", snapshot.message_preview) ||
+            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Payload digest", snapshot.payload_digest)) {
             memset(output, 0, sizeof(*output));
             return AgentQUserSigningReviewBuildResult::output_too_small;
         }
-    } else if (method == AgentQSigningMethod::sui_sign_transaction) {
+    } else if (route == AgentQSigningRoute::sui_sign_transaction) {
         if (!summary_fields_valid(snapshot)) {
             return AgentQUserSigningReviewBuildResult::invalid_summary;
         }
-        if (!copy_exact_c_string(kReviewTitle, output->title, sizeof(output->title))) {
-            return AgentQUserSigningReviewBuildResult::output_too_small;
-        }
-        if (!add_row(output, "Chain", wire_chain) ||
-            !add_row(output, "Method", wire_method) ||
-            !add_row(output, "Amount", snapshot.sui_transfer.amount) ||
-            !add_row(output, "Asset", snapshot.sui_transfer.asset) ||
-            !add_row(output, "Recipient", snapshot.sui_transfer.recipient) ||
-            !add_row(output, "Gas budget", snapshot.sui_transfer.gas_budget) ||
-            !add_row(output, "Gas price", snapshot.sui_transfer.gas_price)) {
+        if (!add_review_header(output, kReviewTitle, wire_chain, wire_method) ||
+            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Amount", snapshot.sui_transfer.amount) ||
+            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Asset", snapshot.sui_transfer.asset) ||
+            !add_row(output, AgentQUserSigningReviewRowKind::wrapped_value, "Recipient", snapshot.sui_transfer.recipient) ||
+            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Gas budget", snapshot.sui_transfer.gas_budget) ||
+            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Gas price", snapshot.sui_transfer.gas_price)) {
             memset(output, 0, sizeof(*output));
             return AgentQUserSigningReviewBuildResult::output_too_small;
         }

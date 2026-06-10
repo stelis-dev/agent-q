@@ -55,6 +55,29 @@ bool should_terminalize_signing_failure(
            consume_result == AgentQUserSigningTransitionResult::output_too_small;
 }
 
+SuiTransactionSigningResult sign_payload_for_route(
+    AgentQSigningRoute route,
+    const uint8_t* payload,
+    size_t payload_size,
+    uint8_t* signature)
+{
+    switch (route) {
+        case AgentQSigningRoute::sui_sign_transaction:
+            return sign_sui_ed25519_transaction_from_stored_root(
+                payload,
+                payload_size,
+                signature);
+        case AgentQSigningRoute::sui_sign_personal_message:
+            return sign_sui_ed25519_personal_message_from_stored_root(
+                payload,
+                payload_size,
+                signature);
+        case AgentQSigningRoute::unsupported:
+        default:
+            return SuiTransactionSigningResult::invalid_input;
+    }
+}
+
 }  // namespace
 
 void user_signing_output_wipe(
@@ -63,7 +86,7 @@ void user_signing_output_wipe(
     if (output == nullptr) {
         return;
     }
-    output->signing_method = AgentQSigningMethod::unsupported;
+    output->signing_route = AgentQSigningRoute::unsupported;
     wipe_sensitive_buffer(output->signature, sizeof(output->signature));
     output->signature_size = 0;
     wipe_sensitive_buffer(output->message_bytes, sizeof(output->message_bytes));
@@ -112,8 +135,8 @@ user_signing_execute_critical_section(
             SuiTransactionSigningResult::invalid_input);
     }
 
-    const AgentQSigningMethod method = snapshot.signing_method;
-    if (method == AgentQSigningMethod::unsupported) {
+    const AgentQSigningRoute route = snapshot.signing_route;
+    if (route == AgentQSigningRoute::unsupported) {
         wipe_sensitive_buffer(payload, sizeof(payload));
         wipe_sensitive_buffer(signature, sizeof(signature));
         const AgentQUserSigningTransitionResult terminal_result =
@@ -124,24 +147,8 @@ user_signing_execute_critical_section(
             SuiTransactionSigningResult::invalid_input);
     }
 
-    SuiTransactionSigningResult signing_result = SuiTransactionSigningResult::invalid_input;
-    switch (method) {
-        case AgentQSigningMethod::sui_sign_transaction:
-            signing_result = sign_sui_ed25519_transaction_from_stored_root(
-                payload,
-                payload_size,
-                signature);
-            break;
-        case AgentQSigningMethod::sui_sign_personal_message:
-            signing_result = sign_sui_ed25519_personal_message_from_stored_root(
-                payload,
-                payload_size,
-                signature);
-            break;
-        case AgentQSigningMethod::unsupported:
-        default:
-            break;
-    }
+    const SuiTransactionSigningResult signing_result =
+        sign_payload_for_route(route, payload, payload_size, signature);
 
     if (signing_result != SuiTransactionSigningResult::ok) {
         wipe_sensitive_buffer(payload, sizeof(payload));
@@ -166,8 +173,8 @@ user_signing_execute_critical_section(
     }
     memcpy(output->signature, signature, sizeof(output->signature));
     output->signature_size = sizeof(output->signature);
-    output->signing_method = method;
-    if (method == AgentQSigningMethod::sui_sign_personal_message) {
+    output->signing_route = route;
+    if (route == AgentQSigningRoute::sui_sign_personal_message) {
         memcpy(output->message_bytes, payload, payload_size);
         output->message_bytes_size = payload_size;
     }
