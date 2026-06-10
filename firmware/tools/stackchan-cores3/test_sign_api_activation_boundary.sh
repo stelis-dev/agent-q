@@ -42,6 +42,8 @@ USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/a
 CONNECT_REVIEW_RESPONSE_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_connect_review_response_flow.cpp"
 LOCAL_SETTINGS_RESET_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_local_settings_reset_ui_flow.cpp"
 LOCAL_PIN_AUTH_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_local_pin_auth_ui_flow.cpp"
+POLICY_UPDATE_REVIEW_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_policy_update_review_ui_flow.cpp"
+USER_SIGNING_REVIEW_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_review_ui_flow.cpp"
 REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_request_backed_local_pin_context.cpp"
 TRANSIENT_UI_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_transient_ui_flow.cpp"
 SIGNING_PREFLIGHT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_signing_preflight.cpp"
@@ -195,6 +197,26 @@ expect_present "${USB_SERVER}" 'local_pin_auth_ui_clear_if_needed' \
   "USB request server maintenance phase must delegate local PIN auth cleanup"
 expect_absent "${USB_SERVER}" 'local_pin_auth_complete_verify_job|user_signing_confirmation_complete_pin_verify_job_and_write_history|local_pin_auth_fail_processing_if_expired|local_pin_auth_release_lockout_if_elapsed|request_backed_local_pin_deadline_reached|request_backed_local_pin_resume_input_window|request_backed_local_pin_pause_input_window' \
   "USB request server must not own local PIN verification, lockout, timeout, or request-backed input-window effects"
+expect_present "${POLICY_UPDATE_REVIEW_UI_SOURCE}" 'policy_update_review_ui_continue' \
+  "policy update review UI flow must own continue-to-PIN lifecycle effects"
+expect_present "${POLICY_UPDATE_REVIEW_UI_SOURCE}" 'policy_update_review_ui_reject' \
+  "policy update review UI flow must own reject terminal effects"
+expect_present "${POLICY_UPDATE_REVIEW_UI_SOURCE}" 'policy_update_review_ui_clear_if_needed' \
+  "policy update review UI flow must own timeout and panel-recovery effects"
+expect_present "${USER_SIGNING_REVIEW_UI_SOURCE}" 'user_signing_review_ui_accept' \
+  "user signing review UI flow must own accept/PIN/signing entry effects"
+expect_present "${USER_SIGNING_REVIEW_UI_SOURCE}" 'user_signing_review_ui_reject' \
+  "user signing review UI flow must own reject terminal effects"
+expect_present "${USER_SIGNING_REVIEW_UI_SOURCE}" 'user_signing_review_ui_clear_if_needed' \
+  "user signing review UI flow must own timeout and panel-recovery effects"
+expect_present "${USB_SERVER}" 'policy_update_review_ui_continue' \
+  "USB request server must delegate policy update review continue handling"
+expect_present "${USB_SERVER}" 'policy_update_review_ui_clear_if_needed' \
+  "USB request server maintenance phase must delegate policy update review cleanup"
+expect_present "${USB_SERVER}" 'user_signing_review_ui_accept' \
+  "USB request server must delegate user signing review accept handling"
+expect_present "${USB_SERVER}" 'user_signing_review_ui_clear_if_needed' \
+  "USB request server maintenance phase must delegate user signing review cleanup"
 expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_local_pin_owner_for_purpose' \
   "request-backed local PIN context must own purpose-to-owner classification"
 expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_local_pin_cap_input_window' \

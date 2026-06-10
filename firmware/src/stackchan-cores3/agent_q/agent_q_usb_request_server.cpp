@@ -29,6 +29,7 @@
 #include "agent_q_policy_proposal_parser.h"
 #include "agent_q_policy_store.h"
 #include "agent_q_policy_update_flow.h"
+#include "agent_q_policy_update_review_ui_flow.h"
 #include "agent_q_protocol_constants.h"
 #include "agent_q_protocol_pin_approval.h"
 #include "agent_q_provisioning_flow.h"
@@ -44,6 +45,7 @@
 #include "agent_q_user_signing_flow.h"
 #include "agent_q_sign_transaction_user_ingress.h"
 #include "agent_q_user_signing_review_view_model.h"
+#include "agent_q_user_signing_review_ui_flow.h"
 #include "agent_q_user_signing_critical_section.h"
 #include "agent_q_signing_route.h"
 #include "agent_q_signing_mode.h"
@@ -162,6 +164,8 @@ agent_q::AgentQPersistentMaterialOps persistent_material_ops();
 agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops();
 agent_q::AgentQLocalSettingsResetUiFlowOps local_settings_reset_ui_ops();
 agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops();
+const agent_q::AgentQPolicyUpdateReviewUiFlowOps& policy_update_review_ui_flow_ops();
+const agent_q::AgentQUserSigningReviewUiFlowOps& user_signing_review_ui_flow_ops();
 bool clear_agent_q_panel_if_kind(
     AgentQUiPanelKind expected_kind,
     SensitiveUiClearPolicy policy = SensitiveUiClearPolicy::wipe);
@@ -1043,37 +1047,12 @@ bool user_signing_ingress_busy()
 
 bool show_user_signing_review()
 {
-    const agent_q::AgentQUserSigningFlowSnapshot snapshot =
-        agent_q::user_signing_flow_snapshot();
-    agent_q::AgentQUserSigningReviewViewModel model = {};
-    if (agent_q::user_signing_review_view_model_build(snapshot, &model) !=
-        agent_q::AgentQUserSigningReviewBuildResult::ok) {
-        return false;
-    }
-    return agent_q::modal_draw_user_signing_review_panel(
-        model,
-        snapshot.request_window);
+    return agent_q::user_signing_review_ui_show(user_signing_review_ui_flow_ops());
 }
 
 bool show_policy_update_review()
 {
-    const agent_q::AgentQPolicyUpdateFlowSnapshot snapshot =
-        agent_q::policy_update_flow_snapshot();
-    if (!snapshot.active ||
-        snapshot.stage != agent_q::AgentQPolicyUpdateFlowStage::reviewing) {
-        return false;
-    }
-    const agent_q::AgentQPolicyUpdateReviewViewModel model{
-        snapshot.policy_hash,
-        snapshot.rule_count,
-        snapshot.default_action,
-        snapshot.highest_action,
-        snapshot.method_summary,
-        snapshot.review_summary,
-    };
-    return agent_q::modal_draw_policy_update_review_panel(
-        model,
-        snapshot.review_window);
+    return agent_q::policy_update_review_ui_show(policy_update_review_ui_flow_ops());
 }
 
 bool agent_q_ui_idle_for_local_settings()
@@ -2103,66 +2082,7 @@ void finish_policy_update_terminal(
 
 void begin_policy_update_pin_auth_from_review()
 {
-    const agent_q::AgentQPolicyUpdateFlowSnapshot snapshot =
-        agent_q::policy_update_flow_snapshot();
-    if (!snapshot.active ||
-        snapshot.stage != agent_q::AgentQPolicyUpdateFlowStage::reviewing) {
-        ESP_LOGW(kTag, "Stale policy update review continue ignored");
-        return;
-    }
-
-    agent_q::identification_display_clear();
-    const TickType_t started_at = xTaskGetTickCount();
-    const agent_q::AgentQPolicyUpdateFlowTransitionResult transition =
-        agent_q::policy_update_flow_continue_to_pin(started_at);
-    if (transition == agent_q::AgentQPolicyUpdateFlowTransitionResult::timed_out) {
-        clear_agent_q_panel_if_kind(
-            AgentQUiPanelKind::policy_update_review,
-            SensitiveUiClearPolicy::preserve);
-        finish_policy_update_terminal(
-            snapshot.request_id,
-            agent_q::policy_update_flow_record_timed_out(
-                static_cast<uint64_t>(esp_timer_get_time() / 1000LL)));
-        return;
-    }
-    if (transition != agent_q::AgentQPolicyUpdateFlowTransitionResult::ok) {
-        finish_policy_update_error_terminal(
-            snapshot.request_id,
-            "invalid_state",
-            "Policy update is unavailable.",
-            "Policy unavailable");
-        return;
-    }
-
-    const agent_q::AgentQTimeoutWindow request_window =
-        timeout_window_from_now_ms(started_at, kProvisioningApprovalMaxMs);
-    if (!agent_q::protocol_pin_approval_begin_policy_update(
-            snapshot.request_id,
-            snapshot.session_id,
-            request_window)) {
-        finish_policy_update_error_terminal(
-            snapshot.request_id,
-            "invalid_state",
-            "Policy update is unavailable.",
-            "Policy unavailable");
-        return;
-    }
-    if (!agent_q::local_pin_auth_begin_policy_update(request_window)) {
-        agent_q::protocol_pin_approval_clear();
-        finish_policy_update_error_terminal(
-            snapshot.request_id,
-            "invalid_state",
-            "Policy update PIN is unavailable.",
-            "Policy unavailable");
-        return;
-    }
-
-    if (!agent_q::modal_draw_local_pin_auth_panel()) {
-        wipe_local_pin_auth_scratch("policy update PIN display allocation failed");
-        finish_policy_update_terminal(
-            snapshot.request_id,
-            agent_q::policy_update_flow_record_ui_error());
-    }
+    agent_q::policy_update_review_ui_continue(policy_update_review_ui_flow_ops());
 }
 
 void handle_policy_update_review_continue_from_ui()
@@ -2172,121 +2092,17 @@ void handle_policy_update_review_continue_from_ui()
 
 void handle_policy_update_review_reject_from_ui()
 {
-    const agent_q::AgentQPolicyUpdateFlowSnapshot snapshot =
-        agent_q::policy_update_flow_snapshot();
-    if (!snapshot.active ||
-        snapshot.stage != agent_q::AgentQPolicyUpdateFlowStage::reviewing) {
-        ESP_LOGW(kTag, "Stale policy update review reject ignored");
-        return;
-    }
-    const TickType_t now = xTaskGetTickCount();
-    clear_agent_q_panel_if_kind(
-        AgentQUiPanelKind::policy_update_review,
-        SensitiveUiClearPolicy::preserve);
-    if (agent_q::policy_update_flow_review_deadline_reached(now)) {
-        finish_policy_update_terminal(
-            snapshot.request_id,
-            agent_q::policy_update_flow_record_timed_out(
-                static_cast<uint64_t>(esp_timer_get_time() / 1000LL)));
-        return;
-    }
-    finish_policy_update_terminal(
-        snapshot.request_id,
-        agent_q::policy_update_flow_record_rejected(
-            static_cast<uint64_t>(esp_timer_get_time() / 1000LL)));
+    agent_q::policy_update_review_ui_reject(policy_update_review_ui_flow_ops());
 }
 
 void handle_user_signing_review_accept_from_ui()
 {
-    const agent_q::AgentQUserSigningFlowSnapshot snapshot =
-        agent_q::user_signing_flow_snapshot();
-    if (!snapshot.active ||
-        snapshot.stage != agent_q::AgentQUserSigningStage::reviewing) {
-        ESP_LOGW(kTag, "Stale user_signing review accept ignored");
-        return;
-    }
-
-    const TickType_t now = xTaskGetTickCount();
-    if (!agent_q::human_approval_requires_pin()) {
-        const agent_q::AgentQUserSigningTransitionResult result =
-            agent_q::user_signing_flow_record_physical_confirmed_and_write_confirmation_history(
-                now,
-                write_user_signing_physical_confirmation_history,
-                nullptr);
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::user_signing_review, SensitiveUiClearPolicy::preserve);
-        if (result == agent_q::AgentQUserSigningTransitionResult::ok) {
-            execute_user_signing_critical_section_and_finish(snapshot.request_id);
-            return;
-        }
-        if (agent_q::user_signing_flow_terminal_pending()) {
-            finish_user_signing_terminal(snapshot.request_id);
-            return;
-        }
-        finish_user_signing_error_terminal(
-            snapshot.request_id,
-            result == agent_q::AgentQUserSigningTransitionResult::history_error
-                ? "history_error"
-                : "invalid_state",
-            "Signing request is unavailable.",
-            "Signing unavailable");
-        return;
-    }
-
-    const agent_q::AgentQTimeoutWindow pin_input_window =
-        timeout_window_from_now_ms(now, kLocalPinInputWindowMs);
-    const agent_q::AgentQUserSigningConfirmationResult result =
-        agent_q::user_signing_confirmation_accept_review_and_begin_pin(
-            now,
-            pin_input_window);
-    if (result != agent_q::AgentQUserSigningConfirmationResult::ok) {
-        if (agent_q::user_signing_flow_terminal_pending()) {
-            finish_user_signing_terminal(snapshot.request_id);
-            return;
-        }
-        finish_user_signing_error_terminal(
-            snapshot.request_id,
-            result == agent_q::AgentQUserSigningConfirmationResult::local_pin_busy
-                ? "busy"
-                : "invalid_state",
-            "Signing request is unavailable.",
-            "Signing unavailable");
-        return;
-    }
-
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::user_signing_review, SensitiveUiClearPolicy::preserve);
-    if (!agent_q::modal_draw_local_pin_auth_panel()) {
-        agent_q::user_signing_confirmation_cancel_for_pin_loss();
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-        finish_user_signing_error_terminal(
-            snapshot.request_id,
-            "ui_error",
-            "Could not show signing PIN UI.",
-            "Display error");
-    }
+    agent_q::user_signing_review_ui_accept(user_signing_review_ui_flow_ops());
 }
 
 void handle_user_signing_review_reject_from_ui()
 {
-    const agent_q::AgentQUserSigningFlowSnapshot snapshot =
-        agent_q::user_signing_flow_snapshot();
-    if (!snapshot.active ||
-        snapshot.stage != agent_q::AgentQUserSigningStage::reviewing) {
-        ESP_LOGW(kTag, "Stale user_signing review reject ignored");
-        return;
-    }
-
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::user_signing_review, SensitiveUiClearPolicy::preserve);
-    const agent_q::AgentQUserSigningConfirmationResult result =
-        agent_q::user_signing_confirmation_record_device_rejected();
-    if (result != agent_q::AgentQUserSigningConfirmationResult::ok) {
-        finish_user_signing_error_terminal(
-            snapshot.request_id,
-            "invalid_state",
-            "Signing request is unavailable.",
-            "Signing unavailable");
-        return;
-    }
-    finish_user_signing_terminal(snapshot.request_id);
+    agent_q::user_signing_review_ui_reject(user_signing_review_ui_flow_ops());
 }
 
 void start_settings_human_approval_input_from_settings_menu()
@@ -2425,77 +2241,12 @@ void clear_local_pin_auth_if_needed()
 
 void clear_user_signing_review_if_needed()
 {
-    const TickType_t now = xTaskGetTickCount();
-    const agent_q::AgentQUserSigningFlowSnapshot snapshot =
-        agent_q::user_signing_flow_snapshot();
-    if (!snapshot.active ||
-        snapshot.stage != agent_q::AgentQUserSigningStage::reviewing) {
-        return;
-    }
-
-    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::user_signing_review);
-    const agent_q::AgentQUserSigningTransitionResult timeout_result =
-        agent_q::user_signing_flow_record_timeout(now);
-    if (timeout_result == agent_q::AgentQUserSigningTransitionResult::deadline_not_reached) {
-        if (panel_active) {
-            return;
-        }
-        if (!show_user_signing_review()) {
-            agent_q::user_signing_flow_clear();
-            agent_q::usb_response_write_error(
-                snapshot.request_id,
-                "ui_error",
-                "Could not restore signing review UI.");
-            agent_q::avatar_overlay_show_message(
-                "Display error",
-                AgentQMessageKind::error,
-                AgentQUiMode::result,
-                kAgentQResultDisplayMs);
-        }
-        return;
-    }
-    if (timeout_result == agent_q::AgentQUserSigningTransitionResult::ok ||
-        agent_q::user_signing_flow_terminal_pending()) {
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::user_signing_review, SensitiveUiClearPolicy::preserve);
-        finish_user_signing_terminal(snapshot.request_id);
-        return;
-    }
-
-    ESP_LOGW(kTag,
-             "Signature review timeout check returned %d",
-             static_cast<int>(timeout_result));
+    agent_q::user_signing_review_ui_clear_if_needed(user_signing_review_ui_flow_ops());
 }
 
 void clear_policy_update_review_if_needed()
 {
-    const TickType_t now = xTaskGetTickCount();
-    const agent_q::AgentQPolicyUpdateFlowSnapshot snapshot =
-        agent_q::policy_update_flow_snapshot();
-    if (!snapshot.active ||
-        snapshot.stage != agent_q::AgentQPolicyUpdateFlowStage::reviewing) {
-        return;
-    }
-
-    const bool panel_active = agent_q_panel_active(AgentQUiPanelKind::policy_update_review);
-    if (!agent_q::policy_update_flow_review_deadline_reached(now)) {
-        if (panel_active) {
-            return;
-        }
-        if (!show_policy_update_review()) {
-            finish_policy_update_terminal(
-                snapshot.request_id,
-                agent_q::policy_update_flow_record_ui_error());
-        }
-        return;
-    }
-
-    clear_agent_q_panel_if_kind(
-        AgentQUiPanelKind::policy_update_review,
-        SensitiveUiClearPolicy::preserve);
-    finish_policy_update_terminal(
-        snapshot.request_id,
-        agent_q::policy_update_flow_record_timed_out(
-            static_cast<uint64_t>(esp_timer_get_time() / 1000LL)));
+    agent_q::policy_update_review_ui_clear_if_needed(policy_update_review_ui_flow_ops());
 }
 
 void poll_local_settings_touch_entry()
@@ -3223,6 +2974,94 @@ void show_policy_signing_notice(
             break;
     }
     show_policy_signing_notification(message, message_kind);
+}
+
+bool policy_update_review_panel_active()
+{
+    return agent_q_panel_active(AgentQUiPanelKind::policy_update_review);
+}
+
+bool user_signing_review_panel_active()
+{
+    return agent_q_panel_active(AgentQUiPanelKind::user_signing_review);
+}
+
+bool draw_local_pin_auth_panel_for_review_flow()
+{
+    return agent_q::modal_draw_local_pin_auth_panel();
+}
+
+void review_flow_log_warn(const char* message)
+{
+    ESP_LOGW(kTag, "%s", message != nullptr ? message : "review flow warning");
+}
+
+void cancel_user_signing_confirmation_for_pin_loss()
+{
+    agent_q::user_signing_confirmation_cancel_for_pin_loss();
+}
+
+void finish_user_signing_terminal_for_review(const char* request_id)
+{
+    finish_user_signing_terminal(request_id);
+}
+
+const agent_q::AgentQPolicyUpdateReviewUiFlowOps& policy_update_review_ui_flow_ops()
+{
+    static const agent_q::AgentQPolicyUpdateReviewUiFlowOps ops = {
+        xTaskGetTickCount,
+        local_pin_auth_wall_clock_ms,
+        agent_q::policy_update_flow_snapshot,
+        agent_q::modal_draw_policy_update_review_panel,
+        clear_agent_q_panel_if_kind,
+        policy_update_review_panel_active,
+        agent_q::identification_display_clear,
+        agent_q::policy_update_flow_continue_to_pin,
+        agent_q::protocol_pin_approval_begin_policy_update,
+        agent_q::protocol_pin_approval_clear,
+        agent_q::local_pin_auth_begin_policy_update,
+        draw_local_pin_auth_panel_for_review_flow,
+        wipe_local_pin_auth_scratch,
+        agent_q::policy_update_flow_review_deadline_reached,
+        agent_q::policy_update_flow_record_timed_out,
+        agent_q::policy_update_flow_record_rejected,
+        agent_q::policy_update_flow_record_ui_error,
+        finish_policy_update_terminal,
+        finish_policy_update_error_terminal,
+        review_flow_log_warn,
+        kProvisioningApprovalMaxMs,
+    };
+    return ops;
+}
+
+const agent_q::AgentQUserSigningReviewUiFlowOps& user_signing_review_ui_flow_ops()
+{
+    static const agent_q::AgentQUserSigningReviewUiFlowOps ops = {
+        xTaskGetTickCount,
+        agent_q::user_signing_flow_snapshot,
+        agent_q::user_signing_review_view_model_build,
+        agent_q::modal_draw_user_signing_review_panel,
+        clear_agent_q_panel_if_kind,
+        user_signing_review_panel_active,
+        agent_q::human_approval_requires_pin,
+        agent_q::user_signing_flow_record_physical_confirmed_and_write_confirmation_history,
+        agent_q::user_signing_confirmation_accept_review_and_begin_pin,
+        agent_q::user_signing_confirmation_record_device_rejected,
+        agent_q::user_signing_flow_record_timeout,
+        agent_q::user_signing_flow_clear,
+        agent_q::user_signing_flow_terminal_pending,
+        cancel_user_signing_confirmation_for_pin_loss,
+        draw_local_pin_auth_panel_for_review_flow,
+        agent_q::usb_response_write_error,
+        show_user_signing_display_error,
+        write_user_signing_physical_confirmation_history,
+        execute_user_signing_critical_section_and_finish,
+        finish_user_signing_terminal_for_review,
+        finish_user_signing_error_terminal,
+        review_flow_log_warn,
+        kLocalPinInputWindowMs,
+    };
+    return ops;
 }
 
 void log_policy_rejected(
