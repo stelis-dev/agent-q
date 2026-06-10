@@ -11,6 +11,7 @@
 #include "agent_q_bip39.h"
 #include "agent_q_bip39_wordlist.h"
 #include "agent_q_connect_approval.h"
+#include "agent_q_connect_review_response_flow.h"
 #include "agent_q_human_approval_settings.h"
 #include "agent_q_drawing_surface.h"
 #include "agent_q_entropy.h"
@@ -3524,28 +3525,66 @@ bool begin_connect_pin_auth_from_review(TickType_t now)
     return begin_connect_pin_auth(approval.request_id, approval.client_name);
 }
 
-void drain_connect_review_choice_events()
+bool receive_connect_review_choice(ConnectApprovalChoice* choice)
 {
-    if (connect_local_pin_flow_active()) {
-        agent_q::ui_event_bridge_reset_connect_choices();
-        return;
-    }
+    return agent_q::ui_event_bridge_receive_connect_choice(choice);
+}
 
-    ConnectApprovalChoice choice = ConnectApprovalChoice::none;
-    while (agent_q::ui_event_bridge_receive_connect_choice(&choice)) {
-        if (agent_q::connect_approval_awaiting_choice()) {
-            const TickType_t now = xTaskGetTickCount();
-            if (choice == ConnectApprovalChoice::approved &&
-                agent_q::human_approval_requires_pin()) {
-                begin_connect_pin_auth_from_review(now);
-                agent_q::ui_event_bridge_reset_connect_choices();
-                return;
-            }
-            agent_q::connect_approval_choose(choice, now);
-            agent_q::ui_event_bridge_reset_connect_choices();
-            return;
-        }
-    }
+bool connect_review_panel_visible()
+{
+    LvglLockGuard lock;
+    return agent_q::drawing_surface_panel_locked() != nullptr &&
+           is_connect_review_panel_kind(agent_q::drawing_surface_panel_kind_locked());
+}
+
+void log_connect_review_flow_info(const char* message, const char* id)
+{
+    ESP_LOGI(kTag, "%s: id=%s", message != nullptr ? message : "connect", id != nullptr ? id : "");
+}
+
+void log_connect_review_flow_error(const char* message, const char* id)
+{
+    ESP_LOGE(kTag, "%s: id=%s", message != nullptr ? message : "connect error", id != nullptr ? id : "");
+}
+
+void log_connect_review_recovered(const char* id)
+{
+    ESP_LOGW(kTag, "connect review UI recovered: id=%s", id != nullptr ? id : "");
+}
+
+const agent_q::AgentQConnectReviewResponseFlowOps& connect_review_response_flow_ops()
+{
+    static const agent_q::AgentQConnectReviewResponseFlowOps ops = {
+        xTaskGetTickCount,
+        connect_local_pin_flow_active,
+        agent_q::ui_event_bridge_reset_connect_choices,
+        receive_connect_review_choice,
+        agent_q::connect_approval_awaiting_choice,
+        agent_q::human_approval_requires_pin,
+        begin_connect_pin_auth_from_review,
+        agent_q::connect_approval_choose,
+        agent_q::connect_approval_snapshot,
+        agent_q::connect_approval_deadline_reached,
+        agent_q::connect_approval_request_id,
+        agent_q::connect_approval_clear,
+        replace_active_session,
+        agent_q::usb_response_write_error,
+        write_connect_approved_response,
+        agent_q::usb_response_write_connect_rejected,
+        log_connect_review_flow_info,
+        log_connect_review_flow_error,
+        agent_q::usb_response_log_write_failure,
+        log_connect_review_recovered,
+        show_result_and_clear_connect_review,
+        connect_review_panel_visible,
+        show_connect_review,
+    };
+    return ops;
+}
+
+void run_connect_review_response_flow()
+{
+    agent_q::connect_review_response_flow_run(connect_review_response_flow_ops());
 }
 
 void start_local_provisioning_from_setup_touch()
@@ -3810,80 +3849,6 @@ void drain_ui_events()
             "setup panel deleted",
             "local reset panel deleted",
             "local PIN authorization panel deleted");
-    }
-}
-
-void ensure_connect_review_ui()
-{
-    if (!agent_q::connect_approval_awaiting_choice()) {
-        return;
-    }
-    if (connect_local_pin_flow_active()) {
-        return;
-    }
-
-    bool needs_connect_review_panel = false;
-    {
-        LvglLockGuard lock;
-        needs_connect_review_panel = agent_q::drawing_surface_panel_locked() == nullptr ||
-                               !is_connect_review_panel_kind(agent_q::drawing_surface_panel_kind_locked());
-    }
-    if (!needs_connect_review_panel) {
-        return;
-    }
-
-    const agent_q::AgentQConnectApprovalSnapshot approval =
-        agent_q::connect_approval_snapshot();
-    show_connect_review();
-    ESP_LOGW(kTag, "connect review UI recovered: id=%s", approval.request_id);
-}
-
-void send_connect_review_response_if_needed()
-{
-    drain_connect_review_choice_events();
-
-    agent_q::AgentQConnectApprovalSnapshot approval =
-        agent_q::connect_approval_snapshot();
-    if (!approval.active || approval.choice == ConnectApprovalChoice::none) {
-        if (connect_local_pin_flow_active()) {
-            return;
-        }
-        if (agent_q::connect_approval_deadline_reached(xTaskGetTickCount())) {
-            char request_id[kMaxRequestIdSize] = {};
-            agent_q::connect_approval_request_id(request_id, sizeof(request_id));
-            // Device leaves awaiting_approval before reporting the result.
-            agent_q::connect_approval_clear();
-            agent_q::usb_response_write_connect_rejected(request_id, "timeout", "Connection approval timed out.");
-            ESP_LOGI(kTag, "connect timed out: id=%s", request_id);
-            show_result_and_clear_connect_review("Connection timed out", AgentQMessageKind::timeout);
-        }
-        return;
-    }
-
-    const bool approved = approval.choice == ConnectApprovalChoice::approved;
-    char request_id[kMaxRequestIdSize] = {};
-    agent_q::connect_approval_request_id(request_id, sizeof(request_id));
-    agent_q::connect_approval_clear();
-    if (approved) {
-        if (!replace_active_session()) {
-            agent_q::usb_response_write_error(request_id, "rng_error", "Could not create session id.");
-            ESP_LOGE(kTag, "connect could not create session id: id=%s", request_id);
-            show_result_and_clear_connect_review("RNG error", AgentQMessageKind::error);
-            return;
-        }
-        if (write_connect_approved_response(request_id)) {
-            ESP_LOGI(kTag, "connect approved: id=%s", request_id);
-        } else {
-            agent_q::usb_response_log_write_failure("connect_result", request_id);
-        }
-        show_result_and_clear_connect_review("Connected", AgentQMessageKind::success);
-    } else {
-        if (agent_q::usb_response_write_connect_rejected(request_id, "rejected", "Connection rejected.")) {
-            ESP_LOGI(kTag, "connect rejected: id=%s", request_id);
-        } else {
-            agent_q::usb_response_log_write_failure("connect_result", request_id);
-        }
-        show_result_and_clear_connect_review("Connection rejected", AgentQMessageKind::rejected);
     }
 }
 
@@ -4425,8 +4390,7 @@ void run_usb_request_server_local_ui_phase()
 
 void run_usb_request_server_connect_response_phase()
 {
-    send_connect_review_response_if_needed();
-    ensure_connect_review_ui();
+    run_connect_review_response_flow();
 }
 
 void run_usb_request_server_transport_phase()
@@ -4448,7 +4412,7 @@ void run_usb_request_server_tick()
 void usb_request_task(void*)
 {
     // Ordering matters: any pending YES/NO choice is resolved and its response is
-    // sent (send_connect_review_response_if_needed) before new input is read
+    // sent (run_usb_request_server_connect_response_phase) before new input is read
     // (poll_usb_input). A new request therefore cannot be handled until the
     // in-flight approval response has been written in the same loop pass.
     while (true) {

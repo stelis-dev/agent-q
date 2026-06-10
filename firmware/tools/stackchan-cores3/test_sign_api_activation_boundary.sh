@@ -39,6 +39,7 @@ USB_SESSION_READ_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/age
 USB_POLICY_PROPOSE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_policy_propose_handler.cpp"
 USB_POLICY_PROPOSE_RESULT_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_policy_propose_result_writer.cpp"
 USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_signing_handlers.cpp"
+CONNECT_REVIEW_RESPONSE_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_connect_review_response_flow.cpp"
 LOCAL_SETTINGS_RESET_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_local_settings_reset_ui_flow.cpp"
 REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_request_backed_local_pin_context.cpp"
 TRANSIENT_UI_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_transient_ui_flow.cpp"
@@ -438,12 +439,20 @@ awk '
   capture { print }
   /void run_usb_request_server_transport_phase/ { capture = 0 }
 ' "${USB_SERVER}" >"${USB_CONNECT_RESPONSE_PHASE_SNIPPET}"
-expect_present "${USB_CONNECT_RESPONSE_PHASE_SNIPPET}" 'send_connect_review_response_if_needed' \
-  "USB connect-response phase must resolve pending connect review responses"
-expect_present "${USB_CONNECT_RESPONSE_PHASE_SNIPPET}" 'ensure_connect_review_ui' \
-  "USB connect-response phase must recover connect review UI after response handling"
-expect_order "${USB_CONNECT_RESPONSE_PHASE_SNIPPET}" 'send_connect_review_response_if_needed' 'ensure_connect_review_ui' \
-  "USB connect-response phase must write terminal response before recovering connect review UI"
+expect_present "${USB_CONNECT_RESPONSE_PHASE_SNIPPET}" 'run_connect_review_response_flow' \
+  "USB connect-response phase must delegate connect review terminal response and recovery"
+expect_absent "${USB_CONNECT_RESPONSE_PHASE_SNIPPET}" 'send_connect_review_response_if_needed|ensure_connect_review_ui|connect_approval_deadline_reached|replace_active_session' \
+  "USB connect-response phase must not inline connect review terminal response logic"
+expect_present "${CONNECT_REVIEW_RESPONSE_FLOW_SOURCE}" 'connect_review_response_flow_run' \
+  "connect review response flow must own the connect response phase"
+expect_present "${CONNECT_REVIEW_RESPONSE_FLOW_SOURCE}" 'drain_connect_review_choice_events' \
+  "connect review response flow must drain connect review choices"
+expect_present "${CONNECT_REVIEW_RESPONSE_FLOW_SOURCE}" 'send_connect_terminal_response_if_needed' \
+  "connect review response flow must send terminal connect responses"
+expect_present "${CONNECT_REVIEW_RESPONSE_FLOW_SOURCE}" 'ensure_connect_review_ui' \
+  "connect review response flow must recover missing connect review UI after response handling"
+expect_order "${CONNECT_REVIEW_RESPONSE_FLOW_SOURCE}" 'send_connect_terminal_response_if_needed' 'ensure_connect_review_ui' \
+  "connect review response flow must write terminal response before recovering connect review UI"
 
 USB_TRANSPORT_PHASE_SNIPPET="${TMP_DIR}/usb-transport-phase.cpp"
 awk '
