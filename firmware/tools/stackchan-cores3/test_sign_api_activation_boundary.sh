@@ -139,8 +139,8 @@ expect_present "${USB_SIGNING_RESULT_WRITER_SOURCE}" '"sign_result"|usb_signing_
   "USB signing result writer must own public sign_result responses"
 expect_absent "${USB_SERVER}" 'response\["type"\][[:space:]]*=[[:space:]]*"sign_result"|write_sign_result_signed|write_sign_result_user_terminal|write_sign_result_policy_rejected|write_sign_result_signing_failed' \
   "USB request server must not own public sign_result response JSON"
-expect_present "${USB_SERVER}" '"signing"' \
-  "USB request server must advertise shared signing capabilities"
+expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '"signing"' \
+  "session-read handler must advertise shared signing capabilities"
 expect_present "${USB_OPERATION_RESPONSE_WRITER_HEADER}" 'AgentQUsbOperationResponseWriter' \
   "USB operation response writer boundary must be shared outside the USB server"
 expect_present "${USB_OPERATION_DISPATCH_SOURCE}" 'dispatch_usb_operation' \
@@ -219,6 +219,12 @@ expect_present "${USB_SERVER}" 'handle_get_approval_history_request' \
   "USB request server must route get_approval_history through an operation handler"
 expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" 'handle_usb_get_approval_history_request' \
   "get_approval_history operation handler must live outside the USB server"
+expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" 'response\["type"\][[:space:]]*=[[:space:]]*"approval_history"' \
+  "get_approval_history handler must own approval_history response JSON"
+expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" 'read_approval_history_page' \
+  "get_approval_history handler must own approval-history page read dispatch"
+expect_absent "${USB_SERVER}" 'response\["type"\][[:space:]]*=[[:space:]]*"approval_history"|write_approval_history_response' \
+  "USB request server must not own approval_history response JSON"
 expect_present "${USB_SERVER}" 'handle_policy_propose_request' \
   "USB request server must route policy_propose through an operation handler"
 expect_present "${USB_POLICY_PROPOSE_HANDLER_SOURCE}" 'handle_usb_policy_propose_request' \

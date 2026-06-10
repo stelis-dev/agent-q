@@ -28,6 +28,8 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_usb_approval_history_handler.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_approval_history_handler.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h" \
+  "${AGENT_Q_DIR}/agent_q_usb_response_writer.h" \
+  "${COMMON_ROOT}/agent_q_u64_decimal.h" \
   "${AGENT_Q_DIR}/agent_q_approval_history.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -70,6 +72,22 @@ bool approval_history_parse_sequence(const char* value, uint64_t* output)
     return true;
 }
 
+const char* approval_history_confirmation_kind_to_string(AgentQApprovalHistoryConfirmationKind value)
+{
+    return value == AgentQApprovalHistoryConfirmationKind::policy ? "policy" : "physical_confirm";
+}
+
+const char* approval_history_signing_record_kind_to_string(AgentQSigningHistoryRecordKind value)
+{
+    return value == AgentQSigningHistoryRecordKind::terminal ? "terminal" : "confirmation";
+}
+
+const char* approval_history_signing_terminal_result_to_string(
+    AgentQSigningHistoryTerminalResult value)
+{
+    return value == AgentQSigningHistoryTerminalResult::signed_success ? "signed_success" : "signing_failed";
+}
+
 }  // namespace agent_q
 
 namespace {
@@ -79,17 +97,30 @@ int g_log_write_failure_calls = 0;
 int g_material_calls = 0;
 int g_busy_calls = 0;
 int g_require_session_calls = 0;
-int g_write_history_calls = 0;
+int g_read_history_calls = 0;
+int g_json_write_calls = 0;
 bool g_material_ready = true;
 bool g_busy = false;
 bool g_session_valid = true;
-bool g_write_history_ok = true;
+agent_q::AgentQApprovalHistoryReadResult g_read_history_result = agent_q::AgentQApprovalHistoryReadResult::ok;
+bool g_json_write_ok = true;
 size_t g_last_limit = 0;
 uint64_t g_last_before = 0;
 const char* g_last_id = nullptr;
 const char* g_last_session = nullptr;
 const char* g_last_error_code = nullptr;
 const char* g_last_error_message = nullptr;
+char g_last_response_id[32] = {};
+char g_last_response_type[32] = {};
+bool g_last_has_more = false;
+size_t g_last_record_count = 0;
+char g_last_record_seq[32] = {};
+char g_last_record_uptime[32] = {};
+char g_last_record_event_kind[32] = {};
+char g_last_record_reason_code[32] = {};
+char g_last_record_chain[16] = {};
+char g_last_record_method[40] = {};
+char g_last_record_terminal_result[32] = {};
 
 void reset_state()
 {
@@ -98,17 +129,30 @@ void reset_state()
     g_material_calls = 0;
     g_busy_calls = 0;
     g_require_session_calls = 0;
-    g_write_history_calls = 0;
+    g_read_history_calls = 0;
+    g_json_write_calls = 0;
     g_material_ready = true;
     g_busy = false;
     g_session_valid = true;
-    g_write_history_ok = true;
+    g_read_history_result = agent_q::AgentQApprovalHistoryReadResult::ok;
+    g_json_write_ok = true;
     g_last_limit = 0;
     g_last_before = 0;
     g_last_id = nullptr;
     g_last_session = nullptr;
     g_last_error_code = nullptr;
     g_last_error_message = nullptr;
+    g_last_response_id[0] = '\0';
+    g_last_response_type[0] = '\0';
+    g_last_has_more = false;
+    g_last_record_count = 0;
+    g_last_record_seq[0] = '\0';
+    g_last_record_uptime[0] = '\0';
+    g_last_record_event_kind[0] = '\0';
+    g_last_record_reason_code[0] = '\0';
+    g_last_record_chain[0] = '\0';
+    g_last_record_method[0] = '\0';
+    g_last_record_terminal_result[0] = '\0';
 }
 
 bool write_error(const char* id, const char* code, const char* message)
@@ -148,13 +192,30 @@ bool require_session(const char* id, const char* session_id)
     return g_session_valid;
 }
 
-bool write_history_response(const char* id, uint64_t before_sequence, size_t limit)
+agent_q::AgentQApprovalHistoryReadResult read_history_page(
+    uint64_t before_sequence,
+    size_t limit,
+    agent_q::AgentQApprovalHistoryPage* output)
 {
-    g_write_history_calls += 1;
-    g_last_id = id;
+    g_read_history_calls += 1;
     g_last_before = before_sequence;
     g_last_limit = limit;
-    return g_write_history_ok;
+    if (output != nullptr && g_read_history_result == agent_q::AgentQApprovalHistoryReadResult::ok) {
+        memset(output, 0, sizeof(*output));
+        output->count = 1;
+        output->has_more = true;
+        output->records[0].sequence = 7;
+        output->records[0].uptime_ms = 1234;
+        output->records[0].event_kind = agent_q::AgentQApprovalHistoryEventKind::signing;
+        output->records[0].confirmation_kind = agent_q::AgentQApprovalHistoryConfirmationKind::policy;
+        output->records[0].signing_record_kind = agent_q::AgentQSigningHistoryRecordKind::terminal;
+        output->records[0].signing_terminal_result =
+            agent_q::AgentQSigningHistoryTerminalResult::signed_success;
+        snprintf(output->records[0].reason_code, sizeof(output->records[0].reason_code), "signed");
+        snprintf(output->records[0].chain, sizeof(output->records[0].chain), "sui");
+        snprintf(output->records[0].method, sizeof(output->records[0].method), "sign_transaction");
+    }
+    return g_read_history_result;
 }
 
 agent_q::AgentQUsbOperationResponseWriter make_writer()
@@ -171,7 +232,7 @@ agent_q::AgentQUsbApprovalHistoryHandlerOps make_ops()
         material_ready,
         write_busy,
         require_session,
-        write_history_response,
+        read_history_page,
     };
 }
 
@@ -185,6 +246,31 @@ JsonDocument parse_request(const char* json)
 
 }  // namespace
 
+namespace agent_q {
+
+bool usb_response_write_json(JsonDocument& response)
+{
+    g_json_write_calls += 1;
+    snprintf(g_last_response_id, sizeof(g_last_response_id), "%s", response["id"].as<const char*>());
+    snprintf(g_last_response_type, sizeof(g_last_response_type), "%s", response["type"].as<const char*>());
+    g_last_has_more = response["hasMore"].as<bool>();
+    JsonArray records = response["records"].as<JsonArray>();
+    g_last_record_count = records.size();
+    if (g_last_record_count > 0) {
+        JsonObject record = records[0].as<JsonObject>();
+        snprintf(g_last_record_seq, sizeof(g_last_record_seq), "%s", record["seq"].as<const char*>());
+        snprintf(g_last_record_uptime, sizeof(g_last_record_uptime), "%s", record["uptimeMs"].as<const char*>());
+        snprintf(g_last_record_event_kind, sizeof(g_last_record_event_kind), "%s", record["eventKind"].as<const char*>());
+        snprintf(g_last_record_reason_code, sizeof(g_last_record_reason_code), "%s", record["reasonCode"].as<const char*>());
+        snprintf(g_last_record_chain, sizeof(g_last_record_chain), "%s", record["chain"].as<const char*>());
+        snprintf(g_last_record_method, sizeof(g_last_record_method), "%s", record["method"].as<const char*>());
+        snprintf(g_last_record_terminal_result, sizeof(g_last_record_terminal_result), "%s", record["terminalResult"].as<const char*>());
+    }
+    return g_json_write_ok;
+}
+
+}  // namespace agent_q
+
 int main()
 {
     {
@@ -196,7 +282,8 @@ int main()
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(g_busy_calls == 0);
         assert(g_require_session_calls == 0);
-        assert(g_write_history_calls == 0);
+        assert(g_read_history_calls == 0);
+        assert(g_json_write_calls == 0);
     }
 
     {
@@ -208,7 +295,8 @@ int main()
         assert(g_busy_calls == 1);
         assert(g_write_error_calls == 0);
         assert(g_require_session_calls == 0);
-        assert(g_write_history_calls == 0);
+        assert(g_read_history_calls == 0);
+        assert(g_json_write_calls == 0);
     }
 
     {
@@ -218,7 +306,8 @@ int main()
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_require_session_calls == 0);
-        assert(g_write_history_calls == 0);
+        assert(g_read_history_calls == 0);
+        assert(g_json_write_calls == 0);
     }
 
     {
@@ -228,7 +317,8 @@ int main()
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_require_session_calls == 1);
         assert(g_write_error_calls == 0);
-        assert(g_write_history_calls == 0);
+        assert(g_read_history_calls == 0);
+        assert(g_json_write_calls == 0);
     }
 
     {
@@ -238,7 +328,8 @@ int main()
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(strcmp(g_last_error_message, "get_approval_history request contains unsupported fields.") == 0);
-        assert(g_write_history_calls == 0);
+        assert(g_read_history_calls == 0);
+        assert(g_json_write_calls == 0);
     }
 
     {
@@ -248,7 +339,8 @@ int main()
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(strcmp(g_last_error_message, "Approval history params are invalid.") == 0);
-        assert(g_write_history_calls == 0);
+        assert(g_read_history_calls == 0);
+        assert(g_json_write_calls == 0);
     }
 
     {
@@ -257,7 +349,8 @@ int main()
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(g_write_history_calls == 0);
+        assert(g_read_history_calls == 0);
+        assert(g_json_write_calls == 0);
     }
 
     {
@@ -266,7 +359,8 @@ int main()
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(g_write_history_calls == 0);
+        assert(g_read_history_calls == 0);
+        assert(g_json_write_calls == 0);
     }
 
     {
@@ -274,18 +368,42 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\",\"params\":{\"limit\":2,\"beforeSeq\":\"42\"}}");
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
-        assert(g_write_history_calls == 1);
+        assert(g_read_history_calls == 1);
+        assert(g_json_write_calls == 1);
         assert(g_last_limit == 2);
         assert(g_last_before == 42);
-        assert(strcmp(g_last_id, "req") == 0);
+        assert(strcmp(g_last_response_id, "req") == 0);
+        assert(strcmp(g_last_response_type, "approval_history") == 0);
+        assert(g_last_has_more);
+        assert(g_last_record_count == 1);
+        assert(strcmp(g_last_record_seq, "7") == 0);
+        assert(strcmp(g_last_record_uptime, "1234") == 0);
+        assert(strcmp(g_last_record_event_kind, "signing") == 0);
+        assert(strcmp(g_last_record_reason_code, "signed") == 0);
+        assert(strcmp(g_last_record_chain, "sui") == 0);
+        assert(strcmp(g_last_record_method, "sign_transaction") == 0);
+        assert(strcmp(g_last_record_terminal_result, "signed_success") == 0);
     }
 
     {
         reset_state();
-        g_write_history_ok = false;
+        g_read_history_result = agent_q::AgentQApprovalHistoryReadResult::storage_error;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
-        assert(g_write_history_calls == 1);
+        assert(g_read_history_calls == 1);
+        assert(g_json_write_calls == 0);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "history_error") == 0);
+        assert(strcmp(g_last_error_message, "Approval history is unavailable.") == 0);
+    }
+
+    {
+        reset_state();
+        g_json_write_ok = false;
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\"}");
+        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        assert(g_read_history_calls == 1);
+        assert(g_json_write_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "history_error") == 0);
         assert(strcmp(g_last_error_message, "Approval history is unavailable.") == 0);
@@ -298,6 +416,7 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
+  -I"${COMMON_ROOT}" \
   -I"${AGENT_Q_DIR}" \
   -I"${TMP_DIR}" \
   "${TMP_DIR}/test.cpp" \

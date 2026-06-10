@@ -6,7 +6,6 @@
 #include <ArduinoJson.h>
 #include <memory>
 #include "agent_q_sign_route.h"
-#include "agent_q_u64_decimal.h"
 #include "agent_q_avatar_overlay_drawing.h"
 #include "agent_q_approval_history.h"
 #include "agent_q_bip39.h"
@@ -441,73 +440,6 @@ bool write_policy_execution_response(
         agent_q::session_id(),
         request_identity,
         result);
-}
-
-bool write_approval_history_response(const char* id, uint64_t before_sequence, size_t limit)
-{
-    agent_q::AgentQApprovalHistoryPage page = {};
-    const agent_q::AgentQApprovalHistoryReadResult read_result =
-        agent_q::approval_history_read_page(before_sequence, limit, &page);
-    if (read_result != agent_q::AgentQApprovalHistoryReadResult::ok) {
-        return false;
-    }
-
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["type"] = "approval_history";
-    response["hasMore"] = page.has_more;
-    JsonArray records = response["records"].to<JsonArray>();
-    for (size_t index = 0; index < page.count; ++index) {
-        const agent_q::AgentQApprovalHistoryRecord& source = page.records[index];
-        JsonObject record = records.add<JsonObject>();
-        char sequence[agent_q::kAgentQU64DecimalBufferBytes] = {};
-        char uptime_ms[agent_q::kAgentQU64DecimalBufferBytes] = {};
-        if (!agent_q::format_u64_decimal(source.sequence, sequence, sizeof(sequence)) ||
-            !agent_q::format_u64_decimal(source.uptime_ms, uptime_ms, sizeof(uptime_ms))) {
-            return false;
-        }
-        record["seq"] = sequence;
-        record["uptimeMs"] = uptime_ms;
-        record["timeSource"] = "uptime";
-        record["reasonCode"] = source.reason_code;
-        if (source.event_kind == agent_q::AgentQApprovalHistoryEventKind::policy_update) {
-            record["eventKind"] = "policy_update";
-            record["result"] = source.policy_result;
-            record["policyHash"] = source.policy_hash;
-            record["ruleCount"] = source.rule_count;
-            record["highestAction"] = source.highest_action;
-        } else if (source.event_kind == agent_q::AgentQApprovalHistoryEventKind::signing) {
-            record["eventKind"] = "signing";
-            record["recordKind"] =
-                agent_q::approval_history_signing_record_kind_to_string(source.signing_record_kind);
-            record["authorization"] =
-                source.confirmation_kind == agent_q::AgentQApprovalHistoryConfirmationKind::policy
-                    ? "policy"
-                    : "user";
-            record["chain"] = source.chain;
-            record["method"] = source.method;
-            if (source.signing_record_kind == agent_q::AgentQSigningHistoryRecordKind::confirmation &&
-                source.confirmation_kind != agent_q::AgentQApprovalHistoryConfirmationKind::none) {
-                record["confirmationKind"] =
-                    agent_q::approval_history_confirmation_kind_to_string(source.confirmation_kind);
-            }
-            if (source.signing_terminal_result != agent_q::AgentQSigningHistoryTerminalResult::none) {
-                record["terminalResult"] =
-                    agent_q::approval_history_signing_terminal_result_to_string(source.signing_terminal_result);
-            }
-            if (source.payload_digest[0] != '\0') {
-                record["payloadDigest"] = source.payload_digest;
-            }
-            if (source.policy_hash[0] != '\0') {
-                record["policyHash"] = source.policy_hash;
-            }
-            if (source.rule_ref[0] != '\0') {
-                record["ruleRef"] = source.rule_ref;
-            }
-        }
-    }
-    return agent_q::usb_response_write_json(response);
 }
 
 bool write_policy_propose_result_response(
@@ -4908,7 +4840,7 @@ const agent_q::AgentQUsbApprovalHistoryHandlerOps& approval_history_handler_ops(
         provisioned_material_ready,
         write_busy_if_pending_or_local_flow_active_allow_settings,
         require_active_matching_session,
-        write_approval_history_response,
+        agent_q::approval_history_read_page,
     };
     return ops;
 }

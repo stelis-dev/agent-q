@@ -1,7 +1,9 @@
 #include "agent_q_usb_approval_history_handler.h"
 
-#include "agent_q_approval_history.h"
 #include "agent_q_json_input.h"
+#include "agent_q_protocol_constants.h"
+#include "agent_q_u64_decimal.h"
+#include "agent_q_usb_response_writer.h"
 
 namespace agent_q {
 
@@ -53,6 +55,66 @@ bool parse_approval_history_params(JsonDocument& request, size_t* limit, uint64_
     return true;
 }
 
+bool write_approval_history_response(const char* id, const AgentQApprovalHistoryPage& page)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kAgentQProtocolVersion;
+    response["type"] = "approval_history";
+    response["hasMore"] = page.has_more;
+    JsonArray records = response["records"].to<JsonArray>();
+    for (size_t index = 0; index < page.count; ++index) {
+        const AgentQApprovalHistoryRecord& source = page.records[index];
+        JsonObject record = records.add<JsonObject>();
+        char sequence[kAgentQU64DecimalBufferBytes] = {};
+        char uptime_ms[kAgentQU64DecimalBufferBytes] = {};
+        if (!format_u64_decimal(source.sequence, sequence, sizeof(sequence)) ||
+            !format_u64_decimal(source.uptime_ms, uptime_ms, sizeof(uptime_ms))) {
+            return false;
+        }
+        record["seq"] = sequence;
+        record["uptimeMs"] = uptime_ms;
+        record["timeSource"] = "uptime";
+        record["reasonCode"] = source.reason_code;
+        if (source.event_kind == AgentQApprovalHistoryEventKind::policy_update) {
+            record["eventKind"] = "policy_update";
+            record["result"] = source.policy_result;
+            record["policyHash"] = source.policy_hash;
+            record["ruleCount"] = source.rule_count;
+            record["highestAction"] = source.highest_action;
+        } else if (source.event_kind == AgentQApprovalHistoryEventKind::signing) {
+            record["eventKind"] = "signing";
+            record["recordKind"] =
+                approval_history_signing_record_kind_to_string(source.signing_record_kind);
+            record["authorization"] =
+                source.confirmation_kind == AgentQApprovalHistoryConfirmationKind::policy
+                    ? "policy"
+                    : "user";
+            record["chain"] = source.chain;
+            record["method"] = source.method;
+            if (source.signing_record_kind == AgentQSigningHistoryRecordKind::confirmation &&
+                source.confirmation_kind != AgentQApprovalHistoryConfirmationKind::none) {
+                record["confirmationKind"] =
+                    approval_history_confirmation_kind_to_string(source.confirmation_kind);
+            }
+            if (source.signing_terminal_result != AgentQSigningHistoryTerminalResult::none) {
+                record["terminalResult"] =
+                    approval_history_signing_terminal_result_to_string(source.signing_terminal_result);
+            }
+            if (source.payload_digest[0] != '\0') {
+                record["payloadDigest"] = source.payload_digest;
+            }
+            if (source.policy_hash[0] != '\0') {
+                record["policyHash"] = source.policy_hash;
+            }
+            if (source.rule_ref[0] != '\0') {
+                record["ruleRef"] = source.rule_ref;
+            }
+        }
+    }
+    return usb_response_write_json(response);
+}
+
 }  // namespace
 
 void handle_usb_get_approval_history_request(
@@ -96,8 +158,10 @@ void handle_usb_get_approval_history_request(
         return;
     }
 
-    if (ops.write_approval_history_response != nullptr &&
-        ops.write_approval_history_response(id, before_sequence, limit)) {
+    AgentQApprovalHistoryPage page = {};
+    if (ops.read_approval_history_page != nullptr &&
+        ops.read_approval_history_page(before_sequence, limit, &page) == AgentQApprovalHistoryReadResult::ok &&
+        write_approval_history_response(id, page)) {
         return;
     }
     writer.write_error(id, "history_error", "Approval history is unavailable.");
