@@ -40,6 +40,7 @@ USB_POLICY_PROPOSE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/ag
 USB_POLICY_PROPOSE_RESULT_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_policy_propose_result_writer.cpp"
 USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_signing_handlers.cpp"
 LOCAL_SETTINGS_RESET_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_local_settings_reset_ui_flow.cpp"
+REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_request_backed_local_pin_context.cpp"
 SIGNING_PREFLIGHT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_signing_preflight.cpp"
 POLICY_SIGNING_EXECUTION_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_policy_signing_execution.cpp"
 USER_REVIEW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_review_view_model.cpp"
@@ -177,6 +178,16 @@ expect_present "${USB_SERVER}" 'local_settings_reset_ui_handle_auth_worker_resul
   "USB request server must delegate local reset auth worker results"
 expect_absent "${USB_SERVER}" 'local_reset_submit_pin_for_verification|local_reset_complete_pin_verify_job|local_reset_commit_material' \
   "USB request server must not own local reset PIN verification or destructive reset commit logic"
+expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_local_pin_owner_for_purpose' \
+  "request-backed local PIN context must own purpose-to-owner classification"
+expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_local_pin_cap_input_window' \
+  "request-backed local PIN context must own request-window capping"
+expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_local_pin_pause_input_window' \
+  "request-backed local PIN context must own request-backed pause delegation"
+expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_local_pin_resume_input_window' \
+  "request-backed local PIN context must own request-backed resume delegation"
+expect_absent "${USB_SERVER}" 'RequestBackedPinOwner|request_backed_pin_owner_for_purpose|protocol_pin_approval_refresh_deadline_for_local_pin_purpose|protocol_pin_approval_pause_deadline_for_local_pin_purpose|user_signing_flow_refresh_pin_deadline|user_signing_confirmation_mark_pin_verification_started' \
+  "USB request server must not own request-backed local PIN owner/deadline delegation"
 expect_absent "${USB_SERVER}" 'g_ui_event_queue|g_connect_review_choice_queue|modal_drawing_set_callbacks|drawing_surface_set_panel_deleted_callback|xQueueCreate|xQueueSend|xQueueReceive|on_(connect_review|user_signing_review|policy_update_review|setup|settings|error_recovery|reset|backup_phrase|pin|import).*clicked' \
   "USB request server must not own LVGL callback or UI input queue wiring"
 expect_present "${USB_LINE_HANDLER_SOURCE}" 'parse_usb_request_envelope' \

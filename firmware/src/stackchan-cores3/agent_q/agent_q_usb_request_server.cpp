@@ -32,6 +32,7 @@
 #include "agent_q_provisioning_flow.h"
 #include "agent_q_provisioning_ui_flow.h"
 #include "agent_q_provisioning_runtime_state.h"
+#include "agent_q_request_backed_local_pin_context.h"
 #include "agent_q_request_id.h"
 #include "agent_q_session.h"
 #include "agent_q_sign_personal_message_user_ingress.h"
@@ -1261,65 +1262,15 @@ bool require_pending_policy_update_session(const char* request_id)
     }
 }
 
-enum class RequestBackedPinOwner {
-    none,
-    protocol_pin_approval,
-    user_signing,
-};
-
-RequestBackedPinOwner request_backed_pin_owner_for_purpose(LocalPinAuthPurpose purpose)
-{
-    switch (purpose) {
-        case LocalPinAuthPurpose::connect:
-        case LocalPinAuthPurpose::policy_update:
-            return RequestBackedPinOwner::protocol_pin_approval;
-        case LocalPinAuthPurpose::user_signing:
-            return RequestBackedPinOwner::user_signing;
-        default:
-            return RequestBackedPinOwner::none;
-    }
-}
-
-bool request_backed_local_pin_purpose(LocalPinAuthPurpose purpose)
-{
-    return request_backed_pin_owner_for_purpose(purpose) !=
-           RequestBackedPinOwner::none;
-}
-
 bool pending_request_id_for_local_pin_purpose(
     LocalPinAuthPurpose purpose,
     char* output,
     size_t output_size)
 {
-    switch (request_backed_pin_owner_for_purpose(purpose)) {
-        case RequestBackedPinOwner::user_signing: {
-            if (output == nullptr || output_size == 0) {
-                return false;
-            }
-            output[0] = '\0';
-            const agent_q::AgentQUserSigningFlowSnapshot snapshot =
-                agent_q::user_signing_flow_snapshot();
-            if (!snapshot.active || snapshot.request_id[0] == '\0') {
-                return false;
-            }
-            if (strlen(snapshot.request_id) >= output_size) {
-                return false;
-            }
-            snprintf(output, output_size, "%s", snapshot.request_id);
-            return true;
-        }
-        case RequestBackedPinOwner::protocol_pin_approval:
-            return agent_q::protocol_pin_approval_request_id_for_local_pin_purpose(
-                purpose,
-                output,
-                output_size);
-        case RequestBackedPinOwner::none:
-        default:
-            if (output != nullptr && output_size > 0) {
-                output[0] = '\0';
-            }
-            return false;
-    }
+    return agent_q::request_backed_local_pin_request_id(
+        purpose,
+        output,
+        output_size);
 }
 
 agent_q::AgentQTimeoutWindow timeout_window_from_now_ms(
@@ -1329,48 +1280,6 @@ agent_q::AgentQTimeoutWindow timeout_window_from_now_ms(
     return agent_q::timeout_window_from_deadline(
         started_at,
         started_at + pdMS_TO_TICKS(duration_ms));
-}
-
-agent_q::AgentQTimeoutWindow cap_request_backed_pin_input_window(
-    LocalPinAuthPurpose purpose,
-    agent_q::AgentQTimeoutWindow input_window)
-{
-    if (!agent_q::timeout_window_valid(input_window)) {
-        return agent_q::kAgentQTimeoutWindowNone;
-    }
-    switch (request_backed_pin_owner_for_purpose(purpose)) {
-        case RequestBackedPinOwner::user_signing: {
-            const agent_q::AgentQUserSigningFlowSnapshot snapshot =
-                agent_q::user_signing_flow_snapshot();
-            if (!snapshot.active) {
-                return agent_q::kAgentQTimeoutWindowNone;
-            }
-            const TickType_t capped_deadline =
-                agent_q::timeout_window_cap_deadline(
-                    snapshot.request_window,
-                    input_window.deadline);
-            return agent_q::timeout_window_from_deadline(
-                input_window.started_at,
-                capped_deadline);
-        }
-        case RequestBackedPinOwner::protocol_pin_approval: {
-            const agent_q::AgentQProtocolPinApprovalSnapshot snapshot =
-                agent_q::protocol_pin_approval_snapshot();
-            if (!snapshot.active) {
-                return agent_q::kAgentQTimeoutWindowNone;
-            }
-            const TickType_t capped_deadline =
-                agent_q::timeout_window_cap_deadline(
-                    snapshot.request_window,
-                    input_window.deadline);
-            return agent_q::timeout_window_from_deadline(
-                input_window.started_at,
-                capped_deadline);
-        }
-        case RequestBackedPinOwner::none:
-        default:
-            return agent_q::kAgentQTimeoutWindowNone;
-    }
 }
 
 agent_q::AgentQTimeoutWindow local_pin_auth_next_input_window(
@@ -1384,64 +1293,29 @@ agent_q::AgentQTimeoutWindow local_pin_auth_next_input_window(
         purpose == LocalPinAuthPurpose::settings_change_pin) {
         return next_input_window;
     }
-    if (!request_backed_local_pin_purpose(purpose)) {
+    if (!agent_q::request_backed_local_pin_purpose(purpose)) {
         return agent_q::kAgentQTimeoutWindowNone;
     }
-    return cap_request_backed_pin_input_window(purpose, next_input_window);
+    return agent_q::request_backed_local_pin_cap_input_window(
+        purpose,
+        next_input_window);
 }
 
 bool resume_request_backed_pin_input_window(
     LocalPinAuthPurpose purpose,
     TickType_t now)
 {
-    switch (request_backed_pin_owner_for_purpose(purpose)) {
-        case RequestBackedPinOwner::user_signing:
-            return agent_q::user_signing_flow_refresh_pin_deadline(now) ==
-                   agent_q::AgentQUserSigningTransitionResult::ok;
-        case RequestBackedPinOwner::protocol_pin_approval:
-            return agent_q::protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
-                purpose,
-                now);
-        case RequestBackedPinOwner::none:
-        default:
-            return false;
-    }
+    return agent_q::request_backed_local_pin_resume_input_window(purpose, now);
 }
 
 bool pause_request_backed_pin_input_window(LocalPinAuthPurpose purpose, TickType_t now)
 {
-    switch (request_backed_pin_owner_for_purpose(purpose)) {
-        case RequestBackedPinOwner::user_signing:
-            return agent_q::user_signing_confirmation_mark_pin_verification_started(now) ==
-                   agent_q::AgentQUserSigningConfirmationResult::ok;
-        case RequestBackedPinOwner::protocol_pin_approval:
-            if (purpose == LocalPinAuthPurpose::policy_update &&
-                agent_q::policy_update_flow_mark_pin_verifying() !=
-                    agent_q::AgentQPolicyUpdateFlowTransitionResult::ok) {
-                return false;
-            }
-            return agent_q::protocol_pin_approval_pause_deadline_for_local_pin_purpose(
-                purpose,
-                now);
-        case RequestBackedPinOwner::none:
-        default:
-            return true;
-    }
+    return agent_q::request_backed_local_pin_pause_input_window(purpose, now);
 }
 
 bool request_backed_local_pin_input_deadline_reached(LocalPinAuthPurpose purpose, TickType_t now)
 {
-    switch (request_backed_pin_owner_for_purpose(purpose)) {
-        case RequestBackedPinOwner::user_signing:
-            return agent_q::user_signing_flow_deadline_reached(now);
-        case RequestBackedPinOwner::protocol_pin_approval:
-            return agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
-                purpose,
-                now);
-        case RequestBackedPinOwner::none:
-        default:
-            return false;
-    }
+    return agent_q::request_backed_local_pin_deadline_reached(purpose, now);
 }
 
 bool disconnect_pending_policy_update_for_session(const char* id, const char* session_id)
@@ -2432,8 +2306,8 @@ bool finish_request_backed_local_pin_input_timeout_if_reached(
     pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
     clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
     wipe_local_pin_auth_scratch(scratch_reason);
-    switch (request_backed_pin_owner_for_purpose(purpose)) {
-        case RequestBackedPinOwner::protocol_pin_approval:
+    switch (agent_q::request_backed_local_pin_owner_for_purpose(purpose)) {
+        case agent_q::AgentQRequestBackedLocalPinOwner::protocol_pin_approval:
             if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
                 finish_policy_update_terminal(
                     request_id,
@@ -2453,7 +2327,7 @@ bool finish_request_backed_local_pin_input_timeout_if_reached(
                 return true;
             }
             break;
-        case RequestBackedPinOwner::user_signing:
+        case agent_q::AgentQRequestBackedLocalPinOwner::user_signing:
             if (request_id[0] != '\0') {
                 const agent_q::AgentQUserSigningConfirmationResult result =
                     agent_q::user_signing_confirmation_record_timeout(now);
@@ -2470,7 +2344,7 @@ bool finish_request_backed_local_pin_input_timeout_if_reached(
                 return true;
             }
             break;
-        case RequestBackedPinOwner::none:
+        case agent_q::AgentQRequestBackedLocalPinOwner::none:
         default:
             break;
     }
