@@ -19,6 +19,7 @@
 #include "agent_q_local_auth.h"
 #include "agent_q_local_auth_worker.h"
 #include "agent_q_local_pin_auth.h"
+#include "agent_q_local_settings_reset_ui_flow.h"
 #include "agent_q_local_settings_touch_entry.h"
 #include "agent_q_local_reset.h"
 #include "agent_q_modal_drawing.h"
@@ -155,6 +156,7 @@ bool refresh_persistent_material_consistency();
 bool provisioned_material_ready();
 agent_q::AgentQPersistentMaterialOps persistent_material_ops();
 agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops();
+agent_q::AgentQLocalSettingsResetUiFlowOps local_settings_reset_ui_ops();
 bool clear_agent_q_panel_if_kind(
     AgentQUiPanelKind expected_kind,
     SensitiveUiClearPolicy policy = SensitiveUiClearPolicy::wipe);
@@ -245,14 +247,7 @@ bool local_pin_auth_accepts_keypad_input()
 
 bool local_reset_panel_matches_stage(AgentQUiPanelKind kind)
 {
-    const agent_q::AgentQLocalResetStage stage =
-        agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
-    return (kind == AgentQUiPanelKind::settings_menu &&
-            stage == agent_q::AgentQLocalResetStage::settings_menu) ||
-           (kind == AgentQUiPanelKind::reset_pin_entry &&
-            stage == agent_q::AgentQLocalResetStage::pin_entry) ||
-           (kind == AgentQUiPanelKind::error_recovery &&
-            stage == agent_q::AgentQLocalResetStage::error_recovery_confirm);
+    return agent_q::local_settings_reset_ui_panel_matches_stage(kind);
 }
 
 bool handle_provisioning_panel_deleted(ProvisioningFlowPanel panel, const char* reason)
@@ -1789,6 +1784,80 @@ void provisioning_ui_log_warn(const char* message)
     ESP_LOGW(kTag, "%s", message != nullptr ? message : "");
 }
 
+TickType_t local_settings_reset_ui_now()
+{
+    return xTaskGetTickCount();
+}
+
+bool local_settings_reset_ui_display_ready()
+{
+    LvglLockGuard lock;
+    return agent_q::drawing_surface_ready();
+}
+
+bool local_settings_reset_ui_panel_active()
+{
+    LvglLockGuard lock;
+    return agent_q::drawing_surface_panel_locked() != nullptr &&
+           local_reset_panel_matches_stage(agent_q::drawing_surface_panel_kind_locked());
+}
+
+bool local_settings_start_available()
+{
+    const TickType_t now = xTaskGetTickCount();
+    return provisioned_material_ready() &&
+           !agent_q::connect_approval_active() &&
+           !agent_q::protocol_pin_approval_active() &&
+           !agent_q::identification_display_active() &&
+           !agent_q::provisioning_flow_active() &&
+           !agent_q::user_signing_flow_active() &&
+           !agent_q::local_reset_snapshot(now).flow_active &&
+           agent_q_ui_idle_for_local_settings();
+}
+
+bool local_error_recovery_available()
+{
+    return !agent_q::connect_approval_active() &&
+           !agent_q::protocol_pin_approval_active() &&
+           !agent_q::identification_display_active() &&
+           !agent_q::provisioning_flow_active() &&
+           !agent_q::local_pin_auth_flow_active() &&
+           !agent_q::user_signing_flow_active() &&
+           !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active;
+}
+
+bool draw_local_settings_reset_processing_overlay(AgentQUiPanelKind kind)
+{
+    return agent_q::modal_draw_processing_overlay_on_current_panel(kind);
+}
+
+void local_settings_reset_ui_show_message(const char* message, AgentQMessageKind kind)
+{
+    agent_q::avatar_overlay_show_message(
+        message,
+        kind,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+}
+
+void local_settings_reset_ui_record_material_failure(
+    agent_q::AgentQPersistentMaterialRuntimeFailure failure)
+{
+    agent_q::persistent_material_record_runtime_failure(
+        failure,
+        persistent_material_ops());
+}
+
+void local_settings_reset_ui_log_warn(const char* message)
+{
+    ESP_LOGW(kTag, "%s", message != nullptr ? message : "");
+}
+
+void local_settings_reset_ui_log_error(const char* message)
+{
+    ESP_LOGE(kTag, "%s", message != nullptr ? message : "");
+}
+
 const agent_q::AgentQProvisioningUiFlowOps& provisioning_ui_ops()
 {
     static const agent_q::AgentQProvisioningUiFlowOps ops = {
@@ -1814,6 +1883,36 @@ const agent_q::AgentQProvisioningUiFlowOps& provisioning_ui_ops()
         agent_q::kAgentQLocalAuthWorkerMaxMs,
     };
     return ops;
+}
+
+agent_q::AgentQLocalSettingsResetUiFlowOps local_settings_reset_ui_ops()
+{
+    return agent_q::AgentQLocalSettingsResetUiFlowOps{
+        local_settings_reset_ui_now,
+        provisioned_material_ready,
+        local_settings_start_available,
+        local_error_recovery_available,
+        agent_q::persistent_material_consistency_error_active,
+        local_settings_reset_ui_display_ready,
+        agent_q_panel_active,
+        local_settings_reset_ui_panel_active,
+        clear_agent_q_panel_if_kind,
+        clear_agent_q_panel_if_local_reset_stage,
+        agent_q::modal_draw_settings_menu_panel,
+        agent_q::modal_draw_error_recovery_panel,
+        agent_q::modal_draw_reset_pin_panel,
+        draw_local_settings_reset_processing_overlay,
+        agent_q::local_settings_touch_entry_clear,
+        local_settings_reset_ui_show_message,
+        local_settings_reset_ui_record_material_failure,
+        local_settings_reset_ui_log_warn,
+        local_settings_reset_ui_log_error,
+        local_reset_persistence_ops(),
+        agent_q::kAgentQLocalResetEntryMs,
+        kLocalProcessingRenderDelayMs,
+        kLocalProcessingDisplayMs,
+        agent_q::kAgentQLocalAuthWorkerMaxMs,
+    };
 }
 
 void clear_setup_choice_if_needed()
@@ -1858,290 +1957,53 @@ void handle_pin_submit_from_local_ui()
 
 void clear_local_reset_if_needed()
 {
-    const TickType_t now = xTaskGetTickCount();
-    const agent_q::AgentQLocalResetSnapshot reset = agent_q::local_reset_snapshot(now);
-    if (reset.stage == agent_q::AgentQLocalResetStage::none) {
-        return;
-    }
-    if (reset.stage == agent_q::AgentQLocalResetStage::pin_verifying) {
-        if (agent_q::local_reset_fail_processing_if_expired(now)) {
-            agent_q::persistent_material_record_runtime_failure(
-                agent_q::AgentQPersistentMaterialRuntimeFailure::local_reset_auth_unavailable,
-                persistent_material_ops());
-            clear_agent_q_panel_if_kind(AgentQUiPanelKind::reset_pin_entry, SensitiveUiClearPolicy::preserve);
-            agent_q::avatar_overlay_show_message("Auth error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-            return;
-        }
-        if (!agent_q_panel_active(AgentQUiPanelKind::reset_pin_entry) &&
-            !agent_q::modal_draw_reset_pin_panel()) {
-            wipe_local_reset_scratch("local reset PIN verification UI recovery failed");
-            agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-    if (reset.stage == agent_q::AgentQLocalResetStage::wiping) {
-        if (!agent_q_panel_active(AgentQUiPanelKind::reset_pin_entry) &&
-            !agent_q::modal_draw_reset_pin_panel()) {
-            ESP_LOGW(kTag, "Local reset wiping panel could not be restored");
-        }
-        return;
-    }
-
-    const agent_q::AgentQLocalResetLockoutReleaseResult reset_lockout_release =
-        agent_q::local_reset_release_lockout_if_elapsed(now);
-    if (reset_lockout_release == agent_q::AgentQLocalResetLockoutReleaseResult::failed) {
-        wipe_local_reset_scratch("local reset PIN lockout release failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        return;
-    }
-    if (reset_lockout_release == agent_q::AgentQLocalResetLockoutReleaseResult::released) {
-        if (!agent_q::modal_draw_reset_pin_panel("Try again.")) {
-            wipe_local_reset_scratch("local reset PIN panel allocation failed");
-            agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-
-    bool panel_active = false;
-    {
-        LvglLockGuard lock;
-        panel_active =
-            local_reset_panel_matches_stage(agent_q::drawing_surface_panel_kind_locked()) &&
-            agent_q::drawing_surface_panel_locked() != nullptr;
-    }
-    const bool expired = agent_q::local_reset_deadline_expired(now);
-    if (panel_active && !expired) {
-        return;
-    }
-
-    if (panel_active) {
-        clear_agent_q_panel_if_local_reset_stage();
-    } else {
-        wipe_local_reset_scratch("local reset panel lost");
-    }
-
-    if (expired) {
-        const char* timeout_message = "Reset canceled";
-        if (reset.stage == agent_q::AgentQLocalResetStage::settings_menu) {
-            timeout_message = "Settings timed out";
-        } else if (reset.stage == agent_q::AgentQLocalResetStage::error_recovery_confirm) {
-            timeout_message = "Erase canceled";
-        }
-        agent_q::avatar_overlay_show_message(
-            timeout_message,
-            AgentQMessageKind::timeout,
-            AgentQUiMode::result,
-            kAgentQResultDisplayMs);
-    }
+    agent_q::local_settings_reset_ui_clear_if_needed(local_settings_reset_ui_ops());
 }
 
 void commit_local_reset_if_ready()
 {
-    if (!agent_q::local_reset_wipe_ready(xTaskGetTickCount())) {
-        return;
-    }
-
-    const agent_q::AgentQLocalResetCommitResult result =
-        agent_q::local_reset_commit_material(local_reset_persistence_ops());
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::reset_pin_entry, SensitiveUiClearPolicy::preserve);
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::error_recovery, SensitiveUiClearPolicy::preserve);
-    wipe_local_reset_scratch("local reset completed");
-    switch (result) {
-        case agent_q::AgentQLocalResetCommitResult::ok:
-            ESP_LOGW(kTag, "Local reset completed; device returned to unprovisioned");
-            agent_q::avatar_overlay_show_message("Device reset", AgentQMessageKind::success, AgentQUiMode::result, kAgentQResultDisplayMs);
-            break;
-        case agent_q::AgentQLocalResetCommitResult::missing_state:
-            ESP_LOGW(kTag, "Local reset commit missing state");
-            agent_q::avatar_overlay_show_message("Reset unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-            break;
-        case agent_q::AgentQLocalResetCommitResult::reset_marker_storage_error:
-            ESP_LOGW(kTag, "Local reset aborted before wiping material because the reset marker could not be stored");
-            agent_q::avatar_overlay_show_message("Reset error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-            break;
-        case agent_q::AgentQLocalResetCommitResult::root_wipe_error:
-        case agent_q::AgentQLocalResetCommitResult::policy_wipe_error:
-        case agent_q::AgentQLocalResetCommitResult::local_auth_wipe_error:
-        case agent_q::AgentQLocalResetCommitResult::human_approval_setting_wipe_error:
-        case agent_q::AgentQLocalResetCommitResult::signing_mode_wipe_error:
-        case agent_q::AgentQLocalResetCommitResult::approval_history_wipe_error:
-        case agent_q::AgentQLocalResetCommitResult::policy_update_marker_wipe_error:
-        case agent_q::AgentQLocalResetCommitResult::material_remaining_error:
-        case agent_q::AgentQLocalResetCommitResult::state_storage_error:
-            ESP_LOGE(kTag, "Local reset failed and device entered consistency error");
-            agent_q::avatar_overlay_show_message("Reset error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-            break;
-    }
+    agent_q::local_settings_reset_ui_commit_if_ready(local_settings_reset_ui_ops());
 }
 
 void start_local_settings_from_touch()
 {
-    const TickType_t now = xTaskGetTickCount();
-    if (!provisioned_material_ready() ||
-        agent_q::connect_approval_active() ||
-        agent_q::protocol_pin_approval_active() ||
-        agent_q::identification_display_active() ||
-        agent_q::provisioning_flow_active() ||
-        agent_q::user_signing_flow_active() ||
-        agent_q::local_reset_snapshot(now).flow_active ||
-        !agent_q_ui_idle_for_local_settings()) {
-        ESP_LOGW(kTag, "Local settings touch ignored because settings are unavailable");
-        agent_q::local_settings_touch_entry_clear();
-        return;
-    }
-
-    agent_q::local_reset_begin_settings(
-        timeout_window_from_now_ms(now, agent_q::kAgentQLocalResetEntryMs));
-    if (!agent_q::modal_draw_settings_menu_panel()) {
-        wipe_local_reset_scratch("local settings display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::local_settings_reset_ui_start_from_touch(local_settings_reset_ui_ops());
 }
 
 void cancel_local_reset_from_ui(const char* message)
 {
-    const TickType_t now = xTaskGetTickCount();
-    if (agent_q::local_reset_snapshot(now).stage !=
-        agent_q::AgentQLocalResetStage::pin_entry) {
-        ESP_LOGW(kTag, "Stale local reset cancel ignored");
-        return;
-    }
-
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::reset_pin_entry);
-    agent_q::local_reset_begin_settings(
-        timeout_window_from_now_ms(now, agent_q::kAgentQLocalResetEntryMs));
-    if (!agent_q::modal_draw_settings_menu_panel()) {
-        wipe_local_reset_scratch("local settings display allocation failed after reset cancel");
-        agent_q::avatar_overlay_show_message(
-            message != nullptr && message[0] != '\0' ? message : "Reset canceled",
-            AgentQMessageKind::error,
-            AgentQUiMode::result,
-            kAgentQResultDisplayMs);
-    }
+    agent_q::local_settings_reset_ui_cancel_reset_from_ui(
+        message,
+        local_settings_reset_ui_ops());
 }
 
 void close_local_settings_from_ui()
 {
-    if (agent_q::local_reset_snapshot(xTaskGetTickCount()).stage !=
-        agent_q::AgentQLocalResetStage::settings_menu) {
-        ESP_LOGW(kTag, "Stale local settings close ignored");
-        return;
-    }
-
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::settings_menu);
-    wipe_local_reset_scratch("local settings closed");
+    agent_q::local_settings_reset_ui_close_settings_from_ui(local_settings_reset_ui_ops());
 }
 
 void show_persistent_error_recovery_if_needed()
 {
-    if (!agent_q::persistent_material_consistency_error_active() ||
-        agent_q::connect_approval_active() ||
-        agent_q::protocol_pin_approval_active() ||
-        agent_q::identification_display_active() ||
-        agent_q::provisioning_flow_active() ||
-        agent_q::local_pin_auth_flow_active() ||
-        agent_q::user_signing_flow_active() ||
-        agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active) {
-        return;
-    }
-
-    bool error_recovery_visible = false;
-    {
-        LvglLockGuard lock;
-        if (!agent_q::drawing_surface_ready()) {
-            return;
-        }
-        error_recovery_visible =
-            agent_q::drawing_surface_panel_active(AgentQUiPanelKind::error_recovery);
-    }
-    if (error_recovery_visible) {
-        return;
-    }
-
-    if (!agent_q::modal_draw_error_recovery_panel(false)) {
-        ESP_LOGW(kTag, "Persistent error recovery panel could not be shown");
-    }
-}
-
-void start_error_recovery_from_ui()
-{
-    const TickType_t now = xTaskGetTickCount();
-    const agent_q::AgentQLocalResetSnapshot reset =
-        agent_q::local_reset_snapshot(now);
-    if (!agent_q::persistent_material_consistency_error_active() ||
-        reset.flow_active ||
-        agent_q::connect_approval_active() ||
-        agent_q::protocol_pin_approval_active() ||
-        agent_q::identification_display_active() ||
-        agent_q::provisioning_flow_active() ||
-        agent_q::user_signing_flow_active() ||
-        agent_q::local_pin_auth_flow_active()) {
-        ESP_LOGW(kTag, "Stale error recovery action ignored");
-        return;
-    }
-
-    agent_q::local_reset_begin_error_recovery_confirm(
-        timeout_window_from_now_ms(now, agent_q::kAgentQLocalResetEntryMs));
-    if (!agent_q::modal_draw_error_recovery_panel(true)) {
-        wipe_local_reset_scratch("error recovery confirmation display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::local_settings_reset_ui_show_persistent_error_recovery_if_needed(
+        local_settings_reset_ui_ops());
 }
 
 void cancel_error_recovery_from_ui()
 {
-    if (agent_q::local_reset_snapshot(xTaskGetTickCount()).stage !=
-        agent_q::AgentQLocalResetStage::error_recovery_confirm) {
-        ESP_LOGW(kTag, "Stale error recovery cancel ignored");
-        return;
-    }
-
-    clear_agent_q_panel_if_kind(AgentQUiPanelKind::error_recovery);
-    wipe_local_reset_scratch("error recovery canceled");
-    agent_q::avatar_overlay_show_message("Erase canceled", AgentQMessageKind::info, AgentQUiMode::result, kAgentQResultDisplayMs);
+    agent_q::local_settings_reset_ui_cancel_error_recovery_from_ui(
+        local_settings_reset_ui_ops());
 }
 
 void confirm_error_recovery_from_ui()
 {
-    const agent_q::AgentQLocalResetSnapshot reset =
-        agent_q::local_reset_snapshot(xTaskGetTickCount());
-    if (reset.stage == agent_q::AgentQLocalResetStage::none) {
-        start_error_recovery_from_ui();
-        return;
-    }
-    if (reset.stage != agent_q::AgentQLocalResetStage::error_recovery_confirm ||
-        !agent_q::persistent_material_consistency_error_active()) {
-        ESP_LOGW(kTag, "Stale error recovery erase ignored");
-        return;
-    }
-
-    if (!agent_q::local_reset_begin_error_recovery_wipe(
-            xTaskGetTickCount() + pdMS_TO_TICKS(kLocalProcessingDisplayMs))) {
-        ESP_LOGW(kTag, "Error recovery erase could not enter wiping state");
-        return;
-    }
-
-    if (!agent_q::modal_draw_processing_overlay_on_current_panel(AgentQUiPanelKind::error_recovery) &&
-        !agent_q::modal_draw_error_recovery_panel(true)) {
-        wipe_local_reset_scratch("error recovery wiping display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::local_settings_reset_ui_confirm_error_recovery_from_ui(
+        local_settings_reset_ui_ops());
 }
 
 void start_reset_pin_from_settings_menu()
 {
-    const TickType_t now = xTaskGetTickCount();
-    if (!provisioned_material_ready() ||
-        !agent_q::local_reset_begin_pin_entry(
-            timeout_window_from_now_ms(now, agent_q::kAgentQLocalResetEntryMs))) {
-        ESP_LOGW(kTag, "Stale local reset menu action ignored");
-        return;
-    }
-
-    if (!agent_q::modal_draw_reset_pin_panel()) {
-        wipe_local_reset_scratch("local reset PIN display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::local_settings_reset_ui_start_reset_pin_from_settings_menu(
+        local_settings_reset_ui_ops());
 }
 
 bool begin_connect_pin_auth(const char* id, const char* client_name)
@@ -2617,19 +2479,19 @@ bool finish_request_backed_local_pin_input_timeout_if_reached(
 
 void start_settings_human_approval_input_from_settings_menu()
 {
-    const agent_q::AgentQLocalResetSnapshot reset =
-        agent_q::local_reset_snapshot(xTaskGetTickCount());
-    if (!provisioned_material_ready() ||
-        reset.stage != agent_q::AgentQLocalResetStage::settings_menu ||
-        agent_q::local_pin_auth_flow_active()) {
+    if (agent_q::local_pin_auth_flow_active()) {
         ESP_LOGW(kTag, "Stale human approval input setting action ignored");
+        return;
+    }
+    if (!agent_q::local_settings_reset_ui_begin_settings_pin_auth_handoff(
+            "Stale human approval input setting action ignored",
+            local_settings_reset_ui_ops())) {
         return;
     }
 
     agent_q::AgentQHumanApprovalInputMode current_human_approval_mode =
         agent_q::AgentQHumanApprovalInputMode::pin;
     if (!agent_q::read_human_approval_input_mode(&current_human_approval_mode)) {
-        agent_q::local_reset_wipe();
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::settings_menu, SensitiveUiClearPolicy::preserve);
         agent_q::avatar_overlay_show_message(
             "Settings error",
@@ -2638,7 +2500,6 @@ void start_settings_human_approval_input_from_settings_menu()
             kAgentQResultDisplayMs);
         return;
     }
-    agent_q::local_reset_wipe();
     const agent_q::AgentQTimeoutWindow input_window =
         timeout_window_from_now_ms(xTaskGetTickCount(), agent_q::kAgentQLocalResetEntryMs);
     const agent_q::AgentQHumanApprovalInputMode target_human_approval_mode =
@@ -2660,19 +2521,19 @@ void start_settings_human_approval_input_from_settings_menu()
 
 void start_settings_signing_mode_from_settings_menu()
 {
-    const agent_q::AgentQLocalResetSnapshot reset =
-        agent_q::local_reset_snapshot(xTaskGetTickCount());
-    if (!provisioned_material_ready() ||
-        reset.stage != agent_q::AgentQLocalResetStage::settings_menu ||
-        agent_q::local_pin_auth_flow_active()) {
+    if (agent_q::local_pin_auth_flow_active()) {
         ESP_LOGW(kTag, "Stale settings signing mode action ignored");
+        return;
+    }
+    if (!agent_q::local_settings_reset_ui_begin_settings_pin_auth_handoff(
+            "Stale settings signing mode action ignored",
+            local_settings_reset_ui_ops())) {
         return;
     }
 
     agent_q::AgentQSigningAuthorizationMode current_mode =
         agent_q::AgentQSigningAuthorizationMode::user;
     if (!agent_q::read_signing_authorization_mode(&current_mode)) {
-        agent_q::local_reset_wipe();
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::settings_menu, SensitiveUiClearPolicy::preserve);
         agent_q::avatar_overlay_show_message(
             "Settings error",
@@ -2686,7 +2547,6 @@ void start_settings_signing_mode_from_settings_menu()
         current_mode == agent_q::AgentQSigningAuthorizationMode::policy
             ? agent_q::AgentQSigningAuthorizationMode::user
             : agent_q::AgentQSigningAuthorizationMode::policy;
-    agent_q::local_reset_wipe();
     const agent_q::AgentQTimeoutWindow input_window =
         timeout_window_from_now_ms(xTaskGetTickCount(), agent_q::kAgentQLocalResetEntryMs);
     if (!agent_q::local_pin_auth_begin_signing_mode_setting(
@@ -2704,16 +2564,16 @@ void start_settings_signing_mode_from_settings_menu()
 
 void start_settings_change_pin_from_settings_menu()
 {
-    const agent_q::AgentQLocalResetSnapshot reset =
-        agent_q::local_reset_snapshot(xTaskGetTickCount());
-    if (!provisioned_material_ready() ||
-        reset.stage != agent_q::AgentQLocalResetStage::settings_menu ||
-        agent_q::local_pin_auth_flow_active()) {
+    if (agent_q::local_pin_auth_flow_active()) {
         ESP_LOGW(kTag, "Stale settings Change PIN action ignored");
         return;
     }
+    if (!agent_q::local_settings_reset_ui_begin_settings_pin_auth_handoff(
+            "Stale settings Change PIN action ignored",
+            local_settings_reset_ui_ops())) {
+        return;
+    }
 
-    agent_q::local_reset_wipe();
     const agent_q::AgentQTimeoutWindow input_window =
         timeout_window_from_now_ms(xTaskGetTickCount(), agent_q::kAgentQLocalResetEntryMs);
     if (!agent_q::local_pin_auth_begin_change_pin(input_window)) {
@@ -2810,12 +2670,11 @@ void cancel_local_pin_auth_from_ui(const char* message)
         purpose == LocalPinAuthPurpose::settings_signing_mode ||
         purpose == LocalPinAuthPurpose::settings_change_pin) {
         wipe_local_pin_auth_scratch("local PIN authorization canceled");
-        agent_q::local_reset_begin_settings(
-            timeout_window_from_now_ms(now, agent_q::kAgentQLocalResetEntryMs));
-        if (!agent_q::modal_draw_settings_menu_panel()) {
-            wipe_local_reset_scratch("local settings display allocation failed after PIN cancel");
-            agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
+        agent_q::local_settings_reset_ui_restore_settings_menu(
+            "local settings display allocation failed after PIN cancel",
+            "Display error",
+            AgentQMessageKind::error,
+            local_settings_reset_ui_ops());
         return;
     }
 
@@ -2966,80 +2825,27 @@ void handle_local_pin_auth_submit_from_ui()
 
 void handle_reset_pin_digit_from_local_ui(char digit)
 {
-    if (!agent_q::local_reset_add_pin_digit(digit)) {
-        return;
-    }
-
-    if (!agent_q::modal_draw_reset_pin_panel()) {
-        wipe_local_reset_scratch("local reset PIN display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::local_settings_reset_ui_handle_reset_pin_digit(
+        digit,
+        local_settings_reset_ui_ops());
 }
 
 void handle_reset_pin_clear_from_local_ui()
 {
-    if (!agent_q::local_reset_clear_pin()) {
-        return;
-    }
-    if (!agent_q::modal_draw_reset_pin_panel()) {
-        wipe_local_reset_scratch("local reset PIN display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::local_settings_reset_ui_handle_reset_pin_clear(
+        local_settings_reset_ui_ops());
 }
 
 void handle_reset_pin_backspace_from_local_ui()
 {
-    if (!agent_q::local_reset_backspace_pin()) {
-        return;
-    }
-    if (!agent_q::modal_draw_reset_pin_panel()) {
-        wipe_local_reset_scratch("local reset PIN display allocation failed");
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::local_settings_reset_ui_handle_reset_pin_backspace(
+        local_settings_reset_ui_ops());
 }
 
 void handle_reset_pin_submit_from_local_ui()
 {
-    const TickType_t now = xTaskGetTickCount();
-    if (!provisioned_material_ready()) {
-        wipe_local_reset_scratch("local reset material state unavailable");
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::reset_pin_entry, SensitiveUiClearPolicy::preserve);
-        agent_q::avatar_overlay_show_message("Reset unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        return;
-    }
-
-    const agent_q::AgentQLocalResetPinSubmitResult submit_result =
-        agent_q::local_reset_submit_pin_for_verification(
-            now + pdMS_TO_TICKS(kLocalProcessingRenderDelayMs),
-            now + pdMS_TO_TICKS(agent_q::kAgentQLocalAuthWorkerMaxMs));
-    if (submit_result == agent_q::AgentQLocalResetPinSubmitResult::unavailable_stage) {
-        ESP_LOGW(kTag, "Stale local reset PIN submit ignored");
-        return;
-    }
-    if (submit_result == agent_q::AgentQLocalResetPinSubmitResult::locked) {
-        return;
-    }
-    if (submit_result == agent_q::AgentQLocalResetPinSubmitResult::worker_unavailable) {
-        if (!agent_q::modal_draw_reset_pin_panel("Auth worker busy. Try again.")) {
-            wipe_local_reset_scratch("local reset PIN worker unavailable display allocation failed");
-            agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-    if (submit_result == agent_q::AgentQLocalResetPinSubmitResult::invalid_pin) {
-        if (!agent_q::modal_draw_reset_pin_panel("Enter exactly 6 digits.")) {
-            wipe_local_reset_scratch("local reset PIN display allocation failed");
-            agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        }
-        return;
-    }
-
-    if (!agent_q::modal_draw_processing_overlay_on_current_panel(AgentQUiPanelKind::reset_pin_entry) &&
-        !agent_q::modal_draw_reset_pin_panel()) {
-        wipe_local_reset_scratch("local reset PIN verification display allocation failed");
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::reset_pin_entry, SensitiveUiClearPolicy::preserve);
-        agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-    }
+    agent_q::local_settings_reset_ui_handle_reset_pin_submit(
+        local_settings_reset_ui_ops());
 }
 
 void commit_local_pin_setting_if_ready()
@@ -3079,16 +2885,11 @@ void commit_local_pin_setting_if_ready()
         return;
     }
 
-    agent_q::local_reset_begin_settings(
-        timeout_window_from_now_ms(now, agent_q::kAgentQLocalResetEntryMs));
-    if (!agent_q::modal_draw_settings_menu_panel()) {
-        wipe_local_reset_scratch("local settings display allocation failed after PIN commit");
-        agent_q::avatar_overlay_show_message(
-            result == agent_q::AgentQLocalPinAuthCommitResult::pin_changed ? "PIN changed" : "Settings saved",
-            AgentQMessageKind::success,
-            AgentQUiMode::result,
-            kAgentQResultDisplayMs);
-    }
+    agent_q::local_settings_reset_ui_restore_settings_menu(
+        "local settings display allocation failed after PIN commit",
+        result == agent_q::AgentQLocalPinAuthCommitResult::pin_changed ? "PIN changed" : "Settings saved",
+        AgentQMessageKind::success,
+        local_settings_reset_ui_ops());
 }
 
 void handle_setup_auth_worker_result(agent_q::AgentQLocalAuthWorkerResult& worker_result)
@@ -3100,63 +2901,9 @@ void handle_setup_auth_worker_result(agent_q::AgentQLocalAuthWorkerResult& worke
 
 void handle_local_reset_auth_worker_result(const agent_q::AgentQLocalAuthWorkerResult& worker_result)
 {
-    const TickType_t now = xTaskGetTickCount();
-    if (!provisioned_material_ready()) {
-        const agent_q::AgentQLocalResetSnapshot reset =
-            agent_q::local_reset_snapshot(now);
-        if (reset.stage != agent_q::AgentQLocalResetStage::pin_verifying) {
-            return;
-        }
-        wipe_local_reset_scratch("local reset material state unavailable during PIN verification");
-        clear_agent_q_panel_if_kind(AgentQUiPanelKind::reset_pin_entry, SensitiveUiClearPolicy::preserve);
-        agent_q::avatar_overlay_show_message("Reset unavailable", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-        return;
-    }
-
-    const agent_q::AgentQLocalResetPinVerifyResult verify_result =
-        agent_q::local_reset_complete_pin_verify_job(
-            worker_result,
-            now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetPinLockoutMs),
-            now + pdMS_TO_TICKS(kLocalProcessingDisplayMs));
-    switch (verify_result) {
-        case agent_q::AgentQLocalResetPinVerifyResult::not_ready:
-            return;
-        case agent_q::AgentQLocalResetPinVerifyResult::auth_unavailable:
-            agent_q::persistent_material_record_runtime_failure(
-                agent_q::AgentQPersistentMaterialRuntimeFailure::local_reset_auth_unavailable,
-                persistent_material_ops());
-            wipe_local_reset_scratch("local reset PIN verifier unavailable");
-            clear_agent_q_panel_if_kind(AgentQUiPanelKind::reset_pin_entry, SensitiveUiClearPolicy::preserve);
-            agent_q::avatar_overlay_show_message("Auth error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-            return;
-        case agent_q::AgentQLocalResetPinVerifyResult::locked:
-            if (!agent_q::modal_draw_reset_pin_panel("Too many wrong PINs. Wait 30s.")) {
-                wipe_local_reset_scratch("local reset PIN lockout display allocation failed");
-                agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-            }
-            return;
-        case agent_q::AgentQLocalResetPinVerifyResult::wrong_pin:
-            if (!agent_q::modal_draw_reset_pin_panel("Wrong PIN.")) {
-                wipe_local_reset_scratch("local reset PIN display allocation failed");
-                agent_q::avatar_overlay_show_message("Display error", AgentQMessageKind::error, AgentQUiMode::result, kAgentQResultDisplayMs);
-            }
-            return;
-        case agent_q::AgentQLocalResetPinVerifyResult::verified:
-            break;
-    }
-
-    bool reset_panel_active = false;
-    {
-        LvglLockGuard lock;
-        reset_panel_active =
-            agent_q::drawing_surface_panel_active(AgentQUiPanelKind::reset_pin_entry);
-    }
-    if (!reset_panel_active) {
-        if (!agent_q::modal_draw_reset_pin_panel()) {
-            ESP_LOGW(kTag, "Local reset wiping panel could not be shown");
-            commit_local_reset_if_ready();
-        }
-    }
+    agent_q::local_settings_reset_ui_handle_auth_worker_result(
+        worker_result,
+        local_settings_reset_ui_ops());
 }
 
 void handle_local_pin_auth_verify_worker_result(
@@ -3439,7 +3186,6 @@ void handle_local_pin_auth_verify_worker_result(
 void handle_local_pin_auth_prepare_worker_result(
     const agent_q::AgentQLocalAuthWorkerResult& worker_result)
 {
-    const TickType_t now = xTaskGetTickCount();
     const agent_q::AgentQLocalPinAuthCommitResult result =
         agent_q::local_pin_auth_complete_pin_change_job(worker_result);
     if (result == agent_q::AgentQLocalPinAuthCommitResult::not_ready) {
@@ -3466,16 +3212,11 @@ void handle_local_pin_auth_prepare_worker_result(
         return;
     }
 
-    agent_q::local_reset_begin_settings(
-        timeout_window_from_now_ms(now, agent_q::kAgentQLocalResetEntryMs));
-    if (!agent_q::modal_draw_settings_menu_panel()) {
-        wipe_local_reset_scratch("local settings display allocation failed after PIN commit");
-        agent_q::avatar_overlay_show_message(
-            "PIN changed",
-            AgentQMessageKind::success,
-            AgentQUiMode::result,
-            kAgentQResultDisplayMs);
-    }
+    agent_q::local_settings_reset_ui_restore_settings_menu(
+        "local settings display allocation failed after PIN commit",
+        "PIN changed",
+        AgentQMessageKind::success,
+        local_settings_reset_ui_ops());
 }
 
 void drain_local_auth_worker_results()
@@ -4124,11 +3865,9 @@ void drain_ui_events()
         }
 
         if (event.kind == AgentQUiEventKind::pin_digit_requested) {
-            const agent_q::AgentQLocalResetStage reset_stage =
-                agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
             if (agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 handle_pin_digit_from_local_ui(event.digit);
-            } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
+            } else if (agent_q::local_settings_reset_ui_accepts_reset_pin_input()) {
                 handle_reset_pin_digit_from_local_ui(event.digit);
             } else if (local_pin_auth_accepts_keypad_input()) {
                 handle_local_pin_auth_digit_from_ui(event.digit);
@@ -4137,11 +3876,9 @@ void drain_ui_events()
         }
 
         if (event.kind == AgentQUiEventKind::pin_clear_requested) {
-            const agent_q::AgentQLocalResetStage reset_stage =
-                agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
             if (agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 handle_pin_clear_from_local_ui();
-            } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
+            } else if (agent_q::local_settings_reset_ui_accepts_reset_pin_input()) {
                 handle_reset_pin_clear_from_local_ui();
             } else if (local_pin_auth_accepts_keypad_input()) {
                 handle_local_pin_auth_clear_from_ui();
@@ -4150,11 +3887,9 @@ void drain_ui_events()
         }
 
         if (event.kind == AgentQUiEventKind::pin_backspace_requested) {
-            const agent_q::AgentQLocalResetStage reset_stage =
-                agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
             if (agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 handle_pin_backspace_from_local_ui();
-            } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
+            } else if (agent_q::local_settings_reset_ui_accepts_reset_pin_input()) {
                 handle_reset_pin_backspace_from_local_ui();
             } else if (local_pin_auth_accepts_keypad_input()) {
                 handle_local_pin_auth_backspace_from_ui();
@@ -4163,11 +3898,9 @@ void drain_ui_events()
         }
 
         if (event.kind == AgentQUiEventKind::pin_submit_requested) {
-            const agent_q::AgentQLocalResetStage reset_stage =
-                agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
             if (agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 handle_pin_submit_from_local_ui();
-            } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
+            } else if (agent_q::local_settings_reset_ui_accepts_reset_pin_input()) {
                 handle_reset_pin_submit_from_local_ui();
             } else if (local_pin_auth_accepts_keypad_input()) {
                 handle_local_pin_auth_submit_from_ui();
@@ -4176,11 +3909,9 @@ void drain_ui_events()
         }
 
         if (event.kind == AgentQUiEventKind::pin_cancel_requested) {
-            const agent_q::AgentQLocalResetStage reset_stage =
-                agent_q::local_reset_snapshot(xTaskGetTickCount()).stage;
             if (agent_q::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 cancel_setup_from_local_ui();
-            } else if (reset_stage == agent_q::AgentQLocalResetStage::pin_entry) {
+            } else if (agent_q::local_settings_reset_ui_accepts_reset_pin_input()) {
                 cancel_local_reset_from_ui("Reset canceled");
             } else if (local_pin_auth_accepts_keypad_input()) {
                 cancel_local_pin_auth_from_ui("Settings canceled");
