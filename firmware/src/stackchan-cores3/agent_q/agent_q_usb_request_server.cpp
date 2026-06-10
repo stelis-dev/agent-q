@@ -5085,6 +5085,32 @@ void poll_usb_input()
     agent_q::usb_line_receiver_poll(handle_line, write_usb_line_error);
 }
 
+void run_usb_request_server_tick()
+{
+    drain_local_auth_worker_results();
+    clear_identification_if_needed();
+    clear_agent_q_message_if_needed();
+    clear_setup_choice_if_needed();
+    clear_backup_phrase_if_needed();
+    clear_import_word_entry_if_needed();
+    clear_pin_setup_if_needed();
+    clear_local_reset_if_needed();
+    clear_local_pin_auth_if_needed();
+    clear_policy_update_review_if_needed();
+    clear_user_signing_review_if_needed();
+    drain_ui_events();
+    commit_local_reset_if_ready();
+    commit_local_pin_setting_if_ready();
+    poll_local_settings_touch_entry();
+    show_persistent_error_recovery_if_needed();
+    send_connect_review_response_if_needed();
+    ensure_connect_review_ui();
+    if (g_usb_ready) {
+        poll_usb_host_connection();
+        poll_usb_input();
+    }
+}
+
 void usb_request_task(void*)
 {
     // Ordering matters: any pending YES/NO choice is resolved and its response is
@@ -5092,28 +5118,7 @@ void usb_request_task(void*)
     // (poll_usb_input). A new request therefore cannot be handled until the
     // in-flight approval response has been written in the same loop pass.
     while (true) {
-        drain_local_auth_worker_results();
-        clear_identification_if_needed();
-        clear_agent_q_message_if_needed();
-        clear_setup_choice_if_needed();
-        clear_backup_phrase_if_needed();
-        clear_import_word_entry_if_needed();
-        clear_pin_setup_if_needed();
-        clear_local_reset_if_needed();
-        clear_local_pin_auth_if_needed();
-        clear_policy_update_review_if_needed();
-        clear_user_signing_review_if_needed();
-        drain_ui_events();
-        commit_local_reset_if_ready();
-        commit_local_pin_setting_if_ready();
-        poll_local_settings_touch_entry();
-        show_persistent_error_recovery_if_needed();
-        send_connect_review_response_if_needed();
-        ensure_connect_review_ui();
-        if (g_usb_ready) {
-            poll_usb_host_connection();
-            poll_usb_input();
-        }
+        run_usb_request_server_tick();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
