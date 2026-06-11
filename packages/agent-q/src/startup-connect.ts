@@ -51,41 +51,60 @@ async function writeStartupConnectionSummary(
   input: { deviceId: string; purpose?: string },
   writeDiagnostic: (line: string) => void,
 ): Promise<void> {
+  const accountsLines = await readStartupAccountsSummary(core, input);
+  const capabilitiesLines = await readStartupCapabilitiesSummary(core, input);
+  for (const line of [...accountsLines, ...capabilitiesLines]) {
+    writeDiagnostic(line);
+  }
+}
+
+async function readStartupAccountsSummary(
+  core: StartupConnectCore,
+  input: { deviceId: string; purpose?: string },
+): Promise<string[]> {
   try {
-    const [capabilitiesResult, accountsResult] = await Promise.all([
-      core.getCapabilities(input),
-      core.getAccounts(input),
-    ]);
+    const accountsResult = await core.getAccounts(input);
     if (accountsResult.source === "live") {
       const suiAddresses = accountsResult.accounts
         .filter((account) => account.chain === "sui")
         .map((account) => account.address);
       if (suiAddresses.length > 0) {
-        writeDiagnostic(`Agent-Q Sui address: ${suiAddresses.join(", ")}`);
-      } else {
-        writeDiagnostic("Agent-Q Sui address: unavailable");
+        return [`Agent-Q Sui address: ${suiAddresses.join(", ")}`];
       }
-    } else {
-      writeDiagnostic(`Agent-Q accounts unavailable: ${accountsResult.reason}`);
+      return ["Agent-Q Sui address: unavailable"];
     }
+    return [`Agent-Q accounts unavailable: ${accountsResult.reason}`];
+  } catch (error) {
+    const agentQError = toAgentQError(error);
+    const publicError = toPublicError(agentQError.code, agentQError.retryable);
+    return [`Agent-Q accounts unavailable: ${publicError.code}. ${publicError.message}`];
+  }
+}
 
+async function readStartupCapabilitiesSummary(
+  core: StartupConnectCore,
+  input: { deviceId: string; purpose?: string },
+): Promise<string[]> {
+  try {
+    const capabilitiesResult = await core.getCapabilities(input);
     if (capabilitiesResult.source === "live") {
       if (capabilitiesResult.signing !== undefined) {
-        writeDiagnostic(`Agent-Q signing mode: ${capabilitiesResult.signing.authorization}`);
         const methods = capabilitiesResult.signing.methods
           .map((method) => `${method.chain}:${method.method}`)
           .join(", ");
-        writeDiagnostic(`Agent-Q signing methods: ${methods}`);
-      } else {
-        writeDiagnostic("Agent-Q signing mode: unavailable");
+        return [
+          `Agent-Q signing mode: ${capabilitiesResult.signing.authorization}`,
+          `Agent-Q signing methods: ${methods}`,
+        ];
       }
+      return ["Agent-Q signing mode: unavailable"];
     } else {
-      writeDiagnostic(`Agent-Q capabilities unavailable: ${capabilitiesResult.reason}`);
+      return [`Agent-Q capabilities unavailable: ${capabilitiesResult.reason}`];
     }
   } catch (error) {
     const agentQError = toAgentQError(error);
     const publicError = toPublicError(agentQError.code, agentQError.retryable);
-    writeDiagnostic(`Agent-Q connection summary unavailable: ${publicError.code}. ${publicError.message}`);
+    return [`Agent-Q capabilities unavailable: ${publicError.code}. ${publicError.message}`];
   }
 }
 

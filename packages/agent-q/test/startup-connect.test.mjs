@@ -50,8 +50,8 @@ test("startup --request-connect selects the only live device and sends a Firmwar
     ["scan"],
     ["select", { deviceId, purpose: "sui-cli" }],
     ["connect", { deviceId, purpose: "sui-cli", clientName: "Agent-Q" }],
-    ["getCapabilities", { deviceId, purpose: "sui-cli" }],
     ["getAccounts", { deviceId, purpose: "sui-cli" }],
+    ["getCapabilities", { deviceId, purpose: "sui-cli" }],
   ]);
   assert.match(diagnostics.join("\n"), /Confirm it on the device/);
   assert.match(diagnostics.join("\n"), /connection approved/);
@@ -163,7 +163,7 @@ test("startup --request-connect keeps the server path alive when connect is reje
   assert.doesNotMatch(diagnostics.join("\n"), /raw rejection text/);
 });
 
-test("startup --request-connect reports sanitized connection summary failures", async () => {
+test("startup --request-connect reports partial summary when capabilities fail", async () => {
   const calls = [];
   const diagnostics = [];
   await requestDeviceConnectionOnStart(
@@ -208,12 +208,70 @@ test("startup --request-connect reports sanitized connection summary failures", 
     "scan",
     "select",
     "connect",
-    "getCapabilities",
     "getAccounts",
+    "getCapabilities",
   ]);
   assert.match(diagnostics.join("\n"), /connection approved/);
-  assert.match(diagnostics.join("\n"), /connection summary unavailable: transport_closed/);
+  assert.match(
+    diagnostics.join("\n"),
+    /Sui address: 0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133/,
+  );
+  assert.match(diagnostics.join("\n"), /capabilities unavailable: transport_closed/);
   assert.doesNotMatch(diagnostics.join("\n"), /raw port path/);
+});
+
+test("startup --request-connect reports sanitized account summary failures", async () => {
+  const calls = [];
+  const diagnostics = [];
+  await requestDeviceConnectionOnStart(
+    {
+      async scanDevices() {
+        calls.push(["scan"]);
+        return startupScanResult([startupLiveDevice(deviceId)]);
+      },
+      async selectDevice(input) {
+        calls.push(["select", input]);
+        return {
+          source: "selected",
+          activeDeviceId: input.deviceId,
+          purpose: input.purpose ?? null,
+          device: startupDevice(input.deviceId),
+        };
+      },
+      async connectDevice(input) {
+        calls.push(["connect", input]);
+        return {
+          source: "connected",
+          deviceId,
+          sessionTtlMs: 4294967295,
+          connectedAt: "2026-05-28T00:00:00.000Z",
+          device: startupDevice(input.deviceId),
+        };
+      },
+      async getCapabilities(input) {
+        calls.push(["getCapabilities", input]);
+        return startupCapabilities(input.deviceId);
+      },
+      async getAccounts(input) {
+        calls.push(["getAccounts", input]);
+        throw new AgentQError("handshake_failed", "raw serial text must not leak", true);
+      },
+    },
+    {},
+    (line) => diagnostics.push(line),
+  );
+
+  assert.deepEqual(calls.map((call) => call[0]), [
+    "scan",
+    "select",
+    "connect",
+    "getAccounts",
+    "getCapabilities",
+  ]);
+  assert.match(diagnostics.join("\n"), /connection approved/);
+  assert.match(diagnostics.join("\n"), /accounts unavailable: handshake_failed/);
+  assert.match(diagnostics.join("\n"), /signing mode: user/);
+  assert.doesNotMatch(diagnostics.join("\n"), /raw serial text/);
 });
 
 function startupScanResult(devices, activeDeviceId = null) {

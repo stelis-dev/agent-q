@@ -53,8 +53,11 @@ npm exec --yes --package @stelis/agent-q -- agent-q serve --request-connect
 After approval, the server writes an operator-facing summary to stderr. The
 summary includes the connected device id, public Sui address when available,
 Firmware-reported signing mode when available, and supported signing methods
-when available. Use the public Sui address from this summary as
-`<SUI_ADDRESS>` in the Sui CLI commands below.
+when available. Account information and capability information are read after
+the device approves the connection; if either read fails, the server prints a
+separate `Agent-Q accounts unavailable: ...` or
+`Agent-Q capabilities unavailable: ...` line. Use the public Sui address from
+this summary as `<SUI_ADDRESS>` in the Sui CLI commands below.
 
 In another terminal, register the Agent-Q key with Sui CLI once. This writes an
 external signer entry to the Sui CLI keystore; it is not an environment
@@ -122,9 +125,12 @@ npx -y @stelis/agent-q serve --request-connect
 Confirm the connection request on the device. After approval, `agent-q` writes
 an operator-facing summary to stderr. The summary includes the connected device
 id, public Sui address when available, Firmware-reported signing mode when
-available, and supported signing methods when available. This is diagnostic
-output only; it does not register the key with Sui CLI and does not authorize
-signing.
+available, and supported signing methods when available. Account information
+and capability information are read after the device approves the connection;
+if either read fails, the server prints a separate
+`Agent-Q accounts unavailable: ...` or
+`Agent-Q capabilities unavailable: ...` line. This is diagnostic output only;
+it does not register the key with Sui CLI and does not authorize signing.
 
 After approval, MCP tools can use the active session. Signing requests still
 require the Firmware-owned signing gate for the selected method and device mode.
