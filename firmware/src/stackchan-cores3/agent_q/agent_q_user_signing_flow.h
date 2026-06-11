@@ -88,7 +88,9 @@ struct AgentQUserSigningPersonalMessageBeginInput {
     AgentQTimeoutWindow request_window;
 };
 
-struct AgentQUserSigningFlowSnapshot {
+// Small lifecycle snapshot for state gates, terminal handling, history writes,
+// and signing handoff. Keep large review-only facts out of these paths.
+struct AgentQUserSigningFlowCoreSnapshot {
     bool active;
     AgentQUserSigningStage stage;
     AgentQUserSigningTerminalResult terminal_result;
@@ -104,17 +106,24 @@ struct AgentQUserSigningFlowSnapshot {
     AgentQTimeoutWindow pin_input_window;
     size_t signable_payload_size;
     bool signable_payload_available;
+};
+
+// Full review snapshot. It includes the Sui fact matrix and must be copied only
+// into caller-owned or static scratch when rendering review UI details.
+struct AgentQUserSigningFlowSnapshot : AgentQUserSigningFlowCoreSnapshot {
     SuiTransactionPolicyFacts sui_facts;
     char account_address[kSuiAddressBufferSize];
     char message_preview[kAgentQSignPersonalMessagePreviewSize];
 };
 
 using AgentQUserSigningHistoryWriteFn =
-    bool (*)(const AgentQUserSigningFlowSnapshot& snapshot, void* context);
+    bool (*)(const AgentQUserSigningFlowCoreSnapshot& snapshot, void* context);
 
 AgentQUserSigningTransitionResult user_signing_flow_clear();
 bool user_signing_flow_active();
 bool user_signing_flow_session_matches(const char* session_id);
+AgentQUserSigningFlowCoreSnapshot user_signing_flow_core_snapshot();
+bool user_signing_flow_snapshot_copy(AgentQUserSigningFlowSnapshot* output);
 AgentQUserSigningFlowSnapshot user_signing_flow_snapshot();
 
 AgentQUserSigningFlowBeginResult user_signing_flow_begin(

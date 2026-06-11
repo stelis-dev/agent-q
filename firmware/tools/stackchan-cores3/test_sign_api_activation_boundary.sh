@@ -50,6 +50,7 @@ SIGNING_PREFLIGHT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/age
 POLICY_SIGNING_EXECUTION_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_policy_signing_execution.cpp"
 USER_REVIEW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_review_view_model.cpp"
 USER_SIGNING_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_critical_section.cpp"
+USER_SIGNING_CONFIRMATION_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_confirmation.cpp"
 USER_FLOW_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_flow.h"
 USER_SIGNING_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_critical_section.h"
 SIGN_TRANSACTION_INGRESS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_sign_transaction_user_ingress.cpp"
@@ -150,6 +151,27 @@ else
     failures=$((failures + 1))
   fi
 fi
+
+expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'g_sign_transaction_preflight_scratch' \
+  "USB signing handler must keep large transaction preflight scratch off the USB task stack"
+expect_absent "${USB_SIGNING_HANDLER_SOURCE}" 'AgentQSignTransactionPreflightOutput[[:space:]]+preflight[[:space:]]*(=|;)' \
+  "USB signing handler must not allocate transaction preflight output as a stack local"
+expect_present "${USER_FLOW_HEADER}" 'AgentQUserSigningFlowCoreSnapshot' \
+  "user signing flow must expose a small core snapshot for non-review lifecycle paths"
+expect_present "${USER_FLOW_HEADER}" 'user_signing_flow_snapshot_copy' \
+  "user signing flow must expose caller-owned review snapshot copying for large review details"
+expect_present "${USER_SIGNING_REVIEW_UI_SOURCE}" 'g_review_snapshot_scratch' \
+  "user signing review UI must keep large review snapshots off the task stack"
+expect_absent "${USER_SIGNING_REVIEW_UI_SOURCE}" 'AgentQUserSigningFlowSnapshot[[:space:]]+[A-Za-z_]+[[:space:]]*=' \
+  "user signing review UI must not allocate large review snapshots as stack locals"
+expect_absent "${USB_SERVER}" 'AgentQUserSigningFlowSnapshot[[:space:]]+[A-Za-z_]+[[:space:]]*=' \
+  "USB request server must use the small user-signing core snapshot outside review rendering"
+expect_absent "${USER_SIGNING_SOURCE}" 'AgentQUserSigningFlowSnapshot' \
+  "user signing critical section must not copy large review snapshots"
+expect_absent "${USER_SIGNING_CONFIRMATION_SOURCE}" 'AgentQUserSigningFlowSnapshot' \
+  "user signing confirmation must not bind or copy large review snapshots"
+expect_absent "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'AgentQUserSigningFlowSnapshot' \
+  "request-backed local PIN context must not copy large review snapshots"
 
 expect_present "${USB_OPERATION_TYPE_HEADER}" '"sign_transaction"' \
   "USB operation classifier must accept public sign_transaction messages"

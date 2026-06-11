@@ -12,7 +12,7 @@ namespace {
 struct SignaturePinBinding {
     bool active = false;
     AgentQLocalPinAuthSignatureBinding pin = {};
-    AgentQUserSigningFlowSnapshot flow = {};
+    AgentQUserSigningFlowCoreSnapshot flow = {};
 };
 
 SignaturePinBinding g_signature_pin_binding;
@@ -79,11 +79,11 @@ uint32_t next_signature_pin_token()
 }
 
 bool flow_matches_expected(
-    const AgentQUserSigningFlowSnapshot& expected,
+    const AgentQUserSigningFlowCoreSnapshot& expected,
     AgentQUserSigningStage stage)
 {
-    const AgentQUserSigningFlowSnapshot current =
-        user_signing_flow_snapshot();
+    const AgentQUserSigningFlowCoreSnapshot current =
+        user_signing_flow_core_snapshot();
     return expected.active &&
            current.active &&
            current.stage == stage &&
@@ -116,7 +116,7 @@ void clear_signature_pin_if_active()
 }
 
 AgentQUserSigningConfirmationResult clear_expected_flow_and_pin(
-    const AgentQUserSigningFlowSnapshot& expected)
+    const AgentQUserSigningFlowCoreSnapshot& expected)
 {
     clear_signature_pin_if_active();
     if (!flow_matches_expected(expected, AgentQUserSigningStage::pin_entry)) {
@@ -130,7 +130,7 @@ record_verified_pin_and_write_history(
     TickType_t now,
     AgentQUserSigningHistoryWriteFn write_fn,
     void* context,
-    const AgentQUserSigningFlowSnapshot& expected)
+    const AgentQUserSigningFlowCoreSnapshot& expected)
 {
     if (write_fn == nullptr) {
         return AgentQUserSigningConfirmationResult::invalid_argument;
@@ -155,8 +155,8 @@ user_signing_confirmation_accept_review_and_begin_pin(
     TickType_t now,
     AgentQTimeoutWindow pin_input_window)
 {
-    const AgentQUserSigningFlowSnapshot flow =
-        user_signing_flow_snapshot();
+    const AgentQUserSigningFlowCoreSnapshot flow =
+        user_signing_flow_core_snapshot();
     if (!flow.active) {
         return AgentQUserSigningConfirmationResult::inactive;
     }
@@ -208,7 +208,7 @@ user_signing_confirmation_complete_pin_verify_job_and_write_history(
             AgentQUserSigningStage::pin_entry)) {
         return AgentQUserSigningConfirmationResult::wrong_stage;
     }
-    const AgentQUserSigningFlowSnapshot expected = g_signature_pin_binding.flow;
+    const AgentQUserSigningFlowCoreSnapshot expected = g_signature_pin_binding.flow;
     if (write_fn == nullptr) {
         clear_expected_flow_and_pin(expected);
         return AgentQUserSigningConfirmationResult::invalid_argument;

@@ -307,7 +307,30 @@ AgentQUserSigningTransitionResult terminalize_if_deadline_expired(TickType_t now
     return AgentQUserSigningTransitionResult::ok;
 }
 
-bool same_history_write_request(const AgentQUserSigningFlowSnapshot& snapshot)
+void populate_core_snapshot(AgentQUserSigningFlowCoreSnapshot& snapshot)
+{
+    memset(&snapshot, 0, sizeof(snapshot));
+    snapshot.active = g_state.active();
+    snapshot.stage = g_state.stage;
+    snapshot.terminal_result = g_state.terminal_result;
+    snapshot.signing_route = g_state.signing_route;
+    memcpy(snapshot.request_id, g_state.request_id, sizeof(snapshot.request_id));
+    memcpy(
+        snapshot.request_identity,
+        g_state.request_identity,
+        sizeof(snapshot.request_identity));
+    memcpy(snapshot.session_id, g_state.session_id, sizeof(snapshot.session_id));
+    memcpy(snapshot.chain, g_state.chain, sizeof(snapshot.chain));
+    memcpy(snapshot.method, g_state.method, sizeof(snapshot.method));
+    memcpy(snapshot.network, g_state.network, sizeof(snapshot.network));
+    memcpy(snapshot.payload_digest, g_state.payload_digest, sizeof(snapshot.payload_digest));
+    snapshot.request_window = g_state.request_window;
+    snapshot.pin_input_window = g_state.pin_input_window;
+    snapshot.signable_payload_size = g_state.signable_payload_size;
+    snapshot.signable_payload_available = g_state.signable_payload_available;
+}
+
+bool same_history_write_request(const AgentQUserSigningFlowCoreSnapshot& snapshot)
 {
     return g_state.active() &&
            snapshot.active &&
@@ -392,30 +415,30 @@ AgentQSessionValidationResult user_signing_flow_validate_session()
     return session_validate(g_state.session_id);
 }
 
+AgentQUserSigningFlowCoreSnapshot user_signing_flow_core_snapshot()
+{
+    AgentQUserSigningFlowCoreSnapshot snapshot = {};
+    populate_core_snapshot(snapshot);
+    return snapshot;
+}
+
+bool user_signing_flow_snapshot_copy(AgentQUserSigningFlowSnapshot* output)
+{
+    if (output == nullptr) {
+        return false;
+    }
+    memset(output, 0, sizeof(*output));
+    populate_core_snapshot(*output);
+    output->sui_facts = g_state.sui_facts;
+    memcpy(output->account_address, g_state.account_address, sizeof(output->account_address));
+    memcpy(output->message_preview, g_state.message_preview, sizeof(output->message_preview));
+    return true;
+}
+
 AgentQUserSigningFlowSnapshot user_signing_flow_snapshot()
 {
     AgentQUserSigningFlowSnapshot snapshot = {};
-    snapshot.active = g_state.active();
-    snapshot.stage = g_state.stage;
-    snapshot.terminal_result = g_state.terminal_result;
-    snapshot.signing_route = g_state.signing_route;
-    memcpy(snapshot.request_id, g_state.request_id, sizeof(snapshot.request_id));
-    memcpy(
-        snapshot.request_identity,
-        g_state.request_identity,
-        sizeof(snapshot.request_identity));
-    memcpy(snapshot.session_id, g_state.session_id, sizeof(snapshot.session_id));
-    memcpy(snapshot.chain, g_state.chain, sizeof(snapshot.chain));
-    memcpy(snapshot.method, g_state.method, sizeof(snapshot.method));
-    memcpy(snapshot.network, g_state.network, sizeof(snapshot.network));
-    memcpy(snapshot.payload_digest, g_state.payload_digest, sizeof(snapshot.payload_digest));
-    snapshot.request_window = g_state.request_window;
-    snapshot.pin_input_window = g_state.pin_input_window;
-    snapshot.signable_payload_size = g_state.signable_payload_size;
-    snapshot.signable_payload_available = g_state.signable_payload_available;
-    snapshot.sui_facts = g_state.sui_facts;
-    memcpy(snapshot.account_address, g_state.account_address, sizeof(snapshot.account_address));
-    memcpy(snapshot.message_preview, g_state.message_preview, sizeof(snapshot.message_preview));
+    user_signing_flow_snapshot_copy(&snapshot);
     return snapshot;
 }
 
@@ -663,8 +686,8 @@ user_signing_flow_record_pin_verified_and_write_confirmation_history(
     if (guard != AgentQUserSigningTransitionResult::ok) {
         return guard;
     }
-    const AgentQUserSigningFlowSnapshot snapshot =
-        user_signing_flow_snapshot();
+    const AgentQUserSigningFlowCoreSnapshot snapshot =
+        user_signing_flow_core_snapshot();
     const bool write_ok = write_fn(snapshot, context);
     if (!same_history_write_request(snapshot)) {
         return AgentQUserSigningTransitionResult::stale_state;
@@ -704,8 +727,8 @@ user_signing_flow_record_physical_confirmed_and_write_confirmation_history(
     g_state.pin_input_window = kAgentQTimeoutWindowNone;
     g_state.paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
 
-    const AgentQUserSigningFlowSnapshot snapshot =
-        user_signing_flow_snapshot();
+    const AgentQUserSigningFlowCoreSnapshot snapshot =
+        user_signing_flow_core_snapshot();
     const bool write_ok = write_fn(snapshot, context);
     if (!same_history_write_request(snapshot)) {
         return AgentQUserSigningTransitionResult::stale_state;

@@ -332,7 +332,16 @@ void policy_finish_error(
     snprintf(g_policy_last_error_code, sizeof(g_policy_last_error_code), "%s", error_code);
 }
 
-agent_q::AgentQUserSigningFlowSnapshot user_snapshot()
+bool user_snapshot(agent_q::AgentQUserSigningFlowSnapshot* output)
+{
+    if (output == nullptr) {
+        return false;
+    }
+    *output = g_user_snapshot;
+    return true;
+}
+
+agent_q::AgentQUserSigningFlowCoreSnapshot user_core_snapshot()
 {
     return g_user_snapshot;
 }
@@ -404,7 +413,7 @@ bool write_error(const char*, const char* code, const char*)
     return true;
 }
 void show_display_error() { ++g_user_display_error_calls; }
-bool dummy_history_write(const agent_q::AgentQUserSigningFlowSnapshot&, void*) { return true; }
+bool dummy_history_write(const agent_q::AgentQUserSigningFlowCoreSnapshot&, void*) { return true; }
 void execute_signing(const char* request_id)
 {
     expect(strcmp(request_id, "sign-1") == 0, "execute uses request id");
@@ -453,6 +462,7 @@ agent_q::AgentQUserSigningReviewUiFlowOps user_ops()
 {
     return {
         now,
+        user_core_snapshot,
         user_snapshot,
         build_user_model,
         draw_user_review,

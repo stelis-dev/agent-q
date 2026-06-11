@@ -41,8 +41,8 @@ bool request_backed_local_pin_request_id(
                 return false;
             }
             output[0] = '\0';
-            const AgentQUserSigningFlowSnapshot snapshot =
-                user_signing_flow_snapshot();
+            const AgentQUserSigningFlowCoreSnapshot snapshot =
+                user_signing_flow_core_snapshot();
             if (!snapshot.active || snapshot.request_id[0] == '\0') {
                 return false;
             }
@@ -76,8 +76,8 @@ AgentQTimeoutWindow request_backed_local_pin_cap_input_window(
 
     switch (request_backed_local_pin_owner_for_purpose(purpose)) {
         case AgentQRequestBackedLocalPinOwner::user_signing: {
-            const AgentQUserSigningFlowSnapshot snapshot =
-                user_signing_flow_snapshot();
+            const AgentQUserSigningFlowCoreSnapshot snapshot =
+                user_signing_flow_core_snapshot();
             if (!snapshot.active) {
                 return kAgentQTimeoutWindowNone;
             }

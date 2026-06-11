@@ -189,7 +189,7 @@ bool usb_signing_result_write_user_signed(
     const char* id,
     const char* session_id,
     const char* authorization,
-    const AgentQUserSigningFlowSnapshot& snapshot,
+    const AgentQUserSigningFlowCoreSnapshot& snapshot,
     const AgentQUserSigningOutput& signing_output)
 {
     if (snapshot.signing_route == AgentQSigningRoute::unsupported ||

@@ -105,8 +105,8 @@ user_signing_execute_critical_section(
     }
     user_signing_output_wipe(output);
 
-    const AgentQUserSigningFlowSnapshot snapshot =
-        user_signing_flow_snapshot();
+    const AgentQUserSigningFlowCoreSnapshot snapshot =
+        user_signing_flow_core_snapshot();
     uint8_t payload[kAgentQUserSigningPayloadMaxBytes] = {};
     uint8_t signature[kSuiEd25519SignatureBytes] = {};
     size_t payload_size = 0;

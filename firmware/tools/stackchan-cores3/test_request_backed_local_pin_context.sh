@@ -154,6 +154,11 @@ AgentQUserSigningFlowSnapshot user_signing_flow_snapshot()
     return g_user_snapshot;
 }
 
+AgentQUserSigningFlowCoreSnapshot user_signing_flow_core_snapshot()
+{
+    return g_user_snapshot;
+}
+
 AgentQUserSigningTransitionResult user_signing_flow_refresh_pin_deadline(TickType_t now)
 {
     g_last_user_refresh_now = now;

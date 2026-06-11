@@ -232,7 +232,7 @@ agent_q::AgentQUserSigningPersonalMessageBeginInput make_valid_personal_message_
 }
 
 bool write_confirmation_history(
-    const agent_q::AgentQUserSigningFlowSnapshot& snapshot,
+    const agent_q::AgentQUserSigningFlowCoreSnapshot& snapshot,
     void*)
 {
     expect(snapshot.stage == agent_q::AgentQUserSigningStage::history_write,

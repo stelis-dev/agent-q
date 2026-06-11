@@ -1,8 +1,12 @@
 #include "agent_q_usb_signing_handlers.h"
 
+#include <string.h>
+
 namespace agent_q {
 
 namespace {
+
+AgentQSignTransactionPreflightOutput g_sign_transaction_preflight_scratch;
 
 enum class CommonSignatureIngressError {
     ok,
@@ -457,6 +461,14 @@ bool transaction_signing_handler_available(
            ops.clear_prepared_transaction != nullptr;
 }
 
+void clear_sign_transaction_preflight_scratch(
+    const AgentQUsbSigningHandlerOps& ops,
+    AgentQSignTransactionPreflightOutput& preflight)
+{
+    ops.clear_prepared_transaction(&preflight.prepared);
+    memset(&preflight, 0, sizeof(preflight));
+}
+
 bool personal_message_signing_handler_available(
     const AgentQUsbSigningHandlerOps& ops)
 {
@@ -653,7 +665,8 @@ void handle_usb_sign_transaction_request(
         return;
     }
 
-    AgentQSignTransactionPreflightOutput preflight = {};
+    AgentQSignTransactionPreflightOutput& preflight = g_sign_transaction_preflight_scratch;
+    clear_sign_transaction_preflight_scratch(ops, preflight);
     const AgentQSigningPreflightResult preflight_result =
         ops.evaluate_transaction_preflight(
             request,
@@ -667,6 +680,7 @@ void handle_usb_sign_transaction_request(
             &preflight);
     if (preflight_result != AgentQSigningPreflightResult::ok) {
         write_sign_transaction_preflight_error(id, preflight_result, preflight, writer, ops);
+        clear_sign_transaction_preflight_scratch(ops, preflight);
         return;
     }
     if (preflight.signing_mode == AgentQSigningAuthorizationMode::policy) {
@@ -675,10 +689,11 @@ void handle_usb_sign_transaction_request(
             preflight.prepared,
             preflight.request_identity,
             ops);
-        ops.clear_prepared_transaction(&preflight.prepared);
+        clear_sign_transaction_preflight_scratch(ops, preflight);
         return;
     }
 
+    const AgentQSigningRoute route = preflight.route;
     const AgentQUserSigningFlowBeginResult begin_result =
         ops.begin_transaction_user_signing(
             AgentQUserSigningTransactionBeginInput{
@@ -689,8 +704,8 @@ void handle_usb_sign_transaction_request(
                 &preflight.prepared,
                 ops.make_user_signing_window(),
             });
-    ops.clear_prepared_transaction(&preflight.prepared);
-    finish_user_signing_review_entry(id, preflight.route, begin_result, writer, ops);
+    clear_sign_transaction_preflight_scratch(ops, preflight);
+    finish_user_signing_review_entry(id, route, begin_result, writer, ops);
 }
 
 void handle_usb_sign_personal_message_request(

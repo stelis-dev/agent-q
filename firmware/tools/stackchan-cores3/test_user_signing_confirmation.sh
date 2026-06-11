@@ -205,7 +205,7 @@ agent_q::AgentQLocalAuthWorkerResult make_verify_result(bool verified)
 }
 
 bool write_confirmation_history(
-    const agent_q::AgentQUserSigningFlowSnapshot& snapshot,
+    const agent_q::AgentQUserSigningFlowCoreSnapshot& snapshot,
     void*)
 {
     ++g_history_write_calls;

@@ -2,24 +2,42 @@
 
 #include "agent_q_timeout_window.h"
 
+#include <string.h>
+
 namespace agent_q {
 namespace {
+
+AgentQUserSigningFlowSnapshot g_review_snapshot_scratch;
 
 TickType_t now_or_zero(const AgentQUserSigningReviewUiFlowOps& ops)
 {
     return ops.now != nullptr ? ops.now() : 0;
 }
 
-AgentQUserSigningFlowSnapshot snapshot_or_inactive(
+const AgentQUserSigningFlowSnapshot* snapshot_or_null(
     const AgentQUserSigningReviewUiFlowOps& ops)
 {
     if (ops.snapshot == nullptr) {
-        return {};
+        return nullptr;
     }
-    return ops.snapshot();
+    memset(&g_review_snapshot_scratch, 0, sizeof(g_review_snapshot_scratch));
+    if (!ops.snapshot(&g_review_snapshot_scratch)) {
+        memset(&g_review_snapshot_scratch, 0, sizeof(g_review_snapshot_scratch));
+        return nullptr;
+    }
+    return &g_review_snapshot_scratch;
 }
 
-bool reviewing(const AgentQUserSigningFlowSnapshot& snapshot)
+AgentQUserSigningFlowCoreSnapshot core_snapshot_or_inactive(
+    const AgentQUserSigningReviewUiFlowOps& ops)
+{
+    if (ops.core_snapshot == nullptr) {
+        return {};
+    }
+    return ops.core_snapshot();
+}
+
+bool reviewing(const AgentQUserSigningFlowCoreSnapshot& snapshot)
 {
     return snapshot.active &&
            snapshot.stage == AgentQUserSigningStage::reviewing;
@@ -82,20 +100,24 @@ bool terminal_pending(const AgentQUserSigningReviewUiFlowOps& ops)
 
 bool user_signing_review_ui_show(const AgentQUserSigningReviewUiFlowOps& ops)
 {
-    const AgentQUserSigningFlowSnapshot current = snapshot_or_inactive(ops);
+    const AgentQUserSigningFlowSnapshot* current = snapshot_or_null(ops);
     AgentQUserSigningReviewViewModel model = {};
-    if (ops.build_review_model == nullptr ||
-        ops.build_review_model(current, &model) !=
+    if (current == nullptr ||
+        ops.build_review_model == nullptr ||
+        ops.build_review_model(*current, &model) !=
             AgentQUserSigningReviewBuildResult::ok) {
+        memset(&g_review_snapshot_scratch, 0, sizeof(g_review_snapshot_scratch));
         return false;
     }
-    return ops.draw_review_panel != nullptr &&
-           ops.draw_review_panel(model, current.request_window);
+    const bool drawn = ops.draw_review_panel != nullptr &&
+                       ops.draw_review_panel(model, current->request_window);
+    memset(&g_review_snapshot_scratch, 0, sizeof(g_review_snapshot_scratch));
+    return drawn;
 }
 
 void user_signing_review_ui_accept(const AgentQUserSigningReviewUiFlowOps& ops)
 {
-    const AgentQUserSigningFlowSnapshot current = snapshot_or_inactive(ops);
+    const AgentQUserSigningFlowCoreSnapshot current = core_snapshot_or_inactive(ops);
     if (!reviewing(current)) {
         log_warn(ops, "Stale user_signing review accept ignored");
         return;
@@ -179,7 +201,7 @@ void user_signing_review_ui_accept(const AgentQUserSigningReviewUiFlowOps& ops)
 
 void user_signing_review_ui_reject(const AgentQUserSigningReviewUiFlowOps& ops)
 {
-    const AgentQUserSigningFlowSnapshot current = snapshot_or_inactive(ops);
+    const AgentQUserSigningFlowCoreSnapshot current = core_snapshot_or_inactive(ops);
     if (!reviewing(current)) {
         log_warn(ops, "Stale user_signing review reject ignored");
         return;
@@ -205,7 +227,7 @@ void user_signing_review_ui_reject(const AgentQUserSigningReviewUiFlowOps& ops)
 void user_signing_review_ui_clear_if_needed(const AgentQUserSigningReviewUiFlowOps& ops)
 {
     const TickType_t now = now_or_zero(ops);
-    const AgentQUserSigningFlowSnapshot current = snapshot_or_inactive(ops);
+    const AgentQUserSigningFlowCoreSnapshot current = core_snapshot_or_inactive(ops);
     if (!reviewing(current)) {
         return;
     }

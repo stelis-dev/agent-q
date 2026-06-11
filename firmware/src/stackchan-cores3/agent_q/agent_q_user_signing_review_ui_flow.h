@@ -14,7 +14,8 @@ namespace agent_q {
 
 struct AgentQUserSigningReviewUiFlowOps {
     TickType_t (*now)();
-    AgentQUserSigningFlowSnapshot (*snapshot)();
+    AgentQUserSigningFlowCoreSnapshot (*core_snapshot)();
+    bool (*snapshot)(AgentQUserSigningFlowSnapshot* output);
     AgentQUserSigningReviewBuildResult (*build_review_model)(
         const AgentQUserSigningFlowSnapshot& snapshot,
         AgentQUserSigningReviewViewModel* output);

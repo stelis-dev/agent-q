@@ -236,8 +236,8 @@ bool local_pin_auth_panel_matches_stage(AgentQUiPanelKind kind)
 
 bool user_signing_review_panel_matches_stage(AgentQUiPanelKind kind)
 {
-    const agent_q::AgentQUserSigningFlowSnapshot snapshot =
-        agent_q::user_signing_flow_snapshot();
+    const agent_q::AgentQUserSigningFlowCoreSnapshot snapshot =
+        agent_q::user_signing_flow_core_snapshot();
     return kind == AgentQUiPanelKind::user_signing_review &&
            snapshot.active &&
            snapshot.stage == agent_q::AgentQUserSigningStage::reviewing;
@@ -325,8 +325,8 @@ const char* current_device_state()
     if (agent_q::persistent_material_consistency_error_active()) {
         return "error";
     }
-    const agent_q::AgentQUserSigningFlowSnapshot user_signing =
-        agent_q::user_signing_flow_snapshot();
+    const agent_q::AgentQUserSigningFlowCoreSnapshot user_signing =
+        agent_q::user_signing_flow_core_snapshot();
     if (agent_q::connect_approval_active() ||
         agent_q::protocol_pin_approval_active() ||
         (user_signing.active &&
@@ -518,7 +518,7 @@ agent_q::AgentQSigningHistoryTerminalResult signing_history_terminal_result(
 }
 
 bool write_user_signing_confirmation_history(
-    const agent_q::AgentQUserSigningFlowSnapshot& snapshot,
+    const agent_q::AgentQUserSigningFlowCoreSnapshot& snapshot,
     void*)
 {
     const agent_q::AgentQSigningHistoryAppendInput input{
@@ -538,7 +538,7 @@ bool write_user_signing_confirmation_history(
 }
 
 bool write_user_signing_physical_confirmation_history(
-    const agent_q::AgentQUserSigningFlowSnapshot& snapshot,
+    const agent_q::AgentQUserSigningFlowCoreSnapshot& snapshot,
     void*)
 {
     const agent_q::AgentQSigningHistoryAppendInput input{
@@ -558,7 +558,7 @@ bool write_user_signing_physical_confirmation_history(
 }
 
 bool write_user_signing_terminal_history(
-    const agent_q::AgentQUserSigningFlowSnapshot& snapshot,
+    const agent_q::AgentQUserSigningFlowCoreSnapshot& snapshot,
     agent_q::AgentQUserSigningTerminalResult result)
 {
     const agent_q::AgentQSigningHistoryTerminalResult history_result =
@@ -615,8 +615,8 @@ void finish_user_signing_terminal(
     const char* request_id,
     const agent_q::AgentQUserSigningOutput* signing_output)
 {
-    const agent_q::AgentQUserSigningFlowSnapshot snapshot =
-        agent_q::user_signing_flow_snapshot();
+    const agent_q::AgentQUserSigningFlowCoreSnapshot snapshot =
+        agent_q::user_signing_flow_core_snapshot();
     const agent_q::AgentQUserSigningTerminalResult result =
         snapshot.terminal_result;
     if (!snapshot.active ||
@@ -789,8 +789,8 @@ agent_q::AgentQUsbSessionLossPlan current_usb_session_loss_plan(TickType_t now)
         agent_q::protocol_pin_approval_snapshot();
     const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
         agent_q::local_pin_auth_snapshot(now);
-    const agent_q::AgentQUserSigningFlowSnapshot user_signing =
-        agent_q::user_signing_flow_snapshot();
+    const agent_q::AgentQUserSigningFlowCoreSnapshot user_signing =
+        agent_q::user_signing_flow_core_snapshot();
     return agent_q::usb_session_loss_plan(agent_q::AgentQUsbSessionLossInput{
         agent_q::session_active(),
 	        agent_q::connect_approval_active(),
@@ -1197,8 +1197,8 @@ void cancel_policy_update_after_session_loss(const char* log_reason)
 
 void cancel_user_signing_after_session_loss(const char* log_reason)
 {
-    const agent_q::AgentQUserSigningFlowSnapshot snapshot =
-        agent_q::user_signing_flow_snapshot();
+    const agent_q::AgentQUserSigningFlowCoreSnapshot snapshot =
+        agent_q::user_signing_flow_core_snapshot();
     if (!snapshot.active) {
         return;
     }
@@ -1309,8 +1309,8 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
 
 bool disconnect_pending_user_signing_for_session(const char* id, const char* session_id)
 {
-    const agent_q::AgentQUserSigningFlowSnapshot snapshot =
-        agent_q::user_signing_flow_snapshot();
+    const agent_q::AgentQUserSigningFlowCoreSnapshot snapshot =
+        agent_q::user_signing_flow_core_snapshot();
     if (!snapshot.active ||
         !agent_q::user_signing_flow_session_matches(session_id)) {
         return false;
@@ -3041,7 +3041,8 @@ const agent_q::AgentQUserSigningReviewUiFlowOps& user_signing_review_ui_flow_ops
 {
     static const agent_q::AgentQUserSigningReviewUiFlowOps ops = {
         xTaskGetTickCount,
-        agent_q::user_signing_flow_snapshot,
+        agent_q::user_signing_flow_core_snapshot,
+        agent_q::user_signing_flow_snapshot_copy,
         agent_q::user_signing_review_view_model_build,
         agent_q::modal_draw_user_signing_review_panel,
         clear_agent_q_panel_if_kind,
