@@ -49,8 +49,7 @@ constexpr int kPanelActionButtonGap = 8;
 // setup, reset PIN, error recovery, and local PIN auth. Every one of those rows
 // MUST use these X/width constants together with kSetupActionButtonY (row Y) and
 // kBackupPhraseButtonHeight (row height) so the layout stays identical across
-// modals. Do NOT introduce a second decision-row constant set (that is exactly how
-// the connect modal previously drifted to a wider, gap-less layout); extend these.
+// modals. Do NOT introduce a second decision-row constant set; extend these.
 constexpr int kPanelActionButtonLeftX = kPanelGridLeft;
 constexpr int kPanelActionButtonWidth =
     (kPanelGridWidth - kPanelActionButtonGap) / 2;
@@ -1543,8 +1542,8 @@ bool modal_draw_settings_menu_panel()
     const bool signing_mode_read_ok =
         agent_q::read_signing_authorization_mode(&signing_mode);
 
-    // Settings are fixed rows: add future settings by appending the same
-    // label/control pair, not by adding explanatory text blocks.
+    // Settings are fixed rows: add settings by appending the same label/control
+    // pair, not by adding explanatory text blocks.
     if (!make_settings_row_label(panel, "Approval input", kSettingsMenuRowOneY) ||
         !make_setup_button(
             panel,

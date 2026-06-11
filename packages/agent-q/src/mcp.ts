@@ -316,7 +316,7 @@ export function createAgentQMcpServer(core = createDefaultAgentQCore()): McpServ
 
   // For the tools below the registered SDK outputSchema is the success-only
   // object shape. Error results carry `isError: true`, for which the SDK skips
-  // output validation, so the error variant is intentionally absent there.
+  // output validation, so the error variant is absent there.
   server.registerTool(
     hostToolDefinitions.scanDevices.name,
     {

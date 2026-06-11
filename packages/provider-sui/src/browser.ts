@@ -91,7 +91,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
   // Every Web Serial port operation runs through this single-slot queue so
   // concurrent callers never open the same port at once. Web Serial throws when
   // open() is called on an already-open port, so two in-flight requests would
-  // otherwise collide; each request now waits for the previous one to settle.
+  // otherwise collide; each request waits for the previous one to settle.
   #requestQueue: Promise<unknown> = Promise.resolve();
   // Bumped whenever the cached transport is torn down (physical disconnect or a
   // session-ended error). A request still queued when this changes rejects
@@ -257,8 +257,8 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       const response = await this.#request(signRequest, assertSignResultResponse);
       return toLiveSignResult(session.deviceId, response);
     } catch (error) {
-      // W4: the request may have been signed but its response was lost in transit. Fetch
-      // the buffered result by id before surfacing the error.
+      // Buffered-result recovery: the request may have been signed but its response was
+      // lost in transit. Fetch the buffered result by id before surfacing the error.
       const recovered = await this.#tryRecoverBufferedSignResult(session.sessionId, signRequest.id);
       if (recovered !== null) {
         return toLiveSignResult(session.deviceId, recovered);
@@ -296,8 +296,8 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       const response = await this.#request(signRequest, assertSignResultResponse);
       return toLiveSignResult(session.deviceId, response);
     } catch (error) {
-      // W4: the request may have been signed but its response was lost in transit. Fetch
-      // the buffered result by id before surfacing the error.
+      // Buffered-result recovery: the request may have been signed but its response was
+      // lost in transit. Fetch the buffered result by id before surfacing the error.
       const recovered = await this.#tryRecoverBufferedSignResult(session.sessionId, signRequest.id);
       if (recovered !== null) {
         return toLiveSignResult(session.deviceId, recovered);
@@ -310,7 +310,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     }
   }
 
-  // W4: best-effort recovery of a buffered signing result whose response was lost in
+  // Best-effort recovery of a buffered signing result whose response was lost in
   // transit. Returns null when the device has no buffered result for this id (it never
   // signed, or the session ended and the buffer cleared), so the caller surfaces the
   // original error.
@@ -324,7 +324,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     }
     try {
       const recovered = await this.#request(makeGetResultRequest(sessionId, requestId), assertSignResultResponse);
-      // Best-effort release: now that we hold the result, tell the device to drop its
+      // Best-effort release: after receiving the result, tell the device to drop its
       // buffered copy. A separate serialized request, fire-and-forget — a failed ack
       // leaves cleanup to the device's LRU and session-clear, so it never turns a
       // successful buffered-result fetch into a failure.

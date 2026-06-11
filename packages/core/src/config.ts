@@ -26,7 +26,7 @@ export { MAX_LABEL_LENGTH, PURPOSE_PATTERN, RESERVED_PURPOSES, isValidLabel, isV
 
 // Unknown-timestamp sentinel. A stored lastSeenAt that is missing or malformed is
 // coerced to the Unix epoch so the field always reaches MCP output as a valid ISO
-// instant. The epoch is a deliberate "unknown / not recently observed" marker:
+// instant. The epoch is the stable "unknown / not recently observed" marker:
 // Agent-Q does not invent a plausible current time (a false observation), and it
 // does not drop the device for a bad display-only timestamp.
 const EPOCH_ISO = "1970-01-01T00:00:00.000Z";
@@ -199,7 +199,7 @@ export class ConfigStore {
     const config = await this.load();
     const lastSeenAt = (options.observedAt ?? new Date()).toISOString();
     // portPath is an OS-supplied diagnostic string; sanitize it before it is
-    // stored and later surfaced as lastPortHint in MCP output.
+    // stored and returned as lastPortHint in MCP output.
     const lastPortHint = sanitizePortHint(portPath);
     // Defensive: callers pass a wire-parsed (already sanitized) status, but the
     // write boundary re-applies the same policy so the stored registry can never
@@ -356,11 +356,11 @@ function toDeviceListing(record: DeviceRecord, config: AgentQConfig): DeviceList
  * Drop routing selections that point at devices not present in `devices`.
  * Writes always validate references, so dangling entries only arise from a
  * hand-edited config. Pruning keeps `list_devices` and purpose routing
- * self-consistent instead of failing later with `device_not_found`.
+ * self-consistent instead of returning `device_not_found` for a stale route.
  *
  * Stable exported shape. Internally this is the report-free view of the
- * pipeline's reference-pruning stage ({@link pruneReferences}); load and write
- * thread a NormalizationReport through that stage instead.
+ * pipeline's reference-pruning pass ({@link pruneReferences}); load and write
+ * thread a NormalizationReport through that pass instead.
  */
 export function normalizeReferences(config: AgentQConfig): AgentQConfig {
   return pruneReferences(config, emptyReport());
@@ -368,7 +368,7 @@ export function normalizeReferences(config: AgentQConfig): AgentQConfig {
 
 // Every transformation Agent-Q applies to a stored (possibly hand-edited) config
 // is recorded here, so the operator warning can never under-report. One report is
-// threaded through the whole pipeline rather than merged from per-stage objects,
+// threaded through the whole pipeline rather than merged from per-pass objects,
 // which removes the merge step where a newly added field could be forgotten.
 interface NormalizationReport {
   droppedRecords: number;
@@ -433,8 +433,8 @@ function normalizeAgentQConfig(
 // Top-level envelope gate. A config whose envelope is wrong or whose schema
 // version is not current is treated as foreign (the caller uses defaults);
 // individual current-schema device records and routing entries are normalized
-// later rather than rejected wholesale, so one bad record cannot discard the
-// whole registry.
+// at the field-entry boundary rather than rejected wholesale, so one bad record
+// cannot discard the whole registry.
 function recognizeConfigShape(value: unknown): RecognizedConfig | undefined {
   if (!isRecord(value)) {
     return undefined;

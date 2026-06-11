@@ -244,15 +244,14 @@ read-only `policy_get` for the committed active policy document, read-only
 `get_approval_history` for Firmware-owned persistent decision metadata, and the
 session-scoped Sign API runtime. `sign_transaction` has
 `source-wired-not-product-active` status for the bounded Sui `sign_transaction`
-shape: the public request exists in source, but product-active evidence is not
-complete. Detailed hardware evidence status is tracked in
-`docs/IMPLEMENTATION_STATUS.md`.
+shape. Product-active status is not claimed unless
+`docs/IMPLEMENTATION_STATUS.md` says the matching source, docs, tests, build,
+hardware, and visual evidence are complete.
 `sign_personal_message` also has `source-wired-not-product-active` status for
 bounded Sui personal-message bytes in user authorization mode only; policy mode
 fails closed because policy facts and rules for personal-message signing are not
-implemented. It also remains below product-active status until final
-current-tree hardware and visual evidence are complete.
-the host process must not evaluate policy. A corrupt, unreadable, missing,
+implemented.
+The host process must not evaluate policy. A corrupt, unreadable, missing,
 or invalid current active policy is a persistent-material consistency
 error, not a normal `provisioned` state. Provisioned DEV_PROFILE devices that
 lack the current local PIN verifier, active canonical policy, or signing
@@ -501,7 +500,7 @@ Rejected:
 - policy update
 - signing
 
-This recovery is intentionally destructive and cannot read, export, repair, or
+This recovery is destructive and cannot read, export, repair, or
 unlock root material. It exists only to return a fail-closed device to the
 normal local setup path when the stored material set is inconsistent. USB,
 host process, and MCP clients still cannot trigger reset or recovery.
@@ -540,8 +539,8 @@ This state is reserved until an unlock model is implemented.
 | `get_accounts` | X | X | O | X | X | Firmware |
 | `policy_get` | X | X | O | X | X | Firmware |
 | `get_approval_history` | X | X | O | X | X | Firmware |
-| `sign_transaction` | X | X | O (source-wired-not-product-active; product-active evidence pending) | X | X | Firmware |
-| `sign_personal_message` | X | X | O (source-wired-not-product-active; user authorization mode only; product-active evidence pending) | X | X | Firmware |
+| `sign_transaction` | X | X | O (source-wired-not-product-active) | X | X | Firmware |
+| `sign_personal_message` | X | X | O (source-wired-not-product-active; user authorization mode only) | X | X | Firmware |
 | policy read | X | X | O | X | X | Firmware |
 | policy update | X | X | O (validated proposal + device-local approval) | X | X | Firmware |
 
@@ -592,7 +591,7 @@ expose a USB, host process, and MCP PIN submit request.
 
 ## Boot Flows
 
-First install:
+Initial setup:
 
 ```text
 Boot

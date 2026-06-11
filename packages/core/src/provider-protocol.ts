@@ -733,9 +733,9 @@ export function identifySignRoute(
   }
 
   if (chain !== SUI_CHAIN_ID) {
-    // TODO: Add a new explicit chain case only when its Firmware adapter,
-    // core validation, capabilities, provider surface, tests, docs, and
-    // hardware evidence implement the same contract.
+    // Keep chain support explicit. Add a chain case only when its Firmware
+    // adapter, core validation, capabilities, provider surface, tests, docs,
+    // and hardware evidence implement the same contract.
     throw new ProtocolError("unsupported_chain", "Signing chain is unsupported.");
   }
 

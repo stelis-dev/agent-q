@@ -5,7 +5,7 @@
 //   - MCP egress      (mcp.ts output schemas): the untrusted client/agent surface
 //   - MCP input + request building (mcp.ts input schemas, protocol.ts make*)
 //
-// Two policies, applied deliberately differently:
+// Two policies, applied with different failure behavior:
 //   - Identifiers (deviceId, requestId, sessionId, purpose, clientName) have a
 //     strict format. Invalid values are REJECTED so the caller corrects them; an
 //     identifier is never silently rewritten.

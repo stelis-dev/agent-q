@@ -88,7 +88,7 @@ client cannot choose the device signing mode.
 - Policy update proposals are available only through the full core. They are
   not part of the limited device API facade.
   This is API surface separation, not a security barrier against code that
-  deliberately imports the full core. Firmware remains responsible for
+  imports the full core. Firmware remains responsible for
   validating and approving sensitive writes.
 - Current StackChan CoreS3 capabilities report Sui account identity and no
   delegated signing methods in `chains[].methods`. Signing availability is

@@ -10,7 +10,7 @@ namespace agent_q {
 
 // Bounded RAM store of completed signing results, keyed by (session_id, request_id).
 // A generated signature is buffered here until the host acknowledges it, so a link
-// blip or reconnect between "signed" and "delivered" no longer loses the result:
+// blip or reconnect between "signed" and "delivered" does not lose the result:
 // the host re-requests the same request_id and the device returns the stored result
 // (idempotent, never re-signs) or fetches it with a get_result request.
 //

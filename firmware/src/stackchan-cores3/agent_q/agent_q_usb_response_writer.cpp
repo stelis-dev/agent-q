@@ -20,7 +20,7 @@ constexpr uint32_t kUsbSerialWriteChunkTimeoutMs = 100;
 constexpr uint32_t kUsbSerialTxDoneTimeoutMs = 100;
 // Right after the device wakes from idle, the host USB link may be mid-resume
 // (selective-suspend) and not yet draining, so the first response write times out
-// and the response is dropped while a slightly-later log line still gets through.
+// and the response is dropped while a subsequent log line still gets through.
 // Retry the whole response a few times to survive that resume window.
 constexpr uint32_t kUsbResponseWriteAttempts = 6;
 constexpr uint32_t kUsbResponseWriteRetryDelayMs = 150;

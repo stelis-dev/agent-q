@@ -1280,7 +1280,7 @@ test("browser provider clears a prior session when a later connect mismatches th
     });
     const provider = createAgentQSuiBrowserProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
-    // A later connect for a different deviceId mismatches (the device reports device-1).
+    // A subsequent connect for a different deviceId mismatches (the device reports device-1).
     await assert.rejects(() => provider.connectDevice({ deviceId: "device-2" }), { code: "device_mismatch" });
     // The mismatch is a full teardown: the prior device-1 session must not be left stale.
     const result = await provider.getCapabilities();

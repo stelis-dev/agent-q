@@ -462,7 +462,7 @@ export async function scanUsbDeviceStatuses(
         firmwareErrorCode: getFirmwareErrorCode(error),
       });
       // Scan only reports confirmed Agent-Q devices. Callers can use failures
-      // to explain why a previously known device is not live now.
+      // to explain why a known device is not live.
     }
   }
 

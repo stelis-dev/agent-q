@@ -8,10 +8,10 @@ import { fileURLToPath } from 'node:url';
 // af72024d8a88062e35a9499da7d95e424a0e3c85 and @mysten/sui 2.17.0.
 // Relevant source: packages/sui/src/bcs/bcs.ts and Transaction builder output.
 //
-// This generator is intentionally self-contained. .WORK/sources/ts-sdks is
-// evidence for the schema, not a tracked build or test dependency. To avoid
-// testing only our own local encoder assumptions, the positive fixture must
-// match the SDK oracle hex below before this script writes any fixture.
+// This generator is self-contained. .WORK/sources/ts-sdks is evidence for the
+// schema, not a tracked build or test dependency. To avoid testing only our own
+// local encoder assumptions, the positive fixture must match the SDK oracle hex
+// below before this script writes any fixture.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../../..');

@@ -6,7 +6,7 @@ namespace agent_q {
 
 // Framing for the newline-delimited request stream from the host. One JSON object per
 // line; a leading/trailing newline isolates partial bytes left by a failed write. This
-// per-byte accumulator is the read side of that framing and is intentionally robust:
+// per-byte accumulator is the read side of that framing and is robust by contract:
 //
 //   - bounded:        an over-long line is rejected and skipped to the next newline, so
 //                     a malformed/never-terminated stream cannot grow the buffer.

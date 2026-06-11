@@ -449,8 +449,8 @@ bool write_policy_propose_result_with_current_policy(
 void clear_active_session()
 {
     agent_q::session_clear();
-    // W4: buffered signing results are session-scoped; drop them when the session ends
-    // so a new session never sees a prior session's results.
+    // Buffered signing results are session-scoped; drop them when the session
+    // ends so a new session never sees a prior session's results.
     agent_q::signing_result_clear_all();
 }
 
@@ -875,8 +875,8 @@ void clear_usb_session_state_for_host_loss()
     ESP_LOGW(kTag, "USB host SOF lost; session-bound state cleared");
 }
 
-// W4-W2: hold the session for this long after a USB drop so a transient resume can
-// reconnect and recover its buffered signing result before the session is torn down.
+// Hold the session briefly after a USB drop so a transient resume can reconnect
+// and recover its buffered signing result before the session is torn down.
 constexpr uint32_t kUsbSessionGraceMs = 2000;
 agent_q::AgentQUsbGraceState g_usb_session_grace;
 
@@ -2763,9 +2763,9 @@ agent_q::SuiAccountDerivationResult derive_sui_account_for_session_read(
 
 void record_root_material_unreadable_for_session_read()
 {
-    // A provisioned device whose stored root material is no longer readable is
-    // inconsistent. Fail closed so status/connect/account reads stop treating
-    // it as provisioned until local recovery/reset handles the condition.
+    // A provisioned device whose stored root material is unreadable is inconsistent.
+    // Fail closed so status/connect/account reads stop treating it as provisioned
+    // until local recovery/reset handles the condition.
     agent_q::persistent_material_record_runtime_failure(
         agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable,
         persistent_material_ops());

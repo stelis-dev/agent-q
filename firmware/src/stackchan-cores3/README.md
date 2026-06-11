@@ -1,7 +1,7 @@
 # StackChan CoreS3 Firmware Source
 
-This directory contains the first hardware-specific Agent-Q firmware source
-overlay.
+This directory contains the StackChan CoreS3 hardware-specific Agent-Q firmware
+source overlay.
 
 Target-specific behavior and capability status live in `SPEC.md`.
 
@@ -91,8 +91,8 @@ The current implementation includes:
   policy approval, user confirmation records only after device-local approval,
   terminal signing records for signed/failed/rejected/timed-out outcomes as
   applicable, user-mode `sign_personal_message` confirmation/terminal metadata,
-  and recordable `policy_propose` terminal results. Detailed hardware evidence
-  and product-active status are tracked in `docs/IMPLEMENTATION_STATUS.md`.
+  and recordable `policy_propose` terminal results. Product-active status is
+  tracked in `docs/IMPLEMENTATION_STATUS.md`.
 - a USB JSONL `sign_transaction` path. It requires material-backed `provisioned`
   state plus a matching active session, keeps unknown methods rejected with
   `unsupported_method`, and validates Sui `sign_transaction` restricted SUI
@@ -102,15 +102,15 @@ The current implementation includes:
   authorizes the bounded request, while user mode shows clear-signing review
   and requires the current human approval input mode without applying active
   policy as an additional filter. It returns `signed` only after required
-  history is durable and signing succeeds. Sponsored gas, arbitrary Sui transactions,
-  caller-selected authorization, caller-controlled timing fields, and
-  chain-specific top-level signing APIs are not implemented. Detailed hardware
-  evidence and product-active status are tracked in `docs/IMPLEMENTATION_STATUS.md`.
+  history is durable and signing succeeds. Sponsored gas, arbitrary Sui
+  transactions, caller-selected authorization, caller-controlled timing fields,
+  and chain-specific top-level signing APIs are not implemented. Product-active
+  status is tracked in `docs/IMPLEMENTATION_STATUS.md`.
 - a common bounded `(type, chain, method)` signing route classifier before
   state/session work. Unsupported chains return `unsupported_chain`;
   unsupported or type-mismatched Sui methods return `unsupported_method`. The
   Sui transaction and personal-message adapters retain their decoded-payload
-  capacities; common ingress no longer treats those capacities as
+  capacities; common ingress does not treat those capacities as
   request-format limits.
 - a USB JSONL `sign_personal_message` path. It requires material-backed
   `provisioned` state plus a matching active session, validates bounded Sui
@@ -174,13 +174,12 @@ shape after clear-signing review, the current human approval input mode, and
 required history. It rejects
 unsupported transactions and returns `signed`, `policy_rejected`,
 `user_rejected`, `user_timed_out`, or `signing_failed` through `sign_result` as
-applicable. Detailed hardware evidence status is recorded in
-`docs/IMPLEMENTATION_STATUS.md`; do not infer product-active status from source
-paths alone.
+applicable. Product-active status is tracked in
+`docs/IMPLEMENTATION_STATUS.md`; do not infer it from source paths alone.
 The target also exposes user-mode `sign_personal_message` for bounded Sui
 personal-message bytes; policy mode fails closed for that method until matching
-policy facts and rules are implemented. Detailed hardware evidence status is
-tracked in `docs/IMPLEMENTATION_STATUS.md`.
+policy facts and rules are implemented. Product-active status is tracked in
+`docs/IMPLEMENTATION_STATUS.md`.
 
 This target also implements the Firmware-owned `policy_propose` request
 for bounded current-schema policy proposals over an active session, a
@@ -203,12 +202,10 @@ write path classifies terminal state as applied, previous policy proven
 unchanged, or consistency error. Firmware recognizes only the current tracked
 active-policy storage layout as product state.
 
-Agent-Q firmware is intentionally not a general StackChan AI firmware. It does
-not include StackChan World login, Xiaozhi cloud sessions, camera upload, screen
-snapshot upload, remote video, app center, setup, EzData, or other non-Agent-Q
-remote surfaces. Developers who need those upstream StackChan features should
-flash the upstream firmware separately and must not treat that firmware as an
-Agent-Q signing device.
+Agent-Q firmware is not a general StackChan AI firmware. It does not include
+StackChan World login, Xiaozhi cloud sessions, camera upload, screen snapshot
+upload, remote video, app center, setup, EzData, or other non-Agent-Q remote
+surfaces. Upstream StackChan firmware is not an Agent-Q signing device.
 
 ## Source And Build
 

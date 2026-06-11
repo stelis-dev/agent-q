@@ -15,8 +15,8 @@ constexpr uint32_t kMillisPerMinute = 60 * 1000;
 constexpr uint32_t kScreenSleepTimeoutMs = 3 * kMillisPerMinute;
 // Single source of truth for device display brightness. Pinned to 50 (StackChan default
 // is 75) for lower heat / longer panel life: applied once at boot and restored on wake.
-// This intentionally overrides Settings, so app/Settings brightness changes do not persist
-// across reboot by design — change device brightness by editing this one constant.
+// This overrides Settings, so app/Settings brightness changes do not persist
+// across reboot; change device brightness by editing this one constant.
 constexpr uint8_t kDisplayBrightness = 50;
 
 std::atomic<bool> g_toggle_requested{false};

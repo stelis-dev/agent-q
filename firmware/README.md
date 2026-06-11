@@ -10,8 +10,9 @@ proposal behavior plus the bounded Sign API source paths documented in
 Sui restricted-transfer shape and user-mode-only `sign_personal_message` for
 bounded Sui personal-message bytes. Firmware chooses policy or user
 authorization for transaction signing from its device-local signing mode.
-Product-active signing status still depends on tracked implementation status
-and current-tree hardware evidence; do not infer it from source paths alone.
+Product-active signing support is not claimed unless
+`docs/IMPLEMENTATION_STATUS.md` says the matching source, docs, tests, build,
+hardware, and visual evidence are complete.
 
 Common Firmware signing ingress explicitly classifies bounded
 `(type, chain, method)` routes before stateful work. Sui is currently the only

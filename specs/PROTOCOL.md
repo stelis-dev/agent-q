@@ -3,8 +3,7 @@
 This document defines the communication contract between Agent-Q and
 Agent-Q Firmware.
 
-The protocol is intentionally small. It is inspired by wallet capability
-discovery patterns, but it does not copy a full wallet standard.
+The protocol is small and does not copy a full wallet standard.
 
 ## Scope
 
@@ -17,7 +16,7 @@ The protocol only needs enough structure for the host process and Firmware to ag
 - supported chains and methods
 - addresses and public keys
 - signing requests and signing results
-- read-only Firmware decision history
+- read-only Firmware approval history
 
 Chain-specific requests must fit into the supported method list instead of
 creating separate product-level protocols.
@@ -182,9 +181,8 @@ get_status
 ```
 
 `sign_transaction` uses the same wire shape regardless of the active
-authorization mode. Product-active status depends on target implementation
-status and current-tree hardware evidence; do not infer that status from this
-protocol shape alone.
+authorization mode. Product-active status is not claimed from protocol shape
+alone.
 
 Flow rules:
 
@@ -226,8 +224,7 @@ returns `sign_result`. In policy authorization mode, the active policy can
 reject `sign_transaction` or authorize signing through a bounded `sign` rule.
 `sign_personal_message` is user-mode only and fails closed in policy mode. In
 user authorization mode, Firmware uses device-local clear-signing review and
-the device-local human approval input mode. Product-active status for the
-current tree still depends on target implementation status and hardware evidence in
+the device-local human approval input mode. Product-active status is tracked in
 `docs/IMPLEMENTATION_STATUS.md`.
 
 Provisioning and material reset transitions are not USB protocol requests in the
@@ -361,7 +358,7 @@ active, reports `error` for material/state consistency failure, and also uses
 `busy` as an error code for requests that cannot run while another operation
 owns the device UI. An idle target Settings menu remains `idle` because existing
 session-scoped read and cleanup requests can still proceed. Other states are
-reserved for later behavior.
+not emitted by the current Firmware.
 
 `deviceId` is a Firmware-generated UUID stored in device-local persistent
 storage. It must not be derived from MAC address, USB serial number, account
@@ -482,7 +479,7 @@ text.
 BIP-39 English word prefixes of up to four letters identify the words and must
 be treated as secret material.
 
-The current protocol intentionally has no factory-reset or reprovisioning USB
+The current protocol has no factory-reset or reprovisioning USB
 request. Destructive material reset is device-local UX only. A target reset flow
 must start from `provisioned`, require local user action plus stored local
 authentication, wipe root material, active policy, local-auth verifier,
@@ -1094,10 +1091,9 @@ APIs. Firmware and host process independently classify the bounded
 `specs/sign-route-vectors.tsv` is the shared regression fixture for this
 contract. Client and Firmware tests must consume it when the route grammar,
 supported routes, or unsupported-route error classification changes. The
-current implementation intentionally keeps small explicit classifiers in
-Client and Firmware instead of generating route constants or a dynamic registry;
-adding another chain may revisit generation, but it must not replace the
-explicit switch/default routing boundary.
+current implementation uses small explicit classifiers in Client and Firmware
+instead of generated route constants or a dynamic registry. Route expansion
+must preserve the explicit switch/default routing boundary.
 
 Route classification is bounded and side-effect-free. Unsupported routes must
 not reach device/session state checks, stored-result replay, policy evaluation,
@@ -1179,14 +1175,14 @@ Request shape:
 }
 ```
 
-Rules for the first implementation:
+Current implementation rules:
 
 - `sign_transaction` is valid only in material-backed `provisioned` state with
   a matching active session.
 - Request fields may not include `authorization`, `timeoutMs`,
   `approvalTimeoutMs`, `durationMs`, raw session tokens beyond the envelope
   `sessionId`, or signing material.
-- The first implementation is limited to `chain: "sui"` and
+- The current implementation is limited to `chain: "sui"` and
   `method: "sign_transaction"` for the restricted SUI transfer projection
   derived by the current Sui transaction-facts extractor. Firmware parses full
   Sui `TransactionData`; well-formed transaction shapes outside the supported
@@ -1206,7 +1202,7 @@ Rules for the first implementation:
 - Firmware must derive the signing account from stored device material, and
   the parsed sender and gas owner must both match that device-derived account.
   Sponsored gas and request-supplied expected-signer bindings are unsupported
-  in the first implementation.
+  in the current implementation.
 - Firmware must not call the signing service before the required
   approval-history record for the selected authorization mode is durable. If a
   required history write fails, Firmware returns top-level `history_error` and
@@ -1285,14 +1281,14 @@ Request shape:
 }
 ```
 
-Rules for the first implementation:
+Current implementation rules:
 
 - `sign_personal_message` is valid only in material-backed `provisioned` state
   with a matching active session.
 - Request fields may not include `authorization`, `timeoutMs`,
   `approvalTimeoutMs`, `durationMs`, raw session tokens beyond the envelope
   `sessionId`, or signing material.
-- The first implementation is limited to `chain: "sui"` and
+- The current implementation is limited to `chain: "sui"` and
   `method: "sign_personal_message"` with canonical base64 `params.message`
   that fits the shared transport/frame bound. The current Sui Firmware adapter
   has a 256-byte decoded personal-message implementation capacity. Capacity
@@ -1526,7 +1522,7 @@ through `sign_transaction`.
 ### `policy_propose`
 
 `policy_propose` is a policy-write proposal request. StackChan CoreS3
-Firmware, host process, and MCP implement the first supported path: a session-scoped
+Firmware, host process, and MCP implement the current supported path: a session-scoped
 proposal is validated by Firmware, shown on device as a policy-update summary
 review, advanced to local PIN approval only after device-local Continue,
 committed through the canonical active-policy store, and reported as
@@ -1574,7 +1570,7 @@ Request shape:
 }
 ```
 
-Policy document rules for the first version:
+Policy document rules for the current version:
 
 - Wire format: JSON inside the existing JSONL protocol envelope. Firmware must
   parse the JSON into a bounded internal policy AST before validation or
@@ -1597,11 +1593,11 @@ Policy document rules for the first version:
 - The current policy schema accepts only `reject` and `sign`.
 - Action values outside the current schema are invalid policy input. A policy
   update must not store dormant behavior. Disabled policy drafts are out
-  of scope for this version.
+  of scope for the current version.
 - A `reject` rule may have zero criteria.
-- A `sign` rule must be bounded, and the first implementation accepts at most
+- A `sign` rule must be bounded, and the current implementation accepts at most
   one `sign` rule in a policy document. For Sui `sign_transaction`, broad
-  signing is invalid. The first implementation requires criteria that restrict
+  signing is invalid. The current implementation requires criteria that restrict
   the rule to the bounded restricted SUI transfer shape, including
   `common.intent = single_asset_transfer`,
   `sui.command_shape = restricted_transfer`,

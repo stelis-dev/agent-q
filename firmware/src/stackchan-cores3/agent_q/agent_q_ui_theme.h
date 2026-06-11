@@ -10,20 +10,19 @@
 // modal. Drawing code references these semantic *roles* instead of raw literals,
 // so the whole device shares one palette and re-theming is a single-file edit.
 //
-// This is exactly what prevents per-modal drift: the connect modal previously grew
-// a wider, gap-less button row and a different shade because values were duplicated
-// inline. With this table there is one definition per role; a modal cannot diverge
-// without editing the shared token.
+// This prevents per-modal drift: with this table there is one definition per
+// role, so a modal cannot diverge without editing the shared token.
 //
 // Color values are 0xRRGGBB; wrap a role with lv_color_hex(role) at the call site.
 //
 // ── Active theme: NES (Famicom) light palette ────────────────────────────────
 // Light background, saturated mid-tone accents, black ink + black outlines.
 //
-// WHY LIGHT (hard-won): the CoreS3 panel is a 2.0" IPS LCD (ILI9342C) with a weak
-// black level — its backlight bleeds through dark-but-non-black pixels, so a dark
-// theme renders washed/hazy (e.g. a #1E1E24 navy surface shows as milky light-blue),
-// and the backlight curve (reg 20..28) keeps even "low" brightness fairly bright.
+// Panel contrast constraint: the CoreS3 panel is a 2.0" IPS LCD (ILI9342C) with
+// a weak black level — its backlight bleeds through dark-but-non-black pixels,
+// so a dark theme renders washed/hazy (e.g. a #1E1E24 navy surface shows as
+// milky light-blue), and the backlight curve (reg 20..28) keeps even "low"
+// brightness fairly bright.
 // Verified empirically: a magenta fill renders vivid and pure #000000 renders true
 // black, but mid-dark values lift. A light surface plays to the panel's strength, so
 // the wash disappears. Re-theming is a single edit here — but keep backgrounds light.
@@ -71,8 +70,8 @@ constexpr int kRadiusSmall = 6;   // compact controls (PIN / keypad cells)
 constexpr int kRadiusMedium = 7;  // action buttons
 
 // ── Typography ───────────────────────────────────────────────────────────────
-// The device currently ships a single bundled size; these roles give call sites a
-// semantic name and a single place to grow a full type scale later.
+// The device currently ships a single bundled size; these roles give call sites
+// a semantic name and a single place to add a broader type scale.
 inline const lv_font_t* font_title() { return &lv_font_montserrat_14; }
 inline const lv_font_t* font_body() { return &lv_font_montserrat_14; }
 inline const lv_font_t* font_label() { return &lv_font_montserrat_14; }

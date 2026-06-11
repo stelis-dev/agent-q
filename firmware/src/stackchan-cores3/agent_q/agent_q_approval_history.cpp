@@ -13,9 +13,9 @@ namespace {
 constexpr const char* kTag = "AgentQApprovalHist";
 constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kApprovalHistoryKey = "approval_hist";
-// Current-only storage layout. Version 1 removes the pre-release placeholder
-// decision byte; older blobs are unsupported and fail closed through the
-// normal invalid-history path rather than being migrated.
+// Current-only storage layout. Version 1 accepts records without a placeholder
+// decision byte; unsupported blobs fail closed through the normal
+// invalid-history path rather than being migrated.
 constexpr uint8_t kStoredApprovalHistoryFormatVersion = 1;
 constexpr uint8_t kStoredConfirmationNone = 0;
 constexpr uint8_t kStoredConfirmationPolicy = 1;

@@ -106,9 +106,9 @@ inline AgentQSignRouteClassification classify_sign_route(
     }
 
     if (!sign_route_string_equal(chain, "sui")) {
-        // TODO: Add a new explicit chain case only when its Firmware adapter,
-        // Client validation, capabilities, provider surface, tests, docs, and
-        // hardware evidence implement the same contract.
+        // Keep chain support explicit. Add a chain case only when its Firmware
+        // adapter, Client validation, capabilities, provider surface, tests,
+        // docs, and hardware evidence implement the same contract.
         return {
             AgentQSignRouteResult::unsupported_chain,
             AgentQSupportedSignRoute::unsupported,

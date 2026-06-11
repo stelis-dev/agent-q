@@ -100,7 +100,7 @@ npm exec --yes --package @stelis/agent-q -- \
 ```
 
 Use the same `npm exec --yes --package @stelis/agent-q -- ...` wrapper for
-later `sui client ...` commands when the package is not globally installed.
+subsequent `sui client ...` commands when the package is not globally installed.
 
 Keep `agent-q` running while Sui CLI uses the signer. Sui CLI calls
 `agent-q-sui-signer` when a transaction needs a signature. The signer calls the
@@ -233,9 +233,9 @@ product APIs.
 Detailed status lives in `docs/IMPLEMENTATION_STATUS.md`.
 
 Current source includes the Sui signing routes listed above, MCP tools,
-provider-sui, and StackChan CoreS3 Firmware paths. Tracked product status still
-distinguishes implemented source paths, hardware evidence, and product-active
-claims. Do not infer product-active signing support from source code alone.
+provider-sui, and StackChan CoreS3 Firmware paths. Product-active signing
+support is not claimed unless `docs/IMPLEMENTATION_STATUS.md` says the matching
+source, docs, tests, build, hardware, and visual evidence are complete.
 
 Current limitations:
 

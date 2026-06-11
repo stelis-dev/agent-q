@@ -591,7 +591,7 @@ export class AgentQCore {
     } catch (error) {
       // The device could not be located. clearRuntimeSessionMirrorIfEnded owns the policy
       // for which disconnect failures end Agent-Q's local session view; clearing
-      // it here prevents reusing a session Agent-Q can no longer confirm.
+      // it here prevents reusing a session Agent-Q cannot confirm.
       const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       if (reason !== null) {
         return { source: "disconnected", deviceId: target.deviceId, reason };
@@ -1313,7 +1313,7 @@ function toRuntimeSessionView(session: RuntimeSession | null): RuntimeSessionVie
 }
 
 // Single owner of the session-clearing transport policy (see specs/PROTOCOL.md):
-// these failures mean Agent-Q can no longer confirm the session, so it clears its
+// these failures mean Agent-Q cannot confirm the session, so it clears its
 // local view to avoid reusing a session Firmware may have already dropped. The
 // returned reason explains why; an unrecognized error returns null, so the caller
 // rethrows and keeps the session.

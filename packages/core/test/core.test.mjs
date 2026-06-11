@@ -1140,7 +1140,7 @@ test("disconnectDevice clears the local session and reports timeout when Firmwar
     assert.equal(result.source, "disconnected");
     assert.equal(result.reason, "timeout");
     // Agent-Q cannot confirm Firmware observed the disconnect, but it must not
-    // keep reusing a session it can no longer verify, so the local view clears.
+    // keep reusing a session it cannot verify, so the local view clears.
     const listed = await core.listDevices();
     assert.equal(listed.devices[0].runtimeSession, null);
   });

@@ -149,7 +149,7 @@ npm exec --yes --package @stelis/agent-q -- \
 ```
 
 Use the same `npm exec --yes --package @stelis/agent-q -- ...` wrapper for
-later `sui client ...` commands when the package is not globally installed.
+subsequent `sui client ...` commands when the package is not globally installed.
 
 `agent-q-sui-signer` uses the active Sui CLI environment when it is `mainnet`,
 `testnet`, `devnet`, or `localnet`. To set it explicitly:

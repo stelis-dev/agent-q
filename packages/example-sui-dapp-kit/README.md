@@ -1,6 +1,6 @@
 # Agent-Q Sui dapp-kit Example
 
-This example shows the intended Sui dapp-kit registration path for
+This example shows the current Sui dapp-kit registration path for
 `@stelis/agent-q-provider-sui`. It includes browser signing actions for
 self-transfer transaction signing and personal-message signing.
 

@@ -5,15 +5,15 @@ profiles, signing-material lifecycle, firmware-integrity requirements,
 policy-update authorization, and the acceptance gates a device must pass before
 it may be called a locked user device.
 
-It describes a **target** security model. Most of it is not implemented yet.
-Section 2 states exactly what exists today. Every "must", "rejects", or "after
-lock" statement elsewhere is a requirement for unfinished work, not a
-description of current behavior.
+It describes the target security model. Section 2 states exactly what exists
+today. Every "must", "rejects", or "after lock" statement elsewhere is a
+requirement for behavior that is not implemented unless Section 2 or
+`docs/IMPLEMENTATION_STATUS.md` says it is implemented.
 
 This document does not restate the product boundary or the wire protocol. See
 [../README.md](../README.md) for product context, [../specs/PROTOCOL.md](../specs/PROTOCOL.md)
 for the host process-Firmware contract, [PROVISIONING.md](PROVISIONING.md) for
-first-install signing-material setup, and [../AGENTS.md](../AGENTS.md) for the
+signing-material setup, and [../AGENTS.md](../AGENTS.md) for the
 contributor operating rules.
 
 ## 1. Scope
@@ -30,8 +30,7 @@ Agent-Q does not claim Ledger-grade physical extraction resistance.
 
 ## 2. Implementation Status
 
-This section is first on purpose. A security document must not make planned work
-look implemented.
+This section lists implemented behavior only.
 
 Implemented today:
 
@@ -69,18 +68,18 @@ Implemented today:
   policy-update terminal marker wipe, human approval input mode setting wipe, session
   cleanup, and return to `unprovisioned`.
   Firmware records an internal reset-pending marker so boot can resume an
-  interrupted reset wipe. Host-triggered reset/debug protocol paths are
-  intentionally not implemented. StackChan CoreS3 source also uses this
+  interrupted reset wipe. Host-triggered reset/debug protocol paths are not
+  implemented. StackChan CoreS3 source also uses this
   destructive wipe machinery for a device-local, PIN-less, erase-only recovery
   from material/state consistency `error`, because the stored PIN verifier may
   be unreadable. That path cannot read, repair, unlock, or export material and
-  is not exposed as a host-triggered recovery API. Hardware smoke is still
-  required after reset or error-recovery UI/state changes.
+  is not exposed as a host-triggered recovery API. Hardware coverage level is
+  tracked in `docs/IMPLEMENTATION_STATUS.md`.
 - Read-only Sui account and public-key discovery over an approved runtime
   session. Firmware derives public identity from the DEV_PROFILE root entropy
   on demand and does not return mnemonic, seed, entropy, or private key
-  material. Targeted hardware verification remains required after setup,
-  session, or material-storage changes.
+  material. Hardware coverage level is tracked in
+  `docs/IMPLEMENTATION_STATUS.md`.
 - A common firmware policy evaluator and a StackChan CoreS3 DEV_PROFILE active
   policy provider. The current product flow installs the default-reject policy,
   while the target stores the committed active policy as a canonical binary
@@ -101,7 +100,7 @@ Implemented today:
   `sign_transaction` and user-mode `sign_personal_message`, plus recordable
   terminal metadata from `policy_propose`. History does not store raw txBytes,
   decoded transactions, raw policy documents, full rule content, session ids,
-  request ids, client names, PINs, secret material, or full policy documents.
+  request ids, client names, PINs, or secret material.
   Local reset and error-state erase recovery wipe the history.
 - The unified `sign_transaction` path has `source-wired-not-product-active`
   status for bounded Sui restricted transfers derived from full Sui
@@ -112,17 +111,16 @@ Implemented today:
   mode evaluates active policy and signs after policy authorization with
   speech-bubble status notifications; user mode shows clear-signing review and
   requires the current human approval input mode. Requests cannot choose the
-  authorization mode or the human approval input mode.
-  Detailed hardware evidence status is tracked in
-  `docs/IMPLEMENTATION_STATUS.md`. Final current-tree hardware and visual
-  evidence remain pending, so product-active status is not claimed.
+  authorization mode or the human approval input mode. Product-active status is
+  not claimed unless `docs/IMPLEMENTATION_STATUS.md` says the matching source,
+  docs, tests, build, hardware, and visual evidence are complete.
 - The `sign_personal_message` path has `source-wired-not-product-active` status
   for bounded Sui personal-message bytes. Firmware accepts it only in user
   authorization mode, uses clear-signing review and the current human approval
   input mode, and fails closed in policy mode because policy facts and rules for
-  this method are not implemented. Detailed hardware evidence status is tracked in
-  `docs/IMPLEMENTATION_STATUS.md`. Final current-tree hardware and visual
-  evidence remain pending, so product-active status is not claimed.
+  this method are not implemented. Product-active status is not claimed unless
+  `docs/IMPLEMENTATION_STATUS.md` says the matching source, docs, tests, build,
+  hardware, and visual evidence are complete.
 - Completed signing results are buffered in Firmware RAM for bounded recovery.
   A repeated signing request replays a result only when its session, public
   request id, selected route, and validated method parameters match the
@@ -136,11 +134,11 @@ Implemented today:
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 
-Designed but not implemented (do not treat as present):
+Not implemented:
 
 - USER_PROFILE persistent signing keys and on-device key generation.
 - Host-assisted key import.
-- USER_PROFILE first-install mnemonic generation or import.
+- USER_PROFILE mnemonic generation or import.
 - zkLogin signing material.
 - USER_PROFILE policy storage and policy update authorization.
 - Arbitrary Sui transactions, policy-authorized Sui personal-message signing,
@@ -301,8 +299,8 @@ OWNER_PROFILE - a user-controlled trust root:
 - Security reduces to the owner's key hygiene.
 
 Provisioning into USER_PROFILE or OWNER_PROFILE is explicit, shows
-irreversible-operation warnings, and must be rehearsed on sacrificial hardware
-first (section 15).
+irreversible-operation warnings, and requires sacrificial-hardware rehearsal
+(section 15).
 
 ## 7. Signing Material
 
@@ -324,7 +322,7 @@ Device-generated key (preferred):
 - Generated inside the locked device, only after USER_PROFILE protections are
   active.
 - The private key never existed outside the device.
-- The first target chain signs with Ed25519 (Sui); the protocol stays
+- The current executable chain signs with Ed25519 (Sui); the protocol stays
   chain-agnostic through shared Sign API methods such as `sign_transaction` and
   `sign_personal_message`.
 
@@ -399,7 +397,7 @@ Policy-update contract:
 - Firmware must accept only policy actions that the current schema allows and
   the current runtime can enforce. Other action values are invalid input and
   must not be stored as dormant behavior.
-- The first wire format is JSON inside the existing protocol envelope.
+- The current wire format is JSON inside the existing protocol envelope.
   Firmware must canonicalize the accepted policy into a bounded binary policy
   record before storage and hash calculation; raw JSON is not the active policy
   storage format.
@@ -484,8 +482,7 @@ active can write the key to unencrypted flash or run it under replaceable
 firmware.
 
 ```text
-1.  Build the trusted, signed firmware (this same image performs key
-    generation in the later steps).
+1.  Build the trusted, signed firmware that performs key generation.
 2.  Enable Secure Boot v2.
 3.  Enable Flash Encryption (release mode).
 4.  Enable the anti-rollback secure_version policy.
@@ -510,8 +507,9 @@ Entropy gate:
   source. Weak or unverified entropy is a key-compromise condition, not a
   warning.
 
-The exact `espefuse` / `menuconfig` sequence for steps 2 to 7 is an
-implementation detail to fix and validate on sacrificial hardware (section 15).
+The exact `espefuse` / `menuconfig` sequence for steps 2 to 7 is not defined
+in the current implementation and must be validated on sacrificial hardware
+before USER_PROFILE use.
 
 ## 11. Update And Admin Paths
 
@@ -588,27 +586,27 @@ Minimal Device risk, stated plainly:
   window.
 - Persisting replay state has a cost: a counter write per request causes flash
   wear, and a nonce cache needs a bounded eviction policy. Size this tradeoff
-  deliberately.
+  explicitly.
 - Host-supplied expiration timestamps are weak unless the device has trusted
   time. Without a trusted RTC, time-based expiry is a secondary control; the
   monotonic counter or nonce is the primary replay defense.
 
 ## 14. Release Signing
 
-M0:
+Current repository automation does not implement a USER_PROFILE firmware
+signing authority. A USER_PROFILE firmware release requires a signed firmware
+artifact, manifest, and hash. The firmware signing key is the trust root for
+every USER_PROFILE device that accepts that key; compromise is catastrophic and
+per-device irreversible.
 
-- CI builds, tests, and publishes artifacts only.
-- The maintainer signs firmware locally / offline.
-- A release includes the signed firmware, a manifest, and a hash.
-- The local signing key is the trust root for every USER_PROFILE device. Its
-  compromise is catastrophic and per-device irreversible. Protect it
-  accordingly.
+USER_PROFILE release signing requirements:
 
-Long term:
-
-- Sign with an HSM / YubiHSM / KMS.
-- CI requests signing (for example via OIDC) rather than holding a key.
-- The signing private key is never stored directly in GitHub Secrets.
+- The firmware signing private key is never stored directly in GitHub Secrets.
+- CI may build, test, and publish unsigned artifacts, but it must not silently
+  become the signing authority.
+- The release process must identify the signer, signed firmware artifact,
+  manifest, and hash.
+- The device trust anchor is the Secure Boot key digest in eFuse.
 
 Trust anchor:
 
@@ -616,10 +614,10 @@ Trust anchor:
   anchor is the Secure Boot key digest in eFuse. That, not the manifest, is what
   prevents malicious firmware from booting.
 
-## 15. Required Work And Acceptance Gates
+## 15. USER_PROFILE Acceptance Gates
 
-Before any device may be called a locked USER_PROFILE device, the following must
-pass. None of this is implemented yet.
+No current device may be called a locked USER_PROFILE device. A locked
+USER_PROFILE device must pass the following gates.
 
 Build / provisioning:
 

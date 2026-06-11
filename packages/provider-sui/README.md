@@ -50,21 +50,20 @@ The Wallet Standard entrypoint requires an injected provider implementation and
 does not create a default provider internally. The repository's
 `createAgentQSuiProvider()` factory is Node/host-local and uses the device
 client transport. Browser dapps can use the `./browser` subpath for a Web
-Serial-based runtime that implements `AgentQSuiWalletProvider`. Do not use the
-Wallet Standard adapter or Web Serial runtime as evidence that browser hardware
-signing has been verified; product-active status still requires current-tree
-hardware smoke and LVGL visual evidence.
+Serial-based runtime that implements `AgentQSuiWalletProvider`. Browser
+hardware signing is product-active only when the matching status entry in
+`docs/IMPLEMENTATION_STATUS.md` says the source, docs, tests, build, hardware,
+and visual evidence are complete.
 
-The current package still depends on `@stelis/agent-q-core` because the root
-provider factory is Node/host-local. The `./wallet-standard` subpath remains
-runtime-separated from that Node transport, and the `./browser` subpath uses the
-core package's provider protocol projection needed to satisfy
-`AgentQSuiWalletProvider` over Web Serial. That projection exact-validates
-provider requests at runtime and does not expose Admin, policy read/update, or
-approval-history request builders.
+The root provider factory is Node/host-local and uses `@stelis/agent-q-core`
+device transport. The `./wallet-standard` subpath is runtime-separated from
+that Node transport, and the `./browser` subpath uses the core package's
+provider protocol projection needed to satisfy `AgentQSuiWalletProvider` over
+Web Serial. That projection exact-validates provider requests at runtime and
+does not expose Admin, policy read/update, or approval-history request builders.
 
 This package narrows the dapp-facing API it presents. That is not a security
-boundary against an application that deliberately imports
+boundary against an application that imports
 `@stelis/agent-q-core` or broader `@stelis/agent-q` local-server APIs directly. Firmware
 remains the authority that enforces state gates, device-local confirmation,
 policy evaluation, signing, persistence, and cleanup.
@@ -149,7 +148,7 @@ const registration = registerAgentQSuiWallet({
   chains: ["sui:devnet"],
 });
 
-// Later, during teardown:
+// During teardown:
 registration.unregister();
 ```
 
@@ -182,8 +181,8 @@ implementation.
 
 See `packages/example-sui-dapp-kit/` for a minimal dapp-kit integration
 example with transfer-signing and personal-message signing buttons. The example
-intentionally does not create or accept a fake provider; it creates the Web
-Serial-based browser runtime so the Agent-Q wallet can stay visible before a
+does not create or accept a fake provider; it creates the Web Serial-based
+browser runtime so the Agent-Q wallet can stay visible before a
 USB device is selected. If Web Serial is unavailable, the runtime fails closed
 on connect/read/signing instead of hiding the wallet. The example does not
 expose policy reads, policy update proposals, approval history, Admin, MCP, or
@@ -192,7 +191,7 @@ a host-selected authorization API.
 ### Browser-Safe Provider Boundary
 
 `AgentQSuiWalletProvider` is the current browser injection contract for the
-Wallet Standard adapter. It is intentionally smaller than the Node-local
+Wallet Standard adapter. It is smaller than the Node-local
 provider factory:
 
 - `connectDevice`
@@ -237,9 +236,8 @@ npm --workspace @stelis/agent-q-provider-sui run build
 npm --workspace @stelis/agent-q-provider-sui test
 ```
 
-The current source tree tracks opt-in hardware smoke tests for
-`source-wired-not-product-active` signing in the core package, where the
-direct USB/Firmware boundary lives:
+The current source tree tracks opt-in hardware smoke tests for signing in the
+core package, where the direct USB/Firmware boundary lives:
 
 ```sh
 AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER=1 \

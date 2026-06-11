@@ -1,7 +1,6 @@
 # Agent-Q Provisioning Flow
 
-This document defines the target first-install flow for Agent-Q signing
-material.
+This document defines Agent-Q device provisioning for signing material.
 
 This document separates target design from implemented setup behavior. Current
 implementation status lives in `docs/IMPLEMENTATION_STATUS.md`.
@@ -33,8 +32,8 @@ USER_PROFILE firmware integrity requirements are defined in
 
 Provisioning can start only from:
 
-1. First install on an unprovisioned device.
-2. Explicit reprovisioning or factory reset.
+1. An unprovisioned device.
+2. A destructive device-local reprovisioning/reset flow.
 
 Reprovisioning is destructive. It wipes signing material, accounts, policy, and
 replay state before creating or importing new signing material.
@@ -86,9 +85,9 @@ user provides mnemonic
 ```
 
 Direct device input is preferred when hardware supports it. The current
-StackChan CoreS3 DEV_PROFILE source implements device-local Import. Host-assisted
-input is not implemented and would be weaker because the host sees the root
-secret; if added later, it must be labeled as weaker.
+StackChan CoreS3 DEV_PROFILE source implements device-local Import.
+Host-assisted input is not implemented and would be weaker because the host
+sees the root secret.
 
 ## Hardware Capability
 
@@ -124,11 +123,9 @@ implemented. Automatic signing outside the bounded policy-authorized
 The root mnemonic or seed is chain-neutral. Chain adapters own their derivation
 path, signing scheme, address calculation, and public key format.
 
-Initial target chains:
+Current executable chain:
 
 - Sui
-- EVM
-- Solana
 
 Rules:
 
@@ -143,12 +140,12 @@ Rules:
   device-local clear-signing review and the current human approval input mode.
   Requests cannot choose this mode or the human approval input mode.
   Personal-message signing is user-mode only and fails closed in policy mode.
-  Detailed hardware evidence status is tracked in
-  `docs/IMPLEMENTATION_STATUS.md`. Final current-tree Sign API hardware and
-  visual evidence remains pending, so product-active status is not claimed.
+  Product-active status is not claimed unless `docs/IMPLEMENTATION_STATUS.md`
+  says the matching source, docs, tests, build, hardware, and visual evidence
+  are complete.
 - Agent-Q must not add chain-specific top-level MCP tools.
 
-The first implementation target is Sui Ed25519.
+The current executable chain target is Sui Ed25519.
 
 ## Firmware State
 
@@ -275,7 +272,7 @@ volatile scratch, and must not report `provisioned`.
 
 The backup phrase is backup-ready only while its backup phrase setup panel
 is still active and not expired. If that panel is removed or replaced, Firmware
-wipes or invalidates the volatile phrase so a later backup confirmation cannot
+wipes or invalidates the volatile phrase so a subsequent backup confirmation cannot
 confirm material whose setup UI is gone. Display power state is not part of
 this security state: screen/backlight sleep does not invalidate scratch by
 itself, and Agent-Q UI wakes the display before showing setup material.
@@ -319,42 +316,27 @@ stored PIN verifier may be unreadable, but it still requires on-device
 destructive confirmation, cannot read or export material, and is not exposed as
 a USB, host process, or MCP import request.
 
-## Implementation Order
+## Current Implementation Summary
 
-Provisioning-specific sequence:
+StackChan CoreS3 DEV_PROFILE source implements provisioning status reporting,
+device-local setup entry, BIP-39 backup phrase display with volatile wipe and
+no host exposure, device-local mnemonic import with checksum validation,
+persistent root material, active policy, local PIN verifier, signing
+authorization mode storage, Sui Ed25519 account derivation, and read-only
+`get_accounts`.
 
-1. Report whether a device is provisioned.
-2. Add device-local setup entry that still stores no persistent assets.
-3. Add DEV_PROFILE BIP-39 backup phrase display with volatile wipe and no
-   host exposure.
-4. Add DEV_PROFILE device-local mnemonic import entry with checksum
-   validation.
-5. Add DEV_PROFILE persistent root material, active policy, local PIN verifier,
-   and signing authorization mode storage after backup confirmation or
-   successful import plus matching PIN repeat.
-6. Add Sui Ed25519 account derivation and read-only `get_accounts`.
-
-Current implementation status: steps 1 through 6 are implemented for the
-StackChan CoreS3 DEV_PROFILE source path. Hardware smoke coverage exists for
-local setup, PIN entry, device-local Import, and local reset/material wipe.
-Targeted hardware verification remains required after setup, reset UI, or
-reset-state changes.
-
-Provisioning is not signing readiness. The current dependency order is: keep
-the policy facts / method adapter boundary stable, use the Firmware-owned
-`policy_propose` flow for current-schema active policy changes, and keep
-`sign_transaction` as a single request whose Firmware-local signing mode selects
-policy evaluation or user confirmation as the authorization gate. Policy update
-remains a proposal flow, not a direct state setter: the host process and Admin may submit a
-bounded proposal, but Firmware validates it, requires device-local approval,
-and commits it through rollback-safe storage. Sui `sign_personal_message`
-is source-wired for user authorization mode only; policy facts and rules for
-personal-message signing are not implemented. Arbitrary Sui transaction signing
-outside the restricted transfer shape, full Admin policy editing beyond the
-current policy proposal template, and USER_PROFILE secure provisioning are not
-implemented. Provider-facing
-Sign API product-active status still requires final current-tree hardware and
-visual evidence.
+Provisioning is not signing readiness. Policy changes use the Firmware-owned
+`policy_propose` proposal flow for current-schema active policy changes.
+`sign_transaction` is a single request whose Firmware-local signing mode
+selects policy evaluation or user confirmation as the authorization gate.
+Policy update remains a proposal flow, not a direct state setter: the host
+process and Admin may submit a bounded proposal, but Firmware validates it,
+requires device-local approval, and commits it through rollback-safe storage.
+Sui `sign_personal_message` is source-wired for user authorization mode only;
+policy facts and rules for personal-message signing are not implemented.
+Arbitrary Sui transaction signing outside the restricted transfer shape, full
+Admin policy editing beyond the current policy proposal template, and
+USER_PROFILE secure provisioning are not implemented.
 
 ## Completion Criteria
 
