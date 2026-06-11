@@ -1,0 +1,114 @@
+name: Publish npm packages
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish-npm:
+    name: Publish npm packages
+    if: contains(github.event.release.tag_name, '-front') == false
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - run: npm ci
+
+      - name: Verify publish package graph
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const publishPackages = [
+            'packages/core/package.json',
+            'packages/agent-q/package.json',
+            'packages/provider-sui/package.json',
+          ];
+          const privatePackages = [
+            'packages/example-sui-dapp-kit/package.json',
+          ];
+
+          const readPackage = (path) => JSON.parse(fs.readFileSync(path, 'utf8'));
+          const packages = new Map(
+            publishPackages.map((path) => {
+              const pkg = readPackage(path);
+              if (pkg.private === true) {
+                throw new Error(`${pkg.name} is marked private and cannot be published`);
+              }
+              return [pkg.name, pkg];
+            }),
+          );
+
+          const publishVersions = new Map(
+            [...packages.values()].map((pkg) => [pkg.name, pkg.version]),
+          );
+          const uniquePublishVersions = new Set(publishVersions.values());
+          if (uniquePublishVersions.size !== 1) {
+            throw new Error(
+              `publish packages must share one npm version, found ${[...publishVersions].map(([name, version]) => `${name}@${version}`).join(', ')}`,
+            );
+          }
+
+          for (const path of privatePackages) {
+            const pkg = readPackage(path);
+            if (pkg.private !== true) {
+              throw new Error(`${pkg.name} must stay private and must not be published`);
+            }
+          }
+
+          const core = packages.get('@stelis/agent-q-core');
+          for (const name of ['@stelis/agent-q', '@stelis/agent-q-provider-sui']) {
+            const pkg = packages.get(name);
+            const actual = pkg.dependencies?.[core.name];
+            if (actual !== core.version) {
+              throw new Error(`${pkg.name} must depend on ${core.name}@${core.version}, found ${actual ?? 'missing'}`);
+            }
+          }
+          NODE
+
+      - run: npm test
+
+      - run: npm pack --workspace @stelis/agent-q-core --dry-run
+      - run: npm pack --workspace @stelis/agent-q --dry-run
+      - run: npm pack --workspace @stelis/agent-q-provider-sui --dry-run
+
+      - name: Publish core package
+        uses: JS-DevTools/npm-publish@v3
+        id: agent-q-core
+        with:
+          access: public
+          provenance: true
+          token: ${{ secrets.NPM_TOKEN }}
+          package: packages/core/package.json
+          strategy: upgrade
+
+      - name: Publish local server package
+        uses: JS-DevTools/npm-publish@v3
+        id: agent-q
+        with:
+          access: public
+          provenance: true
+          token: ${{ secrets.NPM_TOKEN }}
+          package: packages/agent-q/package.json
+          strategy: upgrade
+
+      - name: Publish Sui provider package
+        uses: JS-DevTools/npm-publish@v3
+        id: agent-q-provider-sui
+        with:
+          access: public
+          provenance: true
+          token: ${{ secrets.NPM_TOKEN }}
+          package: packages/provider-sui/package.json
+          strategy: upgrade
