@@ -162,7 +162,7 @@ bool load_default_policy(AgentQPolicyDocument* out, void*)
     }
     static const char* recipient_values[1] = {};
     recipient_values[0] = ::g_allowed_recipient;
-    static AgentQPolicyCriterion criteria[7] = {};
+    static AgentQPolicyCriterion criteria[10] = {};
     criteria[0] = AgentQPolicyCriterion{
         "common.intent",
         AgentQPolicyOperator::eq,
@@ -178,34 +178,55 @@ bool load_default_policy(AgentQPolicyDocument* out, void*)
         0,
     };
     criteria[2] = AgentQPolicyCriterion{
+        "sui.command_count",
+        AgentQPolicyOperator::eq,
+        "2",
+        nullptr,
+        0,
+    };
+    criteria[3] = AgentQPolicyCriterion{
+        "sui.command0_kind",
+        AgentQPolicyOperator::eq,
+        kAgentQSuiPolicyCommandKindSplitCoins,
+        nullptr,
+        0,
+    };
+    criteria[4] = AgentQPolicyCriterion{
+        "sui.command1_kind",
+        AgentQPolicyOperator::eq,
+        kAgentQSuiPolicyCommandKindTransferObjects,
+        nullptr,
+        0,
+    };
+    criteria[5] = AgentQPolicyCriterion{
         "sui.coin_type",
         AgentQPolicyOperator::eq,
         "0x2::sui::SUI",
         nullptr,
         0,
     };
-    criteria[3] = AgentQPolicyCriterion{
+    criteria[6] = AgentQPolicyCriterion{
         "sui.recipient_address",
         AgentQPolicyOperator::in,
         nullptr,
         recipient_values,
         1,
     };
-    criteria[4] = AgentQPolicyCriterion{
+    criteria[7] = AgentQPolicyCriterion{
         "sui.amount_raw",
         AgentQPolicyOperator::lte,
         "1000000",
         nullptr,
         0,
     };
-    criteria[5] = AgentQPolicyCriterion{
+    criteria[8] = AgentQPolicyCriterion{
         "sui.gas_budget",
         AgentQPolicyOperator::lte,
         "50000000",
         nullptr,
         0,
     };
-    criteria[6] = AgentQPolicyCriterion{
+    criteria[9] = AgentQPolicyCriterion{
         "sui.gas_price",
         AgentQPolicyOperator::lte,
         ::g_gas_price_bound,

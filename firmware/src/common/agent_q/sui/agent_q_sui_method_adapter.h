@@ -11,10 +11,13 @@ constexpr const char* kAgentQSuiPolicyChain = "sui";
 constexpr const char* kAgentQSuiPolicyOperationSignTransaction = "sign_transaction";
 constexpr const char* kAgentQPolicyIntentSingleAssetTransfer = "single_asset_transfer";
 constexpr const char* kAgentQSuiPolicyCommandShapeRestrictedTransfer = "restricted_transfer";
-constexpr size_t kAgentQSuiTransferPolicyFactCount = 10;
+constexpr const char* kAgentQSuiPolicyCommandKindSplitCoins = "split_coins";
+constexpr const char* kAgentQSuiPolicyCommandKindTransferObjects = "transfer_objects";
+constexpr size_t kAgentQSuiTransferPolicyFactCount = 14;
 
 struct AgentQSuiSignTransactionPolicyFacts {
     AgentQPolicyFact entries[kAgentQSuiTransferPolicyFactCount];
+    char command_count[kSuiU64StringBufferSize];
     AgentQPolicyFacts facts;
 };
 

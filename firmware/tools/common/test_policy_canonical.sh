@@ -199,6 +199,9 @@ int main()
     const agent_q::AgentQPolicyCriterion sign_criteria[] = {
         {"common.intent", agent_q::AgentQPolicyOperator::eq, "single_asset_transfer", nullptr, 0},
         {"sui.command_shape", agent_q::AgentQPolicyOperator::eq, "restricted_transfer", nullptr, 0},
+        {"sui.command_count", agent_q::AgentQPolicyOperator::eq, "2", nullptr, 0},
+        {"sui.command0_kind", agent_q::AgentQPolicyOperator::eq, "split_coins", nullptr, 0},
+        {"sui.command1_kind", agent_q::AgentQPolicyOperator::eq, "transfer_objects", nullptr, 0},
         {"sui.coin_type", agent_q::AgentQPolicyOperator::eq, "0x2::sui::SUI", nullptr, 0},
         {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, nullptr, sign_recipients, 1},
         {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},

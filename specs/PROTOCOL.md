@@ -397,7 +397,8 @@ read-only `get_accounts` Sui account derivation are implemented.
 USB, host process, or MCP mnemonic import is not implemented.
 Policy updates are available only through the Firmware-owned
 `policy_propose` proposal flow for current-schema reject policies and at
-most one single-recipient bounded sign rule.
+most one single-recipient bounded sign rule whose criteria explicitly cover the
+accepted command count and command kinds.
 
 If a target boots with `prov_state = provisioned` but missing, unreadable, or
 unsupported current active policy or signing authorization mode material,
@@ -1604,11 +1605,17 @@ Policy document rules for the first version:
   the rule to the bounded restricted SUI transfer shape, including
   `common.intent = single_asset_transfer`,
   `sui.command_shape = restricted_transfer`,
+  `sui.command_count = 2`,
+  `sui.command0_kind = split_coins`,
+  `sui.command1_kind = transfer_objects`,
   `sui.coin_type = 0x2::sui::SUI`, one concrete recipient criterion,
   amount bounds, and gas bounds. Multiple sign rules and multi-recipient sign
   allowlists are invalid until the device-local policy-update review can show
   every allowed signing rule and recipient clearly.
-- A rule may contain at most 8 criteria.
+- A rule may contain at most 12 criteria. The current restricted-transfer
+  `sign` rule requires 10 criteria: route intent, command shape, command count,
+  two command kinds, asset, one recipient, amount max, gas budget max, and gas
+  price max.
 - Criterion `field` is a bounded namespace/field id such as `common.intent` or
   `sui.amount_raw`. Common fields are owned by the common policy evaluator;
   chain-specific fields are owned by the corresponding method adapter.

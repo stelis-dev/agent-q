@@ -88,11 +88,11 @@ Implemented today:
   through its internal storage boundary. Firmware exposes read-only active policy
   document readback through `policy_get`, consumes that active policy only when
   the Firmware-local signing authorization mode is `policy`, rejects broad,
-  multi-rule, and
-  multi-recipient sign policies that the current device-local policy review
-  cannot show clearly, and exposes policy update authorization only through the
-  Firmware-owned `policy_propose` proposal flow. Policy actions do not authorize
-  user-mode signing.
+  multi-rule, multi-recipient, and sign policies missing explicit command
+  count/kind coverage that the current device-local policy review cannot show
+  clearly, and exposes policy update authorization only through the
+  Firmware-owned `policy_propose` proposal flow. Policy actions do not
+  authorize user-mode signing.
 - A local Admin Page for read-only device metadata and the
   current policy proposal template. It uses the same host core
   boundary as MCP and is not a policy authority.

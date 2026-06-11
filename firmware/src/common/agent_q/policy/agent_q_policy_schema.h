@@ -7,7 +7,7 @@
 namespace agent_q {
 
 constexpr size_t kAgentQPolicyMaxRules = 16;
-constexpr size_t kAgentQPolicyMaxRuleCriteria = 8;
+constexpr size_t kAgentQPolicyMaxRuleCriteria = 12;
 constexpr size_t kAgentQPolicyMaxCriterionValues = 16;
 constexpr size_t kAgentQPolicyMaxFacts = 24;
 constexpr size_t kAgentQPolicyMaxFieldDescriptors = 24;

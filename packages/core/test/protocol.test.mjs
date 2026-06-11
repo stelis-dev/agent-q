@@ -905,6 +905,9 @@ const validPolicyRule = () => ({
   criteria: [
     { field: "common.intent", op: "eq", value: "single_asset_transfer" },
     { field: "sui.command_shape", op: "eq", value: "restricted_transfer" },
+    { field: "sui.command_count", op: "eq", value: "2" },
+    { field: "sui.command0_kind", op: "eq", value: "split_coins" },
+    { field: "sui.command1_kind", op: "eq", value: "transfer_objects" },
     { field: "sui.coin_type", op: "eq", value: "0x2::sui::SUI" },
     { field: "sui.recipient_address", op: "in", values: ["0x4b7ba5768f9ed7d0ecbcad64be775f49951f215495a10134a8acc4bdeab7da97"] },
     { field: "sui.amount_raw", op: "lte", value: "500000000" },
@@ -943,7 +946,7 @@ test("parseProtocolResponse accepts a bounded custom policy document", () => {
   assert.equal(response.type, "policy");
   assert.equal(response.policy.ruleCount, 1);
   assert.equal(response.policy.rules.length, 1);
-  assert.equal(response.policy.rules[0].criteria.length, 7);
+  assert.equal(response.policy.rules[0].criteria.length, 10);
 });
 
 test("parseProtocolResponse accepts an empty reject rule for a supported current method", () => {
@@ -985,6 +988,13 @@ test("parseProtocolResponse rejects malformed policy documents", () => {
   });
   assert.throws(() => parseProtocolResponse(policyLineWithRule(
     policyRuleWithCriteria(validPolicyRule().criteria.filter((criterion) => criterion.field !== "sui.gas_price")),
+  ), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLineWithRule(
+    policyRuleWithCriteria(validPolicyRule().criteria.filter((criterion) =>
+      !["sui.command_count", "sui.command0_kind", "sui.command1_kind"].includes(criterion.field)
+    )),
   ), "req_policy"), {
     code: "protocol_error",
   });

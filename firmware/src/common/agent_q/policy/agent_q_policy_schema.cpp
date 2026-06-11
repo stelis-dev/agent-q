@@ -263,6 +263,12 @@ bool criterion_lte(const AgentQPolicyCriterion& criterion, const char* field)
            agent_q_policy_is_decimal_u64_string(criterion.value);
 }
 
+bool criterion_u64_eq(const AgentQPolicyCriterion& criterion, const char* field, const char* value)
+{
+    return criterion_eq(criterion, field, value) &&
+           agent_q_policy_is_decimal_u64_string(criterion.value);
+}
+
 bool criterion_recipient_bounded(const AgentQPolicyCriterion& criterion)
 {
     if (criterion.field == nullptr ||
@@ -294,6 +300,9 @@ bool agent_q_policy_sign_rule_is_bounded(const AgentQPolicyRule& rule)
     bool has_intent = false;
     bool has_shape = false;
     bool has_asset = false;
+    bool has_command_count = false;
+    bool has_command0_kind = false;
+    bool has_command1_kind = false;
     bool has_recipient = false;
     bool has_amount_bound = false;
     bool has_gas_budget_bound = false;
@@ -306,6 +315,12 @@ bool agent_q_policy_sign_rule_is_bounded(const AgentQPolicyRule& rule)
             criterion_eq(criterion, "sui.command_shape", "restricted_transfer");
         has_asset = has_asset ||
             criterion_eq(criterion, "sui.coin_type", "0x2::sui::SUI");
+        has_command_count = has_command_count ||
+            criterion_u64_eq(criterion, "sui.command_count", "2");
+        has_command0_kind = has_command0_kind ||
+            criterion_eq(criterion, "sui.command0_kind", "split_coins");
+        has_command1_kind = has_command1_kind ||
+            criterion_eq(criterion, "sui.command1_kind", "transfer_objects");
         has_recipient = has_recipient || criterion_recipient_bounded(criterion);
         has_amount_bound = has_amount_bound || criterion_lte(criterion, "sui.amount_raw");
         has_gas_budget_bound = has_gas_budget_bound || criterion_lte(criterion, "sui.gas_budget");
@@ -314,6 +329,9 @@ bool agent_q_policy_sign_rule_is_bounded(const AgentQPolicyRule& rule)
     return has_intent &&
            has_shape &&
            has_asset &&
+           has_command_count &&
+           has_command0_kind &&
+           has_command1_kind &&
            has_recipient &&
            has_amount_bound &&
            has_gas_budget_bound &&

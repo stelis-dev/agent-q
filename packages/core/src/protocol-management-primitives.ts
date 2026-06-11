@@ -6,7 +6,7 @@ import {
 export const AGENT_Q_POLICY_SCHEMA = "agentq.policy.v0";
 export const POLICY_ID_PATTERN = HASH_ID_PATTERN;
 export const MAX_POLICY_RULE_COUNT = 16;
-export const MAX_POLICY_RULE_CRITERIA = 8;
+export const MAX_POLICY_RULE_CRITERIA = 12;
 export const MAX_POLICY_CRITERION_VALUES = 16;
 export const MAX_POLICY_FIELD_ID_LENGTH = 48;
 export const MAX_POLICY_RULE_ID_LENGTH = 32;

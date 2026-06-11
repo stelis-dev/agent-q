@@ -956,6 +956,10 @@ const COMMON_POLICY_FIELDS: Record<string, PolicyFieldDescriptor> = {
 const SUI_SIGN_TRANSACTION_POLICY_FIELDS: Record<string, PolicyFieldDescriptor> = {
   "sui.command_shape": { type: "string", allowEq: true, allowIn: true, allowLte: false },
   "sui.sender_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.gas_owner_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command_count": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.command0_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command1_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
   "sui.recipient_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
   "sui.coin_type": { type: "string", allowEq: true, allowIn: true, allowLte: false },
   "sui.amount_raw": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
@@ -1019,6 +1023,12 @@ function policyCriterionLte(criterion: PolicyCriterion, field: string): boolean 
     isUint64DecimalString(criterion.value);
 }
 
+function policyCriterionU64Eq(criterion: PolicyCriterion, field: string, value: string): boolean {
+  return policyCriterionEq(criterion, field, value) &&
+    criterion.value !== undefined &&
+    isUint64DecimalString(criterion.value);
+}
+
 function policyRecipientIsBounded(criterion: PolicyCriterion): boolean {
   if (criterion.field !== "sui.recipient_address") {
     return false;
@@ -1044,6 +1054,9 @@ function policySignRuleIsBounded(rule: PolicyRule): boolean {
   let hasIntent = false;
   let hasShape = false;
   let hasAsset = false;
+  let hasCommandCount = false;
+  let hasCommand0Kind = false;
+  let hasCommand1Kind = false;
   let hasRecipient = false;
   let hasAmountBound = false;
   let hasGasBudgetBound = false;
@@ -1052,6 +1065,9 @@ function policySignRuleIsBounded(rule: PolicyRule): boolean {
     hasIntent = hasIntent || policyCriterionEq(criterion, "common.intent", "single_asset_transfer");
     hasShape = hasShape || policyCriterionEq(criterion, "sui.command_shape", "restricted_transfer");
     hasAsset = hasAsset || policyCriterionEq(criterion, "sui.coin_type", "0x2::sui::SUI");
+    hasCommandCount = hasCommandCount || policyCriterionU64Eq(criterion, "sui.command_count", "2");
+    hasCommand0Kind = hasCommand0Kind || policyCriterionEq(criterion, "sui.command0_kind", "split_coins");
+    hasCommand1Kind = hasCommand1Kind || policyCriterionEq(criterion, "sui.command1_kind", "transfer_objects");
     hasRecipient = hasRecipient || policyRecipientIsBounded(criterion);
     hasAmountBound = hasAmountBound || policyCriterionLte(criterion, "sui.amount_raw");
     hasGasBudgetBound = hasGasBudgetBound || policyCriterionLte(criterion, "sui.gas_budget");
@@ -1060,6 +1076,9 @@ function policySignRuleIsBounded(rule: PolicyRule): boolean {
   return hasIntent &&
     hasShape &&
     hasAsset &&
+    hasCommandCount &&
+    hasCommand0Kind &&
+    hasCommand1Kind &&
     hasRecipient &&
     hasAmountBound &&
     hasGasBudgetBound &&

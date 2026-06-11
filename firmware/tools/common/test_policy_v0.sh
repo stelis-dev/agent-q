@@ -354,6 +354,9 @@ int main(int argc, char** argv)
     const agent_q::AgentQPolicyCriterion sign_criteria[] = {
         {"common.intent", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQPolicyIntentSingleAssetTransfer, nullptr, 0},
         {"sui.command_shape", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQSuiPolicyCommandShapeRestrictedTransfer, nullptr, 0},
+        {"sui.command_count", agent_q::AgentQPolicyOperator::eq, "2", nullptr, 0},
+        {"sui.command0_kind", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQSuiPolicyCommandKindSplitCoins, nullptr, 0},
+        {"sui.command1_kind", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQSuiPolicyCommandKindTransferObjects, nullptr, 0},
         {"sui.coin_type", agent_q::AgentQPolicyOperator::eq, "0x2::sui::SUI", nullptr, 0},
         {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, nullptr, allowed_recipients, 1},
         {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},
@@ -377,6 +380,32 @@ int main(int argc, char** argv)
         "sign-small-sui-transfer",
         &failures);
 
+    const agent_q::AgentQPolicyCriterion missing_command_coverage_sign_criteria[] = {
+        {"common.intent", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQPolicyIntentSingleAssetTransfer, nullptr, 0},
+        {"sui.command_shape", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQSuiPolicyCommandShapeRestrictedTransfer, nullptr, 0},
+        {"sui.coin_type", agent_q::AgentQPolicyOperator::eq, "0x2::sui::SUI", nullptr, 0},
+        {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, nullptr, allowed_recipients, 1},
+        {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},
+        {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "50000000", nullptr, 0},
+        {"sui.gas_price", agent_q::AgentQPolicyOperator::lte, sui_facts.gas_price, nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule missing_command_coverage_sign_rule = {
+        "sign-missing-command-coverage",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        missing_command_coverage_sign_criteria,
+        sizeof(missing_command_coverage_sign_criteria) / sizeof(missing_command_coverage_sign_criteria[0]),
+    };
+    expect_decision(
+        "sign rule missing command coverage is invalid",
+        one_rule_policy(&missing_command_coverage_sign_rule),
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::invalid_policy,
+        nullptr,
+        &failures);
+
     const char* multiple_recipients[] = {
         sui_facts.restricted_transfer.recipient,
         "0x1111111111111111111111111111111111111111111111111111111111111111",
@@ -384,6 +413,9 @@ int main(int argc, char** argv)
     const agent_q::AgentQPolicyCriterion multi_recipient_sign_criteria[] = {
         {"common.intent", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQPolicyIntentSingleAssetTransfer, nullptr, 0},
         {"sui.command_shape", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQSuiPolicyCommandShapeRestrictedTransfer, nullptr, 0},
+        {"sui.command_count", agent_q::AgentQPolicyOperator::eq, "2", nullptr, 0},
+        {"sui.command0_kind", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQSuiPolicyCommandKindSplitCoins, nullptr, 0},
+        {"sui.command1_kind", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQSuiPolicyCommandKindTransferObjects, nullptr, 0},
         {"sui.coin_type", agent_q::AgentQPolicyOperator::eq, "0x2::sui::SUI", nullptr, 0},
         {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, nullptr, multiple_recipients, 2},
         {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},

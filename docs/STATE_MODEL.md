@@ -199,7 +199,8 @@ binary BIP-39 entropy blob, a canonical active policy record, and a local
 read-only Sui account derivation, read-only active policy document readback,
 source-level local reset/material wipe, and the Firmware-owned
 `policy_propose` proposal flow for current-schema reject policies and at
-most one single-recipient bounded sign rule are implemented. USER_PROFILE secure
+most one single-recipient bounded sign rule whose criteria explicitly cover the
+accepted command count and command kinds are implemented. USER_PROFILE secure
 storage gates are still separate work.
 
 Allowed:
