@@ -35,6 +35,16 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 SNIPPET="${TMP_DIR}/connect_review.cpp"
 sed -n '/bool modal_draw_connect_review_panel(/,/^}/p' "${MODAL_SOURCE}" >"${SNIPPET}"
 
+grep -Fq 'lv_label_set_text(subtitle, "Connect only, not signing");' "${SNIPPET}" ||
+  fail "connect review must state that connection is not signing approval"
+grep -Fq 'lv_label_set_text(client_label, "Requester");' "${SNIPPET}" ||
+  fail "connect review client label must say Requester"
+if grep -Fq 'lv_label_set_text(client_label, "Agent-Q");' "${SNIPPET}"; then
+  fail "connect review client label must not duplicate the default Agent-Q client name"
+fi
+grep -Fq 'lv_label_set_text(mode_label, "Requires");' "${SNIPPET}" ||
+  fail "connect review approval row must explain the required local input"
+
 grep -Fq 'lv_label_set_long_mode(client_value, LV_LABEL_LONG_CLIP);' "${SNIPPET}" ||
   fail "connect review agent-q value must use bounded long mode"
 

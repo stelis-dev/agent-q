@@ -670,12 +670,22 @@ bool modal_draw_connect_review_panel(
     lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
 
+    lv_obj_t* subtitle = lv_label_create(panel);
+    if (subtitle == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(subtitle, "Connect only, not signing");
+    lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(subtitle, lv_color_hex(theme::kOnSurfaceVariant), 0);
+    lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
+
     lv_obj_t* client_label = lv_label_create(panel);
     if (client_label == nullptr) {
         drawing_surface_clear_panel_locked();
         return false;
     }
-    lv_label_set_text(client_label, "Agent-Q");
+    lv_label_set_text(client_label, "Requester");
     lv_obj_set_style_text_font(client_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(client_label, lv_color_hex(theme::kOnSurfaceVariant), 0);
     lv_obj_align(client_label, LV_ALIGN_TOP_LEFT, kConnectReviewTextLeft, 86);
@@ -705,7 +715,7 @@ bool modal_draw_connect_review_panel(
         drawing_surface_clear_panel_locked();
         return false;
     }
-    lv_label_set_text(mode_label, "Approval");
+    lv_label_set_text(mode_label, "Requires");
     lv_obj_set_style_text_font(mode_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(mode_label, lv_color_hex(theme::kOnSurfaceVariant), 0);
     lv_obj_align(
@@ -722,8 +732,8 @@ bool modal_draw_connect_review_panel(
     lv_label_set_text(
         mode_value,
         input_mode == AgentQHumanApprovalInputMode::pin
-            ? "Review, then PIN"
-            : "Review, then Confirm");
+            ? "PIN"
+            : "Device confirm");
     lv_obj_set_style_text_font(mode_value, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(mode_value, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(

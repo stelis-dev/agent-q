@@ -26,10 +26,11 @@ export async function requestDeviceConnectionOnStart(
   },
 ): Promise<void> {
   try {
-    writeDiagnostic("Agent-Q sending a connection request. Confirm it on the device.");
+    writeDiagnostic("Agent-Q scanning for a connected device.");
     const scanResult = await core.scanDevices();
     const deviceId = chooseStartupConnectDeviceId(scanResult, options.deviceId);
     await core.selectDevice({ deviceId, purpose: options.purpose });
+    writeDiagnostic("Agent-Q sending a connection request. Confirm it on the device.");
     const result = await core.connectDevice({
       deviceId,
       purpose: options.purpose,

@@ -139,6 +139,18 @@ expect_tree_present() {
   rm -f "${matches}"
 }
 
+usb_stack_expr="$(sed -n 's/.*kUsbRequestTaskStackBytes = \(.*\);/\1/p' "${USB_SERVER}" | head -n 1)"
+if [[ -z "${usb_stack_expr}" ]]; then
+  echo "FAILED: USB request task stack size must be declared" >&2
+  failures=$((failures + 1))
+else
+  usb_stack_bytes=$((usb_stack_expr))
+  if (( usb_stack_bytes < 32768 )); then
+    echo "FAILED: USB request task stack must be at least 32768 bytes" >&2
+    failures=$((failures + 1))
+  fi
+fi
+
 expect_present "${USB_OPERATION_TYPE_HEADER}" '"sign_transaction"' \
   "USB operation classifier must accept public sign_transaction messages"
 expect_absent "${USB_OPERATION_TYPE_HEADER}" '"sign_transaction_user"|"sign_transaction_policy"' \

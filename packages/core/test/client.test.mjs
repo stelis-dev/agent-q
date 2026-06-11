@@ -398,6 +398,11 @@ test("client internals keep provider-protocol as the signing helper owner", asyn
   assert.match(usbSource, /from "\.\/provider-protocol\.js";/);
 });
 
+test("serial transport keeps HUPCL disabled across short-lived USB requests", async () => {
+  const usbSource = await readFile(fileURLToPath(new URL("../src/usb.ts", import.meta.url)), "utf8");
+  assert.match(usbSource, /hupcl:\s*false/);
+});
+
 test("provider-protocol serializer rejects non-provider requests at runtime", async () => {
   const providerProtocol = await import("@stelis/agent-q-core/provider-protocol");
   const blockedRequests = [

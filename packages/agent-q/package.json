@@ -1,6 +1,6 @@
 {
   "name": "@stelis/agent-q",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Agent-Q host process that routes MCP, local API, and Sui CLI signing requests to Agent-Q Firmware.",
   "license": "UNLICENSED",
   "type": "module",
@@ -43,7 +43,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@stelis/agent-q-core": "0.0.2",
+    "@stelis/agent-q-core": "0.0.3",
     "zod": "4.4.3"
   },
   "devDependencies": {

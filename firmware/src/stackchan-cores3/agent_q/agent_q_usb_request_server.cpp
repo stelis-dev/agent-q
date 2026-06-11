@@ -128,7 +128,10 @@ constexpr uint32_t kLocalProcessingRenderDelayMs = 250;
 constexpr uint32_t kLocalProcessingDisplayMs = 900;
 constexpr uint32_t kSettingsTouchEntryMs = 900;
 constexpr uint32_t kUsbHostLinkCheckMs = 10;
-constexpr uint32_t kUsbRequestTaskStackBytes = 8192;
+// This task still combines transport polling, JSON request dispatch, persistent
+// material checks, and immediate target UI effects. Keep explicit headroom for
+// current connect/status paths until those runtime effects have a smaller owner.
+constexpr uint32_t kUsbRequestTaskStackBytes = 32 * 1024;
 constexpr size_t kPolicyReadbackEnvelopeReserveBytes = 1024;
 constexpr size_t kMaxRequestIdSize = agent_q::kAgentQRequestIdSize;
 constexpr size_t kDeviceIdSize = 37;

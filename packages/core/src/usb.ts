@@ -608,6 +608,10 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
   const port = new SerialPort({
     path: portPath,
     baudRate: DEFAULT_AGENT_Q_USB_BAUD_RATE,
+    // The host opens a short-lived serial connection for each protocol call.
+    // Dropping DTR on every close resets ESP32-S3 USB Serial/JTAG devices
+    // between scan and connect, so keep the line state stable across closes.
+    hupcl: false,
     autoOpen: false,
   });
 
