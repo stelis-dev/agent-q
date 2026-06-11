@@ -437,10 +437,12 @@ function makeBrowserTerminalSignResult(status) {
 
 test("provider-sui package metadata exposes only Sui provider and Wallet Standard entrypoints", async () => {
   const packagePath = fileURLToPath(new URL("../package.json", import.meta.url));
+  const corePackagePath = fileURLToPath(new URL("../../core/package.json", import.meta.url));
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
+  const corePackageJson = JSON.parse(await readFile(corePackagePath, "utf8"));
   assert.equal(packageJson.name, "@stelis/agent-q-provider-sui");
   assert.deepEqual(Object.keys(packageJson.exports).sort(), [".", "./browser", "./package.json", "./provider-sui", "./wallet-standard"]);
-  assert.equal(packageJson.dependencies["@stelis/agent-q-core"], "0.0.0");
+  assert.equal(packageJson.dependencies["@stelis/agent-q-core"], corePackageJson.version);
   assert.equal(packageJson.dependencies["@mysten/wallet-standard"], "^0.20.3");
   assert.equal(packageJson.dependencies["@mysten/sui"], "^2.17.0");
   assert.equal(packageJson.dependencies["@stelis/agent-q"], undefined);

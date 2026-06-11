@@ -6,6 +6,18 @@ the request and produces the signature.
 
 The agent, app, CLI, or the host process can request. The device decides.
 
+## Terms Used Here
+
+- **host process**: the local `agent-q` process. It exposes MCP stdio tools,
+  the local HTTP API, and the Admin Page, and relays requests to Firmware.
+- **Firmware**: the software running on the Agent-Q hardware device. Firmware is
+  the signing and policy authority.
+- **Admin Page**: the local web UI served by the host process. It is not a
+  separate authority.
+- **Sui CLI external signer**: an executable that Sui CLI starts from its
+  keystore configuration when a registered address needs a signature. In
+  Agent-Q this executable is `agent-q-sui-signer`.
+
 ## Who This Is For
 
 - Sui users who want the Sui CLI to sign through an external Agent-Q device.
@@ -19,14 +31,45 @@ The agent, app, CLI, or the host process can request. The device decides.
 
 ### Use With Sui CLI
 
-Use `agent-q-sui-signer` as a Sui CLI external signer:
+Use `agent-q-sui-signer` as a Sui CLI external signer. Sui CLI needs a
+one-time external key registration before normal `sui client ...` commands can
+use Agent-Q. Running the Agent-Q server only opens the local server and requests
+a device connection; it does not register the key in Sui CLI.
+
+Start the local Agent-Q server and confirm the connection request on the
+device. With a global install:
 
 ```sh
 npm install -g @stelis/agent-q
 agent-q serve --request-connect
+```
+
+Without a global install:
+
+```sh
+npm exec --yes --package @stelis/agent-q -- agent-q serve --request-connect
+```
+
+After approval, the server writes an operator-facing summary to stderr. The
+summary includes the connected device id, public Sui address when available,
+Firmware-reported signing mode when available, and supported signing methods
+when available. Use the public Sui address from this summary as
+`<SUI_ADDRESS>` in the Sui CLI commands below.
+
+In another terminal, register the Agent-Q key with Sui CLI once. This writes an
+external signer entry to the Sui CLI keystore; it is not an environment
+variable. Copy `<KEY_ID_FROM_LIST_KEYS>` from the `list-keys` output:
+
+```sh
 sui external-keys list-keys agent-q-sui-signer
-sui external-keys add-existing "<KEY_ID>" agent-q-sui-signer
+sui external-keys add-existing "<KEY_ID_FROM_LIST_KEYS>" agent-q-sui-signer
 sui client switch --address <SUI_ADDRESS>
+```
+
+After registration, keep `agent-q` running and use the registered address as the
+Sui CLI sender:
+
+```sh
 sui client gas <SUI_ADDRESS> --json
 sui client pay-sui \
   --input-coins <SUI_COIN_OBJECT_ID> \
@@ -37,14 +80,24 @@ sui client pay-sui \
   --json
 ```
 
-Confirm the connection request on the device when the server starts. The server
-can request a connection, but only Firmware can approve it on the device.
+The server can request a connection, but only Firmware can approve it on the
+device. Sui CLI finds the external signer from its keystore registration for the
+sender address, then runs `agent-q-sui-signer` by command name. The signer must
+therefore be installed, linked, or otherwise available on `PATH` whenever Sui
+CLI invokes it.
 
-Sui CLI later runs the signer by command name. `agent-q-sui-signer` must
-therefore be installed, linked, or otherwise available on `PATH` when Sui CLI
-invokes it. The same `@stelis/agent-q` package provides both `agent-q` and
-`agent-q-sui-signer`. From a source checkout, link the package before using Sui
-CLI as an external signer.
+If you do not install the package globally, run both setup and Sui CLI commands
+through `npm exec` so `agent-q-sui-signer` is on `PATH` for that command:
+
+```sh
+npm exec --yes --package @stelis/agent-q -- \
+  sui external-keys list-keys agent-q-sui-signer
+npm exec --yes --package @stelis/agent-q -- \
+  sui external-keys add-existing "<KEY_ID_FROM_LIST_KEYS>" agent-q-sui-signer
+```
+
+Use the same `npm exec --yes --package @stelis/agent-q -- ...` wrapper for
+later `sui client ...` commands when the package is not globally installed.
 
 Keep `agent-q` running while Sui CLI uses the signer. Sui CLI calls
 `agent-q-sui-signer` when a transaction needs a signature. The signer calls the
@@ -66,9 +119,15 @@ Run the Agent-Q local server and let an MCP client call the signing tools:
 npx -y @stelis/agent-q serve --request-connect
 ```
 
-Confirm the connection request on the device. After approval, MCP tools can use
-the active session. Signing requests still require the Firmware-owned signing
-gate for the selected method and device mode.
+Confirm the connection request on the device. After approval, `agent-q` writes
+an operator-facing summary to stderr. The summary includes the connected device
+id, public Sui address when available, Firmware-reported signing mode when
+available, and supported signing methods when available. This is diagnostic
+output only; it does not register the key with Sui CLI and does not authorize
+signing.
+
+After approval, MCP tools can use the active session. Signing requests still
+require the Firmware-owned signing gate for the selected method and device mode.
 
 Typical agent flow:
 
@@ -142,8 +201,8 @@ Current executable signing routes:
 
 | Chain | Method | Current behavior |
 | --- | --- | --- |
-| `sui` | `sign_transaction` | Bounded Sui transaction signing. Firmware chooses policy or user confirmation from its device-local signing mode. |
-| `sui` | `sign_personal_message` | Bounded Sui personal-message signing in user-confirmation mode. Policy mode fails closed for this method. |
+| `sui` | `sign_transaction` | Bounded Sui transaction signing. Firmware chooses policy authorization or user authorization from its device-local signing mode. |
+| `sui` | `sign_personal_message` | Bounded Sui personal-message signing in user authorization mode. Policy authorization mode fails closed for this method. |
 
 Unsupported chains and unsupported methods fail explicitly. Chains are exposed
 through the shared protocol; Agent-Q does not create separate chain-specific
@@ -157,7 +216,7 @@ product APIs.
   decisions.
 - Firmware stores keys and policies locally and owns signing decisions.
 - Firmware chooses the signing authorization gate from device-local state.
-  Requests cannot choose policy mode or user-confirmation mode.
+  Requests cannot choose policy authorization mode or user authorization mode.
 - Agent-Q cannot verify what happened inside an agent, app, wallet UI, or host
   process before a signing request was created.
 - All external requests are untrusted input. Firmware must parse bounded

@@ -275,7 +275,7 @@ export const hostToolDefinitions = {
 export function createAgentQMcpServer(core = createDefaultAgentQCore()): McpServer {
   const server = new McpServer({
     name: "agent-q",
-    version: "0.0.0",
+    version: "0.0.1",
   });
 
   // run() is the single MCP output boundary. It sanitizes every result so that

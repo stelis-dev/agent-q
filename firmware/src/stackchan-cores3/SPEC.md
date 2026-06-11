@@ -522,6 +522,13 @@ wordlist source is not tracked.
 
 Current verification expectations for this target:
 
+Command-level build and flash usage lives in this target's README. A hardware
+smoke pass is complete only when the evidence records the target hardware,
+repository commit, build command, flash command, serial port, manual
+device-local steps, observed result, and unchecked paths. If a listed smoke item
+cannot be checked, mark it unchecked; do not infer it from source paths or host
+tests.
+
 - run `firmware/tools/stackchan-cores3/test_bip39_vectors.sh` after ESP-IDF
   v5.5.4 is active to check known BIP-39 entropy-to-mnemonic vectors against
   the tracked encoder, ESP-IDF mbedTLS SHA-256, and generated wordlist source;

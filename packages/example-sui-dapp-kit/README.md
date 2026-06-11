@@ -24,14 +24,20 @@ checkout, install the root workspace dependencies first:
 npm install
 ```
 
-From the repository root:
+Build the example from the repository root:
 
 ```sh
 npm run build:example-sui-dapp-kit
 ```
 
-For local development, run `npm --workspace @stelis/agent-q-example-sui-dapp-kit
-run dev` from the repository root.
+For local development, start the Vite server from the repository root:
+
+```sh
+npm --workspace @stelis/agent-q-example-sui-dapp-kit run dev
+```
+
+Open the URL printed by Vite. With the default script, this is usually
+`http://127.0.0.1:5173/` unless that port is already in use.
 
 The Web Serial runtime is created before dapp-kit initialization so the
 Agent-Q wallet remains visible in the connect modal for ordinary users. It

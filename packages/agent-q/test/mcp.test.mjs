@@ -28,10 +28,12 @@ const expectedToolNames = [
 
 test("local server package metadata exposes MCP and local API entrypoints", async () => {
   const packagePath = fileURLToPath(new URL("../package.json", import.meta.url));
+  const corePackagePath = fileURLToPath(new URL("../../core/package.json", import.meta.url));
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
+  const corePackageJson = JSON.parse(await readFile(corePackagePath, "utf8"));
   assert.equal(packageJson.name, "@stelis/agent-q");
   assert.deepEqual(Object.keys(packageJson.exports).sort(), [".", "./local-api", "./mcp", "./package.json"]);
-  assert.equal(packageJson.dependencies["@stelis/agent-q-core"], "0.0.0");
+  assert.equal(packageJson.dependencies["@stelis/agent-q-core"], corePackageJson.version);
   assert.deepEqual(packageJson.bin, {
     "agent-q": "./dist/bin/agent-q.js",
     "agent-q-sui-signer": "./dist/bin/agent-q-sui-signer.js",

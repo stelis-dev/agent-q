@@ -18,6 +18,25 @@ AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stackchan-cores3/build.sh
 ```
 
+When no custom checkout path is passed, the build script generates the upstream
+ESP-IDF project under `.firmware-cache/stackchan-cores3/StackChan/firmware` and
+uses `build-agentq-stackchan-cores3` as the build directory. There is no
+Agent-Q protocol command for flashing. To flash the default build, run ESP-IDF
+against that generated project and the target serial port:
+
+```bash
+AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+  firmware/tools/stackchan-cores3/with-idf.sh \
+  idf.py \
+    -C .firmware-cache/stackchan-cores3/StackChan/firmware \
+    -B .firmware-cache/stackchan-cores3/StackChan/firmware/build-agentq-stackchan-cores3 \
+    -p /dev/cu.usbmodemXXXX \
+    flash
+```
+
+If you pass a custom host firmware checkout or build directory to `build.sh`,
+use the matching generated firmware path and build directory for `idf.py`.
+
 After flashing a current build, verify the product path through the normal
 device UX:
 
@@ -34,6 +53,11 @@ device-local setup or existing provisioned device
 Use development erase/reprovisioning only when explicitly approved for a
 hardware smoke pass. Setup, reset, and signing approval are device-local flows;
 they are not exposed as USB state-setter APIs.
+
+For each hardware smoke pass, record the target hardware, repository commit,
+build command, flash command, serial port, manual device-local steps, observed
+result, and unchecked paths. Keep scratch evidence under `.WORK/notes/`, and
+update tracked status documents only when the verification level changes.
 
 ## Current Implementation
 

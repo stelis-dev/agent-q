@@ -50,7 +50,8 @@ firmware/tools/stackchan-cores3/test_sui_signing_preparation.sh
 
 Hardware smoke requires the target device, the current build, manual
 device-local approval where required, and recorded evidence. Do not raise
-product-active status from source paths alone.
+product-active status from source paths alone. Flash commands are
+target-specific; for the current target, use the StackChan CoreS3 README.
 
 ## Folder Policy
 

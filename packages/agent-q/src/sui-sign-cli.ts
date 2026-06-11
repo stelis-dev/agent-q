@@ -25,8 +25,10 @@ export const SUI_SIGN_CLI_HELP = `Agent-Q Sui CLI external signer
 Usage:
   npm install -g @stelis/agent-q
   agent-q serve --request-connect
+  # without a global install:
+  npm exec --yes --package @stelis/agent-q -- agent-q serve --request-connect
   sui external-keys list-keys agent-q-sui-signer
-  sui external-keys add-existing "<KEY_ID>" agent-q-sui-signer
+  sui external-keys add-existing "<KEY_ID_FROM_LIST_KEYS>" agent-q-sui-signer
   sui client switch --address <SUI_ADDRESS>
   sui client gas <SUI_ADDRESS> --json
   sui client pay-sui \\
@@ -44,6 +46,8 @@ Advanced:
 
 Sui CLI calls this program as an external signer. Keep agent-q running while Sui
 CLI uses the signer. agent-q-sui-signer must be on PATH when Sui CLI invokes it.
+If @stelis/agent-q is not globally installed, run setup and Sui CLI commands
+through: npm exec --yes --package @stelis/agent-q -- ...
 The signer calls the local Agent-Q server, and the server sends signing requests
 to Firmware. The private key stays on the device.`;
 

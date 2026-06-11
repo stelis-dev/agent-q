@@ -1,7 +1,7 @@
 {
   "name": "@stelis/agent-q",
-  "version": "0.0.0",
-  "description": "Agent-Q local server with MCP API, local HTTP API, Admin Page, and Sui CLI external signer support.",
+  "version": "0.0.1",
+  "description": "Agent-Q host process that routes MCP, local API, and Sui CLI signing requests to a device-held signing authority.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
@@ -43,7 +43,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@stelis/agent-q-core": "0.0.0",
+    "@stelis/agent-q-core": "0.0.1",
     "zod": "4.4.3"
   },
   "devDependencies": {

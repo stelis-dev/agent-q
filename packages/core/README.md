@@ -120,7 +120,17 @@ npm --workspace @stelis/agent-q-core test
 ```
 
 Direct USB/Firmware hardware smoke tests live in this package and are opt-in.
-They are skipped unless their `AGENTQ_HW_CLIENT_*` environment gates are set:
+They are skipped unless their `AGENTQ_HW_CLIENT_*` environment gates are set.
+
+Run one smoke scenario at a time against a development device running the
+current firmware build. The device must be provisioned, connected over USB, and
+already in the signing mode required by the selected gate. Use the matching
+`*_DEVICE_ID` variable when more than one Agent-Q device is connected. For
+transaction-signing smoke, pass canonical base64 `txBytes` whose sender and gas
+owner are the Agent-Q account. For policy-mode smoke, configure the active
+device policy before running the scenario.
+
+Examples:
 
 ```sh
 npm --workspace @stelis/agent-q-core run build

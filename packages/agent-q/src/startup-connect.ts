@@ -6,7 +6,11 @@ import { AgentQError, toAgentQError, toPublicError } from "@stelis/agent-q-core/
 
 export type StartupConnectCore = Pick<
   AgentQCore,
-  "scanDevices" | "selectDevice" | "connectDevice"
+  | "scanDevices"
+  | "selectDevice"
+  | "connectDevice"
+  | "getCapabilities"
+  | "getAccounts"
 >;
 
 export interface StartupConnectOptions {
@@ -32,12 +36,56 @@ export async function requestDeviceConnectionOnStart(
       clientName: "Agent-Q",
     });
     writeDiagnostic(`Agent-Q device connection approved: ${result.deviceId}`);
+    await writeStartupConnectionSummary(core, { deviceId, purpose: options.purpose }, writeDiagnostic);
   } catch (error) {
     const agentQError = toAgentQError(error);
     const publicError = toPublicError(agentQError.code, agentQError.retryable);
     writeDiagnostic(
       `Agent-Q connection request did not complete: ${publicError.code}. ${publicError.message}`,
     );
+  }
+}
+
+async function writeStartupConnectionSummary(
+  core: StartupConnectCore,
+  input: { deviceId: string; purpose?: string },
+  writeDiagnostic: (line: string) => void,
+): Promise<void> {
+  try {
+    const [capabilitiesResult, accountsResult] = await Promise.all([
+      core.getCapabilities(input),
+      core.getAccounts(input),
+    ]);
+    if (accountsResult.source === "live") {
+      const suiAddresses = accountsResult.accounts
+        .filter((account) => account.chain === "sui")
+        .map((account) => account.address);
+      if (suiAddresses.length > 0) {
+        writeDiagnostic(`Agent-Q Sui address: ${suiAddresses.join(", ")}`);
+      } else {
+        writeDiagnostic("Agent-Q Sui address: unavailable");
+      }
+    } else {
+      writeDiagnostic(`Agent-Q accounts unavailable: ${accountsResult.reason}`);
+    }
+
+    if (capabilitiesResult.source === "live") {
+      if (capabilitiesResult.signing !== undefined) {
+        writeDiagnostic(`Agent-Q signing mode: ${capabilitiesResult.signing.authorization}`);
+        const methods = capabilitiesResult.signing.methods
+          .map((method) => `${method.chain}:${method.method}`)
+          .join(", ");
+        writeDiagnostic(`Agent-Q signing methods: ${methods}`);
+      } else {
+        writeDiagnostic("Agent-Q signing mode: unavailable");
+      }
+    } else {
+      writeDiagnostic(`Agent-Q capabilities unavailable: ${capabilitiesResult.reason}`);
+    }
+  } catch (error) {
+    const agentQError = toAgentQError(error);
+    const publicError = toPublicError(agentQError.code, agentQError.retryable);
+    writeDiagnostic(`Agent-Q connection summary unavailable: ${publicError.code}. ${publicError.message}`);
   }
 }
 
