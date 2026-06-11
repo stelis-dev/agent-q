@@ -45,6 +45,7 @@ import {
   validatePolicyProposeRequestInput,
 } from "./protocol.js";
 import {
+  consumeFirmwareSessionInvalidated,
   INTERNAL_USB_DEADLINE_MS,
   deadlineEnforcingDriver,
   mapErrorToUnavailableReason,
@@ -894,9 +895,14 @@ export class AgentQCore {
         params,
         deadlineMs,
       );
-      return toLiveSignResult(target.deviceId, response);
+      const firmwareInvalidatedSession = consumeFirmwareSessionInvalidated(response);
+      const result = toLiveSignResult(target.deviceId, response);
+      if (firmwareInvalidatedSession) {
+        this.clearRuntimeSessionMirror(target.deviceId);
+      }
+      return result;
     } catch (error) {
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
+      const reason = this.clearRuntimeSessionMirrorIfFirmwareInvalidated(target.deviceId, error);
       if (reason !== null) {
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
@@ -948,9 +954,14 @@ export class AgentQCore {
         params,
         deadlineMs,
       );
-      return toLiveSignResult(target.deviceId, response);
+      const firmwareInvalidatedSession = consumeFirmwareSessionInvalidated(response);
+      const result = toLiveSignResult(target.deviceId, response);
+      if (firmwareInvalidatedSession) {
+        this.clearRuntimeSessionMirror(target.deviceId);
+      }
+      return result;
     } catch (error) {
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
+      const reason = this.clearRuntimeSessionMirrorIfFirmwareInvalidated(target.deviceId, error);
       if (reason !== null) {
         return { source: "session_ended", deviceId: target.deviceId, reason };
       }
@@ -999,6 +1010,17 @@ export class AgentQCore {
       this.clearRuntimeSessionMirror(deviceId);
     }
     return reason;
+  }
+
+  private clearRuntimeSessionMirrorIfFirmwareInvalidated(
+    deviceId: string,
+    error: unknown,
+  ): RuntimeSessionMirrorEndReason | null {
+    if (!(error instanceof AgentQError) || error.code !== "invalid_session") {
+      return null;
+    }
+    this.clearRuntimeSessionMirror(deviceId);
+    return "invalid_session";
   }
 
   private async resolveTargetDevice(input: {

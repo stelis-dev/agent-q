@@ -7,6 +7,7 @@ import {
   assertCapabilitiesResponse,
   assertPolicyResponse,
   assertPolicyProposeResultResponse,
+  assertAckResultResponse,
   assertSignResultResponse,
   assertConnectResponse,
   assertDisconnectResponse,
@@ -23,7 +24,9 @@ import {
   makeDisconnectRequest,
   makeGetCapabilitiesRequest,
   makeGetAccountsRequest,
+  makeAckResultRequest,
   makeGetApprovalHistoryRequest,
+  makeGetResultRequest,
   makePolicyGetRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
@@ -37,6 +40,7 @@ import {
   sanitizeDisplayText,
   serializeRequest,
 } from "../dist/protocol.js";
+import { normalizeRecoveryRequest } from "../dist/protocol-recovery.js";
 
 const SIGN_ROUTE_VECTORS = readFileSync(
   new URL("../../../specs/sign-route-vectors.tsv", import.meta.url),
@@ -78,6 +82,94 @@ test("rejects unsafe request ids", () => {
   assert.equal(isSafeRequestId("req/unsafe"), false);
   assert.equal(isSafeRequestId("a".repeat(80)), false);
   assert.throws(() => makeGetStatusRequest("req/unsafe"), /Invalid request id/);
+});
+
+test("builds retained-result recovery requests with the original signing request id", () => {
+  const sessionId = "session_abcdef";
+  const requestId = "req_original_sign";
+  assert.deepEqual(makeGetResultRequest(sessionId, requestId), {
+    id: requestId,
+    version: 1,
+    type: "get_result",
+    sessionId,
+  });
+  assert.deepEqual(makeAckResultRequest(sessionId, requestId), {
+    id: requestId,
+    version: 1,
+    type: "ack_result",
+    sessionId,
+  });
+});
+
+test("recovery request normalizer exact-validates get_result and ack_result", () => {
+  assert.deepEqual(normalizeRecoveryRequest({
+    id: "req_sign",
+    version: 1,
+    type: "get_result",
+    sessionId: "session_abcdef",
+  }), {
+    id: "req_sign",
+    version: 1,
+    type: "get_result",
+    sessionId: "session_abcdef",
+  });
+
+  assert.throws(
+    () => normalizeRecoveryRequest({
+      id: "req_sign",
+      version: 1,
+      type: "ack_result",
+      sessionId: "session_abcdef",
+      extra: true,
+    }),
+    { code: "protocol_error" },
+  );
+});
+
+test("parseProtocolResponse accepts and exact-validates ack_result as full protocol", () => {
+  const response = assertAckResultResponse(parseProtocolResponse(JSON.stringify({
+    id: "req_sign",
+    version: 1,
+    type: "ack_result",
+    status: "acked",
+  }), "req_sign"));
+  assert.deepEqual(response, {
+    id: "req_sign",
+    version: 1,
+    type: "ack_result",
+    status: "acked",
+  });
+
+  assert.throws(
+    () => parseProtocolResponse(JSON.stringify({
+      id: "req_sign",
+      version: 1,
+      type: "ack_result",
+      status: "acked",
+      extra: true,
+    }), "req_sign"),
+    { code: "protocol_error" },
+  );
+
+  assert.throws(
+    () => assertAckResultResponse({
+      id: "req_sign",
+      version: 2,
+      type: "ack_result",
+      status: "acked",
+    }),
+    { code: "protocol_error" },
+  );
+
+  assert.throws(
+    () => assertAckResultResponse({
+      id: "req_sign",
+      version: 1,
+      type: "ack_result",
+      status: "not_acked",
+    }),
+    { code: "protocol_error" },
+  );
 });
 
 test("identifySignRoute matches the shared protocol route vectors", () => {

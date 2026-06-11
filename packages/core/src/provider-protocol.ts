@@ -135,20 +135,6 @@ export interface GetAccountsRequest {
   sessionId: string;
 }
 
-export interface GetResultRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "get_result";
-  sessionId: string;
-}
-
-export interface AckResultRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "ack_result";
-  sessionId: string;
-}
-
 export interface SignTransactionParams {
   network: SuiSignTransactionNetwork;
   txBytes: string;
@@ -202,8 +188,6 @@ export type ProviderProtocolRequest =
   | DisconnectRequest
   | GetAccountsRequest
   | GetCapabilitiesRequest
-  | GetResultRequest
-  | AckResultRequest
   | SignPersonalMessageRequest
   | SignTransactionRequest;
 
@@ -235,13 +219,6 @@ export interface DisconnectResponse {
   version: typeof PROTOCOL_VERSION;
   type: "disconnect_result";
   status: "disconnected";
-}
-
-export interface AckResultResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "ack_result";
-  status: "acked";
 }
 
 export interface CapabilityAccount {
@@ -372,7 +349,6 @@ export interface ProtocolErrorResponse {
 
 export type ProviderProtocolResponse =
   | AccountsResponse
-  | AckResultResponse
   | CapabilitiesResponse
   | ConnectResponse
   | DisconnectResponse
@@ -403,20 +379,6 @@ export function makeGetAccountsRequest(sessionId: string, id = createRequestId()
   validateRequestId(id);
   validateSessionId(sessionId);
   return { id, version: PROTOCOL_VERSION, type: "get_accounts", sessionId };
-}
-
-// `id` is required (and not freshly generated): get_result/ack_result target a specific
-// prior request's buffered signing result, so the caller passes that request's id.
-export function makeGetResultRequest(sessionId: string, id: string): GetResultRequest {
-  validateRequestId(id);
-  validateSessionId(sessionId);
-  return { id, version: PROTOCOL_VERSION, type: "get_result", sessionId };
-}
-
-export function makeAckResultRequest(sessionId: string, id: string): AckResultRequest {
-  validateRequestId(id);
-  validateSessionId(sessionId);
-  return { id, version: PROTOCOL_VERSION, type: "ack_result", sessionId };
 }
 
 export function makeSignTransactionRequest(
@@ -509,9 +471,6 @@ export function parseProviderProtocolResponse(line: string, expectedId?: string)
   if (value.type === "sign_result") {
     return sanitizeSignResultResponse(value);
   }
-  if (value.type === "ack_result") {
-    return sanitizeAckResultResponse(value);
-  }
   throw new ProtocolError("protocol_error", "Provider protocol response type is unsupported.");
 }
 
@@ -531,16 +490,6 @@ export function assertDisconnectResponse(response: ProviderProtocolResponse): Di
   }
   if (response.type !== "disconnect_result") {
     throw new ProtocolError("protocol_error", "Protocol response type is not disconnect_result.");
-  }
-  return response;
-}
-
-export function assertAckResultResponse(response: ProviderProtocolResponse): AckResultResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "ack_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not ack_result.");
   }
   return response;
 }
@@ -595,12 +544,6 @@ function normalizeProviderProtocolRequest(request: unknown): ProviderProtocolReq
     case "get_accounts":
       requireOnlyKeys(request, ["id", "version", "type", "sessionId"], "get_accounts request");
       return makeGetAccountsRequest(request.sessionId as string, request.id as string);
-    case "get_result":
-      requireOnlyKeys(request, ["id", "version", "type", "sessionId"], "get_result request");
-      return makeGetResultRequest(request.sessionId as string, request.id as string);
-    case "ack_result":
-      requireOnlyKeys(request, ["id", "version", "type", "sessionId"], "ack_result request");
-      return makeAckResultRequest(request.sessionId as string, request.id as string);
     case "get_capabilities":
       requireOnlyKeys(request, ["id", "version", "type", "sessionId"], "get_capabilities request");
       return makeGetCapabilitiesRequest(request.sessionId as string, request.id as string);
@@ -858,14 +801,6 @@ function sanitizeDisconnectResponse(value: Record<string, unknown>): DisconnectR
     throw new ProtocolError("protocol_error", "Disconnect response is malformed.");
   }
   return { id: value.id, version: PROTOCOL_VERSION, type: "disconnect_result", status: "disconnected" };
-}
-
-function sanitizeAckResultResponse(value: Record<string, unknown>): AckResultResponse {
-  requireOnlyKeys(value, ["id", "version", "type", "status"], "Ack result response");
-  if (typeof value.id !== "string" || value.status !== "acked") {
-    throw new ProtocolError("protocol_error", "Ack result response is malformed.");
-  }
-  return { id: value.id, version: PROTOCOL_VERSION, type: "ack_result", status: "acked" };
 }
 
 function sanitizeCapabilitiesResponse(value: Record<string, unknown>): CapabilitiesResponse {

@@ -334,6 +334,15 @@ test("package self-reference resolves only core entrypoints", async () => {
   assert.equal(typeof device.createDefaultAgentQDeviceClient, "function");
   assert.equal(typeof protocol.makeGetStatusRequest, "function");
   assert.equal(typeof protocol.makeSignTransactionRequest, "function");
+  assert.equal(typeof protocol.makeGetResultRequest, "function");
+  assert.equal(typeof protocol.makeAckResultRequest, "function");
+  assert.equal(typeof protocol.assertAckResultResponse, "function");
+  await assert.rejects(() => import("@stelis/agent-q-core/protocol-recovery"), {
+    code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
+  });
+  assert.equal(providerProtocol.makeGetResultRequest, undefined);
+  assert.equal(providerProtocol.makeAckResultRequest, undefined);
+  assert.equal(providerProtocol.assertAckResultResponse, undefined);
   assert.equal(providerProtocol.makeGetStatusRequest, undefined);
   assert.equal(providerProtocol.makePolicyGetRequest, undefined);
   assert.equal(providerProtocol.makePolicyProposeRequest, undefined);
@@ -379,17 +388,38 @@ test("provider-protocol declaration stays type-bounded to provider requests", as
   assert.doesNotMatch(types, /MAX_POLICY_RULE_COUNT/);
   assert.doesNotMatch(types, /MAX_APPROVAL_HISTORY_RECORDS/);
   assert.doesNotMatch(types, /POLICY_PROPOSE_RESULT_STATUSES/);
+  assert.doesNotMatch(types, /makeGetResultRequest/);
+  assert.doesNotMatch(types, /makeAckResultRequest/);
+  assert.doesNotMatch(types, /assertAckResultResponse/);
+  assert.doesNotMatch(types, /GetResultRequest/);
+  assert.doesNotMatch(types, /AckResultRequest/);
+  assert.doesNotMatch(types, /AckResultResponse/);
+  assert.doesNotMatch(types, /protocol-recovery/);
+  assert.doesNotMatch(types, /get_result/);
+  assert.doesNotMatch(types, /ack_result/);
 });
 
-test("client internals keep provider-protocol as the signing helper owner", async () => {
+test("client internals keep signing and recovery helper ownership separated", async () => {
   const protocolSource = await readFile(fileURLToPath(new URL("../src/protocol.ts", import.meta.url)), "utf8");
   const coreSource = await readFile(fileURLToPath(new URL("../src/core.ts", import.meta.url)), "utf8");
   const usbSource = await readFile(fileURLToPath(new URL("../src/usb.ts", import.meta.url)), "utf8");
+  const providerProtocolSource = await readFile(fileURLToPath(new URL("../src/provider-protocol.ts", import.meta.url)), "utf8");
 
   assert.match(protocolSource, /export \{\s+identifySignRoute,\s+makeSignPersonalMessageRequest,\s+makeSignTransactionRequest,\s+\} from "\.\/provider-protocol\.js";/);
+  assert.match(protocolSource, /from "\.\/protocol-recovery\.js";/);
   assert.doesNotMatch(protocolSource, /identifyProviderSignRoute/);
   assert.doesNotMatch(protocolSource, /makeProviderSignTransactionRequest/);
   assert.doesNotMatch(protocolSource, /makeProviderSignPersonalMessageRequest/);
+  assert.doesNotMatch(providerProtocolSource, /function sanitizeAckResultResponse/);
+  assert.doesNotMatch(providerProtocolSource, /"get_result request"\)/);
+  assert.doesNotMatch(providerProtocolSource, /"ack_result request"\)/);
+  assert.doesNotMatch(providerProtocolSource, /export \{\s+assertAckResultResponse/);
+  assert.doesNotMatch(providerProtocolSource, /export \{\s+makeAckResultRequest/);
+  assert.doesNotMatch(providerProtocolSource, /export \{\s+makeGetResultRequest/);
+  assert.doesNotMatch(providerProtocolSource, /from "\.\/protocol-recovery\.js";/);
+  assert.doesNotMatch(providerProtocolSource, /\bGetResultRequest\b/);
+  assert.doesNotMatch(providerProtocolSource, /\bAckResultRequest\b/);
+  assert.doesNotMatch(providerProtocolSource, /\bAckResultResponse\b/);
 
   assert.match(coreSource, /from "\.\/provider-protocol\.js";/);
   assert.doesNotMatch(coreSource, /validateSignTransactionParamsInput/);

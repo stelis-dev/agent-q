@@ -16,6 +16,7 @@
 #include "agent_q_drawing_surface.h"
 #include "agent_q_entropy.h"
 #include "agent_q_identification_display.h"
+#include "agent_q_device_activity_projection.h"
 #include "agent_q_json_input.h"
 #include "agent_q_local_auth.h"
 #include "agent_q_local_auth_worker.h"
@@ -163,6 +164,7 @@ TaskHandle_t g_usb_task = nullptr;
 
 bool refresh_persistent_material_consistency();
 bool provisioned_material_ready();
+bool agent_q_ui_idle_for_local_settings();
 agent_q::AgentQPersistentMaterialOps persistent_material_ops();
 agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops();
 agent_q::AgentQLocalSettingsResetUiFlowOps local_settings_reset_ui_ops();
@@ -320,30 +322,29 @@ void apply_panel_cleanup_plan(
     }
 }
 
+agent_q::AgentQDeviceActivityProjection current_device_activity()
+{
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQDeviceActivityFacts facts = {
+        agent_q::persistent_material_consistency_error_active(),
+        agent_q::provisioning_runtime_state_is_provisioned(),
+        agent_q_ui_idle_for_local_settings(),
+        agent_q::identification_display_active(),
+        agent_q::connect_approval_active(),
+        agent_q::protocol_pin_approval_active(),
+        agent_q::provisioning_flow_active(),
+        agent_q::local_pin_auth_flow_active(),
+        agent_q::policy_update_flow_snapshot(),
+        agent_q::local_reset_snapshot(now),
+        agent_q::user_signing_flow_core_snapshot(),
+    };
+    return agent_q::project_device_activity(facts);
+}
+
 const char* current_device_state()
 {
-    if (agent_q::persistent_material_consistency_error_active()) {
-        return "error";
-    }
-    const agent_q::AgentQUserSigningFlowCoreSnapshot user_signing =
-        agent_q::user_signing_flow_core_snapshot();
-    if (agent_q::connect_approval_active() ||
-        agent_q::protocol_pin_approval_active() ||
-        (user_signing.active &&
-         (user_signing.stage == agent_q::AgentQUserSigningStage::reviewing ||
-          user_signing.stage == agent_q::AgentQUserSigningStage::pin_entry))) {
-        return "awaiting_approval";
-    }
-    const agent_q::AgentQLocalResetSnapshot reset =
-        agent_q::local_reset_snapshot(xTaskGetTickCount());
-    if (agent_q::provisioning_flow_active() ||
-        (reset.flow_active &&
-         reset.stage != agent_q::AgentQLocalResetStage::settings_menu) ||
-        agent_q::local_pin_auth_flow_active() ||
-        user_signing.active) {
-        return "busy";
-    }
-    return "idle";
+    return agent_q::device_activity_state_name(
+        current_device_activity().device_state);
 }
 
 const AgentQUsbOperationResponseWriter& usb_operation_response_writer()
@@ -1037,15 +1038,8 @@ agent_q::AgentQSessionValidationResult validate_session_for_user_signing(
 
 bool user_signing_ingress_busy()
 {
-    const agent_q::AgentQLocalResetSnapshot reset =
-        agent_q::local_reset_snapshot(xTaskGetTickCount());
-    return agent_q::connect_approval_active() ||
-           agent_q::protocol_pin_approval_active() ||
-           agent_q::policy_update_flow_active() ||
-           agent_q::provisioning_flow_active() ||
-           reset.flow_active ||
-           agent_q::local_pin_auth_flow_active() ||
-           agent_q::user_signing_flow_active();
+    return agent_q::device_activity_blocks_user_signing_ingress(
+        current_device_activity());
 }
 
 bool show_user_signing_review()
@@ -1067,59 +1061,21 @@ bool agent_q_ui_idle_for_local_settings()
 
 bool local_settings_touch_entry_candidate_allowed()
 {
-    return agent_q::provisioning_runtime_state_is_provisioned() &&
-           !agent_q::connect_approval_active() &&
-           !agent_q::protocol_pin_approval_active() &&
-           !agent_q::identification_display_active() &&
-           !agent_q::provisioning_flow_active() &&
-           !agent_q::local_pin_auth_flow_active() &&
-           !agent_q::user_signing_flow_active() &&
-           !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
-           agent_q_ui_idle_for_local_settings();
+    return agent_q::device_activity_allows_local_settings_touch_entry(
+        current_device_activity());
 }
 
 bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_settings_menu = false)
 {
-    if (agent_q::connect_approval_active()) {
-        agent_q::usb_response_write_error(id, "busy", "Device is awaiting local input.");
-        return true;
+    const agent_q::AgentQDeviceActivityUsbRequestBlock block =
+        agent_q::device_activity_usb_request_block(
+            current_device_activity(),
+            { allow_settings_menu });
+    if (!block.blocked) {
+        return false;
     }
-    if (agent_q::protocol_pin_approval_active()) {
-        agent_q::usb_response_write_error(id, "busy", "Device is awaiting local PIN approval.");
-        return true;
-    }
-    if (agent_q::policy_update_flow_active()) {
-        agent_q::usb_response_write_error(id, "busy", "Device has a pending policy update.");
-        return true;
-    }
-    if (agent_q::provisioning_flow_active()) {
-        agent_q::usb_response_write_error(id, "busy", "Device is showing setup material.");
-        return true;
-    }
-    const agent_q::AgentQLocalResetSnapshot reset =
-        agent_q::local_reset_snapshot(xTaskGetTickCount());
-    if (reset.flow_active) {
-        if (allow_settings_menu &&
-            reset.stage == agent_q::AgentQLocalResetStage::settings_menu) {
-            return false;
-        }
-        agent_q::usb_response_write_error(
-            id,
-            "busy",
-            reset.stage == agent_q::AgentQLocalResetStage::settings_menu
-                ? "Device is showing local settings UI."
-                : "Device is showing local reset UI.");
-        return true;
-    }
-    if (agent_q::local_pin_auth_flow_active()) {
-        agent_q::usb_response_write_error(id, "busy", "Device is showing local PIN UI.");
-        return true;
-    }
-    if (agent_q::user_signing_flow_active()) {
-        agent_q::usb_response_write_error(id, "busy", "Device has a pending signing request.");
-        return true;
-    }
-    return false;
+    agent_q::usb_response_write_error(id, block.code, block.message);
+    return true;
 }
 
 bool write_busy_if_pending_or_local_flow_active_default(const char* id)
@@ -1613,26 +1569,15 @@ bool local_settings_reset_ui_panel_active()
 
 bool local_settings_start_available()
 {
-    const TickType_t now = xTaskGetTickCount();
     return provisioned_material_ready() &&
-           !agent_q::connect_approval_active() &&
-           !agent_q::protocol_pin_approval_active() &&
-           !agent_q::identification_display_active() &&
-           !agent_q::provisioning_flow_active() &&
-           !agent_q::user_signing_flow_active() &&
-           !agent_q::local_reset_snapshot(now).flow_active &&
-           agent_q_ui_idle_for_local_settings();
+           agent_q::device_activity_allows_local_settings_start(
+               current_device_activity());
 }
 
 bool local_error_recovery_available()
 {
-    return !agent_q::connect_approval_active() &&
-           !agent_q::protocol_pin_approval_active() &&
-           !agent_q::identification_display_active() &&
-           !agent_q::provisioning_flow_active() &&
-           !agent_q::local_pin_auth_flow_active() &&
-           !agent_q::user_signing_flow_active() &&
-           !agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active;
+    return agent_q::device_activity_allows_local_error_recovery(
+        current_device_activity());
 }
 
 bool draw_local_settings_reset_processing_overlay(AgentQUiPanelKind kind)
@@ -2727,6 +2672,14 @@ void handle_connect_request(
 
 const agent_q::AgentQUsbRetainedResultHandlerOps& retained_result_handler_ops()
 {
+    static_assert(
+        agent_q::usb_operation_is_retained_result_read_cleanup(
+            agent_q::AgentQUsbOperationType::get_result),
+        "get_result must remain a retained-result read route.");
+    static_assert(
+        agent_q::usb_operation_is_retained_result_read_cleanup(
+            agent_q::AgentQUsbOperationType::ack_result),
+        "ack_result must remain a retained-result cleanup route.");
     static const agent_q::AgentQUsbRetainedResultHandlerOps ops = {
         provisioned_material_ready,
         require_active_matching_session,

@@ -549,6 +549,11 @@ tests.
   host SOF polling state ownership and link-edge classification;
 - run `firmware/tools/stackchan-cores3/test_usb_session_loss.sh` to check the
   session-bound volatile cleanup plan for USB host SOF loss;
+- run `firmware/tools/stackchan-cores3/test_device_activity_projection.sh` to
+  check the host-compiled device activity projection matrix for
+  policy-update stages, local Settings gates, signing ingress blocking, and the
+  idle Settings menu USB exception, plus the retained-result read/cleanup route
+  class for `get_result` and `ack_result`. This is not a hardware smoke test;
 - run `firmware/tools/stackchan-cores3/test_sign_api_activation_boundary.sh`
   to check that chain-specific public Sign API names are absent,
   `sign_transaction` and `sign_personal_message` are wired through the intended

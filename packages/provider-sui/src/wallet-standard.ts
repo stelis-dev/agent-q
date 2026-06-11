@@ -70,6 +70,7 @@ export type AgentQSuiWalletGetCapabilitiesResult = {
 export type AgentQSuiWalletSignTransactionResult = {
   source: string;
   deviceId?: string;
+  reason?: string;
   status?: string;
   authorization?: string;
   chain?: string;

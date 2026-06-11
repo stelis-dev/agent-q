@@ -281,6 +281,7 @@ firmware/tools/stackchan-cores3/test_identification_display.sh
 firmware/tools/stackchan-cores3/test_local_settings_touch_entry.sh
 firmware/tools/stackchan-cores3/test_usb_link_state.sh
 firmware/tools/stackchan-cores3/test_usb_session_loss.sh
+firmware/tools/stackchan-cores3/test_device_activity_projection.sh
 firmware/tools/stackchan-cores3/test_ui_panel_cleanup.sh
 firmware/tools/stackchan-cores3/test_modal_layout_static.sh
 firmware/tools/stackchan-cores3/test_human_approval_settings.sh
@@ -349,6 +350,14 @@ then verifies the persistent terminal marker's pending/clear states, input
 validation, corrupt-marker fail-closed behavior, and storage-error reporting.
 This marker is a policy-update terminal substrate only; it is not a protocol
 policy-update handler.
+
+The StackChan device-activity projection test is target-specific and host-side.
+It compiles `agent_q_device_activity_projection.cpp` and verifies active-flow
+state projection and operation-specific gates, including policy-update review
+and commit stages, local Settings entry blocking, signing ingress blocking, and
+the idle Settings menu USB exception. It also verifies the retained-result
+read/cleanup route class for `get_result` and `ack_result`. It is not a
+hardware smoke test.
 
 The StackChan sign_transaction policy runtime test is target-specific. It compiles the tracked
 `agent_q_sign_transaction_policy_runtime.cpp` runtime boundary with ArduinoJson, the common Sui

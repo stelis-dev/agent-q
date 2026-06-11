@@ -68,4 +68,11 @@ inline AgentQUsbOperationType classify_usb_operation_type(const char* type)
     return AgentQUsbOperationType::unsupported;
 }
 
+constexpr inline bool usb_operation_is_retained_result_read_cleanup(
+    AgentQUsbOperationType operation)
+{
+    return operation == AgentQUsbOperationType::get_result ||
+           operation == AgentQUsbOperationType::ack_result;
+}
+
 }  // namespace agent_q

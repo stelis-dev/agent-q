@@ -128,9 +128,12 @@ Implemented today:
   reuse returns `request_id_conflict` before adapter or authorization work.
   `get_result` and `ack_result` address an already-stored result by session and
   request id; this recovery contract is not persistent anti-replay protection
-  across device reset. `signing_failed` is a completed terminal signing result
-  for retry purposes: same-id retry replays the retained failure while it is
-  buffered, and a new signing attempt requires a fresh request id.
+  across device reset. Host and browser transports may use those operations
+  only to recover or release a result for a signing request whose write may have
+  reached Firmware; they do not create a second signing request or let the host
+  decide signing validity. `signing_failed` is a completed terminal signing
+  result for retry purposes: same-id retry replays the retained failure while
+  it is buffered, and a new signing attempt requires a fresh request id.
 - An Ed25519 signing self-test that generates a temporary seed at runtime, signs
   a fixed test message, and wipes the seed. There is no persistent key.
 

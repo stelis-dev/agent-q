@@ -36,12 +36,19 @@ import {
   type PolicyResponse,
   type ProtocolRequest,
   type ProtocolResponse,
+  type SignPersonalMessageRequest,
   type SignResultResponse,
   type SignPersonalMessageParams,
+  type SignTransactionRequest,
   type SignTransactionParams,
   type SupportedSignRoute,
   type StatusResponse,
 } from "./protocol.js";
+import {
+  assertAckResultResponse,
+  makeAckResultRequest,
+  makeGetResultRequest,
+} from "./protocol-recovery.js";
 import {
   makeSignPersonalMessageRequest,
   makeSignTransactionRequest,
@@ -89,6 +96,77 @@ export interface UsbStatusScanResult {
   ports: PortInfo[];
   devices: UsbStatusResult[];
   failures: UsbStatusFailure[];
+}
+
+export type UsbProtocolRequestExecutor = <TResponse extends ProtocolResponse>(
+  request: ProtocolRequest,
+  deadlineMs: number,
+  assertResponse: (response: ProtocolResponse) => TResponse,
+) => Promise<TResponse>;
+
+type SignProtocolRequest = SignTransactionRequest | SignPersonalMessageRequest;
+export type PortTransactionContext = {
+  request: UsbProtocolRequestExecutor;
+};
+type SerialPortOptions = {
+  path: string;
+  baudRate: number;
+  hupcl: boolean;
+  autoOpen: boolean;
+};
+type SerialPortLike = {
+  readonly isOpen: boolean;
+  open(callback: (error?: Error | null) => void): void;
+  flush(callback: (error?: Error | null) => void): void;
+  write(data: string, callback: (error?: Error | null) => void): void;
+  drain(callback: (error?: Error | null) => void): void;
+  close(callback: (error?: Error | null) => void): void;
+  on(event: "data", listener: (chunk: Buffer) => void): void;
+  on(event: "error", listener: (error: Error) => void): void;
+  on(event: "close", listener: () => void): void;
+  off(event: "data", listener: (chunk: Buffer) => void): void;
+  off(event: "error", listener: (error: Error) => void): void;
+  off(event: "close", listener: () => void): void;
+};
+type SerialPortFactory = (options: SerialPortOptions) => SerialPortLike;
+type WriteReachability = "not_started" | "started";
+type PortLease = {
+  portPath: string;
+  canceled: boolean;
+  writeReachability: WriteReachability;
+  quarantineToken?: symbol;
+  cleanupPromise?: Promise<void>;
+};
+type PortQuarantine = {
+  token: symbol;
+  reason: string;
+  released: Promise<void>;
+  release(): void;
+};
+type SignRecoveryOutcome =
+  | { status: "not_recovered" }
+  | { status: "recovered"; result: SignResultResponse };
+type AckRecoveryOutcome = "acked" | "failed" | "invalid_session";
+
+const REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("agent-q.requestMayHaveReachedFirmware");
+const FIRMWARE_SESSION_INVALIDATED = Symbol("agent-q.firmwareSessionInvalidated");
+const portTransactions = new Map<string, Promise<void>>();
+const portQuarantines = new Map<string, PortQuarantine>();
+const USB_CLEANUP_STEP_TIMEOUT_MS = 1500;
+const defaultSerialPortFactory: SerialPortFactory = (options) => new SerialPort(options);
+let serialPortFactory: SerialPortFactory = defaultSerialPortFactory;
+
+const RECOVERABLE_SIGN_DELIVERY_CODES = new Set([
+  "timeout",
+  "transport_closed",
+  "protocol_error",
+  "invalid_json",
+  "handshake_failed",
+]);
+
+/** @internal Test-only injection point for transport lease tests. */
+export function setSerialPortFactoryForTest(factory: SerialPortFactory | null): void {
+  serialPortFactory = factory ?? defaultSerialPortFactory;
 }
 
 // Transport contract: each call should resolve or reject within its internal
@@ -329,6 +407,10 @@ function raceDeadline<T>(work: Promise<T>, remainingMs: number, timeoutMessage: 
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }
 
+function deadlineExpiredBeforeWriteError(message: string): AgentQError {
+  return markRequestDidNotReachFirmware(new AgentQError("timeout", message, true));
+}
+
 // Single enforcement boundary for the transport deadline contract. Wrapping a
 // driver here races every deadline-bearing call against its own deadline argument,
 // so a driver that ignores the argument still cannot exceed the budget. Applied
@@ -396,16 +478,207 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
     signTransaction: (portPath, sessionId, route, params, deadlineMs) =>
       raceDeadline(
         driver.signTransaction(portPath, sessionId, route, params, deadlineMs),
-        deadlineMs,
+        deadlineWithSignRecovery(deadlineMs),
         "USB sign_transaction exceeded its timeout.",
       ),
     signPersonalMessage: (portPath, sessionId, route, params, deadlineMs) =>
       raceDeadline(
         driver.signPersonalMessage(portPath, sessionId, route, params, deadlineMs),
-        deadlineMs,
+        deadlineWithSignRecovery(deadlineMs),
         "USB sign_personal_message exceeded its timeout.",
       ),
   };
+}
+
+function deadlineWithSignRecovery(deadlineMs: number): number {
+  return deadlineMs + INTERNAL_USB_DEADLINE_MS * 2;
+}
+
+/** @internal */
+export function markRequestMayHaveReachedFirmware<T>(error: T): T {
+  return tagRequestReachability(error, true);
+}
+
+function markFirmwareSessionInvalidated<T>(value: T): T {
+  if ((typeof value === "object" && value !== null) || typeof value === "function") {
+    try {
+      Object.defineProperty(value, FIRMWARE_SESSION_INVALIDATED, {
+        value: true,
+        configurable: true,
+      });
+    } catch {
+      // Some Error-like or response-like objects may be non-extensible.
+    }
+  }
+  return value;
+}
+
+/** @internal Package-private side channel consumed by AgentQCore before projection. */
+export function consumeFirmwareSessionInvalidated(value: unknown): boolean {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function") ||
+    (value as { [FIRMWARE_SESSION_INVALIDATED]?: boolean })[FIRMWARE_SESSION_INVALIDATED] !== true
+  ) {
+    return false;
+  }
+  try {
+    delete (value as { [FIRMWARE_SESSION_INVALIDATED]?: boolean })[FIRMWARE_SESSION_INVALIDATED];
+  } catch {
+    // Metadata is non-public and non-enumerable; failure to delete is harmless.
+  }
+  return true;
+}
+
+function markRequestDidNotReachFirmware<T>(error: T): T {
+  return tagRequestReachability(error, false);
+}
+
+function tagRequestReachability<T>(error: T, mayHaveReachedFirmware: boolean): T {
+  if ((typeof error === "object" && error !== null) || typeof error === "function") {
+    try {
+      Object.defineProperty(error, REQUEST_MAY_HAVE_REACHED_FIRMWARE, {
+        value: mayHaveReachedFirmware,
+        configurable: true,
+      });
+    } catch {
+      // Some host errors may be non-extensible; leave them untagged.
+    }
+  }
+  return error;
+}
+
+function requestMayHaveReachedFirmware(error: unknown): boolean {
+  return Boolean(
+    error !== null &&
+      (typeof error === "object" || typeof error === "function") &&
+      (error as { [REQUEST_MAY_HAVE_REACHED_FIRMWARE]?: boolean })[REQUEST_MAY_HAVE_REACHED_FIRMWARE],
+  );
+}
+
+function errorCode(error: unknown): string | null {
+  if (error instanceof AgentQError || error instanceof ProtocolError) {
+    return error.code;
+  }
+  return null;
+}
+
+/** @internal Shared per-port transaction queue for multi-request USB invariants. */
+export function withSerialPortTransaction<T>(
+  portPath: string,
+  deadlineMs: number,
+  operation: (context: PortTransactionContext) => Promise<T>,
+): Promise<T> {
+  const absoluteDeadlineMs = Date.now() + Math.max(0, deadlineMs);
+  const previous = portTransactions.get(portPath) ?? Promise.resolve();
+  const run = previous.then(async () => {
+    ensureTransactionDeadline(
+      absoluteDeadlineMs,
+      "USB request expired before it reached Firmware.",
+    );
+    await waitForPortPathAvailability(portPath, absoluteDeadlineMs);
+    const context: PortTransactionContext = {
+      request: async (request, requestDeadlineMs, assertResponse) => {
+        const remainingMs = ensureTransactionDeadline(
+          absoluteDeadlineMs,
+          "USB request expired before it reached Firmware.",
+        );
+        await waitForPortPathAvailability(portPath, absoluteDeadlineMs);
+        return requestOverSerialUnlocked(
+          portPath,
+          request,
+          Math.min(requestDeadlineMs, remainingMs),
+          assertResponse,
+        );
+      },
+    };
+    return operation(context);
+  });
+  const tail = run.then(noop, noop);
+  portTransactions.set(portPath, tail);
+  tail.then(() => {
+    if (portTransactions.get(portPath) === tail) {
+      portTransactions.delete(portPath);
+    }
+  });
+  return run;
+}
+
+function ensureTransactionDeadline(absoluteDeadlineMs: number, message: string): number {
+  const remainingMs = absoluteDeadlineMs - Date.now();
+  if (remainingMs <= 0) {
+    throw deadlineExpiredBeforeWriteError(message);
+  }
+  return remainingMs;
+}
+
+function noop(): void {}
+
+function ensurePortPathNotQuarantined(portPath: string): void {
+  const quarantine = portQuarantines.get(portPath);
+  if (quarantine !== undefined) {
+    throw new AgentQError(
+      "port_in_use",
+      `USB port is waiting for timed-out transport cleanup: ${quarantine.reason}`,
+      true,
+    );
+  }
+}
+
+async function waitForPortPathAvailability(portPath: string, absoluteDeadlineMs: number): Promise<void> {
+  const quarantine = portQuarantines.get(portPath);
+  if (quarantine === undefined) {
+    return;
+  }
+  const remainingMs = absoluteDeadlineMs - Date.now();
+  if (remainingMs <= 0) {
+    ensurePortPathNotQuarantined(portPath);
+  }
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      quarantine.released,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new AgentQError(
+            "port_in_use",
+            `USB port is waiting for timed-out transport cleanup: ${quarantine.reason}`,
+            true,
+          ));
+        }, remainingMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+  }
+  ensurePortPathNotQuarantined(portPath);
+}
+
+function quarantinePortPath(lease: PortLease, reason: string): symbol {
+  if (lease.quarantineToken !== undefined) {
+    return lease.quarantineToken;
+  }
+  const token = Symbol(`agent-q.port-quarantine:${lease.portPath}`);
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  lease.quarantineToken = token;
+  portQuarantines.set(lease.portPath, { token, reason, released, release });
+  return token;
+}
+
+function releasePortPathQuarantine(portPath: string, token: symbol | undefined): void {
+  if (token === undefined) {
+    return;
+  }
+  const quarantine = portQuarantines.get(portPath);
+  if (quarantine?.token === token) {
+    portQuarantines.delete(portPath);
+    quarantine.release();
+  }
 }
 
 export async function scanUsbDeviceStatuses(
@@ -585,7 +858,9 @@ async function signTransactionOverSerial(
   deadlineMs: number,
 ): Promise<SignResultResponse> {
   const request = makeSignTransactionRequest(sessionId, route.chain, route.method, params);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertSignResultResponse(response));
+  return withSerialPortTransaction(portPath, deadlineWithSignRecovery(deadlineMs), (transaction) =>
+    requestSignResultWithRecovery(request, deadlineMs, transaction.request),
+  );
 }
 
 async function signPersonalMessageOverSerial(
@@ -596,7 +871,84 @@ async function signPersonalMessageOverSerial(
   deadlineMs: number,
 ): Promise<SignResultResponse> {
   const request = makeSignPersonalMessageRequest(sessionId, route.chain, route.method, params);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertSignResultResponse(response));
+  return withSerialPortTransaction(portPath, deadlineWithSignRecovery(deadlineMs), (transaction) =>
+    requestSignResultWithRecovery(request, deadlineMs, transaction.request),
+  );
+}
+
+/** @internal Shared signing-result delivery invariant for the Node USB path. */
+export async function requestSignResultWithRecovery(
+  request: SignProtocolRequest,
+  deadlineMs: number,
+  executor: UsbProtocolRequestExecutor,
+): Promise<SignResultResponse> {
+  try {
+    return await executor(request, deadlineMs, (response) => assertSignResultResponse(response));
+  } catch (error) {
+    if (!shouldAttemptSignResultRecovery(error)) {
+      throw error;
+    }
+    const recovery = await tryRecoverSignResult(request.sessionId, request.id, executor);
+    if (recovery.status === "recovered") {
+      return recovery.result;
+    }
+    throw error;
+  }
+}
+
+async function tryRecoverSignResult(
+  sessionId: string,
+  requestId: string,
+  executor: UsbProtocolRequestExecutor,
+): Promise<SignRecoveryOutcome> {
+  let recovered: SignResultResponse;
+  try {
+    recovered = await executor(
+      makeGetResultRequest(sessionId, requestId),
+      INTERNAL_USB_DEADLINE_MS,
+      (response) => assertSignResultResponse(response),
+    );
+  } catch (error) {
+    if (errorCode(error) === "invalid_session") {
+      throw error;
+    }
+    return { status: "not_recovered" };
+  }
+  const ack = await releaseRecoveredSignResult(sessionId, requestId, executor);
+  if (ack === "invalid_session") {
+    markFirmwareSessionInvalidated(recovered);
+  }
+  return { status: "recovered", result: recovered };
+}
+
+async function releaseRecoveredSignResult(
+  sessionId: string,
+  requestId: string,
+  executor: UsbProtocolRequestExecutor,
+): Promise<AckRecoveryOutcome> {
+  try {
+    await executor(
+      makeAckResultRequest(sessionId, requestId),
+      INTERNAL_USB_DEADLINE_MS,
+      (response) => assertAckResultResponse(response),
+    );
+    return "acked";
+  } catch (error) {
+    if (errorCode(error) === "invalid_session") {
+      return "invalid_session";
+    }
+    // Best-effort cleanup: a failed ack must not turn a recovered sign_result
+    // into a caller-visible failure.
+    return "failed";
+  }
+}
+
+function shouldAttemptSignResultRecovery(error: unknown): boolean {
+  if (!requestMayHaveReachedFirmware(error)) {
+    return false;
+  }
+  const code = errorCode(error);
+  return code !== null && RECOVERABLE_SIGN_DELIVERY_CODES.has(code);
 }
 
 async function requestOverSerial<TResponse extends ProtocolResponse>(
@@ -605,7 +957,24 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
   deadlineMs: number,
   assertResponse: (response: ProtocolResponse) => TResponse,
 ): Promise<TResponse> {
-  const port = new SerialPort({
+  return withSerialPortTransaction(portPath, deadlineMs, (transaction) =>
+    transaction.request(request, deadlineMs, assertResponse),
+  );
+}
+
+async function requestOverSerialUnlocked<TResponse extends ProtocolResponse>(
+  portPath: string,
+  request: ProtocolRequest,
+  deadlineMs: number,
+  assertResponse: (response: ProtocolResponse) => TResponse,
+): Promise<TResponse> {
+  const absoluteDeadlineMs = Date.now() + Math.max(0, deadlineMs);
+  const lease: PortLease = {
+    portPath,
+    canceled: false,
+    writeReachability: "not_started",
+  };
+  const port = serialPortFactory({
     path: portPath,
     baudRate: DEFAULT_AGENT_Q_USB_BAUD_RATE,
     // The host opens a short-lived serial connection for each protocol call.
@@ -615,18 +984,32 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
     autoOpen: false,
   });
 
-  await openPort(port);
+  if (deadlineMs <= 0) {
+    throw deadlineExpiredBeforeWriteError("USB request expired before it reached Firmware.");
+  }
 
   try {
-    // Flush discards only OS-side serial buffers. Bytes already in transit on
-    // the USB wire may still arrive after this call.
-    await flushPort(port);
+    await openPortWithinLease(port, lease, absoluteDeadlineMs);
+    await flushPortWithinLease(port, lease, absoluteDeadlineMs);
+  } catch (error) {
+    await ensureLeaseCleanup(port, lease, "pre-write port.close");
+    throw markRequestDidNotReachFirmware(error);
+  }
+
+  try {
+    ensureLeaseCanStartSideEffect(lease, absoluteDeadlineMs);
     return await new Promise<TResponse>((resolve, reject) => {
       let settled = false;
       let buffer = "";
       const timer = setTimeout(() => {
-        settle(() => reject(new AgentQError("timeout", "Timed out waiting for Firmware response.", true)));
-      }, deadlineMs);
+        lease.canceled = true;
+        settle(() =>
+          reject(tagRequestReachability(
+            new AgentQError("timeout", "Timed out waiting for Firmware response.", true),
+            lease.writeReachability === "started",
+          )),
+        );
+      }, Math.max(0, absoluteDeadlineMs - Date.now()));
 
       const settle = (complete: () => void): void => {
         if (settled) {
@@ -641,11 +1024,16 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
       };
 
       const onError = (error: Error): void => {
-        settle(() => reject(mapSerialOpenError(error)));
+        settle(() => reject(tagRequestReachability(mapSerialOpenError(error), lease.writeReachability === "started")));
       };
 
       const onClose = (): void => {
-        settle(() => reject(new AgentQError("transport_closed", "USB serial transport closed.", true)));
+        settle(() =>
+          reject(tagRequestReachability(
+            new AgentQError("transport_closed", "USB serial transport closed.", true),
+            lease.writeReachability === "started",
+          )),
+        );
       };
 
       const onData = (chunk: Buffer): void => {
@@ -655,7 +1043,7 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
           buffer = consumed.buffer;
           lines = consumed.lines;
         } catch (error) {
-          settle(() => reject(toAgentQProtocolError(error)));
+          settle(() => reject(markRequestMayHaveReachedFirmware(toAgentQProtocolError(error))));
           return;
         }
 
@@ -669,7 +1057,7 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
           try {
             parsed = tryParseMatchingResponseLine(line, request.id, assertResponse);
           } catch (error) {
-            settle(() => reject(error));
+            settle(() => reject(markRequestMayHaveReachedFirmware(error)));
             return;
           }
           if (parsed !== undefined) {
@@ -682,20 +1070,27 @@ async function requestOverSerial<TResponse extends ProtocolResponse>(
       port.on("data", onData);
       port.on("error", onError);
       port.on("close", onClose);
+      lease.writeReachability = "started";
       port.write(serializeRequest(request), (error) => {
+        if (settled || lease.canceled) {
+          return;
+        }
         if (error) {
-          settle(() => reject(mapSerialOpenError(error)));
+          settle(() => reject(markRequestMayHaveReachedFirmware(mapSerialOpenError(error))));
           return;
         }
         port.drain((drainError) => {
+          if (settled || lease.canceled) {
+            return;
+          }
           if (drainError) {
-            settle(() => reject(mapSerialOpenError(drainError)));
+            settle(() => reject(markRequestMayHaveReachedFirmware(mapSerialOpenError(drainError))));
           }
         });
       });
     });
   } finally {
-    await closePort(port);
+    await ensureLeaseCleanup(port, lease, "port.close");
   }
 }
 
@@ -747,11 +1142,65 @@ export function tryParseMatchingResponseLine<TResponse extends ProtocolResponse>
   }
 }
 
-function openPort(port: SerialPort): Promise<void> {
+function ensureLeaseCanStartSideEffect(lease: PortLease, absoluteDeadlineMs: number): void {
+  if (lease.canceled) {
+    throw markRequestDidNotReachFirmware(
+      new AgentQError("timeout", "USB request lease was canceled before it reached Firmware.", true),
+    );
+  }
+  ensureTransactionDeadline(
+    absoluteDeadlineMs,
+    "USB request expired before it reached Firmware.",
+  );
+}
+
+function remainingLeaseMs(lease: PortLease, absoluteDeadlineMs: number, message: string): number {
+  if (lease.canceled) {
+    throw markRequestDidNotReachFirmware(new AgentQError("timeout", message, true));
+  }
+  return ensureTransactionDeadline(absoluteDeadlineMs, message);
+}
+
+function openPortWithinLease(
+  port: SerialPortLike,
+  lease: PortLease,
+  absoluteDeadlineMs: number,
+): Promise<void> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutMs = remainingLeaseMs(
+      lease,
+      absoluteDeadlineMs,
+      "USB request expired while opening the serial port.",
+    );
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      lease.canceled = true;
+      quarantinePortPath(lease, "serial port open timed out");
+      reject(deadlineExpiredBeforeWriteError("USB request expired while opening the serial port."));
+    }, timeoutMs);
+
     port.open((error) => {
+      if (settled) {
+        if (!error) {
+          void ensureLeaseCleanup(port, lease, "late port.open close-only cleanup");
+        } else {
+          releasePortPathQuarantine(lease.portPath, lease.quarantineToken);
+        }
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
       if (error) {
         reject(mapSerialOpenError(error));
+        return;
+      }
+      if (lease.canceled) {
+        void ensureLeaseCleanup(port, lease, "canceled port.open close-only cleanup");
+        reject(deadlineExpiredBeforeWriteError("USB request lease was canceled before it reached Firmware."));
         return;
       }
       resolve();
@@ -759,11 +1208,43 @@ function openPort(port: SerialPort): Promise<void> {
   });
 }
 
-function flushPort(port: SerialPort): Promise<void> {
+function flushPortWithinLease(
+  port: SerialPortLike,
+  lease: PortLease,
+  absoluteDeadlineMs: number,
+): Promise<void> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutMs = remainingLeaseMs(
+      lease,
+      absoluteDeadlineMs,
+      "USB request expired while preparing the serial port.",
+    );
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      lease.canceled = true;
+      quarantinePortPath(lease, "serial port flush timed out");
+      void ensureLeaseCleanup(port, lease, "timed-out port.flush close-only cleanup");
+      reject(deadlineExpiredBeforeWriteError("USB request expired while preparing the serial port."));
+    }, timeoutMs);
+
     port.flush((error) => {
+      if (settled) {
+        void ensureLeaseCleanup(port, lease, "late port.flush close-only cleanup");
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
       if (error) {
         reject(mapSerialOpenError(error));
+        return;
+      }
+      if (lease.canceled) {
+        void ensureLeaseCleanup(port, lease, "canceled port.flush close-only cleanup");
+        reject(deadlineExpiredBeforeWriteError("USB request lease was canceled before it reached Firmware."));
         return;
       }
       resolve();
@@ -771,12 +1252,54 @@ function flushPort(port: SerialPort): Promise<void> {
   });
 }
 
-function closePort(port: SerialPort): Promise<void> {
+function ensureLeaseCleanup(
+  port: SerialPortLike,
+  lease: PortLease,
+  label: string,
+): Promise<void> {
+  if (!port.isOpen) {
+    return Promise.resolve();
+  }
+  if (lease.cleanupPromise === undefined) {
+    lease.cleanupPromise = closePortBestEffort(port, lease, label);
+  }
+  return lease.cleanupPromise;
+}
+
+function closePortBestEffort(
+  port: SerialPortLike,
+  lease: PortLease,
+  label: string,
+): Promise<void> {
   if (!port.isOpen) {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
-    port.close(() => resolve());
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      quarantinePortPath(lease, `${label} timed out`);
+      resolve();
+    }, USB_CLEANUP_STEP_TIMEOUT_MS);
+    port.close((error) => {
+      if (settled) {
+        if (!error) {
+          releasePortPathQuarantine(lease.portPath, lease.quarantineToken);
+        }
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      if (error) {
+        quarantinePortPath(lease, `${label} failed`);
+      } else {
+        releasePortPathQuarantine(lease.portPath, lease.quarantineToken);
+      }
+      resolve();
+    });
   });
 }
 

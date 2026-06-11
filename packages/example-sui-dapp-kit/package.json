@@ -1,6 +1,6 @@
 {
   "name": "@stelis/agent-q-example-sui-dapp-kit",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Example Sui dapp-kit app that registers the Agent-Q Wallet Standard wallet for signing through an Agent-Q device.",
   "private": true,
   "type": "module",
@@ -13,7 +13,7 @@
   "dependencies": {
     "@mysten/dapp-kit-react": "2.0.3",
     "@mysten/sui": "2.17.0",
-    "@stelis/agent-q-provider-sui": "0.0.4",
+    "@stelis/agent-q-provider-sui": "0.0.5",
     "react": "19.2.7",
     "react-dom": "19.2.7"
   },

@@ -55,6 +55,12 @@ import {
   type SigningCapabilities,
   type SigningCapabilityEntry,
 } from "./provider-protocol.js";
+import {
+  sanitizeAckResultResponse,
+  type AckResultRequest,
+  type AckResultResponse,
+  type GetResultRequest,
+} from "./protocol-recovery.js";
 import { ProtocolError } from "./protocol-error.js";
 import {
   AGENT_Q_POLICY_SCHEMA,
@@ -218,6 +224,16 @@ export type {
   SigningCapabilities,
   SigningCapabilityEntry,
 } from "./provider-protocol.js";
+export type {
+  AckResultRequest,
+  AckResultResponse,
+  GetResultRequest,
+} from "./protocol-recovery.js";
+export {
+  assertAckResultResponse,
+  makeAckResultRequest,
+  makeGetResultRequest,
+} from "./protocol-recovery.js";
 // Signing request builders and route identification are owned by
 // provider-protocol because provider adapters and the full protocol share the
 // same top-level signing methods. The full protocol entrypoint re-exports them
@@ -295,6 +311,8 @@ export type ProtocolRequest =
   | DisconnectRequest
   | GetCapabilitiesRequest
   | GetAccountsRequest
+  | GetResultRequest
+  | AckResultRequest
   | PolicyGetRequest
   | GetApprovalHistoryRequest
   | PolicyProposeRequest
@@ -438,6 +456,7 @@ export type ProtocolResponse =
   | IdentifyDeviceResponse
   | ConnectResponse
   | DisconnectResponse
+  | AckResultResponse
   | CapabilitiesResponse
   | AccountsResponse
   | PolicyResponse
@@ -635,6 +654,10 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
 
   if (isProviderProtocolResponseType(value.type)) {
     return parseProviderProtocolResponse(line, expectedId);
+  }
+
+  if (value.type === "ack_result") {
+    return sanitizeAckResultResponse(value);
   }
 
   if (value.type === "status") {

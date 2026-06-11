@@ -58,9 +58,12 @@ and visual evidence are complete.
 The root provider factory is Node/host-local and uses `@stelis/agent-q-core`
 device transport. The `./wallet-standard` subpath is runtime-separated from
 that Node transport, and the `./browser` subpath uses the core package's
-provider protocol projection needed to satisfy `AgentQSuiWalletProvider` over
-Web Serial. That projection exact-validates provider requests at runtime and
-does not expose Admin, policy read/update, or approval-history request builders.
+provider protocol projection for app-facing Web Serial requests. That
+projection exact-validates provider requests at runtime and does not expose
+Admin, policy read/update, approval-history, or retained-result recovery
+request/response types. Browser retained-result recovery uses the full core
+protocol's low-level `get_result` / `ack_result` primitives internally; direct
+application use of those primitives is unsupported.
 
 This package narrows the dapp-facing API it presents. That is not a security
 boundary against an application that imports

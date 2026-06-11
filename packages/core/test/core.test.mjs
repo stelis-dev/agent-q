@@ -6,7 +6,12 @@ import test from "node:test";
 import { ConfigStore } from "../dist/config.js";
 import { AgentQCore } from "../dist/core.js";
 import { AgentQError } from "../dist/errors.js";
+import { makeSignPersonalMessageRequest, makeSignTransactionRequest } from "../dist/provider-protocol.js";
 import { MAX_SESSION_TTL_MS } from "../dist/protocol.js";
+import {
+  markRequestMayHaveReachedFirmware,
+  requestSignResultWithRecovery,
+} from "../dist/usb.js";
 
 const device = {
   deviceId: "a508d833-5c83-4680-88bb-18aee976881e",
@@ -1740,6 +1745,35 @@ test("signTransaction propagates history_error without clearing the session", as
   });
 });
 
+test("signTransaction preserves the local session on post-write transport failure", async () => {
+  await withStore(async (store) => {
+    const core = new AgentQCore(
+      store,
+      defaultDriver({
+        async signTransaction() {
+          throw new AgentQError("transport_closed", "USB serial transport closed.", true);
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    await assert.rejects(
+      () => core.signTransaction({
+        chain: "sui",
+        method: "sign_transaction",
+        network: "devnet",
+        txBytes: CANONICAL_TX_BYTES_BASE64,
+      }),
+      { code: "transport_closed" },
+    );
+
+    const listed = await core.listDevices();
+    assert.notEqual(listed.devices[0].runtimeSession, null);
+  });
+});
+
 test("signTransaction validates input before USB live-port probing", async () => {
   await withStore(async (store) => {
     let listPortsCalls = 0;
@@ -1829,6 +1863,95 @@ test("signTransaction clears the local session when Firmware reports invalid_ses
     assert.equal(result.reason, "invalid_session");
     const listed = await core.listDevices();
     assert.equal(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("signTransaction clears the local session when get_result reports invalid_session", async () => {
+  await withStore(async (store) => {
+    const core = new AgentQCore(
+      store,
+      defaultDriver({
+        async signTransaction(_portPath, sessionId, route, params) {
+          const request = makeSignTransactionRequest(sessionId, route.chain, route.method, params);
+          return requestSignResultWithRecovery(request, 1000, async (wireRequest) => {
+            if (wireRequest.type === "sign_transaction") {
+              throw markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Original sign timeout.", true));
+            }
+            if (wireRequest.type === "get_result") {
+              throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+            }
+            throw new Error(`unexpected request: ${wireRequest.type}`);
+          });
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.signTransaction({
+      chain: "sui",
+      method: "sign_transaction",
+      network: "devnet",
+      txBytes: CANONICAL_TX_BYTES_BASE64,
+    });
+    assert.equal(result.source, "session_ended");
+    assert.equal(result.reason, "invalid_session");
+    const listed = await core.listDevices();
+    assert.equal(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("signTransaction returns recovered result and clears the local session when ack_result reports invalid_session", async () => {
+  await withStore(async (store) => {
+    const signature = Buffer.alloc(97, 3).toString("base64");
+    const core = new AgentQCore(
+      store,
+      defaultDriver({
+        async signTransaction(_portPath, sessionId, route, params) {
+          const request = makeSignTransactionRequest(sessionId, route.chain, route.method, params);
+          return requestSignResultWithRecovery(request, 1000, async (wireRequest, _deadlineMs, assertResponse) => {
+            if (wireRequest.type === "sign_transaction") {
+              throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
+            }
+            if (wireRequest.type === "get_result") {
+              return assertResponse({
+                id: wireRequest.id,
+                version: 1,
+                type: "sign_result",
+                authorization: "user",
+                status: "signed",
+                chain: "sui",
+                method: "sign_transaction",
+                signature,
+              });
+            }
+            if (wireRequest.type === "ack_result") {
+              throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+            }
+            throw new Error(`unexpected request: ${wireRequest.type}`);
+          });
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.signTransaction({
+      chain: "sui",
+      method: "sign_transaction",
+      network: "devnet",
+      txBytes: CANONICAL_TX_BYTES_BASE64,
+    });
+    assert.equal(result.source, "live");
+    assert.equal(result.status, "signed");
+    assert.equal(result.signature, signature);
+
+    const listed = await core.listDevices();
+    assert.equal(listed.devices[0].runtimeSession, null);
+    const capabilities = await core.getCapabilities({});
+    assert.equal(capabilities.source, "not_connected");
   });
 });
 
@@ -2294,6 +2417,58 @@ test("signPersonalMessage clears the local session when Firmware reports invalid
     });
     assert.equal(result.source, "session_ended");
     assert.equal(result.reason, "invalid_session");
+    const listed = await core.listDevices();
+    assert.equal(listed.devices[0].runtimeSession, null);
+  });
+});
+
+test("signPersonalMessage returns recovered result and clears the local session when ack_result reports invalid_session", async () => {
+  await withStore(async (store) => {
+    const signature = Buffer.alloc(97, 4).toString("base64");
+    const messageBytes = Buffer.from("hello").toString("base64");
+    const core = new AgentQCore(
+      store,
+      defaultDriver({
+        async signPersonalMessage(_portPath, sessionId, route, params) {
+          const request = makeSignPersonalMessageRequest(sessionId, route.chain, route.method, params);
+          return requestSignResultWithRecovery(request, 1000, async (wireRequest, _deadlineMs, assertResponse) => {
+            if (wireRequest.type === "sign_personal_message") {
+              throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
+            }
+            if (wireRequest.type === "get_result") {
+              return assertResponse({
+                id: wireRequest.id,
+                version: 1,
+                type: "sign_result",
+                authorization: "user",
+                status: "signed",
+                chain: "sui",
+                method: "sign_personal_message",
+                signature,
+                messageBytes,
+              });
+            }
+            if (wireRequest.type === "ack_result") {
+              throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+            }
+            throw new Error(`unexpected request: ${wireRequest.type}`);
+          });
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.signPersonalMessage({
+      chain: "sui",
+      method: "sign_personal_message",
+      network: "devnet",
+      message: messageBytes,
+    });
+    assert.equal(result.source, "live");
+    assert.equal(result.status, "signed");
+    assert.equal(result.signature, signature);
     const listed = await core.listDevices();
     assert.equal(listed.devices[0].runtimeSession, null);
   });

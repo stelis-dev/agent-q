@@ -1,6 +1,5 @@
 import {
   assertAccountsResponse,
-  assertAckResultResponse,
   assertCapabilitiesResponse,
   assertConnectResponse,
   assertDisconnectResponse,
@@ -18,14 +17,9 @@ import {
   makeDisconnectRequest,
   makeGetAccountsRequest,
   makeGetCapabilitiesRequest,
-  makeGetResultRequest,
-  makeAckResultRequest,
   makeSignPersonalMessageRequest,
   makeSignTransactionRequest,
-  parseJsonLine,
-  parseProviderProtocolResponse,
   ProtocolError,
-  serializeProviderProtocolRequest,
   type AccountsResponse,
   type CapabilitiesResponse,
   type ConnectResponse,
@@ -34,6 +28,16 @@ import {
   type ProviderProtocolResponse,
   type SignResultResponse,
 } from "@stelis/agent-q-core/provider-protocol";
+import {
+  assertAckResultResponse,
+  makeAckResultRequest,
+  makeGetResultRequest,
+  parseJsonLine,
+  parseProtocolResponse,
+  serializeRequest,
+  type ProtocolRequest,
+  type ProtocolResponse,
+} from "@stelis/agent-q-core/protocol";
 import type {
   AgentQSuiWalletGetAccountsResult,
   AgentQSuiWalletGetCapabilitiesResult,
@@ -70,7 +74,66 @@ type BrowserSession = {
   sessionTtlMs: number;
   connectedAt: string;
   device: Extract<ConnectResponse, { status: "approved" }>["device"];
+  epoch: number;
 };
+
+type BrowserSignRequest = Extract<
+  ProviderProtocolRequest,
+  { type: "sign_transaction" | "sign_personal_message" }
+>;
+type BrowserWriteReachability = "not_started" | "started";
+type BrowserPortLease = {
+  canceled: boolean;
+  abandoned: boolean;
+  writeReachability: BrowserWriteReachability;
+  stalePortLease?: BrowserStalePortLease;
+};
+type BrowserStalePortCleanup = {
+  promise: Promise<void>;
+  abandonedReason?: string;
+  release(): void;
+  abandon(reason: string): void;
+};
+type BrowserStalePortLease = {
+  port: BrowserSerialPort;
+  release(): void;
+  abandon(reason: string): void;
+};
+type BrowserTransportTeardownReason =
+  | "physical_disconnect"
+  | "explicit_disconnect"
+  | "dispose"
+  | "session_ended"
+  | "device_mismatch"
+  | "transport_reset";
+type BrowserTransportTeardownEvent = {
+  generation: number;
+  reason: BrowserTransportTeardownReason;
+  deviceId?: string;
+  sessionId?: string;
+  sessionEpoch?: number;
+};
+type BrowserSessionSnapshot = {
+  deviceId: string;
+  sessionId: string;
+  epoch: number;
+  generation: number;
+};
+type BrowserBufferedRecoveryOutcome =
+  | { status: "not_recovered" }
+  | { status: "session_invalidated" }
+  | { status: "recovered"; response: SignResultResponse; ack: "acked" | "failed" | "invalid_session" };
+type BrowserSignRecoveryOutcome =
+  | { status: "result"; response: SignResultResponse; sessionInvalidatedByAck: boolean }
+  | { status: "session_invalidated" };
+
+const PROVIDER_REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("agent-q.providerRequestMayHaveReachedFirmware");
+const RECOVERABLE_PROVIDER_SIGN_DELIVERY_CODES = new Set([
+  "timeout",
+  "transport_closed",
+  "protocol_error",
+  "invalid_json",
+]);
 
 export class AgentQSuiBrowserProviderError extends Error {
   readonly code: string;
@@ -87,6 +150,9 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
   readonly #clientName: string;
   #port: BrowserSerialPort | null;
   #session: BrowserSession | null = null;
+  #nextSessionEpoch = 1;
+  #stalePortCleanups = new WeakMap<BrowserSerialPort, BrowserStalePortCleanup>();
+  #transportTeardownEvent: BrowserTransportTeardownEvent | null = null;
 
   // Every Web Serial port operation runs through this single-slot queue so
   // concurrent callers never open the same port at once. Web Serial throws when
@@ -113,14 +179,15 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     clientName?: string;
   } = {}): Promise<unknown> {
     if (this.#session !== null && targetMatches(input.deviceId, this.#session.deviceId)) {
+      const snapshot = this.#sessionSnapshot(this.#session);
       try {
         await this.#request(makeGetCapabilitiesRequest(this.#session.sessionId), assertCapabilitiesResponse);
         return this.#connectOutput(this.#session);
       } catch (error) {
-        if (!isSessionEndedError(error)) {
+        const ended = this.#clearIfSessionEnded(error, snapshot);
+        if (ended === null) {
           throw error;
         }
-        this.#clearSessionAndPort();
       }
     }
 
@@ -133,7 +200,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       );
     } catch (error) {
       if (isSessionEndedError(error)) {
-        this.#clearSessionAndPort();
+        this.#clearSessionAndPort("session_ended");
       }
       throw error;
     }
@@ -150,7 +217,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       } catch {
         // Best-effort cleanup for a session this provider will not retain.
       } finally {
-        this.#clearSessionAndPort();
+        this.#clearSessionAndPort("device_mismatch");
       }
       throw new AgentQSuiBrowserProviderError("device_mismatch", "Connected Agent-Q device did not match the requested deviceId.");
     }
@@ -160,7 +227,9 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       sessionTtlMs: response.sessionTtlMs,
       connectedAt: new Date().toISOString(),
       device: response.device,
+      epoch: this.#nextSessionEpoch++,
     };
+    this.#transportTeardownEvent = null;
     return this.#connectOutput(this.#session);
   }
 
@@ -182,7 +251,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     } finally {
       // A user-requested disconnect is a full transport teardown: invalidate any
       // queued requests (generation bump) and release the port, not just the session.
-      this.#clearSessionAndPort();
+      this.#clearSessionAndPort("explicit_disconnect");
     }
     return { source: "disconnected", deviceId: session.deviceId, reason: "firmware_confirmed" };
   }
@@ -195,6 +264,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     if (session === null) {
       return this.#inactiveResult(input.deviceId);
     }
+    const snapshot = this.#sessionSnapshot(session);
     try {
       const response = await this.#request(makeGetCapabilitiesRequest(session.sessionId), assertCapabilitiesResponse);
       return {
@@ -204,7 +274,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
         ...(response.signing === undefined ? {} : { signing: response.signing }),
       };
     } catch (error) {
-      const ended = this.#clearIfSessionEnded(error, session.deviceId);
+      const ended = this.#clearIfSessionEnded(error, snapshot);
       if (ended !== null) {
         return ended;
       }
@@ -220,11 +290,12 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     if (session === null) {
       return this.#inactiveResult(input.deviceId);
     }
+    const snapshot = this.#sessionSnapshot(session);
     try {
       const response = await this.#request(makeGetAccountsRequest(session.sessionId), assertAccountsResponse);
       return { source: "live", deviceId: session.deviceId, accounts: response.accounts as AgentQSuiWalletGetAccountsResult["accounts"] };
     } catch (error) {
-      const ended = this.#clearIfSessionEnded(error, session.deviceId);
+      const ended = this.#clearIfSessionEnded(error, snapshot);
       if (ended !== null) {
         return ended;
       }
@@ -239,31 +310,33 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     method: "sign_transaction";
     network: "mainnet" | "testnet" | "devnet" | "localnet";
     txBytes: string;
-    // Optional stable request id for idempotent retries. The caller owns id uniqueness:
-    // reuse it only to retry the same request, which returns the already-authorized result
-    // instead of signing twice. Reusing an id for a different request returns that prior
-    // (already-authorized) result, never an unauthorized one.
+    // Optional stable request id for idempotent retries. Reuse it only for the
+    // same signing request; while a retained result is buffered, a different
+    // request using the same id fails with request_id_conflict.
     requestId?: string;
   }): Promise<AgentQSuiWalletSignTransactionResult> {
     const session = this.#matchingSession(input.deviceId);
     if (session === null) {
       return this.#inactiveResult(input.deviceId);
     }
+    const snapshot = this.#sessionSnapshot(session);
     const signRequest = makeSignTransactionRequest(session.sessionId, input.chain, input.method, {
       network: input.network,
       txBytes: input.txBytes,
     }, input.requestId);
     try {
-      const response = await this.#request(signRequest, assertSignResultResponse);
-      return toLiveSignResult(session.deviceId, response);
-    } catch (error) {
-      // Buffered-result recovery: the request may have been signed but its response was
-      // lost in transit. Fetch the buffered result by id before surfacing the error.
-      const recovered = await this.#tryRecoverBufferedSignResult(session.sessionId, signRequest.id);
-      if (recovered !== null) {
-        return toLiveSignResult(session.deviceId, recovered);
+      const outcome = await this.#signWithRecovery(signRequest, session);
+      if (outcome.status === "session_invalidated") {
+        this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
+        return { source: "session_ended", deviceId: session.deviceId, reason: "invalid_session" };
       }
-      const ended = this.#clearIfSessionEnded(error, session.deviceId);
+      const result = toLiveSignResult(session.deviceId, outcome.response);
+      if (outcome.sessionInvalidatedByAck) {
+        this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
+      }
+      return result;
+    } catch (error) {
+      const ended = this.#clearIfFirmwareInvalidated(error, snapshot);
       if (ended !== null) {
         return ended;
       }
@@ -278,31 +351,33 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     method: "sign_personal_message";
     network: "mainnet" | "testnet" | "devnet" | "localnet";
     message: string;
-    // Optional stable request id for idempotent retries. The caller owns id uniqueness:
-    // reuse it only to retry the same request, which returns the already-authorized result
-    // instead of signing twice. Reusing an id for a different request returns that prior
-    // (already-authorized) result, never an unauthorized one.
+    // Optional stable request id for idempotent retries. Reuse it only for the
+    // same signing request; while a retained result is buffered, a different
+    // request using the same id fails with request_id_conflict.
     requestId?: string;
   }): Promise<AgentQSuiWalletSignTransactionResult> {
     const session = this.#matchingSession(input.deviceId);
     if (session === null) {
       return this.#inactiveResult(input.deviceId);
     }
+    const snapshot = this.#sessionSnapshot(session);
     const signRequest = makeSignPersonalMessageRequest(session.sessionId, input.chain, input.method, {
       network: input.network,
       message: input.message,
     }, input.requestId);
     try {
-      const response = await this.#request(signRequest, assertSignResultResponse);
-      return toLiveSignResult(session.deviceId, response);
-    } catch (error) {
-      // Buffered-result recovery: the request may have been signed but its response was
-      // lost in transit. Fetch the buffered result by id before surfacing the error.
-      const recovered = await this.#tryRecoverBufferedSignResult(session.sessionId, signRequest.id);
-      if (recovered !== null) {
-        return toLiveSignResult(session.deviceId, recovered);
+      const outcome = await this.#signWithRecovery(signRequest, session);
+      if (outcome.status === "session_invalidated") {
+        this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
+        return { source: "session_ended", deviceId: session.deviceId, reason: "invalid_session" };
       }
-      const ended = this.#clearIfSessionEnded(error, session.deviceId);
+      const result = toLiveSignResult(session.deviceId, outcome.response);
+      if (outcome.sessionInvalidatedByAck) {
+        this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
+      }
+      return result;
+    } catch (error) {
+      const ended = this.#clearIfFirmwareInvalidated(error, snapshot);
       if (ended !== null) {
         return ended;
       }
@@ -310,48 +385,112 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     }
   }
 
-  // Best-effort recovery of a buffered signing result whose response was lost in
-  // transit. Returns null when the device has no buffered result for this id (it never
-  // signed, or the session ended and the buffer cleared), so the caller surfaces the
-  // original error.
-  async #tryRecoverBufferedSignResult(sessionId: string, requestId: string) {
-    // Only recover over a still-open transport. If the port was already cleared (a real
-    // disconnect), re-acquiring it here would surprise the user with a port picker, so
-    // leave the original error to surface. The device holds the session through a short
-    // grace window, so a transient drop that kept the port open still recovers here.
-    if (this.#port === null) {
-      return null;
+  async #getPort(absoluteDeadlineMs: number): Promise<BrowserSerialPort> {
+    if (this.#port !== null) {
+      await this.#waitForStalePortCleanup(this.#port, absoluteDeadlineMs);
+      return this.#port;
     }
-    try {
-      const recovered = await this.#request(makeGetResultRequest(sessionId, requestId), assertSignResultResponse);
-      // Best-effort release: after receiving the result, tell the device to drop its
-      // buffered copy. A separate serialized request, fire-and-forget — a failed ack
-      // leaves cleanup to the device's LRU and session-clear, so it never turns a
-      // successful buffered-result fetch into a failure.
-      void this.#request(makeAckResultRequest(sessionId, requestId), assertAckResultResponse).catch(() => undefined);
-      return recovered;
-    } catch {
-      return null;
-    }
-  }
-
-  async #getPort(): Promise<BrowserSerialPort> {
-    this.#port ??= await this.#requestPort();
-    return this.#port;
+    const port = await this.#requestPort();
+    await this.#waitForStalePortCleanup(port, absoluteDeadlineMs);
+    this.#port = port;
+    return port;
   }
 
   #clearPort(): void {
+    const staleLease = this.#abandonPort();
+    if (staleLease === null) {
+      return;
+    }
+    if (staleLease.port.readable === null) {
+      staleLease.release();
+      return;
+    }
+    // Persistent port: close it on clear. Fire-and-forget so disconnect/dispose stay
+    // synchronous; a dead port's close may never settle. The stale-port gate is
+    // released only when cleanup actually settles before its cap.
+    void settleCleanupStep(staleLease.port.close(), "port.close").then((completed) => {
+      if (completed) {
+        staleLease.release();
+      } else {
+        staleLease.abandon("port.close cleanup did not complete");
+      }
+    });
+  }
+
+  #abandonPort(): BrowserStalePortLease | null {
     const port = this.#port;
     this.#port = null;
-    if (port !== null && port.readable !== null) {
-      // Persistent port: close it on clear. Fire-and-forget so disconnect/dispose stay
-      // synchronous; a dead port's close may never settle.
-      void settleCleanupStep(port.close(), "port.close");
+    if (port === null) {
+      return null;
+    }
+    let resolveCleanup!: () => void;
+    const cleanup: BrowserStalePortCleanup = {
+      promise: new Promise<void>((resolve) => {
+        resolveCleanup = resolve;
+      }),
+      release: () => {
+        if (this.#stalePortCleanups.get(port) === cleanup) {
+          this.#stalePortCleanups.delete(port);
+        }
+        resolveCleanup();
+      },
+      abandon: (reason: string) => {
+        cleanup.abandonedReason = reason;
+        resolveCleanup();
+      },
+    };
+    this.#stalePortCleanups.set(port, cleanup);
+    return { port, release: cleanup.release, abandon: cleanup.abandon };
+  }
+
+  async #waitForStalePortCleanup(port: BrowserSerialPort, absoluteDeadlineMs: number): Promise<void> {
+    const cleanup = this.#stalePortCleanups.get(port);
+    if (cleanup === undefined) {
+      return;
+    }
+    if (cleanup.abandonedReason !== undefined) {
+      throw new AgentQSuiBrowserProviderError(
+        "transport_closed",
+        `The selected Web Serial port was abandoned after timed-out cleanup: ${cleanup.abandonedReason}.`,
+      );
+    }
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      await Promise.race([
+        cleanup.promise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new AgentQSuiBrowserProviderError(
+              "transport_closed",
+              "The selected Web Serial port is still cleaning up from a timed-out request.",
+            ));
+          }, Math.max(0, absoluteDeadlineMs - Date.now()));
+        }),
+      ]);
+    } finally {
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+    }
+    if (cleanup.abandonedReason !== undefined) {
+      throw new AgentQSuiBrowserProviderError(
+        "transport_closed",
+        `The selected Web Serial port was abandoned after timed-out cleanup: ${cleanup.abandonedReason}.`,
+      );
     }
   }
 
-  #clearSessionAndPort(): void {
+  #clearSessionAndPort(reason: BrowserTransportTeardownReason = "transport_reset"): void {
+    const session = this.#session;
+    const generation = this.#transportGeneration;
     this.#transportGeneration += 1;
+    this.#transportTeardownEvent = {
+      generation,
+      reason,
+      deviceId: session?.deviceId,
+      sessionId: session?.sessionId,
+      sessionEpoch: session?.epoch,
+    };
     this.#session = null;
     this.#clearPort();
   }
@@ -375,7 +514,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
         return;
       }
       console.warn("[agent-q] Web Serial device disconnected; clearing cached port and session.");
-      this.#clearSessionAndPort();
+      this.#clearSessionAndPort("physical_disconnect");
     };
     this.#disconnectListener = listener;
     serial.addEventListener("disconnect", listener);
@@ -389,7 +528,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       serial.removeEventListener("disconnect", this.#disconnectListener);
     }
     this.#disconnectListener = null;
-    this.#clearSessionAndPort();
+    this.#clearSessionAndPort("dispose");
   }
 
   async #request<TResponse extends ProviderProtocolResponse>(
@@ -397,6 +536,147 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     assertResponse: (response: ProviderProtocolResponse) => TResponse,
   ): Promise<TResponse> {
     return this.#exchange(request, assertResponse, deadlineForProviderRequest(request));
+  }
+
+  #signWithRecovery(request: BrowserSignRequest, session: BrowserSession): Promise<BrowserSignRecoveryOutcome> {
+    const generation = this.#transportGeneration;
+    const absoluteDeadlineMs = Date.now() + deadlineForProviderSigningTransaction(request);
+    return this.#enqueue(async () => {
+      this.#assertTransportLive(generation);
+      const port = await this.#getPort(absoluteDeadlineMs);
+      this.#assertTransportLive(generation);
+      try {
+        const response = await requestOverBrowserSerial(
+          port,
+          request,
+          (response) => assertSignResultResponse(response as ProviderProtocolResponse),
+          remainingProviderDeadline(absoluteDeadlineMs, deadlineForProviderRequest(request)),
+          () => this.#abandonPort(),
+        );
+        this.#restoreCapturedSessionAfterPhysicalDisconnect(generation, session, port);
+        return { status: "result", response, sessionInvalidatedByAck: false };
+      } catch (error) {
+        if (!shouldAttemptProviderSignResultRecovery(error)) {
+          throw error;
+        }
+        if (!this.#canAttemptRecoveryAfterTeardown(generation, session)) {
+          throw error;
+        }
+        try {
+          const recoveryPort = await this.#getPort(absoluteDeadlineMs);
+          const recovery = await this.#tryRecoverBufferedSignResult(
+            recoveryPort,
+            request.sessionId,
+            request.id,
+            absoluteDeadlineMs,
+          );
+          if (recovery.status === "session_invalidated") {
+            return { status: "session_invalidated" };
+          }
+          if (recovery.status === "recovered") {
+            if (recovery.ack !== "invalid_session") {
+              this.#restoreCapturedSessionAfterPhysicalDisconnect(generation, session, recoveryPort);
+            }
+            return {
+              status: "result",
+              response: recovery.response,
+              sessionInvalidatedByAck: recovery.ack === "invalid_session",
+            };
+          }
+        } catch {
+          // Recovery transport setup/read failures preserve the original signing
+          // delivery error. Firmware invalid_session remains visible if it is the
+          // original sign response error.
+        }
+        throw error;
+      }
+    });
+  }
+
+  async #tryRecoverBufferedSignResult(
+    port: BrowserSerialPort,
+    sessionId: string,
+    requestId: string,
+    absoluteDeadlineMs: number,
+  ): Promise<BrowserBufferedRecoveryOutcome> {
+    let recovered: SignResultResponse;
+    try {
+      recovered = await requestOverBrowserSerial(
+        port,
+        makeGetResultRequest(sessionId, requestId),
+        (response) => assertSignResultResponse(response as ProviderProtocolResponse),
+        remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
+        () => this.#abandonPort(),
+      );
+    } catch (error) {
+      if (errorCode(error) === "invalid_session") {
+        return { status: "session_invalidated" };
+      }
+      return { status: "not_recovered" };
+    }
+    const ack = await this.#releaseRecoveredSignResult(port, sessionId, requestId, absoluteDeadlineMs);
+    return { status: "recovered", response: recovered, ack };
+  }
+
+  async #releaseRecoveredSignResult(
+    port: BrowserSerialPort,
+    sessionId: string,
+    requestId: string,
+    absoluteDeadlineMs: number,
+  ): Promise<"acked" | "failed" | "invalid_session"> {
+    try {
+      await requestOverBrowserSerial(
+        port,
+        makeAckResultRequest(sessionId, requestId),
+        assertAckResultResponse,
+        remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
+        () => this.#abandonPort(),
+      );
+      return "acked";
+    } catch (error) {
+      if (errorCode(error) === "invalid_session") {
+        return "invalid_session";
+      }
+      // Best-effort cleanup: a failed ack must not turn a recovered sign_result
+      // into a caller-visible failure, but it still runs inside the queued
+      // signing transaction so later requests cannot overtake cleanup.
+      return "failed";
+    }
+  }
+
+  #canAttemptRecoveryAfterTeardown(generation: number, session: BrowserSession): boolean {
+    return this.#transportGeneration === generation ||
+      this.#teardownMatches(generation, session, "physical_disconnect");
+  }
+
+  #restoreCapturedSessionAfterPhysicalDisconnect(
+    generation: number,
+    session: BrowserSession,
+    port: BrowserSerialPort,
+  ): void {
+    if (
+      this.#transportGeneration === generation ||
+      !this.#teardownMatches(generation, session, "physical_disconnect")
+    ) {
+      return;
+    }
+    this.#session = session;
+    this.#port = port;
+    this.#transportTeardownEvent = null;
+  }
+
+  #teardownMatches(
+    generation: number,
+    session: BrowserSession,
+    reason: BrowserTransportTeardownReason,
+  ): boolean {
+    const event = this.#transportTeardownEvent;
+    return event !== null &&
+      event.generation === generation &&
+      event.reason === reason &&
+      event.deviceId === session.deviceId &&
+      event.sessionId === session.sessionId &&
+      event.sessionEpoch === session.epoch;
   }
 
   #assertTransportLive(generation: number): void {
@@ -418,14 +698,21 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     deadlineMs: number,
   ): Promise<TResponse> {
     const generation = this.#transportGeneration;
+    const absoluteDeadlineMs = Date.now() + deadlineMs;
     return this.#enqueue(async () => {
       this.#assertTransportLive(generation);
-      const port = await this.#getPort();
+      const port = await this.#getPort(absoluteDeadlineMs);
       // Re-check after the (possibly awaited) port acquisition: a disconnect observed
       // while #getPort() was re-prompting bumps the generation, so this request must
       // not run over or reopen a transport that was torn down in that window.
       this.#assertTransportLive(generation);
-      return requestOverBrowserSerial(port, request, assertResponse, deadlineMs);
+      return requestOverBrowserSerial(
+        port,
+        request,
+        (response) => assertResponse(response as ProviderProtocolResponse),
+        remainingProviderDeadline(absoluteDeadlineMs, deadlineMs),
+        () => this.#abandonPort(),
+      );
     });
   }
 
@@ -444,6 +731,33 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     return this.#session;
   }
 
+  #sessionSnapshot(session: BrowserSession): BrowserSessionSnapshot {
+    return {
+      deviceId: session.deviceId,
+      sessionId: session.sessionId,
+      epoch: session.epoch,
+      generation: this.#transportGeneration,
+    };
+  }
+
+  #currentSessionMatches(snapshot: BrowserSessionSnapshot): boolean {
+    return this.#session !== null &&
+      this.#session.deviceId === snapshot.deviceId &&
+      this.#session.sessionId === snapshot.sessionId &&
+      this.#session.epoch === snapshot.epoch;
+  }
+
+  #clearCurrentSessionIfSnapshotMatches(
+    snapshot: BrowserSessionSnapshot,
+    reason: BrowserTransportTeardownReason,
+  ): boolean {
+    if (!this.#currentSessionMatches(snapshot)) {
+      return false;
+    }
+    this.#clearSessionAndPort(reason);
+    return true;
+  }
+
   #inactiveResult(deviceId: string | undefined): { source: "not_connected" | "unavailable"; deviceId: string; reason: string } {
     if (!isAgentQSuiBrowserProviderAvailable()) {
       return { source: "unavailable", deviceId: deviceId ?? "browser", reason: "unsupported_transport" };
@@ -451,12 +765,31 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     return { source: "not_connected", deviceId: deviceId ?? this.#session?.deviceId ?? "browser", reason: "not_connected" };
   }
 
-  #clearIfSessionEnded(error: unknown, deviceId: string): { source: "session_ended"; deviceId: string; reason: string } | null {
+  #clearIfSessionEnded(
+    error: unknown,
+    snapshot: BrowserSessionSnapshot,
+  ): { source: "session_ended"; deviceId: string; reason: string } | null {
     if (!isSessionEndedError(error)) {
       return null;
     }
-    this.#clearSessionAndPort();
-    return { source: "session_ended", deviceId, reason: errorCode(error) ?? "session_ended" };
+    const code = errorCode(error);
+    if (code === "invalid_session") {
+      this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
+    } else if (this.#transportGeneration === snapshot.generation) {
+      this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
+    }
+    return { source: "session_ended", deviceId: snapshot.deviceId, reason: code ?? "session_ended" };
+  }
+
+  #clearIfFirmwareInvalidated(
+    error: unknown,
+    snapshot: BrowserSessionSnapshot,
+  ): { source: "session_ended"; deviceId: string; reason: string } | null {
+    if (errorCode(error) !== "invalid_session") {
+      return null;
+    }
+    this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
+    return { source: "session_ended", deviceId: snapshot.deviceId, reason: "invalid_session" };
   }
 
   #connectOutput(session: BrowserSession): unknown {
@@ -496,25 +829,79 @@ function defaultRequestPort(): () => Promise<BrowserSerialPort> {
 
 function noop(): void {}
 
+function deadlineForProviderSigningTransaction(request: BrowserSignRequest): number {
+  return deadlineForProviderRequest(request) + INTERNAL_USB_DEADLINE_MS * 2;
+}
+
+function remainingProviderDeadline(absoluteDeadlineMs: number, phaseDeadlineMs: number): number {
+  const remainingMs = absoluteDeadlineMs - Date.now();
+  if (remainingMs <= 0) {
+    throw markProviderRequestDidNotReachFirmware(
+      new AgentQSuiBrowserProviderError("timeout", "The device request expired before it reached Firmware."),
+    );
+  }
+  return Math.min(phaseDeadlineMs, remainingMs);
+}
+
+function markProviderRequestDidNotReachFirmware<T>(error: T): T {
+  return tagProviderRequestReachability(error, false);
+}
+
+function markProviderRequestMayHaveReachedFirmware<T>(error: T): T {
+  return tagProviderRequestReachability(error, true);
+}
+
+function tagProviderRequestReachability<T>(error: T, mayHaveReachedFirmware: boolean): T {
+  if ((typeof error === "object" && error !== null) || typeof error === "function") {
+    try {
+      Object.defineProperty(error, PROVIDER_REQUEST_MAY_HAVE_REACHED_FIRMWARE, {
+        value: mayHaveReachedFirmware,
+        configurable: true,
+      });
+    } catch {
+      // Some browser errors may be non-extensible; leave them untagged.
+    }
+  }
+  return error;
+}
+
+function providerRequestMayHaveReachedFirmware(error: unknown): boolean {
+  return Boolean(
+    error !== null &&
+      (typeof error === "object" || typeof error === "function") &&
+      (error as { [PROVIDER_REQUEST_MAY_HAVE_REACHED_FIRMWARE]?: boolean })[
+        PROVIDER_REQUEST_MAY_HAVE_REACHED_FIRMWARE
+      ],
+  );
+}
+
+function shouldAttemptProviderSignResultRecovery(error: unknown): boolean {
+  if (!providerRequestMayHaveReachedFirmware(error)) {
+    return false;
+  }
+  const code = errorCode(error);
+  return code !== null && RECOVERABLE_PROVIDER_SIGN_DELIVERY_CODES.has(code);
+}
+
 // Await a best-effort transport-cleanup step, but never block longer than
 // CLEANUP_STEP_TIMEOUT_MS. A hung reader.cancel()/port.close() on a disconnected
 // device is abandoned (its rejection is swallowed) so the request still settles.
-async function settleCleanupStep(operation: Promise<unknown> | undefined, label: string): Promise<void> {
+async function settleCleanupStep(operation: Promise<unknown> | undefined, label: string): Promise<boolean> {
   if (operation === undefined) {
-    return;
+    return true;
   }
-  const guarded = operation.catch(() => undefined);
   let timer: ReturnType<typeof setTimeout> | null = null;
-  const timeout = new Promise<void>((resolve) => {
+  const guarded = operation.then(() => true, () => false);
+  const timeout = new Promise<false>((resolve) => {
     timer = setTimeout(() => {
       console.warn(
         `[agent-q] Web Serial cleanup '${label}' did not complete within ${CLEANUP_STEP_TIMEOUT_MS}ms; abandoning it.`,
       );
-      resolve();
+      resolve(false);
     }, CLEANUP_STEP_TIMEOUT_MS);
   });
   try {
-    await Promise.race([guarded, timeout]);
+    return await Promise.race([guarded, timeout]);
   } finally {
     if (timer !== null) {
       clearTimeout(timer);
@@ -522,17 +909,129 @@ async function settleCleanupStep(operation: Promise<unknown> | undefined, label:
   }
 }
 
-async function requestOverBrowserSerial<TResponse extends ProviderProtocolResponse>(
+function remainingBrowserLeaseMs(
+  lease: BrowserPortLease,
+  absoluteDeadlineMs: number,
+  message: string,
+): number {
+  if (lease.canceled) {
+    throw markProviderRequestDidNotReachFirmware(new AgentQSuiBrowserProviderError("timeout", message));
+  }
+  const remainingMs = absoluteDeadlineMs - Date.now();
+  if (remainingMs <= 0) {
+    lease.canceled = true;
+    throw tagProviderRequestReachability(
+      new AgentQSuiBrowserProviderError("timeout", message),
+      lease.writeReachability === "started",
+    );
+  }
+  return remainingMs;
+}
+
+async function openBrowserPortWithinLease(
   port: BrowserSerialPort,
-  request: ProviderProtocolRequest,
-  assertResponse: (response: ProviderProtocolResponse) => TResponse,
+  lease: BrowserPortLease,
+  absoluteDeadlineMs: number,
+  abandonPort: () => BrowserStalePortLease | null,
+): Promise<void> {
+  const timeoutMs = remainingBrowserLeaseMs(
+    lease,
+    absoluteDeadlineMs,
+    "The device request expired while opening the Web Serial port.",
+  );
+  const open = port.open({ baudRate: DEFAULT_AGENT_Q_USB_BAUD_RATE });
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  open.then(() => {
+    if (lease.canceled) {
+      void settleCleanupStep(port.close(), "late port.open close-only cleanup").then((completed) => {
+        if (completed) {
+          lease.stalePortLease?.release();
+        } else {
+          lease.stalePortLease?.abandon("late port.open cleanup did not complete");
+        }
+      });
+    }
+  }, () => {
+    if (lease.canceled) {
+      lease.stalePortLease?.release();
+    }
+  });
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      lease.canceled = true;
+      lease.abandoned = true;
+      lease.stalePortLease = abandonPort() ?? undefined;
+      reject(markProviderRequestDidNotReachFirmware(
+        new AgentQSuiBrowserProviderError("timeout", "The device request expired while opening the Web Serial port."),
+      ));
+    }, timeoutMs);
+  });
+  try {
+    await Promise.race([open, timeout]);
+  } catch (error) {
+    throw markProviderRequestDidNotReachFirmware(error);
+  } finally {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+async function writeBrowserRequestWithinLease(
+  writer: WritableStreamDefaultWriter<Uint8Array>,
+  request: ProtocolRequest,
+  lease: BrowserPortLease,
+  absoluteDeadlineMs: number,
+  abandonPort: () => BrowserStalePortLease | null,
+): Promise<void> {
+  remainingBrowserLeaseMs(
+    lease,
+    absoluteDeadlineMs,
+    "The device request expired before it reached Firmware.",
+  );
+  lease.writeReachability = "started";
+  const write = writer.write(new TextEncoder().encode(serializeRequest(request)));
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  write.catch(() => undefined);
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      lease.canceled = true;
+      lease.abandoned = true;
+      lease.stalePortLease = abandonPort() ?? undefined;
+      reject(markProviderRequestMayHaveReachedFirmware(
+        new AgentQSuiBrowserProviderError("timeout", "Timed out writing to Firmware."),
+      ));
+    }, Math.max(0, absoluteDeadlineMs - Date.now()));
+  });
+  try {
+    await Promise.race([write, timeout]);
+  } catch (error) {
+    throw markProviderRequestMayHaveReachedFirmware(error);
+  } finally {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+async function requestOverBrowserSerial<TResponse>(
+  port: BrowserSerialPort,
+  request: ProtocolRequest,
+  assertResponse: (response: ProtocolResponse) => TResponse,
   deadlineMs: number,
+  abandonPort: () => BrowserStalePortLease | null,
 ): Promise<TResponse> {
+  const absoluteDeadlineMs = Date.now() + Math.max(0, deadlineMs);
+  const lease: BrowserPortLease = {
+    canceled: false,
+    abandoned: false,
+    writeReachability: "not_started",
+  };
   // Persistent port: open once and reuse it across serialized requests (the request
   // queue guarantees one at a time). open() is idempotent here — a port a prior request
   // left open is reused; only a prior error or a disconnect leaves it closed.
   if (port.readable === null || port.writable === null) {
-    await port.open({ baudRate: DEFAULT_AGENT_Q_USB_BAUD_RATE });
+    await openBrowserPortWithinLease(port, lease, absoluteDeadlineMs, abandonPort);
   }
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -540,11 +1039,13 @@ async function requestOverBrowserSerial<TResponse extends ProviderProtocolRespon
   let succeeded = false;
   try {
     if (port.readable === null || port.writable === null) {
-      throw new AgentQSuiBrowserProviderError("transport_closed", "Web Serial port is not readable or writable.");
+      throw markProviderRequestDidNotReachFirmware(
+        new AgentQSuiBrowserProviderError("transport_closed", "Web Serial port is not readable or writable."),
+      );
     }
     reader = port.readable.getReader();
     writer = port.writable.getWriter();
-    await writer.write(new TextEncoder().encode(serializeProviderProtocolRequest(request)));
+    await writeBrowserRequestWithinLease(writer, request, lease, absoluteDeadlineMs, abandonPort);
     writer.releaseLock();
     writer = null;
 
@@ -555,13 +1056,20 @@ async function requestOverBrowserSerial<TResponse extends ProviderProtocolRespon
     void response.catch(() => undefined);
     const deadline = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
+        lease.canceled = true;
+        lease.abandoned = true;
+        lease.stalePortLease = abandonPort() ?? undefined;
         console.warn(`[agent-q] No Firmware response for '${request.type}' within ${deadlineMs}ms; treating link as lost.`);
-        reject(new AgentQSuiBrowserProviderError("timeout", "Timed out waiting for Firmware response."));
-      }, deadlineMs);
+        reject(markProviderRequestMayHaveReachedFirmware(
+          new AgentQSuiBrowserProviderError("timeout", "Timed out waiting for Firmware response."),
+        ));
+      }, Math.max(0, absoluteDeadlineMs - Date.now()));
     });
     const result = await Promise.race([response, deadline]);
     succeeded = true;
     return result;
+  } catch (error) {
+    throw tagProviderRequestReachability(error, lease.writeReachability === "started");
   } finally {
     if (timeout !== null) {
       clearTimeout(timeout);
@@ -587,15 +1095,21 @@ async function requestOverBrowserSerial<TResponse extends ProviderProtocolRespon
     if (!succeeded) {
       // Close on failure so the next request reopens a clean transport; a successful
       // request leaves the port open for reuse.
-      await settleCleanupStep(port.close(), "port.close");
+      lease.stalePortLease ??= abandonPort() ?? undefined;
+      const completed = await settleCleanupStep(port.close(), "port.close");
+      if (completed) {
+        lease.stalePortLease?.release();
+      } else {
+        lease.stalePortLease?.abandon("port.close cleanup did not complete");
+      }
     }
   }
 }
 
-async function readMatchingResponse<TResponse extends ProviderProtocolResponse>(
+async function readMatchingResponse<TResponse>(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   expectedId: string,
-  assertResponse: (response: ProviderProtocolResponse) => TResponse,
+  assertResponse: (response: ProtocolResponse) => TResponse,
 ): Promise<TResponse> {
   const decoder = new TextDecoder();
   let buffer = "";
@@ -640,16 +1154,15 @@ function deadlineForProviderRequest(request: ProviderProtocolRequest): number {
       return INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS;
     case "get_capabilities":
     case "get_accounts":
-    case "get_result":
-    case "ack_result":
       return INTERNAL_USB_DEADLINE_MS;
   }
+  throw new AgentQSuiBrowserProviderError("internal_error", "Provider request deadline is not defined.");
 }
 
-function tryParseMatchingResponseLine<TResponse extends ProviderProtocolResponse>(
+function tryParseMatchingResponseLine<TResponse>(
   line: string,
   expectedId: string,
-  assertResponse: (response: ProviderProtocolResponse) => TResponse,
+  assertResponse: (response: ProtocolResponse) => TResponse,
 ): TResponse | undefined {
   let parsed: unknown;
   try {
@@ -662,7 +1175,7 @@ function tryParseMatchingResponseLine<TResponse extends ProviderProtocolResponse
   }
   if (parsed.id !== expectedId) {
     if (parsed.id === undefined && parsed.type === "error") {
-      const response = parseProviderProtocolResponse(line);
+      const response = parseProtocolResponse(line);
       if (response.type === "error") {
         throw new AgentQSuiBrowserProviderError(response.error.code, response.error.message);
       }
@@ -670,7 +1183,7 @@ function tryParseMatchingResponseLine<TResponse extends ProviderProtocolResponse
     return undefined;
   }
   try {
-    return assertResponse(parseProviderProtocolResponse(line, expectedId));
+    return assertResponse(parseProtocolResponse(line, expectedId));
   } catch (error) {
     if (error instanceof ProtocolError) {
       throw new AgentQSuiBrowserProviderError(error.code, error.message);
