@@ -7,8 +7,8 @@ on:
       - main
 
 jobs:
-  gateway:
-    name: Gateway
+  node-packages:
+    name: Node packages
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,12 +16,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: packages/gateway/package-lock.json
-      - name: Install Gateway dependencies
-        working-directory: packages/gateway
+          cache-dependency-path: package-lock.json
+      - name: Install workspace dependencies
         run: npm ci
-      - name: Test Gateway
-        working-directory: packages/gateway
+      - name: Test workspace packages
         run: npm test
 
   firmware-stackchan-cores3:
@@ -41,4 +39,4 @@ jobs:
           esp_idf_version: ${{ steps.source.outputs.esp_idf_version }}
           target: esp32s3
           path: .
-          command: /github/workspace/firmware/tools/stackchan-cores3/build.sh
+          command: ./firmware/tools/stackchan-cores3/build.sh
