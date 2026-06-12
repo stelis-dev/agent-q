@@ -122,6 +122,19 @@ Before implementing:
 
 - State assumptions explicitly when they affect architecture, security, public
   API, protocol meaning, or product boundaries.
+- Identify the source of truth for every affected type, protocol field,
+  constant, parser, validator, capability, and error precedence before adding
+  or changing code. If no suitable source of truth exists, establish the
+  smallest correct owner before consuming the value elsewhere.
+- Treat duplicated field lists, validators, parsers, capability metadata, and
+  error classification across Core, providers, Firmware, or docs as a design
+  risk. Remove fragmentation by using or moving the source of truth instead of
+  copying the rule into another layer.
+- Default to no new public API, export, protocol operation, package entrypoint,
+  or adapter-facing surface. Any added surface must have a concrete caller,
+  owner, misuse analysis, and verification. Internal implementation primitives
+  must not be exposed where application code can mistake them for supported
+  product APIs.
 - If multiple interpretations exist, present them instead of picking silently.
 - If a simpler approach exists, say so.
 - Push back when the requested shape appears overcomplicated or inconsistent
@@ -518,6 +531,13 @@ Avoid unless explicitly requested:
 Work is complete only when:
 
 - the requested behavior is implemented, not merely planned or reported
+- do not silently or arbitrarily lower an accepted goal, especially by making a
+  change that conflicts with the primary product objective. If a goal appears
+  impossible or unsafe, stop and make an explicit replacement decision from
+  evidence before implementing a smaller behavior
+- do not turn an implementation shortfall into a new definition of success. If
+  the accepted goal was not achieved, document the gap as unfinished work; do
+  not rewrite the goal so the smaller implemented behavior appears complete
 - affected code, docs, interfaces, user flows, and product claims have been
   reviewed after the change
 - the affected boundary still looks robust from product purpose, files, docs,
