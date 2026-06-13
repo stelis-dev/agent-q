@@ -13,9 +13,8 @@
 namespace agent_q {
 
 constexpr size_t kAgentQPayloadDeliveryDefaultMaxBytes = 128 * 1024;
-// Worst-case payload_upload_chunk JSON frame under the 4096-byte USB request
-// line cap with maximum request/session/upload id lengths, uint64 offset, and
-// base64 expansion. Keep this in sync with host request framing tests.
+// Decoded chunk cap. The JSON request line cap is larger because policy
+// proposals are inline JSON; chunk admission remains bounded here.
 constexpr size_t kAgentQPayloadDeliveryDefaultChunkMaxBytes = 2700;
 
 enum class AgentQPayloadDeliveryState {

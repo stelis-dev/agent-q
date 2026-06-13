@@ -106,9 +106,10 @@ setup source also records a DEV_PROFILE local PIN verifier before reporting
 `provisioned`, and initializes device-local signing authorization mode to
 `user`. Source/build tests cover the provisioned host process and MCP session path
 through `get_accounts`, policy-decision rejection, inline and same-session
-staged Sui `sign_transaction` request validation for the current restricted SUI
-transfer semantic projection, the current `sign_transaction` policy/user gate
-split, and the user-mode `sign_personal_message` source path.
+staged Sui `sign_transaction` request validation for bounded
+`TransactionData::V1 -> ProgrammableTransaction` bytes, the current
+`sign_transaction` policy/user gate split, and the user-mode
+`sign_personal_message` source path.
 Hardware smoke coverage exists for StackChan CoreS3 local setup and PIN entry.
 Targeted hardware verification remains required after setup UI or state changes.
 Source-level local settings
@@ -134,13 +135,16 @@ Rules:
 - Firmware returns public key/address data through `get_accounts`.
 - The current Sign API source paths have `source-wired-not-product-active`
   status for Sui `sign_transaction` with inline or same-session staged
-  transaction bytes, currently signable only when the Firmware route adapter
-  derives the supported restricted SUI transfer semantic projection, and for
-  user-mode Sui `sign_personal_message`.
+  transaction bytes decoded by the Firmware Sui `TransactionData::V1 ->
+  ProgrammableTransaction` facts extractor, and for user-mode Sui
+  `sign_personal_message`.
   Firmware reads its local signing authorization mode and selects one gate:
-  policy mode evaluates active policy and signs with speech-bubble status
-  notifications when policy authorizes the bounded request, while user mode uses
-  device-local clear-signing review and the current human approval input mode.
+  policy mode returns a policy rejection for valid Sui transactions whose
+  policy coverage is incomplete, and does not sign until complete policy
+  coverage and accepted sign-rule validation are implemented. User mode uses
+  device-local clear-signing review when complete offline facts review coverage
+  exists, or an explicit blind-signing warning when Firmware can validate and
+  bind the transaction but offline facts review coverage is incomplete.
   Requests cannot choose this mode or the human approval input mode.
   Personal-message signing is user-mode only and fails closed in policy mode.
   Product-active status is not claimed unless `docs/IMPLEMENTATION_STATUS.md`
@@ -182,10 +186,15 @@ The current DEV_PROFILE runtime does not import or export root signing material.
 Read-only public Sui account derivation is available via `get_accounts`.
 The current Sign API source paths exist for Sui `sign_transaction` transaction
 bytes delivered inline or through same-session staging and for user-mode
-`sign_personal_message` personal-message bytes. Current Sui transaction signing
-still fails closed outside the supported restricted SUI transfer semantic
-projection, and product-active claims still depend on the target evidence
-tracked in `docs/IMPLEMENTATION_STATUS.md`.
+`sign_personal_message` personal-message bytes. Sui transaction bytes are
+decoded by the Firmware Sui `TransactionData::V1 -> ProgrammableTransaction`
+facts extractor. Unsupported versions, unsupported transaction kinds,
+malformed bytes, out-of-range command references, and transactions whose
+minimum sender/gas-owner facts cannot be extracted and bound fail closed.
+Valid account-bound transactions whose offline review facts are incomplete may
+enter the explicit user-mode blind-signing path; policy mode rejects
+policy-incomplete transactions. Product-active claims still depend on the
+target evidence tracked in `docs/IMPLEMENTATION_STATUS.md`.
 Current StackChan CoreS3 source can generate a BIP-39 backup
 phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
 3-column by 4-row grid, and wipe scratch on confirm, cancel, timeout, failure,
@@ -339,9 +348,14 @@ process and Admin may submit a bounded proposal, but Firmware validates it,
 requires device-local approval, and commits it through rollback-safe storage.
 Sui `sign_personal_message` is source-wired for user authorization mode only;
 policy facts and rules for personal-message signing are not implemented.
-Sui transaction semantics outside the supported restricted transfer projection,
-full Admin policy editing beyond the current policy proposal template, and
-USER_PROFILE secure provisioning are not implemented.
+Sui transaction parsing is bounded and offline. Parser facts may be available
+for broader programmable transactions, but parser success is not signing
+authorization. Sui `sign_transaction` policy mode returns a policy rejection for
+valid transactions whose policy coverage is incomplete, and does not sign until
+Firmware can mark the parsed shape as policy-coverage complete and accept a
+sign-rule schema that binds the actual transaction values needed for automatic
+authorization. Full Admin policy editing beyond the current policy proposal
+template and USER_PROFILE secure provisioning are not implemented.
 
 ## Completion Criteria
 

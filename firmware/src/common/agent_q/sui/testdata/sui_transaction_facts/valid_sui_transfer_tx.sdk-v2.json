@@ -1,0 +1,69 @@
+{
+  "version": 2,
+  "sender": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expiration": {
+    "None": true,
+    "$kind": "None"
+  },
+  "gasData": {
+    "budget": "50000000",
+    "price": "1000",
+    "owner": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "payment": [
+      {
+        "objectId": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "version": "7",
+        "digest": "Fw5KdYvFgue4q1HAQ264JTZax6VUr3jDVBJ1szuQ7dHE"
+      }
+    ]
+  },
+  "inputs": [
+    {
+      "Pure": {
+        "bytes": "QEIPAAAAAAA="
+      },
+      "$kind": "Pure"
+    },
+    {
+      "Pure": {
+        "bytes": "u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s="
+      },
+      "$kind": "Pure"
+    }
+  ],
+  "commands": [
+    {
+      "SplitCoins": {
+        "coin": {
+          "GasCoin": true,
+          "$kind": "GasCoin"
+        },
+        "amounts": [
+          {
+            "Input": 0,
+            "$kind": "Input"
+          }
+        ]
+      },
+      "$kind": "SplitCoins"
+    },
+    {
+      "TransferObjects": {
+        "objects": [
+          {
+            "NestedResult": [
+              0,
+              0
+            ],
+            "$kind": "NestedResult"
+          }
+        ],
+        "address": {
+          "Input": 1,
+          "$kind": "Input"
+        }
+      },
+      "$kind": "TransferObjects"
+    }
+  ]
+}

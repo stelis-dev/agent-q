@@ -920,7 +920,7 @@ test(
               chain: "sui",
               method: "sign_transaction",
               action: "reject",
-              criteria: [{ field: "common.intent", op: "eq", value: "single_asset_transfer" }],
+              criteria: [{ field: "common.intent", op: "eq", value: "programmable_transaction" }],
             },
           ],
         };

@@ -380,7 +380,7 @@ awk '
   capture { print }
   /void handle_usb_sign_personal_message_request/ { capture = 0 }
 ' "${USB_SIGNING_HANDLER_SOURCE}" >"${SIGN_TRANSACTION_BRANCH_SNIPPET}"
-expect_present "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'make_preflight_runtime\(ops\)' \
+expect_present "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'make_preflight_runtime\(ops' \
   "sign_transaction handler snippet must be captured"
 expect_present "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'evaluate_transaction_preflight' \
   "sign_transaction handler must delegate signing preflight to the extracted helper"
@@ -417,7 +417,7 @@ awk '
   capture { print }
   /^}  \/\/ namespace agent_q/ { capture = 0 }
 ' "${USB_SIGNING_HANDLER_SOURCE}" >"${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}"
-expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'make_preflight_runtime\(ops\)' \
+expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'make_preflight_runtime\(ops' \
   "sign_personal_message handler snippet must be captured"
 expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'evaluate_personal_message_preflight' \
   "sign_personal_message handler must delegate signing preflight to the extracted helper"

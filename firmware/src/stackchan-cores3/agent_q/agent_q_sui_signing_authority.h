@@ -11,6 +11,6 @@ enum class AgentQSuiSigningAccountBindingResult {
 };
 
 AgentQSuiSigningAccountBindingResult verify_sui_signing_stored_account_binding(
-    const SuiTransactionPolicyFacts& facts);
+    const SuiPolicySubjectFacts& facts);
 
 }  // namespace agent_q

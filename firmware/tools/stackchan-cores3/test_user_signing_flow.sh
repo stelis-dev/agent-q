@@ -182,6 +182,24 @@ agent_q::AgentQTimeoutWindow timeout_window(TickType_t started_at, TickType_t de
 
 const uint8_t kRequestIdentity[agent_q::kAgentQSignRequestIdentitySize] = {};
 
+void fill_prepared_sui_facts(
+    const uint8_t* payload,
+    size_t payload_size,
+    agent_q::AgentQSuiPreparedSignTransaction* prepared)
+{
+    agent_q::SuiParsedTransactionFacts parsed = {};
+    if (agent_q::parse_sui_parsed_transaction_facts(payload, payload_size, &parsed) ==
+        agent_q::SuiTransactionFactsResult::ok) {
+        assert(agent_q::build_sui_policy_subject_facts(parsed, &prepared->sui_policy_subject));
+        assert(agent_q::build_sui_review_summary(parsed, &prepared->sui_review));
+        // Most user-flow tests exercise the clear-review path. Dedicated cases
+        // below cover the blind-signing confirmation path for insufficient review
+        // coverage.
+        prepared->sui_review.status = agent_q::SuiReviewSummaryStatus::ok;
+        prepared->user_mode_authorization_covered = true;
+    }
+}
+
 agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
     const char* request_id,
     const char* session_id,
@@ -204,7 +222,7 @@ agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
         prepared.tx_bytes_size = payload_size;
         snprintf(prepared.payload_digest, sizeof(prepared.payload_digest),
                  "%s", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-        agent_q::parse_sui_transaction_policy_facts(payload, payload_size, &prepared.sui_facts);
+        fill_prepared_sui_facts(payload, payload_size, &prepared);
     }
     return agent_q::AgentQUserSigningTransactionBeginInput{
         request_id,
@@ -334,15 +352,13 @@ void expect_terminal_review_metadata_wiped(
            "terminal cleanup clears review window");
     expect(snapshot.pin_input_window.started_at == 0 && snapshot.pin_input_window.deadline == 0,
            "terminal cleanup clears PIN window");
-    expect(snapshot.sui_facts.sender[0] == '\0' &&
-               snapshot.sui_facts.gas_owner[0] == '\0' &&
-               snapshot.sui_facts.restricted_transfer.recipient[0] == '\0' &&
-               snapshot.sui_facts.restricted_transfer.asset[0] == '\0' &&
-               snapshot.sui_facts.restricted_transfer.amount[0] == '\0' &&
-               snapshot.sui_facts.gas_budget[0] == '\0' &&
-               snapshot.sui_facts.gas_price[0] == '\0' &&
-               snapshot.sui_facts.restricted_transfer.command_count == 0,
-           "terminal cleanup wipes transfer facts");
+    expect(snapshot.sui_policy_subject.sender[0] == '\0' &&
+               snapshot.sui_policy_subject.gas_owner[0] == '\0' &&
+               snapshot.sui_policy_subject.gas_budget[0] == '\0' &&
+               snapshot.sui_policy_subject.gas_price[0] == '\0' &&
+               snapshot.sui_policy_subject.command_count == 0 &&
+               snapshot.sui_review.row_count == 0,
+           "terminal cleanup wipes Sui review metadata");
     expect(snapshot.account_address[0] == '\0',
            "terminal cleanup wipes personal-message account address");
     expect(snapshot.message_preview[0] == '\0',
@@ -486,13 +502,14 @@ int main()
     std::vector<uint8_t> max_transaction_payload(
         agent_q::kAgentQSuiSignTransactionTxBytesMaxBytes,
         0x5A);
-    expect(agent_q::user_signing_flow_begin(
-               make_valid_input(
-                   "req_max_transaction_payload",
-                   agent_q::session_id(),
-                   max_transaction_payload.data(),
-                   max_transaction_payload.size())) ==
-               Begin::ok,
+    agent_q::AgentQUserSigningTransactionBeginInput max_payload_begin =
+        make_valid_input(
+            "req_max_transaction_payload",
+            agent_q::session_id(),
+            max_transaction_payload.data(),
+            max_transaction_payload.size());
+    max_payload_begin.prepared->user_mode_authorization_covered = true;
+    expect(agent_q::user_signing_flow_begin(max_payload_begin) == Begin::ok,
            "max transaction payload begins without a smaller user-flow cap");
     agent_q::AgentQUserSigningFlowSnapshot max_payload_snapshot =
         agent_q::user_signing_flow_snapshot();
@@ -504,6 +521,35 @@ int main()
            "max transaction payload flow clears");
 
     const std::vector<uint8_t>& payload = valid_payload();
+    agent_q::AgentQUserSigningTransactionBeginInput parser_only_begin =
+        make_valid_input("req_parser_only", agent_q::session_id(), payload.data(), payload.size());
+    parser_only_begin.prepared->user_mode_authorization_covered = false;
+    expect(agent_q::user_signing_flow_begin(parser_only_begin) == Begin::unsupported_transaction,
+           "parser-only transaction coverage cannot enter user signing flow");
+    expect(parser_only_begin.prepared->tx_bytes != nullptr &&
+               parser_only_begin.prepared->tx_bytes_size == payload.size(),
+           "rejected parser-only transaction leaves prepared payload with caller");
+    expect(!agent_q::user_signing_flow_active(),
+           "parser-only transaction rejection leaves flow inactive");
+
+    agent_q::AgentQUserSigningTransactionBeginInput incomplete_review_begin =
+        make_valid_input(
+            "req_incomplete_review",
+            agent_q::session_id(),
+            payload.data(),
+            payload.size());
+    incomplete_review_begin.prepared->user_mode_authorization_covered = true;
+    incomplete_review_begin.prepared->sui_review.status =
+        agent_q::SuiReviewSummaryStatus::insufficient_review;
+    expect(agent_q::user_signing_flow_begin(incomplete_review_begin) == Begin::ok,
+           "incomplete review enters blind-signing confirmation");
+    agent_q::AgentQUserSigningFlowSnapshot incomplete_review_snapshot =
+        agent_q::user_signing_flow_snapshot();
+    expect(incomplete_review_snapshot.blind_signing_confirmation,
+           "incomplete review snapshot marks blind-signing confirmation");
+    expect(agent_q::user_signing_flow_clear() == Transition::ok,
+           "incomplete review blind-signing flow clears");
+
     agent_q::AgentQUserSigningTransactionBeginInput first_begin =
         make_valid_input("req_signature_1", agent_q::session_id(), payload.data(), payload.size());
     expect(agent_q::user_signing_flow_begin(first_begin) == Begin::ok,
@@ -532,15 +578,21 @@ int main()
            "request starts without a PIN input deadline");
     expect(snapshot.signable_payload_available, "payload initially available to owner");
     expect(snapshot.signable_payload_size == payload.size(), "payload size stored");
-    expect(strcmp(snapshot.sui_facts.sender, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0,
+    expect(strcmp(snapshot.sui_policy_subject.sender, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0,
            "summary sender is parsed from payload");
-    expect(strcmp(snapshot.sui_facts.gas_owner, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0,
+    expect(strcmp(snapshot.sui_policy_subject.gas_owner, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0,
            "summary gas owner is parsed from payload");
-    expect(strcmp(snapshot.sui_facts.restricted_transfer.recipient, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == 0,
-           "summary recipient is parsed from payload");
-    expect(strcmp(snapshot.sui_facts.restricted_transfer.amount, "1000000") == 0, "summary amount is parsed from payload");
-    expect(strcmp(snapshot.sui_facts.gas_budget, "50000000") == 0, "summary gas budget is parsed from payload");
-    expect(strcmp(snapshot.sui_facts.gas_price, "1000") == 0, "summary gas price is parsed from payload");
+    expect(snapshot.sui_policy_subject.command_count == 2,
+           "summary command count is parsed from payload");
+    expect(snapshot.sui_policy_subject.commands[0].kind == agent_q::SuiCommandFactKind::split_coins,
+           "summary first command is parsed from payload");
+    expect(snapshot.sui_policy_subject.commands[1].kind == agent_q::SuiCommandFactKind::transfer_objects,
+           "summary second command is parsed from payload");
+    expect(strcmp(snapshot.sui_policy_subject.gas_budget, "50000000") == 0, "summary gas budget is parsed from payload");
+    expect(strcmp(snapshot.sui_policy_subject.gas_price, "1000") == 0, "summary gas price is parsed from payload");
+    expect(snapshot.sui_review.status == agent_q::SuiReviewSummaryStatus::ok &&
+               snapshot.sui_review.row_count > 0,
+           "review summary is derived from payload");
     expect(agent_q::user_signing_flow_validate_session() == SessionValidation::ok,
            "matching active session validates");
     expect(agent_q::user_signing_flow_session_matches(agent_q::session_id()),

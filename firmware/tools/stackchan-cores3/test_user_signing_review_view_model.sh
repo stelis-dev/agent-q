@@ -65,6 +65,18 @@ void copy_field(char* output, size_t output_size, const char* value)
     snprintf(output, output_size, "%s", value);
 }
 
+void add_summary_row(
+    agent_q::SuiReviewSummary* summary,
+    agent_q::SuiReviewRowKind kind,
+    const char* label,
+    const char* value)
+{
+    const uint16_t index = summary->row_count++;
+    summary->rows[index].kind = kind;
+    copy_field(summary->rows[index].label, sizeof(summary->rows[index].label), label);
+    copy_field(summary->rows[index].value, sizeof(summary->rows[index].value), value);
+}
+
 agent_q::AgentQUserSigningFlowSnapshot valid_snapshot()
 {
     agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
@@ -76,22 +88,21 @@ agent_q::AgentQUserSigningFlowSnapshot valid_snapshot()
     copy_field(snapshot.network, sizeof(snapshot.network), "devnet");
     copy_field(snapshot.payload_digest, sizeof(snapshot.payload_digest),
                "sha256:1111111111111111111111111111111111111111111111111111111111111111");
-    copy_field(snapshot.sui_facts.sender, sizeof(snapshot.sui_facts.sender),
-               "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    copy_field(snapshot.sui_facts.gas_owner, sizeof(snapshot.sui_facts.gas_owner),
-               "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    snapshot.sui_facts.has_restricted_transfer = true;
-    copy_field(snapshot.sui_facts.restricted_transfer.recipient, sizeof(snapshot.sui_facts.restricted_transfer.recipient),
-               kFullRecipient);
-    copy_field(snapshot.sui_facts.restricted_transfer.asset, sizeof(snapshot.sui_facts.restricted_transfer.asset),
-               "0x2::sui::SUI");
-    copy_field(snapshot.sui_facts.restricted_transfer.amount, sizeof(snapshot.sui_facts.restricted_transfer.amount),
-               "1000000000");
-    copy_field(snapshot.sui_facts.gas_budget, sizeof(snapshot.sui_facts.gas_budget),
-               "5000000");
-    copy_field(snapshot.sui_facts.gas_price, sizeof(snapshot.sui_facts.gas_price),
-               "1000");
-    snapshot.sui_facts.restricted_transfer.command_count = 2;
+    snapshot.sui_review.status = agent_q::SuiReviewSummaryStatus::ok;
+    snapshot.sui_review.risk = agent_q::SuiReviewRiskLevel::low;
+    copy_field(snapshot.sui_review.title, sizeof(snapshot.sui_review.title), "Review Sui transaction");
+    copy_field(snapshot.sui_review.type_summary, sizeof(snapshot.sui_review.type_summary), "SUI transfer");
+    copy_field(snapshot.sui_review.risk_label, sizeof(snapshot.sui_review.risk_label), "Low");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Type", "SUI transfer");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Risk", "Low");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Amount", "1000000000");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Asset", "0x2::sui::SUI");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::wrapped_value, "Recipient", kFullRecipient);
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Gas max", "5000000");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Gas price", "1000");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Commands", "2");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Command 0", "SplitCoins");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Command 1", "TransferObjects");
     snapshot.signable_payload_available = true;
     snapshot.signable_payload_size = 128;
     return snapshot;
@@ -131,9 +142,9 @@ int main()
     agent_q::AgentQUserSigningFlowSnapshot snapshot = valid_snapshot();
     expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
            "valid reviewing snapshot builds review model");
-    expect(strcmp(model.title, "Review Sui transfer") == 0,
+    expect(strcmp(model.title, "Review Sui transaction") == 0,
            "model title names review action");
-    expect(model.row_count == 7,
+    expect(model.row_count == 13,
            "model uses only txBytes-derived clear-signing rows");
     expect(strcmp(row_value(model, "Chain"), "sui") == 0,
            "chain row included");
@@ -145,8 +156,8 @@ int main()
            "amount row included");
     expect(strcmp(row_value(model, "Asset"), "0x2::sui::SUI") == 0,
            "asset row included");
-    expect(strcmp(row_value(model, "Gas budget"), "5000000") == 0,
-           "gas budget row included");
+    expect(strcmp(row_value(model, "Gas max"), "5000000") == 0,
+           "gas max row included");
     expect(strcmp(row_value(model, "Gas price"), "1000") == 0,
            "gas price row included");
     expect(strcmp(row_value(model, "Recipient"), kFullRecipient) == 0,
@@ -155,6 +166,22 @@ int main()
            "recipient row carries wrapped-value layout kind");
     expect(row_kind(model, "Amount") == agent_q::AgentQUserSigningReviewRowKind::normal,
            "amount row carries normal layout kind");
+
+    snapshot = valid_snapshot();
+    snapshot.sui_review.status = agent_q::SuiReviewSummaryStatus::insufficient_review;
+    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
+           "incomplete review snapshot builds blind-signing confirmation model");
+    expect(model.row_count == 16,
+           "blind-signing confirmation adds bounded warning rows");
+    expect(strcmp(row_value(model, "Review"), "Blind signing") == 0,
+           "blind-signing review row names the signing mode");
+    expect(strcmp(row_value(model, "Reason"), "Transaction details cannot be fully shown") == 0,
+           "blind-signing reason row is included");
+    expect(strcmp(row_value(model, "Warning"),
+                  "Confirm only if you accept blind signing") == 0,
+           "blind-signing warning row is included");
+    expect(row_kind(model, "Review") == agent_q::AgentQUserSigningReviewRowKind::warning,
+           "blind-signing review row carries warning layout kind");
 
     snapshot = valid_snapshot();
     copy_field(snapshot.method, sizeof(snapshot.method), "sign_personal_message");
@@ -198,14 +225,14 @@ int main()
            "non-reviewing snapshot is rejected");
 
     snapshot = valid_snapshot();
-    snapshot.sui_facts.restricted_transfer.amount[0] = '\0';
+    snapshot.sui_review.rows[2].value[0] = '\0';
     expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "missing amount is rejected");
 
     snapshot = valid_snapshot();
-    snapshot.sui_facts.gas_budget[0] = '\0';
+    snapshot.sui_review.row_count = 0;
     expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
-           "missing gas budget is rejected");
+           "missing Sui review rows are rejected");
 
     snapshot = valid_snapshot();
     snapshot.signable_payload_available = false;
@@ -247,12 +274,12 @@ int main()
            "host-supplied network is ignored by the clear-signing view model");
 
     snapshot = valid_snapshot();
-    memset(snapshot.sui_facts.restricted_transfer.asset, 'S', sizeof(snapshot.sui_facts.restricted_transfer.asset));
+    memset(snapshot.sui_review.rows[3].value, 'S', sizeof(snapshot.sui_review.rows[3].value));
     expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unterminated asset is rejected instead of overread");
 
     snapshot = valid_snapshot();
-    memset(snapshot.sui_facts.restricted_transfer.recipient, 'b', sizeof(snapshot.sui_facts.restricted_transfer.recipient));
+    memset(snapshot.sui_review.rows[4].value, 'b', sizeof(snapshot.sui_review.rows[4].value));
     expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unterminated overlong recipient is rejected instead of truncated");
 

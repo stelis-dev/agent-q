@@ -91,6 +91,7 @@ constexpr int kUserSigningReviewRowLabelX = 18;
 constexpr int kUserSigningReviewRowValueX = 90;
 constexpr int kUserSigningReviewRowTop = 34;
 constexpr int kUserSigningReviewRowWidth = 206;
+constexpr int kUserSigningReviewContentHeight = kSetupActionButtonY - kUserSigningReviewRowTop - 6;
 constexpr int kUserSigningReviewNormalRowHeight = 16;
 constexpr int kUserSigningReviewWrappedValueRowHeight = 34;
 constexpr int kPolicyUpdateReviewRowTop = 50;
@@ -456,7 +457,12 @@ static bool make_user_signing_review_row(
     lv_obj_set_width(label, kUserSigningReviewRowValueX - kUserSigningReviewRowLabelX - 8);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(label, &lv_font_unscii_8, 0);
-    lv_obj_set_style_text_color(label, lv_color_hex(theme::kOnSurfaceVariant), 0);
+    const bool warning = row.kind == AgentQUserSigningReviewRowKind::warning;
+    const bool section = row.kind == AgentQUserSigningReviewRowKind::section;
+    lv_obj_set_style_text_color(
+        label,
+        lv_color_hex(warning ? theme::kError : theme::kOnSurfaceVariant),
+        0);
     lv_obj_align(label, LV_ALIGN_TOP_LEFT, kUserSigningReviewRowLabelX, y + 2);
 
     lv_obj_t* value = lv_label_create(parent);
@@ -465,14 +471,21 @@ static bool make_user_signing_review_row(
     }
     lv_label_set_text(value, row.value);
     const bool wrapped_value =
-        row.kind == AgentQUserSigningReviewRowKind::wrapped_value;
+        row.kind == AgentQUserSigningReviewRowKind::wrapped_value ||
+        row.kind == AgentQUserSigningReviewRowKind::section;
     lv_label_set_long_mode(
         value,
         wrapped_value ? LV_LABEL_LONG_WRAP : LV_LABEL_LONG_CLIP);
     lv_obj_set_width(value, kUserSigningReviewRowWidth);
     lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_font(value, &lv_font_unscii_8, 0);
-    lv_obj_set_style_text_color(value, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_set_style_text_font(
+        value,
+        section ? &lv_font_montserrat_14 : &lv_font_unscii_8,
+        0);
+    lv_obj_set_style_text_color(
+        value,
+        lv_color_hex(warning ? theme::kError : theme::kOnSurface),
+        0);
     lv_obj_align(value, LV_ALIGN_TOP_LEFT, kUserSigningReviewRowValueX, y + 2);
     return true;
 }
@@ -2085,11 +2098,27 @@ bool modal_draw_user_signing_review_panel(
     lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
 
-    int row_y = kUserSigningReviewRowTop;
+    lv_obj_t* content = lv_obj_create(panel);
+    if (content == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_obj_set_size(content, kPanelContentWidth, kUserSigningReviewContentHeight);
+    lv_obj_align(content, LV_ALIGN_TOP_LEFT, 0, kUserSigningReviewRowTop);
+    lv_obj_set_style_radius(content, 0, 0);
+    lv_obj_set_style_border_width(content, 0, 0);
+    lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(content, 0, 0);
+    lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(content, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
+
+    int row_y = 0;
     for (size_t index = 0; index < model.row_count; ++index) {
         const bool wrapped_value =
-            model.rows[index].kind == AgentQUserSigningReviewRowKind::wrapped_value;
-        if (!make_user_signing_review_row(panel, model.rows[index], row_y)) {
+            model.rows[index].kind == AgentQUserSigningReviewRowKind::wrapped_value ||
+            model.rows[index].kind == AgentQUserSigningReviewRowKind::section;
+        if (!make_user_signing_review_row(content, model.rows[index], row_y)) {
             drawing_surface_clear_panel_locked();
             return false;
         }

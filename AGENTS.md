@@ -64,9 +64,13 @@ Non-negotiable boundaries:
   validate bounded request contents before signing. In policy-authorization
   mode, Firmware policy constrains risk through explicit automatic rules such
   as allowlists, spending limits, rate limits, and rejection. In
-  device-confirmed mode, Firmware must parse, bind, display, confirm, and sign
-  only the implemented bounded request shape. Device-local approval is a
-  separate request/state gate, not a policy action or policy escalation path.
+  device-confirmed mode, Firmware must validate and bind only the implemented
+  bounded request shape before signing. Clear-signing paths must parse and
+  display enough transaction details for review. Blind-signing paths are allowed
+  only when explicitly named as blind signing in Firmware UI, docs, tests, and
+  history metadata, and must still require device-local confirmation.
+  Device-local approval is a separate request/state gate, not a policy action
+  or policy escalation path.
 - Signing work must keep policy authorization and device-local confirmation as
   separate Firmware-owned gates. A device-confirmed gate means Firmware
   requires device-local confirmation for a bounded request; it does not prove

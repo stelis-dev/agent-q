@@ -39,6 +39,7 @@ import {
   makeSignPersonalMessageRequest,
   makeSignTransactionRequest,
   MAX_RAW_PROTOCOL_JSON_BYTES,
+  MAX_POLICY_UPDATE_REQUEST_JSON_BYTES,
   MAX_SESSION_TTL_MS,
   MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
@@ -1017,7 +1018,7 @@ test("makePolicyProposeRequest builds admin proposal requests without chain auth
         chain: "sui",
         method: "sign_transaction",
         action: "reject",
-        criteria: [{ field: "common.intent", op: "eq", value: "single_asset_transfer" }],
+        criteria: [{ field: "common.intent", op: "eq", value: "programmable_transaction" }],
       },
     ],
   };
@@ -1036,6 +1037,27 @@ test("makePolicyProposeRequest builds admin proposal requests without chain auth
   assert.equal("chain" in request, false);
   assert.ok(Buffer.byteLength(serializeRequest(request), "utf8") <= 4097);
 
+  const longRejectValue = "x".repeat(256);
+  const largePolicy = {
+    schema: "agentq.policy.v0",
+    defaultAction: "reject",
+    rules: Array.from({ length: 16 }, (_, index) => ({
+      id: `reject_big_${index}`,
+      chain: "sui",
+      method: "sign_transaction",
+      action: "reject",
+      criteria: [{ field: "common.intent", op: "eq", value: longRejectValue }],
+    })),
+  };
+  const largeRequest = makePolicyProposeRequest(
+    "session_abcdef0123456789",
+    largePolicy,
+    "req_policy_propose_big",
+  );
+  const largeRequestBytes = Buffer.byteLength(serializeRequest(largeRequest), "utf8");
+  assert.ok(largeRequestBytes > MAX_RAW_PROTOCOL_JSON_BYTES);
+  assert.ok(largeRequestBytes <= MAX_POLICY_UPDATE_REQUEST_JSON_BYTES + 1);
+
   assert.throws(
     () => makePolicyProposeRequest("not_a_session", policy),
     /sessionId/,
@@ -1049,7 +1071,7 @@ test("makePolicyProposeRequest builds admin proposal requests without chain auth
     /secret material/,
   );
   assert.throws(
-    () => makePolicyProposeRequest("session_abcdef0123456789", { data: "x".repeat(5000) }),
+    () => makePolicyProposeRequest("session_abcdef0123456789", { data: "x".repeat(20000) }),
     /too large/,
   );
 });
@@ -1375,29 +1397,39 @@ const policyLine = (policyOverrides = {}, topLevelOverrides = {}) =>
     ...topLevelOverrides,
   });
 
-const validPolicyRule = () => ({
-  id: "allow_self_transfer",
+const unsupportedSignPolicyRule = () => ({
+  id: "allow_specific_move_call",
   chain: "sui",
   method: "sign_transaction",
   action: "sign",
   criteria: [
-    { field: "common.intent", op: "eq", value: "single_asset_transfer" },
-    { field: "sui.command_shape", op: "eq", value: "restricted_transfer" },
-    { field: "sui.command_count", op: "eq", value: "2" },
-    { field: "sui.command0_kind", op: "eq", value: "split_coins" },
-    { field: "sui.command1_kind", op: "eq", value: "transfer_objects" },
-    { field: "sui.coin_type", op: "eq", value: "0x2::sui::SUI" },
-    { field: "sui.recipient_address", op: "in", values: ["0x4b7ba5768f9ed7d0ecbcad64be775f49951f215495a10134a8acc4bdeab7da97"] },
-    { field: "sui.amount_raw", op: "lte", value: "500000000" },
+    { field: "sui.command_count", op: "eq", value: "1" },
+    { field: "sui.command0_kind", op: "eq", value: "move_call" },
+    { field: "sui.command0_move_call_package", op: "eq", value: "0x4b7ba5768f9ed7d0ecbcad64be775f49951f215495a10134a8acc4bdeab7da97" },
+    { field: "sui.command0_move_call_module", op: "eq", value: "demo" },
+    { field: "sui.command0_move_call_function", op: "eq", value: "mint" },
+    { field: "sui.command0_move_call_type_args", op: "eq", value: "1" },
+    { field: "sui.command0_move_call_type_arg0", op: "eq", value: "u64" },
     { field: "sui.gas_budget", op: "lte", value: "50000000" },
     { field: "sui.gas_price", op: "lte", value: "10000" },
   ],
 });
 
+const validRejectPolicyRule = () => ({
+  id: "reject_supported_sui_tx",
+  chain: "sui",
+  method: "sign_transaction",
+  action: "reject",
+  criteria: [
+    { field: "common.intent", op: "eq", value: "programmable_transaction" },
+    { field: "sui.gas_budget", op: "lte", value: "50000000" },
+  ],
+});
+
 const policyLineWithRule = (rule) => policyLine({ ruleCount: 1, rules: [rule] });
-const policyRuleWithCriteria = (criteria) => ({ ...validPolicyRule(), criteria });
+const policyRuleWithCriteria = (criteria) => ({ ...validRejectPolicyRule(), criteria });
 const replacePolicyRuleCriterion = (field, replacement) =>
-  validPolicyRule().criteria.map((criterion) => criterion.field === field ? replacement : criterion);
+  validRejectPolicyRule().criteria.map((criterion) => criterion.field === field ? replacement : criterion);
 const validEmptyRejectPolicyRule = () => ({
   id: "reject_supported_sui_tx",
   chain: "sui",
@@ -1416,15 +1448,21 @@ test("parseProtocolResponse accepts a valid active policy document", () => {
   assert.match(response.policy.policyId, /^sha256:[0-9a-f]{64}$/);
 });
 
-test("parseProtocolResponse accepts a bounded custom policy document", () => {
+test("parseProtocolResponse accepts a bounded reject policy document", () => {
   const response = assertPolicyResponse(parseProtocolResponse(policyLine({
     ruleCount: 1,
-    rules: [validPolicyRule()],
+    rules: [validRejectPolicyRule()],
   }), "req_policy"));
   assert.equal(response.type, "policy");
   assert.equal(response.policy.ruleCount, 1);
   assert.equal(response.policy.rules.length, 1);
-  assert.equal(response.policy.rules[0].criteria.length, 10);
+  assert.equal(response.policy.rules[0].criteria.length, 2);
+});
+
+test("parseProtocolResponse rejects Sui sign policy documents until policy coverage is implemented", () => {
+  assert.throws(() => parseProtocolResponse(policyLineWithRule(unsupportedSignPolicyRule()), "req_policy"), {
+    code: "protocol_error",
+  });
 });
 
 test("parseProtocolResponse accepts an empty reject rule for a supported current method", () => {
@@ -1456,29 +1494,17 @@ test("parseProtocolResponse rejects malformed policy documents", () => {
   assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 1, rules: [] }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLine({ rules: [{ ...validPolicyRule(), privateKey: "x" }] }), "req_policy"), {
+  assert.throws(() => parseProtocolResponse(policyLine({ rules: [{ ...validRejectPolicyRule(), privateKey: "x" }] }), "req_policy"), {
     code: "protocol_error",
   });
   assert.throws(() => parseProtocolResponse(policyLineWithRule(
-    policyRuleWithCriteria([{ field: "sui.amount_raw", op: "lte", values: ["1"] }]),
+    policyRuleWithCriteria([{ field: "sui.gas_budget", op: "lte", values: ["1"] }]),
   ), "req_policy"), {
     code: "protocol_error",
   });
   assert.throws(() => parseProtocolResponse(policyLineWithRule(
-    policyRuleWithCriteria(validPolicyRule().criteria.filter((criterion) => criterion.field !== "sui.gas_price")),
-  ), "req_policy"), {
-    code: "protocol_error",
-  });
-  assert.throws(() => parseProtocolResponse(policyLineWithRule(
-    policyRuleWithCriteria(validPolicyRule().criteria.filter((criterion) =>
-      !["sui.command_count", "sui.command0_kind", "sui.command1_kind"].includes(criterion.field)
-    )),
-  ), "req_policy"), {
-    code: "protocol_error",
-  });
-  assert.throws(() => parseProtocolResponse(policyLineWithRule(
-    policyRuleWithCriteria(replacePolicyRuleCriterion("sui.amount_raw", {
-      field: "sui.amount_raw",
+    policyRuleWithCriteria(replacePolicyRuleCriterion("sui.gas_budget", {
+      field: "sui.gas_budget",
       op: "lte",
       value: "000500000000",
     })),
@@ -1486,30 +1512,20 @@ test("parseProtocolResponse rejects malformed policy documents", () => {
     code: "protocol_error",
   });
   assert.throws(() => parseProtocolResponse(policyLineWithRule(
-    policyRuleWithCriteria(replacePolicyRuleCriterion("sui.amount_raw", {
-      field: "sui.amount_raw",
+    policyRuleWithCriteria(replacePolicyRuleCriterion("sui.gas_budget", {
+      field: "sui.gas_budget",
       op: "in",
       values: ["500000000"],
     })),
   ), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLineWithRule(
-    policyRuleWithCriteria(replacePolicyRuleCriterion("sui.recipient_address", {
-      field: "sui.recipient_address",
-      op: "in",
-      values: [
-        "0x4b7ba5768f9ed7d0ecbcad64be775f49951f215495a10134a8acc4bdeab7da97",
-        "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
-      ],
-    })),
-  ), "req_policy"), {
-    code: "protocol_error",
-  });
-  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 2, rules: [validPolicyRule(), { ...validPolicyRule(), id: "allow_second_transfer" }] }), "req_policy"), {
-    code: "protocol_error",
-  });
-  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 1, rules: [{ ...validPolicyRule(), method: "sign_personal_message" }] }), "req_policy"), {
+  const multiRuleResponse = assertPolicyResponse(parseProtocolResponse(
+    policyLine({ ruleCount: 2, rules: [validRejectPolicyRule(), { ...validRejectPolicyRule(), id: "reject_second_move_call" }] }),
+    "req_policy",
+  ));
+  assert.equal(multiRuleResponse.policy.ruleCount, 2);
+  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 1, rules: [{ ...unsupportedSignPolicyRule(), method: "sign_personal_message" }] }), "req_policy"), {
     code: "protocol_error",
   });
   assert.throws(() => parseProtocolResponse(policyLineWithRule({
@@ -1684,6 +1700,19 @@ test("parseProtocolResponse accepts signing approval history records", () => {
   assert.equal(physicalConfirmation.records[0].authorization, "user");
   assert.equal(physicalConfirmation.records[0].confirmationKind, "physical_confirm");
   assert.equal(physicalConfirmation.records[0].payloadDigest, APPROVAL_DIGEST);
+
+  const blindSigningConfirmation = assertApprovalHistoryResponse(
+    parseProtocolResponse(
+      approvalHistorySigningUserLine({ reasonCode: "blind_signing_confirmed" }),
+      "req_approval_history",
+    ),
+  );
+  assert.equal(blindSigningConfirmation.records[0].eventKind, "signing");
+  assert.equal(blindSigningConfirmation.records[0].recordKind, "confirmation");
+  assert.equal(blindSigningConfirmation.records[0].authorization, "user");
+  assert.equal(blindSigningConfirmation.records[0].confirmationKind, "local_pin");
+  assert.equal(blindSigningConfirmation.records[0].reasonCode, "blind_signing_confirmed");
+  assert.equal(blindSigningConfirmation.records[0].payloadDigest, APPROVAL_DIGEST);
 
   const terminal = assertApprovalHistoryResponse(
     parseProtocolResponse(

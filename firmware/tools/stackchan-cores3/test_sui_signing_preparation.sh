@@ -39,10 +39,10 @@ extern "C" {
 namespace {
 
 bool g_digest_ok = true;
-agent_q::AgentQSuiSigningAccountBindingResult g_binding_result =
-    agent_q::AgentQSuiSigningAccountBindingResult::ok;
 agent_q::SuiAccountDerivationResult g_derivation_result =
     agent_q::SuiAccountDerivationResult::ok;
+char g_derived_address[agent_q::kSuiAddressBufferSize] =
+    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 int hex_value(char value)
 {
@@ -116,12 +116,6 @@ bool approval_history_digest_payload(
     return true;
 }
 
-AgentQSuiSigningAccountBindingResult verify_sui_signing_stored_account_binding(
-    const SuiTransactionPolicyFacts&)
-{
-    return ::g_binding_result;
-}
-
 SuiAccountDerivationResult derive_sui_ed25519_account_from_stored_root(
     uint8_t* public_key,
     char* address,
@@ -131,8 +125,7 @@ SuiAccountDerivationResult derive_sui_ed25519_account_from_stored_root(
         return ::g_derivation_result;
     }
     memset(public_key, 0xA5, kSuiEd25519PublicKeyBytes);
-    snprintf(address, address_size,
-             "%s", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    snprintf(address, address_size, "%s", ::g_derived_address);
     return SuiAccountDerivationResult::ok;
 }
 
@@ -144,8 +137,11 @@ int main(int argc, char** argv)
     const std::string root = argv[1];
     const std::vector<uint8_t> valid = read_hex((root + "/valid_sui_transfer_tx.bcs.hex").c_str());
     const std::vector<uint8_t> malformed = read_hex((root + "/malformed_short_tx.bcs.hex").c_str());
-    const std::vector<uint8_t> unsupported =
-        read_hex((root + "/unsupported_result_reference_transfer_tx.bcs.hex").c_str());
+    const std::vector<uint8_t> result_reference_transfer =
+        read_hex((root + "/result_reference_transfer_tx.bcs.hex").c_str());
+    const std::vector<uint8_t> publish = read_hex((root + "/publish_tx.bcs.hex").c_str());
+    const std::vector<uint8_t> sponsored =
+        read_hex((root + "/sponsored_gas_owner_tx.bcs.hex").c_str());
 
     agent_q::AgentQSuiPreparedSignTransaction tx = {};
     assert(agent_q::prepare_sui_sign_transaction(
@@ -156,6 +152,13 @@ int main(int argc, char** argv)
                &tx) == agent_q::AgentQSuiSigningPreparationResult::ok);
     assert(tx.tx_bytes_size == valid.size());
     assert(strcmp(tx.network, "devnet") == 0);
+    assert(tx.sui_policy_subject.command_count == 2);
+    assert(tx.sui_policy_subject.commands[0].kind == agent_q::SuiCommandFactKind::split_coins);
+    assert(tx.sui_policy_subject.commands[1].kind == agent_q::SuiCommandFactKind::transfer_objects);
+    assert(tx.sui_review.status == agent_q::SuiReviewSummaryStatus::ok);
+    assert(tx.sui_review.row_count > 0);
+    assert(tx.user_mode_authorization_covered);
+    assert(!tx.policy_mode_authorization_covered);
     agent_q::clear_prepared_sui_sign_transaction(&tx);
     assert(tx.tx_bytes_size == 0);
 
@@ -168,9 +171,25 @@ int main(int argc, char** argv)
     assert(agent_q::prepare_sui_sign_transaction(
                agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
                "devnet",
-               base64(unsupported).c_str(),
-               unsupported.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::unsupported_transaction);
+               base64(result_reference_transfer).c_str(),
+               result_reference_transfer.size(),
+               &tx) == agent_q::AgentQSuiSigningPreparationResult::ok);
+    assert(tx.sui_policy_subject.command_count > 0);
+    assert(tx.sui_review.status == agent_q::SuiReviewSummaryStatus::ok);
+    assert(tx.user_mode_authorization_covered);
+    assert(!tx.policy_mode_authorization_covered);
+    agent_q::clear_prepared_sui_sign_transaction(&tx);
+    assert(agent_q::prepare_sui_sign_transaction(
+               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+               "devnet",
+               base64(publish).c_str(),
+               publish.size(),
+               &tx) == agent_q::AgentQSuiSigningPreparationResult::ok);
+    assert(tx.tx_bytes_size == publish.size());
+    assert(tx.sui_review.status == agent_q::SuiReviewSummaryStatus::insufficient_review);
+    assert(tx.user_mode_authorization_covered);
+    assert(!tx.policy_mode_authorization_covered);
+    agent_q::clear_prepared_sui_sign_transaction(&tx);
     assert(agent_q::prepare_sui_sign_transaction(
                agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
                "devnet",
@@ -214,14 +233,27 @@ int main(int argc, char** argv)
                nullptr,
                &tx) == agent_q::AgentQSuiSigningPreparationResult::unsupported_payload_size);
 
-    ::g_binding_result = agent_q::AgentQSuiSigningAccountBindingResult::account_mismatch;
+    assert(agent_q::prepare_sui_sign_transaction(
+               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+               "devnet",
+               base64(sponsored).c_str(),
+               sponsored.size(),
+               &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_account);
+
+    snprintf(::g_derived_address,
+             sizeof(::g_derived_address),
+             "%s",
+             "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
     assert(agent_q::prepare_sui_sign_transaction(
                agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(valid).c_str(),
                valid.size(),
                &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_account);
-    ::g_binding_result = agent_q::AgentQSuiSigningAccountBindingResult::ok;
+    snprintf(::g_derived_address,
+             sizeof(::g_derived_address),
+             "%s",
+             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
     ::g_digest_ok = false;
     assert(agent_q::prepare_sui_sign_transaction(
@@ -286,6 +318,7 @@ CPP
   -I"${SIGNING_CORE}" \
   "${TMP_DIR}/test.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_signing_preparation.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sui_signing_authority.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \

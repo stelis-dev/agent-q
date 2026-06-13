@@ -31,7 +31,10 @@ struct AgentQSuiPreparedSignTransaction {
     uint8_t* tx_bytes;
     size_t tx_bytes_size;
     char payload_digest[kAgentQApprovalHistoryDigestSize];
-    SuiTransactionPolicyFacts sui_facts;
+    SuiPolicySubjectFacts sui_policy_subject;
+    SuiReviewSummary sui_review;
+    bool user_mode_authorization_covered;
+    bool policy_mode_authorization_covered;
 };
 
 struct AgentQSuiPreparedPersonalMessage {

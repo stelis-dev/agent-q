@@ -1509,6 +1509,51 @@ test("getApprovalHistory returns Firmware-owned history and keeps the session", 
   });
 });
 
+test("getApprovalHistory preserves blind-signing confirmation reason codes", async () => {
+  await withStore(async (store) => {
+    const core = new AgentQCore(
+      store,
+      defaultDriver({
+        async getApprovalHistory() {
+          return {
+            id: "req_approval_history",
+            version: 1,
+            type: "approval_history",
+            records: [
+              {
+                seq: "2",
+                uptimeMs: "1300",
+                timeSource: "uptime",
+                eventKind: "signing",
+                authorization: "user",
+                recordKind: "confirmation",
+                confirmationKind: "local_pin",
+                chain: "sui",
+                method: "sign_transaction",
+                reasonCode: "blind_signing_confirmed",
+                payloadDigest: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+              },
+            ],
+            hasMore: false,
+          };
+        },
+      }),
+    );
+    await core.scanDevices();
+    await core.selectDevice({ deviceId: device.deviceId });
+    await core.connectDevice({});
+
+    const result = await core.getApprovalHistory({ limit: 1 });
+    assert.equal(result.source, "live");
+    assert.equal(result.records.length, 1);
+    assert.equal(result.records[0].eventKind, "signing");
+    assert.equal(result.records[0].authorization, "user");
+    assert.equal(result.records[0].recordKind, "confirmation");
+    assert.equal(result.records[0].confirmationKind, "local_pin");
+    assert.equal(result.records[0].reasonCode, "blind_signing_confirmed");
+  });
+});
+
 test("getApprovalHistory validates pagination before USB live-port probing", async () => {
   await withStore(async (store) => {
     let listPortsCalls = 0;
@@ -2503,7 +2548,7 @@ test("policyPropose forwards a bounded proposal and returns Firmware terminal me
           chain: "sui",
           method: "sign_transaction",
           action: "reject",
-          criteria: [{ field: "common.intent", op: "eq", value: "single_asset_transfer" }],
+          criteria: [{ field: "common.intent", op: "eq", value: "programmable_transaction" }],
         },
       ],
     };
@@ -2595,7 +2640,7 @@ test("policyPropose validates proposals before live-port probing", async () => {
           schema: "agentq.policy.v0",
           defaultAction: "reject",
           rules: [],
-          padding: "x".repeat(4096),
+          padding: "x".repeat(20000),
         },
       }),
       { code: "invalid_params" },

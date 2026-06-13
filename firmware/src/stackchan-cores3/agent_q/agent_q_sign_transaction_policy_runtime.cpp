@@ -78,6 +78,32 @@ const char* policy_rule_ref(const AgentQPolicyDecision& decision)
     return "default";
 }
 
+AgentQSignTransactionPolicyRuntimeResult make_policy_rejected_result(
+    AgentQSupportedSignRoute route,
+    const char* payload_digest,
+    const char* policy_hash,
+    const char* rule_ref,
+    const char* reason_code)
+{
+    AgentQSignTransactionPolicyRuntimeResult result = make_result(
+        AgentQSignTransactionPolicyRuntimeStatus::policy_rejected,
+        "policy_rejected",
+        "The signing request was rejected by device policy.");
+    if (!fill_sign_metadata(
+            &result,
+            reason_code,
+            route,
+            payload_digest,
+            policy_hash,
+            rule_ref)) {
+        return make_result(
+            AgentQSignTransactionPolicyRuntimeStatus::policy_error,
+            "policy_error",
+            "Active policy is unavailable.");
+    }
+    return result;
+}
+
 AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
     const AgentQSuiPreparedSignTransaction& prepared)
 {
@@ -89,13 +115,28 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
             "invalid_params",
             "Prepared sui/sign_transaction request is invalid.");
     }
+    if (!prepared.policy_mode_authorization_covered) {
+        AgentQStoredPolicySummary policy_summary = {};
+        if (!read_active_policy_summary(&policy_summary)) {
+            return make_result(
+                AgentQSignTransactionPolicyRuntimeStatus::policy_error,
+                "policy_error",
+                "Active policy is unavailable.");
+        }
+        return make_policy_rejected_result(
+            prepared.route,
+            prepared.payload_digest,
+            policy_summary.policy_id,
+            "default",
+            "policy_coverage_incomplete");
+    }
 
     AgentQSuiSignTransactionPolicyFacts policy_facts = {};
-    if (!make_sui_sign_transaction_policy_facts(prepared.sui_facts, &policy_facts)) {
+    if (!make_sui_sign_transaction_policy_facts(prepared.sui_policy_subject, &policy_facts)) {
         return make_result(
             AgentQSignTransactionPolicyRuntimeStatus::unsupported_transaction,
             "unsupported_transaction",
-            "Transaction shape is not supported.");
+            "Policy cannot evaluate this transaction.");
     }
 
     AgentQStoredPolicySummary policy_summary = {};
@@ -117,23 +158,12 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
 
     const char* rule_ref = policy_rule_ref(decision);
     if (decision.action != AgentQPolicyAction::sign) {
-        AgentQSignTransactionPolicyRuntimeResult result = make_result(
-            AgentQSignTransactionPolicyRuntimeStatus::policy_rejected,
-            "policy_rejected",
-            "The signing request was rejected by device policy.");
-        if (!fill_sign_metadata(
-                &result,
-                "policy_rejected",
-                prepared.route,
-                prepared.payload_digest,
-                policy_summary.policy_id,
-                rule_ref)) {
-            return make_result(
-                AgentQSignTransactionPolicyRuntimeStatus::policy_error,
-                "policy_error",
-                "Active policy is unavailable.");
-        }
-        return result;
+        return make_policy_rejected_result(
+            prepared.route,
+            prepared.payload_digest,
+            policy_summary.policy_id,
+            rule_ref,
+            "policy_rejected");
     }
 
     AgentQSignTransactionPolicyRuntimeResult result = make_result(

@@ -547,7 +547,9 @@ bool write_user_signing_confirmation_history(
         agent_q::AgentQSigningHistoryTerminalResult::none,
         snapshot.chain,
         snapshot.method,
-        "device_confirmed",
+        snapshot.blind_signing_confirmation
+            ? "blind_signing_confirmed"
+            : "device_confirmed",
         snapshot.payload_digest,
         nullptr,
         nullptr,
@@ -567,7 +569,9 @@ bool write_user_signing_physical_confirmation_history(
         agent_q::AgentQSigningHistoryTerminalResult::none,
         snapshot.chain,
         snapshot.method,
-        "device_confirmed",
+        snapshot.blind_signing_confirmation
+            ? "blind_signing_confirmed"
+            : "device_confirmed",
         snapshot.payload_digest,
         nullptr,
         nullptr,

@@ -1,0 +1,34 @@
+{
+  "version": 2,
+  "sender": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expiration": {
+    "None": true,
+    "$kind": "None"
+  },
+  "gasData": {
+    "budget": "50000000",
+    "price": "1000",
+    "owner": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "payment": [
+      {
+        "objectId": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "version": "7",
+        "digest": "Fw5KdYvFgue4q1HAQ264JTZax6VUr3jDVBJ1szuQ7dHE"
+      }
+    ]
+  },
+  "inputs": [],
+  "commands": [
+    {
+      "Publish": {
+        "modules": [
+          "AQIDBA=="
+        ],
+        "dependencies": [
+          "0x1111111111111111111111111111111111111111111111111111111111111111"
+        ]
+      },
+      "$kind": "Publish"
+    }
+  ]
+}

@@ -230,6 +230,19 @@ agent_q::AgentQTimeoutWindow request_window(TickType_t deadline)
 
 const uint8_t kRequestIdentity[agent_q::kAgentQSignRequestIdentitySize] = {};
 
+void fill_prepared_sui_facts(
+    const uint8_t* payload,
+    size_t payload_size,
+    agent_q::AgentQSuiPreparedSignTransaction* prepared)
+{
+    agent_q::SuiParsedTransactionFacts parsed = {};
+    assert(agent_q::parse_sui_parsed_transaction_facts(payload, payload_size, &parsed) ==
+           agent_q::SuiTransactionFactsResult::ok);
+    assert(agent_q::build_sui_policy_subject_facts(parsed, &prepared->sui_policy_subject));
+    assert(agent_q::build_sui_review_summary(parsed, &prepared->sui_review));
+    prepared->user_mode_authorization_covered = true;
+}
+
 agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
     const char* request_id,
     const char* session_id,
@@ -252,7 +265,7 @@ agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
     prepared.tx_bytes_size = payload_size;
     snprintf(prepared.payload_digest, sizeof(prepared.payload_digest),
              "%s", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-    agent_q::parse_sui_transaction_policy_facts(payload, payload_size, &prepared.sui_facts);
+    fill_prepared_sui_facts(payload, payload_size, &prepared);
     return agent_q::AgentQUserSigningTransactionBeginInput{
         request_id,
         kRequestIdentity,

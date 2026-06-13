@@ -1,0 +1,47 @@
+{
+  "version": 2,
+  "sender": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expiration": {
+    "None": true,
+    "$kind": "None"
+  },
+  "gasData": {
+    "budget": "50000000",
+    "price": "1000",
+    "owner": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "payment": [
+      {
+        "objectId": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "version": "7",
+        "digest": "Fw5KdYvFgue4q1HAQ264JTZax6VUr3jDVBJ1szuQ7dHE"
+      }
+    ]
+  },
+  "inputs": [
+    {
+      "Object": {
+        "ImmOrOwnedObject": {
+          "objectId": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "version": "7",
+          "digest": "Fw5KdYvFgue4q1HAQ264JTZax6VUr3jDVBJ1szuQ7dHE"
+        },
+        "$kind": "ImmOrOwnedObject"
+      },
+      "$kind": "Object"
+    }
+  ],
+  "commands": [
+    {
+      "MakeMoveVec": {
+        "type": "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
+        "elements": [
+          {
+            "Input": 0,
+            "$kind": "Input"
+          }
+        ]
+      },
+      "$kind": "MakeMoveVec"
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 #include "agent_q_policy_update_flow.h"
 
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -21,9 +22,9 @@ struct AgentQPolicyUpdateFlowState {
     char request_id[kAgentQRequestIdSize] = {};
     char session_id[kAgentQSessionIdSize] = {};
     AgentQTimeoutWindow review_window = kAgentQTimeoutWindowNone;
-    AgentQParsedPolicyProposal parsed = {};
-    AgentQPolicyCanonicalDocument canonical = {};
-    uint8_t record[kAgentQPolicyMaxCanonicalRecordBytes] = {};
+    AgentQParsedPolicyProposal* parsed = nullptr;
+    AgentQPolicyCanonicalDocument* canonical = nullptr;
+    uint8_t* record = nullptr;
     size_t record_size = 0;
     uint8_t digest[kAgentQPolicyUpdateDigestBytes] = {};
     char policy_hash[kAgentQPolicyIdSize] = {};
@@ -33,13 +34,52 @@ struct AgentQPolicyUpdateFlowState {
 
     void clear()
     {
+        if (parsed != nullptr) {
+            memset(parsed, 0, sizeof(*parsed));
+            free(parsed);
+        }
+        if (canonical != nullptr) {
+            memset(canonical, 0, sizeof(*canonical));
+            free(canonical);
+        }
+        if (record != nullptr) {
+            memset(record, 0, kAgentQPolicyMaxCanonicalRecordBytes);
+            free(record);
+        }
         memset(this, 0, sizeof(*this));
         stage = AgentQPolicyUpdateFlowStage::idle;
         highest_action = AgentQPolicyUpdateHighestAction::reject;
     }
+
+    bool allocate_workspaces()
+    {
+        parsed = static_cast<AgentQParsedPolicyProposal*>(malloc(sizeof(*parsed)));
+        canonical = static_cast<AgentQPolicyCanonicalDocument*>(malloc(sizeof(*canonical)));
+        record = static_cast<uint8_t*>(malloc(kAgentQPolicyMaxCanonicalRecordBytes));
+        if (parsed == nullptr || canonical == nullptr || record == nullptr) {
+            clear();
+            return false;
+        }
+        memset(parsed, 0, sizeof(*parsed));
+        memset(canonical, 0, sizeof(*canonical));
+        memset(record, 0, kAgentQPolicyMaxCanonicalRecordBytes);
+        return true;
+    }
 };
 
 AgentQPolicyUpdateFlowState g_state;
+
+size_t current_policy_rule_count()
+{
+    return g_state.parsed != nullptr ? g_state.parsed->document.rule_count : 0;
+}
+
+const char* current_policy_default_action_name()
+{
+    return g_state.parsed != nullptr
+               ? agent_q_policy_action_name(g_state.parsed->document.default_action)
+               : agent_q_policy_action_name(AgentQPolicyAction::reject);
+}
 
 bool copy_non_empty_bounded(const char* input, char* output, size_t output_size)
 {
@@ -188,24 +228,30 @@ bool build_sign_review_summary(
         return false;
     }
     output[0] = '\0';
-    const char* recipient = single_criterion_value(rule, "sui.recipient_address");
-    const char* amount = lte_criterion_value(rule, "sui.amount_raw");
+    const char* package = single_criterion_value(rule, "sui.command0_move_call_package");
+    const char* module = single_criterion_value(rule, "sui.command0_move_call_module");
+    const char* function = single_criterion_value(rule, "sui.command0_move_call_function");
     const char* gas_budget = lte_criterion_value(rule, "sui.gas_budget");
     const char* gas_price = lte_criterion_value(rule, "sui.gas_price");
-    if (recipient == nullptr || amount == nullptr || gas_budget == nullptr || gas_price == nullptr) {
+    if (package == nullptr ||
+        module == nullptr ||
+        function == nullptr ||
+        gas_budget == nullptr ||
+        gas_price == nullptr) {
         return false;
     }
-    char short_recipient[16] = {};
-    format_short_address(recipient, short_recipient, sizeof(short_recipient));
-    if (short_recipient[0] == '\0') {
+    char short_package[16] = {};
+    format_short_address(package, short_package, sizeof(short_package));
+    if (short_package[0] == '\0') {
         return false;
     }
     const int written = snprintf(
         output,
         output_size,
-        "to %s a<=%s g<=%s/%s",
-        short_recipient,
-        amount,
+        "%s::%s::%s g<=%s/%s",
+        short_package,
+        module,
+        function,
         gas_budget,
         gas_price);
     return written > 0 && static_cast<size_t>(written) < output_size;
@@ -271,7 +317,7 @@ bool append_policy_update_history(const char* result, const char* reason_code, u
         result,
         reason_code,
         g_state.policy_hash,
-        g_state.parsed.document.rule_count,
+        current_policy_rule_count(),
         highest_action_name(g_state.highest_action),
     };
     return approval_history_append_required_policy_update(input, uptime_ms);
@@ -337,9 +383,9 @@ AgentQPolicyUpdateFlowSnapshot policy_update_flow_snapshot()
         g_state.session_id,
         g_state.review_window,
         g_state.policy_hash,
-        g_state.parsed.document.rule_count,
+        current_policy_rule_count(),
         highest_action_name(g_state.highest_action),
-        agent_q_policy_action_name(g_state.parsed.document.default_action),
+        current_policy_default_action_name(),
         g_state.method_summary,
         g_state.review_summary,
     };
@@ -361,6 +407,9 @@ AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(
         g_state.clear();
         return AgentQPolicyUpdateFlowBeginResult::invalid_argument;
     }
+    if (!g_state.allocate_workspaces()) {
+        return AgentQPolicyUpdateFlowBeginResult::encode_error;
+    }
 
     const AgentQPolicyMethodDescriptor descriptors[kPolicyUpdateMethodDescriptorCount] = {
         method_descriptor(),
@@ -371,7 +420,7 @@ AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(
             policy,
             descriptors,
             kPolicyUpdateMethodDescriptorCount,
-            &g_state.parsed);
+            g_state.parsed);
     if (parse_status != AgentQPolicyProposalParseStatus::ok) {
         g_state.clear();
         switch (parse_status) {
@@ -391,14 +440,14 @@ AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(
     }
 
     if (canonicalize_agent_q_policy_v0(
-            g_state.parsed.document,
+            g_state.parsed->document,
             descriptors,
             kPolicyUpdateMethodDescriptorCount,
-            &g_state.canonical) != AgentQPolicyCanonicalStatus::ok ||
+            g_state.canonical) != AgentQPolicyCanonicalStatus::ok ||
         encode_agent_q_policy_v0_canonical_record(
-            g_state.canonical,
+            *g_state.canonical,
             g_state.record,
-            sizeof(g_state.record),
+            kAgentQPolicyMaxCanonicalRecordBytes,
             &g_state.record_size) != AgentQPolicyCanonicalStatus::ok ||
         !digest_record(
             g_state.record,
@@ -411,19 +460,19 @@ AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(
         return AgentQPolicyUpdateFlowBeginResult::encode_error;
     }
 
-    g_state.highest_action = highest_action_for_document(g_state.parsed.document);
-    if (g_state.parsed.document.rule_count > 0) {
+    g_state.highest_action = highest_action_for_document(g_state.parsed->document);
+    if (g_state.parsed->document.rule_count > 0) {
         snprintf(
             g_state.method_summary,
             sizeof(g_state.method_summary),
             "%s/%s",
-            g_state.parsed.document.rules[0].chain,
-            g_state.parsed.document.rules[0].operation);
+            g_state.parsed->document.rules[0].chain,
+            g_state.parsed->document.rules[0].operation);
     } else {
         strlcpy(g_state.method_summary, "none", sizeof(g_state.method_summary));
     }
     if (!build_review_summary(
-            g_state.parsed.document,
+            g_state.parsed->document,
             g_state.method_summary,
             g_state.policy_hash,
             g_state.highest_action,
@@ -553,7 +602,7 @@ AgentQPolicyUpdateFlowTerminalResult policy_update_flow_commit(uint64_t uptime_m
         policy_update_marker_begin(
             g_state.digest,
             sizeof(g_state.digest),
-            g_state.parsed.document.rule_count,
+            current_policy_rule_count(),
             g_state.highest_action);
     if (marker_result == AgentQPolicyUpdateMarkerBeginResult::pending_after_error) {
         return AgentQPolicyUpdateFlowTerminalResult::consistency_error;

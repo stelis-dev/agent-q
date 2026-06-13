@@ -75,13 +75,13 @@ function invalidUnboundedSignPolicyDocument() {
     ruleCount: 1,
     rules: [
       {
-        id: "allow_unbounded_transfer",
+        id: "allow_unbounded_move_call",
         chain: "sui",
         method: "sign_transaction",
         action: "sign",
         criteria: [
-          { field: "sui.command_shape", op: "eq", value: "restricted_transfer" },
-          { field: "sui.amount_raw", op: "lte", value: "500000000" },
+          { field: "sui.command0_kind", op: "eq", value: "move_call" },
+          { field: "sui.gas_budget", op: "lte", value: "500000000" },
         ],
       },
     ],

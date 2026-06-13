@@ -221,7 +221,9 @@ rejected, accepts inline `txBytes` or same-session staged payload references
 for Sui `sign_transaction`, recognizes bounded Sui personal-message bytes for
 `sign_personal_message`, records required approval-history metadata, and
 returns `sign_result`. In policy authorization mode, the active policy can
-reject `sign_transaction` or authorize signing through a bounded `sign` rule.
+reject `sign_transaction`; Sui transaction signing through a policy `sign` rule
+is not accepted until complete policy coverage and sign-rule validation are
+implemented.
 `sign_personal_message` is user-mode only and fails closed in policy mode. In
 user authorization mode, Firmware uses device-local clear-signing review and
 the device-local human approval input mode. Product-active status is tracked in
@@ -268,9 +270,14 @@ The normal product flow still installs the DEV_PROFILE default-reject policy.
 view of Firmware-owned persistent decision metadata. The current Sign API
 runtime paths are session-scoped: unknown methods are rejected, Sui
 `sign_transaction` uses the current Sui `TransactionData::V1 ->
-ProgrammableTransaction` facts extractor, accepts signing only for the currently
-supported restricted SUI transfer projection, and uses the Firmware-local
-signing authorization mode. Sui
+ProgrammableTransaction` facts extractor and uses the Firmware-local signing
+authorization mode. Policy authorization signs only when the parsed transaction
+shape has complete policy coverage and the active policy has a matching bounded
+rule; user authorization enters device review only when the parsed shape has
+complete offline facts review coverage or when Firmware can validate and
+account-bind the transaction but must show an explicit blind-signing warning
+because offline facts review coverage is incomplete.
+Sui
 `sign_personal_message` validates bounded personal-message bytes in user
 authorization mode only. Both methods return `sign_result` for supported
 terminal outcomes. Hardware verification remains required for product-active
@@ -394,9 +401,10 @@ PIN verifier storage, signing authorization mode storage, local reset, and
 read-only `get_accounts` Sui account derivation are implemented.
 USB, host process, or MCP mnemonic import is not implemented.
 Policy updates are available only through the Firmware-owned
-`policy_propose` proposal flow for current-schema reject policies and at
-most one single-recipient bounded sign rule whose criteria explicitly cover the
-accepted command count and command kinds.
+`policy_propose` proposal flow for current-schema reject policies. The `sign`
+action value is part of the current schema, but Sui `sign_transaction` sign
+rules are not accepted until policy coverage can bind the actual transaction
+values needed for automatic authorization.
 
 If a target boots with `prov_state = provisioned` but missing, unreadable, or
 unsupported current active policy or signing authorization mode material,
@@ -1074,6 +1082,14 @@ Rules:
   transaction, unsupported chain, unsupported method, unsupported payload
   size, unsupported transaction, and unsupported policy-action errors are not
   persisted as approval history.
+- User signing confirmation records use `reasonCode: "device_confirmed"` for
+  clear review confirmation and `reasonCode: "blind_signing_confirmed"` when
+  the device showed the blind-signing warning for a valid account-bound
+  transaction whose offline facts review coverage was incomplete.
+- The clear/blind distinction is recorded on the required confirmation record.
+  Terminal records describe the terminal result (`signed`, `user_rejected`,
+  `user_timed_out`, or `signing_failed`) and do not repeat whether the preceding
+  confirmation was clear review or blind signing.
 - Approval-history persistence is part of the terminal decision contract for
   decisions that are recorded. If Firmware cannot persist a required history
   record or its write budget is exhausted, `sign_transaction` returns the top-level
@@ -1281,17 +1297,26 @@ its device-local signing authorization mode and chooses the internal signing
 gate:
 
 - both modes validate the request envelope, parse the transaction bytes, bind
-  sender and gas owner to the stored device account, and reject without
-  fallback when their selected gate rejects the request;
-- `policy`: build policy facts, evaluate the active policy, show
-  non-confirming device notifications, and sign without per-request
-  device-local confirmation only when policy authorizes the bounded request;
-- `user`: build a clear-signing review, require device-local human approval
-  using the current human approval input mode, and either reject, time out, or
-  sign the bounded request.
+  sender and gas owner to the stored device account, and reject when their
+  selected gate rejects the request;
+- `policy`: sign only when the parsed transaction shape has complete policy
+  coverage, policy facts can be built, and the active policy authorizes the
+  bounded request. A valid account-bound transaction whose policy coverage is
+  incomplete returns `status: "policy_rejected"`; malformed, unbindable,
+  unsupported-version/kind, `TransactionKind`-only, trailing, or oversized
+  transaction bytes remain request errors;
+- `user`: build a clear-signing review when complete offline facts review
+  coverage exists.
+  If Firmware can still validate and account-bind the transaction but cannot
+  provide complete offline facts review coverage, it may show an explicit
+  blind-signing warning instead. Both user paths require device-local human
+  approval using the
+  current human approval input mode and either reject, time out, or sign the
+  original transaction bytes.
 
-There is no fallback between gates. A policy rejection in policy mode ends the
-request. A user rejection or timeout in user mode ends the request.
+There is no cross-over between gates. A policy rejection or incomplete policy
+coverage in policy mode ends the request without user confirmation. A user
+rejection or timeout in user mode ends the request.
 
 Request shape:
 
@@ -1340,11 +1365,20 @@ Current implementation rules:
   `approvalTimeoutMs`, `durationMs`, raw session tokens beyond the envelope
   `sessionId`, or signing material.
 - The current implementation is limited to `chain: "sui"` and
-  `method: "sign_transaction"` for the restricted SUI transfer projection
-  derived by the current Sui `TransactionData::V1 -> ProgrammableTransaction`
-  facts extractor. Well-formed transaction shapes outside the supported
-  projection remain fail-closed until policy and review support are
-  implemented.
+  `method: "sign_transaction"` for bounded Sui `TransactionData::V1 ->
+  ProgrammableTransaction` bytes decoded by the Firmware facts extractor.
+  Unsupported versions, unsupported transaction kinds, `TransactionKind`-only
+  bytes, malformed bytes, trailing bytes, out-of-range command references,
+  serialized payload/input capacity overflow, and transactions whose sender and
+  gas owner cannot be extracted and bound to the stored device account fail
+  closed.
+  Policy authorization currently returns `policy_rejected` for valid
+  transactions whose policy coverage is incomplete, and does not sign until
+  complete policy coverage and accepted sign-rule validation are implemented.
+  User authorization shows covered offline facts when offline facts review
+  coverage is complete, or an explicit blind-signing warning when Firmware can
+  validate and bind the transaction but offline facts review coverage is
+  incomplete.
 - `params.network` is required and must be one of `mainnet`, `testnet`,
   `devnet`, or `localnet`. Current Sui transaction bytes do not carry network
   identity, so Firmware validates this only as request context and does not
@@ -1360,11 +1394,18 @@ Current implementation rules:
 - The current Sui transaction route can receive staged payload bytes up to the
   Sui serialized transaction maximum. This capacity is a payload delivery and
   adapter input bound, not a claim that every Sui transaction shape is
-  semantically signable. Capacity overflow returns `unsupported_payload_size`;
-  malformed decoded bytes return `malformed_transaction`; a decoded but
-  unsupported transaction shape returns `unsupported_transaction`. These are
-  adapter outcomes, not common Core, host process, MCP, and CLI request-format
-  limits.
+  semantically signable. Serialized payload/input capacity overflow returns
+  `unsupported_payload_size`; malformed decoded bytes return
+  `malformed_transaction`; unsupported transaction identity, unsupported version
+  or kind, `TransactionKind`-only payloads, or inputs whose minimum
+  sender/gas-owner facts cannot be extracted fail closed before signing.
+  Separate detail-review parser limits may prevent complete offline facts
+  review without making the serialized payload oversized. A valid
+  account-bound transaction that stays within the serialized payload/input
+  bound but exceeds a detail-review parser limit may enter the explicit
+  user-mode blind signing path, while policy mode rejects policy-incomplete
+  transactions. These are Firmware adapter and authorization outcomes, not
+  common Core, host process, MCP, and CLI request-format limits.
 - Firmware must derive the signing account from stored device material, and
   the parsed sender and gas owner must both match that device-derived account.
   Sponsored gas and request-supplied expected-signer bindings are unsupported
@@ -1718,7 +1759,7 @@ Request shape:
       "defaultAction": "reject",
       "rules": [
         {
-          "id": "reject-sui-transfer",
+          "id": "reject-sui-ptb",
           "chain": "sui",
           "method": "sign_transaction",
           "action": "reject",
@@ -1726,7 +1767,7 @@ Request shape:
             {
               "field": "common.intent",
               "op": "eq",
-              "value": "single_asset_transfer"
+              "value": "programmable_transaction"
             }
           ]
         }
@@ -1741,11 +1782,11 @@ Policy document rules for the current version:
 - Wire format: JSON inside the existing JSONL protocol envelope. Firmware must
   parse the JSON into a bounded internal policy AST before validation or
   storage. The wire JSON is not stored directly.
-- The protocol handler enforces a 4096-byte maximum raw JSON object before
-  deserialization, not counting the trailing newline. Target-local proposal
-  parser source may additionally
-  bound the serialized policy object after deserialization; that check is not a
-  substitute for the raw envelope limit.
+- The policy proposal request and Firmware request-line receiver are bounded to
+  the current policy proposal size. The current policy proposal object and
+  canonical policy record cap is 16384 bytes. This is separate from the smaller
+  default request-frame bound used by ordinary request builders and staged
+  payload chunks.
 - Stored format: a Firmware-canonical binary policy record derived from the
   bounded AST. Policy hash/id is computed over that canonical record.
 - `schema` must be `agentq.policy.v0`.
@@ -1761,26 +1802,17 @@ Policy document rules for the current version:
   update must not store dormant behavior. Disabled policy drafts are out
   of scope for the current version.
 - A `reject` rule may have zero criteria.
-- A `sign` rule must be bounded, and the current implementation accepts at most
-  one `sign` rule in a policy document. For Sui `sign_transaction`, broad
-  signing is invalid. The current implementation requires criteria that restrict
-  the rule to the bounded restricted SUI transfer shape, including
-  `common.intent = single_asset_transfer`,
-  `sui.command_shape = restricted_transfer`,
-  `sui.command_count = 2`,
-  `sui.command0_kind = split_coins`,
-  `sui.command1_kind = transfer_objects`,
-  `sui.coin_type = 0x2::sui::SUI`, one concrete recipient criterion,
-  amount bounds, and gas bounds. Multiple sign rules and multi-recipient sign
-  allowlists are invalid until the device-local policy-update review can show
-  every allowed signing rule and recipient clearly.
-- A rule may contain at most 12 criteria. The current restricted-transfer
-  `sign` rule requires 10 criteria: route intent, command shape, command count,
-  two command kinds, asset, one recipient, amount max, gas budget max, and gas
-  price max.
-- Criterion `field` is a bounded namespace/field id such as `common.intent` or
-  `sui.amount_raw`. Common fields are owned by the common policy evaluator;
-  chain-specific fields are owned by the corresponding method adapter.
+- A `sign` rule must be backed by complete policy coverage for the selected
+  method. Sui `sign_transaction` does not currently accept policy `sign` rules:
+  graph-level MoveCall criteria and gas bounds do not bind enough of the actual
+  transaction values to authorize signing. Policy mode for Sui transaction
+  signing therefore remains fail-closed until a complete policy-coverage
+  contract is implemented.
+- A rule may contain at most 96 criteria.
+- Criterion `field` is a bounded namespace/field id such as `common.intent`,
+  `sui.gas_budget`, or `sui.command0_move_call_package`. Common fields are
+  owned by the common policy evaluator; chain-specific fields are owned by the
+  corresponding method adapter.
 - Criterion `op` may be `eq`, `in`, or `lte` only where the active method
   adapter's field descriptor allows that operator.
 - `eq` and `lte` use exactly one scalar `value`. `in` uses exactly one

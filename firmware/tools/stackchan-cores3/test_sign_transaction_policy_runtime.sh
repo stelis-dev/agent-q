@@ -7,8 +7,9 @@ Usage: firmware/tools/stackchan-cores3/test_sign_transaction_policy_runtime.sh
 
 Compiles the StackChan CoreS3 sign_transaction_policy runtime boundary against
 prepared Sui transaction input, the common Sui facts parser, and the common
-policy runtime. It verifies default policy rejection, bounded policy sign
-approval, unsupported methods, invalid prepared input, and policy metadata.
+policy runtime. It verifies parser-only coverage rejection, default policy
+rejection, fail-closed handling for current invalid sign policies, unsupported
+methods, invalid prepared input, and policy metadata.
 This test uses only host compilers and does NOT require ESP-IDF.
 EOF
 }
@@ -26,7 +27,7 @@ COMMON_POLICY_DIR="${COMMON_ROOT}/policy"
 COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
 for required in \
-  "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
+  "${FIXTURE_DIR}/move_call_tx.bcs.hex" \
   "${COMMON_ROOT}/agent_q_u64_decimal.h" \
   "${AGENT_Q_DIR}/agent_q_sign_transaction_policy_runtime.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
@@ -85,9 +86,13 @@ constexpr const char* kPayloadDigest =
 int failures = 0;
 agent_q::AgentQPolicyAction g_policy_action = agent_q::AgentQPolicyAction::reject;
 bool g_policy_has_rule = false;
-const char* g_rule_id = "sign-small-sui-transfer";
-const char* g_allowed_recipient = nullptr;
+const char* g_rule_id = "sign-specific-move-call";
 const char* g_gas_price_bound = "1000000000";
+const char* g_move_call_package = nullptr;
+const char* g_move_call_module = nullptr;
+const char* g_move_call_function = nullptr;
+const char* g_move_call_type_arg0 = nullptr;
+char g_move_call_type_arg_count[agent_q::kSuiU64StringBufferSize] = "0";
 bool g_account_available = true;
 const char* g_stored_address = nullptr;
 
@@ -105,6 +110,25 @@ void clobber_stack()
     for (size_t index = 0; index < sizeof(buffer); ++index) {
         buffer[index] = static_cast<char>(index & 0x7F);
     }
+}
+
+agent_q::SuiTransactionFactsResult parse_policy_subject(
+    const uint8_t* bytes,
+    size_t size,
+    agent_q::SuiPolicySubjectFacts* out)
+{
+    if (out != nullptr) {
+        *out = {};
+    }
+    agent_q::SuiParsedTransactionFacts parsed = {};
+    const agent_q::SuiTransactionFactsResult result =
+        agent_q::parse_sui_parsed_transaction_facts(bytes, size, &parsed);
+    if (result != agent_q::SuiTransactionFactsResult::ok) {
+        return result;
+    }
+    return agent_q::build_sui_policy_subject_facts(parsed, out)
+               ? agent_q::SuiTransactionFactsResult::ok
+               : agent_q::SuiTransactionFactsResult::unsupported_shape;
 }
 
 uint8_t hex_value(char c)
@@ -161,73 +185,64 @@ bool load_default_policy(AgentQPolicyDocument* out, void*)
     if (out == nullptr) {
         return false;
     }
-    static const char* recipient_values[1] = {};
-    recipient_values[0] = ::g_allowed_recipient;
-    static AgentQPolicyCriterion criteria[10] = {};
+    static AgentQPolicyCriterion criteria[9] = {};
     criteria[0] = AgentQPolicyCriterion{
-        "common.intent",
+        "sui.command_count",
         AgentQPolicyOperator::eq,
-        kAgentQPolicyIntentSingleAssetTransfer,
+        "1",
         nullptr,
         0,
     };
     criteria[1] = AgentQPolicyCriterion{
-        "sui.command_shape",
+        "sui.command0_kind",
         AgentQPolicyOperator::eq,
-        kAgentQSuiPolicyCommandShapeRestrictedTransfer,
+        kAgentQSuiPolicyCommandKindMoveCall,
         nullptr,
         0,
     };
     criteria[2] = AgentQPolicyCriterion{
-        "sui.command_count",
+        "sui.command0_move_call_package",
         AgentQPolicyOperator::eq,
-        "2",
+        ::g_move_call_package,
         nullptr,
         0,
     };
     criteria[3] = AgentQPolicyCriterion{
-        "sui.command0_kind",
+        "sui.command0_move_call_module",
         AgentQPolicyOperator::eq,
-        kAgentQSuiPolicyCommandKindSplitCoins,
+        ::g_move_call_module,
         nullptr,
         0,
     };
     criteria[4] = AgentQPolicyCriterion{
-        "sui.command1_kind",
+        "sui.command0_move_call_function",
         AgentQPolicyOperator::eq,
-        kAgentQSuiPolicyCommandKindTransferObjects,
+        ::g_move_call_function,
         nullptr,
         0,
     };
     criteria[5] = AgentQPolicyCriterion{
-        "sui.coin_type",
+        "sui.command0_move_call_type_args",
         AgentQPolicyOperator::eq,
-        "0x2::sui::SUI",
+        ::g_move_call_type_arg_count,
         nullptr,
         0,
     };
     criteria[6] = AgentQPolicyCriterion{
-        "sui.recipient_address",
-        AgentQPolicyOperator::in,
-        nullptr,
-        recipient_values,
-        1,
-    };
-    criteria[7] = AgentQPolicyCriterion{
-        "sui.amount_raw",
-        AgentQPolicyOperator::lte,
-        "1000000",
+        "sui.command0_move_call_type_arg0",
+        AgentQPolicyOperator::eq,
+        ::g_move_call_type_arg0,
         nullptr,
         0,
     };
-    criteria[8] = AgentQPolicyCriterion{
+    criteria[7] = AgentQPolicyCriterion{
         "sui.gas_budget",
         AgentQPolicyOperator::lte,
         "50000000",
         nullptr,
         0,
     };
-    criteria[9] = AgentQPolicyCriterion{
+    criteria[8] = AgentQPolicyCriterion{
         "sui.gas_price",
         AgentQPolicyOperator::lte,
         ::g_gas_price_bound,
@@ -322,12 +337,24 @@ int main(int argc, char** argv)
     }
 
     const std::vector<uint8_t> tx_bytes = read_hex_fixture(argv[1]);
-    agent_q::SuiTransactionPolicyFacts sui_facts = {};
+    agent_q::SuiPolicySubjectFacts sui_facts = {};
     const agent_q::SuiTransactionFactsResult facts_result =
-        agent_q::parse_sui_transaction_policy_facts(tx_bytes.data(), tx_bytes.size(), &sui_facts);
+        parse_policy_subject(tx_bytes.data(), tx_bytes.size(), &sui_facts);
     expect(facts_result == agent_q::SuiTransactionFactsResult::ok,
-           "fixture parses as supported restricted transfer");
-    ::g_allowed_recipient = sui_facts.restricted_transfer.recipient;
+           "fixture parses as supported MoveCall transaction");
+    expect(sui_facts.command_count == 1 &&
+           sui_facts.commands[0].kind == agent_q::SuiCommandFactKind::move_call &&
+           sui_facts.commands[0].type_argument_count == 1,
+           "fixture exposes bounded MoveCall facts");
+    ::g_move_call_package = sui_facts.commands[0].move_call_package;
+    ::g_move_call_module = sui_facts.commands[0].move_call_module;
+    ::g_move_call_function = sui_facts.commands[0].move_call_function;
+    ::g_move_call_type_arg0 = sui_facts.commands[0].move_call_type_args[0];
+    snprintf(
+        ::g_move_call_type_arg_count,
+        sizeof(::g_move_call_type_arg_count),
+        "%u",
+        static_cast<unsigned>(sui_facts.commands[0].type_argument_count));
     ::g_gas_price_bound = sui_facts.gas_price;
     ::g_account_available = true;
     ::g_stored_address = sui_facts.sender;
@@ -340,7 +367,25 @@ int main(int argc, char** argv)
     memcpy(prepared.tx_bytes, tx_bytes.data(), tx_bytes.size());
     prepared.tx_bytes_size = tx_bytes.size();
     snprintf(prepared.payload_digest, sizeof(prepared.payload_digest), "%s", kPayloadDigest);
-    prepared.sui_facts = sui_facts;
+    prepared.sui_policy_subject = sui_facts;
+
+    agent_q::AgentQSuiPreparedSignTransaction not_covered_prepared = prepared;
+    const agent_q::AgentQSignTransactionPolicyRuntimeResult not_covered =
+        agent_q::evaluate_sign_transaction_policy(not_covered_prepared);
+    expect(not_covered.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_rejected,
+           "policy runtime rejects incomplete policy coverage");
+    expect(strcmp(not_covered.code, "policy_rejected") == 0,
+           "incomplete policy coverage reports policy_rejected");
+    expect(strcmp(not_covered.reason_code, "policy_coverage_incomplete") == 0,
+           "incomplete policy coverage records reason code");
+    expect(strcmp(not_covered.policy_hash, kPolicyHash) == 0,
+           "incomplete policy coverage preserves policy hash");
+    expect(strcmp(not_covered.rule_ref, "default") == 0,
+           "incomplete policy coverage records default rule ref");
+    expect(not_covered.tx_bytes_size == 0,
+           "incomplete policy coverage does not expose signable tx bytes");
+
+    prepared.policy_mode_authorization_covered = true;
 
     ::g_policy_has_rule = false;
     ::g_policy_action = agent_q::AgentQPolicyAction::reject;
@@ -366,18 +411,15 @@ int main(int argc, char** argv)
 
     ::g_policy_has_rule = true;
     ::g_policy_action = agent_q::AgentQPolicyAction::sign;
-    ::g_rule_id = "sign-small-sui-transfer";
-    const agent_q::AgentQSignTransactionPolicyRuntimeResult approved =
+    ::g_rule_id = "sign-specific-move-call";
+    const agent_q::AgentQSignTransactionPolicyRuntimeResult invalid_sign_policy =
         agent_q::evaluate_sign_transaction_policy(prepared);
-    expect(approved.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized,
-           "bounded policy sign rule approves sign_transaction_policy");
-    expect(strcmp(approved.code, "policy_signed") == 0,
-           "policy approval code");
-    expect(strcmp(approved.rule_ref, "sign-small-sui-transfer") == 0,
-           "policy approval records matched sign rule id");
-    expect(approved.tx_bytes_size == tx_bytes.size(), "policy approval owns signable tx bytes");
-    expect(memcmp(approved.tx_bytes, tx_bytes.data(), tx_bytes.size()) == 0,
-           "policy approval preserves signable tx bytes");
+    expect(invalid_sign_policy.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_error,
+           "current sign policy fails closed until policy coverage is implemented");
+    expect(strcmp(invalid_sign_policy.code, "policy_error") == 0,
+           "invalid sign policy reports policy_error");
+    expect(invalid_sign_policy.tx_bytes_size == 0,
+           "invalid sign policy does not expose signable tx bytes");
 
     std::vector<uint8_t> max_policy_payload(
         agent_q::kAgentQSuiSignTransactionTxBytesMaxBytes,
@@ -385,16 +427,14 @@ int main(int argc, char** argv)
     agent_q::AgentQSuiPreparedSignTransaction max_prepared = prepared;
     max_prepared.tx_bytes = max_policy_payload.data();
     max_prepared.tx_bytes_size = max_policy_payload.size();
-    const agent_q::AgentQSignTransactionPolicyRuntimeResult max_approved =
+    const agent_q::AgentQSignTransactionPolicyRuntimeResult max_rejected =
         agent_q::evaluate_sign_transaction_policy(max_prepared);
-    expect(max_approved.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized,
-           "bounded policy sign rule can authorize max-size prepared payload");
-    expect(max_approved.tx_bytes == max_policy_payload.data(),
-           "policy approval preserves max-size signable payload pointer");
-    expect(max_approved.tx_bytes_size == max_policy_payload.size(),
-           "policy approval preserves max-size signable payload size");
+    expect(max_rejected.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_error,
+           "current sign policy does not authorize max-size prepared payload");
+    expect(max_rejected.tx_bytes_size == 0,
+           "current sign policy fail-closed result does not expose max-size payload");
 
-    agent_q::AgentQSignTransactionPolicyRuntimeResult cleared = approved;
+    agent_q::AgentQSignTransactionPolicyRuntimeResult cleared = rejected;
     agent_q::clear_sign_transaction_policy_runtime_result(&cleared);
     expect(cleared.code == nullptr && cleared.tx_bytes_size == 0,
            "clearing sign_transaction_policy result wipes public metadata");
@@ -443,4 +483,4 @@ CPP
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   -o "${TMP_DIR}/sign_transaction_policy_runtime_test"
 
-"${TMP_DIR}/sign_transaction_policy_runtime_test" "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex"
+"${TMP_DIR}/sign_transaction_policy_runtime_test" "${FIXTURE_DIR}/move_call_tx.bcs.hex"

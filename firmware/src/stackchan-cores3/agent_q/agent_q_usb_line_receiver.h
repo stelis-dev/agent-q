@@ -4,7 +4,7 @@
 
 namespace agent_q {
 
-constexpr size_t kAgentQUsbRequestLineMaxBytes = 4096;
+constexpr size_t kAgentQUsbRequestLineMaxBytes = 16 * 1024;
 
 using AgentQUsbRequestLineHandler = void (*)(const char* line);
 using AgentQUsbRequestLineErrorHandler = void (*)(const char* code, const char* message);

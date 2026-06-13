@@ -177,7 +177,7 @@ agent_q::AgentQPolicyFacts valid_facts()
         {
             "common.intent",
             agent_q::AgentQPolicyValueType::string,
-            "single_asset_transfer",
+            "programmable_transaction",
         },
     };
     return agent_q::AgentQPolicyFacts{
@@ -310,20 +310,53 @@ bool fill_generated_policy(JsonDocument* policy, size_t rule_count, size_t value
         rule["action"] = "reject";
         JsonArray criteria = rule["criteria"].to<JsonArray>();
 
-        JsonObject intent = criteria.add<JsonObject>();
-        intent["field"] = "common.intent";
-        intent["op"] = "eq";
-        intent["value"] = "single_asset_transfer";
+        const std::string string_value(value_length, static_cast<char>('a' + static_cast<int>(rule_index % 26)));
 
-        JsonObject recipient = criteria.add<JsonObject>();
-        recipient["field"] = "sui.recipient_address";
-        recipient["op"] = "in";
-        JsonArray values = recipient["values"].to<JsonArray>();
-        std::string value = "recipient";
-        while (value.size() < value_length) {
-            value.push_back(static_cast<char>('a' + (rule_index % 26)));
+        auto add_eq = [&criteria, &string_value](const char* field) {
+            JsonObject criterion = criteria.add<JsonObject>();
+            criterion["field"] = std::string(field);
+            criterion["op"] = "eq";
+            criterion["value"] = string_value;
+        };
+        auto add_u64_lte = [&criteria](const char* field, const char* value) {
+            JsonObject criterion = criteria.add<JsonObject>();
+            criterion["field"] = std::string(field);
+            criterion["op"] = "lte";
+            criterion["value"] = value;
+        };
+
+        add_eq("common.intent");
+        add_eq("common.chain");
+        add_eq("common.method");
+        add_eq("sui.sender_address");
+        add_eq("sui.gas_owner_address");
+        add_u64_lte("sui.command_count", "8");
+        add_u64_lte("sui.gas_budget", "1000000");
+        add_u64_lte("sui.gas_price", "1000");
+        add_eq("sui.transaction_kind");
+        add_eq("sui.expiration_kind");
+        for (size_t command_index = 0; command_index < agent_q::kSuiPolicyFactMaxCommands; ++command_index) {
+            char field[64] = {};
+            snprintf(field, sizeof(field), "sui.command%u_kind", static_cast<unsigned>(command_index));
+            add_eq(field);
+            snprintf(field, sizeof(field), "sui.command%u_move_call_package", static_cast<unsigned>(command_index));
+            add_eq(field);
+            snprintf(field, sizeof(field), "sui.command%u_move_call_module", static_cast<unsigned>(command_index));
+            add_eq(field);
+            snprintf(field, sizeof(field), "sui.command%u_move_call_function", static_cast<unsigned>(command_index));
+            add_eq(field);
+            snprintf(field, sizeof(field), "sui.command%u_move_call_type_args", static_cast<unsigned>(command_index));
+            add_u64_lte(field, "4");
+            for (size_t type_arg_index = 0; type_arg_index < agent_q::kSuiPolicyFactMaxTypeArguments; ++type_arg_index) {
+                snprintf(
+                    field,
+                    sizeof(field),
+                    "sui.command%u_move_call_type_arg%u",
+                    static_cast<unsigned>(command_index),
+                    static_cast<unsigned>(type_arg_index));
+                add_eq(field);
+            }
         }
-        values.add(value.c_str());
     }
     return !policy->overflowed();
 }
@@ -595,7 +628,7 @@ int main()
     std::vector<uint8_t> custom_record;
     std::vector<uint8_t> custom_record_2;
     expect(make_default_record(&default_record), "build default record fixture");
-    expect(make_reject_rule_record("reject-transfer", "single_asset_transfer", &custom_record), "build custom policy record");
+    expect(make_reject_rule_record("reject-programmable", "programmable_transaction", &custom_record), "build custom policy record");
     expect(make_reject_rule_record("reject-other-intent", "unsupported_intent", &custom_record_2), "build second custom policy record");
 
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "missing policy status");
@@ -679,7 +712,7 @@ int main()
     expect(store_record(custom_record_2) == agent_q::AgentQPolicyStoreWriteResult::unchanged_failure, "stale commit pre-erase failure blocks inactive slot reuse");
     g_erase_fails_for_key.clear();
     decision = evaluate_active_policy();
-    expect(strcmp(decision.rule_id, "reject-transfer") == 0, "stale commit pre-erase failure preserves active policy");
+    expect(strcmp(decision.rule_id, "reject-programmable") == 0, "stale commit pre-erase failure preserves active policy");
     expect(agent_q::wipe_policy(), "wipe after stale commit cleanup failure");
     expect(agent_q::store_default_policy(), "restore default policy after stale commit cleanup failure");
 
@@ -692,12 +725,12 @@ int main()
     expect(document.rule_count == 1, "custom policy document rule count");
     expect(document.document != nullptr, "custom policy document view");
     expect(document.document->rule_count == 1, "custom policy runtime view rule count");
-    expect(strcmp(document.document->rules[0].id, "reject-transfer") == 0, "custom policy document rule id");
+    expect(strcmp(document.document->rules[0].id, "reject-programmable") == 0, "custom policy document rule id");
     expect(document.document->rules[0].criterion_count > 0, "custom policy document carries criteria");
     decision = evaluate_active_policy();
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "custom policy matching rule rejects");
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::matched_rule, "custom policy match reason");
-    expect(strcmp(decision.rule_id, "reject-transfer") == 0, "custom policy rule id");
+    expect(strcmp(decision.rule_id, "reject-programmable") == 0, "custom policy rule id");
     decision = evaluate_active_policy_mismatch();
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "custom policy mismatch rejects");
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "custom policy mismatch default reason");
@@ -718,7 +751,7 @@ int main()
     g_blobs["pol_c1"] = {0};
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "pending torn next commit metadata preserves newest policy");
     decision = evaluate_active_policy();
-    expect(strcmp(decision.rule_id, "reject-transfer") == 0, "pending torn next commit metadata keeps newest rule");
+    expect(strcmp(decision.rule_id, "reject-programmable") == 0, "pending torn next commit metadata keeps newest rule");
     g_blobs.erase("pol_c1");
     g_blobs.erase("pol_p");
 
@@ -737,7 +770,7 @@ int main()
     g_blobs["pol_s0"] = {0};
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active, "pending torn next slot preserves newest policy");
     decision = evaluate_active_policy();
-    expect(strcmp(decision.rule_id, "reject-transfer") == 0, "pending torn next slot keeps newest rule");
+    expect(strcmp(decision.rule_id, "reject-programmable") == 0, "pending torn next slot keeps newest rule");
     g_blobs.erase("pol_p");
 
     g_set_fails_for_key = "pol_c1";
@@ -745,7 +778,7 @@ int main()
     g_set_fails_for_key.clear();
     decision = evaluate_active_policy();
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::matched_rule, "commit metadata set failure keeps old policy");
-    expect(strcmp(decision.rule_id, "reject-transfer") == 0, "commit metadata set failure keeps old rule");
+    expect(strcmp(decision.rule_id, "reject-programmable") == 0, "commit metadata set failure keeps old rule");
 
     g_commit_fails_for_commit_record = true;
     expect(store_record(custom_record_2) == agent_q::AgentQPolicyStoreWriteResult::applied, "durable commit despite commit return failure is treated as applied");

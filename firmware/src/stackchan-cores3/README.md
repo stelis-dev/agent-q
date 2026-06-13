@@ -97,11 +97,14 @@ The current implementation includes:
   state plus a matching active session, keeps unknown methods rejected with
   `unsupported_method`, and accepts Sui transaction bytes either inline or
   through same-session staged payload delivery before Firmware parsing.
-  Firmware reads the device-local signing authorization mode: policy mode
-  evaluates active policy, shows speech-bubble status notifications, and signs
-  without per-request confirmation when policy authorizes the bounded request,
-  while user mode shows clear-signing review and requires the current human
-  approval input mode without applying active policy as an additional filter.
+  Firmware reads the device-local signing authorization mode. Policy mode
+  evaluates active policy only after the parsed transaction shape has complete
+  policy coverage; valid policy-incomplete shapes return `policy_rejected`
+  before signing. User mode starts clear-signing review when complete offline
+  facts review coverage exists, or a blind-signing warning when Firmware can
+  validate and bind the transaction but offline facts review coverage is
+  incomplete. Both user paths require the current human approval input mode
+  without applying active policy as an additional filter.
   It returns `signed` only after required history is durable and signing
   succeeds. Unsupported Sui transaction semantics, caller-selected
   authorization, caller-controlled timing fields, and chain-specific top-level
@@ -169,13 +172,15 @@ methods plus top-level `signing`, derives read-only public account identity
 (`get_accounts`), and links a host-tested Sui `TransactionData` facts extractor
 plus a common stored-policy runtime boundary. The current
 `sign_transaction` path reads the Firmware-local signing authorization mode and
-uses exactly one gate: policy mode evaluates the committed active policy, while
-user mode performs device confirmation after Firmware parses the inline or
-staged Sui transaction bytes, prepares the supported review model, applies the
-current human approval input mode, and records required history. It rejects
-unsupported transactions and returns `signed`, `policy_rejected`,
-`user_rejected`, `user_timed_out`, or `signing_failed` through `sign_result` as
-applicable. Product-active status is tracked in
+uses exactly one gate: policy mode may sign only after Firmware marks the parsed
+shape as having complete policy coverage and the committed active policy
+authorizes signing, while user mode may enter clear review or blind-signing
+device confirmation after Firmware validates and account-binds the transaction.
+User mode then applies the current human approval input mode and records
+required history. Policy-incomplete valid transactions return `policy_rejected`
+in policy mode. It rejects unsupported transactions and returns `signed`,
+`policy_rejected`, `user_rejected`, `user_timed_out`, or `signing_failed`
+through `sign_result` as applicable. Product-active status is tracked in
 `docs/IMPLEMENTATION_STATUS.md`; do not infer it from source paths alone.
 The target also exposes user-mode `sign_personal_message` for bounded Sui
 personal-message bytes; policy mode fails closed for that method until matching
@@ -316,18 +321,20 @@ signing boundary with host stubs. This is not a protocol signing test.
 The Sui transaction facts parser test is a common host-side check. It compiles
 `firmware/src/common/agent_q/sui` and verifies tracked BCS fixtures for the Sui
 `TransactionData` facts extractor, command argument refs, top-level TypeTag
-facts, MoveCall package/module/function facts, malformed ref rejection, and the
-currently signable derived restricted SUI transfer fact. StackChan CoreS3
+facts, MoveCall package/module/function/type-argument facts, malformed ref
+rejection, unsupported decoded shape classification, and generic PTB command
+facts. StackChan CoreS3
 connects the extractor to Sui `sign_transaction` policy and user authorization
 gates for inline and staged transaction bytes.
 
 The policy test is also a common host-side check. It compiles
 `firmware/src/common/agent_q/policy` plus the Sui method adapter and
-verifies deny-by-default reject decisions, bounded sign decisions, default
-provider behavior, missing/invalid policy provider rejection, malformed policy
-rejection, and unsupported-facts rejection. StackChan CoreS3 consumes the
-committed active policy for restricted Sui `sign_transaction` policy evaluation
-and signing decisions. Custom policy updates enter separately through the
+verifies deny-by-default reject decisions, sign-rule invalidation while policy
+coverage is incomplete, default provider behavior, missing/invalid policy
+provider rejection, malformed policy rejection, and unsupported-facts
+rejection. StackChan CoreS3 consumes the committed active policy for Sui
+`sign_transaction` policy evaluation only after the parsed shape has complete
+policy coverage. Custom policy updates enter separately through the
 Firmware-owned `policy_propose` proposal flow.
 
 The StackChan policy-store test is target-specific. It compiles the tracked
@@ -364,9 +371,9 @@ The StackChan sign_transaction policy runtime test is target-specific. It compil
 `agent_q_sign_transaction_policy_runtime.cpp` runtime boundary with ArduinoJson, the common Sui
 facts parser, the common policy runtime, and pinned MicroSui base64 helpers,
 then verifies unsupported method rejection, invalid Sui params, approval-history
-metadata exposure, the default-reject policy result, bounded policy-approved
-signing handoff metadata, and scratch cleanup for a valid restricted SUI
-transfer fixture.
+metadata exposure, fail-closed behavior for policy-incomplete transaction coverage,
+the default-reject policy result, policy-authorized handoff metadata only for
+an explicitly coverage-marked fixture, and scratch cleanup.
 
 The StackChan policy-proposal parser test is target-specific. It compiles the
 tracked `agent_q_policy_proposal_parser.cpp` parser with ArduinoJson and the

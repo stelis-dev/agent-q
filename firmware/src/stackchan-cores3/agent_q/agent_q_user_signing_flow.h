@@ -106,12 +106,14 @@ struct AgentQUserSigningFlowCoreSnapshot {
     AgentQTimeoutWindow pin_input_window;
     size_t signable_payload_size;
     bool signable_payload_available;
+    bool blind_signing_confirmation;
 };
 
-// Full review snapshot. It includes the Sui fact matrix and must be copied only
-// into caller-owned or static scratch when rendering review UI details.
+// Full review snapshot. It includes compact review metadata and must be copied
+// only into caller-owned or static scratch when rendering review UI details.
 struct AgentQUserSigningFlowSnapshot : AgentQUserSigningFlowCoreSnapshot {
-    SuiTransactionPolicyFacts sui_facts;
+    SuiPolicySubjectFacts sui_policy_subject;
+    SuiReviewSummary sui_review;
     char account_address[kSuiAddressBufferSize];
     char message_preview[kAgentQSignPersonalMessagePreviewSize];
 };

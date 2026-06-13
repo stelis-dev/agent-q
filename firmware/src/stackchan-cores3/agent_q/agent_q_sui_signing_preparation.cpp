@@ -111,11 +111,14 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
         clear_prepared_sui_sign_transaction(out);
         return AgentQSuiSigningPreparationResult::digest_error;
     }
+    AgentQSuiSignTransactionAuthorizationCoverage authorization_coverage = {};
     const AgentQSuiSignTransactionAdapterResult adapter_result =
         classify_sui_sign_transaction(
             out->tx_bytes,
             out->tx_bytes_size,
-            &out->sui_facts);
+            &out->sui_policy_subject,
+            &out->sui_review,
+            &authorization_coverage);
     if (adapter_result != AgentQSuiSignTransactionAdapterResult::ok) {
         clear_prepared_sui_sign_transaction(out);
         return adapter_result ==
@@ -123,8 +126,12 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
                    ? AgentQSuiSigningPreparationResult::malformed_transaction
                    : AgentQSuiSigningPreparationResult::unsupported_transaction;
     }
+    out->user_mode_authorization_covered =
+        authorization_coverage.user_mode_authorization_covered;
+    out->policy_mode_authorization_covered =
+        authorization_coverage.policy_mode_authorization_covered;
     const AgentQSuiSigningAccountBindingResult account_result =
-        verify_sui_signing_stored_account_binding(out->sui_facts);
+        verify_sui_signing_stored_account_binding(out->sui_policy_subject);
     if (account_result != AgentQSuiSigningAccountBindingResult::ok) {
         clear_prepared_sui_sign_transaction(out);
         return account_result == AgentQSuiSigningAccountBindingResult::account_unavailable

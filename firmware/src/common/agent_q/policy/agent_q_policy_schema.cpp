@@ -243,116 +243,14 @@ bool agent_q_policy_validate_method_descriptors(
     return true;
 }
 
-namespace {
-
-bool criterion_eq(const AgentQPolicyCriterion& criterion, const char* field, const char* value)
-{
-    return criterion.field != nullptr &&
-           criterion.value != nullptr &&
-           strcmp(criterion.field, field) == 0 &&
-           criterion.op == AgentQPolicyOperator::eq &&
-           strcmp(criterion.value, value) == 0;
-}
-
-bool criterion_lte(const AgentQPolicyCriterion& criterion, const char* field)
-{
-    return criterion.field != nullptr &&
-           criterion.value != nullptr &&
-           strcmp(criterion.field, field) == 0 &&
-           criterion.op == AgentQPolicyOperator::lte &&
-           agent_q_policy_is_decimal_u64_string(criterion.value);
-}
-
-bool criterion_u64_eq(const AgentQPolicyCriterion& criterion, const char* field, const char* value)
-{
-    return criterion_eq(criterion, field, value) &&
-           agent_q_policy_is_decimal_u64_string(criterion.value);
-}
-
-bool criterion_recipient_bounded(const AgentQPolicyCriterion& criterion)
-{
-    if (criterion.field == nullptr ||
-        strcmp(criterion.field, "sui.recipient_address") != 0) {
-        return false;
-    }
-    if (criterion.op == AgentQPolicyOperator::eq) {
-        return string_present(criterion.value);
-    }
-    return criterion.op == AgentQPolicyOperator::in &&
-           criterion.values != nullptr &&
-           criterion.value_count == 1;
-}
-
-}  // namespace
-
 bool agent_q_policy_sign_rule_is_bounded(const AgentQPolicyRule& rule)
 {
-    if (rule.action != AgentQPolicyAction::sign) {
-        return true;
-    }
-    if (!string_eq(rule.chain, "sui") ||
-        !string_eq(rule.operation, "sign_transaction") ||
-        rule.criteria == nullptr ||
-        rule.criterion_count == 0) {
-        return false;
-    }
-
-    bool has_intent = false;
-    bool has_shape = false;
-    bool has_asset = false;
-    bool has_command_count = false;
-    bool has_command0_kind = false;
-    bool has_command1_kind = false;
-    bool has_recipient = false;
-    bool has_amount_bound = false;
-    bool has_gas_budget_bound = false;
-    bool has_gas_price_bound = false;
-    for (size_t index = 0; index < rule.criterion_count; ++index) {
-        const AgentQPolicyCriterion& criterion = rule.criteria[index];
-        has_intent = has_intent ||
-            criterion_eq(criterion, "common.intent", "single_asset_transfer");
-        has_shape = has_shape ||
-            criterion_eq(criterion, "sui.command_shape", "restricted_transfer");
-        has_asset = has_asset ||
-            criterion_eq(criterion, "sui.coin_type", "0x2::sui::SUI");
-        has_command_count = has_command_count ||
-            criterion_u64_eq(criterion, "sui.command_count", "2");
-        has_command0_kind = has_command0_kind ||
-            criterion_eq(criterion, "sui.command0_kind", "split_coins");
-        has_command1_kind = has_command1_kind ||
-            criterion_eq(criterion, "sui.command1_kind", "transfer_objects");
-        has_recipient = has_recipient || criterion_recipient_bounded(criterion);
-        has_amount_bound = has_amount_bound || criterion_lte(criterion, "sui.amount_raw");
-        has_gas_budget_bound = has_gas_budget_bound || criterion_lte(criterion, "sui.gas_budget");
-        has_gas_price_bound = has_gas_price_bound || criterion_lte(criterion, "sui.gas_price");
-    }
-    return has_intent &&
-           has_shape &&
-           has_asset &&
-           has_command_count &&
-           has_command0_kind &&
-           has_command1_kind &&
-           has_recipient &&
-           has_amount_bound &&
-           has_gas_budget_bound &&
-           has_gas_price_bound;
+    return rule.action != AgentQPolicyAction::sign;
 }
 
 bool agent_q_policy_sign_rule_count_is_supported(const AgentQPolicyDocument& policy)
 {
-    if (policy.rule_count != 0 && policy.rules == nullptr) {
-        return false;
-    }
-    size_t sign_rule_count = 0;
-    for (size_t index = 0; index < policy.rule_count; ++index) {
-        if (policy.rules[index].action == AgentQPolicyAction::sign) {
-            ++sign_rule_count;
-            if (sign_rule_count > 1) {
-                return false;
-            }
-        }
-    }
-    return true;
+    return policy.rule_count == 0 || policy.rules != nullptr;
 }
 
 }  // namespace agent_q

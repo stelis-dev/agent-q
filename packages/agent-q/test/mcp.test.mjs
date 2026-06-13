@@ -708,6 +708,47 @@ test("get_approval_history dispatch returns bounded signing records without a se
   });
 });
 
+test("get_approval_history dispatch preserves blind-signing confirmation metadata", async () => {
+  await withConnectedClient(
+    async (client) => {
+      const result = await client.callTool({ name: "get_approval_history", arguments: { limit: 1 } });
+      assert.equal(result.structuredContent.source, "live");
+      assert.equal(result.structuredContent.records.length, 1);
+      assert.equal(result.structuredContent.records[0].eventKind, "signing");
+      assert.equal(result.structuredContent.records[0].authorization, "user");
+      assert.equal(result.structuredContent.records[0].recordKind, "confirmation");
+      assert.equal(result.structuredContent.records[0].confirmationKind, "local_pin");
+      assert.equal(result.structuredContent.records[0].reasonCode, "blind_signing_confirmed");
+      assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
+    },
+    {
+      ...noOpCore,
+      async getApprovalHistory() {
+        return {
+          source: "live",
+          deviceId: "device-1",
+          records: [
+            {
+              seq: "2",
+              uptimeMs: "1300",
+              timeSource: "uptime",
+              eventKind: "signing",
+              recordKind: "confirmation",
+              authorization: "user",
+              confirmationKind: "local_pin",
+              chain: "sui",
+              method: "sign_transaction",
+              reasonCode: "blind_signing_confirmed",
+              payloadDigest: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+            },
+          ],
+          hasMore: false,
+        };
+      },
+    },
+  );
+});
+
 test("get_capabilities dispatch returns current capabilities without a session token", async () => {
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "get_capabilities", arguments: {} });
@@ -1278,13 +1319,13 @@ test("policy_get rejects semantically invalid active policy documents", async ()
           ruleCount: 1,
           rules: [
             {
-              id: "allow_unbounded_transfer",
+              id: "allow_unbounded_move_call",
               chain: "sui",
               method: "sign_transaction",
               action: "sign",
               criteria: [
-                { field: "sui.command_shape", op: "eq", value: "restricted_transfer" },
-                { field: "sui.amount_raw", op: "lte", value: "500000000" },
+                { field: "sui.command0_kind", op: "eq", value: "move_call" },
+                { field: "sui.gas_budget", op: "lte", value: "500000000" },
               ],
             },
           ],

@@ -5,9 +5,7 @@
 namespace agent_q {
 namespace {
 
-constexpr const char* kReviewTitle = "Review Sui transfer";
 constexpr const char* kPersonalMessageReviewTitle = "Review Sui message";
-constexpr const char* kSuiAsset = "0x2::sui::SUI";
 
 bool bounded_string_present(const char* value, size_t value_size)
 {
@@ -15,19 +13,6 @@ bool bounded_string_present(const char* value, size_t value_size)
            value_size > 0 &&
            value[0] != '\0' &&
            memchr(value, '\0', value_size) != nullptr;
-}
-
-bool decimal_string_valid(const char* value, size_t value_size)
-{
-    if (!bounded_string_present(value, value_size)) {
-        return false;
-    }
-    for (size_t index = 0; value[index] != '\0'; ++index) {
-        if (value[index] < '0' || value[index] > '9') {
-            return false;
-        }
-    }
-    return true;
 }
 
 bool copy_exact_c_string(const char* input, char* output, size_t output_size)
@@ -96,16 +81,25 @@ bool common_summary_fields_valid(const AgentQUserSigningFlowSnapshot& snapshot)
 
 bool summary_fields_valid(const AgentQUserSigningFlowSnapshot& snapshot)
 {
-    const SuiTransactionPolicyFacts& facts = snapshot.sui_facts;
-    const SuiRestrictedTransferFact& transfer = facts.restricted_transfer;
-    return common_summary_fields_valid(snapshot) &&
-           facts.has_restricted_transfer &&
-           bounded_string_present(transfer.recipient, sizeof(transfer.recipient)) &&
-           bounded_string_present(transfer.asset, sizeof(transfer.asset)) &&
-           strcmp(transfer.asset, kSuiAsset) == 0 &&
-           decimal_string_valid(transfer.amount, sizeof(transfer.amount)) &&
-           decimal_string_valid(facts.gas_budget, sizeof(facts.gas_budget)) &&
-           decimal_string_valid(facts.gas_price, sizeof(facts.gas_price));
+    if (!common_summary_fields_valid(snapshot) ||
+        (snapshot.sui_review.status != SuiReviewSummaryStatus::ok &&
+         snapshot.sui_review.status != SuiReviewSummaryStatus::insufficient_review) ||
+        !bounded_string_present(snapshot.sui_review.title, sizeof(snapshot.sui_review.title)) ||
+        snapshot.sui_review.row_count == 0 ||
+        snapshot.sui_review.row_count > kSuiReviewSummaryMaxRows) {
+        return false;
+    }
+    for (uint16_t index = 0; index < snapshot.sui_review.row_count; ++index) {
+        if (!bounded_string_present(
+                snapshot.sui_review.rows[index].label,
+                sizeof(snapshot.sui_review.rows[index].label)) ||
+            !bounded_string_present(
+                snapshot.sui_review.rows[index].value,
+                sizeof(snapshot.sui_review.rows[index].value))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool personal_message_summary_fields_valid(const AgentQUserSigningFlowSnapshot& snapshot)
@@ -114,6 +108,56 @@ bool personal_message_summary_fields_valid(const AgentQUserSigningFlowSnapshot& 
            snapshot.signable_payload_size <= kAgentQSuiSignPersonalMessageMaxBytes &&
            bounded_string_present(snapshot.account_address, sizeof(snapshot.account_address)) &&
            bounded_string_present(snapshot.message_preview, sizeof(snapshot.message_preview));
+}
+
+AgentQUserSigningReviewRowKind review_row_kind(SuiReviewRowKind kind)
+{
+    switch (kind) {
+        case SuiReviewRowKind::normal:
+            return AgentQUserSigningReviewRowKind::normal;
+        case SuiReviewRowKind::wrapped_value:
+            return AgentQUserSigningReviewRowKind::wrapped_value;
+        case SuiReviewRowKind::section:
+            return AgentQUserSigningReviewRowKind::section;
+        case SuiReviewRowKind::warning:
+            return AgentQUserSigningReviewRowKind::warning;
+    }
+    return AgentQUserSigningReviewRowKind::normal;
+}
+
+bool add_sui_review_rows(
+    AgentQUserSigningReviewViewModel* output,
+    const SuiReviewSummary& summary)
+{
+    for (uint16_t index = 0; index < summary.row_count; ++index) {
+        if (!add_row(
+                output,
+                review_row_kind(summary.rows[index].kind),
+                summary.rows[index].label,
+                summary.rows[index].value)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool add_blind_signing_review_rows(AgentQUserSigningReviewViewModel* output)
+{
+    return add_row(
+               output,
+               AgentQUserSigningReviewRowKind::warning,
+               "Review",
+               "Blind signing") &&
+           add_row(
+               output,
+               AgentQUserSigningReviewRowKind::warning,
+               "Reason",
+               "Transaction details cannot be fully shown") &&
+           add_row(
+               output,
+               AgentQUserSigningReviewRowKind::warning,
+               "Warning",
+               "Confirm only if you accept blind signing");
 }
 
 }  // namespace
@@ -158,13 +202,17 @@ AgentQUserSigningReviewBuildResult user_signing_review_view_model_build(
         if (!summary_fields_valid(snapshot)) {
             return AgentQUserSigningReviewBuildResult::invalid_summary;
         }
-        const SuiRestrictedTransferFact& transfer = snapshot.sui_facts.restricted_transfer;
-        if (!add_review_header(output, kReviewTitle, wire_chain, wire_method) ||
-            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Amount", transfer.amount) ||
-            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Asset", transfer.asset) ||
-            !add_row(output, AgentQUserSigningReviewRowKind::wrapped_value, "Recipient", transfer.recipient) ||
-            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Gas budget", snapshot.sui_facts.gas_budget) ||
-            !add_row(output, AgentQUserSigningReviewRowKind::normal, "Gas price", snapshot.sui_facts.gas_price)) {
+        const bool blind_signing_review =
+            snapshot.sui_review.status ==
+            SuiReviewSummaryStatus::insufficient_review;
+        if (!add_review_header(output, snapshot.sui_review.title, wire_chain, wire_method) ||
+            (blind_signing_review && !add_blind_signing_review_rows(output)) ||
+            !add_sui_review_rows(output, snapshot.sui_review) ||
+            !add_row(
+                output,
+                AgentQUserSigningReviewRowKind::wrapped_value,
+                "Payload digest",
+                snapshot.payload_digest)) {
             memset(output, 0, sizeof(*output));
             return AgentQUserSigningReviewBuildResult::output_too_small;
         }

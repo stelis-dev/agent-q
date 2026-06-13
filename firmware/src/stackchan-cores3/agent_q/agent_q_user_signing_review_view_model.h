@@ -6,9 +6,9 @@
 
 namespace agent_q {
 
-constexpr size_t kAgentQUserSigningReviewMaxRows = 8;
-constexpr size_t kAgentQUserSigningReviewLabelSize = 16;
-constexpr size_t kAgentQUserSigningReviewValueSize = 80;
+constexpr size_t kAgentQUserSigningReviewMaxRows = kSuiReviewSummaryMaxRows + 8;
+constexpr size_t kAgentQUserSigningReviewLabelSize = kSuiReviewSummaryRowLabelSize;
+constexpr size_t kAgentQUserSigningReviewValueSize = kSuiReviewSummaryRowValueSize;
 constexpr size_t kAgentQUserSigningReviewTitleSize = 40;
 
 enum class AgentQUserSigningReviewBuildResult {
@@ -23,6 +23,8 @@ enum class AgentQUserSigningReviewBuildResult {
 enum class AgentQUserSigningReviewRowKind {
     normal,
     wrapped_value,
+    section,
+    warning,
 };
 
 struct AgentQUserSigningReviewRow {

@@ -633,6 +633,9 @@ const char* policy_execution_notice_message(
             if (strcmp(code, "malformed_transaction") == 0) {
                 return "Malformed transaction";
             }
+            if (strcmp(code, "unsupported_transaction") == 0) {
+                return "Policy cannot evaluate";
+            }
             return "Unsupported transaction";
         case AgentQPolicySigningExecutionStatus::policy_rejected:
             return wrote_response ? "Policy rejected" : "Rejected; USB failed";

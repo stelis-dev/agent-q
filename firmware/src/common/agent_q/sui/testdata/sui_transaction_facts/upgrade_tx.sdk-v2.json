@@ -1,0 +1,46 @@
+{
+  "version": 2,
+  "sender": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expiration": {
+    "None": true,
+    "$kind": "None"
+  },
+  "gasData": {
+    "budget": "50000000",
+    "price": "1000",
+    "owner": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "payment": [
+      {
+        "objectId": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "version": "7",
+        "digest": "Fw5KdYvFgue4q1HAQ264JTZax6VUr3jDVBJ1szuQ7dHE"
+      }
+    ]
+  },
+  "inputs": [
+    {
+      "Pure": {
+        "bytes": "QEIPAAAAAAA="
+      },
+      "$kind": "Pure"
+    }
+  ],
+  "commands": [
+    {
+      "Upgrade": {
+        "modules": [
+          "BQYHCA=="
+        ],
+        "dependencies": [
+          "0x3333333333333333333333333333333333333333333333333333333333333333"
+        ],
+        "package": "0x4444444444444444444444444444444444444444444444444444444444444444",
+        "ticket": {
+          "Input": 0,
+          "$kind": "Input"
+        }
+      },
+      "$kind": "Upgrade"
+    }
+  ]
+}

@@ -14,9 +14,16 @@ enum class AgentQSuiSignTransactionAdapterResult {
     unsupported_transaction,
 };
 
+struct AgentQSuiSignTransactionAuthorizationCoverage {
+    bool user_mode_authorization_covered;
+    bool policy_mode_authorization_covered;
+};
+
 AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
     const uint8_t* tx_bytes,
     size_t tx_bytes_size,
-    SuiTransactionPolicyFacts* out);
+    SuiPolicySubjectFacts* policy_subject_out,
+    SuiReviewSummary* review_summary_out,
+    AgentQSuiSignTransactionAuthorizationCoverage* coverage_out);
 
 }  // namespace agent_q

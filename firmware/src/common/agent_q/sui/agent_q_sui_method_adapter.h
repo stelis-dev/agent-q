@@ -9,20 +9,21 @@ namespace agent_q {
 
 constexpr const char* kAgentQSuiPolicyChain = "sui";
 constexpr const char* kAgentQSuiPolicyOperationSignTransaction = "sign_transaction";
-constexpr const char* kAgentQPolicyIntentSingleAssetTransfer = "single_asset_transfer";
-constexpr const char* kAgentQSuiPolicyCommandShapeRestrictedTransfer = "restricted_transfer";
+constexpr const char* kAgentQPolicyIntentProgrammableTransaction = "programmable_transaction";
+constexpr const char* kAgentQSuiPolicyCommandKindMoveCall = "move_call";
 constexpr const char* kAgentQSuiPolicyCommandKindSplitCoins = "split_coins";
 constexpr const char* kAgentQSuiPolicyCommandKindTransferObjects = "transfer_objects";
-constexpr size_t kAgentQSuiTransferPolicyFactCount = 14;
+constexpr size_t kAgentQSuiSignTransactionPolicyFactCount = kAgentQPolicyMaxFacts;
 
 struct AgentQSuiSignTransactionPolicyFacts {
-    AgentQPolicyFact entries[kAgentQSuiTransferPolicyFactCount];
+    AgentQPolicyFact entries[kAgentQSuiSignTransactionPolicyFactCount];
     char command_count[kSuiU64StringBufferSize];
+    char command_type_argument_counts[kSuiPolicyFactMaxCommands][kSuiU64StringBufferSize];
     AgentQPolicyFacts facts;
 };
 
 bool make_sui_sign_transaction_policy_facts(
-    const SuiTransactionPolicyFacts& sui_facts,
+    const SuiPolicySubjectFacts& sui_facts,
     AgentQSuiSignTransactionPolicyFacts* out);
 
 AgentQPolicyMethodDescriptor sui_sign_transaction_policy_method_descriptor();

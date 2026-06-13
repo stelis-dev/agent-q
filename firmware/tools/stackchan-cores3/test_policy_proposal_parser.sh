@@ -160,14 +160,14 @@ int main()
               "schema":"agentq.policy.v0",
               "defaultAction":"reject",
               "rules":[{
-                "id":"reject-sui-mainnet-transfer",
+                "id":"reject-move-call-shape",
                 "chain":"sui",
                 "method":"sign_transaction",
                 "action":"reject",
                 "criteria":[
-                  {"field":"common.intent","op":"eq","value":"single_asset_transfer"},
-                  {"field":"sui.amount_raw","op":"lte","value":"1000"},
-                  {"field":"sui.recipient_address","op":"in","values":["0xabc","0xdef"]}
+                  {"field":"common.intent","op":"eq","value":"programmable_transaction"},
+                  {"field":"sui.command0_kind","op":"eq","value":"move_call"},
+                  {"field":"sui.gas_budget","op":"lte","value":"1000"}
                 ]
               }]
             })JSON",
@@ -189,7 +189,7 @@ int main()
         "rule id must be history-safe",
         parse_policy(
             "invalid-rule-id",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"1_rule","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"common.intent","op":"eq","value":"single_asset_transfer"}]}]})JSON",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"1_rule","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"common.intent","op":"eq","value":"programmable_transaction"}]}]})JSON",
             &proposal),
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
 
@@ -220,7 +220,7 @@ int main()
         "schema-external action rejected",
         parse_policy(
             "invalid-action",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"invalid-action","chain":"sui","method":"sign_transaction","action":"approve","criteria":[{"field":"common.intent","op":"eq","value":"single_asset_transfer"}]}]})JSON",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"invalid-action","chain":"sui","method":"sign_transaction","action":"approve","criteria":[{"field":"common.intent","op":"eq","value":"programmable_transaction"}]}]})JSON",
             &proposal),
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
 
@@ -236,7 +236,7 @@ int main()
         "eq with values rejected",
         parse_policy(
             "eq-values",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"common.intent","op":"eq","value":"single_asset_transfer","values":["single_asset_transfer"]}]}]})JSON",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"common.intent","op":"eq","value":"programmable_transaction","values":["programmable_transaction"]}]}]})JSON",
             &proposal),
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
 
@@ -244,7 +244,7 @@ int main()
         "in with scalar rejected",
         parse_policy(
             "in-scalar",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"common.intent","op":"in","value":"single_asset_transfer","values":["single_asset_transfer"]}]}]})JSON",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"common.intent","op":"in","value":"programmable_transaction","values":["programmable_transaction"]}]}]})JSON",
             &proposal),
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
 
@@ -252,7 +252,7 @@ int main()
         "u64 overflow rejected",
         parse_policy(
             "u64-overflow",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"sui.amount_raw","op":"lte","value":"18446744073709551616"}]}]})JSON",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"sui.gas_budget","op":"lte","value":"18446744073709551616"}]}]})JSON",
             &proposal),
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
 
@@ -260,19 +260,19 @@ int main()
         "u64 leading zero rejected",
         parse_policy(
             "u64-leading-zero",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"sui.amount_raw","op":"lte","value":"0001"}]}]})JSON",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"sui.gas_budget","op":"lte","value":"0001"}]}]})JSON",
             &proposal),
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
     expect_status(
         "embedded nul scalar rejected",
         parse_policy(
             "embedded-nul-scalar",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"common.intent","op":"eq","value":"single_asset_transfer\u0000suffix"}]}]})JSON",
+            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"common.intent","op":"eq","value":"programmable_transaction\u0000suffix"}]}]})JSON",
             &proposal),
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
 
     expect_status(
-        "more than one sign rule rejected",
+        "sign policy rules are invalid until policy coverage is implemented",
         parse_policy(
             "multi-sign-rule",
             R"JSON({
@@ -284,14 +284,12 @@ int main()
                 "method":"sign_transaction",
                 "action":"sign",
                 "criteria":[
-                  {"field":"common.intent","op":"eq","value":"single_asset_transfer"},
-                  {"field":"sui.command_shape","op":"eq","value":"restricted_transfer"},
-                  {"field":"sui.command_count","op":"eq","value":"2"},
-                  {"field":"sui.command0_kind","op":"eq","value":"split_coins"},
-                  {"field":"sui.command1_kind","op":"eq","value":"transfer_objects"},
-                  {"field":"sui.coin_type","op":"eq","value":"0x2::sui::SUI"},
-                  {"field":"sui.recipient_address","op":"in","values":["0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"]},
-                  {"field":"sui.amount_raw","op":"lte","value":"1000000000"},
+                  {"field":"sui.command_count","op":"eq","value":"1"},
+                  {"field":"sui.command0_kind","op":"eq","value":"move_call"},
+                  {"field":"sui.command0_move_call_package","op":"eq","value":"0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+                  {"field":"sui.command0_move_call_module","op":"eq","value":"demo"},
+                  {"field":"sui.command0_move_call_function","op":"eq","value":"mint"},
+                  {"field":"sui.command0_move_call_type_args","op":"eq","value":"0"},
                   {"field":"sui.gas_budget","op":"lte","value":"10000000"},
                   {"field":"sui.gas_price","op":"lte","value":"1000"}
                 ]
@@ -301,14 +299,12 @@ int main()
                 "method":"sign_transaction",
                 "action":"sign",
                 "criteria":[
-                  {"field":"common.intent","op":"eq","value":"single_asset_transfer"},
-                  {"field":"sui.command_shape","op":"eq","value":"restricted_transfer"},
-                  {"field":"sui.command_count","op":"eq","value":"2"},
-                  {"field":"sui.command0_kind","op":"eq","value":"split_coins"},
-                  {"field":"sui.command1_kind","op":"eq","value":"transfer_objects"},
-                  {"field":"sui.coin_type","op":"eq","value":"0x2::sui::SUI"},
-                  {"field":"sui.recipient_address","op":"in","values":["0x1111111111111111111111111111111111111111111111111111111111111111"]},
-                  {"field":"sui.amount_raw","op":"lte","value":"1"},
+                  {"field":"sui.command_count","op":"eq","value":"1"},
+                  {"field":"sui.command0_kind","op":"eq","value":"move_call"},
+                  {"field":"sui.command0_move_call_package","op":"eq","value":"0x1111111111111111111111111111111111111111111111111111111111111111"},
+                  {"field":"sui.command0_move_call_module","op":"eq","value":"demo"},
+                  {"field":"sui.command0_move_call_function","op":"eq","value":"mint"},
+                  {"field":"sui.command0_move_call_type_args","op":"eq","value":"0"},
                   {"field":"sui.gas_budget","op":"lte","value":"1"},
                   {"field":"sui.gas_price","op":"lte","value":"1"}
                 ]

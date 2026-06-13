@@ -466,6 +466,48 @@ test("Local API exposes signer account and transaction-signing endpoints", async
   assert.equal(calls[1][1].purpose, "sui-cli");
 });
 
+test("Local API preserves blind-signing approval history metadata", async () => {
+  await withAdminServer(
+    defaultCore({
+      async getApprovalHistory() {
+        return {
+          source: "live",
+          deviceId,
+          records: [
+            {
+              seq: "2",
+              uptimeMs: "1300",
+              timeSource: "uptime",
+              eventKind: "signing",
+              authorization: "user",
+              recordKind: "confirmation",
+              confirmationKind: "local_pin",
+              chain: "sui",
+              method: "sign_transaction",
+              reasonCode: "blind_signing_confirmed",
+              payloadDigest: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+            },
+          ],
+          hasMore: false,
+        };
+      },
+    }),
+    async (baseUrl) => {
+      const response = await postJson(baseUrl, "/api/get_approval_history", {
+        deviceId,
+      });
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      assert.equal(response.body.ok, true);
+      assert.equal(response.body.result.source, "live");
+      assert.equal(response.body.result.records.length, 1);
+      assert.equal(response.body.result.records[0].authorization, "user");
+      assert.equal(response.body.result.records[0].recordKind, "confirmation");
+      assert.equal(response.body.result.records[0].confirmationKind, "local_pin");
+      assert.equal(response.body.result.records[0].reasonCode, "blind_signing_confirmed");
+    },
+  );
+});
+
 test("Local API rejects an explicit invalid deviceId instead of using the default device", async () => {
   await withAdminServer(defaultCore(), async (baseUrl) => {
     const response = await postJson(baseUrl, "/api/policy_get", {

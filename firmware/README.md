@@ -6,9 +6,9 @@ Firmware is the signing authority. It stores keys and policies, evaluates
 requests, and handles device-local approval according to target policy. Current
 public methods expose account, session, policy, approval-history, and policy
 proposal behavior plus the bounded Sign API source paths documented in
-`specs/PROTOCOL.md`. Current source includes `sign_transaction` for the bounded
-Sui restricted-transfer shape and user-mode-only `sign_personal_message` for
-bounded Sui personal-message bytes. Firmware chooses policy or user
+`specs/PROTOCOL.md`. Current source includes `sign_transaction` for bounded
+Sui `TransactionData::V1 -> ProgrammableTransaction` bytes and user-mode-only
+`sign_personal_message` for bounded Sui personal-message bytes. Firmware chooses policy or user
 authorization for transaction signing from its device-local signing mode.
 Product-active signing support is not claimed unless
 `docs/IMPLEMENTATION_STATUS.md` says the matching source, docs, tests, build,

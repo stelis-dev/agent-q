@@ -1023,19 +1023,38 @@ const COMMON_POLICY_FIELDS: Record<string, PolicyFieldDescriptor> = {
   "common.intent": { type: "string", allowEq: true, allowIn: true, allowLte: false },
 };
 
-const SUI_SIGN_TRANSACTION_POLICY_FIELDS: Record<string, PolicyFieldDescriptor> = {
-  "sui.command_shape": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-  "sui.sender_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-  "sui.gas_owner_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-  "sui.command_count": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
-  "sui.command0_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-  "sui.command1_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-  "sui.recipient_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-  "sui.coin_type": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-  "sui.amount_raw": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
-  "sui.gas_budget": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
-  "sui.gas_price": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
-};
+const SUI_POLICY_MAX_COMMANDS = 8;
+const SUI_POLICY_MAX_MOVE_CALL_TYPE_ARGS = 4;
+
+function makeSuiSignTransactionPolicyFields(): Record<string, PolicyFieldDescriptor> {
+  const fields: Record<string, PolicyFieldDescriptor> = {
+    "sui.sender_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+    "sui.gas_owner_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+    "sui.command_count": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+    "sui.gas_budget": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+    "sui.gas_price": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+    "sui.transaction_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+    "sui.expiration_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  };
+  for (let commandIndex = 0; commandIndex < SUI_POLICY_MAX_COMMANDS; commandIndex += 1) {
+    fields[`sui.command${commandIndex}_kind`] = { type: "string", allowEq: true, allowIn: true, allowLte: false };
+    fields[`sui.command${commandIndex}_move_call_package`] = { type: "string", allowEq: true, allowIn: true, allowLte: false };
+    fields[`sui.command${commandIndex}_move_call_module`] = { type: "string", allowEq: true, allowIn: true, allowLte: false };
+    fields[`sui.command${commandIndex}_move_call_function`] = { type: "string", allowEq: true, allowIn: true, allowLte: false };
+    fields[`sui.command${commandIndex}_move_call_type_args`] = { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true };
+    for (let typeArgIndex = 0; typeArgIndex < SUI_POLICY_MAX_MOVE_CALL_TYPE_ARGS; typeArgIndex += 1) {
+      fields[`sui.command${commandIndex}_move_call_type_arg${typeArgIndex}`] = {
+        type: "string",
+        allowEq: true,
+        allowIn: true,
+        allowLte: false,
+      };
+    }
+  }
+  return fields;
+}
+
+const SUI_SIGN_TRANSACTION_POLICY_FIELDS = makeSuiSignTransactionPolicyFields();
 
 function policyRuleHasSupportedMethod(rule: Pick<PolicyRule, "chain" | "method">): boolean {
   return rule.chain === SUI_CHAIN_ID && rule.method === SUI_SIGN_TRANSACTION_METHOD;
@@ -1080,79 +1099,8 @@ function policyCriterionMatchesDescriptor(
   return descriptor.type !== "u64_decimal" || isUint64DecimalString(criterion.value);
 }
 
-function policyCriterionEq(criterion: PolicyCriterion, field: string, value: string): boolean {
-  return criterion.field === field &&
-    criterion.op === "eq" &&
-    criterion.value === value;
-}
-
-function policyCriterionLte(criterion: PolicyCriterion, field: string): boolean {
-  return criterion.field === field &&
-    criterion.op === "lte" &&
-    criterion.value !== undefined &&
-    isUint64DecimalString(criterion.value);
-}
-
-function policyCriterionU64Eq(criterion: PolicyCriterion, field: string, value: string): boolean {
-  return policyCriterionEq(criterion, field, value) &&
-    criterion.value !== undefined &&
-    isUint64DecimalString(criterion.value);
-}
-
-function policyRecipientIsBounded(criterion: PolicyCriterion): boolean {
-  if (criterion.field !== "sui.recipient_address") {
-    return false;
-  }
-  if (criterion.op === "eq") {
-    return criterion.value !== undefined && criterion.value.length > 0;
-  }
-  return criterion.op === "in" &&
-    criterion.values !== undefined &&
-    criterion.values.length === 1;
-}
-
 function policySignRuleIsBounded(rule: PolicyRule): boolean {
-  if (rule.action !== "sign") {
-    return true;
-  }
-  if (rule.chain !== SUI_CHAIN_ID ||
-      rule.method !== SUI_SIGN_TRANSACTION_METHOD ||
-      rule.criteria.length === 0) {
-    return false;
-  }
-
-  let hasIntent = false;
-  let hasShape = false;
-  let hasAsset = false;
-  let hasCommandCount = false;
-  let hasCommand0Kind = false;
-  let hasCommand1Kind = false;
-  let hasRecipient = false;
-  let hasAmountBound = false;
-  let hasGasBudgetBound = false;
-  let hasGasPriceBound = false;
-  for (const criterion of rule.criteria) {
-    hasIntent = hasIntent || policyCriterionEq(criterion, "common.intent", "single_asset_transfer");
-    hasShape = hasShape || policyCriterionEq(criterion, "sui.command_shape", "restricted_transfer");
-    hasAsset = hasAsset || policyCriterionEq(criterion, "sui.coin_type", "0x2::sui::SUI");
-    hasCommandCount = hasCommandCount || policyCriterionU64Eq(criterion, "sui.command_count", "2");
-    hasCommand0Kind = hasCommand0Kind || policyCriterionEq(criterion, "sui.command0_kind", "split_coins");
-    hasCommand1Kind = hasCommand1Kind || policyCriterionEq(criterion, "sui.command1_kind", "transfer_objects");
-    hasRecipient = hasRecipient || policyRecipientIsBounded(criterion);
-    hasAmountBound = hasAmountBound || policyCriterionLte(criterion, "sui.amount_raw");
-    hasGasBudgetBound = hasGasBudgetBound || policyCriterionLte(criterion, "sui.gas_budget");
-    hasGasPriceBound = hasGasPriceBound || policyCriterionLte(criterion, "sui.gas_price");
-  }
-  return hasIntent &&
-    hasShape &&
-    hasAsset &&
-    hasCommandCount &&
-    hasCommand0Kind &&
-    hasCommand1Kind &&
-    hasRecipient &&
-    hasAmountBound &&
-    hasGasBudgetBound &&
-    hasGasPriceBound;
+  return rule.action !== "sign";
 }
 
 function sanitizePolicyCriterion(value: unknown): PolicyCriterion | null {
@@ -1268,10 +1216,6 @@ export function sanitizeCurrentPolicyDocument(value: unknown): PolicyDocument | 
   }
   const rules = value.rules.map((rule) => sanitizePolicyRule(rule));
   if (rules.some((rule) => rule === null)) {
-    return null;
-  }
-  const signRuleCount = rules.filter((rule) => rule?.action === "sign").length;
-  if (signRuleCount > 1) {
     return null;
   }
   return {

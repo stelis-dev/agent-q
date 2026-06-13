@@ -8,7 +8,7 @@
 namespace agent_q {
 
 AgentQSuiSigningAccountBindingResult verify_sui_signing_stored_account_binding(
-    const SuiTransactionPolicyFacts& facts)
+    const SuiPolicySubjectFacts& facts)
 {
     uint8_t public_key[kSuiEd25519PublicKeyBytes] = {};
     char stored_address[kSuiAddressBufferSize] = {};

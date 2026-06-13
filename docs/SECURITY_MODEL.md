@@ -86,12 +86,12 @@ Implemented today:
   record in ordinary NVS and can load canonical current-schema policy records
   through its internal storage boundary. Firmware exposes read-only active policy
   document readback through `policy_get`, consumes that active policy only when
-  the Firmware-local signing authorization mode is `policy`, rejects broad,
-  multi-rule, multi-recipient, and sign policies missing explicit command
-  count/kind coverage that the current device-local policy review cannot show
-  clearly, and exposes policy update authorization only through the
-  Firmware-owned `policy_propose` proposal flow. Policy actions do not
-  authorize user-mode signing.
+  the Firmware-local signing authorization mode is `policy`, rejects Sui
+  `sign_transaction` sign rules while policy coverage is incomplete, and still
+  requires Sui transaction policy coverage to be complete for the parsed shape
+  before a policy `sign` decision can lead to signing. It exposes policy
+  update authorization only through the Firmware-owned `policy_propose`
+  proposal flow. Policy actions do not authorize user-mode signing.
 - A local Admin Page for read-only device metadata and the
   current policy proposal template. It uses the same host core
   boundary as MCP and is not a policy authority.
@@ -109,11 +109,16 @@ Implemented today:
   `TransactionData::V1 -> ProgrammableTransaction` facts extractor and stored
   material, reads its device-local signing authorization mode, selects the
   policy or user signing gate, requires history before signing, emits terminal
-  metadata, and owns cleanup. The current signable semantic projection remains
-  the restricted SUI transfer shape; unsupported decoded transaction shapes fail
-  closed. Policy mode evaluates active policy and signs after policy
-  authorization with speech-bubble status notifications; user mode shows
-  clear-signing review and requires the current human approval input mode.
+  metadata, and owns cleanup. Unsupported versions, unsupported transaction
+  kinds, `TransactionKind`-only bytes, malformed bytes, trailing bytes,
+  oversized bytes, unbindable transactions, and out-of-range command references
+  fail closed. Policy mode evaluates active policy only
+  after complete policy coverage; valid policy-incomplete shapes return
+  `policy_rejected` there.
+  User mode shows covered offline facts when offline facts review coverage is
+  complete, or an explicit blind-signing warning when Firmware can validate and
+  account-bind the transaction but offline facts review coverage is incomplete.
+  Both user paths require the current human approval input mode.
   Requests cannot choose the authorization mode or the human approval input
   mode. Product-active status is not claimed unless
   `docs/IMPLEMENTATION_STATUS.md` says the matching source, docs, tests, build,
@@ -245,13 +250,20 @@ policy-write proposals. A connection session alone does not authorize signing.
 gates. Firmware chooses the gate from device-local signing authorization mode;
 requests, adapters, and host callers cannot choose it.
 
-- Policy mode evaluates the active policy for transaction signing. A policy
-  reject is terminal and must not fall back to user confirmation.
-- Policy mode treats policy authorization as sufficient for signing after the
-  required policy history record, with speech-bubble status notifications
-  instead of per-request device-local confirmation.
-- User mode uses device-local clear-signing review and the current human
-  approval input mode for the bounded request.
+- Policy mode evaluates the active policy for transaction signing only after
+  the parsed transaction shape has complete policy coverage. A policy reject,
+  including rejection for incomplete policy coverage, is terminal and must not
+  fall back to user confirmation.
+- Policy mode treats policy authorization as sufficient for signing only after
+  that policy coverage gate and the required policy history record, with
+  speech-bubble status notifications instead of per-request device-local
+  confirmation.
+- User mode uses device-local clear-signing review when complete offline facts
+  review coverage exists. When Firmware can validate and account-bind a
+  transaction but offline facts review coverage is incomplete, user mode shows
+  an explicit blind-signing warning before the current human approval input
+  mode. Malformed transactions, account mismatches, and digest failures do not
+  reach this blind-signing path.
 - User mode confirmation does not prove the request came from a trustworthy
   host, dapp, provider, agent, or upstream user intent. The runtime models local
   human approval and does not let the request choose the input mode.

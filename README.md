@@ -208,7 +208,7 @@ Current signing routes in source, with product-active evidence tracked in
 
 | Chain | Method | Current behavior |
 | --- | --- | --- |
-| `sui` | `sign_transaction` | Sui transaction signing over inline or same-session staged bytes; current semantic support is the restricted SUI transfer projection, and unsupported shapes fail closed. Firmware chooses policy authorization or user authorization from its device-local signing mode. |
+| `sui` | `sign_transaction` | Sui transaction signing over inline or same-session staged bytes. Firmware parses bounded offline `TransactionData::V1 -> ProgrammableTransaction` facts, then chooses policy authorization or user authorization from its device-local signing mode. Policy authorization currently rejects valid transactions whose policy coverage is incomplete and does not sign until complete policy coverage and accepted sign-rule validation are implemented. User authorization shows covered offline facts when offline facts review coverage is complete, or a device-local blind-signing warning when Firmware can validate and bind the transaction but offline facts review coverage is incomplete. |
 | `sui` | `sign_personal_message` | Bounded Sui personal-message signing in user authorization mode. Policy authorization mode fails closed for this method. |
 
 Unsupported chains and unsupported methods fail explicitly. Chains are exposed
@@ -241,8 +241,15 @@ source, docs, tests, build, hardware, and visual evidence are complete.
 Current limitations:
 
 - Sui is the only executable chain.
-- Sui transaction semantics outside the supported restricted transfer projection
-  fail closed.
+- Sui transaction parsing is bounded and offline. Parser facts may be available
+  for broader programmable transactions, but parser success is not signing
+  authorization. Firmware user mode shows a covered offline facts review when
+  offline facts review coverage is complete and otherwise shows a blind-signing
+  warning for valid, account-bound transactions whose offline facts review
+  coverage is incomplete. Firmware policy mode returns a policy rejection for
+  valid transactions whose policy coverage is incomplete
+  and does not sign until policy coverage is complete for the parsed shape.
+  Agent-Q does not simulate Sui execution or fetch chain state.
 - Sponsored Sui transactions are not implemented.
 - Sui transaction execution / submit-to-network is not an Agent-Q signing
   responsibility.

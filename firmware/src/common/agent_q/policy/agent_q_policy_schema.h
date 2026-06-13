@@ -7,18 +7,18 @@
 namespace agent_q {
 
 constexpr size_t kAgentQPolicyMaxRules = 16;
-constexpr size_t kAgentQPolicyMaxRuleCriteria = 12;
+constexpr size_t kAgentQPolicyMaxRuleCriteria = 96;
 constexpr size_t kAgentQPolicyMaxCriterionValues = 16;
-constexpr size_t kAgentQPolicyMaxFacts = 24;
-constexpr size_t kAgentQPolicyMaxFieldDescriptors = 24;
+constexpr size_t kAgentQPolicyMaxFacts = 96;
+constexpr size_t kAgentQPolicyMaxFieldDescriptors = 96;
 constexpr size_t kAgentQPolicyMaxFieldIdLength = 48;
 constexpr size_t kAgentQPolicyMaxRuleIdLength = 32;
 constexpr size_t kAgentQPolicyMaxChainIdLength = 32;
 constexpr size_t kAgentQPolicyMaxOperationLength = 64;
-constexpr size_t kAgentQPolicyMaxValueLength = 96;
+constexpr size_t kAgentQPolicyMaxValueLength = 256;
 constexpr size_t kAgentQPolicyDefaultCanonicalRecordBytes = 16;
-constexpr size_t kAgentQPolicyMaxCanonicalRecordBytes = 4096;
-constexpr size_t kAgentQPolicyCanonicalStringPoolBytes = 2048;
+constexpr size_t kAgentQPolicyMaxCanonicalRecordBytes = 16384;
+constexpr size_t kAgentQPolicyCanonicalStringPoolBytes = 16384;
 constexpr size_t kAgentQPolicyCommonFieldDescriptorCount = 3;
 constexpr size_t kAgentQPolicyMaxMethodDescriptors = 16;
 

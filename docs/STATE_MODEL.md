@@ -198,10 +198,10 @@ binary BIP-39 entropy blob, a canonical active policy record, and a local
 `provisioned`; the normal product flow installs the default-reject policy, while
 read-only Sui account derivation, read-only active policy document readback,
 source-level local reset/material wipe, and the Firmware-owned
-`policy_propose` proposal flow for current-schema reject policies and at
-most one single-recipient bounded sign rule whose criteria explicitly cover the
-accepted command count and command kinds are implemented. USER_PROFILE secure
-storage gates are still separate work.
+`policy_propose` proposal flow for current-schema reject policies is
+implemented. The `sign` action value is known by the schema, but Sui
+`sign_transaction` sign rules are rejected while complete policy coverage is
+not implemented. USER_PROFILE secure storage gates are still separate work.
 
 Allowed:
 
@@ -247,8 +247,14 @@ read-only `policy_get` for the committed active policy document, read-only
 `get_approval_history` for Firmware-owned persistent decision metadata, and the
 session-scoped Sign API runtime. `sign_transaction` has
 `source-wired-not-product-active` status for inline or same-session staged Sui
-transaction bytes, currently signable only when the Firmware route adapter
-derives the supported restricted SUI transfer semantic projection.
+transaction bytes decoded by the Firmware Sui `TransactionData::V1 ->
+ProgrammableTransaction` facts extractor. Policy authorization currently returns
+a policy rejection for valid transactions whose policy coverage is incomplete,
+and does not sign until complete policy coverage and accepted sign-rule
+validation are implemented. User authorization enters device review only when
+the parsed shape has either complete offline facts review coverage or an
+explicit blind-signing warning for a valid, account-bound transaction whose
+offline facts review coverage is incomplete.
 Product-active status is not claimed unless
 `docs/IMPLEMENTATION_STATUS.md` says the matching source, docs, tests, build,
 hardware, and visual evidence are complete.
@@ -265,18 +271,23 @@ or development reflash workflow.
 
 #### Request Authority Paths
 
-The Sign API is not a policy action, request-authority flag, compatibility
-fallback, or host-selected authorization mode. Firmware reads the device-local
-signing authorization mode and chooses the supported Firmware-owned signing gate
+The Sign API is not a policy action, request-authority flag, blind-signing
+selector, compatibility conversion, or host-selected authorization mode. Firmware
+reads the device-local signing authorization mode and chooses the supported
+Firmware-owned signing gate
 for the requested method:
 
-- policy mode evaluates the active policy, treats policy authorization as
-  sufficient for `sign_transaction`, shows speech-bubble status notifications,
-  and does not fall back to user confirmation on reject. `sign_personal_message`
-  is unsupported in policy mode and fails closed;
-- user mode shows the bounded request on the device and requires
-  Firmware-owned human approval before signing `sign_transaction` or
-  `sign_personal_message`.
+- policy mode evaluates the active policy only after the parsed transaction
+  shape has complete policy coverage, treats policy authorization as sufficient
+  for `sign_transaction`, shows speech-bubble status notifications, and does
+  not fall back to user confirmation on reject. `sign_personal_message` is
+  unsupported in policy mode and fails closed;
+- user mode shows covered offline facts when offline facts review coverage is
+  complete, or an explicit blind-signing warning when Firmware can validate and
+  bind the transaction but offline facts review coverage is incomplete. Both
+  paths require Firmware-owned human approval before signing `sign_transaction`.
+  `sign_personal_message` remains a
+  bounded clear-review user path.
 
 Neither mode proves the upstream user, dapp, provider, host, or agent intent
 that produced the request. The source state must be material-backed

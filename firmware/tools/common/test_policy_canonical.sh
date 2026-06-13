@@ -92,9 +92,10 @@ agent_q::AgentQPolicyFacts matching_sui_facts()
     static const agent_q::AgentQPolicyFact entries[] = {
         {"common.chain", agent_q::AgentQPolicyValueType::string, "sui"},
         {"common.method", agent_q::AgentQPolicyValueType::string, "sign_transaction"},
-        {"common.intent", agent_q::AgentQPolicyValueType::string, "single_asset_transfer"},
-        {"sui.amount_raw", agent_q::AgentQPolicyValueType::u64_decimal, "1000"},
-        {"sui.recipient_address", agent_q::AgentQPolicyValueType::string, "0xabc"},
+        {"common.intent", agent_q::AgentQPolicyValueType::string, "programmable_transaction"},
+        {"sui.command_count", agent_q::AgentQPolicyValueType::u64_decimal, "1"},
+        {"sui.command0_kind", agent_q::AgentQPolicyValueType::string, "move_call"},
+        {"sui.gas_budget", agent_q::AgentQPolicyValueType::u64_decimal, "1000"},
     };
     static const agent_q::AgentQPolicyMethodDescriptor method =
         agent_q::sui_sign_transaction_policy_method_descriptor();
@@ -171,10 +172,10 @@ int main()
             &decoded),
         agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
 
-    const char* intents[] = {"single_asset_transfer"};
+    const char* intents[] = {"programmable_transaction"};
     const agent_q::AgentQPolicyCriterion criteria[] = {
         {"common.intent", agent_q::AgentQPolicyOperator::in, nullptr, intents, 1},
-        {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "2000", nullptr, 0},
+        {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "2000", nullptr, 0},
     };
     const agent_q::AgentQPolicyRule rule = {
         "small-sui-reject",
@@ -195,16 +196,14 @@ int main()
         agent_q::canonicalize_agent_q_policy_v0(reject_policy, sui_methods, 1, &canonical),
         agent_q::AgentQPolicyCanonicalStatus::ok);
 
-    const char* sign_recipients[] = {"0xabc"};
     const agent_q::AgentQPolicyCriterion sign_criteria[] = {
-        {"common.intent", agent_q::AgentQPolicyOperator::eq, "single_asset_transfer", nullptr, 0},
-        {"sui.command_shape", agent_q::AgentQPolicyOperator::eq, "restricted_transfer", nullptr, 0},
-        {"sui.command_count", agent_q::AgentQPolicyOperator::eq, "2", nullptr, 0},
-        {"sui.command0_kind", agent_q::AgentQPolicyOperator::eq, "split_coins", nullptr, 0},
-        {"sui.command1_kind", agent_q::AgentQPolicyOperator::eq, "transfer_objects", nullptr, 0},
-        {"sui.coin_type", agent_q::AgentQPolicyOperator::eq, "0x2::sui::SUI", nullptr, 0},
-        {"sui.recipient_address", agent_q::AgentQPolicyOperator::in, nullptr, sign_recipients, 1},
-        {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
+        {"sui.command_count", agent_q::AgentQPolicyOperator::eq, "1", nullptr, 0},
+        {"sui.command0_kind", agent_q::AgentQPolicyOperator::eq, "move_call", nullptr, 0},
+        {"sui.command0_move_call_package", agent_q::AgentQPolicyOperator::eq, "0x2222222222222222222222222222222222222222222222222222222222222222", nullptr, 0},
+        {"sui.command0_move_call_module", agent_q::AgentQPolicyOperator::eq, "demo", nullptr, 0},
+        {"sui.command0_move_call_function", agent_q::AgentQPolicyOperator::eq, "mint", nullptr, 0},
+        {"sui.command0_move_call_type_args", agent_q::AgentQPolicyOperator::eq, "1", nullptr, 0},
+        {"sui.command0_move_call_type_arg0", agent_q::AgentQPolicyOperator::eq, "u64", nullptr, 0},
         {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
         {"sui.gas_price", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
     };
@@ -232,8 +231,38 @@ int main()
         sizeof(two_sign_rules) / sizeof(two_sign_rules[0]),
     };
     expect_status(
-        "more than one sign rule is rejected before canonical storage",
+        "multiple sign rules are invalid until policy coverage is implemented",
         agent_q::canonicalize_agent_q_policy_v0(two_sign_rule_policy, sui_methods, 1, &canonical),
+        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
+
+    const agent_q::AgentQPolicyCriterion move_call_sign_criteria[] = {
+        {"sui.command_count", agent_q::AgentQPolicyOperator::eq, "1", nullptr, 0},
+        {"sui.command0_kind", agent_q::AgentQPolicyOperator::eq, "move_call", nullptr, 0},
+        {"sui.command0_move_call_package", agent_q::AgentQPolicyOperator::eq, "0x2222222222222222222222222222222222222222222222222222222222222222", nullptr, 0},
+        {"sui.command0_move_call_module", agent_q::AgentQPolicyOperator::eq, "demo", nullptr, 0},
+        {"sui.command0_move_call_function", agent_q::AgentQPolicyOperator::eq, "mint", nullptr, 0},
+        {"sui.command0_move_call_type_args", agent_q::AgentQPolicyOperator::eq, "1", nullptr, 0},
+        {"sui.command0_move_call_type_arg0", agent_q::AgentQPolicyOperator::eq, "u64", nullptr, 0},
+        {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "10000000", nullptr, 0},
+        {"sui.gas_price", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule move_call_sign_rule = {
+        "sign-move-call",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        move_call_sign_criteria,
+        sizeof(move_call_sign_criteria) / sizeof(move_call_sign_criteria[0]),
+    };
+    const agent_q::AgentQPolicyDocument move_call_sign_policy = {
+        agent_q::kAgentQPolicyV0Schema,
+        agent_q::AgentQPolicyAction::reject,
+        &move_call_sign_rule,
+        1,
+    };
+    expect_status(
+        "MoveCall graph sign policy is invalid until policy coverage is implemented",
+        agent_q::canonicalize_agent_q_policy_v0(move_call_sign_policy, sui_methods, 1, &canonical),
         agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
 
     const agent_q::AgentQPolicyRule digit_rule_id_rule = {
@@ -378,8 +407,8 @@ int main()
         agent_q::AgentQPolicyCanonicalStatus::unsupported_field);
 
     const agent_q::AgentQPolicyFieldDescriptor duplicate_fields[] = {
-        {"sui.amount_raw", agent_q::AgentQPolicyValueType::u64_decimal, true, false, true},
-        {"sui.amount_raw", agent_q::AgentQPolicyValueType::u64_decimal, true, false, true},
+        {"sui.gas_budget", agent_q::AgentQPolicyValueType::u64_decimal, true, false, true},
+        {"sui.gas_budget", agent_q::AgentQPolicyValueType::u64_decimal, true, false, true},
     };
     const agent_q::AgentQPolicyMethodDescriptor malformed_methods[] = {
         {
@@ -397,7 +426,7 @@ int main()
         agent_q::AgentQPolicyCanonicalStatus::invalid_argument);
 
     const agent_q::AgentQPolicyCriterion malformed_lte[] = {
-        {"sui.amount_raw", agent_q::AgentQPolicyOperator::lte, "18446744073709551616", nullptr, 0},
+        {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "18446744073709551616", nullptr, 0},
     };
     agent_q::AgentQPolicyRule malformed_rule = rule;
     malformed_rule.criteria = malformed_lte;

@@ -545,15 +545,8 @@ AgentQPolicyCanonicalStatus validate_agent_q_policy_v0_canonical_document(
         return AgentQPolicyCanonicalStatus::invalid_argument;
     }
 
-    size_t sign_rule_count = 0;
     for (size_t rule_index = 0; rule_index < policy.rule_count; ++rule_index) {
         const AgentQPolicyCanonicalRule& rule = policy.rules[rule_index];
-        if (rule.action == AgentQPolicyAction::sign) {
-            ++sign_rule_count;
-            if (sign_rule_count > 1) {
-                return AgentQPolicyCanonicalStatus::invalid_policy;
-            }
-        }
         const char* chain = get_string(policy, rule.chain);
         const char* operation = get_string(policy, rule.operation);
         const AgentQPolicyMethodDescriptor* method =

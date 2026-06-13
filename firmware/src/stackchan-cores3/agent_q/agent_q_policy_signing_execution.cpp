@@ -148,10 +148,14 @@ AgentQPolicySigningExecutionResult handle_policy_filter_result(
     }
 
     if (policy_result.status == AgentQSignTransactionPolicyRuntimeStatus::policy_rejected) {
+        const char* reason_code =
+            policy_result.reason_code[0] != '\0'
+                ? policy_result.reason_code
+                : "policy_rejected";
         if (!write_policy_signing_terminal_history(
                 policy_result,
                 AgentQSigningHistoryTerminalResult::policy_rejected,
-                "policy_rejected",
+                reason_code,
                 true)) {
             return make_policy_execution_result(
                 AgentQPolicySigningExecutionStatus::history_error,

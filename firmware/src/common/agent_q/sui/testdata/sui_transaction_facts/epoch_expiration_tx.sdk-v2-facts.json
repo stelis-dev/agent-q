@@ -1,0 +1,10 @@
+{
+  "sender": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "gasOwner": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "gasBudget": "50000000",
+  "gasPrice": "1000",
+  "inputCount": 0,
+  "commandCount": 1,
+  "firstCommandKind": "Publish",
+  "expirationKind": "Epoch"
+}

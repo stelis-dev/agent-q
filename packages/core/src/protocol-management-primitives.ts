@@ -7,14 +7,14 @@ import {
 export const AGENT_Q_POLICY_SCHEMA = "agentq.policy.v0";
 export const POLICY_ID_PATTERN = HASH_ID_PATTERN;
 export const MAX_POLICY_RULE_COUNT = 16;
-export const MAX_POLICY_RULE_CRITERIA = 12;
+export const MAX_POLICY_RULE_CRITERIA = 96;
 export const MAX_POLICY_CRITERION_VALUES = 16;
 export const MAX_POLICY_FIELD_ID_LENGTH = 48;
 export const MAX_POLICY_RULE_ID_LENGTH = 32;
 export const MAX_POLICY_CHAIN_ID_LENGTH = 32;
 export const MAX_POLICY_METHOD_LENGTH = 64;
-export const MAX_POLICY_VALUE_LENGTH = 96;
-export const MAX_POLICY_UPDATE_REQUEST_JSON_BYTES = 4096;
+export const MAX_POLICY_VALUE_LENGTH = 256;
+export const MAX_POLICY_UPDATE_REQUEST_JSON_BYTES = 16384;
 export const MAX_APPROVAL_HISTORY_RECORDS = 4;
 export { UINT_DECIMAL_STRING_PATTERN };
 export const POLICY_ACTIONS = ["reject", "sign"] as const;

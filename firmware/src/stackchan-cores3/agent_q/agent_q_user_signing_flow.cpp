@@ -31,7 +31,9 @@ struct AgentQUserSigningFlowState {
     uint8_t* signable_payload = nullptr;
     size_t signable_payload_size = 0;
     bool signable_payload_available = false;
-    SuiTransactionPolicyFacts sui_facts = {};
+    bool blind_signing_confirmation = false;
+    SuiPolicySubjectFacts sui_policy_subject = {};
+    SuiReviewSummary sui_review = {};
     char account_address[kSuiAddressBufferSize] = {};
     char message_preview[kAgentQSignPersonalMessagePreviewSize] = {};
 
@@ -58,7 +60,9 @@ struct AgentQUserSigningFlowState {
         request_window = kAgentQTimeoutWindowNone;
         pin_input_window = kAgentQTimeoutWindowNone;
         paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
-        memset(&sui_facts, 0, sizeof(sui_facts));
+        blind_signing_confirmation = false;
+        memset(&sui_policy_subject, 0, sizeof(sui_policy_subject));
+        memset(&sui_review, 0, sizeof(sui_review));
         wipe_sensitive_buffer(account_address, sizeof(account_address));
         wipe_sensitive_buffer(message_preview, sizeof(message_preview));
     }
@@ -378,6 +382,7 @@ void populate_core_snapshot(AgentQUserSigningFlowCoreSnapshot& snapshot)
     snapshot.pin_input_window = g_state.pin_input_window;
     snapshot.signable_payload_size = g_state.signable_payload_size;
     snapshot.signable_payload_available = g_state.signable_payload_available;
+    snapshot.blind_signing_confirmation = g_state.blind_signing_confirmation;
 }
 
 bool same_history_write_request(const AgentQUserSigningFlowCoreSnapshot& snapshot)
@@ -398,7 +403,8 @@ bool same_history_write_request(const AgentQUserSigningFlowCoreSnapshot& snapsho
            strcmp(g_state.network, snapshot.network) == 0 &&
            strcmp(g_state.payload_digest, snapshot.payload_digest) == 0 &&
            g_state.signable_payload_size == snapshot.signable_payload_size &&
-           g_state.signable_payload_available == snapshot.signable_payload_available;
+           g_state.signable_payload_available == snapshot.signable_payload_available &&
+           g_state.blind_signing_confirmation == snapshot.blind_signing_confirmation;
 }
 
 struct AgentQUserSigningTerminalWireFields {
@@ -479,7 +485,8 @@ bool user_signing_flow_snapshot_copy(AgentQUserSigningFlowSnapshot* output)
     }
     memset(output, 0, sizeof(*output));
     populate_core_snapshot(*output);
-    output->sui_facts = g_state.sui_facts;
+    output->sui_policy_subject = g_state.sui_policy_subject;
+    output->sui_review = g_state.sui_review;
     memcpy(output->account_address, g_state.account_address, sizeof(output->account_address));
     memcpy(output->message_preview, g_state.message_preview, sizeof(output->message_preview));
     return true;
@@ -504,6 +511,28 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin(
         input.prepared == nullptr ||
         input.prepared->route != input.route) {
         return AgentQUserSigningFlowBeginResult::invalid_argument;
+    }
+    if (input.prepared->tx_bytes == nullptr) {
+        return AgentQUserSigningFlowBeginResult::invalid_payload;
+    }
+    const AgentQUserSigningFlowBeginResult payload_result =
+        validate_prepared_payload_metadata(
+            input.prepared->tx_bytes_size,
+            kAgentQSuiSignTransactionTxBytesMaxBytes,
+            input.prepared->payload_digest);
+    if (payload_result != AgentQUserSigningFlowBeginResult::ok) {
+        return payload_result;
+    }
+    if (!input.prepared->user_mode_authorization_covered) {
+        return AgentQUserSigningFlowBeginResult::unsupported_transaction;
+    }
+    const bool clear_review =
+        input.prepared->sui_review.status == SuiReviewSummaryStatus::ok;
+    const bool blind_signing_review =
+        input.prepared->sui_review.status ==
+        SuiReviewSummaryStatus::insufficient_review;
+    if (!clear_review && !blind_signing_review) {
+        return AgentQUserSigningFlowBeginResult::unsupported_transaction;
     }
     AgentQUserSigningBeginMetadata metadata = {};
     const AgentQUserSigningFlowBeginResult metadata_result =
@@ -531,7 +560,9 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin(
     input.prepared->tx_bytes = nullptr;
     input.prepared->tx_bytes_size = 0;
 
-    g_state.sui_facts = input.prepared->sui_facts;
+    g_state.sui_policy_subject = input.prepared->sui_policy_subject;
+    g_state.sui_review = input.prepared->sui_review;
+    g_state.blind_signing_confirmation = blind_signing_review;
     return AgentQUserSigningFlowBeginResult::ok;
 }
 

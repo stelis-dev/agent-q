@@ -1062,7 +1062,7 @@ bool usb_response_write_error(const char* id, const char* code, const char* mess
 }
 
 AgentQSuiSigningAccountBindingResult verify_sui_signing_stored_account_binding(
-    const SuiTransactionPolicyFacts&)
+    const SuiPolicySubjectFacts&)
 {
     ++g_binding_calls;
     return g_binding_result;

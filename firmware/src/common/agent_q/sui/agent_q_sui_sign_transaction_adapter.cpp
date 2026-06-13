@@ -1,70 +1,142 @@
 #include "agent_q_sui_sign_transaction_adapter.h"
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 namespace agent_q {
 namespace {
 
-constexpr const char* kSuiAsset = "0x2::sui::SUI";
-constexpr size_t kSuiAddressHexLength = 64;
-constexpr size_t kSuiAddressStringLength = 2 + kSuiAddressHexLength;
-constexpr uint16_t kRestrictedSuiTransferCommandCount = 2;
-
-bool bounded_string_present(const char* value, size_t value_size)
+AgentQSuiSignTransactionAuthorizationCoverage incomplete_authorization_coverage()
 {
-    return value != nullptr &&
-           value_size > 0 &&
-           value[0] != '\0' &&
-           memchr(value, '\0', value_size) != nullptr;
+    // Current parser facts are useful for diagnostics, review work, and policy
+    // work, but policy coverage is not complete for broad PTB signing yet.
+    return AgentQSuiSignTransactionAuthorizationCoverage{false, false};
 }
 
-bool decimal_string_valid(const char* value, size_t value_size)
+AgentQSuiSignTransactionAuthorizationCoverage authorization_coverage_from_review(
+    const SuiReviewSummary& review)
 {
-    if (!bounded_string_present(value, value_size)) {
+    AgentQSuiSignTransactionAuthorizationCoverage coverage =
+        incomplete_authorization_coverage();
+    // User-mode authorization can proceed with either full clear-signing
+    // coverage or the explicit blind-signing confirmation path. Policy-mode
+    // authorization remains unavailable until policy facts cover the actual
+    // signable value.
+    coverage.user_mode_authorization_covered =
+        review.status == SuiReviewSummaryStatus::ok ||
+        review.status == SuiReviewSummaryStatus::insufficient_review;
+    return coverage;
+}
+
+bool copy_c_string(char* output, size_t output_size, const char* value)
+{
+    if (output == nullptr || output_size == 0 || value == nullptr) {
         return false;
     }
-    for (size_t index = 0; value[index] != '\0'; ++index) {
-        if (value[index] < '0' || value[index] > '9') {
-            return false;
-        }
+    const int written = snprintf(output, output_size, "%s", value);
+    return written >= 0 && static_cast<size_t>(written) < output_size;
+}
+
+bool add_review_row(
+    SuiReviewSummary* output,
+    SuiReviewRowKind kind,
+    const char* label,
+    const char* value)
+{
+    if (output == nullptr || output->row_count >= kSuiReviewSummaryMaxRows) {
+        return false;
     }
+    SuiReviewRow& row = output->rows[output->row_count];
+    row.kind = kind;
+    if (!copy_c_string(row.label, sizeof(row.label), label) ||
+        !copy_c_string(row.value, sizeof(row.value), value)) {
+        return false;
+    }
+    ++output->row_count;
     return true;
 }
 
-bool hex_char(char value)
+bool build_minimum_policy_subject(
+    const SuiMinimumTransactionFacts& minimum,
+    SuiPolicySubjectFacts* output)
 {
-    return (value >= '0' && value <= '9') ||
-           (value >= 'a' && value <= 'f') ||
-           (value >= 'A' && value <= 'F');
-}
-
-bool sui_address_valid(const char* value, size_t value_size)
-{
-    if (!bounded_string_present(value, value_size) ||
-        strlen(value) != kSuiAddressStringLength ||
-        value[0] != '0' ||
-        value[1] != 'x') {
+    if (output == nullptr ||
+        minimum.transaction_data_version != SuiTransactionDataVersionFact::v1 ||
+        minimum.transaction_kind != SuiTransactionKindFact::programmable_transaction ||
+        minimum.sender[0] == '\0' ||
+        minimum.gas_owner[0] == '\0') {
         return false;
     }
-    for (size_t index = 2; value[index] != '\0'; ++index) {
-        if (!hex_char(value[index])) {
-            return false;
-        }
-    }
-    return true;
+    memset(output, 0, sizeof(*output));
+    output->transaction_data_version = minimum.transaction_data_version;
+    output->transaction_kind = minimum.transaction_kind;
+    return copy_c_string(output->sender, sizeof(output->sender), minimum.sender) &&
+           copy_c_string(output->gas_owner, sizeof(output->gas_owner), minimum.gas_owner) &&
+           copy_c_string(output->gas_price, sizeof(output->gas_price), minimum.gas_price) &&
+           copy_c_string(output->gas_budget, sizeof(output->gas_budget), minimum.gas_budget);
 }
 
-bool supported_transfer_facts(const SuiRestrictedTransferFact& facts)
+bool build_minimum_review_summary(
+    const SuiMinimumTransactionFacts& minimum,
+    const char* reason,
+    SuiReviewSummary* output)
 {
-    return sui_address_valid(facts.sender, sizeof(facts.sender)) &&
-           sui_address_valid(facts.gas_owner, sizeof(facts.gas_owner)) &&
-           sui_address_valid(facts.recipient, sizeof(facts.recipient)) &&
-           bounded_string_present(facts.asset, sizeof(facts.asset)) &&
-           strcmp(facts.asset, kSuiAsset) == 0 &&
-           decimal_string_valid(facts.amount, sizeof(facts.amount)) &&
-           decimal_string_valid(facts.gas_budget, sizeof(facts.gas_budget)) &&
-           decimal_string_valid(facts.gas_price, sizeof(facts.gas_price)) &&
-           facts.command_count == kRestrictedSuiTransferCommandCount;
+    if (output == nullptr || reason == nullptr || reason[0] == '\0') {
+        return false;
+    }
+    memset(output, 0, sizeof(*output));
+    output->status = SuiReviewSummaryStatus::insufficient_review;
+    output->risk = SuiReviewRiskLevel::high;
+    return copy_c_string(output->title, sizeof(output->title), "Review Sui transaction") &&
+           copy_c_string(output->type_summary, sizeof(output->type_summary), "Unparsed transaction") &&
+           copy_c_string(output->risk_label, sizeof(output->risk_label), "High") &&
+           add_review_row(output, SuiReviewRowKind::warning, "Type", output->type_summary) &&
+           add_review_row(output, SuiReviewRowKind::warning, "Reason", reason) &&
+           add_review_row(output, SuiReviewRowKind::wrapped_value, "Sender", minimum.sender) &&
+           add_review_row(output, SuiReviewRowKind::wrapped_value, "Gas owner", minimum.gas_owner) &&
+           add_review_row(output, SuiReviewRowKind::normal, "Gas max", minimum.gas_budget) &&
+           add_review_row(output, SuiReviewRowKind::normal, "Gas price", minimum.gas_price);
+}
+
+const char* minimum_blind_signing_reason(SuiTransactionFactsResult result)
+{
+    switch (result) {
+        case SuiTransactionFactsResult::too_large:
+            return "Transaction details exceed parser limits";
+        case SuiTransactionFactsResult::unsupported_shape:
+            return "Transaction shape cannot be fully shown";
+        case SuiTransactionFactsResult::transaction_kind_only:
+            return "Transaction data is incomplete";
+        case SuiTransactionFactsResult::unsupported_version:
+            return "Transaction version is unsupported";
+        case SuiTransactionFactsResult::unsupported_kind:
+            return "Transaction kind is unsupported";
+        case SuiTransactionFactsResult::ok:
+        case SuiTransactionFactsResult::malformed:
+            break;
+    }
+    return "Transaction details cannot be fully shown";
+}
+
+bool build_minimum_outputs_for_blind_signing(
+    const uint8_t* tx_bytes,
+    size_t tx_bytes_size,
+    SuiTransactionFactsResult full_parse_result,
+    SuiPolicySubjectFacts* policy_subject_out,
+    SuiReviewSummary* review_summary_out)
+{
+    SuiMinimumTransactionFacts minimum = {};
+    const SuiTransactionFactsResult minimum_result =
+        parse_sui_minimum_transaction_facts(tx_bytes, tx_bytes_size, &minimum);
+    if (minimum_result != SuiTransactionFactsResult::ok) {
+        return false;
+    }
+    return build_minimum_policy_subject(minimum, policy_subject_out) &&
+           build_minimum_review_summary(
+               minimum,
+               minimum_blind_signing_reason(full_parse_result),
+               review_summary_out);
 }
 
 }  // namespace
@@ -72,24 +144,77 @@ bool supported_transfer_facts(const SuiRestrictedTransferFact& facts)
 AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
     const uint8_t* tx_bytes,
     size_t tx_bytes_size,
-    SuiTransactionPolicyFacts* out)
+    SuiPolicySubjectFacts* policy_subject_out,
+    SuiReviewSummary* review_summary_out,
+    AgentQSuiSignTransactionAuthorizationCoverage* coverage_out)
 {
-    if (tx_bytes == nullptr || tx_bytes_size == 0 || out == nullptr) {
+    if (policy_subject_out != nullptr) {
+        *policy_subject_out = {};
+    }
+    if (review_summary_out != nullptr) {
+        *review_summary_out = {};
+    }
+    if (coverage_out != nullptr) {
+        *coverage_out = incomplete_authorization_coverage();
+    }
+    if (tx_bytes == nullptr ||
+        tx_bytes_size == 0 ||
+        policy_subject_out == nullptr ||
+        review_summary_out == nullptr ||
+        coverage_out == nullptr) {
         return AgentQSuiSignTransactionAdapterResult::invalid_argument;
     }
-    *out = {};
-    const SuiTransactionFactsResult parse_result =
-        parse_sui_transaction_policy_facts(tx_bytes, tx_bytes_size, out);
-    if (parse_result == SuiTransactionFactsResult::malformed) {
-        *out = {};
-        return AgentQSuiSignTransactionAdapterResult::malformed_transaction;
-    }
-    if (parse_result != SuiTransactionFactsResult::ok ||
-        !out->has_restricted_transfer ||
-        !supported_transfer_facts(out->restricted_transfer)) {
-        *out = {};
+
+    SuiParsedTransactionFacts* parsed =
+        static_cast<SuiParsedTransactionFacts*>(malloc(sizeof(SuiParsedTransactionFacts)));
+    if (parsed == nullptr) {
         return AgentQSuiSignTransactionAdapterResult::unsupported_transaction;
     }
+    const SuiTransactionFactsResult parse_result =
+        parse_sui_parsed_transaction_facts(tx_bytes, tx_bytes_size, parsed);
+    if (parse_result == SuiTransactionFactsResult::malformed) {
+        free(parsed);
+        return AgentQSuiSignTransactionAdapterResult::malformed_transaction;
+    }
+    if (parse_result != SuiTransactionFactsResult::ok) {
+        if (build_minimum_outputs_for_blind_signing(
+                tx_bytes,
+                tx_bytes_size,
+                parse_result,
+                policy_subject_out,
+                review_summary_out)) {
+            *coverage_out = authorization_coverage_from_review(*review_summary_out);
+            free(parsed);
+            return AgentQSuiSignTransactionAdapterResult::ok;
+        }
+        free(parsed);
+        return AgentQSuiSignTransactionAdapterResult::unsupported_transaction;
+    }
+    if (!build_sui_policy_subject_facts(*parsed, policy_subject_out) ||
+        !build_sui_review_summary(*parsed, review_summary_out)) {
+        SuiMinimumTransactionFacts minimum = {};
+        minimum.transaction_data_version = parsed->transaction_data_version;
+        minimum.transaction_kind = parsed->transaction_kind;
+        copy_c_string(minimum.sender, sizeof(minimum.sender), parsed->sender);
+        copy_c_string(minimum.gas_owner, sizeof(minimum.gas_owner), parsed->gas_owner);
+        copy_c_string(minimum.gas_price, sizeof(minimum.gas_price), parsed->gas_price);
+        copy_c_string(minimum.gas_budget, sizeof(minimum.gas_budget), parsed->gas_budget);
+        if (build_minimum_policy_subject(minimum, policy_subject_out) &&
+            build_minimum_review_summary(
+                minimum,
+                "Transaction review cannot be fully shown",
+                review_summary_out)) {
+            *coverage_out = authorization_coverage_from_review(*review_summary_out);
+            free(parsed);
+            return AgentQSuiSignTransactionAdapterResult::ok;
+        }
+        *policy_subject_out = {};
+        *review_summary_out = {};
+        free(parsed);
+        return AgentQSuiSignTransactionAdapterResult::unsupported_transaction;
+    }
+    *coverage_out = authorization_coverage_from_review(*review_summary_out);
+    free(parsed);
     return AgentQSuiSignTransactionAdapterResult::ok;
 }
 
