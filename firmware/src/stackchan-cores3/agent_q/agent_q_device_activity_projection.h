@@ -22,6 +22,8 @@ struct AgentQDeviceActivityFacts {
     bool protocol_pin_approval_active;
     bool provisioning_flow_active;
     bool local_pin_auth_flow_active;
+    bool payload_delivery_receiving;
+    bool payload_delivery_finalized;
     AgentQPolicyUpdateFlowSnapshot policy_update;
     AgentQLocalResetSnapshot local_reset;
     AgentQUserSigningFlowCoreSnapshot user_signing;
@@ -39,6 +41,9 @@ struct AgentQDeviceActivityProjection {
     bool policy_update_awaiting_approval;
     bool policy_update_busy;
     bool provisioning_flow_active;
+    bool payload_delivery_active;
+    bool payload_delivery_receiving;
+    bool payload_delivery_finalized;
     bool local_reset_active;
     bool local_reset_settings_menu;
     bool local_pin_auth_flow_active;
@@ -48,6 +53,7 @@ struct AgentQDeviceActivityProjection {
 
 struct AgentQDeviceActivityUsbRequestOptions {
     bool allow_settings_menu;
+    bool allow_payload_delivery;
 };
 
 struct AgentQDeviceActivityUsbRequestBlock {

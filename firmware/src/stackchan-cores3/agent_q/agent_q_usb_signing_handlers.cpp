@@ -135,6 +135,8 @@ CommonSignatureIngressError common_signature_ingress_error(
         case AgentQSignTransactionUserIngressResult::invalid_network:
             return CommonSignatureIngressError::invalid_network;
         case AgentQSignTransactionUserIngressResult::invalid_tx_bytes:
+        case AgentQSignTransactionUserIngressResult::invalid_payload_ref:
+        case AgentQSignTransactionUserIngressResult::invalid_payload_descriptor:
             return CommonSignatureIngressError::payload_invalid;
         case AgentQSignTransactionUserIngressResult::ok:
         default:
@@ -256,6 +258,24 @@ const char* signature_begin_error_message(AgentQUserSigningFlowBeginResult resul
     }
 }
 
+bool signature_begin_error_should_notify(AgentQUserSigningFlowBeginResult result)
+{
+    return result == AgentQUserSigningFlowBeginResult::malformed_transaction ||
+           result == AgentQUserSigningFlowBeginResult::unsupported_transaction;
+}
+
+const char* signature_begin_notice_message(AgentQUserSigningFlowBeginResult result)
+{
+    switch (result) {
+        case AgentQUserSigningFlowBeginResult::malformed_transaction:
+            return "Malformed transaction";
+        case AgentQUserSigningFlowBeginResult::unsupported_transaction:
+            return "Unsupported transaction";
+        default:
+            return nullptr;
+    }
+}
+
 const char* sui_preparation_error_code(AgentQSuiSigningPreparationResult result)
 {
     switch (result) {
@@ -299,6 +319,27 @@ const char* sui_preparation_error_message(AgentQSuiSigningPreparationResult resu
         case AgentQSuiSigningPreparationResult::ok:
         default:
             return "Signing request params are invalid.";
+    }
+}
+
+bool sui_preparation_error_should_notify(AgentQSuiSigningPreparationResult result)
+{
+    return result == AgentQSuiSigningPreparationResult::unsupported_payload_size ||
+           result == AgentQSuiSigningPreparationResult::malformed_transaction ||
+           result == AgentQSuiSigningPreparationResult::unsupported_transaction;
+}
+
+const char* sui_preparation_notice_message(AgentQSuiSigningPreparationResult result)
+{
+    switch (result) {
+        case AgentQSuiSigningPreparationResult::unsupported_payload_size:
+            return "Payload too large";
+        case AgentQSuiSigningPreparationResult::malformed_transaction:
+            return "Malformed transaction";
+        case AgentQSuiSigningPreparationResult::unsupported_transaction:
+            return "Unsupported transaction";
+        default:
+            return nullptr;
     }
 }
 
@@ -367,6 +408,12 @@ void write_sui_preparation_error(
         id,
         sui_preparation_error_code(result),
         sui_preparation_error_message(result));
+    if (sui_preparation_error_should_notify(result) &&
+        ops.show_policy_signing_notice != nullptr) {
+        ops.show_policy_signing_notice(
+            sui_preparation_notice_message(result),
+            AgentQUsbSigningNoticeKind::error);
+    }
 }
 
 bool write_sign_transaction_preflight_error(
@@ -431,7 +478,10 @@ bool common_signing_handler_available(
 {
     if (ops.material_ready == nullptr ||
         ops.user_signing_ingress_busy == nullptr ||
+        ops.unrelated_user_signing_ingress_busy == nullptr ||
+        ops.current_tick == nullptr ||
         ops.validate_session == nullptr ||
+        ops.admit_transaction_payload_delivery == nullptr ||
         ops.read_signing_mode == nullptr ||
         ops.retry_responder == nullptr ||
         ops.retry_stored_result == nullptr ||
@@ -479,9 +529,11 @@ bool personal_message_signing_handler_available(
 }
 
 AgentQSigningPreflightRuntime make_preflight_runtime(
-    const AgentQUsbSigningHandlerOps& ops)
+    const AgentQUsbSigningHandlerOps& ops,
+    AgentQTimeoutTick now_tick)
 {
     return AgentQSigningPreflightRuntime{
+        now_tick,
         ops.read_signing_mode,
         ops.read_signing_mode_context,
         ops.retry_responder,
@@ -511,11 +563,23 @@ void log_response_write_failure(
     }
 }
 
-bool policy_execution_status_reportable(AgentQPolicySigningExecutionStatus status)
+bool policy_execution_request_error_reportable(const char* code)
+{
+    return code != nullptr &&
+           (strcmp(code, "unsupported_transaction") == 0 ||
+            strcmp(code, "unsupported_payload_size") == 0 ||
+            strcmp(code, "malformed_transaction") == 0);
+}
+
+bool policy_execution_status_reportable(
+    AgentQPolicySigningExecutionStatus status,
+    const char* code)
 {
     return status == AgentQPolicySigningExecutionStatus::policy_rejected ||
            status == AgentQPolicySigningExecutionStatus::signing_failed ||
-           status == AgentQPolicySigningExecutionStatus::signed_success;
+           status == AgentQPolicySigningExecutionStatus::signed_success ||
+           (status == AgentQPolicySigningExecutionStatus::request_error &&
+            policy_execution_request_error_reportable(code));
 }
 
 void log_policy_execution_status(
@@ -555,9 +619,21 @@ void log_policy_execution_status(
 
 const char* policy_execution_notice_message(
     AgentQPolicySigningExecutionStatus status,
+    const char* code,
     bool wrote_response)
 {
     switch (status) {
+        case AgentQPolicySigningExecutionStatus::request_error:
+            if (!wrote_response) {
+                return "Request failed; USB failed";
+            }
+            if (strcmp(code, "unsupported_payload_size") == 0) {
+                return "Payload too large";
+            }
+            if (strcmp(code, "malformed_transaction") == 0) {
+                return "Malformed transaction";
+            }
+            return "Unsupported transaction";
         case AgentQPolicySigningExecutionStatus::policy_rejected:
             return wrote_response ? "Policy rejected" : "Rejected; USB failed";
         case AgentQPolicySigningExecutionStatus::signing_failed:
@@ -573,7 +649,9 @@ AgentQUsbSigningNoticeKind policy_execution_notice_kind(
     AgentQPolicySigningExecutionStatus status,
     bool wrote_response)
 {
-    if (!wrote_response || status == AgentQPolicySigningExecutionStatus::signing_failed) {
+    if (!wrote_response ||
+        status == AgentQPolicySigningExecutionStatus::request_error ||
+        status == AgentQPolicySigningExecutionStatus::signing_failed) {
         return AgentQUsbSigningNoticeKind::error;
     }
     if (status == AgentQPolicySigningExecutionStatus::policy_rejected) {
@@ -589,7 +667,7 @@ void report_policy_execution_outcome(
     bool wrote_response,
     const AgentQUsbSigningHandlerOps& ops)
 {
-    if (!policy_execution_status_reportable(status)) {
+    if (!policy_execution_status_reportable(status, sign_result.code)) {
         return;
     }
     if (wrote_response) {
@@ -599,7 +677,7 @@ void report_policy_execution_outcome(
     }
     show_policy_notice(
         ops,
-        policy_execution_notice_message(status, wrote_response),
+        policy_execution_notice_message(status, sign_result.code, wrote_response),
         policy_execution_notice_kind(status, wrote_response));
 }
 
@@ -615,6 +693,12 @@ void finish_user_signing_review_entry(
             id,
             signature_begin_error_code(begin_result),
             signature_begin_error_message(begin_result));
+        if (signature_begin_error_should_notify(begin_result) &&
+            ops.show_policy_signing_notice != nullptr) {
+            ops.show_policy_signing_notice(
+                signature_begin_notice_message(begin_result),
+                AgentQUsbSigningNoticeKind::error);
+        }
         return;
     }
 
@@ -627,12 +711,16 @@ void finish_user_signing_review_entry(
     ops.record_user_signing_waiting(id, route);
 }
 
-void handle_sign_transaction_policy_mode(
+void handle_sign_transaction_policy_mode_with_prepared_borrow(
     const char* id,
     const AgentQSuiPreparedSignTransaction& prepared,
     const uint8_t* request_identity,
     const AgentQUsbSigningHandlerOps& ops)
 {
+    // Policy runtime results borrow prepared.tx_bytes. Keep evaluation,
+    // execution, response writing, and policy cleanup inside this helper so the
+    // caller can clear the prepared payload only after the borrowed result is
+    // fully consumed.
     AgentQSignTransactionPolicyRuntimeResult sign_result =
         ops.evaluate_transaction_policy(prepared);
     if (sign_result.status == AgentQSignTransactionPolicyRuntimeStatus::policy_authorized) {
@@ -667,16 +755,20 @@ void handle_usb_sign_transaction_request(
 
     AgentQSignTransactionPreflightOutput& preflight = g_sign_transaction_preflight_scratch;
     clear_sign_transaction_preflight_scratch(ops, preflight);
+    const AgentQTimeoutTick now_tick = ops.current_tick();
     const AgentQSigningPreflightResult preflight_result =
         ops.evaluate_transaction_preflight(
             request,
             AgentQSignTransactionUserIngressState{
+                now_tick,
                 ops.material_ready(),
                 ops.user_signing_ingress_busy(),
                 ops.validate_session,
                 ops.validate_session_context,
+                ops.admit_transaction_payload_delivery,
+                ops.transaction_payload_delivery_admission_context,
             },
-            make_preflight_runtime(ops),
+            make_preflight_runtime(ops, now_tick),
             &preflight);
     if (preflight_result != AgentQSigningPreflightResult::ok) {
         write_sign_transaction_preflight_error(id, preflight_result, preflight, writer, ops);
@@ -684,7 +776,7 @@ void handle_usb_sign_transaction_request(
         return;
     }
     if (preflight.signing_mode == AgentQSigningAuthorizationMode::policy) {
-        handle_sign_transaction_policy_mode(
+        handle_sign_transaction_policy_mode_with_prepared_borrow(
             id,
             preflight.prepared,
             preflight.request_identity,
@@ -720,16 +812,17 @@ void handle_usb_sign_personal_message_request(
     }
 
     AgentQSignPersonalMessagePreflightOutput preflight = {};
+    const AgentQTimeoutTick now_tick = ops.current_tick();
     const AgentQSigningPreflightResult preflight_result =
         ops.evaluate_personal_message_preflight(
             request,
             AgentQSignPersonalMessageUserIngressState{
                 ops.material_ready(),
-                ops.user_signing_ingress_busy(),
+                ops.unrelated_user_signing_ingress_busy(),
                 ops.validate_session,
                 ops.validate_session_context,
             },
-            make_preflight_runtime(ops),
+            make_preflight_runtime(ops, now_tick),
             &preflight);
     if (preflight_result != AgentQSigningPreflightResult::ok) {
         write_sign_personal_message_preflight_error(id, preflight_result, preflight, writer, ops);

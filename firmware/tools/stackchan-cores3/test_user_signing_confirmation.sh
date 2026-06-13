@@ -44,6 +44,7 @@ extern "C" TickType_t xTaskGetTickCount(void);
 H
 
 cat >"${TMP_DIR}/user_signing_confirmation_test.cpp" <<'CPP'
+#include <assert.h>
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -238,9 +239,15 @@ agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
     TickType_t deadline = 300)
 {
     static agent_q::AgentQSuiPreparedSignTransaction prepared = {};
+    if (prepared.tx_bytes != nullptr) {
+        memset(prepared.tx_bytes, 0, prepared.tx_bytes_size);
+        free(prepared.tx_bytes);
+    }
     prepared = {};
     prepared.route = agent_q::AgentQSupportedSignRoute::sui_sign_transaction;
     snprintf(prepared.network, sizeof(prepared.network), "%s", network);
+    prepared.tx_bytes = static_cast<uint8_t*>(malloc(payload_size));
+    assert(prepared.tx_bytes != nullptr);
     memcpy(prepared.tx_bytes, payload, payload_size);
     prepared.tx_bytes_size = payload_size;
     snprintf(prepared.payload_digest, sizeof(prepared.payload_digest),

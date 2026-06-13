@@ -1,14 +1,17 @@
 #include "agent_q_sign_transaction_user_validation.h"
 
+#include <stdint.h>
 #include <string.h>
 
 #include "agent_q_protocol_input_copy.h"
 
+#include "agent_q_approval_history.h"
 #include "agent_q_base64.h"
 #include "agent_q_json_input.h"
 #include "agent_q_protocol_constants.h"
 #include "agent_q_request_id.h"
 #include "agent_q_sui_network.h"
+#include "agent_q_u64_decimal.h"
 
 namespace agent_q {
 namespace {
@@ -33,10 +36,44 @@ bool request_params_fields_supported(JsonObjectConst params)
 {
     for (JsonPairConst pair : params) {
         if (!agent_q_json_string_equals(pair.key(), "network") &&
-            !agent_q_json_string_equals(pair.key(), "txBytes")) {
+            !agent_q_json_string_equals(pair.key(), "txBytes") &&
+            !agent_q_json_string_equals(pair.key(), "payloadRef") &&
+            !agent_q_json_string_equals(pair.key(), "payloadKind") &&
+            !agent_q_json_string_equals(pair.key(), "sizeBytes") &&
+            !agent_q_json_string_equals(pair.key(), "payloadDigest")) {
             return false;
         }
     }
+    return true;
+}
+
+bool object_has_key(JsonObjectConst object, const char* key)
+{
+    if (key == nullptr) {
+        return false;
+    }
+    for (JsonPairConst pair : object) {
+        if (agent_q_json_string_equals(pair.key(), key)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool parse_payload_size_string(const char* value, size_t* output)
+{
+    if (output == nullptr) {
+        return false;
+    }
+    *output = 0;
+    uint64_t parsed = 0;
+    if (!parse_canonical_u64_decimal_string(value, &parsed)) {
+        return false;
+    }
+    if (parsed > static_cast<uint64_t>(SIZE_MAX)) {
+        return false;
+    }
+    *output = static_cast<size_t>(parsed);
     return true;
 }
 
@@ -156,16 +193,68 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_params(
         return AgentQSignTransactionUserValidationResult::invalid_network;
     }
 
-    const char* tx_bytes_base64 = nullptr;
-    if (!agent_q_json_value_c_string(params["txBytes"], &tx_bytes_base64) ||
-        !validate_canonical_base64_syntax(
-            tx_bytes_base64,
-            kAgentQSignRequestBase64MaxSize,
-            &output->tx_bytes_decoded_size)) {
+    const bool has_tx_bytes = object_has_key(params, "txBytes");
+    const bool has_payload_ref = object_has_key(params, "payloadRef");
+    const bool has_payload_kind = object_has_key(params, "payloadKind");
+    const bool has_size_bytes = object_has_key(params, "sizeBytes");
+    const bool has_payload_digest = object_has_key(params, "payloadDigest");
+    if (has_tx_bytes == has_payload_ref) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignTransactionUserValidationResult::invalid_tx_bytes;
+        return AgentQSignTransactionUserValidationResult::invalid_params_shape;
     }
-    output->tx_bytes_base64 = tx_bytes_base64;
+
+    if (has_tx_bytes) {
+        if (has_payload_kind || has_size_bytes || has_payload_digest) {
+            memset(output, 0, sizeof(*output));
+            return AgentQSignTransactionUserValidationResult::invalid_params_shape;
+        }
+        const char* tx_bytes_base64 = nullptr;
+        if (!agent_q_json_value_c_string(params["txBytes"], &tx_bytes_base64) ||
+            !validate_canonical_base64_syntax(
+                tx_bytes_base64,
+                kAgentQSignRequestBase64MaxSize,
+                &output->tx_bytes_decoded_size)) {
+            memset(output, 0, sizeof(*output));
+            return AgentQSignTransactionUserValidationResult::invalid_tx_bytes;
+        }
+        output->payload_form = AgentQSignTransactionPayloadForm::inline_tx_bytes;
+        output->tx_bytes_base64 = tx_bytes_base64;
+        return AgentQSignTransactionUserValidationResult::ok;
+    }
+
+    if (!has_payload_kind || !has_size_bytes || !has_payload_digest) {
+        memset(output, 0, sizeof(*output));
+        return AgentQSignTransactionUserValidationResult::invalid_params_shape;
+    }
+
+    const char* payload_ref = nullptr;
+    const char* payload_kind = nullptr;
+    const char* size_bytes_string = nullptr;
+    const char* payload_digest = nullptr;
+    if (!agent_q_json_value_c_string(params["payloadRef"], &payload_ref) ||
+        !payload_delivery_payload_ref_format_valid(payload_ref) ||
+        !agent_q_json_value_c_string(params["payloadKind"], &payload_kind) ||
+        strcmp(payload_kind, kAgentQPayloadDeliveryPayloadKindTransaction) != 0 ||
+        !agent_q_json_value_c_string(params["sizeBytes"], &size_bytes_string) ||
+        !parse_payload_size_string(size_bytes_string, &output->payload_size_bytes) ||
+        !agent_q_json_value_c_string(params["payloadDigest"], &payload_digest) ||
+        !payload_delivery_payload_digest_format_valid(payload_digest) ||
+        !copy_nonempty_c_string(
+            payload_ref,
+            output->payload_ref,
+            sizeof(output->payload_ref)) ||
+        !copy_nonempty_c_string(
+            payload_kind,
+            output->payload_kind,
+            sizeof(output->payload_kind)) ||
+        !copy_nonempty_c_string(
+            payload_digest,
+            output->payload_digest,
+            sizeof(output->payload_digest))) {
+        memset(output, 0, sizeof(*output));
+        return AgentQSignTransactionUserValidationResult::invalid_payload_descriptor;
+    }
+    output->payload_form = AgentQSignTransactionPayloadForm::staged_payload_ref;
 
     return AgentQSignTransactionUserValidationResult::ok;
 }
@@ -194,6 +283,10 @@ const char* sign_transaction_user_validation_result_name(
             return "invalid_network";
         case AgentQSignTransactionUserValidationResult::invalid_tx_bytes:
             return "invalid_tx_bytes";
+        case AgentQSignTransactionUserValidationResult::invalid_payload_ref:
+            return "invalid_payload_ref";
+        case AgentQSignTransactionUserValidationResult::invalid_payload_descriptor:
+            return "invalid_payload_descriptor";
     }
     return "unknown";
 }

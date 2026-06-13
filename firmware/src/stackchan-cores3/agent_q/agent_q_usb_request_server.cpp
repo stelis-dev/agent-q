@@ -27,6 +27,8 @@
 #include "agent_q_local_reset.h"
 #include "agent_q_modal_drawing.h"
 #include "agent_q_persistent_material.h"
+#include "agent_q_payload_delivery_admission.h"
+#include "agent_q_payload_delivery_store.h"
 #include "agent_q_policy_proposal_parser.h"
 #include "agent_q_policy_store.h"
 #include "agent_q_policy_update_flow.h"
@@ -64,6 +66,7 @@
 #include "agent_q_usb_operation_dispatch.h"
 #include "agent_q_usb_operation_response_writer.h"
 #include "agent_q_usb_policy_propose_handler.h"
+#include "agent_q_usb_payload_upload_handlers.h"
 #include "agent_q_usb_policy_propose_result_writer.h"
 #include "agent_q_ui_panel_cleanup.h"
 #include "agent_q_usb_operation_type.h"
@@ -121,6 +124,9 @@ constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kDeviceIdKey = "device_id";
 constexpr uint32_t kIdentifyDisplayDefaultMs = 30000;
 constexpr uint32_t kConnectApprovalDefaultMs = 30000;
+constexpr uint32_t kPayloadUploadBaseWindowMs = 30000;
+constexpr uint32_t kPayloadUploadPerChunkWindowMs = 1000;
+constexpr uint32_t kPayloadUploadMaxWindowMs = 180000;
 constexpr uint32_t kProvisioningApprovalMaxMs = 30000;
 constexpr uint32_t kLocalPinInputWindowMs = 30000;
 constexpr uint32_t kBackupPhraseDisplayMs = kProvisioningApprovalMaxMs;
@@ -165,6 +171,9 @@ TaskHandle_t g_usb_task = nullptr;
 bool refresh_persistent_material_consistency();
 bool provisioned_material_ready();
 bool agent_q_ui_idle_for_local_settings();
+bool write_busy_if_pending_or_local_flow_active_for_operation(
+    const char* id,
+    agent_q::AgentQPayloadDeliveryOperationKind operation);
 agent_q::AgentQPersistentMaterialOps persistent_material_ops();
 agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops();
 agent_q::AgentQLocalSettingsResetUiFlowOps local_settings_reset_ui_ops();
@@ -322,9 +331,16 @@ void apply_panel_cleanup_plan(
     }
 }
 
+agent_q::AgentQTimeoutTick current_timeout_tick()
+{
+    return static_cast<agent_q::AgentQTimeoutTick>(xTaskGetTickCount());
+}
+
 agent_q::AgentQDeviceActivityProjection current_device_activity()
 {
-    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQTimeoutTick now = current_timeout_tick();
+    const agent_q::AgentQPayloadDeliverySnapshot payload_delivery =
+        agent_q::payload_delivery_advance_and_snapshot(now);
     const agent_q::AgentQDeviceActivityFacts facts = {
         agent_q::persistent_material_consistency_error_active(),
         agent_q::provisioning_runtime_state_is_provisioned(),
@@ -334,6 +350,8 @@ agent_q::AgentQDeviceActivityProjection current_device_activity()
         agent_q::protocol_pin_approval_active(),
         agent_q::provisioning_flow_active(),
         agent_q::local_pin_auth_flow_active(),
+        payload_delivery.state == agent_q::AgentQPayloadDeliveryState::receiving,
+        payload_delivery.state == agent_q::AgentQPayloadDeliveryState::finalized,
         agent_q::policy_update_flow_snapshot(),
         agent_q::local_reset_snapshot(now),
         agent_q::user_signing_flow_core_snapshot(),
@@ -453,6 +471,7 @@ void clear_active_session()
     // Buffered signing results are session-scoped; drop them when the session
     // ends so a new session never sees a prior session's results.
     agent_q::signing_result_clear_all();
+    agent_q::payload_delivery_clear_all();
 }
 
 bool persist_unprovisioned_state_for_local_reset()
@@ -741,6 +760,7 @@ bool replace_active_session()
     // A newly established session must not inherit the previous session's buffered
     // signing results, so drop them before the session id changes.
     agent_q::signing_result_clear_all();
+    agent_q::payload_delivery_clear_all();
     return agent_q::session_replace(fill_session_random, nullptr) ==
            agent_q::AgentQSessionStartResult::ok;
 }
@@ -1042,6 +1062,128 @@ bool user_signing_ingress_busy()
         current_device_activity());
 }
 
+bool unrelated_user_signing_ingress_busy()
+{
+    const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
+        agent_q::payload_delivery_admit_operation(
+            agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
+                current_timeout_tick(),
+                agent_q::AgentQPayloadDeliveryOperationKind::sign_personal_message,
+                nullptr,
+                false,
+                nullptr,
+            });
+    return user_signing_ingress_busy() ||
+           agent_q::payload_delivery_admission_blocks_sensitive_flow(admission);
+}
+
+bool write_payload_delivery_operation_busy(
+    const char* id,
+    agent_q::AgentQPayloadDeliveryOperationKind operation)
+{
+    const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
+        agent_q::payload_delivery_admit_operation(
+            agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
+                current_timeout_tick(),
+                operation,
+                nullptr,
+                false,
+                nullptr,
+            });
+    if (!agent_q::payload_delivery_admission_blocks_sensitive_flow(admission)) {
+        return false;
+    }
+    agent_q::usb_response_write_error(
+        id,
+        "busy",
+        "Device has a pending signable payload.");
+    return true;
+}
+
+bool write_payload_delivery_identify_device_busy(const char* id)
+{
+    return write_busy_if_pending_or_local_flow_active_for_operation(
+        id,
+        agent_q::AgentQPayloadDeliveryOperationKind::identify_device);
+}
+
+bool write_payload_delivery_connect_busy(const char* id)
+{
+    return write_busy_if_pending_or_local_flow_active_for_operation(
+        id,
+        agent_q::AgentQPayloadDeliveryOperationKind::connect);
+}
+
+bool write_payload_delivery_policy_propose_busy(const char* id)
+{
+    return write_busy_if_pending_or_local_flow_active_for_operation(
+        id,
+        agent_q::AgentQPayloadDeliveryOperationKind::policy_propose);
+}
+
+bool write_payload_delivery_disconnect_admission_error(const char* id)
+{
+    const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
+        agent_q::payload_delivery_admit_operation(
+            agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
+                current_timeout_tick(),
+                agent_q::AgentQPayloadDeliveryOperationKind::disconnect,
+                nullptr,
+                false,
+                nullptr,
+            });
+    if (agent_q::payload_delivery_admission_allows_disconnect_cleanup(admission)) {
+        return false;
+    }
+    agent_q::usb_response_write_error(
+        id,
+        "busy",
+        "Device has a pending signable payload.");
+    return true;
+}
+
+bool write_payload_delivery_safe_read_admission_error(const char* id)
+{
+    const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
+        agent_q::payload_delivery_admit_operation(
+            agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
+                current_timeout_tick(),
+                agent_q::AgentQPayloadDeliveryOperationKind::safe_read,
+                nullptr,
+                false,
+                nullptr,
+            });
+    if (agent_q::payload_delivery_admission_allows_safe_read(admission)) {
+        return false;
+    }
+    agent_q::usb_response_write_error(
+        id,
+        "busy",
+        "Device has a pending signable payload.");
+    return true;
+}
+
+bool write_payload_delivery_retained_result_admission_error(const char* id)
+{
+    const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
+        agent_q::payload_delivery_admit_operation(
+            agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
+                current_timeout_tick(),
+                agent_q::AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup,
+                nullptr,
+                false,
+                nullptr,
+            });
+    if (agent_q::payload_delivery_admission_allows_retained_result_cleanup(admission)) {
+        return false;
+    }
+    agent_q::usb_response_write_error(
+        id,
+        "busy",
+        "Device has a pending signable payload.");
+    return true;
+}
+
 bool show_user_signing_review()
 {
     return agent_q::user_signing_review_ui_show(user_signing_review_ui_flow_ops());
@@ -1065,12 +1207,15 @@ bool local_settings_touch_entry_candidate_allowed()
         current_device_activity());
 }
 
-bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_settings_menu = false)
+bool write_busy_if_pending_or_local_flow_active(
+    const char* id,
+    bool allow_settings_menu = false,
+    bool allow_payload_delivery = false)
 {
     const agent_q::AgentQDeviceActivityUsbRequestBlock block =
         agent_q::device_activity_usb_request_block(
             current_device_activity(),
-            { allow_settings_menu });
+            { allow_settings_menu, allow_payload_delivery });
     if (!block.blocked) {
         return false;
     }
@@ -1078,14 +1223,22 @@ bool write_busy_if_pending_or_local_flow_active(const char* id, bool allow_setti
     return true;
 }
 
-bool write_busy_if_pending_or_local_flow_active_default(const char* id)
+bool write_busy_if_pending_or_local_flow_active_for_operation(
+    const char* id,
+    agent_q::AgentQPayloadDeliveryOperationKind operation)
 {
-    return write_busy_if_pending_or_local_flow_active(id);
+    return write_busy_if_pending_or_local_flow_active(id, false, true) ||
+           write_payload_delivery_operation_busy(id, operation);
 }
 
 bool write_busy_if_pending_or_local_flow_active_allow_settings(const char* id)
 {
-    return write_busy_if_pending_or_local_flow_active(id, true);
+    return write_busy_if_pending_or_local_flow_active(id, true, true);
+}
+
+bool write_busy_if_pending_or_local_flow_active_allow_payload_delivery(const char* id)
+{
+    return write_busy_if_pending_or_local_flow_active(id, false, true);
 }
 
 bool require_active_matching_session(const char* id, const char* session_id)
@@ -2579,6 +2732,7 @@ const agent_q::AgentQUsbGetStatusHandlerOps& usb_get_status_handler_ops()
 {
     static const agent_q::AgentQUsbGetStatusHandlerOps ops = {
         refresh_persistent_material_consistency,
+        write_payload_delivery_safe_read_admission_error,
         usb_device_response_info,
     };
     return ops;
@@ -2599,7 +2753,7 @@ void handle_get_status_request(
 const agent_q::AgentQUsbIdentifyDeviceHandlerOps& usb_identify_device_handler_ops()
 {
     static const agent_q::AgentQUsbIdentifyDeviceHandlerOps ops = {
-        write_busy_if_pending_or_local_flow_active_default,
+        write_payload_delivery_identify_device_busy,
         agent_q::transient_ui_identification_code_safe,
         show_identification_code,
         usb_device_response_info,
@@ -2651,7 +2805,7 @@ const agent_q::AgentQUsbConnectHandlerOps& connect_handler_ops()
 {
     static const agent_q::AgentQUsbConnectHandlerOps ops = {
         provisioned_material_ready,
-        write_busy_if_pending_or_local_flow_active_default,
+        write_payload_delivery_connect_busy,
         make_connect_approval_window,
         agent_q::connect_approval_begin,
         show_connect_unavailable,
@@ -2682,6 +2836,7 @@ const agent_q::AgentQUsbRetainedResultHandlerOps& retained_result_handler_ops()
         "ack_result must remain a retained-result cleanup route.");
     static const agent_q::AgentQUsbRetainedResultHandlerOps ops = {
         provisioned_material_ready,
+        write_payload_delivery_retained_result_admission_error,
         require_active_matching_session,
     };
     return ops;
@@ -2766,12 +2921,42 @@ const agent_q::AgentQUsbSessionReadHandlerOps& session_read_handler_ops()
     static const agent_q::AgentQUsbSessionReadHandlerOps ops = {
         provisioned_material_ready,
         write_busy_if_pending_or_local_flow_active_allow_settings,
+        write_payload_delivery_safe_read_admission_error,
         require_active_matching_session,
         agent_q::read_signing_authorization_mode,
         derive_sui_account_for_session_read,
         record_root_material_unreadable_for_session_read,
         read_active_policy_for_session_read,
         record_active_policy_unavailable_for_session_read,
+    };
+    return ops;
+}
+
+agent_q::AgentQTimeoutWindow payload_upload_timeout_window_for_size(size_t size_bytes)
+{
+    const size_t chunk_count =
+        (size_bytes + agent_q::kAgentQPayloadDeliveryDefaultChunkMaxBytes - 1) /
+        agent_q::kAgentQPayloadDeliveryDefaultChunkMaxBytes;
+    uint64_t window_ms =
+        static_cast<uint64_t>(kPayloadUploadBaseWindowMs) +
+        static_cast<uint64_t>(chunk_count) * static_cast<uint64_t>(kPayloadUploadPerChunkWindowMs);
+    if (window_ms > kPayloadUploadMaxWindowMs) {
+        window_ms = kPayloadUploadMaxWindowMs;
+    }
+    const TickType_t now = xTaskGetTickCount();
+    return agent_q::timeout_window_from_deadline(
+        now,
+        now + pdMS_TO_TICKS(static_cast<uint32_t>(window_ms)));
+}
+
+const agent_q::AgentQUsbPayloadUploadHandlerOps& payload_upload_handler_ops()
+{
+    static const agent_q::AgentQUsbPayloadUploadHandlerOps ops = {
+        provisioned_material_ready,
+        write_busy_if_pending_or_local_flow_active_allow_payload_delivery,
+        require_active_matching_session,
+        current_timeout_tick,
+        payload_upload_timeout_window_for_size,
     };
     return ops;
 }
@@ -2800,6 +2985,54 @@ void handle_policy_get_request(
     agent_q::handle_usb_policy_get_request(id, request, writer, session_read_handler_ops());
 }
 
+void handle_payload_upload_begin_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_payload_upload_begin_request(
+        id,
+        request,
+        writer,
+        payload_upload_handler_ops());
+}
+
+void handle_payload_upload_chunk_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_payload_upload_chunk_request(
+        id,
+        request,
+        writer,
+        payload_upload_handler_ops());
+}
+
+void handle_payload_upload_finish_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_payload_upload_finish_request(
+        id,
+        request,
+        writer,
+        payload_upload_handler_ops());
+}
+
+void handle_payload_upload_abort_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_payload_upload_abort_request(
+        id,
+        request,
+        writer,
+        payload_upload_handler_ops());
+}
+
 const agent_q::AgentQUsbDisconnectHandlerOps& disconnect_handler_ops()
 {
     static const agent_q::AgentQUsbDisconnectHandlerOps ops = {
@@ -2807,6 +3040,7 @@ const agent_q::AgentQUsbDisconnectHandlerOps& disconnect_handler_ops()
         disconnect_pending_policy_update_for_session,
         disconnect_pending_user_signing_for_session,
         write_busy_if_pending_or_local_flow_active_allow_settings,
+        write_payload_delivery_disconnect_admission_error,
         clear_active_session,
     };
     return ops;
@@ -2825,6 +3059,7 @@ const agent_q::AgentQUsbApprovalHistoryHandlerOps& approval_history_handler_ops(
     static const agent_q::AgentQUsbApprovalHistoryHandlerOps ops = {
         provisioned_material_ready,
         write_busy_if_pending_or_local_flow_active_allow_settings,
+        write_payload_delivery_safe_read_admission_error,
         require_active_matching_session,
         agent_q::approval_history_read_page,
     };
@@ -2858,7 +3093,7 @@ const agent_q::AgentQUsbPolicyProposeHandlerOps& policy_propose_handler_ops()
 {
     static const agent_q::AgentQUsbPolicyProposeHandlerOps ops = {
         provisioned_material_ready,
-        write_busy_if_pending_or_local_flow_active_default,
+        write_payload_delivery_policy_propose_busy,
         require_active_matching_session,
         make_policy_update_review_window,
         agent_q::policy_update_flow_begin,
@@ -3085,7 +3320,11 @@ const agent_q::AgentQUsbSigningHandlerOps& usb_signing_handler_ops()
     static const agent_q::AgentQUsbSigningHandlerOps ops = {
         provisioned_material_ready,
         user_signing_ingress_busy,
+        unrelated_user_signing_ingress_busy,
+        current_timeout_tick,
         validate_session_for_user_signing,
+        nullptr,
+        agent_q::payload_delivery_admit_sign_transaction,
         nullptr,
         read_signing_mode_for_preflight,
         nullptr,
@@ -3151,6 +3390,10 @@ const agent_q::AgentQUsbOperationHandlers& usb_operation_handlers()
         handle_policy_get_request,
         handle_get_approval_history_request,
         handle_policy_propose_request,
+        handle_payload_upload_begin_request,
+        handle_payload_upload_chunk_request,
+        handle_payload_upload_finish_request,
+        handle_payload_upload_abort_request,
     };
     return handlers;
 }
@@ -3175,6 +3418,7 @@ void poll_usb_input()
 
 void run_usb_request_server_maintenance_phase()
 {
+    agent_q::payload_delivery_clear_expired(xTaskGetTickCount());
     drain_local_auth_worker_results();
     clear_identification_if_needed();
     clear_agent_q_message_if_needed();
@@ -3257,7 +3501,11 @@ void init_usb_request_server()
     if (!usb_serial_jtag_is_driver_installed()) {
         usb_serial_jtag_driver_config_t config = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
         config.tx_buffer_size = 1024;
-        config.rx_buffer_size = 1024;
+        // The protocol accepts one bounded JSONL request frame up to
+        // kAgentQUsbRequestLineMaxBytes. The driver RX queue must be at least
+        // that large so a single host write cannot overflow before the request
+        // task drains it.
+        config.rx_buffer_size = agent_q::kAgentQUsbRequestLineMaxBytes + 512;
         const esp_err_t result = usb_serial_jtag_driver_install(&config);
         if (result != ESP_OK) {
             ESP_LOGE(kTag, "USB serial driver install failed: %s", esp_err_to_name(result));

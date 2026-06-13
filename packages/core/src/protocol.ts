@@ -61,6 +61,23 @@ import {
   type AckResultResponse,
   type GetResultRequest,
 } from "./protocol-recovery.js";
+import {
+  isPayloadUploadResponseType,
+  sanitizePayloadUploadResponse,
+  type PayloadDeliveryCapability,
+  type PayloadUploadAbortRequest,
+  type PayloadUploadAbortResultResponse,
+  type PayloadUploadBeginRequest,
+  type PayloadUploadBeginResultResponse,
+  type PayloadUploadChunkRequest,
+  type PayloadUploadChunkResultResponse,
+  type PayloadUploadFinishRequest,
+  type PayloadUploadFinishResultResponse,
+  type PayloadUploadRequest,
+  type PayloadUploadResponse,
+  type StagedSignTransactionParams,
+  type StagedSignTransactionRequest,
+} from "./protocol-payload-delivery.js";
 import { ProtocolError } from "./protocol-error.js";
 import {
   AGENT_Q_POLICY_SCHEMA,
@@ -120,6 +137,7 @@ import {
   createRequestId,
   hasOnlyObjectKeys,
   hasSecretPayloadKey,
+  isUint64DecimalString,
   isRecord,
   isSuiAddressForPublicKey,
   randomBytesPortable,
@@ -187,6 +205,7 @@ export {
   UNSUPPORTED_METHOD_MESSAGE,
   consumeProtocolResponseChunk,
   createRequestId,
+  isUint64DecimalString,
   isSuiAddressForPublicKey,
 };
 export { ProtocolError };
@@ -229,15 +248,46 @@ export type {
   AckResultResponse,
   GetResultRequest,
 } from "./protocol-recovery.js";
+export type {
+  PayloadDeliveryCapability,
+  PayloadDeliveryCapabilityLimits,
+  PayloadUploadAbortRequest,
+  PayloadUploadAbortResultResponse,
+  PayloadUploadBeginRequest,
+  PayloadUploadBeginResultResponse,
+  PayloadUploadChunkRequest,
+  PayloadUploadChunkResultResponse,
+  PayloadUploadFinishRequest,
+  PayloadUploadFinishResultResponse,
+  PayloadUploadRequest,
+  PayloadUploadResponse,
+  StagedSignTransactionParams,
+  StagedSignTransactionRequest,
+} from "./protocol-payload-delivery.js";
 export {
   assertAckResultResponse,
   makeAckResultRequest,
   makeGetResultRequest,
 } from "./protocol-recovery.js";
+export {
+  PAYLOAD_REF_PATTERN,
+  PAYLOAD_UPLOAD_ID_PATTERN,
+  SIGNABLE_PAYLOAD_KIND_TRANSACTION,
+  makePayloadUploadAbortRequest,
+  makePayloadUploadBeginRequest,
+  makePayloadUploadChunkRequest,
+  makePayloadUploadFinishRequest,
+  makeStagedSignTransactionRequest,
+  normalizePayloadUploadRequest,
+  normalizeStagedSignTransactionParams,
+  payloadDeliveryCapabilityLimits,
+  sanitizePayloadDeliveryCapability,
+  sanitizePayloadUploadResponse,
+} from "./protocol-payload-delivery.js";
 // Signing request builders and route identification are owned by
 // provider-protocol because provider adapters and the full protocol share the
-// same top-level signing methods. The full protocol entrypoint re-exports them
-// for compatibility instead of wrapping or reclassifying the route.
+// same top-level signing methods. The full protocol entrypoint re-exports the
+// same current-route builders instead of wrapping or reclassifying the route.
 export {
   identifySignRoute,
   makeSignPersonalMessageRequest,
@@ -313,9 +363,11 @@ export type ProtocolRequest =
   | GetAccountsRequest
   | GetResultRequest
   | AckResultRequest
+  | PayloadUploadRequest
   | PolicyGetRequest
   | GetApprovalHistoryRequest
   | PolicyProposeRequest
+  | StagedSignTransactionRequest
   | SignTransactionRequest
   | SignPersonalMessageRequest;
 
@@ -457,6 +509,7 @@ export type ProtocolResponse =
   | ConnectResponse
   | DisconnectResponse
   | AckResultResponse
+  | PayloadUploadResponse
   | CapabilitiesResponse
   | AccountsResponse
   | PolicyResponse
@@ -658,6 +711,10 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
 
   if (value.type === "ack_result") {
     return sanitizeAckResultResponse(value);
+  }
+
+  if (isPayloadUploadResponseType(value.type)) {
+    return sanitizePayloadUploadResponse(value);
   }
 
   if (value.type === "status") {
@@ -942,16 +999,6 @@ export function isSignChain(value: unknown): value is string {
 export function isSignMethod(value: unknown): value is string {
   return typeof value === "string" && SIGN_METHOD_PATTERN.test(value);
 }
-
-export function isUint64DecimalString(value: unknown): value is string {
-  if (typeof value !== "string" || !UINT_DECIMAL_STRING_PATTERN.test(value)) {
-    return false;
-  }
-  return value.length < UINT64_MAX_DECIMAL.length ||
-    (value.length === UINT64_MAX_DECIMAL.length && value <= UINT64_MAX_DECIMAL);
-}
-
-const UINT64_MAX_DECIMAL = "18446744073709551615";
 
 function isBoundedPolicyString(value: unknown, maxLength: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= maxLength;

@@ -6,8 +6,8 @@ usage() {
 Usage: firmware/tools/stackchan-cores3/test_usb_policy_propose_handler.sh
 
 Compiles the extracted USB policy_propose handler and verifies state/session,
-field, policy-begin, UI-entry, and terminal-error behavior. It does not require
-hardware.
+payload-delivery admission, field, policy-begin, UI-entry, and terminal-error
+behavior. It does not require hardware.
 EOF
 }
 
@@ -24,8 +24,28 @@ COMMON_POLICY_DIR="${COMMON_ROOT}/policy"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
+if [[ -z "${IDF_PATH:-}" ]]; then
+  echo "IDF_PATH is not set. Source ESP-IDF v5.5.4 export.sh before running this test." >&2
+  exit 1
+fi
+
+MBEDTLS_ROOT="${IDF_PATH}/components/mbedtls/mbedtls"
+MBEDTLS_INCLUDE_DIR="${MBEDTLS_ROOT}/include"
+MBEDTLS_LIBRARY_DIR="${MBEDTLS_ROOT}/library"
+if [[ ! -f "${MBEDTLS_INCLUDE_DIR}/mbedtls/sha256.h" || ! -f "${MBEDTLS_LIBRARY_DIR}/sha256.c" || ! -f "${MBEDTLS_LIBRARY_DIR}/platform_util.c" ]]; then
+  echo "IDF_PATH does not expose the expected ESP-IDF mbedTLS sources: ${IDF_PATH}" >&2
+  exit 1
+fi
+
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
+  "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.h" \
+  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
+  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.h" \
+  "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
+  "${AGENT_Q_DIR}/agent_q_payload_delivery_store.h" \
+  "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.h" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_result_writer.cpp" \
@@ -43,6 +63,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
+CC_BIN="${CC:-cc}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-policy-propose-handler.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 mkdir -p "${TMP_DIR}/agent_q_common"
@@ -65,8 +86,11 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
+#include "agent_q_payload_delivery_admission.h"
+#include "agent_q_payload_delivery_store.h"
 #include "agent_q_usb_policy_propose_handler.h"
 #include "agent_q_usb_policy_propose_result_writer.h"
+#include "mbedtls/sha256.h"
 
 namespace {
 
@@ -108,6 +132,7 @@ agent_q::AgentQTimeoutWindow g_last_window = {};
 
 void reset_state()
 {
+    agent_q::payload_delivery_store_reset();
     g_write_error_calls = 0;
     g_log_write_failure_calls = 0;
     g_material_calls = 0;
@@ -170,6 +195,22 @@ bool write_busy(const char* id)
     g_busy_calls += 1;
     g_last_id = id;
     return g_busy;
+}
+
+bool write_busy_from_payload_delivery(const char* id)
+{
+    g_busy_calls += 1;
+    if (agent_q::payload_delivery_admit_operation(
+            agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
+                agent_q::AgentQPayloadDeliveryOperationKind::policy_propose,
+                nullptr,
+                false,
+                nullptr,
+            }) !=
+        agent_q::AgentQPayloadDeliveryAdmissionResult::busy) {
+        return false;
+    }
+    return write_error(id, "busy", "Device has a pending signable payload.");
 }
 
 bool require_session(const char* id, const char* session_id)
@@ -264,6 +305,63 @@ agent_q::AgentQUsbPolicyProposeHandlerOps make_ops()
     };
 }
 
+agent_q::AgentQUsbPolicyProposeHandlerOps make_payload_admission_ops()
+{
+    return agent_q::AgentQUsbPolicyProposeHandlerOps{
+        material_ready,
+        write_busy_from_payload_delivery,
+        require_session,
+        make_review_window,
+        begin_policy_update,
+        begin_result_reason,
+        show_policy_update_review,
+        record_ui_error,
+        finish_policy_update_terminal,
+        record_waiting,
+    };
+}
+
+void stage_finalized_payload()
+{
+    const uint8_t payload[] = {0x31, 0x41, 0x59, 0x26};
+    char digest[agent_q::kAgentQApprovalHistoryDigestSize] = {};
+    assert(agent_q::approval_history_digest_payload(
+        payload,
+        sizeof(payload),
+        digest,
+        sizeof(digest)));
+    agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
+    assert(agent_q::payload_delivery_begin(0,
+        agent_q::AgentQPayloadDeliveryBeginInput{
+            "session_abcdef",
+            agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+            "transaction",
+            sizeof(payload),
+            digest,
+            agent_q::AgentQPayloadDeliveryLimits{16, 128},
+            agent_q::timeout_window_from_deadline(0, 1000),
+        },
+        &begin) == agent_q::AgentQPayloadDeliveryResult::ok);
+    size_t received = 0;
+    assert(agent_q::payload_delivery_append_chunk(0,
+        agent_q::AgentQPayloadDeliveryChunkInput{
+            "session_abcdef",
+            begin.upload_id,
+            0,
+            payload,
+            sizeof(payload),
+        },
+        &received) == agent_q::AgentQPayloadDeliveryResult::ok);
+    assert(received == sizeof(payload));
+    agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
+    assert(agent_q::payload_delivery_finish(0,
+        agent_q::AgentQPayloadDeliveryFinishInput{
+            "session_abcdef",
+            begin.upload_id,
+        },
+        &finish) == agent_q::AgentQPayloadDeliveryResult::ok);
+}
+
 JsonDocument parse_request(const char* json)
 {
     JsonDocument request;
@@ -280,6 +378,47 @@ const char* valid_request()
 }  // namespace
 
 namespace agent_q {
+
+void wipe_sensitive_buffer(void* data, size_t size)
+{
+    if (data == nullptr) {
+        return;
+    }
+    volatile uint8_t* cursor = static_cast<volatile uint8_t*>(data);
+    for (size_t index = 0; index < size; ++index) {
+        cursor[index] = 0;
+    }
+}
+
+bool approval_history_digest_payload(
+    const uint8_t* payload,
+    size_t payload_size,
+    char* output,
+    size_t output_size)
+{
+    if (payload == nullptr || payload_size == 0 || output == nullptr ||
+        output_size != kAgentQApprovalHistoryDigestSize) {
+        return false;
+    }
+    uint8_t digest[32] = {};
+    if (mbedtls_sha256(payload, payload_size, digest, 0) != 0) {
+        return false;
+    }
+    int written = snprintf(output, output_size,
+                           "sha256:%02x%02x%02x%02x%02x%02x%02x%02x"
+                           "%02x%02x%02x%02x%02x%02x%02x%02x"
+                           "%02x%02x%02x%02x%02x%02x%02x%02x"
+                           "%02x%02x%02x%02x%02x%02x%02x%02x",
+                           digest[0], digest[1], digest[2], digest[3],
+                           digest[4], digest[5], digest[6], digest[7],
+                           digest[8], digest[9], digest[10], digest[11],
+                           digest[12], digest[13], digest[14], digest[15],
+                           digest[16], digest[17], digest[18], digest[19],
+                           digest[20], digest[21], digest[22], digest[23],
+                           digest[24], digest[25], digest[26], digest[27],
+                           digest[28], digest[29], digest[30], digest[31]);
+    return written == 71;
+}
 
 bool usb_response_write_json(JsonDocument& response)
 {
@@ -321,6 +460,22 @@ int main()
         agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_busy_calls == 1);
         assert(g_write_error_calls == 0);
+        assert(g_require_session_calls == 0);
+        assert(g_begin_calls == 0);
+    }
+
+    {
+        reset_state();
+        stage_finalized_payload();
+        JsonDocument request = parse_request(valid_request());
+        agent_q::handle_usb_policy_propose_request(
+            "req",
+            request,
+            make_writer(),
+            make_payload_admission_ops());
+        assert(g_busy_calls == 1);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "busy") == 0);
         assert(g_require_session_calls == 0);
         assert(g_begin_calls == 0);
     }
@@ -477,8 +632,62 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
+  -I"${MBEDTLS_INCLUDE_DIR}" \
   -I"${AGENT_Q_DIR}" \
+  -I"${COMMON_ROOT}" \
+  -c "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
+  -o "${TMP_DIR}/payload_delivery_admission.o"
+
+"${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
+  -I"${TMP_DIR}" \
+  -I"${ARDUINOJSON_ROOT}" \
+  -I"${MBEDTLS_INCLUDE_DIR}" \
+  -I"${AGENT_Q_DIR}" \
+  -I"${COMMON_ROOT}" \
+  -c "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
+  -o "${TMP_DIR}/payload_delivery_primitives.o"
+
+"${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
+  -I"${TMP_DIR}" \
+  -I"${ARDUINOJSON_ROOT}" \
+  -I"${MBEDTLS_INCLUDE_DIR}" \
+  -I"${AGENT_Q_DIR}" \
+  -I"${COMMON_ROOT}" \
+  -c "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
+  -o "${TMP_DIR}/payload_delivery_store.o"
+
+"${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
+  -I"${TMP_DIR}" \
+  -I"${ARDUINOJSON_ROOT}" \
+  -I"${MBEDTLS_INCLUDE_DIR}" \
+  -I"${AGENT_Q_DIR}" \
+  -I"${COMMON_ROOT}" \
+  -c "${AGENT_Q_DIR}/agent_q_session.cpp" \
+  -o "${TMP_DIR}/session.o"
+
+"${CC_BIN}" -std=c99 -Wall -Wextra -Werror \
+  -I"${MBEDTLS_INCLUDE_DIR}" \
+  -c "${MBEDTLS_LIBRARY_DIR}/sha256.c" \
+  -o "${TMP_DIR}/sha256.o"
+
+"${CC_BIN}" -std=c99 -Wall -Wextra -Werror \
+  -I"${MBEDTLS_INCLUDE_DIR}" \
+  -c "${MBEDTLS_LIBRARY_DIR}/platform_util.c" \
+  -o "${TMP_DIR}/platform_util.o"
+
+"${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
+  -I"${TMP_DIR}" \
+  -I"${ARDUINOJSON_ROOT}" \
+  -I"${MBEDTLS_INCLUDE_DIR}" \
+  -I"${AGENT_Q_DIR}" \
+  -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
+  "${TMP_DIR}/payload_delivery_admission.o" \
+  "${TMP_DIR}/payload_delivery_primitives.o" \
+  "${TMP_DIR}/payload_delivery_store.o" \
+  "${TMP_DIR}/session.o" \
+  "${TMP_DIR}/sha256.o" \
+  "${TMP_DIR}/platform_util.o" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_result_writer.cpp" \
   -o "${TMP_DIR}/test_usb_policy_propose_handler"

@@ -98,22 +98,26 @@ Implemented today:
 - A bounded persistent approval-history read path. The current StackChan CoreS3
   target stores Firmware-authored signing confirmation/terminal metadata for
   `sign_transaction` and user-mode `sign_personal_message`, plus recordable
-  terminal metadata from `policy_propose`. History does not store raw txBytes,
-  decoded transactions, raw policy documents, full rule content, session ids,
-  request ids, client names, PINs, or secret material.
+  terminal metadata from `policy_propose`. History does not store raw
+  transaction bytes, decoded transactions, raw policy documents, full rule
+  content, session ids, request ids, client names, PINs, or secret material.
   Local reset and error-state erase recovery wipe the history.
 - The unified `sign_transaction` path has `source-wired-not-product-active`
-  status for bounded Sui restricted transfers derived from full Sui
-  `TransactionData`. Firmware derives offline-provable facts and account
-  binding from `txBytes` and stored material, reads its device-local
-  signing authorization mode, selects the policy or user signing gate, requires
-  history before signing, emits terminal metadata, and owns cleanup. Policy
-  mode evaluates active policy and signs after policy authorization with
-  speech-bubble status notifications; user mode shows clear-signing review and
-  requires the current human approval input mode. Requests cannot choose the
-  authorization mode or the human approval input mode. Product-active status is
-  not claimed unless `docs/IMPLEMENTATION_STATUS.md` says the matching source,
-  docs, tests, build, hardware, and visual evidence are complete.
+  status for bounded Sui transaction bytes submitted either inline as `txBytes`
+  or through same-session staged payload delivery. Firmware derives
+  offline-provable facts and account binding from the current Sui
+  `TransactionData::V1 -> ProgrammableTransaction` facts extractor and stored
+  material, reads its device-local signing authorization mode, selects the
+  policy or user signing gate, requires history before signing, emits terminal
+  metadata, and owns cleanup. The current signable semantic projection remains
+  the restricted SUI transfer shape; unsupported decoded transaction shapes fail
+  closed. Policy mode evaluates active policy and signs after policy
+  authorization with speech-bubble status notifications; user mode shows
+  clear-signing review and requires the current human approval input mode.
+  Requests cannot choose the authorization mode or the human approval input
+  mode. Product-active status is not claimed unless
+  `docs/IMPLEMENTATION_STATUS.md` says the matching source, docs, tests, build,
+  hardware, and visual evidence are complete.
 - The `sign_personal_message` path has `source-wired-not-product-active` status
   for bounded Sui personal-message bytes. Firmware accepts it only in user
   authorization mode, uses clear-signing review and the current human approval

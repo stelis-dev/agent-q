@@ -204,6 +204,12 @@ AgentQPolicySigningExecutionResult execute_policy_sign_transaction(
             "history_error",
             "Could not record policy signing terminal result.");
     }
+    if (policy_result.tx_bytes == nullptr || policy_result.tx_bytes_size == 0) {
+        return make_policy_execution_result(
+            AgentQPolicySigningExecutionStatus::request_error,
+            "invalid_params",
+            "Policy signing payload is unavailable.");
+    }
 
     const SuiTransactionSigningResult signing_result =
         sign_sui_ed25519_transaction_from_stored_root(

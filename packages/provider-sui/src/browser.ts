@@ -13,6 +13,7 @@ import {
   INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS,
   INTERNAL_SIGN_TRANSACTION_DEADLINE_MS,
   INTERNAL_USB_DEADLINE_MS,
+  PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES,
   makeConnectRequest,
   makeDisconnectRequest,
   makeGetAccountsRequest,
@@ -20,6 +21,7 @@ import {
   makeSignPersonalMessageRequest,
   makeSignTransactionRequest,
   ProtocolError,
+  validateSignTransactionParams,
   type AccountsResponse,
   type CapabilitiesResponse,
   type ConnectResponse,
@@ -27,14 +29,27 @@ import {
   type ProviderProtocolRequest,
   type ProviderProtocolResponse,
   type SignResultResponse,
+  type SignTransactionParams,
+  type SigningPayloadCapability,
 } from "@stelis/agent-q-core/provider-protocol";
 import {
   assertAckResultResponse,
   makeAckResultRequest,
   makeGetResultRequest,
+  makePayloadUploadAbortRequest,
+  makePayloadUploadBeginRequest,
+  makePayloadUploadChunkRequest,
+  makePayloadUploadFinishRequest,
+  makeStagedSignTransactionRequest,
+  payloadDeliveryCapabilityLimits,
   parseJsonLine,
   parseProtocolResponse,
   serializeRequest,
+  SIGNABLE_PAYLOAD_KIND_TRANSACTION,
+  type PayloadUploadAbortResultResponse,
+  type PayloadUploadBeginResultResponse,
+  type PayloadUploadChunkResultResponse,
+  type PayloadUploadFinishResultResponse,
   type ProtocolRequest,
   type ProtocolResponse,
 } from "@stelis/agent-q-core/protocol";
@@ -78,7 +93,7 @@ type BrowserSession = {
 };
 
 type BrowserSignRequest = Extract<
-  ProviderProtocolRequest,
+  ProtocolRequest,
   { type: "sign_transaction" | "sign_personal_message" }
 >;
 type BrowserWriteReachability = "not_started" | "started";
@@ -126,8 +141,10 @@ type BrowserBufferedRecoveryOutcome =
 type BrowserSignRecoveryOutcome =
   | { status: "result"; response: SignResultResponse; sessionInvalidatedByAck: boolean }
   | { status: "session_invalidated" };
+type BrowserPayloadAbortOutcome = "none" | "aborted" | "failed" | "invalid_session";
 
 const PROVIDER_REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("agent-q.providerRequestMayHaveReachedFirmware");
+const BROWSER_FIRMWARE_SESSION_INVALIDATED = Symbol("agent-q.browserFirmwareSessionInvalidated");
 const RECOVERABLE_PROVIDER_SIGN_DELIVERY_CODES = new Set([
   "timeout",
   "transport_closed",
@@ -320,12 +337,18 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       return this.#inactiveResult(input.deviceId);
     }
     const snapshot = this.#sessionSnapshot(session);
-    const signRequest = makeSignTransactionRequest(session.sessionId, input.chain, input.method, {
+    const params = validateSignTransactionParams({
       network: input.network,
       txBytes: input.txBytes,
-    }, input.requestId);
+    });
     try {
-      const outcome = await this.#signWithRecovery(signRequest, session);
+      const outcome = await this.#signTransactionWithDelivery(
+        session,
+        input.chain,
+        input.method,
+        params,
+        input.requestId,
+      );
       if (outcome.status === "session_invalidated") {
         this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
         return { source: "session_ended", deviceId: session.deviceId, reason: "invalid_session" };
@@ -336,6 +359,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       }
       return result;
     } catch (error) {
+      this.#clearIfFirmwareInvalidatedSideEffect(error, snapshot);
       const ended = this.#clearIfFirmwareInvalidated(error, snapshot);
       if (ended !== null) {
         return ended;
@@ -377,6 +401,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       }
       return result;
     } catch (error) {
+      this.#clearIfFirmwareInvalidatedSideEffect(error, snapshot);
       const ended = this.#clearIfFirmwareInvalidated(error, snapshot);
       if (ended !== null) {
         return ended;
@@ -538,59 +563,249 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     return this.#exchange(request, assertResponse, deadlineForProviderRequest(request));
   }
 
-  #signWithRecovery(request: BrowserSignRequest, session: BrowserSession): Promise<BrowserSignRecoveryOutcome> {
+  #signTransactionWithDelivery(
+    session: BrowserSession,
+    chain: "sui",
+    method: "sign_transaction",
+    params: SignTransactionParams,
+    requestId: string | undefined,
+  ): Promise<BrowserSignRecoveryOutcome> {
     const generation = this.#transportGeneration;
-    const absoluteDeadlineMs = Date.now() + deadlineForProviderSigningTransaction(request);
+    const absoluteDeadlineMs = Date.now() + deadlineForProviderSignTransactionDelivery(params.txBytes);
+    const payloadBytes = decodeCanonicalBase64Payload(params.txBytes);
     return this.#enqueue(async () => {
       this.#assertTransportLive(generation);
       const port = await this.#getPort(absoluteDeadlineMs);
       this.#assertTransportLive(generation);
-      try {
+      const capabilities = await requestOverBrowserSerial(
+        port,
+        makeGetCapabilitiesRequest(session.sessionId),
+        (response) => assertCapabilitiesResponse(response as ProviderProtocolResponse),
+        remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
+        () => this.#abandonPort(),
+      );
+      const payloadCapability = findSignTransactionPayloadCapability(capabilities, chain, method);
+      if (shouldUseInlineSignRequest(payloadBytes.length, payloadCapability)) {
+        const request = makeInlineSignTransactionRequest(
+          session.sessionId,
+          chain,
+          method,
+          params,
+          requestId,
+          payloadCapability,
+        );
+        return this.#signWithRecoveryQueued(request, session, generation, absoluteDeadlineMs);
+      }
+      if (payloadCapability === null) {
+        throw new AgentQSuiBrowserProviderError(
+          "unsupported_payload_size",
+          "Firmware does not advertise staged payload delivery for this signing method.",
+        );
+      }
+      return this.#uploadAndSignTransaction(
+        session,
+        chain,
+        method,
+        params,
+        requestId,
+        payloadBytes,
+        payloadCapability,
+        generation,
+        absoluteDeadlineMs,
+      );
+    });
+  }
+
+  async #uploadAndSignTransaction(
+    session: BrowserSession,
+    chain: "sui",
+    method: "sign_transaction",
+    params: SignTransactionParams,
+    requestId: string | undefined,
+    payloadBytes: Uint8Array,
+    capability: SigningPayloadCapability,
+    generation: number,
+    absoluteDeadlineMs: number,
+  ): Promise<BrowserSignRecoveryOutcome> {
+    const limits = parsePayloadCapabilityLimits(capability);
+    if (payloadBytes.length > limits.payloadMaxBytes) {
+      throw new AgentQSuiBrowserProviderError(
+        "unsupported_payload_size",
+        "Transaction payload exceeds the device payload capability.",
+      );
+    }
+    const payloadDigest = await sha256PayloadDigest(payloadBytes);
+    let uploadId: string | null = null;
+    let payloadRef: string | null = null;
+    try {
+      let port = await this.#getPort(absoluteDeadlineMs);
+      this.#assertTransportLive(generation);
+      const begin = await requestOverBrowserSerial(
+        port,
+        makePayloadUploadBeginRequest(session.sessionId, chain, method, {
+          payloadKind: SIGNABLE_PAYLOAD_KIND_TRANSACTION,
+          sizeBytes: String(payloadBytes.length),
+          payloadDigest,
+        }),
+        assertPayloadUploadBeginResultResponse,
+        remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
+        () => this.#abandonPort(),
+      );
+      uploadId = begin.uploadId;
+      const beginChunkMaxBytes = Number(begin.chunkMaxBytes);
+      const chunkMaxBytes = Math.min(limits.chunkMaxBytes, beginChunkMaxBytes);
+      let offset = 0;
+      while (offset < payloadBytes.length) {
+        const nextOffset = Math.min(offset + chunkMaxBytes, payloadBytes.length);
+        const chunk = encodeBase64(payloadBytes.subarray(offset, nextOffset));
+        port = await this.#getPort(absoluteDeadlineMs);
+        this.#assertTransportLive(generation);
         const response = await requestOverBrowserSerial(
           port,
-          request,
-          (response) => assertSignResultResponse(response as ProviderProtocolResponse),
-          remainingProviderDeadline(absoluteDeadlineMs, deadlineForProviderRequest(request)),
+          makePayloadUploadChunkRequest(session.sessionId, uploadId, String(offset), chunk),
+          assertPayloadUploadChunkResultResponse,
+          remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
           () => this.#abandonPort(),
         );
-        this.#restoreCapturedSessionAfterPhysicalDisconnect(generation, session, port);
-        return { status: "result", response, sessionInvalidatedByAck: false };
-      } catch (error) {
-        if (!shouldAttemptProviderSignResultRecovery(error)) {
-          throw error;
+        if (response.receivedBytes !== String(nextOffset)) {
+          throw new AgentQSuiBrowserProviderError("protocol_error", "Firmware payload upload progress is inconsistent.");
         }
-        if (!this.#canAttemptRecoveryAfterTeardown(generation, session)) {
-          throw error;
-        }
-        try {
-          const recoveryPort = await this.#getPort(absoluteDeadlineMs);
-          const recovery = await this.#tryRecoverBufferedSignResult(
-            recoveryPort,
-            request.sessionId,
-            request.id,
-            absoluteDeadlineMs,
-          );
-          if (recovery.status === "session_invalidated") {
-            return { status: "session_invalidated" };
-          }
-          if (recovery.status === "recovered") {
-            if (recovery.ack !== "invalid_session") {
-              this.#restoreCapturedSessionAfterPhysicalDisconnect(generation, session, recoveryPort);
-            }
-            return {
-              status: "result",
-              response: recovery.response,
-              sessionInvalidatedByAck: recovery.ack === "invalid_session",
-            };
-          }
-        } catch {
-          // Recovery transport setup/read failures preserve the original signing
-          // delivery error. Firmware invalid_session remains visible if it is the
-          // original sign response error.
-        }
+        offset = nextOffset;
+      }
+      port = await this.#getPort(absoluteDeadlineMs);
+      this.#assertTransportLive(generation);
+      const finish = await requestOverBrowserSerial(
+        port,
+        makePayloadUploadFinishRequest(session.sessionId, uploadId),
+        assertPayloadUploadFinishResultResponse,
+        remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
+        () => this.#abandonPort(),
+      );
+      payloadRef = finish.payloadRef;
+      if (
+        finish.chain !== chain ||
+        finish.method !== method ||
+        finish.payloadKind !== SIGNABLE_PAYLOAD_KIND_TRANSACTION ||
+        finish.sizeBytes !== String(payloadBytes.length) ||
+        finish.payloadDigest !== payloadDigest
+      ) {
+        throw new AgentQSuiBrowserProviderError("protocol_error", "Firmware payload descriptor does not match the uploaded payload.");
+      }
+      const request = makeStagedSignTransactionRequest(session.sessionId, chain, method, {
+        network: params.network,
+        payloadRef,
+        payloadKind: finish.payloadKind,
+        sizeBytes: finish.sizeBytes,
+        payloadDigest: finish.payloadDigest,
+      }, requestId);
+      return await this.#signWithRecoveryQueued(request, session, generation, absoluteDeadlineMs);
+    } catch (error) {
+      const abort = await this.#abortPayloadDeliveryBestEffort(session.sessionId, { uploadId, payloadRef }, absoluteDeadlineMs);
+      if (abort === "invalid_session") {
+        markBrowserFirmwareSessionInvalidated(error);
+      }
+      throw error;
+    }
+  }
+
+  #signWithRecovery(request: BrowserSignRequest, session: BrowserSession): Promise<BrowserSignRecoveryOutcome> {
+    const generation = this.#transportGeneration;
+    const absoluteDeadlineMs = Date.now() + deadlineForProviderSigningTransaction(request);
+    return this.#enqueue(async () => this.#signWithRecoveryQueued(request, session, generation, absoluteDeadlineMs));
+  }
+
+  async #signWithRecoveryQueued(
+    request: BrowserSignRequest,
+    session: BrowserSession,
+    generation: number,
+    absoluteDeadlineMs: number,
+  ): Promise<BrowserSignRecoveryOutcome> {
+    this.#assertTransportLive(generation);
+    const port = await this.#getPort(absoluteDeadlineMs);
+    this.#assertTransportLive(generation);
+    try {
+      const response = await requestOverBrowserSerial(
+        port,
+        request,
+        (response) => assertSignResultResponse(response as ProviderProtocolResponse),
+        remainingProviderDeadline(absoluteDeadlineMs, deadlineForProviderRequest(request)),
+        () => this.#abandonPort(),
+      );
+      this.#restoreCapturedSessionAfterPhysicalDisconnect(generation, session, port);
+      return { status: "result", response, sessionInvalidatedByAck: false };
+    } catch (error) {
+      if (!shouldAttemptProviderSignResultRecovery(error)) {
         throw error;
       }
-    });
+      if (!this.#canAttemptRecoveryAfterTeardown(generation, session)) {
+        throw error;
+      }
+      try {
+        const recoveryPort = await this.#getPort(absoluteDeadlineMs);
+        const recovery = await this.#tryRecoverBufferedSignResult(
+          recoveryPort,
+          request.sessionId,
+          request.id,
+          absoluteDeadlineMs,
+        );
+        if (recovery.status === "session_invalidated") {
+          return { status: "session_invalidated" };
+        }
+        if (recovery.status === "recovered") {
+          if (recovery.ack !== "invalid_session") {
+            this.#restoreCapturedSessionAfterPhysicalDisconnect(generation, session, recoveryPort);
+          }
+          return {
+            status: "result",
+            response: recovery.response,
+            sessionInvalidatedByAck: recovery.ack === "invalid_session",
+          };
+        }
+      } catch {
+        // Recovery transport setup/read failures preserve the original signing
+        // delivery error. Firmware invalid_session remains visible if it is the
+        // original sign response error.
+      }
+      throw error;
+    }
+  }
+
+  async #abortPayloadDeliveryBestEffort(
+    sessionId: string,
+    target: { uploadId: string | null; payloadRef: string | null },
+    absoluteDeadlineMs: number,
+  ): Promise<BrowserPayloadAbortOutcome> {
+    if (target.uploadId === null && target.payloadRef === null) {
+      return "none";
+    }
+    try {
+      if (target.payloadRef !== null) {
+        const port = await this.#getPort(absoluteDeadlineMs);
+        await requestOverBrowserSerial(
+          port,
+          makePayloadUploadAbortRequest(sessionId, { payloadRef: target.payloadRef }),
+          assertPayloadUploadAbortResultResponse,
+          remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
+          () => this.#abandonPort(),
+        );
+      } else if (target.uploadId !== null) {
+        const port = await this.#getPort(absoluteDeadlineMs);
+        await requestOverBrowserSerial(
+          port,
+          makePayloadUploadAbortRequest(sessionId, { uploadId: target.uploadId }),
+          assertPayloadUploadAbortResultResponse,
+          remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
+          () => this.#abandonPort(),
+        );
+      }
+      return "aborted";
+    } catch (error) {
+      if (errorCode(error) === "invalid_session") {
+        return "invalid_session";
+      }
+      // Best-effort cleanup must not replace the upload/signing failure.
+      return "failed";
+    }
   }
 
   async #tryRecoverBufferedSignResult(
@@ -792,6 +1007,17 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     return { source: "session_ended", deviceId: snapshot.deviceId, reason: "invalid_session" };
   }
 
+  #clearIfFirmwareInvalidatedSideEffect(
+    error: unknown,
+    snapshot: BrowserSessionSnapshot,
+  ): boolean {
+    if (!consumeBrowserFirmwareSessionInvalidated(error)) {
+      return false;
+    }
+    this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
+    return true;
+  }
+
   #connectOutput(session: BrowserSession): unknown {
     return {
       source: "connected",
@@ -833,6 +1059,12 @@ function deadlineForProviderSigningTransaction(request: BrowserSignRequest): num
   return deadlineForProviderRequest(request) + INTERNAL_USB_DEADLINE_MS * 2;
 }
 
+function deadlineForProviderSignTransactionDelivery(txBytes: string): number {
+  const decodedBytes = estimateBase64DecodedBytes(txBytes);
+  const chunkCount = Math.ceil(decodedBytes / PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES);
+  return INTERNAL_SIGN_TRANSACTION_DEADLINE_MS + INTERNAL_USB_DEADLINE_MS * (chunkCount + 5);
+}
+
 function remainingProviderDeadline(absoluteDeadlineMs: number, phaseDeadlineMs: number): number {
   const remainingMs = absoluteDeadlineMs - Date.now();
   if (remainingMs <= 0) {
@@ -849,6 +1081,40 @@ function markProviderRequestDidNotReachFirmware<T>(error: T): T {
 
 function markProviderRequestMayHaveReachedFirmware<T>(error: T): T {
   return tagProviderRequestReachability(error, true);
+}
+
+function markBrowserFirmwareSessionInvalidated<T>(value: T): T {
+  if ((typeof value === "object" && value !== null) || typeof value === "function") {
+    try {
+      Object.defineProperty(value, BROWSER_FIRMWARE_SESSION_INVALIDATED, {
+        value: true,
+        configurable: true,
+      });
+    } catch {
+      // Some browser errors may be non-extensible; leave them untagged.
+    }
+  }
+  return value;
+}
+
+function consumeBrowserFirmwareSessionInvalidated(value: unknown): boolean {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function") ||
+    (value as { [BROWSER_FIRMWARE_SESSION_INVALIDATED]?: boolean })[
+      BROWSER_FIRMWARE_SESSION_INVALIDATED
+    ] !== true
+  ) {
+    return false;
+  }
+  try {
+    delete (value as { [BROWSER_FIRMWARE_SESSION_INVALIDATED]?: boolean })[
+      BROWSER_FIRMWARE_SESSION_INVALIDATED
+    ];
+  } catch {
+    // Metadata is non-public and non-enumerable; failure to delete is harmless.
+  }
+  return true;
 }
 
 function tagProviderRequestReachability<T>(error: T, mayHaveReachedFirmware: boolean): T {
@@ -881,6 +1147,146 @@ function shouldAttemptProviderSignResultRecovery(error: unknown): boolean {
   }
   const code = errorCode(error);
   return code !== null && RECOVERABLE_PROVIDER_SIGN_DELIVERY_CODES.has(code);
+}
+
+function findSignTransactionPayloadCapability(
+  capabilities: CapabilitiesResponse,
+  chain: "sui",
+  method: "sign_transaction",
+): SigningPayloadCapability | null {
+  const entry = capabilities.signing?.methods.find((candidate) =>
+    candidate.chain === chain && candidate.method === method
+  );
+  return entry?.payload ?? null;
+}
+
+function makeInlineSignTransactionRequest(
+  sessionId: string,
+  chain: "sui",
+  method: "sign_transaction",
+  params: SignTransactionParams,
+  requestId: string | undefined,
+  capability: SigningPayloadCapability | null,
+): BrowserSignRequest {
+  try {
+    return makeSignTransactionRequest(sessionId, chain, method, params, requestId);
+  } catch (error) {
+    if (
+      capability === null &&
+      error instanceof ProtocolError &&
+      error.code === "invalid_params" &&
+      error.message.includes("too large")
+    ) {
+      throw new AgentQSuiBrowserProviderError(
+        "unsupported_payload_size",
+        "Firmware does not advertise staged payload delivery for this signing method.",
+      );
+    }
+    throw error;
+  }
+}
+
+function shouldUseInlineSignRequest(
+  payloadSize: number,
+  capability: SigningPayloadCapability | null,
+): boolean {
+  if (capability === null) {
+    return true;
+  }
+  return payloadSize <= parsePayloadCapabilityLimits(capability).inlineMaxBytes;
+}
+
+function parsePayloadCapabilityLimits(capability: SigningPayloadCapability): ReturnType<typeof payloadDeliveryCapabilityLimits> {
+  try {
+    return payloadDeliveryCapabilityLimits(capability);
+  } catch (error) {
+    if (error instanceof ProtocolError) {
+      throw new AgentQSuiBrowserProviderError("protocol_error", error.message);
+    }
+    throw error;
+  }
+}
+
+function decodeCanonicalBase64Payload(value: string): Uint8Array {
+  const binary = globalThis.atob(value);
+  const output = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; ++index) {
+    output[index] = binary.charCodeAt(index);
+  }
+  return output;
+}
+
+function encodeBase64(value: Uint8Array): string {
+  let binary = "";
+  for (let index = 0; index < value.length; ++index) {
+    binary += String.fromCharCode(value[index] ?? 0);
+  }
+  return globalThis.btoa(binary);
+}
+
+async function sha256PayloadDigest(value: Uint8Array): Promise<string> {
+  const copy = new Uint8Array(value.length);
+  copy.set(value);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", copy.buffer);
+  return `sha256:${hexBytes(new Uint8Array(digest))}`;
+}
+
+function hexBytes(value: Uint8Array): string {
+  let output = "";
+  for (const byte of value) {
+    output += byte.toString(16).padStart(2, "0");
+  }
+  return output;
+}
+
+function estimateBase64DecodedBytes(value: string): number {
+  if (value.length === 0) {
+    return 0;
+  }
+  let padding = 0;
+  if (value.endsWith("==")) {
+    padding = 2;
+  } else if (value.endsWith("=")) {
+    padding = 1;
+  }
+  return Math.max(0, Math.floor(value.length / 4) * 3 - padding);
+}
+
+function assertPayloadUploadBeginResultResponse(
+  response: ProtocolResponse,
+): PayloadUploadBeginResultResponse {
+  return assertPayloadUploadResponseType(response, "payload_upload_begin_result");
+}
+
+function assertPayloadUploadChunkResultResponse(
+  response: ProtocolResponse,
+): PayloadUploadChunkResultResponse {
+  return assertPayloadUploadResponseType(response, "payload_upload_chunk_result");
+}
+
+function assertPayloadUploadFinishResultResponse(
+  response: ProtocolResponse,
+): PayloadUploadFinishResultResponse {
+  return assertPayloadUploadResponseType(response, "payload_upload_finish_result");
+}
+
+function assertPayloadUploadAbortResultResponse(
+  response: ProtocolResponse,
+): PayloadUploadAbortResultResponse {
+  return assertPayloadUploadResponseType(response, "payload_upload_abort_result");
+}
+
+function assertPayloadUploadResponseType<TType extends ProtocolResponse["type"]>(
+  response: ProtocolResponse,
+  type: TType,
+): Extract<ProtocolResponse, { type: TType }> {
+  if (response.type === "error") {
+    throw new AgentQSuiBrowserProviderError(response.error.code, response.error.message);
+  }
+  if (response.type !== type) {
+    throw new AgentQSuiBrowserProviderError("protocol_error", `Protocol response type is not ${type}.`);
+  }
+  return response as Extract<ProtocolResponse, { type: TType }>;
 }
 
 // Await a best-effort transport-cleanup step, but never block longer than
@@ -934,7 +1340,7 @@ async function openBrowserPortWithinLease(
   absoluteDeadlineMs: number,
   abandonPort: () => BrowserStalePortLease | null,
 ): Promise<void> {
-  const timeoutMs = remainingBrowserLeaseMs(
+  const remainingOpenMs = remainingBrowserLeaseMs(
     lease,
     absoluteDeadlineMs,
     "The device request expired while opening the Web Serial port.",
@@ -964,7 +1370,7 @@ async function openBrowserPortWithinLease(
       reject(markProviderRequestDidNotReachFirmware(
         new AgentQSuiBrowserProviderError("timeout", "The device request expired while opening the Web Serial port."),
       ));
-    }, timeoutMs);
+    }, remainingOpenMs);
   });
   try {
     await Promise.race([open, timeout]);
@@ -1142,7 +1548,7 @@ async function readMatchingResponse<TResponse>(
   }
 }
 
-function deadlineForProviderRequest(request: ProviderProtocolRequest): number {
+function deadlineForProviderRequest(request: Pick<ProtocolRequest, "type">): number {
   switch (request.type) {
     case "connect":
       return INTERNAL_CONNECT_DEADLINE_MS;

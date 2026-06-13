@@ -1,6 +1,7 @@
 #include "agent_q_user_signing_flow.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "agent_q_protocol_input_copy.h"
@@ -27,7 +28,7 @@ struct AgentQUserSigningFlowState {
     AgentQTimeoutWindow request_window = kAgentQTimeoutWindowNone;
     AgentQTimeoutWindow pin_input_window = kAgentQTimeoutWindowNone;
     AgentQPausedTimeoutWindow paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
-    uint8_t signable_payload[kAgentQUserSigningPayloadMaxBytes] = {};
+    uint8_t* signable_payload = nullptr;
     size_t signable_payload_size = 0;
     bool signable_payload_available = false;
     SuiTransactionPolicyFacts sui_facts = {};
@@ -41,7 +42,11 @@ struct AgentQUserSigningFlowState {
 
     void wipe_payload()
     {
-        wipe_sensitive_buffer(signable_payload, sizeof(signable_payload));
+        if (signable_payload != nullptr && signable_payload_size > 0) {
+            wipe_sensitive_buffer(signable_payload, signable_payload_size);
+            free(signable_payload);
+        }
+        signable_payload = nullptr;
         signable_payload_size = 0;
         signable_payload_available = false;
     }
@@ -189,11 +194,31 @@ void apply_common_begin_metadata(
     g_state.stage = AgentQUserSigningStage::reviewing;
 }
 
-void apply_signable_payload(const uint8_t* payload, size_t payload_size)
+bool apply_signable_payload_copy(const uint8_t* payload, size_t payload_size)
 {
-    memcpy(g_state.signable_payload, payload, payload_size);
+    if (payload == nullptr || payload_size == 0) {
+        return false;
+    }
+    uint8_t* copy = static_cast<uint8_t*>(malloc(payload_size));
+    if (copy == nullptr) {
+        return false;
+    }
+    memcpy(copy, payload, payload_size);
+    g_state.signable_payload = copy;
     g_state.signable_payload_size = payload_size;
     g_state.signable_payload_available = true;
+    return true;
+}
+
+bool apply_signable_payload_owned(uint8_t* payload, size_t payload_size)
+{
+    if (payload == nullptr || payload_size == 0) {
+        return false;
+    }
+    g_state.signable_payload = payload;
+    g_state.signable_payload_size = payload_size;
+    g_state.signable_payload_available = true;
+    return true;
 }
 
 AgentQUserSigningFlowBeginResult validate_prepared_payload_metadata(
@@ -210,7 +235,7 @@ AgentQUserSigningFlowBeginResult validate_prepared_payload_metadata(
     return AgentQUserSigningFlowBeginResult::ok;
 }
 
-AgentQUserSigningFlowBeginResult begin_common_review_state(
+AgentQUserSigningFlowBeginResult begin_common_review_state_with_copy(
     const AgentQUserSigningBeginMetadata& metadata,
     const uint8_t* payload,
     size_t payload_size,
@@ -225,7 +250,32 @@ AgentQUserSigningFlowBeginResult begin_common_review_state(
 
     g_state.clear();
     apply_common_begin_metadata(metadata, payload_digest);
-    apply_signable_payload(payload, payload_size);
+    if (!apply_signable_payload_copy(payload, payload_size)) {
+        g_state.clear();
+        return AgentQUserSigningFlowBeginResult::invalid_payload;
+    }
+    return AgentQUserSigningFlowBeginResult::ok;
+}
+
+AgentQUserSigningFlowBeginResult begin_common_review_state_with_owned_payload(
+    const AgentQUserSigningBeginMetadata& metadata,
+    uint8_t* payload,
+    size_t payload_size,
+    size_t max_payload_size,
+    const char* payload_digest)
+{
+    const AgentQUserSigningFlowBeginResult payload_result =
+        validate_prepared_payload_metadata(payload_size, max_payload_size, payload_digest);
+    if (payload_result != AgentQUserSigningFlowBeginResult::ok) {
+        return payload_result;
+    }
+
+    g_state.clear();
+    apply_common_begin_metadata(metadata, payload_digest);
+    if (!apply_signable_payload_owned(payload, payload_size)) {
+        g_state.clear();
+        return AgentQUserSigningFlowBeginResult::invalid_payload;
+    }
     return AgentQUserSigningFlowBeginResult::ok;
 }
 
@@ -469,7 +519,7 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin(
         return metadata_result;
     }
     const AgentQUserSigningFlowBeginResult begin_result =
-        begin_common_review_state(
+        begin_common_review_state_with_owned_payload(
             metadata,
             input.prepared->tx_bytes,
             input.prepared->tx_bytes_size,
@@ -478,6 +528,8 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin(
     if (begin_result != AgentQUserSigningFlowBeginResult::ok) {
         return begin_result;
     }
+    input.prepared->tx_bytes = nullptr;
+    input.prepared->tx_bytes_size = 0;
 
     g_state.sui_facts = input.prepared->sui_facts;
     return AgentQUserSigningFlowBeginResult::ok;
@@ -510,7 +562,7 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin_personal_message(
         return metadata_result;
     }
     const AgentQUserSigningFlowBeginResult begin_result =
-        begin_common_review_state(
+        begin_common_review_state_with_copy(
             metadata,
             input.prepared->message,
             input.prepared->message_size,
@@ -767,6 +819,38 @@ AgentQUserSigningTransitionResult user_signing_flow_consume_signable_payload(
     memcpy(output, g_state.signable_payload, g_state.signable_payload_size);
     *output_size = g_state.signable_payload_size;
     g_state.wipe_payload();
+    return AgentQUserSigningTransitionResult::ok;
+}
+
+AgentQUserSigningTransitionResult user_signing_flow_take_signable_payload(
+    uint8_t** output,
+    size_t* output_size)
+{
+    if (output != nullptr) {
+        *output = nullptr;
+    }
+    if (output_size != nullptr) {
+        *output_size = 0;
+    }
+    if (!g_state.active()) {
+        return AgentQUserSigningTransitionResult::inactive;
+    }
+    if (g_state.stage != AgentQUserSigningStage::signing_critical_section) {
+        return AgentQUserSigningTransitionResult::wrong_stage;
+    }
+    if (!g_state.signable_payload_available ||
+        g_state.signable_payload == nullptr ||
+        g_state.signable_payload_size == 0) {
+        return AgentQUserSigningTransitionResult::payload_unavailable;
+    }
+    if (output == nullptr || output_size == nullptr) {
+        return AgentQUserSigningTransitionResult::invalid_argument;
+    }
+    *output = g_state.signable_payload;
+    *output_size = g_state.signable_payload_size;
+    g_state.signable_payload = nullptr;
+    g_state.signable_payload_size = 0;
+    g_state.signable_payload_available = false;
     return AgentQUserSigningTransitionResult::ok;
 }
 

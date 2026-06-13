@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 
 #include "agent_q_policy_signing_execution.h"
+#include "agent_q_payload_delivery_admission.h"
 #include "agent_q_sign_transaction_policy_runtime.h"
 #include "agent_q_signing_preflight.h"
 #include "agent_q_timeout_window.h"
@@ -35,8 +36,12 @@ using AgentQEvaluateSignPersonalMessagePreflightFn =
 struct AgentQUsbSigningHandlerOps {
     bool (*material_ready)();
     bool (*user_signing_ingress_busy)();
+    bool (*unrelated_user_signing_ingress_busy)();
+    AgentQTimeoutTick (*current_tick)();
     AgentQSessionValidationResult (*validate_session)(const char* session_id, void* context);
     void* validate_session_context;
+    AgentQPayloadDeliverySignTransactionAdmissionFn admit_transaction_payload_delivery;
+    void* transaction_payload_delivery_admission_context;
     AgentQSigningModeReadFn read_signing_mode;
     void* read_signing_mode_context;
     AgentQSigningPreflightRetryResponder retry_responder;

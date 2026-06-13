@@ -39,6 +39,21 @@ bool update_string(mbedtls_sha256_context* context, const char* value)
                value_size);
 }
 
+bool update_u64(mbedtls_sha256_context* context, uint64_t value)
+{
+    const uint8_t bytes[] = {
+        static_cast<uint8_t>((value >> 56) & 0xFF),
+        static_cast<uint8_t>((value >> 48) & 0xFF),
+        static_cast<uint8_t>((value >> 40) & 0xFF),
+        static_cast<uint8_t>((value >> 32) & 0xFF),
+        static_cast<uint8_t>((value >> 24) & 0xFF),
+        static_cast<uint8_t>((value >> 16) & 0xFF),
+        static_cast<uint8_t>((value >> 8) & 0xFF),
+        static_cast<uint8_t>(value & 0xFF),
+    };
+    return update_bytes(context, bytes, sizeof(bytes));
+}
+
 }  // namespace
 
 bool sign_request_identity(
@@ -58,14 +73,52 @@ bool sign_request_identity(
 
     mbedtls_sha256_context context;
     mbedtls_sha256_init(&context);
-    const uint8_t identity_version = 1;
+    const uint8_t identity_form = 1;
     const uint8_t route_value = static_cast<uint8_t>(route);
     const bool ok =
         mbedtls_sha256_starts(&context, 0) == 0 &&
-        update_bytes(&context, &identity_version, sizeof(identity_version)) &&
+        update_bytes(&context, &identity_form, sizeof(identity_form)) &&
         update_bytes(&context, &route_value, sizeof(route_value)) &&
         update_string(&context, network) &&
         update_string(&context, canonical_base64_payload) &&
+        mbedtls_sha256_finish(&context, output) == 0;
+    mbedtls_sha256_free(&context);
+    if (!ok) {
+        memset(output, 0, output_size);
+    }
+    return ok;
+}
+
+bool sign_request_identity_for_payload_descriptor(
+    AgentQSupportedSignRoute route,
+    const char* network,
+    const char* payload_kind,
+    size_t payload_size_bytes,
+    const char* payload_digest,
+    uint8_t* output,
+    size_t output_size)
+{
+    if (route == AgentQSupportedSignRoute::unsupported ||
+        network == nullptr ||
+        payload_kind == nullptr ||
+        payload_digest == nullptr ||
+        output == nullptr ||
+        output_size != kAgentQSignRequestIdentitySize) {
+        return false;
+    }
+
+    mbedtls_sha256_context context;
+    mbedtls_sha256_init(&context);
+    const uint8_t identity_form = 2;
+    const uint8_t route_value = static_cast<uint8_t>(route);
+    const bool ok =
+        mbedtls_sha256_starts(&context, 0) == 0 &&
+        update_bytes(&context, &identity_form, sizeof(identity_form)) &&
+        update_bytes(&context, &route_value, sizeof(route_value)) &&
+        update_string(&context, network) &&
+        update_string(&context, payload_kind) &&
+        update_u64(&context, static_cast<uint64_t>(payload_size_bytes)) &&
+        update_string(&context, payload_digest) &&
         mbedtls_sha256_finish(&context, output) == 0;
     mbedtls_sha256_free(&context);
     if (!ok) {

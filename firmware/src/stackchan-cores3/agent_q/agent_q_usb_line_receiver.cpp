@@ -9,7 +9,9 @@ namespace agent_q {
 namespace {
 
 constexpr size_t kLineBufferSize = kAgentQUsbRequestLineMaxBytes + 1;
-constexpr size_t kReadBufferSize = 64;
+// Drain enough bytes per poll that a host-written 4096-byte JSONL frame does not
+// depend on host-side pacing. The line buffer remains the framing bound.
+constexpr size_t kReadBufferSize = 512;
 
 char g_line_buffer[kLineBufferSize];
 size_t g_line_size = 0;

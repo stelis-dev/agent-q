@@ -1,5 +1,6 @@
 #include "agent_q_sui_signing_preparation.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "agent_q_base64.h"
@@ -54,6 +55,85 @@ AgentQSuiSigningPreparationResult validate_encoded_payload_size(
     return AgentQSuiSigningPreparationResult::ok;
 }
 
+bool digest_string_present(const char* value)
+{
+    return value != nullptr && value[0] != '\0';
+}
+
+AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
+    AgentQSupportedSignRoute route,
+    const char* network,
+    uint8_t* tx_bytes,
+    size_t tx_bytes_size,
+    const char* known_payload_digest,
+    AgentQSuiPreparedSignTransaction* out)
+{
+    if (out == nullptr) {
+        if (tx_bytes != nullptr) {
+            wipe_sensitive_buffer(tx_bytes, tx_bytes_size);
+            free(tx_bytes);
+        }
+        return AgentQSuiSigningPreparationResult::invalid_argument;
+    }
+    clear_prepared_sui_sign_transaction(out);
+    if (route != AgentQSupportedSignRoute::sui_sign_transaction ||
+        network == nullptr ||
+        tx_bytes == nullptr ||
+        tx_bytes_size == 0 ||
+        tx_bytes_size > kAgentQSuiSignTransactionTxBytesMaxBytes) {
+        if (tx_bytes != nullptr) {
+            wipe_sensitive_buffer(tx_bytes, tx_bytes_size);
+            free(tx_bytes);
+        }
+        return tx_bytes_size > kAgentQSuiSignTransactionTxBytesMaxBytes
+                   ? AgentQSuiSigningPreparationResult::unsupported_payload_size
+                   : AgentQSuiSigningPreparationResult::invalid_argument;
+    }
+
+    out->route = route;
+    out->tx_bytes = tx_bytes;
+    out->tx_bytes_size = tx_bytes_size;
+    if (!copy_network(network, out->network, sizeof(out->network))) {
+        clear_prepared_sui_sign_transaction(out);
+        return AgentQSuiSigningPreparationResult::invalid_argument;
+    }
+    if (digest_string_present(known_payload_digest)) {
+        if (strlen(known_payload_digest) + 1 > sizeof(out->payload_digest)) {
+            clear_prepared_sui_sign_transaction(out);
+            return AgentQSuiSigningPreparationResult::digest_error;
+        }
+        memcpy(out->payload_digest, known_payload_digest, strlen(known_payload_digest) + 1);
+    } else if (!approval_history_digest_payload(
+                   out->tx_bytes,
+                   out->tx_bytes_size,
+                   out->payload_digest,
+                   sizeof(out->payload_digest))) {
+        clear_prepared_sui_sign_transaction(out);
+        return AgentQSuiSigningPreparationResult::digest_error;
+    }
+    const AgentQSuiSignTransactionAdapterResult adapter_result =
+        classify_sui_sign_transaction(
+            out->tx_bytes,
+            out->tx_bytes_size,
+            &out->sui_facts);
+    if (adapter_result != AgentQSuiSignTransactionAdapterResult::ok) {
+        clear_prepared_sui_sign_transaction(out);
+        return adapter_result ==
+                       AgentQSuiSignTransactionAdapterResult::malformed_transaction
+                   ? AgentQSuiSigningPreparationResult::malformed_transaction
+                   : AgentQSuiSigningPreparationResult::unsupported_transaction;
+    }
+    const AgentQSuiSigningAccountBindingResult account_result =
+        verify_sui_signing_stored_account_binding(out->sui_facts);
+    if (account_result != AgentQSuiSigningAccountBindingResult::ok) {
+        clear_prepared_sui_sign_transaction(out);
+        return account_result == AgentQSuiSigningAccountBindingResult::account_unavailable
+                   ? AgentQSuiSigningPreparationResult::account_unavailable
+                   : AgentQSuiSigningPreparationResult::invalid_account;
+    }
+    return AgentQSuiSigningPreparationResult::ok;
+}
+
 }  // namespace
 
 AgentQSuiSigningPreparationResult prepare_sui_sign_transaction(
@@ -83,49 +163,44 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction(
     if (size_result != AgentQSuiSigningPreparationResult::ok) {
         return size_result;
     }
-    out->route = route;
-    if (!copy_network(network, out->network, sizeof(out->network))) {
-        clear_prepared_sui_sign_transaction(out);
-        return AgentQSuiSigningPreparationResult::invalid_argument;
+    uint8_t* tx_bytes = static_cast<uint8_t*>(malloc(decoded_tx_size));
+    if (tx_bytes == nullptr) {
+        return AgentQSuiSigningPreparationResult::unsupported_payload_size;
     }
+    memset(tx_bytes, 0, decoded_tx_size);
     if (base64_to_bytes(
             tx_bytes_base64,
             strlen(tx_bytes_base64),
-            out->tx_bytes,
-            sizeof(out->tx_bytes)) != 0) {
-        clear_prepared_sui_sign_transaction(out);
+            tx_bytes,
+            decoded_tx_size) != 0) {
+        wipe_sensitive_buffer(tx_bytes, decoded_tx_size);
+        free(tx_bytes);
         return AgentQSuiSigningPreparationResult::invalid_params;
     }
-    out->tx_bytes_size = decoded_tx_size;
-    if (!approval_history_digest_payload(
-            out->tx_bytes,
-            out->tx_bytes_size,
-            out->payload_digest,
-            sizeof(out->payload_digest))) {
-        clear_prepared_sui_sign_transaction(out);
-        return AgentQSuiSigningPreparationResult::digest_error;
-    }
-    const AgentQSuiSignTransactionAdapterResult adapter_result =
-        classify_sui_sign_transaction(
-            out->tx_bytes,
-            out->tx_bytes_size,
-            &out->sui_facts);
-    if (adapter_result != AgentQSuiSignTransactionAdapterResult::ok) {
-        clear_prepared_sui_sign_transaction(out);
-        return adapter_result ==
-                       AgentQSuiSignTransactionAdapterResult::malformed_transaction
-                   ? AgentQSuiSigningPreparationResult::malformed_transaction
-                   : AgentQSuiSigningPreparationResult::unsupported_transaction;
-    }
-    const AgentQSuiSigningAccountBindingResult account_result =
-        verify_sui_signing_stored_account_binding(out->sui_facts);
-    if (account_result != AgentQSuiSigningAccountBindingResult::ok) {
-        clear_prepared_sui_sign_transaction(out);
-        return account_result == AgentQSuiSigningAccountBindingResult::account_unavailable
-                   ? AgentQSuiSigningPreparationResult::account_unavailable
-                   : AgentQSuiSigningPreparationResult::invalid_account;
-    }
-    return AgentQSuiSigningPreparationResult::ok;
+    return prepare_sui_sign_transaction_owned_common(
+        route,
+        network,
+        tx_bytes,
+        decoded_tx_size,
+        nullptr,
+        out);
+}
+
+AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_from_owned_bytes(
+    AgentQSupportedSignRoute route,
+    const char* network,
+    uint8_t* tx_bytes,
+    size_t tx_bytes_size,
+    const char* payload_digest,
+    AgentQSuiPreparedSignTransaction* out)
+{
+    return prepare_sui_sign_transaction_owned_common(
+        route,
+        network,
+        tx_bytes,
+        tx_bytes_size,
+        payload_digest,
+        out);
 }
 
 AgentQSuiSigningPreparationResult prepare_sui_sign_personal_message(
@@ -196,7 +271,10 @@ void clear_prepared_sui_sign_transaction(AgentQSuiPreparedSignTransaction* prepa
     if (prepared == nullptr) {
         return;
     }
-    wipe_sensitive_buffer(prepared->tx_bytes, sizeof(prepared->tx_bytes));
+    if (prepared->tx_bytes != nullptr && prepared->tx_bytes_size > 0) {
+        wipe_sensitive_buffer(prepared->tx_bytes, prepared->tx_bytes_size);
+        free(prepared->tx_bytes);
+    }
     memset(prepared, 0, sizeof(*prepared));
 }
 

@@ -23,6 +23,7 @@ bool local_settings_common_blocked(const AgentQDeviceActivityProjection& activit
            activity.identification_display_active ||
            activity.provisioning_flow_active ||
            activity.local_pin_auth_flow_active ||
+           activity.payload_delivery_active ||
            activity.user_signing_active ||
            activity.local_reset_active;
 }
@@ -44,6 +45,8 @@ AgentQDeviceActivityProjection project_device_activity(
     const bool local_reset_settings_menu =
         facts.local_reset.flow_active &&
         facts.local_reset.stage == AgentQLocalResetStage::settings_menu;
+    const bool payload_delivery_active =
+        facts.payload_delivery_receiving || facts.payload_delivery_finalized;
 
     AgentQProjectedDeviceState state = AgentQProjectedDeviceState::idle;
     if (facts.persistent_material_consistency_error) {
@@ -56,6 +59,7 @@ AgentQDeviceActivityProjection project_device_activity(
         state = AgentQProjectedDeviceState::awaiting_approval;
     } else if (
         facts.provisioning_flow_active ||
+        payload_delivery_active ||
         policy_update_busy ||
         (facts.local_reset.flow_active && !local_reset_settings_menu) ||
         facts.local_pin_auth_flow_active ||
@@ -75,6 +79,9 @@ AgentQDeviceActivityProjection project_device_activity(
         policy_update_awaiting,
         policy_update_busy,
         facts.provisioning_flow_active,
+        payload_delivery_active,
+        facts.payload_delivery_receiving,
+        facts.payload_delivery_finalized,
         facts.local_reset.flow_active,
         local_reset_settings_menu,
         facts.local_pin_auth_flow_active,
@@ -105,6 +112,7 @@ bool device_activity_blocks_user_signing_ingress(
            activity.protocol_pin_approval_active ||
            activity.policy_update_active ||
            activity.provisioning_flow_active ||
+           activity.payload_delivery_receiving ||
            activity.local_reset_active ||
            activity.local_pin_auth_flow_active ||
            activity.user_signing_active;
@@ -146,6 +154,15 @@ AgentQDeviceActivityUsbRequestBlock device_activity_usb_request_block(
     }
     if (activity.provisioning_flow_active) {
         return { true, "busy", "Device is showing setup material." };
+    }
+    if (activity.payload_delivery_active && !options.allow_payload_delivery) {
+        return {
+            true,
+            "busy",
+            activity.payload_delivery_receiving
+                ? "Device has a pending payload upload."
+                : "Device has a pending signable payload.",
+        };
     }
     if (activity.local_reset_active) {
         if (options.allow_settings_menu && activity.local_reset_settings_menu) {

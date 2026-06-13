@@ -29,6 +29,8 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.h" \
+  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
+  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.h" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.h" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
@@ -47,6 +49,8 @@ done
 CXX_BIN="${CXX:-c++}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-signature-request-ingress.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
+mkdir -p "${TMP_DIR}/agent_q_common"
+ln -s "${REPO_ROOT}/firmware/src/common/agent_q/policy" "${TMP_DIR}/agent_q_common/policy"
 
 cat >"${TMP_DIR}/sign_transaction_user_ingress_test.cpp" <<'CPP'
 #include <ArduinoJson.h>
@@ -68,6 +72,49 @@ struct SessionCheck {
     agent_q::AgentQSessionValidationResult result;
     int calls;
 };
+
+struct PayloadAdmissionCheck {
+    agent_q::AgentQPayloadDeliveryAdmissionResult result;
+    bool expected_staged_payload_ref;
+    const char* expected_payload_ref;
+    int calls;
+};
+
+agent_q::AgentQPayloadDeliveryAdmissionDecision payload_admission_decision(
+    agent_q::AgentQPayloadDeliveryAdmissionResult result)
+{
+    switch (result) {
+        case agent_q::AgentQPayloadDeliveryAdmissionResult::ok:
+            return {
+                result,
+                agent_q::AgentQPayloadDeliveryAdmissionReason::idle_passthrough,
+            };
+        case agent_q::AgentQPayloadDeliveryAdmissionResult::busy:
+            return {
+                result,
+                agent_q::AgentQPayloadDeliveryAdmissionReason::blocked_pending_finalized_payload,
+            };
+        case agent_q::AgentQPayloadDeliveryAdmissionResult::invalid_session:
+            return {
+                result,
+                agent_q::AgentQPayloadDeliveryAdmissionReason::invalid_consumer_session,
+            };
+        case agent_q::AgentQPayloadDeliveryAdmissionResult::invalid_payload_ref:
+            return {
+                result,
+                agent_q::AgentQPayloadDeliveryAdmissionReason::invalid_consumer_payload_ref,
+            };
+        case agent_q::AgentQPayloadDeliveryAdmissionResult::unknown_request:
+            return {
+                result,
+                agent_q::AgentQPayloadDeliveryAdmissionReason::missing_active_payload,
+            };
+    }
+    return {
+        agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
+        agent_q::AgentQPayloadDeliveryAdmissionReason::blocked_unrelated_sensitive_flow,
+    };
+}
 
 JsonDocument parse_json(const char* label, const std::string& json)
 {
@@ -133,16 +180,43 @@ agent_q::AgentQSessionValidationResult validate_session(
     return check->result;
 }
 
+agent_q::AgentQPayloadDeliveryAdmissionDecision admit_payload_delivery(
+    const agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput& input,
+    void* context)
+{
+    PayloadAdmissionCheck* check = static_cast<PayloadAdmissionCheck*>(context);
+    if (check == nullptr) {
+        return payload_admission_decision(agent_q::AgentQPayloadDeliveryAdmissionResult::ok);
+    }
+    ++check->calls;
+    if (input.staged_payload_ref != check->expected_staged_payload_ref) {
+        fprintf(stderr, "payload admission got unexpected payload form\n");
+        ++failures;
+    }
+    if (check->expected_payload_ref != nullptr &&
+        (input.payload_ref == nullptr ||
+         strcmp(input.payload_ref, check->expected_payload_ref) != 0)) {
+        fprintf(stderr, "payload admission got unexpected payloadRef: %s\n",
+                input.payload_ref == nullptr ? "(null)" : input.payload_ref);
+        ++failures;
+    }
+    return payload_admission_decision(check->result);
+}
+
 agent_q::AgentQSignTransactionUserIngressState state(
     bool material_ready,
     bool busy,
-    SessionCheck* check)
+    SessionCheck* check,
+    PayloadAdmissionCheck* payload_check = nullptr)
 {
     return agent_q::AgentQSignTransactionUserIngressState{
+        0,
         material_ready,
         busy,
         validate_session,
         check,
+        admit_payload_delivery,
+        payload_check,
     };
 }
 
@@ -170,6 +244,17 @@ void expect_ingress(
         if (check->calls != *expected_session_calls) {
             fprintf(stderr, "%s: expected session callback calls %d, got %d\n",
                     label, *expected_session_calls, check->calls);
+            ++failures;
+        }
+    }
+    if (input_state.payload_delivery_admission_context != nullptr) {
+        const PayloadAdmissionCheck* check =
+            static_cast<const PayloadAdmissionCheck*>(
+                input_state.payload_delivery_admission_context);
+        if (actual != agent_q::AgentQSignTransactionUserIngressResult::invalid_params_shape &&
+            actual != agent_q::AgentQSignTransactionUserIngressResult::invalid_payload_ref &&
+            check->calls == 0) {
+            fprintf(stderr, "%s: expected payload delivery admission to run\n", label);
             ++failures;
         }
     }
@@ -350,6 +435,52 @@ int main()
     }
 
     {
+        SessionCheck session{"session_aaaaaaaaaaaaaaaa", SessionResult::ok, 0};
+        PayloadAdmissionCheck payload{
+            agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
+            false,
+            nullptr,
+            0,
+        };
+        int calls = 1;
+        expect_ingress(
+            "payload delivery admission blocks inline request after session",
+            valid_request(),
+            state(true, false, &session, &payload),
+            IngressResult::busy,
+            &calls);
+        if (payload.calls != 1) {
+            fprintf(stderr, "inline payload admission expected one call, got %d\n",
+                    payload.calls);
+            ++failures;
+        }
+    }
+
+    {
+        SessionCheck session{"session_aaaaaaaaaaaaaaaa", SessionResult::ok, 0};
+        PayloadAdmissionCheck payload{
+            agent_q::AgentQPayloadDeliveryAdmissionResult::invalid_payload_ref,
+            true,
+            "payload_aaaaaaaa",
+            0,
+        };
+        int calls = 1;
+        expect_ingress(
+            "payload delivery admission validates staged ref before full descriptor",
+            request_with_session_and_params(
+                "session_aaaaaaaaaaaaaaaa",
+                "{\"network\":\"devnet\",\"payloadRef\":\"payload_aaaaaaaa\"}"),
+            state(true, false, &session, &payload),
+            IngressResult::invalid_payload_ref,
+            &calls);
+        if (payload.calls != 1) {
+            fprintf(stderr, "staged payload admission expected one call, got %d\n",
+                    payload.calls);
+            ++failures;
+        }
+    }
+
+    {
         JsonDocument document = parse_json("null output", valid_request());
         SessionCheck check{"session_aaaaaaaaaaaaaaaa", SessionResult::ok, 0};
         const IngressResult result =
@@ -380,11 +511,13 @@ CPP
   -Wall \
   -Wextra \
   -Werror \
+  -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${AGENT_Q_DIR}" \
   -I"${AGENT_Q_DIR}/../../common/agent_q" \
   "${TMP_DIR}/sign_transaction_user_ingress_test.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
+  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_transaction_user_ingress.cpp" \

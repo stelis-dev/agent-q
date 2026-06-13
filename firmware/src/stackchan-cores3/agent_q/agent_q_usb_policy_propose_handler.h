@@ -10,7 +10,7 @@ namespace agent_q {
 
 struct AgentQUsbPolicyProposeHandlerOps {
     bool (*material_ready)();
-    bool (*write_busy_if_pending_or_local_flow_active)(const char* id);
+    bool (*write_policy_propose_admission_error)(const char* id);
     bool (*require_active_matching_session)(const char* id, const char* session_id);
     AgentQTimeoutWindow (*make_review_window)();
     AgentQPolicyUpdateFlowBeginResult (*begin_policy_update)(

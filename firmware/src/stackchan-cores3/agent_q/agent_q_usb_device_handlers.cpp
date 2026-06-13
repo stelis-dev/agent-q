@@ -50,6 +50,10 @@ void handle_usb_get_status_request(
         writer.write_error(id, "invalid_params", "get_status request contains unsupported fields.");
         return;
     }
+    if (ops.write_payload_delivery_safe_read_admission_error != nullptr &&
+        ops.write_payload_delivery_safe_read_admission_error(id)) {
+        return;
+    }
     if (ops.refresh_persistent_material_consistency != nullptr) {
         (void)ops.refresh_persistent_material_consistency();
     }
@@ -68,8 +72,8 @@ void handle_usb_identify_device_request(
     const AgentQUsbOperationResponseWriter& writer,
     const AgentQUsbIdentifyDeviceHandlerOps& ops)
 {
-    if (ops.write_busy_if_pending_or_local_flow_active != nullptr &&
-        ops.write_busy_if_pending_or_local_flow_active(id)) {
+    if (ops.write_identify_device_admission_error != nullptr &&
+        ops.write_identify_device_admission_error(id)) {
         return;
     }
     const char* const allowed_request_fields[] = {"id", "version", "type", "params"};

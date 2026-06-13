@@ -217,8 +217,8 @@ Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
 `policy_propose`, `sign_transaction`, `sign_personal_message`, explicit local
 host-process device selection, and local host process caching of discovered devices. The
 current signing runtime enforces state and session gates, keeps unknown methods
-rejected, recognizes bounded restricted SUI transfer request inputs for Sui
-`sign_transaction`, recognizes bounded Sui personal-message bytes for
+rejected, accepts inline `txBytes` or same-session staged payload references
+for Sui `sign_transaction`, recognizes bounded Sui personal-message bytes for
 `sign_personal_message`, records required approval-history metadata, and
 returns `sign_result`. In policy authorization mode, the active policy can
 reject `sign_transaction` or authorize signing through a bounded `sign` rule.
@@ -267,9 +267,10 @@ The normal product flow still installs the DEV_PROFILE default-reject policy.
 `get_approval_history` is implemented as a read-only, session-scoped
 view of Firmware-owned persistent decision metadata. The current Sign API
 runtime paths are session-scoped: unknown methods are rejected, Sui
-`sign_transaction` parses full Sui `TransactionData`, derives offline-provable
-facts, accepts signing only for the currently supported restricted SUI transfer
-projection, and uses the Firmware-local signing authorization mode. Sui
+`sign_transaction` uses the current Sui `TransactionData::V1 ->
+ProgrammableTransaction` facts extractor, accepts signing only for the currently
+supported restricted SUI transfer projection, and uses the Firmware-local
+signing authorization mode. Sui
 `sign_personal_message` validates bounded personal-message bytes in user
 authorization mode only. Both methods return `sign_result` for supported
 terminal outcomes. Hardware verification remains required for product-active
@@ -803,7 +804,13 @@ Response:
     "methods": [
       {
         "chain": "sui",
-        "method": "sign_transaction"
+        "method": "sign_transaction",
+        "payload": {
+          "kind": "transaction",
+          "inlineMaxBytes": "384",
+          "chunkMaxBytes": "2700",
+          "payloadMaxBytes": "131072"
+        }
       },
       {
         "chain": "sui",
@@ -832,6 +839,17 @@ Rules:
   authorization mode (`"user"` or `"policy"`) that will be used for supported
   signing methods. Protocol requests must not contain this field, and there is
   no protocol setter.
+- A `signing.methods[]` entry for `sign_transaction` may include `payload`
+  metadata. This advertises Firmware-owned payload delivery limits for signing
+  requests:
+  `inlineMaxBytes` for the decoded payload size that may be sent inside
+  `params.txBytes`, `chunkMaxBytes` for each decoded upload chunk, and
+  `payloadMaxBytes` for one finalized decoded payload. These are decimal
+  strings. `chunkMaxBytes` must be at least 2048 decoded bytes for the current
+  Agent-Q host/provider staged signing deadline model; smaller values are
+  unusable capability metadata and fail closed as `protocol_error`. These fields
+  do not give the host signing authority and do not allow application code to
+  choose the signing authorization mode.
 - A non-empty `methods` list is a Firmware-authored availability claim. Firmware
   must advertise only delegated non-signing methods that have a connected
   runtime implementation, result schema, required approval behavior, required
@@ -1065,7 +1083,7 @@ Rules:
   their respective terminal contracts and must either be persisted before the
   corresponding terminal result is reported or fail closed through the defined
   error path.
-- History records must not store or return raw `txBytes`, full decoded
+- History records must not store or return raw transaction bytes, full decoded
   transactions, session ids, raw request ids, client names, mnemonic text,
   seed, private key material, PINs, or complete policy documents.
 - The host process validates the response strictly, rejects secret-like fields and any
@@ -1106,14 +1124,14 @@ common envelope
   -> (type, chain, method) route
   -> device state and active session
   -> shallow method parameters
-  -> versioned signing-request identity
+  -> form-discriminated signing-request identity
   -> matching stored-result replay or `request_id_conflict`
   -> selected chain-method adapter capacity and semantics
   -> selected Firmware authorization gate
 ```
 
 An explicit same-id signing retry replays a stored result only when its
-versioned signing-request identity matches the stored identity. The identity
+form-discriminated signing-request identity matches the stored identity. The identity
 binds the supported route and every validated method parameter through a
 length-delimited canonical serialization and SHA-256 fingerprint. A different
 validated signing request using the same `(session, request id)` returns
@@ -1122,8 +1140,9 @@ work. `get_result`, `ack_result`, and session-bound result cleanup remain keyed
 by `(session, request id)` and unchanged.
 
 The signing-request identity is Firmware-local recovery state. Hosts do not
-compute or verify it, and tracked target identity vectors are regression
-fixtures for Firmware serialization, not a cross-version persistence format.
+compute or verify it. Tracked target identity vectors are regression fixtures
+for the current inline and staged request forms, not a cross-version persistence
+or compatibility format.
 
 Stored signing results are bounded RAM recovery state, not persistent replay
 protection. Retry match and `request_id_conflict` behavior apply only while the
@@ -1137,6 +1156,122 @@ syntax and the chain-independent transport/frame bound. It must not reject a
 request using the current Sui adapter's decoded-payload capacity. Firmware's
 selected Sui adapter owns base64 decoding, its current implementation capacity,
 transaction or message semantics, account binding, and signing preparation.
+
+## Signable Payload Upload
+
+Large payloads for signing requests use a shared, chain-neutral upload family
+before the signing request consumes a finalized descriptor. These operations
+submit bounded input to Firmware-owned volatile state. They are not external
+state setters, do not select the signing authorization mode, and do not
+authorize signing by themselves.
+
+Supported operations:
+
+```text
+payload_upload_begin
+payload_upload_chunk
+payload_upload_finish
+payload_upload_abort
+```
+
+`payload_upload_begin` declares the supported signing route, payload kind,
+decoded size, and raw payload digest:
+
+```json
+{
+  "id": "req_payload_begin_001",
+  "version": 1,
+  "type": "payload_upload_begin",
+  "sessionId": "session_001",
+  "chain": "sui",
+  "method": "sign_transaction",
+  "payloadKind": "transaction",
+  "sizeBytes": "131072",
+  "payloadDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+```
+
+`payload_upload_chunk` appends the next sequential decoded chunk. The current
+contract is streaming-only: `offsetBytes` must equal Firmware's current
+received-byte count for the active upload.
+
+```json
+{
+  "id": "req_payload_chunk_001",
+  "version": 1,
+  "type": "payload_upload_chunk",
+  "sessionId": "session_001",
+  "uploadId": "upload_001",
+  "offsetBytes": "0",
+  "chunk": "AA..."
+}
+```
+
+`payload_upload_finish` verifies the declared size and digest, then returns an
+immutable payload descriptor:
+
+```json
+{
+  "id": "req_payload_finish_001",
+  "version": 1,
+  "type": "payload_upload_finish",
+  "sessionId": "session_001",
+  "uploadId": "upload_001"
+}
+```
+
+```json
+{
+  "id": "req_payload_finish_001",
+  "version": 1,
+  "type": "payload_upload_finish_result",
+  "payloadRef": "payload_001",
+  "chain": "sui",
+  "method": "sign_transaction",
+  "payloadKind": "transaction",
+  "sizeBytes": "131072",
+  "payloadDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+```
+
+`payload_upload_abort` wipes a same-session active upload or finalized payload
+by `uploadId` or `payloadRef`:
+
+```json
+{
+  "id": "req_payload_abort_001",
+  "version": 1,
+  "type": "payload_upload_abort",
+  "sessionId": "session_001",
+  "payloadRef": "payload_001"
+}
+```
+
+Rules:
+
+- Upload operations require material-backed `provisioned` state and a matching
+  active session.
+- Firmware allows at most one active or finalized upload per session.
+- Upload bytes are volatile RAM scratch. They are wiped on abort, timeout,
+  session cleanup, disconnect/session end, material error, reset, and signing
+  terminal cleanup. An incomplete upload must block signing. A finalized payload
+  may be consumed only by the same-session `sign_transaction` request whose
+  `payloadRef` and descriptor echo match the finalized descriptor. Other
+  sensitive flows, including connection approval, identification display, policy
+  proposal, personal-message signing, nested upload, or unrelated transaction
+  signing, must fail `busy` while upload/finalized payload scratch is pending
+  unless Firmware explicitly owns a cleanup transition before entering that
+  flow.
+- `payloadDigest` is the SHA-256 digest of the raw decoded payload bytes. It is
+  upload integrity and display/history identity metadata, not a Sui signing
+  intent digest and not a host-supplied signing input.
+- A finalized `payloadRef` is immutable and same-session only. A stale,
+  wrong-session, wrong-route, or already-consumed `payloadRef` must fail closed
+  before adapter, policy, approval, history, or signing work.
+- Retained-result lookup for a re-submitted signing request occurs after
+  shallow method parameter validation and before live payload bytes are
+  resolved. This lets same-id retry return a retained result even after the
+  finalized payload bytes were wiped by the original terminal path.
 
 ## Transaction Signing Request
 
@@ -1160,6 +1295,8 @@ request. A user rejection or timeout in user mode ends the request.
 
 Request shape:
 
+Inline form:
+
 ```json
 {
   "id": "req_sign_001",
@@ -1175,6 +1312,26 @@ Request shape:
 }
 ```
 
+Staged form:
+
+```json
+{
+  "id": "req_sign_002",
+  "version": 1,
+  "type": "sign_transaction",
+  "sessionId": "session_001",
+  "chain": "sui",
+  "method": "sign_transaction",
+  "params": {
+    "network": "devnet",
+    "payloadRef": "payload_001",
+    "payloadKind": "transaction",
+    "sizeBytes": "131072",
+    "payloadDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+}
+```
+
 Current implementation rules:
 
 - `sign_transaction` is valid only in material-backed `provisioned` state with
@@ -1184,21 +1341,30 @@ Current implementation rules:
   `sessionId`, or signing material.
 - The current implementation is limited to `chain: "sui"` and
   `method: "sign_transaction"` for the restricted SUI transfer projection
-  derived by the current Sui transaction-facts extractor. Firmware parses full
-  Sui `TransactionData`; well-formed transaction shapes outside the supported
+  derived by the current Sui `TransactionData::V1 -> ProgrammableTransaction`
+  facts extractor. Well-formed transaction shapes outside the supported
   projection remain fail-closed until policy and review support are
   implemented.
 - `params.network` is required and must be one of `mainnet`, `testnet`,
-  `devnet`, or `localnet`. Current Sui `txBytes` do not carry network identity,
-  so Firmware validates this only as request context and does not expose it as a
-  policy fact or transaction-derived history proof.
-- `params.txBytes` must be canonical base64 and fit the shared transport/frame
-  bound. The current Sui Firmware adapter has a 384-byte decoded transaction
-  implementation capacity. Capacity overflow returns
-  `unsupported_payload_size`; malformed decoded bytes return
-  `malformed_transaction`; a decoded but unsupported transaction shape returns
-  `unsupported_transaction`. These are adapter outcomes, not common
-  Core, host process, MCP, and CLI request-format limits.
+  `devnet`, or `localnet`. Current Sui transaction bytes do not carry network
+  identity, so Firmware validates this only as request context and does not
+  expose it as a policy fact or transaction-derived history proof.
+- `params` must contain exactly one payload source: inline `txBytes` or staged
+  `payloadRef`. `txBytes` must be canonical base64 and fit the shared
+  transport/frame bound. A staged request must echo the immutable descriptor
+  fields returned by `payload_upload_finish`: `payloadKind`, `sizeBytes`, and
+  `payloadDigest`. These fields are untrusted request metadata; Firmware
+  compares them with the finalized same-session descriptor before consuming
+  live payload bytes. If both or neither payload source forms are present, the
+  request is invalid.
+- The current Sui transaction route can receive staged payload bytes up to the
+  Sui serialized transaction maximum. This capacity is a payload delivery and
+  adapter input bound, not a claim that every Sui transaction shape is
+  semantically signable. Capacity overflow returns `unsupported_payload_size`;
+  malformed decoded bytes return `malformed_transaction`; a decoded but
+  unsupported transaction shape returns `unsupported_transaction`. These are
+  adapter outcomes, not common Core, host process, MCP, and CLI request-format
+  limits.
 - Firmware must derive the signing account from stored device material, and
   the parsed sender and gas owner must both match that device-derived account.
   Sponsored gas and request-supplied expected-signer bindings are unsupported
@@ -1233,8 +1399,8 @@ User authorization mode:
 - Firmware must parse enough input to show a bounded clear-signing summary
   before entering device confirmation. Unsupported or malformed transactions
   must fail before any signing approval UI can be confirmed. The displayed
-  summary must be derived from the same `txBytes` that would be signed; callers
-  must not supply independent review facts.
+  summary must be derived from the same inline or staged transaction bytes that
+  would be signed; callers must not supply independent review facts.
 - Human approval input mode controls whether the review proceeds directly by
   physical Confirm or continues to local PIN verification. This setting is not
   supplied by the request and is not the signing authorization mode.
@@ -1410,7 +1576,7 @@ personal-message responses also include canonical base64 `messageBytes` for the
 message bytes that Firmware signed. Non-signed terminal responses may contain
 only `authorization` and `error` beyond the shared envelope fields. A
 `policy_rejected` response also includes `policyHash` and `ruleRef`. No
-`sign_result` response may contain raw `txBytes`, decoded transaction
+`sign_result` response may contain raw transaction bytes, decoded transaction
 internals, session id, request id beyond the envelope id, account private
 material, seed, mnemonic, PIN, policy scratch, or device-local UI state.
 Client, provider, and MCP parsers must fail closed on extra or secret-like
@@ -1504,7 +1670,7 @@ Approval-history contract:
 - Terminal records use `recordKind: "terminal"` and store only bounded metadata:
   authorization, chain, method, reason code, payload digest, optional
   `policyHash`, optional `ruleRef`, and optional terminal result. They must not
-  store raw `txBytes`, decoded transaction internals, session ids, raw request
+  store raw transaction bytes, decoded transaction internals, session ids, raw request
   ids, PINs, seed, mnemonic, private key material, or full UI text.
 - A durable `signed` terminal record means Firmware generated a signature after
   device confirmation or policy authorization. It does not prove host process

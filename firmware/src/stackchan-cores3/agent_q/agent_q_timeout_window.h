@@ -2,18 +2,18 @@
 
 #include <stdint.h>
 
-#include "freertos/FreeRTOS.h"
-
 namespace agent_q {
 
+using AgentQTimeoutTick = uint32_t;
+
 struct AgentQTimeoutWindow {
-    TickType_t started_at;
-    TickType_t deadline;
+    AgentQTimeoutTick started_at;
+    AgentQTimeoutTick deadline;
 };
 
 struct AgentQPausedTimeoutWindow {
     AgentQTimeoutWindow window;
-    TickType_t paused_at;
+    AgentQTimeoutTick paused_at;
 };
 
 constexpr AgentQTimeoutWindow kAgentQTimeoutWindowNone = {0, 0};
@@ -22,14 +22,16 @@ constexpr AgentQPausedTimeoutWindow kAgentQPausedTimeoutWindowNone = {
     0,
 };
 
-inline AgentQTimeoutWindow timeout_window_from_deadline(TickType_t started_at, TickType_t deadline)
+inline AgentQTimeoutWindow timeout_window_from_deadline(
+    AgentQTimeoutTick started_at,
+    AgentQTimeoutTick deadline)
 {
     return deadline == 0 || static_cast<int32_t>(started_at - deadline) >= 0
                ? kAgentQTimeoutWindowNone
                : AgentQTimeoutWindow{started_at, deadline};
 }
 
-inline bool timeout_window_tick_reached(TickType_t now, TickType_t deadline)
+inline bool timeout_window_tick_reached(AgentQTimeoutTick now, AgentQTimeoutTick deadline)
 {
     return deadline != 0 && static_cast<int32_t>(now - deadline) >= 0;
 }
@@ -39,7 +41,7 @@ inline bool timeout_window_active(const AgentQTimeoutWindow& window)
     return window.deadline != 0;
 }
 
-inline bool timeout_window_open_at(const AgentQTimeoutWindow& window, TickType_t now)
+inline bool timeout_window_open_at(const AgentQTimeoutWindow& window, AgentQTimeoutTick now)
 {
     return timeout_window_active(window) && !timeout_window_tick_reached(now, window.deadline);
 }
@@ -56,12 +58,14 @@ inline bool timeout_paused_window_valid(const AgentQPausedTimeoutWindow& paused_
            !timeout_window_tick_reached(paused_window.paused_at, paused_window.window.deadline);
 }
 
-inline bool timeout_window_reached(const AgentQTimeoutWindow& window, TickType_t now)
+inline bool timeout_window_reached(const AgentQTimeoutWindow& window, AgentQTimeoutTick now)
 {
     return timeout_window_active(window) && timeout_window_tick_reached(now, window.deadline);
 }
 
-inline TickType_t timeout_window_remaining_ticks(const AgentQTimeoutWindow& window, TickType_t now)
+inline AgentQTimeoutTick timeout_window_remaining_ticks(
+    const AgentQTimeoutWindow& window,
+    AgentQTimeoutTick now)
 {
     if (!timeout_window_open_at(window, now)) {
         return 0;
@@ -74,7 +78,7 @@ inline TickType_t timeout_window_remaining_ticks(const AgentQTimeoutWindow& wind
 
 inline AgentQPausedTimeoutWindow timeout_window_pause_at(
     const AgentQTimeoutWindow& window,
-    TickType_t now)
+    AgentQTimeoutTick now)
 {
     if (!timeout_window_open_at(window, now) ||
         static_cast<int32_t>(now - window.started_at) < 0) {
@@ -85,22 +89,24 @@ inline AgentQPausedTimeoutWindow timeout_window_pause_at(
 
 inline AgentQTimeoutWindow timeout_window_resume_at(
     const AgentQPausedTimeoutWindow& paused_window,
-    TickType_t now)
+    AgentQTimeoutTick now)
 {
     if (!timeout_paused_window_valid(paused_window) ||
         static_cast<int32_t>(now - paused_window.paused_at) < 0) {
         return kAgentQTimeoutWindowNone;
     }
-    const TickType_t elapsed_ticks =
+    const AgentQTimeoutTick elapsed_ticks =
         paused_window.paused_at - paused_window.window.started_at;
-    const TickType_t remaining_ticks =
+    const AgentQTimeoutTick remaining_ticks =
         paused_window.window.deadline - paused_window.paused_at;
     return timeout_window_from_deadline(
         now - elapsed_ticks,
         now + remaining_ticks);
 }
 
-inline TickType_t timeout_window_cap_deadline(const AgentQTimeoutWindow& cap, TickType_t deadline)
+inline AgentQTimeoutTick timeout_window_cap_deadline(
+    const AgentQTimeoutWindow& cap,
+    AgentQTimeoutTick deadline)
 {
     if (!timeout_window_active(cap)) {
         return deadline;
@@ -113,7 +119,7 @@ inline TickType_t timeout_window_cap_deadline(const AgentQTimeoutWindow& cap, Ti
 
 inline int32_t timeout_window_fill_width(
     const AgentQTimeoutWindow& window,
-    TickType_t now,
+    AgentQTimeoutTick now,
     int32_t full_width)
 {
     if (full_width <= 0 || !timeout_window_active(window)) {
@@ -129,8 +135,8 @@ inline int32_t timeout_window_fill_width(
         return full_width;
     }
 
-    const TickType_t total_ticks = window.deadline - window.started_at;
-    const TickType_t remaining_ticks = window.deadline - now;
+    const AgentQTimeoutTick total_ticks = window.deadline - window.started_at;
+    const AgentQTimeoutTick remaining_ticks = window.deadline - now;
     int32_t width = static_cast<int32_t>(
         (static_cast<uint64_t>(remaining_ticks) * static_cast<uint64_t>(full_width) +
          static_cast<uint64_t>(total_ticks) - 1) /

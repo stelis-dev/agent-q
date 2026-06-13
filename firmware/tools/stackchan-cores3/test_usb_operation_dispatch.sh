@@ -64,6 +64,10 @@ enum class HandlerSlot {
     policy_get,
     get_approval_history,
     policy_propose,
+    payload_upload_begin,
+    payload_upload_chunk,
+    payload_upload_finish,
+    payload_upload_abort,
 };
 
 HandlerSlot g_last_handler = HandlerSlot::none;
@@ -126,6 +130,10 @@ DEFINE_HANDLER(handle_get_accounts, HandlerSlot::get_accounts)
 DEFINE_HANDLER(handle_policy_get, HandlerSlot::policy_get)
 DEFINE_HANDLER(handle_get_approval_history, HandlerSlot::get_approval_history)
 DEFINE_HANDLER(handle_policy_propose, HandlerSlot::policy_propose)
+DEFINE_HANDLER(handle_payload_upload_begin, HandlerSlot::payload_upload_begin)
+DEFINE_HANDLER(handle_payload_upload_chunk, HandlerSlot::payload_upload_chunk)
+DEFINE_HANDLER(handle_payload_upload_finish, HandlerSlot::payload_upload_finish)
+DEFINE_HANDLER(handle_payload_upload_abort, HandlerSlot::payload_upload_abort)
 
 #undef DEFINE_HANDLER
 
@@ -145,6 +153,10 @@ agent_q::AgentQUsbOperationHandlers make_handlers()
         handle_policy_get,
         handle_get_approval_history,
         handle_policy_propose,
+        handle_payload_upload_begin,
+        handle_payload_upload_chunk,
+        handle_payload_upload_finish,
+        handle_payload_upload_abort,
     };
 }
 
@@ -196,6 +208,10 @@ int main()
     expect_dispatch(Type::policy_get, HandlerSlot::policy_get);
     expect_dispatch(Type::get_approval_history, HandlerSlot::get_approval_history);
     expect_dispatch(Type::policy_propose, HandlerSlot::policy_propose);
+    expect_dispatch(Type::payload_upload_begin, HandlerSlot::payload_upload_begin);
+    expect_dispatch(Type::payload_upload_chunk, HandlerSlot::payload_upload_chunk);
+    expect_dispatch(Type::payload_upload_finish, HandlerSlot::payload_upload_finish);
+    expect_dispatch(Type::payload_upload_abort, HandlerSlot::payload_upload_abort);
 
     {
         reset_state();

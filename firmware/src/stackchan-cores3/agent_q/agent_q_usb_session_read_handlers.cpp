@@ -1,8 +1,12 @@
 #include "agent_q_usb_session_read_handlers.h"
 
+#include <stdio.h>
+
 #include "agent_q_json_input.h"
+#include "agent_q_payload_delivery_store.h"
 #include "agent_q_protocol_constants.h"
 #include "agent_q_signing_route.h"
+#include "agent_q_sign_transaction_limits.h"
 #include "agent_q_usb_response_writer.h"
 
 extern "C" {
@@ -32,6 +36,14 @@ bool session_read_busy(const AgentQUsbSessionReadHandlerOps& ops, const char* id
 {
     return ops.write_busy_if_pending_or_local_flow_active != nullptr &&
            ops.write_busy_if_pending_or_local_flow_active(id);
+}
+
+bool session_read_payload_delivery_admission_error(
+    const AgentQUsbSessionReadHandlerOps& ops,
+    const char* id)
+{
+    return ops.write_payload_delivery_safe_read_admission_error != nullptr &&
+           ops.write_payload_delivery_safe_read_admission_error(id);
 }
 
 bool session_read_session_valid(
@@ -81,6 +93,9 @@ bool guard_session_read_request(
     if (session_read_busy(ops, id)) {
         return false;
     }
+    if (session_read_payload_delivery_admission_error(ops, id)) {
+        return false;
+    }
     if (!parse_session_id_or_write_error(id, request, writer, session_id)) {
         return false;
     }
@@ -120,6 +135,29 @@ bool write_capabilities_response(
         signing_entry["chain"] = "sui";
         signing_entry["method"] = signing_route_wire_method(
             AgentQSigningRoute::sui_sign_transaction);
+        char inline_max_bytes[24] = {};
+        char chunk_max_bytes[24] = {};
+        char payload_max_bytes[24] = {};
+        snprintf(
+            inline_max_bytes,
+            sizeof(inline_max_bytes),
+            "%u",
+            static_cast<unsigned>(kAgentQSuiSignTransactionInlineTxBytesMaxBytes));
+        snprintf(
+            chunk_max_bytes,
+            sizeof(chunk_max_bytes),
+            "%u",
+            static_cast<unsigned>(kAgentQPayloadDeliveryDefaultChunkMaxBytes));
+        snprintf(
+            payload_max_bytes,
+            sizeof(payload_max_bytes),
+            "%u",
+            static_cast<unsigned>(kAgentQPayloadDeliveryDefaultMaxBytes));
+        JsonObject payload = signing_entry["payload"].to<JsonObject>();
+        payload["kind"] = "transaction";
+        payload["inlineMaxBytes"] = inline_max_bytes;
+        payload["chunkMaxBytes"] = chunk_max_bytes;
+        payload["payloadMaxBytes"] = payload_max_bytes;
     }
     if (signing_route_allowed_for_authorization_mode(
             AgentQSigningRoute::sui_sign_personal_message,

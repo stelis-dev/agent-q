@@ -41,6 +41,35 @@ inline bool is_canonical_u64_decimal_string(const char* value)
     return value[0] != '0' || value[1] == '\0';
 }
 
+inline bool parse_u64_decimal_string(const char* value, uint64_t* output)
+{
+    if (output == nullptr) {
+        return false;
+    }
+    *output = 0;
+    if (!is_u64_decimal_string(value)) {
+        return false;
+    }
+
+    uint64_t parsed = 0;
+    for (const char* cursor = value; *cursor != '\0'; ++cursor) {
+        parsed = (parsed * 10) + static_cast<uint64_t>(*cursor - '0');
+    }
+    *output = parsed;
+    return true;
+}
+
+inline bool parse_canonical_u64_decimal_string(const char* value, uint64_t* output)
+{
+    if (!is_canonical_u64_decimal_string(value)) {
+        if (output != nullptr) {
+            *output = 0;
+        }
+        return false;
+    }
+    return parse_u64_decimal_string(value, output);
+}
+
 inline const char* skip_u64_decimal_leading_zeroes(const char* value)
 {
     while (value[0] == '0' && value[1] != '\0') {

@@ -1,5 +1,6 @@
 import { SerialPort } from "serialport";
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { AgentQError } from "./errors.js";
 import {
   assertAccountsResponse,
@@ -19,12 +20,19 @@ import {
   makeGetApprovalHistoryRequest,
   makePolicyProposeRequest,
   makeIdentifyDeviceRequest,
+  makePayloadUploadAbortRequest,
+  makePayloadUploadBeginRequest,
+  makePayloadUploadChunkRequest,
+  makePayloadUploadFinishRequest,
   makePolicyGetRequest,
   makeGetStatusRequest,
+  makeStagedSignTransactionRequest,
+  payloadDeliveryCapabilityLimits,
   consumeProtocolResponseChunk,
   parseJsonLine,
   parseProtocolResponse,
   ProtocolError,
+  SIGNABLE_PAYLOAD_KIND_TRANSACTION,
   serializeRequest,
   type AccountsResponse,
   type ApprovalHistoryResponse,
@@ -32,6 +40,10 @@ import {
   type ConnectResponse,
   type DisconnectResponse,
   type IdentifyDeviceResponse,
+  type PayloadUploadAbortResultResponse,
+  type PayloadUploadBeginResultResponse,
+  type PayloadUploadChunkResultResponse,
+  type PayloadUploadFinishResultResponse,
   type PolicyProposeResultResponse,
   type PolicyResponse,
   type ProtocolRequest,
@@ -39,6 +51,7 @@ import {
   type SignPersonalMessageRequest,
   type SignResultResponse,
   type SignPersonalMessageParams,
+  type StagedSignTransactionRequest,
   type SignTransactionRequest,
   type SignTransactionParams,
   type SupportedSignRoute,
@@ -52,12 +65,15 @@ import {
 import {
   makeSignPersonalMessageRequest,
   makeSignTransactionRequest,
+  validateSignTransactionInput,
+  type SigningPayloadCapability,
 } from "./provider-protocol.js";
 import {
   AGENT_Q_USB_PRODUCT_ID,
   AGENT_Q_USB_VENDOR_ID,
   DEFAULT_AGENT_Q_USB_BAUD_RATE,
   INTERNAL_USB_DEADLINE_MS,
+  PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES,
 } from "./transport-invariants.js";
 
 export { AGENT_Q_USB_PRODUCT_ID, AGENT_Q_USB_VENDOR_ID, INTERNAL_USB_DEADLINE_MS };
@@ -105,6 +121,7 @@ export type UsbProtocolRequestExecutor = <TResponse extends ProtocolResponse>(
 ) => Promise<TResponse>;
 
 type SignProtocolRequest = SignTransactionRequest | SignPersonalMessageRequest;
+type SignDeliveryRequest = SignProtocolRequest | StagedSignTransactionRequest;
 export type PortTransactionContext = {
   request: UsbProtocolRequestExecutor;
 };
@@ -147,6 +164,7 @@ type SignRecoveryOutcome =
   | { status: "not_recovered" }
   | { status: "recovered"; result: SignResultResponse };
 type AckRecoveryOutcome = "acked" | "failed" | "invalid_session";
+type PayloadAbortOutcome = "none" | "aborted" | "failed" | "invalid_session";
 
 const REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("agent-q.requestMayHaveReachedFirmware");
 const FIRMWARE_SESSION_INVALIDATED = Symbol("agent-q.firmwareSessionInvalidated");
@@ -320,7 +338,8 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     params: SignTransactionParams,
     deadlineMs: number,
   ): Promise<SignResultResponse> {
-    return signTransactionOverSerial(portPath, sessionId, route, params, deadlineMs);
+    const normalizedParams = validateSignTransactionInput(route.chain, route.method, params);
+    return signTransactionOverSerial(portPath, sessionId, route, normalizedParams, deadlineMs);
   }
 
   async signPersonalMessage(
@@ -475,12 +494,14 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         deadlineMs,
         "USB policy_propose exceeded its timeout.",
       ),
-    signTransaction: (portPath, sessionId, route, params, deadlineMs) =>
-      raceDeadline(
-        driver.signTransaction(portPath, sessionId, route, params, deadlineMs),
-        deadlineWithSignRecovery(deadlineMs),
+    signTransaction: (portPath, sessionId, route, params, deadlineMs) => {
+      const normalizedParams = validateSignTransactionInput(route.chain, route.method, params);
+      return raceDeadline(
+        driver.signTransaction(portPath, sessionId, route, normalizedParams, deadlineMs),
+        deadlineWithSignTransactionDelivery(deadlineMs, normalizedParams.txBytes),
         "USB sign_transaction exceeded its timeout.",
-      ),
+      );
+    },
     signPersonalMessage: (portPath, sessionId, route, params, deadlineMs) =>
       raceDeadline(
         driver.signPersonalMessage(portPath, sessionId, route, params, deadlineMs),
@@ -492,6 +513,12 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
 
 function deadlineWithSignRecovery(deadlineMs: number): number {
   return deadlineMs + INTERNAL_USB_DEADLINE_MS * 2;
+}
+
+function deadlineWithSignTransactionDelivery(deadlineMs: number, txBytes: string): number {
+  const decodedBytes = estimateBase64DecodedBytes(txBytes);
+  const chunkCount = Math.ceil(decodedBytes / PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES);
+  return deadlineMs + INTERNAL_USB_DEADLINE_MS * (chunkCount + 5);
 }
 
 /** @internal */
@@ -857,10 +884,35 @@ async function signTransactionOverSerial(
   params: SignTransactionParams,
   deadlineMs: number,
 ): Promise<SignResultResponse> {
-  const request = makeSignTransactionRequest(sessionId, route.chain, route.method, params);
-  return withSerialPortTransaction(portPath, deadlineWithSignRecovery(deadlineMs), (transaction) =>
-    requestSignResultWithRecovery(request, deadlineMs, transaction.request),
-  );
+  const payloadBytes = decodeCanonicalBase64Payload(params.txBytes);
+  return withSerialPortTransaction(portPath, deadlineWithSignTransactionDelivery(deadlineMs, params.txBytes), async (transaction) => {
+    const capabilities = await transaction.request(
+      makeGetCapabilitiesRequest(sessionId),
+      INTERNAL_USB_DEADLINE_MS,
+      (response) => assertCapabilitiesResponse(response),
+    );
+    const payloadCapability = findSignTransactionPayloadCapability(capabilities, route);
+    if (shouldUseInlineSignRequest(payloadBytes.length, payloadCapability)) {
+      const request = makeInlineSignTransactionRequest(sessionId, route, params, payloadCapability);
+      return requestSignResultWithRecovery(request, deadlineMs, transaction.request);
+    }
+    if (payloadCapability === null) {
+      throw new AgentQError(
+        "unsupported_payload_size",
+        "Firmware does not advertise staged payload delivery for this signing method.",
+        false,
+      );
+    }
+    return signStagedTransactionOverSerial(
+      sessionId,
+      route,
+      params,
+      payloadBytes,
+      payloadCapability,
+      deadlineMs,
+      transaction.request,
+    );
+  });
 }
 
 async function signPersonalMessageOverSerial(
@@ -876,9 +928,89 @@ async function signPersonalMessageOverSerial(
   );
 }
 
+async function signStagedTransactionOverSerial(
+  sessionId: string,
+  route: Extract<SupportedSignRoute, { operation: "sign_transaction" }>,
+  params: SignTransactionParams,
+  payloadBytes: Buffer,
+  capability: SigningPayloadCapability,
+  deadlineMs: number,
+  executor: UsbProtocolRequestExecutor,
+): Promise<SignResultResponse> {
+  const limits = parsePayloadCapabilityLimits(capability);
+  if (payloadBytes.length > limits.payloadMaxBytes) {
+    throw new AgentQError(
+      "unsupported_payload_size",
+      "Transaction payload exceeds the device payload capability.",
+      false,
+    );
+  }
+
+  const payloadDigest = sha256PayloadDigest(payloadBytes);
+  let uploadId: string | null = null;
+  let payloadRef: string | null = null;
+  try {
+    const begin = await executor(
+      makePayloadUploadBeginRequest(sessionId, route.chain, route.method, {
+        payloadKind: SIGNABLE_PAYLOAD_KIND_TRANSACTION,
+        sizeBytes: String(payloadBytes.length),
+        payloadDigest,
+      }),
+      INTERNAL_USB_DEADLINE_MS,
+      assertPayloadUploadBeginResultResponse,
+    );
+    uploadId = begin.uploadId;
+    const beginChunkMaxBytes = Number(begin.chunkMaxBytes);
+    const chunkMaxBytes = Math.min(limits.chunkMaxBytes, beginChunkMaxBytes);
+    let offset = 0;
+    while (offset < payloadBytes.length) {
+      const nextOffset = Math.min(offset + chunkMaxBytes, payloadBytes.length);
+      const chunk = payloadBytes.subarray(offset, nextOffset).toString("base64");
+      const response = await executor(
+        makePayloadUploadChunkRequest(sessionId, uploadId, String(offset), chunk),
+        INTERNAL_USB_DEADLINE_MS,
+        assertPayloadUploadChunkResultResponse,
+      );
+      if (response.receivedBytes !== String(nextOffset)) {
+        throw new AgentQError("protocol_error", "Firmware payload upload progress is inconsistent.", false);
+      }
+      offset = nextOffset;
+    }
+    const finish = await executor(
+      makePayloadUploadFinishRequest(sessionId, uploadId),
+      INTERNAL_USB_DEADLINE_MS,
+      assertPayloadUploadFinishResultResponse,
+    );
+    payloadRef = finish.payloadRef;
+    if (
+      finish.chain !== route.chain ||
+      finish.method !== route.method ||
+      finish.payloadKind !== SIGNABLE_PAYLOAD_KIND_TRANSACTION ||
+      finish.sizeBytes !== String(payloadBytes.length) ||
+      finish.payloadDigest !== payloadDigest
+    ) {
+      throw new AgentQError("protocol_error", "Firmware payload descriptor does not match the uploaded payload.", false);
+    }
+    const request = makeStagedSignTransactionRequest(sessionId, route.chain, route.method, {
+      network: params.network,
+      payloadRef,
+      payloadKind: finish.payloadKind,
+      sizeBytes: finish.sizeBytes,
+      payloadDigest: finish.payloadDigest,
+    });
+    return await requestSignResultWithRecovery(request, deadlineMs, executor);
+  } catch (error) {
+    const abort = await abortPayloadDeliveryBestEffort(sessionId, { uploadId, payloadRef }, executor);
+    if (abort === "invalid_session") {
+      markFirmwareSessionInvalidated(error);
+    }
+    throw error;
+  }
+}
+
 /** @internal Shared signing-result delivery invariant for the Node USB path. */
 export async function requestSignResultWithRecovery(
-  request: SignProtocolRequest,
+  request: SignDeliveryRequest,
   deadlineMs: number,
   executor: UsbProtocolRequestExecutor,
 ): Promise<SignResultResponse> {
@@ -939,6 +1071,153 @@ async function releaseRecoveredSignResult(
     }
     // Best-effort cleanup: a failed ack must not turn a recovered sign_result
     // into a caller-visible failure.
+    return "failed";
+  }
+}
+
+function findSignTransactionPayloadCapability(
+  capabilities: CapabilitiesResponse,
+  route: Extract<SupportedSignRoute, { operation: "sign_transaction" }>,
+): SigningPayloadCapability | null {
+  const method = capabilities.signing?.methods.find((entry) =>
+    entry.chain === route.chain && entry.method === route.method
+  );
+  return method?.payload ?? null;
+}
+
+function makeInlineSignTransactionRequest(
+  sessionId: string,
+  route: Extract<SupportedSignRoute, { operation: "sign_transaction" }>,
+  params: SignTransactionParams,
+  capability: SigningPayloadCapability | null,
+): SignTransactionRequest {
+  try {
+    return makeSignTransactionRequest(sessionId, route.chain, route.method, params);
+  } catch (error) {
+    if (
+      capability === null &&
+      error instanceof ProtocolError &&
+      error.code === "invalid_params" &&
+      error.message.includes("too large")
+    ) {
+      throw new AgentQError(
+        "unsupported_payload_size",
+        "Firmware does not advertise staged payload delivery for this signing method.",
+        false,
+      );
+    }
+    throw error;
+  }
+}
+
+function shouldUseInlineSignRequest(
+  payloadSize: number,
+  capability: SigningPayloadCapability | null,
+): boolean {
+  if (capability === null) {
+    return true;
+  }
+  return payloadSize <= parsePayloadCapabilityLimits(capability).inlineMaxBytes;
+}
+
+function parsePayloadCapabilityLimits(capability: SigningPayloadCapability): ReturnType<typeof payloadDeliveryCapabilityLimits> {
+  try {
+    return payloadDeliveryCapabilityLimits(capability);
+  } catch (error) {
+    if (error instanceof ProtocolError) {
+      throw new AgentQError("protocol_error", error.message, false);
+    }
+    throw error;
+  }
+}
+
+function decodeCanonicalBase64Payload(value: string): Buffer {
+  return Buffer.from(value, "base64");
+}
+
+function sha256PayloadDigest(value: Uint8Array): string {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function estimateBase64DecodedBytes(value: string): number {
+  if (value.length === 0) {
+    return 0;
+  }
+  let padding = 0;
+  if (value.endsWith("==")) {
+    padding = 2;
+  } else if (value.endsWith("=")) {
+    padding = 1;
+  }
+  return Math.max(0, Math.floor(value.length / 4) * 3 - padding);
+}
+
+function assertPayloadUploadBeginResultResponse(
+  response: ProtocolResponse,
+): PayloadUploadBeginResultResponse {
+  return assertPayloadUploadResponseType(response, "payload_upload_begin_result");
+}
+
+function assertPayloadUploadChunkResultResponse(
+  response: ProtocolResponse,
+): PayloadUploadChunkResultResponse {
+  return assertPayloadUploadResponseType(response, "payload_upload_chunk_result");
+}
+
+function assertPayloadUploadFinishResultResponse(
+  response: ProtocolResponse,
+): PayloadUploadFinishResultResponse {
+  return assertPayloadUploadResponseType(response, "payload_upload_finish_result");
+}
+
+function assertPayloadUploadAbortResultResponse(
+  response: ProtocolResponse,
+): PayloadUploadAbortResultResponse {
+  return assertPayloadUploadResponseType(response, "payload_upload_abort_result");
+}
+
+function assertPayloadUploadResponseType<TType extends ProtocolResponse["type"]>(
+  response: ProtocolResponse,
+  type: TType,
+): Extract<ProtocolResponse, { type: TType }> {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== type) {
+    throw new ProtocolError("protocol_error", `Protocol response type is not ${type}.`);
+  }
+  return response as Extract<ProtocolResponse, { type: TType }>;
+}
+
+async function abortPayloadDeliveryBestEffort(
+  sessionId: string,
+  target: { uploadId: string | null; payloadRef: string | null },
+  executor: UsbProtocolRequestExecutor,
+): Promise<PayloadAbortOutcome> {
+  if (target.payloadRef === null && target.uploadId === null) {
+    return "none";
+  }
+  try {
+    if (target.payloadRef !== null) {
+      await executor(
+        makePayloadUploadAbortRequest(sessionId, { payloadRef: target.payloadRef }),
+        INTERNAL_USB_DEADLINE_MS,
+        assertPayloadUploadAbortResultResponse,
+      );
+    } else if (target.uploadId !== null) {
+      await executor(
+        makePayloadUploadAbortRequest(sessionId, { uploadId: target.uploadId }),
+        INTERNAL_USB_DEADLINE_MS,
+        assertPayloadUploadAbortResultResponse,
+      );
+    }
+    return "aborted";
+  } catch (error) {
+    if (errorCode(error) === "invalid_session") {
+      return "invalid_session";
+    }
+    // Best-effort cleanup must not replace the signing/upload failure that
+    // caused this path.
     return "failed";
   }
 }
@@ -1168,7 +1447,7 @@ function openPortWithinLease(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const timeoutMs = remainingLeaseMs(
+    const remainingOpenMs = remainingLeaseMs(
       lease,
       absoluteDeadlineMs,
       "USB request expired while opening the serial port.",
@@ -1181,7 +1460,7 @@ function openPortWithinLease(
       lease.canceled = true;
       quarantinePortPath(lease, "serial port open timed out");
       reject(deadlineExpiredBeforeWriteError("USB request expired while opening the serial port."));
-    }, timeoutMs);
+    }, remainingOpenMs);
 
     port.open((error) => {
       if (settled) {
@@ -1215,7 +1494,7 @@ function flushPortWithinLease(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const timeoutMs = remainingLeaseMs(
+    const remainingFlushMs = remainingLeaseMs(
       lease,
       absoluteDeadlineMs,
       "USB request expired while preparing the serial port.",
@@ -1229,7 +1508,7 @@ function flushPortWithinLease(
       quarantinePortPath(lease, "serial port flush timed out");
       void ensureLeaseCleanup(port, lease, "timed-out port.flush close-only cleanup");
       reject(deadlineExpiredBeforeWriteError("USB request expired while preparing the serial port."));
-    }, timeoutMs);
+    }, remainingFlushMs);
 
     port.flush((error) => {
       if (settled) {

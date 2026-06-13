@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test, { mock } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -31,7 +32,10 @@ import {
   SIGN_RESULT_ERROR_MESSAGES,
   SUI_DERIVATION_PATH,
 } from "@stelis/agent-q-core/protocol";
-import { parseProviderProtocolResponse } from "@stelis/agent-q-core/provider-protocol";
+import {
+  PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES,
+  parseProviderProtocolResponse,
+} from "@stelis/agent-q-core/provider-protocol";
 
 const SUI_ADDRESS = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
 const SUI_PUBLIC_KEY = "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=";
@@ -611,11 +615,589 @@ test("browser provider runtime defers Web Serial port selection until connectDev
       "connect",
       "get_capabilities",
       "get_accounts",
+      "get_capabilities",
       "sign_transaction",
       "sign_personal_message",
       "disconnect",
     ]);
     assert.equal(port.requests.some((request) => request.type === "policy_get" || request.type === "policy_propose"), false);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider uploads a synthetic large transaction payload before staged signing", async () => {
+  const payload = Buffer.alloc(128 * 1024);
+  for (let index = 0; index < payload.length; index += 1) {
+    payload[index] = (index * 29 + 23) & 0xff;
+  }
+  const payloadDigest = `sha256:${createHash("sha256").update(payload).digest("hex")}`;
+  const chunkMaxBytes = 2048;
+  const chunks = [];
+  let receivedBytes = 0;
+  const port = new FakeBrowserSerialPort((request) => {
+    if (request.type === "get_capabilities") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "capabilities",
+        chains: [
+          {
+            id: "sui",
+            accounts: [{ keyScheme: "ed25519", derivationPath: SUI_DERIVATION_PATH }],
+            methods: [],
+          },
+        ],
+        signing: {
+          authorization: "user",
+          methods: [
+            {
+              chain: "sui",
+              method: "sign_transaction",
+              payload: {
+                kind: "transaction",
+                inlineMaxBytes: "384",
+                chunkMaxBytes: String(chunkMaxBytes),
+                payloadMaxBytes: "131072",
+              },
+            },
+            { chain: "sui", method: "sign_personal_message" },
+          ],
+        },
+      };
+    }
+    if (request.type === "payload_upload_begin") {
+      assert.equal(request.chain, "sui");
+      assert.equal(request.method, "sign_transaction");
+      assert.equal(request.payloadKind, "transaction");
+      assert.equal(request.sizeBytes, String(payload.length));
+      assert.equal(request.payloadDigest, payloadDigest);
+      return {
+        id: request.id,
+        version: 1,
+        type: "payload_upload_begin_result",
+        uploadId: "upload_browser_synthetic_0001",
+        receivedBytes: "0",
+        chunkMaxBytes: String(chunkMaxBytes),
+      };
+    }
+    if (request.type === "payload_upload_chunk") {
+      assert.equal(request.uploadId, "upload_browser_synthetic_0001");
+      assert.equal(request.offsetBytes, String(receivedBytes));
+      const chunk = Buffer.from(request.chunk, "base64");
+      chunks.push(chunk);
+      receivedBytes += chunk.length;
+      return {
+        id: request.id,
+        version: 1,
+        type: "payload_upload_chunk_result",
+        receivedBytes: String(receivedBytes),
+      };
+    }
+    if (request.type === "payload_upload_finish") {
+      assert.equal(request.uploadId, "upload_browser_synthetic_0001");
+      assert.equal(receivedBytes, payload.length);
+      return {
+        id: request.id,
+        version: 1,
+        type: "payload_upload_finish_result",
+        payloadRef: "payload_browser_synthetic_0001",
+        chain: "sui",
+        method: "sign_transaction",
+        payloadKind: "transaction",
+        sizeBytes: String(payload.length),
+        payloadDigest,
+      };
+    }
+    if (request.type === "sign_transaction") {
+      assert.deepEqual(request.params, {
+        network: "mainnet",
+        payloadRef: "payload_browser_synthetic_0001",
+        payloadKind: "transaction",
+        sizeBytes: String(payload.length),
+        payloadDigest,
+      });
+      return {
+        id: request.id,
+        version: 1,
+        type: "sign_result",
+        status: "signed",
+        authorization: "user",
+        chain: "sui",
+        method: "sign_transaction",
+        signature: SUI_SIGNATURE,
+      };
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+    const result = await provider.signTransaction({
+      chain: "sui",
+      method: "sign_transaction",
+      network: "mainnet",
+      txBytes: payload.toString("base64"),
+    });
+    assert.equal(result.source, "live");
+    assert.equal(result.status, "signed");
+    const requestTypes = port.requests.map((request) => request.type);
+    assert.equal(requestTypes[0], "connect");
+    assert.equal(requestTypes[1], "get_capabilities");
+    assert.equal(requestTypes[2], "payload_upload_begin");
+    assert.equal(requestTypes.at(-2), "payload_upload_finish");
+    assert.equal(requestTypes.at(-1), "sign_transaction");
+    assert.equal(
+      requestTypes.filter((type) => type === "payload_upload_chunk").length,
+      Math.ceil(payload.length / chunkMaxBytes),
+    );
+    assert.deepEqual(Buffer.concat(chunks), payload);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider aborts finalized staged payload by payloadRef after descriptor mismatch", async () => {
+  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x52);
+  const chunkMaxBytes = payload.length;
+  let receivedBytes = 0;
+  const port = new FakeBrowserSerialPort((request) => {
+    if (request.type === "get_capabilities") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "capabilities",
+        chains: [
+          {
+            id: "sui",
+            accounts: [{ keyScheme: "ed25519", derivationPath: SUI_DERIVATION_PATH }],
+            methods: [],
+          },
+        ],
+        signing: {
+          authorization: "user",
+          methods: [
+            {
+              chain: "sui",
+              method: "sign_transaction",
+              payload: {
+                kind: "transaction",
+                inlineMaxBytes: "384",
+                chunkMaxBytes: String(chunkMaxBytes),
+                payloadMaxBytes: "131072",
+              },
+            },
+            { chain: "sui", method: "sign_personal_message" },
+          ],
+        },
+      };
+    }
+    if (request.type === "payload_upload_begin") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "payload_upload_begin_result",
+        uploadId: "upload_browser_descriptor_mismatch",
+        receivedBytes: "0",
+        chunkMaxBytes: String(chunkMaxBytes),
+      };
+    }
+    if (request.type === "payload_upload_chunk") {
+      receivedBytes += Buffer.from(request.chunk, "base64").length;
+      return {
+        id: request.id,
+        version: 1,
+        type: "payload_upload_chunk_result",
+        receivedBytes: String(receivedBytes),
+      };
+    }
+    if (request.type === "payload_upload_finish") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "payload_upload_finish_result",
+        payloadRef: "payload_browser_descriptor_mismatch",
+        chain: "sui",
+        method: "sign_transaction",
+        payloadKind: "transaction",
+        sizeBytes: String(payload.length),
+        payloadDigest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      };
+    }
+    if (request.type === "payload_upload_abort") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "payload_upload_abort_result",
+        status: "aborted",
+      };
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+    await assert.rejects(
+      () => provider.signTransaction({
+        chain: "sui",
+        method: "sign_transaction",
+        network: "mainnet",
+        txBytes: payload.toString("base64"),
+      }),
+      (error) => error.code === "protocol_error",
+    );
+    const abortRequest = port.requests.find((request) => request.type === "payload_upload_abort");
+    assert.equal(abortRequest.payloadRef, "payload_browser_descriptor_mismatch");
+    assert.equal("uploadId" in abortRequest, false);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider preserves staged failure and clears session when abort reports invalid_session", async () => {
+  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x53);
+  const chunkMaxBytes = payload.length;
+  let receivedBytes = 0;
+  const port = new FakeBrowserSerialPort((request) => {
+    if (request.type === "get_capabilities") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "capabilities",
+        chains: [
+          {
+            id: "sui",
+            accounts: [{ keyScheme: "ed25519", derivationPath: SUI_DERIVATION_PATH }],
+            methods: [],
+          },
+        ],
+        signing: {
+          authorization: "user",
+          methods: [
+            {
+              chain: "sui",
+              method: "sign_transaction",
+              payload: {
+                kind: "transaction",
+                inlineMaxBytes: "384",
+                chunkMaxBytes: String(chunkMaxBytes),
+                payloadMaxBytes: "131072",
+              },
+            },
+            { chain: "sui", method: "sign_personal_message" },
+          ],
+        },
+      };
+    }
+    if (request.type === "payload_upload_begin") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "payload_upload_begin_result",
+        uploadId: "upload_browser_abort_invalid_session",
+        receivedBytes: "0",
+        chunkMaxBytes: String(chunkMaxBytes),
+      };
+    }
+    if (request.type === "payload_upload_chunk") {
+      receivedBytes += Buffer.from(request.chunk, "base64").length;
+      return {
+        id: request.id,
+        version: 1,
+        type: "payload_upload_chunk_result",
+        receivedBytes: String(receivedBytes),
+      };
+    }
+    if (request.type === "payload_upload_finish") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "payload_upload_finish_result",
+        payloadRef: "payload_browser_abort_invalid_session",
+        chain: "sui",
+        method: "sign_transaction",
+        payloadKind: "transaction",
+        sizeBytes: String(payload.length),
+        payloadDigest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      };
+    }
+    if (request.type === "payload_upload_abort") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "error",
+        error: { code: "invalid_session", message: "Session is unknown or already ended." },
+      };
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+    await assert.rejects(
+      () => provider.signTransaction({
+        chain: "sui",
+        method: "sign_transaction",
+        network: "mainnet",
+        txBytes: payload.toString("base64"),
+      }),
+      (error) => error.code === "protocol_error",
+    );
+    const abortRequest = port.requests.find((request) => request.type === "payload_upload_abort");
+    assert.equal(abortRequest.payloadRef, "payload_browser_abort_invalid_session");
+    assert.equal((await provider.getAccounts()).source, "not_connected");
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider aborts active staged upload by uploadId after progress mismatch", async () => {
+  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x6a);
+  const chunkMaxBytes = payload.length;
+  let abortRequest = null;
+  const port = new FakeBrowserSerialPort((request) => {
+    if (request.type === "get_capabilities") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "capabilities",
+        chains: [
+          {
+            id: "sui",
+            accounts: [{ keyScheme: "ed25519", derivationPath: SUI_DERIVATION_PATH }],
+            methods: [],
+          },
+        ],
+        signing: {
+          authorization: "user",
+          methods: [
+            {
+              chain: "sui",
+              method: "sign_transaction",
+              payload: {
+                kind: "transaction",
+                inlineMaxBytes: "384",
+                chunkMaxBytes: String(chunkMaxBytes),
+                payloadMaxBytes: "131072",
+              },
+            },
+            { chain: "sui", method: "sign_personal_message" },
+          ],
+        },
+      };
+    }
+    if (request.type === "payload_upload_begin") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "payload_upload_begin_result",
+        uploadId: "upload_browser_progress_mismatch",
+        receivedBytes: "0",
+        chunkMaxBytes: String(chunkMaxBytes),
+      };
+    }
+    if (request.type === "payload_upload_chunk") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "payload_upload_chunk_result",
+        receivedBytes: "1",
+      };
+    }
+    if (request.type === "payload_upload_abort") {
+      abortRequest = request;
+      return {
+        id: request.id,
+        version: 1,
+        type: "payload_upload_abort_result",
+        status: "aborted",
+      };
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+    await assert.rejects(
+      () => provider.signTransaction({
+        chain: "sui",
+        method: "sign_transaction",
+        network: "mainnet",
+        txBytes: payload.toString("base64"),
+      }),
+      (error) => error.code === "protocol_error",
+    );
+    assert.equal(abortRequest.uploadId, "upload_browser_progress_mismatch");
+    assert.equal("payloadRef" in abortRequest, false);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider rejects chunk capabilities below the staged deadline lower bound before upload", async () => {
+  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x6b);
+  const advertisedChunkMaxBytes = PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES - 1;
+  const port = new FakeBrowserSerialPort((request) => {
+    if (request.type === "get_capabilities") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "capabilities",
+        chains: [
+          {
+            id: "sui",
+            accounts: [{ keyScheme: "ed25519", derivationPath: SUI_DERIVATION_PATH }],
+            methods: [],
+          },
+        ],
+        signing: {
+          authorization: "user",
+          methods: [
+            {
+              chain: "sui",
+              method: "sign_transaction",
+              payload: {
+                kind: "transaction",
+                inlineMaxBytes: "384",
+                chunkMaxBytes: String(advertisedChunkMaxBytes),
+                payloadMaxBytes: "131072",
+              },
+            },
+            { chain: "sui", method: "sign_personal_message" },
+          ],
+        },
+      };
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+    await assert.rejects(
+      () => provider.signTransaction({
+        chain: "sui",
+        method: "sign_transaction",
+        network: "mainnet",
+        txBytes: payload.toString("base64"),
+      }),
+      (error) => error.code === "protocol_error",
+    );
+    assert.equal(
+      port.requests.some((request) => request.type === "payload_upload_begin"),
+      false,
+      "unusable chunk capability must fail before upload begins",
+    );
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider rejects payloads above advertised payload max before upload", async () => {
+  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x47);
+  const port = new FakeBrowserSerialPort((request) => {
+    if (request.type === "get_capabilities") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "capabilities",
+        chains: [
+          {
+            id: "sui",
+            accounts: [{ keyScheme: "ed25519", derivationPath: SUI_DERIVATION_PATH }],
+            methods: [],
+          },
+        ],
+        signing: {
+          authorization: "user",
+          methods: [
+            {
+              chain: "sui",
+              method: "sign_transaction",
+              payload: {
+                kind: "transaction",
+                inlineMaxBytes: "384",
+                chunkMaxBytes: String(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES),
+                payloadMaxBytes: String(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES),
+              },
+            },
+            { chain: "sui", method: "sign_personal_message" },
+          ],
+        },
+      };
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+    await assert.rejects(
+      () => provider.signTransaction({
+        chain: "sui",
+        method: "sign_transaction",
+        network: "mainnet",
+        txBytes: payload.toString("base64"),
+      }),
+      (error) => error.code === "unsupported_payload_size",
+    );
+    assert.equal(
+      port.requests.some((request) => request.type === "payload_upload_begin"),
+      false,
+      "payload over advertised max must fail before upload begins",
+    );
   } finally {
     if (previousNavigator === undefined) {
       delete globalThis.navigator;
@@ -681,6 +1263,17 @@ test("browser provider disconnects approved sessions that fail requested device 
 
 function waitMs(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForRecordedRequest(port, type, attempts = 50) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const request = port.requests.find((candidate) => candidate.type === type);
+    if (request !== undefined) {
+      return request;
+    }
+    await Promise.resolve();
+  }
+  return undefined;
 }
 
 // A fake Web Serial port that mimics real Web Serial: open() throws when the port
@@ -1382,7 +1975,7 @@ test("browser provider keeps signing recovery as one queued transaction", async 
     assert.equal(capabilities.source, "live");
     assert.deepEqual(
       port.requests.map((request) => request.type).filter((type) => type !== "connect"),
-      ["sign_transaction", "get_result", "ack_result", "get_capabilities"],
+      ["get_capabilities", "sign_transaction", "get_result", "ack_result", "get_capabilities"],
       "queued provider requests must not interleave with sign/get/ack recovery",
     );
   } finally {
@@ -1501,11 +2094,8 @@ test("browser provider abandons a stale port when writer.write hangs and recover
     const signPromise = provider.signTransaction({
       chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
     });
-    for (let attempts = 0; attempts < 5; attempts += 1) {
-      await Promise.resolve();
-    }
     assert.ok(
-      firstPort.requests.some((request) => request.type === "sign_transaction"),
+      await waitForRecordedRequest(firstPort, "sign_transaction"),
       "the stale port must receive the original sign write",
     );
 
@@ -1569,11 +2159,8 @@ test("browser provider does not reuse the same stale port object for recovery", 
     const signPromise = provider.signTransaction({
       chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
     });
-    for (let attempts = 0; attempts < 5; attempts += 1) {
-      await Promise.resolve();
-    }
     assert.ok(
-      port.requests.some((request) => request.type === "sign_transaction"),
+      await waitForRecordedRequest(port, "sign_transaction"),
       "the stale port must receive the original sign write",
     );
 
@@ -1586,7 +2173,7 @@ test("browser provider does not reuse the same stale port object for recovery", 
     assert.equal(requestPortCalls, 2, "recovery may prompt again but must gate the same stale port object");
     assert.deepEqual(
       port.requests.map((request) => request.type),
-      ["connect", "sign_transaction"],
+      ["connect", "get_capabilities", "sign_transaction"],
       "same stale port object must not carry retained result read or cleanup",
     );
   } finally {
@@ -1651,9 +2238,7 @@ test("browser provider attempts retained recovery after post-write disconnect", 
     const resultPromise = provider.signTransaction({
       chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
     });
-    for (let attempts = 0; attempts < 5; attempts += 1) {
-      await Promise.resolve();
-    }
+    assert.ok(await waitForRecordedRequest(firstPort, "sign_transaction"));
     mock.timers.runAll();
     await Promise.resolve();
     mock.timers.runAll();
@@ -1736,9 +2321,7 @@ test("browser provider stale queued request cannot clear a recovered physical-di
       chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
     });
     const staleCapabilitiesPromise = provider.getCapabilities();
-    for (let attempts = 0; attempts < 5; attempts += 1) {
-      await Promise.resolve();
-    }
+    assert.ok(await waitForRecordedRequest(firstPort, "sign_transaction"));
     mock.timers.runAll();
     await Promise.resolve();
     mock.timers.runAll();
@@ -1807,10 +2390,7 @@ test("browser provider does not recover signing after dispose tears down the tra
     const signPromise = provider.signTransaction({
       chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
     });
-    for (let attempts = 0; attempts < 5; attempts += 1) {
-      await Promise.resolve();
-    }
-    assert.ok(firstPort.requests.some((request) => request.type === "sign_transaction"));
+    assert.ok(await waitForRecordedRequest(firstPort, "sign_transaction"));
     provider.dispose();
     mock.timers.runAll();
     await Promise.resolve();
@@ -2488,6 +3068,25 @@ test("Wallet Standard direct capabilities exact validator maps current signing m
       expectedFeatures: [SuiSignTransaction],
       label: "policy mode",
     },
+    {
+      output: validCapabilitiesResult({
+        methods: [
+          {
+            chain: "sui",
+            method: "sign_transaction",
+            payload: {
+              kind: "transaction",
+              inlineMaxBytes: "384",
+              chunkMaxBytes: "2048",
+              payloadMaxBytes: "131072",
+            },
+          },
+          { chain: "sui", method: "sign_personal_message" },
+        ],
+      }),
+      expectedFeatures: [SuiSignTransaction, SuiSignPersonalMessage],
+      label: "user mode with payload delivery metadata",
+    },
   ];
   for (const { output, expectedFeatures, label } of cases) {
     const wallet = createAgentQSuiWallet({
@@ -2623,6 +3222,51 @@ test("Wallet Standard direct capabilities exact validator rejects malformed prov
         output.signing.methods[0].label = "transaction";
       }),
       label: "signing method entry extra field",
+    },
+    {
+      output: mutate((output) => {
+        output.signing.methods[0].payload = {
+          kind: "transaction",
+          inlineMaxBytes: "384",
+          chunkMaxBytes: "2048",
+          payloadMaxBytes: "131072",
+          maxChunkCount: "64",
+        };
+      }),
+      label: "signing payload capability extra field",
+    },
+    {
+      output: mutate((output) => {
+        output.signing.methods[0].payload = {
+          kind: "transaction",
+          inlineMaxBytes: "384",
+          chunkMaxBytes: "2048",
+          payloadMaxBytes: "not-a-number",
+        };
+      }),
+      label: "signing payload capability malformed size",
+    },
+    {
+      output: mutate((output) => {
+        output.signing.methods[0].payload = {
+          kind: "transaction",
+          inlineMaxBytes: "384",
+          chunkMaxBytes: "2047",
+          payloadMaxBytes: "131072",
+        };
+      }),
+      label: "signing payload capability unusable chunk size",
+    },
+    {
+      output: mutate((output) => {
+        output.signing.methods[1].payload = {
+          kind: "transaction",
+          inlineMaxBytes: "384",
+          chunkMaxBytes: "2048",
+          payloadMaxBytes: "131072",
+        };
+      }),
+      label: "personal-message signing must not carry payload delivery metadata",
     },
   ];
   for (const { output, label } of cases) {

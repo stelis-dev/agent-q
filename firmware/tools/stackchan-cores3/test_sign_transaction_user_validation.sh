@@ -28,6 +28,8 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.h" \
+  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
+  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.h" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.h" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
@@ -44,6 +46,8 @@ done
 CXX_BIN="${CXX:-c++}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-signature-request-validation.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
+mkdir -p "${TMP_DIR}/agent_q_common"
+ln -s "${REPO_ROOT}/firmware/src/common/agent_q/policy" "${TMP_DIR}/agent_q_common/policy"
 
 cat >"${TMP_DIR}/sign_transaction_user_validation_test.cpp" <<'CPP'
 #include <ArduinoJson.h>
@@ -55,6 +59,7 @@ cat >"${TMP_DIR}/sign_transaction_user_validation_test.cpp" <<'CPP'
 #include <string>
 
 #include "agent_q_base64.h"
+#include "agent_q_payload_delivery_primitives.h"
 #include "agent_q_sign_transaction_user_validation.h"
 
 namespace {
@@ -107,6 +112,14 @@ void expect_base64(const char* label, const char* value, size_t max_size, bool e
     }
     if (!actual && decoded_size != 0) {
         fprintf(stderr, "%s: rejected base64 did not clear decoded size\n", label);
+        ++failures;
+    }
+}
+
+void expect_payload_primitive(const char* label, bool actual, bool expected)
+{
+    if (actual != expected) {
+        fprintf(stderr, "%s: expected %s\n", label, expected ? "valid" : "invalid");
         ++failures;
     }
 }
@@ -206,6 +219,42 @@ void expect_params(
          strcmp(output.tx_bytes_base64, expected_tx_bytes) != 0 ||
          output.tx_bytes_decoded_size != expected_decoded_size)) {
         fprintf(stderr, "%s: params output fields did not match\n", label);
+        ++failures;
+    }
+}
+
+void expect_staged_params(
+    const char* label,
+    const std::string& json,
+    agent_q::AgentQSignTransactionUserValidationResult expected,
+    const char* expected_network = nullptr,
+    const char* expected_payload_ref = nullptr,
+    size_t expected_payload_size = 0,
+    const char* expected_payload_digest = nullptr)
+{
+    JsonDocument document = parse_json(label, json);
+    agent_q::AgentQSignTransactionUserParams output = {};
+    memset(&output, 0xA5, sizeof(output));
+    const agent_q::AgentQSignTransactionUserValidationResult actual =
+        agent_q::validate_sign_transaction_user_params(document, agent_q::AgentQSupportedSignRoute::sui_sign_transaction, &output);
+    if (actual != expected) {
+        fprintf(stderr, "%s: expected staged params result %d, got %d\n",
+                label, static_cast<int>(expected), static_cast<int>(actual));
+        ++failures;
+        return;
+    }
+    if (actual != agent_q::AgentQSignTransactionUserValidationResult::ok) {
+        return;
+    }
+    if (expected_network == nullptr ||
+        expected_payload_ref == nullptr ||
+        expected_payload_digest == nullptr ||
+        strcmp(output.network, expected_network) != 0 ||
+        strcmp(output.payload_ref, expected_payload_ref) != 0 ||
+        strcmp(output.payload_kind, "transaction") != 0 ||
+        output.payload_size_bytes != expected_payload_size ||
+        strcmp(output.payload_digest, expected_payload_digest) != 0) {
+        fprintf(stderr, "%s: staged params output fields did not match\n", label);
         ++failures;
     }
 }
@@ -417,7 +466,7 @@ int main()
     expect_params(
         "txBytes missing",
         valid_request_with_params("{\"network\":\"devnet\"}"),
-        Result::invalid_tx_bytes);
+        Result::invalid_params_shape);
     expect_params(
         "txBytes invalid base64",
         valid_request_with_params("{\"network\":\"devnet\",\"txBytes\":\"AA!A\"}"),
@@ -440,11 +489,64 @@ int main()
         387,
         "devnet",
         above_adapter_capacity.c_str());
+    const char* digest =
+        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    expect_staged_params(
+        "valid staged params",
+        valid_request_with_params(std::string("{\"network\":\"devnet\","
+                                  "\"payloadRef\":\"payload_abcdef0123456789\","
+                                  "\"payloadKind\":\"transaction\","
+                                  "\"sizeBytes\":\"131072\","
+                                  "\"payloadDigest\":\"") + digest + "\"}"),
+        Result::ok,
+        "devnet",
+        "payload_abcdef0123456789",
+        131072,
+        digest);
+    expect_staged_params(
+        "staged params reject non-canonical size",
+        valid_request_with_params(std::string("{\"network\":\"devnet\","
+                                  "\"payloadRef\":\"payload_abcdef0123456789\","
+                                  "\"payloadKind\":\"transaction\","
+                                  "\"sizeBytes\":\"00037\","
+                                  "\"payloadDigest\":\"") + digest + "\"}"),
+        Result::invalid_payload_descriptor);
+    expect_staged_params(
+        "staged params reject uint64 overflow size",
+        valid_request_with_params(std::string("{\"network\":\"devnet\","
+                                  "\"payloadRef\":\"payload_abcdef0123456789\","
+                                  "\"payloadKind\":\"transaction\","
+                                  "\"sizeBytes\":\"18446744073709551616\","
+                                  "\"payloadDigest\":\"") + digest + "\"}"),
+        Result::invalid_payload_descriptor);
+    expect_staged_params(
+        "staged params missing descriptor",
+        valid_request_with_params("{\"network\":\"devnet\","
+                                  "\"payloadRef\":\"payload_abcdef0123456789\"}"),
+        Result::invalid_params_shape);
+    expect_staged_params(
+        "staged params malformed digest",
+        valid_request_with_params("{\"network\":\"devnet\","
+                                  "\"payloadRef\":\"payload_abcdef0123456789\","
+                                  "\"payloadKind\":\"transaction\","
+                                  "\"sizeBytes\":\"131072\","
+                                  "\"payloadDigest\":\"sha256:xyz\"}"),
+        Result::invalid_payload_descriptor);
+    expect_params(
+        "inline params reject descriptor echo",
+        valid_request_with_params(std::string("{\"network\":\"devnet\","
+                                  "\"txBytes\":\"AAAA\","
+                                  "\"payloadKind\":\"transaction\","
+                                  "\"sizeBytes\":\"3\","
+                                  "\"payloadDigest\":\"") + digest + "\"}"),
+        Result::invalid_params_shape);
     if (strcmp(agent_q::sign_transaction_user_validation_result_name(Result::ok), "ok") != 0 ||
         strcmp(agent_q::sign_transaction_user_validation_result_name(Result::unsupported_type),
                "unsupported_type") != 0 ||
         strcmp(agent_q::sign_transaction_user_validation_result_name(Result::invalid_tx_bytes),
-               "invalid_tx_bytes") != 0) {
+               "invalid_tx_bytes") != 0 ||
+        strcmp(agent_q::sign_transaction_user_validation_result_name(Result::invalid_payload_descriptor),
+               "invalid_payload_descriptor") != 0) {
         fprintf(stderr, "result names did not match\n");
         ++failures;
     }
@@ -452,6 +554,51 @@ int main()
     expect_base64("base64 valid", "AAAA", 512, true);
     char unterminated[4] = {'A', 'A', 'A', 'A'};
     expect_base64("base64 unterminated within max", unterminated, 3, false);
+
+    expect_payload_primitive(
+        "upload id valid max suffix",
+        agent_q::payload_delivery_upload_id_format_valid(
+            "upload_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-ABCDEFG"),
+        true);
+    expect_payload_primitive(
+        "upload id rejects empty suffix",
+        agent_q::payload_delivery_upload_id_format_valid("upload_"),
+        false);
+    expect_payload_primitive(
+        "upload id rejects slash",
+        agent_q::payload_delivery_upload_id_format_valid("upload_abc/def"),
+        false);
+    expect_payload_primitive(
+        "upload id rejects long suffix",
+        agent_q::payload_delivery_upload_id_format_valid(
+            "upload_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-ABCDEFGH"),
+        false);
+    expect_payload_primitive(
+        "payload ref valid max suffix",
+        agent_q::payload_delivery_payload_ref_format_valid(
+            "payload_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-ABCDEFG"),
+        true);
+    expect_payload_primitive(
+        "payload ref rejects empty suffix",
+        agent_q::payload_delivery_payload_ref_format_valid("payload_"),
+        false);
+    expect_payload_primitive(
+        "payload ref rejects slash",
+        agent_q::payload_delivery_payload_ref_format_valid("payload_abc/def"),
+        false);
+    expect_payload_primitive(
+        "payload digest accepts lowercase sha256",
+        agent_q::payload_delivery_payload_digest_format_valid(digest),
+        true);
+    expect_payload_primitive(
+        "payload digest rejects uppercase hex",
+        agent_q::payload_delivery_payload_digest_format_valid(
+            "sha256:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef"),
+        false);
+    expect_payload_primitive(
+        "payload digest rejects short value",
+        agent_q::payload_delivery_payload_digest_format_valid("sha256:0123"),
+        false);
 
     if (failures != 0) {
         fprintf(stderr, "%d sign_transaction_user validation checks failed\n", failures);
@@ -469,6 +616,7 @@ CPP
   -I"${REPO_ROOT}/firmware/src/common/agent_q" \
   "${TMP_DIR}/sign_transaction_user_validation_test.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
+  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.cpp" \

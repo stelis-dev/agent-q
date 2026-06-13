@@ -62,6 +62,10 @@ void handle_usb_get_result_request(
         writer.write_error(id, "invalid_state", "get_result is available only after provisioning is complete.");
         return;
     }
+    if (ops.write_payload_delivery_retained_result_admission_error != nullptr &&
+        ops.write_payload_delivery_retained_result_admission_error(id)) {
+        return;
+    }
     const char* session_id = nullptr;
     if (!agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
         writer.write_error(id, "invalid_session", "Invalid session.");
@@ -88,6 +92,10 @@ void handle_usb_ack_result_request(
 {
     if (!retained_result_material_ready(ops)) {
         writer.write_error(id, "invalid_state", "ack_result is available only after provisioning is complete.");
+        return;
+    }
+    if (ops.write_payload_delivery_retained_result_admission_error != nullptr &&
+        ops.write_payload_delivery_retained_result_admission_error(id)) {
         return;
     }
     const char* session_id = nullptr;

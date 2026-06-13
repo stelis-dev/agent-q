@@ -1,8 +1,8 @@
 #include "agent_q_user_signing_critical_section.h"
 
 #include "agent_q_bip39.h"
-#include "agent_q_sign_transaction_limits.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 namespace agent_q {
@@ -107,27 +107,22 @@ user_signing_execute_critical_section(
 
     const AgentQUserSigningFlowCoreSnapshot snapshot =
         user_signing_flow_core_snapshot();
-    uint8_t payload[kAgentQUserSigningPayloadMaxBytes] = {};
+    uint8_t* payload = nullptr;
     uint8_t signature[kSuiEd25519SignatureBytes] = {};
     size_t payload_size = 0;
 
     const AgentQUserSigningTransitionResult consume_result =
-        user_signing_flow_consume_signable_payload(
-            payload,
-            sizeof(payload),
-            &payload_size);
+        user_signing_flow_take_signable_payload(&payload, &payload_size);
     if (consume_result != AgentQUserSigningTransitionResult::ok) {
         if (should_terminalize_signing_failure(consume_result)) {
             const AgentQUserSigningTransitionResult terminal_result =
                 user_signing_flow_record_signing_failed();
-            wipe_sensitive_buffer(payload, sizeof(payload));
             wipe_sensitive_buffer(signature, sizeof(signature));
             return make_report(
                 map_consume_failure(consume_result),
                 terminal_result,
                 SuiTransactionSigningResult::invalid_input);
         }
-        wipe_sensitive_buffer(payload, sizeof(payload));
         wipe_sensitive_buffer(signature, sizeof(signature));
         return make_report(
             map_consume_failure(consume_result),
@@ -137,7 +132,8 @@ user_signing_execute_critical_section(
 
     const AgentQSigningRoute route = snapshot.signing_route;
     if (route == AgentQSigningRoute::unsupported) {
-        wipe_sensitive_buffer(payload, sizeof(payload));
+        wipe_sensitive_buffer(payload, payload_size);
+        free(payload);
         wipe_sensitive_buffer(signature, sizeof(signature));
         const AgentQUserSigningTransitionResult terminal_result =
             user_signing_flow_record_signing_failed();
@@ -151,7 +147,8 @@ user_signing_execute_critical_section(
         sign_payload_for_route(route, payload, payload_size, signature);
 
     if (signing_result != SuiTransactionSigningResult::ok) {
-        wipe_sensitive_buffer(payload, sizeof(payload));
+        wipe_sensitive_buffer(payload, payload_size);
+        free(payload);
         wipe_sensitive_buffer(signature, sizeof(signature));
         const AgentQUserSigningTransitionResult terminal_result =
             user_signing_flow_record_signing_failed();
@@ -164,7 +161,8 @@ user_signing_execute_critical_section(
     const AgentQUserSigningTransitionResult terminal_result =
         user_signing_flow_complete_signed();
     if (terminal_result != AgentQUserSigningTransitionResult::ok) {
-        wipe_sensitive_buffer(payload, sizeof(payload));
+        wipe_sensitive_buffer(payload, payload_size);
+        free(payload);
         wipe_sensitive_buffer(signature, sizeof(signature));
         return make_report(
             AgentQUserSigningHandoffResult::terminal_error,
@@ -179,7 +177,8 @@ user_signing_execute_critical_section(
         output->message_bytes_size = payload_size;
     }
     wipe_sensitive_buffer(signature, sizeof(signature));
-    wipe_sensitive_buffer(payload, sizeof(payload));
+    wipe_sensitive_buffer(payload, payload_size);
+    free(payload);
     return make_report(
         AgentQUserSigningHandoffResult::ok,
         terminal_result,

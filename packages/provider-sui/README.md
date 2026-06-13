@@ -101,11 +101,14 @@ Those APIs remain on broader core, MCP, or Admin surfaces. This is API
 projection for the provider audience, not a security claim that the same
 application cannot import broader core or local-server APIs directly. Provider-facing
 signing uses `signTransaction` for transaction bytes and `signPersonalMessage`
-for bounded Sui personal-message bytes. Firmware uses its device-local signing
-mode to select the policy or user authorization gate for transaction signing,
-and personal-message signing is user-mode only. Firmware records required
-history and signs or rejects. The provider does not decide whether signing is
-allowed and cannot select the authorization mode.
+for bounded Sui personal-message bytes. `signTransaction` may internally use
+Firmware-advertised same-session payload upload when the transaction bytes do
+not fit the inline transport form; that upload primitive is not a separate dapp
+API. Firmware uses its device-local signing mode to select the policy or user
+authorization gate for transaction signing, and personal-message signing is
+user-mode only. Firmware records required history and signs or rejects. The
+provider does not decide whether signing is allowed and cannot select the
+authorization mode.
 
 The current signing methods are Sui `sign_transaction` and user-confirmed Sui
 `sign_personal_message`. Transaction execution and policy-authorized personal

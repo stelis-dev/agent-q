@@ -2,6 +2,7 @@ import { MAX_PROTOCOL_RESPONSE_LINE_BYTES } from "./transport-invariants.js";
 import { ProtocolError } from "./protocol-error.js";
 
 export const PROTOCOL_VERSION = 1;
+export const INVALID_ID_ERROR_CODE = "invalid_id";
 // sessionTtlMs is uint32 wire metadata. Agent-Q does not use it as the session
 // authority; it is bounded here only to reject malformed Firmware responses.
 export const MAX_SESSION_TTL_MS = 4_294_967_295;
@@ -19,8 +20,9 @@ export type SuiSignMethod =
   | typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD;
 export const SUI_SIGN_TRANSACTION_NETWORKS = ["mainnet", "testnet", "devnet", "localnet"] as const;
 export type SuiSignTransactionNetwork = (typeof SUI_SIGN_TRANSACTION_NETWORKS)[number];
-export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES = 384;
-export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS = 512;
+export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES = 128 * 1024;
+export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS =
+  Math.ceil(MAX_SUI_SIGN_TRANSACTION_TX_BYTES / 3) * 4;
 export const MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES = 256;
 export const MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS = 344;
 
@@ -37,6 +39,16 @@ export const MAX_ACCOUNTS_PER_RESPONSE = 1;
 
 export const HASH_ID_PATTERN = /^sha256:[0-9a-f]{64}$/;
 export const RULE_REF_PATTERN = /^[a-z][a-z0-9_.:/-]{0,31}$/;
+export const UINT_DECIMAL_STRING_PATTERN = /^(0|[1-9][0-9]{0,19})$/;
+export const UINT64_MAX_DECIMAL = "18446744073709551615";
+
+export function isUint64DecimalString(value: unknown): value is string {
+  if (typeof value !== "string" || !UINT_DECIMAL_STRING_PATTERN.test(value)) {
+    return false;
+  }
+  return value.length < UINT64_MAX_DECIMAL.length ||
+    (value.length === UINT64_MAX_DECIMAL.length && value <= UINT64_MAX_DECIMAL);
+}
 
 export const UNSUPPORTED_METHOD_MESSAGE = "Method is not supported.";
 export const SIGN_RESULT_ERROR_MESSAGES = {
@@ -166,6 +178,36 @@ export function validateCanonicalBase64Syntax(
     throw new ProtocolError(errorCode, `${label} must be canonical base64.`);
   }
   return value;
+}
+
+export function canonicalBase64DecodedByteLength(value: string): number {
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return (value.length / 4) * 3 - padding;
+}
+
+export function validateCanonicalBase64Bytes(
+  value: unknown,
+  maxDecodedBytes: number,
+  label: string,
+  errorCode = "invalid_params",
+): string {
+  const normalized = validateCanonicalBase64Syntax(
+    value,
+    Math.ceil(maxDecodedBytes / 3) * 4,
+    label,
+    errorCode,
+  );
+  if (canonicalBase64DecodedByteLength(normalized) > maxDecodedBytes) {
+    throw new ProtocolError(errorCode, `${label} exceeds maximum decoded byte length.`);
+  }
+  return normalized;
+}
+
+export function validateSuiSignTransactionNetwork(value: unknown): SuiSignTransactionNetwork {
+  if (!SUI_SIGN_TRANSACTION_NETWORKS.includes(value as SuiSignTransactionNetwork)) {
+    throw new ProtocolError("invalid_params", "sui signing network is unsupported.");
+  }
+  return value as SuiSignTransactionNetwork;
 }
 
 export function decodeCanonicalBase64(value: string): Uint8Array | null {

@@ -28,7 +28,7 @@ enum class AgentQSuiSigningPreparationResult {
 struct AgentQSuiPreparedSignTransaction {
     AgentQSupportedSignRoute route;
     char network[kAgentQUserSigningNetworkSize];
-    uint8_t tx_bytes[kAgentQSuiSignTransactionTxBytesMaxBytes];
+    uint8_t* tx_bytes;
     size_t tx_bytes_size;
     char payload_digest[kAgentQApprovalHistoryDigestSize];
     SuiTransactionPolicyFacts sui_facts;
@@ -48,6 +48,14 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction(
     const char* network,
     const char* tx_bytes_base64,
     size_t decoded_tx_size,
+    AgentQSuiPreparedSignTransaction* out);
+
+AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_from_owned_bytes(
+    AgentQSupportedSignRoute route,
+    const char* network,
+    uint8_t* tx_bytes,
+    size_t tx_bytes_size,
+    const char* payload_digest,
     AgentQSuiPreparedSignTransaction* out);
 
 AgentQSuiSigningPreparationResult prepare_sui_sign_personal_message(

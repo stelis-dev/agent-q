@@ -46,12 +46,18 @@ import {
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
 } from "../dist/protocol.js";
 
+const SIGN_TRANSACTION_PAYLOAD_CAPABILITY = Object.freeze({
+  kind: "transaction",
+  inlineMaxBytes: "384",
+  chunkMaxBytes: "2700",
+  payloadMaxBytes: "131072",
+});
 const USER_SIGNING_METHODS = Object.freeze([
-  { chain: "sui", method: "sign_transaction" },
+  { chain: "sui", method: "sign_transaction", payload: SIGN_TRANSACTION_PAYLOAD_CAPABILITY },
   { chain: "sui", method: "sign_personal_message" },
 ]);
 const POLICY_SIGNING_METHODS = Object.freeze([
-  { chain: "sui", method: "sign_transaction" },
+  { chain: "sui", method: "sign_transaction", payload: SIGN_TRANSACTION_PAYLOAD_CAPABILITY },
 ]);
 const DEFAULT_PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q personal message check").toString("base64");
 
@@ -474,7 +480,7 @@ test(
           false,
           "delegated chain methods must not advertise signing",
         );
-        assertNoSmokeOutputLeak(capabilities, forbiddenPayload("raw txBytes", userSigningTxBytes));
+        assertNoSmokeOutputLeak(capabilities, forbiddenPayload("raw transaction bytes", userSigningTxBytes));
 
         const beforeHistory = await core.getApprovalHistory({
           deviceId,
@@ -502,7 +508,7 @@ test(
           network: "devnet",
           txBytes: userSigningTxBytes,
         });
-        assertNoSmokeOutputLeak(result, forbiddenPayload("raw txBytes", userSigningTxBytes));
+        assertNoSmokeOutputLeak(result, forbiddenPayload("raw transaction bytes", userSigningTxBytes));
 
         if (userSigningScenario === "disconnect") {
           assert.equal(result.source, "session_ended");
@@ -537,7 +543,7 @@ test(
             purpose: SIGN_TRANSACTION_USER_PURPOSE,
             limit: 4,
           });
-          assertNoSmokeOutputLeak(afterReconnectHistory, forbiddenPayload("raw txBytes", userSigningTxBytes));
+          assertNoSmokeOutputLeak(afterReconnectHistory, forbiddenPayload("raw transaction bytes", userSigningTxBytes));
           assertNoNewSigningHistory(afterReconnectHistory, previousTopSeq);
           return;
         }
@@ -549,7 +555,7 @@ test(
           purpose: SIGN_TRANSACTION_USER_PURPOSE,
           limit: 4,
         });
-        assertNoSmokeOutputLeak(afterHistory, forbiddenPayload("raw txBytes", userSigningTxBytes));
+        assertNoSmokeOutputLeak(afterHistory, forbiddenPayload("raw transaction bytes", userSigningTxBytes));
 
         if (userSigningScenario === "positive") {
           assert.equal(result.status, "signed");
@@ -608,7 +614,7 @@ test(
         assert.equal(capabilities.source, "live");
         assert.equal(capabilities.signing?.authorization, "policy");
         assert.deepEqual(capabilities.signing?.methods, POLICY_SIGNING_METHODS);
-        assertNoSmokeOutputLeak(capabilities, forbiddenPayload("raw txBytes", txBytes));
+        assertNoSmokeOutputLeak(capabilities, forbiddenPayload("raw transaction bytes", txBytes));
 
         const beforeHistory = await core.getApprovalHistory({
           deviceId,
@@ -627,7 +633,7 @@ test(
           network: "devnet",
           txBytes,
         });
-        assertNoSmokeOutputLeak(result, forbiddenPayload("raw txBytes", txBytes));
+        assertNoSmokeOutputLeak(result, forbiddenPayload("raw transaction bytes", txBytes));
         assert.equal(result.source, "live");
         assert.equal(result.authorization, "policy");
 
@@ -636,7 +642,7 @@ test(
           purpose: SIGN_TRANSACTION_POLICY_PURPOSE,
           limit: 4,
         });
-        assertNoSmokeOutputLeak(afterHistory, forbiddenPayload("raw txBytes", txBytes));
+        assertNoSmokeOutputLeak(afterHistory, forbiddenPayload("raw transaction bytes", txBytes));
 
         if (policySigningScenario === "signed") {
           assert.equal(result.status, "signed");

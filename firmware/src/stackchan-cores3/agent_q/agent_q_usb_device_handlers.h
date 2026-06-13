@@ -11,11 +11,12 @@ namespace agent_q {
 
 struct AgentQUsbGetStatusHandlerOps {
     bool (*refresh_persistent_material_consistency)();
+    bool (*write_payload_delivery_safe_read_admission_error)(const char* id);
     AgentQUsbDeviceResponseInfo (*device_response_info)();
 };
 
 struct AgentQUsbIdentifyDeviceHandlerOps {
-    bool (*write_busy_if_pending_or_local_flow_active)(const char* id);
+    bool (*write_identify_device_admission_error)(const char* id);
     bool (*is_safe_identification_code)(const char* value);
     void (*show_identification_code)(const char* code, uint32_t duration_ms);
     AgentQUsbDeviceResponseInfo (*device_response_info)();

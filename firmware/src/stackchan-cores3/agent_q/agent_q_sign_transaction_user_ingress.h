@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 
+#include "agent_q_payload_delivery_admission.h"
 #include "agent_q_session.h"
 #include "agent_q_sign_transaction_user_validation.h"
 
@@ -20,16 +21,21 @@ enum class AgentQSignTransactionUserIngressResult {
     unsupported_method,
     invalid_network,
     invalid_tx_bytes,
+    invalid_payload_ref,
+    invalid_payload_descriptor,
 };
 
 using AgentQSignTransactionUserSessionValidateFn =
     AgentQSessionValidationResult (*)(const char* session_id, void* context);
 
 struct AgentQSignTransactionUserIngressState {
+    AgentQTimeoutTick now_tick;
     bool material_ready;
     bool busy;
     AgentQSignTransactionUserSessionValidateFn validate_session;
     void* session_context;
+    AgentQPayloadDeliverySignTransactionAdmissionFn admit_payload_delivery = nullptr;
+    void* payload_delivery_admission_context = nullptr;
 };
 
 struct AgentQSignTransactionUserIngressOutput {

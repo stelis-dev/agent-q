@@ -18,6 +18,7 @@ import {
   MAX_ACCOUNTS_PER_RESPONSE,
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
+  INVALID_ID_ERROR_CODE,
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
   MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
@@ -47,15 +48,21 @@ import {
   rejectSecretPayload,
   requireOnlyKeys,
   utf8ByteLength,
+  validateCanonicalBase64Bytes,
   validateCanonicalBase64Syntax,
+  validateSuiSignTransactionNetwork,
   type SignResultErrorCode,
   type SuiSignMethod,
   type SuiSignTransactionNetwork,
 } from "./protocol-primitives.js";
 import {
-  SIGN_CHAIN_PATTERN,
-  SIGN_METHOD_PATTERN,
-} from "./protocol-management-primitives.js";
+  identifySignRoute,
+  type SignOperationType,
+  type SupportedSignRoute,
+} from "./protocol-sign-routes.js";
+import {
+  sanitizePayloadDeliveryCapability,
+} from "./protocol-payload-delivery.js";
 
 export { ProtocolError };
 export {
@@ -94,8 +101,10 @@ export {
   INTERNAL_SIGN_TRANSACTION_DEADLINE_MS,
   INTERNAL_USB_DEADLINE_MS,
   MAX_PROTOCOL_RESPONSE_LINE_BYTES,
+  PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES,
 } from "./transport-invariants.js";
-export type { DeviceState, ProvisioningState };
+export { identifySignRoute };
+export type { DeviceState, ProvisioningState, SignOperationType, SupportedSignRoute };
 
 export interface DeviceStatus {
   deviceId: string;
@@ -144,24 +153,6 @@ export interface SignPersonalMessageParams {
   network: SuiSignTransactionNetwork;
   message: string;
 }
-
-export type SignOperationType =
-  | typeof SUI_SIGN_TRANSACTION_METHOD
-  | typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD;
-
-export type SupportedSignRoute =
-  | {
-      operation: typeof SUI_SIGN_TRANSACTION_METHOD;
-      chain: typeof SUI_CHAIN_ID;
-      method: typeof SUI_SIGN_TRANSACTION_METHOD;
-      route: "sui_sign_transaction";
-    }
-  | {
-      operation: typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD;
-      chain: typeof SUI_CHAIN_ID;
-      method: typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD;
-      route: "sui_sign_personal_message";
-    };
 
 export interface SignTransactionRequest {
   id: string;
@@ -232,9 +223,17 @@ export interface CapabilityChain {
   methods: string[];
 }
 
+export interface SigningPayloadCapability {
+  kind: "transaction";
+  inlineMaxBytes: string;
+  chunkMaxBytes: string;
+  payloadMaxBytes: string;
+}
+
 export interface SigningCapabilityEntry {
   chain: typeof SUI_CHAIN_ID;
   method: SuiSignMethod;
+  payload?: SigningPayloadCapability;
 }
 
 export type SignResultAuthorization = "user" | "policy";
@@ -586,7 +585,7 @@ function normalizeProviderProtocolRequest(request: unknown): ProviderProtocolReq
 
 function validateRequestId(id: string): void {
   if (!isSafeRequestId(id)) {
-    throw new ProtocolError("invalid_request_id", "Invalid request id.");
+    throw new ProtocolError(INVALID_ID_ERROR_CODE, "Invalid request id.");
   }
 }
 
@@ -613,9 +612,9 @@ export function validateSignTransactionParams(
   const normalized = asSignParamsRecord(params, requestType, ["network", "txBytes"]);
   return {
     network: validateSuiNetwork(normalized.network),
-    txBytes: validateCanonicalBase64Syntax(
+    txBytes: validateCanonicalBase64Bytes(
       normalized.txBytes,
-      MAX_RAW_PROTOCOL_JSON_BYTES,
+      MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
       "sui/sign_transaction txBytes",
     ),
   };
@@ -646,67 +645,6 @@ export function validateSignPersonalMessageParams(
   };
 }
 
-export function identifySignRoute(
-  operation: typeof SUI_SIGN_TRANSACTION_METHOD,
-  chain: unknown,
-  method: unknown,
-): Extract<SupportedSignRoute, { operation: typeof SUI_SIGN_TRANSACTION_METHOD }>;
-export function identifySignRoute(
-  operation: typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD,
-  chain: unknown,
-  method: unknown,
-): Extract<SupportedSignRoute, { operation: typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD }>;
-export function identifySignRoute(
-  operation: SignOperationType,
-  chain: unknown,
-  method: unknown,
-): SupportedSignRoute;
-export function identifySignRoute(
-  operation: SignOperationType,
-  chain: unknown,
-  method: unknown,
-): SupportedSignRoute {
-  if (
-    typeof chain !== "string" ||
-    !SIGN_CHAIN_PATTERN.test(chain) ||
-    typeof method !== "string" ||
-    !SIGN_METHOD_PATTERN.test(method)
-  ) {
-    throw new ProtocolError("invalid_params", "Signing route identifiers are invalid.");
-  }
-
-  if (chain !== SUI_CHAIN_ID) {
-    // Keep chain support explicit. Add a chain case only when its Firmware
-    // adapter, core validation, capabilities, provider surface, tests, docs,
-    // and hardware evidence implement the same contract.
-    throw new ProtocolError("unsupported_chain", "Signing chain is unsupported.");
-  }
-
-  switch (operation) {
-    case SUI_SIGN_TRANSACTION_METHOD:
-      if (method === SUI_SIGN_TRANSACTION_METHOD) {
-        return {
-          operation,
-          chain: SUI_CHAIN_ID,
-          method: SUI_SIGN_TRANSACTION_METHOD,
-          route: "sui_sign_transaction",
-        };
-      }
-      break;
-    case SUI_SIGN_PERSONAL_MESSAGE_METHOD:
-      if (method === SUI_SIGN_PERSONAL_MESSAGE_METHOD) {
-        return {
-          operation,
-          chain: SUI_CHAIN_ID,
-          method: SUI_SIGN_PERSONAL_MESSAGE_METHOD,
-          route: "sui_sign_personal_message",
-        };
-      }
-      break;
-  }
-  throw new ProtocolError("unsupported_method", "Signing method is unsupported.");
-}
-
 function asSignParamsRecord(value: unknown, label: string, keys: readonly string[]): Record<string, unknown> {
   const params = asRecord(value, `${label} params`);
   if (hasSecretPayloadKey(params)) {
@@ -717,10 +655,7 @@ function asSignParamsRecord(value: unknown, label: string, keys: readonly string
 }
 
 function validateSuiNetwork(value: unknown): SuiSignTransactionNetwork {
-  if (!SUI_SIGN_TRANSACTION_NETWORKS.includes(value as SuiSignTransactionNetwork)) {
-    throw new ProtocolError("invalid_params", "sui signing network is unsupported.");
-  }
-  return value as SuiSignTransactionNetwork;
+  return validateSuiSignTransactionNetwork(value);
 }
 
 function validateRawRequestSize(request: ProviderProtocolRequest, method: string): void {
@@ -903,14 +838,21 @@ function sanitizeSigningCapabilities(value: unknown): SigningCapabilities | unde
 function sanitizeSigningCapabilityEntry(value: unknown): SigningCapabilityEntry {
   const entry = asRecord(value, "Signing capability entry");
   rejectSecretPayload(entry, "Signing capability entry");
-  requireOnlyKeys(entry, ["chain", "method"], "Signing capability entry");
+  requireOnlyKeys(entry, ["chain", "method", "payload"], "Signing capability entry");
   if (
     entry.chain !== SUI_CHAIN_ID ||
     (entry.method !== SUI_SIGN_TRANSACTION_METHOD && entry.method !== SUI_SIGN_PERSONAL_MESSAGE_METHOD)
   ) {
     throw new ProtocolError("protocol_error", "Signing capability is unsupported.");
   }
-  return { chain: SUI_CHAIN_ID, method: entry.method };
+  if (entry.payload !== undefined && entry.method !== SUI_SIGN_TRANSACTION_METHOD) {
+    throw new ProtocolError("protocol_error", "Signing capability payload metadata is unsupported.");
+  }
+  return {
+    chain: SUI_CHAIN_ID,
+    method: entry.method,
+    ...(entry.payload === undefined ? {} : { payload: sanitizePayloadDeliveryCapability(entry.payload) }),
+  };
 }
 
 function sanitizeAccount(value: unknown): Account {

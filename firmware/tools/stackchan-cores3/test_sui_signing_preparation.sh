@@ -183,12 +183,35 @@ int main(int argc, char** argv)
                base64(valid).c_str(),
                valid.size() + 1,
                &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_params);
+    const std::vector<uint8_t> max_sized_malformed_tx(
+        agent_q::kAgentQSuiSignTransactionTxBytesMaxBytes,
+        0xA5);
+    uint8_t* max_sized_owned = static_cast<uint8_t*>(malloc(max_sized_malformed_tx.size()));
+    assert(max_sized_owned != nullptr);
+    memcpy(max_sized_owned, max_sized_malformed_tx.data(), max_sized_malformed_tx.size());
+    assert(agent_q::prepare_sui_sign_transaction_from_owned_bytes(
+               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+               "devnet",
+               max_sized_owned,
+               max_sized_malformed_tx.size(),
+               nullptr,
+               &tx) == agent_q::AgentQSuiSigningPreparationResult::malformed_transaction);
     const std::vector<uint8_t> oversized_tx(agent_q::kAgentQSuiSignTransactionTxBytesMaxBytes + 1, 0xA5);
+    uint8_t* oversized_owned = static_cast<uint8_t*>(malloc(oversized_tx.size()));
+    assert(oversized_owned != nullptr);
+    memcpy(oversized_owned, oversized_tx.data(), oversized_tx.size());
     assert(agent_q::prepare_sui_sign_transaction(
                agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(oversized_tx).c_str(),
                oversized_tx.size(),
+               &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_params);
+    assert(agent_q::prepare_sui_sign_transaction_from_owned_bytes(
+               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+               "devnet",
+               oversized_owned,
+               oversized_tx.size(),
+               nullptr,
                &tx) == agent_q::AgentQSuiSigningPreparationResult::unsupported_payload_size);
 
     ::g_binding_result = agent_q::AgentQSuiSigningAccountBindingResult::account_mismatch;

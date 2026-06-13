@@ -55,12 +55,14 @@ int g_require_session_calls = 0;
 int g_policy_cleanup_calls = 0;
 int g_user_signing_cleanup_calls = 0;
 int g_busy_calls = 0;
+int g_payload_admission_calls = 0;
 int g_clear_session_calls = 0;
 int g_write_disconnect_calls = 0;
 bool g_session_valid = true;
 bool g_policy_cleanup_consumed = false;
 bool g_user_signing_cleanup_consumed = false;
 bool g_busy = false;
+bool g_payload_admission_blocks = false;
 bool g_write_disconnect_ok = true;
 const char* g_last_id = nullptr;
 const char* g_last_session = nullptr;
@@ -75,12 +77,14 @@ void reset_state()
     g_policy_cleanup_calls = 0;
     g_user_signing_cleanup_calls = 0;
     g_busy_calls = 0;
+    g_payload_admission_calls = 0;
     g_clear_session_calls = 0;
     g_write_disconnect_calls = 0;
     g_session_valid = true;
     g_policy_cleanup_consumed = false;
     g_user_signing_cleanup_consumed = false;
     g_busy = false;
+    g_payload_admission_blocks = false;
     g_write_disconnect_ok = true;
     g_last_id = nullptr;
     g_last_session = nullptr;
@@ -135,6 +139,13 @@ bool write_busy(const char* id)
     return g_busy;
 }
 
+bool write_payload_admission_error(const char* id)
+{
+    g_payload_admission_calls += 1;
+    g_last_id = id;
+    return g_payload_admission_blocks;
+}
+
 void clear_session()
 {
     g_clear_session_calls += 1;
@@ -170,6 +181,7 @@ agent_q::AgentQUsbDisconnectHandlerOps make_ops()
         disconnect_policy,
         disconnect_user_signing,
         write_busy,
+        write_payload_admission_error,
         clear_session,
     };
 }
@@ -251,6 +263,20 @@ int main()
         assert(g_policy_cleanup_calls == 1);
         assert(g_user_signing_cleanup_calls == 1);
         assert(g_busy_calls == 1);
+        assert(g_payload_admission_calls == 0);
+        assert(g_clear_session_calls == 0);
+        assert(g_write_disconnect_calls == 0);
+    }
+
+    {
+        reset_state();
+        g_payload_admission_blocks = true;
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"disconnect\",\"sessionId\":\"session\"}");
+        agent_q::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
+        assert(g_policy_cleanup_calls == 1);
+        assert(g_user_signing_cleanup_calls == 1);
+        assert(g_busy_calls == 1);
+        assert(g_payload_admission_calls == 1);
         assert(g_clear_session_calls == 0);
         assert(g_write_disconnect_calls == 0);
     }
@@ -260,6 +286,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"disconnect\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
+        assert(g_payload_admission_calls == 1);
         assert(g_clear_session_calls == 1);
         assert(g_write_disconnect_calls == 1);
         assert(g_log_write_failure_calls == 0);

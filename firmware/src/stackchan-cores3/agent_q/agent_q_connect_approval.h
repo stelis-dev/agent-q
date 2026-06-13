@@ -4,6 +4,7 @@
 
 #include "agent_q_request_id.h"
 #include "agent_q_timeout_window.h"
+#include "freertos/FreeRTOS.h"
 
 namespace agent_q {
 

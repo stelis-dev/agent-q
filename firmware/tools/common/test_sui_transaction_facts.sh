@@ -358,7 +358,7 @@ int main(int argc, char** argv)
         agent_q::SuiTransactionFactsResult::malformed,
         &failures);
 
-    std::vector<uint8_t> oversized(4097, 0);
+    std::vector<uint8_t> oversized((128 * 1024) + 1, 0);
     facts = {};
     const agent_q::SuiTransactionFactsResult oversized_result =
         agent_q::parse_sui_transaction_policy_facts(oversized.data(), oversized.size(), &facts);

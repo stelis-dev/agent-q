@@ -9,7 +9,7 @@
 namespace agent_q {
 namespace {
 
-constexpr size_t kMaxTxBytes = 4096;
+constexpr size_t kMaxTxBytes = 128 * 1024;
 constexpr size_t kAddressBytes = 32;
 constexpr size_t kDigestBytes = 32;
 constexpr uint32_t kMaxTypeArguments = kSuiPolicyFactMaxTypeArguments;

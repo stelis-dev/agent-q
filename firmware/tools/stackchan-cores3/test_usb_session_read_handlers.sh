@@ -40,6 +40,8 @@ CXX_BIN="${CXX:-c++}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-session-read-handlers.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 mkdir -p "${TMP_DIR}/stubs"
+mkdir -p "${TMP_DIR}/agent_q_common"
+ln -s "${COMMON_AGENT_Q_DIR}/policy" "${TMP_DIR}/agent_q_common/policy"
 
 cat >"${TMP_DIR}/stubs/byte_conversions.h" <<'H'
 #pragma once
@@ -78,6 +80,7 @@ int g_write_error_calls = 0;
 int g_log_write_failure_calls = 0;
 int g_material_calls = 0;
 int g_busy_calls = 0;
+int g_payload_admission_calls = 0;
 int g_require_session_calls = 0;
 int g_read_mode_calls = 0;
 int g_derive_account_calls = 0;
@@ -87,6 +90,7 @@ int g_record_policy_unavailable_calls = 0;
 int g_write_json_calls = 0;
 bool g_material_ready = true;
 bool g_busy = false;
+bool g_payload_admission_error = false;
 bool g_session_valid = true;
 bool g_read_mode_ok = true;
 agent_q::SuiAccountDerivationResult g_account_result =
@@ -103,6 +107,10 @@ char g_last_json_auth[16] = {};
 char g_last_json_account_address[80] = {};
 char g_last_json_account_public_key[64] = {};
 char g_last_json_policy_id[80] = {};
+char g_last_payload_kind[24] = {};
+char g_last_payload_inline_max[24] = {};
+char g_last_payload_chunk_max[24] = {};
+char g_last_payload_max[24] = {};
 size_t g_last_json_signing_method_count = 0;
 size_t g_last_json_policy_rule_count = 0;
 
@@ -114,6 +122,7 @@ void reset_state()
     g_log_write_failure_calls = 0;
     g_material_calls = 0;
     g_busy_calls = 0;
+    g_payload_admission_calls = 0;
     g_require_session_calls = 0;
     g_read_mode_calls = 0;
     g_derive_account_calls = 0;
@@ -123,6 +132,7 @@ void reset_state()
     g_write_json_calls = 0;
     g_material_ready = true;
     g_busy = false;
+    g_payload_admission_error = false;
     g_session_valid = true;
     g_read_mode_ok = true;
     g_account_result = agent_q::SuiAccountDerivationResult::ok;
@@ -138,6 +148,10 @@ void reset_state()
     g_last_json_account_address[0] = '\0';
     g_last_json_account_public_key[0] = '\0';
     g_last_json_policy_id[0] = '\0';
+    g_last_payload_kind[0] = '\0';
+    g_last_payload_inline_max[0] = '\0';
+    g_last_payload_chunk_max[0] = '\0';
+    g_last_payload_max[0] = '\0';
     g_last_json_signing_method_count = 0;
     g_last_json_policy_rule_count = 0;
     g_policy_document = agent_q::AgentQPolicyDocument{
@@ -185,6 +199,11 @@ bool usb_response_write_json(JsonDocument& response)
     snprintf(g_last_json_auth, sizeof(g_last_json_auth), "%s", authorization);
     JsonArray methods = response["signing"]["methods"].as<JsonArray>();
     g_last_json_signing_method_count = methods.size();
+    JsonObject payload = methods[0]["payload"].as<JsonObject>();
+    snprintf(g_last_payload_kind, sizeof(g_last_payload_kind), "%s", payload["kind"] | "");
+    snprintf(g_last_payload_inline_max, sizeof(g_last_payload_inline_max), "%s", payload["inlineMaxBytes"] | "");
+    snprintf(g_last_payload_chunk_max, sizeof(g_last_payload_chunk_max), "%s", payload["chunkMaxBytes"] | "");
+    snprintf(g_last_payload_max, sizeof(g_last_payload_max), "%s", payload["payloadMaxBytes"] | "");
     const char* account_address = response["accounts"][0]["address"] | "";
     snprintf(g_last_json_account_address, sizeof(g_last_json_account_address), "%s", account_address);
     const char* account_public_key = response["accounts"][0]["publicKey"] | "";
@@ -226,6 +245,17 @@ bool write_busy(const char* id)
     g_busy_calls += 1;
     g_last_id = id;
     return g_busy;
+}
+
+bool write_payload_admission_error(const char* id)
+{
+    g_payload_admission_calls += 1;
+    g_last_id = id;
+    if (g_payload_admission_error) {
+        write_error(id, "busy", "Device has a pending signable payload.");
+        return true;
+    }
+    return false;
 }
 
 bool require_session(const char* id, const char* session_id)
@@ -297,6 +327,7 @@ agent_q::AgentQUsbSessionReadHandlerOps make_ops()
     return agent_q::AgentQUsbSessionReadHandlerOps{
         material_ready,
         write_busy,
+        write_payload_admission_error,
         require_session,
         read_signing_mode,
         derive_sui_account,
@@ -326,6 +357,7 @@ int main()
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(g_busy_calls == 0);
+        assert(g_payload_admission_calls == 0);
         assert(g_require_session_calls == 0);
         assert(g_read_mode_calls == 0);
     }
@@ -337,7 +369,22 @@ int main()
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_material_calls == 1);
         assert(g_busy_calls == 1);
+        assert(g_payload_admission_calls == 0);
         assert(g_write_error_calls == 0);
+        assert(g_require_session_calls == 0);
+        assert(g_read_mode_calls == 0);
+    }
+
+    {
+        reset_state();
+        g_payload_admission_error = true;
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":\"session\"}");
+        agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
+        assert(g_material_calls == 1);
+        assert(g_busy_calls == 1);
+        assert(g_payload_admission_calls == 1);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "busy") == 0);
         assert(g_require_session_calls == 0);
         assert(g_read_mode_calls == 0);
     }
@@ -348,6 +395,7 @@ int main()
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
+        assert(g_payload_admission_calls == 1);
         assert(g_require_session_calls == 0);
         assert(g_read_mode_calls == 0);
     }
@@ -357,6 +405,7 @@ int main()
         g_session_valid = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
+        assert(g_payload_admission_calls == 1);
         assert(g_require_session_calls == 1);
         assert(g_write_error_calls == 0);
         assert(g_read_mode_calls == 0);
@@ -388,11 +437,16 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
+        assert(g_payload_admission_calls == 1);
         assert(g_read_mode_calls == 1);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_type, "capabilities") == 0);
         assert(strcmp(g_last_json_auth, "policy") == 0);
         assert(g_last_json_signing_method_count == 1);
+        assert(strcmp(g_last_payload_kind, "transaction") == 0);
+        assert(strcmp(g_last_payload_inline_max, "384") == 0);
+        assert(strcmp(g_last_payload_chunk_max, "2700") == 0);
+        assert(strcmp(g_last_payload_max, "131072") == 0);
     }
 
     {
@@ -410,6 +464,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_accounts\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
+        assert(g_payload_admission_calls == 1);
         assert(g_derive_account_calls == 1);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_type, "accounts") == 0);
@@ -455,6 +510,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"policy_get\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
+        assert(g_payload_admission_calls == 1);
         assert(g_read_policy_calls == 1);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_type, "policy") == 0);
@@ -513,6 +569,7 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
+  -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${AGENT_Q_DIR}" \
   -I"${COMMON_AGENT_Q_DIR}" \

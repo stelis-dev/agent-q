@@ -105,9 +105,10 @@ read-only `get_accounts` Sui account derivation are implemented. The current
 setup source also records a DEV_PROFILE local PIN verifier before reporting
 `provisioned`, and initializes device-local signing authorization mode to
 `user`. Source/build tests cover the provisioned host process and MCP session path
-through `get_accounts`, policy-decision rejection, restricted SUI transfer
-request validation, the current `sign_transaction` policy/user gate split, and
-the user-mode `sign_personal_message` source path.
+through `get_accounts`, policy-decision rejection, inline and same-session
+staged Sui `sign_transaction` request validation for the current restricted SUI
+transfer semantic projection, the current `sign_transaction` policy/user gate
+split, and the user-mode `sign_personal_message` source path.
 Hardware smoke coverage exists for StackChan CoreS3 local setup and PIN entry.
 Targeted hardware verification remains required after setup UI or state changes.
 Source-level local settings
@@ -132,8 +133,10 @@ Rules:
 - The host process must not derive private keys.
 - Firmware returns public key/address data through `get_accounts`.
 - The current Sign API source paths have `source-wired-not-product-active`
-  status for the bounded Sui `sign_transaction` transfer shape and user-mode
-  Sui `sign_personal_message`.
+  status for Sui `sign_transaction` with inline or same-session staged
+  transaction bytes, currently signable only when the Firmware route adapter
+  derives the supported restricted SUI transfer semantic projection, and for
+  user-mode Sui `sign_personal_message`.
   Firmware reads its local signing authorization mode and selects one gate:
   policy mode evaluates active policy and signs with speech-bubble status
   notifications when policy authorizes the bounded request, while user mode uses
@@ -177,10 +180,12 @@ not keep reporting `provisioned` while rejecting all session APIs.
 
 The current DEV_PROFILE runtime does not import or export root signing material.
 Read-only public Sui account derivation is available via `get_accounts`.
-The current Sign API source paths exist for bounded Sui `sign_transaction`
-transaction bytes and user-mode `sign_personal_message` personal-message bytes,
-but product-active claims still depend on the target evidence tracked in
-`docs/IMPLEMENTATION_STATUS.md`.
+The current Sign API source paths exist for Sui `sign_transaction` transaction
+bytes delivered inline or through same-session staging and for user-mode
+`sign_personal_message` personal-message bytes. Current Sui transaction signing
+still fails closed outside the supported restricted SUI transfer semantic
+projection, and product-active claims still depend on the target evidence
+tracked in `docs/IMPLEMENTATION_STATUS.md`.
 Current StackChan CoreS3 source can generate a BIP-39 backup
 phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
 3-column by 4-row grid, and wipe scratch on confirm, cancel, timeout, failure,
@@ -334,8 +339,8 @@ process and Admin may submit a bounded proposal, but Firmware validates it,
 requires device-local approval, and commits it through rollback-safe storage.
 Sui `sign_personal_message` is source-wired for user authorization mode only;
 policy facts and rules for personal-message signing are not implemented.
-Arbitrary Sui transaction signing outside the restricted transfer shape, full
-Admin policy editing beyond the current policy proposal template, and
+Sui transaction semantics outside the supported restricted transfer projection,
+full Admin policy editing beyond the current policy proposal template, and
 USER_PROFILE secure provisioning are not implemented.
 
 ## Completion Criteria

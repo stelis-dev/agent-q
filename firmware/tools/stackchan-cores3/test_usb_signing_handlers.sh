@@ -115,10 +115,15 @@ agent_q::AgentQUserSigningFlowBeginResult g_begin_result =
     agent_q::AgentQUserSigningFlowBeginResult::ok;
 bool g_policy_response_ok = true;
 bool g_show_review_ok = true;
+const char* g_policy_code = "policy_signed";
+const char* g_policy_message = "Policy authorized signing.";
 
 const char* g_last_id = nullptr;
 const char* g_last_error_code = nullptr;
 const char* g_last_error_message = nullptr;
+const char* g_last_policy_response_code = nullptr;
+const char* g_last_policy_response_message = nullptr;
+const char* g_last_notice_message = nullptr;
 agent_q::AgentQSigningRoute g_last_waiting_route =
     agent_q::AgentQSigningRoute::sui_sign_transaction;
 agent_q::AgentQUsbSigningNoticeKind g_last_notice_kind =
@@ -167,9 +172,14 @@ void reset_state()
     g_begin_result = agent_q::AgentQUserSigningFlowBeginResult::ok;
     g_policy_response_ok = true;
     g_show_review_ok = true;
+    g_policy_code = "policy_signed";
+    g_policy_message = "Policy authorized signing.";
     g_last_id = nullptr;
     g_last_error_code = nullptr;
     g_last_error_message = nullptr;
+    g_last_policy_response_code = nullptr;
+    g_last_policy_response_message = nullptr;
+    g_last_notice_message = nullptr;
     g_last_waiting_route = agent_q::AgentQSigningRoute::sui_sign_transaction;
     g_last_notice_kind = agent_q::AgentQUsbSigningNoticeKind::info;
     memset(g_retry_buffer, 0, sizeof(g_retry_buffer));
@@ -199,6 +209,16 @@ bool busy()
 {
     g_busy_calls += 1;
     return false;
+}
+
+agent_q::AgentQPayloadDeliveryAdmissionDecision admit_tx_payload_delivery(
+    const agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput&,
+    void*)
+{
+    return {
+        agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+        agent_q::AgentQPayloadDeliveryAdmissionReason::idle_passthrough,
+    };
 }
 
 agent_q::AgentQSessionValidationResult validate_session(const char*, void*)
@@ -258,6 +278,7 @@ agent_q::AgentQSigningPreflightResult evaluate_tx_preflight(
     assert(state.material_ready);
     assert(!state.busy);
     assert(state.validate_session != nullptr);
+    assert(state.admit_payload_delivery == admit_tx_payload_delivery);
     assert(runtime.read_signing_mode != nullptr);
     assert(runtime.retry_responder != nullptr);
     assert(runtime.retry_stored_result == g_retry_buffer);
@@ -293,6 +314,8 @@ agent_q::AgentQSignTransactionPolicyRuntimeResult evaluate_policy(
     g_policy_eval_calls += 1;
     agent_q::AgentQSignTransactionPolicyRuntimeResult result = {};
     result.status = g_policy_status;
+    result.code = g_policy_code;
+    result.message = g_policy_message;
     strncpy(result.chain, "sui", sizeof(result.chain) - 1);
     strncpy(result.method, "sign_transaction", sizeof(result.method) - 1);
     strncpy(result.rule_ref, "rule-1", sizeof(result.rule_ref) - 1);
@@ -300,22 +323,26 @@ agent_q::AgentQSignTransactionPolicyRuntimeResult evaluate_policy(
 }
 
 agent_q::AgentQPolicySigningExecutionResult execute_policy(
-    const agent_q::AgentQSignTransactionPolicyRuntimeResult&)
+    const agent_q::AgentQSignTransactionPolicyRuntimeResult& policy_result)
 {
     g_policy_execute_calls += 1;
     agent_q::AgentQPolicySigningExecutionResult result = {};
     result.status = g_execution_status;
+    result.code = policy_result.code;
+    result.message = policy_result.message;
     return result;
 }
 
 bool write_policy_response(
     const char* id,
     const uint8_t* request_identity,
-    const agent_q::AgentQPolicySigningExecutionResult&)
+    const agent_q::AgentQPolicySigningExecutionResult& result)
 {
     g_policy_response_calls += 1;
     assert(strcmp(id, "id-1") == 0);
     assert(request_identity[0] == 0x42);
+    g_last_policy_response_code = result.code;
+    g_last_policy_response_message = result.message;
     return g_policy_response_ok;
 }
 
@@ -394,9 +421,10 @@ void record_waiting(const char* id, agent_q::AgentQSigningRoute route)
     g_last_waiting_route = route;
 }
 
-void show_notice(const char*, agent_q::AgentQUsbSigningNoticeKind kind)
+void show_notice(const char* message, agent_q::AgentQUsbSigningNoticeKind kind)
 {
     g_notice_calls += 1;
+    g_last_notice_message = message;
     g_last_notice_kind = kind;
 }
 
@@ -415,12 +443,21 @@ void log_policy_signed(const char*, const char*, const char*, const char*)
     g_log_policy_signed_calls += 1;
 }
 
+agent_q::AgentQTimeoutTick current_tick()
+{
+    return 0;
+}
+
 agent_q::AgentQUsbSigningHandlerOps make_ops()
 {
     return agent_q::AgentQUsbSigningHandlerOps{
         material_ready,
         busy,
+        busy,
+        current_tick,
         validate_session,
+        nullptr,
+        admit_tx_payload_delivery,
         nullptr,
         read_mode,
         nullptr,
@@ -483,7 +520,7 @@ void test_transaction_ingress_error_mapping()
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "invalid_params") == 0);
     assert(strcmp(g_last_error_message, "Signing txBytes are invalid.") == 0);
-    assert(g_clear_tx_prepared_calls == 0);
+    assert(g_clear_tx_prepared_calls == 2);
 }
 
 void test_personal_message_ingress_error_mapping()
@@ -510,6 +547,7 @@ void test_preparation_account_failure_mapping()
     assert(g_record_runtime_failure_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "account_error") == 0);
+    assert(g_notice_calls == 0);
 }
 
 void test_personal_message_preparation_account_failure_mapping()
@@ -523,6 +561,41 @@ void test_personal_message_preparation_account_failure_mapping()
     assert(g_record_runtime_failure_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "account_error") == 0);
+    assert(g_notice_calls == 0);
+}
+
+void test_transaction_preparation_unsupported_notifies()
+{
+    reset_state();
+    g_tx_preflight_result =
+        agent_q::AgentQSigningPreflightResult::transaction_preparation_error;
+    g_preparation_result = agent_q::AgentQSuiSigningPreparationResult::unsupported_transaction;
+    JsonDocument request;
+    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    assert(g_write_error_calls == 1);
+    assert(strcmp(g_last_error_code, "unsupported_transaction") == 0);
+    assert(strcmp(g_last_error_message, "Transaction shape is not supported.") == 0);
+    assert(g_notice_calls == 1);
+    assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
+    assert(strcmp(g_last_notice_message, "Unsupported transaction") == 0);
+    assert(g_begin_tx_calls == 0);
+}
+
+void test_transaction_preparation_payload_too_large_notifies()
+{
+    reset_state();
+    g_tx_preflight_result =
+        agent_q::AgentQSigningPreflightResult::transaction_preparation_error;
+    g_preparation_result = agent_q::AgentQSuiSigningPreparationResult::unsupported_payload_size;
+    JsonDocument request;
+    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    assert(g_write_error_calls == 1);
+    assert(strcmp(g_last_error_code, "unsupported_payload_size") == 0);
+    assert(strcmp(g_last_error_message, "Signing payload exceeds the current Sui adapter capacity.") == 0);
+    assert(g_notice_calls == 1);
+    assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
+    assert(strcmp(g_last_notice_message, "Payload too large") == 0);
+    assert(g_begin_tx_calls == 0);
 }
 
 void test_retry_consumed_writes_no_error()
@@ -551,7 +624,7 @@ void test_policy_signed_path_cleans_outputs()
     assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::success);
     assert(g_clear_policy_execution_calls == 1);
     assert(g_clear_policy_runtime_calls == 1);
-    assert(g_clear_tx_prepared_calls == 1);
+    assert(g_clear_tx_prepared_calls == 2);
     assert(g_begin_tx_calls == 0);
 }
 
@@ -569,7 +642,7 @@ void test_policy_response_failure_logs_and_cleans()
     assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
     assert(g_clear_policy_execution_calls == 1);
     assert(g_clear_policy_runtime_calls == 1);
-    assert(g_clear_tx_prepared_calls == 1);
+    assert(g_clear_tx_prepared_calls == 2);
 }
 
 void test_policy_signing_failed_path_cleans_outputs()
@@ -587,7 +660,31 @@ void test_policy_signing_failed_path_cleans_outputs()
     assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
     assert(g_clear_policy_execution_calls == 1);
     assert(g_clear_policy_runtime_calls == 1);
-    assert(g_clear_tx_prepared_calls == 1);
+    assert(g_clear_tx_prepared_calls == 2);
+    assert(g_begin_tx_calls == 0);
+}
+
+void test_policy_unsupported_transaction_notifies()
+{
+    reset_state();
+    g_mode = agent_q::AgentQSigningAuthorizationMode::policy;
+    g_policy_status = agent_q::AgentQSignTransactionPolicyRuntimeStatus::unsupported_transaction;
+    g_execution_status = agent_q::AgentQPolicySigningExecutionStatus::request_error;
+    g_policy_code = "unsupported_transaction";
+    g_policy_message = "Transaction shape is not supported.";
+    JsonDocument request;
+    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    assert(g_policy_eval_calls == 1);
+    assert(g_policy_execute_calls == 1);
+    assert(g_policy_response_calls == 1);
+    assert(strcmp(g_last_policy_response_code, "unsupported_transaction") == 0);
+    assert(strcmp(g_last_policy_response_message, "Transaction shape is not supported.") == 0);
+    assert(g_notice_calls == 1);
+    assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
+    assert(strcmp(g_last_notice_message, "Unsupported transaction") == 0);
+    assert(g_clear_policy_execution_calls == 1);
+    assert(g_clear_policy_runtime_calls == 1);
+    assert(g_clear_tx_prepared_calls == 2);
     assert(g_begin_tx_calls == 0);
 }
 
@@ -597,7 +694,7 @@ void test_transaction_user_success()
     JsonDocument request;
     agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_begin_tx_calls == 1);
-    assert(g_clear_tx_prepared_calls == 1);
+    assert(g_clear_tx_prepared_calls == 2);
     assert(g_show_review_calls == 1);
     assert(g_waiting_calls == 1);
     assert(g_last_waiting_route == agent_q::AgentQSigningRoute::sui_sign_transaction);
@@ -611,10 +708,13 @@ void test_transaction_begin_failure_cleans_prepared()
     JsonDocument request;
     agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_begin_tx_calls == 1);
-    assert(g_clear_tx_prepared_calls == 1);
+    assert(g_clear_tx_prepared_calls == 2);
     assert(g_show_review_calls == 0);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "malformed_transaction") == 0);
+    assert(g_notice_calls == 1);
+    assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
+    assert(strcmp(g_last_notice_message, "Malformed transaction") == 0);
 }
 
 void test_transaction_ui_failure_cleans_flow()
@@ -624,7 +724,7 @@ void test_transaction_ui_failure_cleans_flow()
     JsonDocument request;
     agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_begin_tx_calls == 1);
-    assert(g_clear_tx_prepared_calls == 1);
+    assert(g_clear_tx_prepared_calls == 2);
     assert(g_show_review_calls == 1);
     assert(g_clear_flow_calls == 1);
     assert(g_display_error_calls == 1);
@@ -667,10 +767,13 @@ int main()
     test_personal_message_ingress_error_mapping();
     test_preparation_account_failure_mapping();
     test_personal_message_preparation_account_failure_mapping();
+    test_transaction_preparation_unsupported_notifies();
+    test_transaction_preparation_payload_too_large_notifies();
     test_retry_consumed_writes_no_error();
     test_policy_signed_path_cleans_outputs();
     test_policy_response_failure_logs_and_cleans();
     test_policy_signing_failed_path_cleans_outputs();
+    test_policy_unsupported_transaction_notifies();
     test_transaction_user_success();
     test_transaction_begin_failure_cleans_prepared();
     test_transaction_ui_failure_cleans_flow();

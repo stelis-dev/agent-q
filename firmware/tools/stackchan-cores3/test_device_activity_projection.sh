@@ -108,6 +108,8 @@ agent_q::AgentQDeviceActivityFacts idle_facts()
         false,
         false,
         false,
+        false,
+        false,
         policy_update(false, agent_q::AgentQPolicyUpdateFlowStage::idle),
         local_reset(false, agent_q::AgentQLocalResetStage::none),
         user_signing(false, agent_q::AgentQUserSigningStage::none),
@@ -123,13 +125,14 @@ agent_q::AgentQDeviceActivityProjection project(
 void expect_usb_block(
     const agent_q::AgentQDeviceActivityProjection& activity,
     bool allow_settings_menu,
+    bool allow_payload_delivery,
     bool blocked,
     const char* message)
 {
     const agent_q::AgentQDeviceActivityUsbRequestBlock block =
         agent_q::device_activity_usb_request_block(
             activity,
-            { allow_settings_menu });
+            { allow_settings_menu, allow_payload_delivery });
     expect(block.blocked == blocked, "USB block flag matches expectation");
     if (message != nullptr) {
         expect(block.message != nullptr, "USB block has a message");
@@ -150,7 +153,7 @@ int main()
            "idle provisioned activity allows touch settings entry");
     expect(!agent_q::device_activity_blocks_user_signing_ingress(activity),
            "idle activity allows user signing ingress");
-    expect_usb_block(activity, false, false, nullptr);
+    expect_usb_block(activity, false, false, false, nullptr);
     expect(agent_q::usb_operation_is_retained_result_read_cleanup(
                agent_q::AgentQUsbOperationType::get_result),
            "get_result is a retained-result read route");
@@ -177,7 +180,7 @@ int main()
                "policy update blocks local settings start");
         expect(agent_q::device_activity_blocks_user_signing_ingress(activity),
                "policy update blocks signing ingress");
-        expect_usb_block(activity, false, true, "Device has a pending policy update.");
+        expect_usb_block(activity, false, false, true, "Device has a pending policy update.");
     }
 
     for (agent_q::AgentQPolicyUpdateFlowStage stage : {
@@ -194,7 +197,7 @@ int main()
                "busy policy update blocks local settings start");
         expect(agent_q::device_activity_blocks_user_signing_ingress(activity),
                "busy policy update blocks signing ingress");
-        expect_usb_block(activity, false, true, "Device has a pending policy update.");
+        expect_usb_block(activity, false, false, true, "Device has a pending policy update.");
     }
 
     facts = idle_facts();
@@ -204,8 +207,8 @@ int main()
            "idle settings menu remains idle for device.state");
     expect(!agent_q::device_activity_allows_local_settings_start(activity),
            "active settings menu blocks starting another settings flow");
-    expect_usb_block(activity, false, true, "Device is showing local settings UI.");
-    expect_usb_block(activity, true, false, nullptr);
+    expect_usb_block(activity, false, false, true, "Device is showing local settings UI.");
+    expect_usb_block(activity, true, false, false, nullptr);
 
     facts = idle_facts();
     facts.local_reset = local_reset(true, agent_q::AgentQLocalResetStage::pin_entry);
@@ -214,7 +217,31 @@ int main()
            "local reset PIN entry projects to busy");
     expect(agent_q::device_activity_blocks_user_signing_ingress(activity),
            "local reset blocks signing ingress");
-    expect_usb_block(activity, true, true, "Device is showing local reset UI.");
+    expect_usb_block(activity, true, false, true, "Device is showing local reset UI.");
+
+    facts = idle_facts();
+    facts.payload_delivery_receiving = true;
+    activity = project(facts);
+    expect(activity.device_state == agent_q::AgentQProjectedDeviceState::busy,
+           "payload delivery receiving projects to busy");
+    expect(!agent_q::device_activity_allows_local_settings_start(activity),
+           "payload delivery receiving blocks local settings start");
+    expect(agent_q::device_activity_blocks_user_signing_ingress(activity),
+           "payload delivery receiving blocks signing ingress");
+    expect_usb_block(activity, false, false, true, "Device has a pending payload upload.");
+    expect_usb_block(activity, false, true, false, nullptr);
+
+    facts = idle_facts();
+    facts.payload_delivery_finalized = true;
+    activity = project(facts);
+    expect(activity.device_state == agent_q::AgentQProjectedDeviceState::busy,
+           "payload delivery finalized projects to busy");
+    expect(!agent_q::device_activity_allows_local_settings_start(activity),
+           "payload delivery finalized blocks local settings start");
+    expect(!agent_q::device_activity_blocks_user_signing_ingress(activity),
+           "payload delivery finalized leaves signing admission request-aware");
+    expect_usb_block(activity, false, false, true, "Device has a pending signable payload.");
+    expect_usb_block(activity, false, true, false, nullptr);
 
     facts = idle_facts();
     facts.user_signing = user_signing(true, agent_q::AgentQUserSigningStage::reviewing);

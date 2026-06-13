@@ -130,6 +130,8 @@ const DEFAULT_WALLET_ICON =
 const SUI_DERIVATION_PATH = "m/44'/784'/0'/0'/0'";
 const SUI_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{64}$/;
 const DEVICE_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
+const UINT_DECIMAL_STRING_PATTERN = /^(0|[1-9][0-9]{0,19})$/;
+const WALLET_PAYLOAD_DELIVERY_MIN_CHUNK_BYTES = 2048;
 const ED25519_PUBLIC_KEY_BYTES = 32;
 const SUI_ED25519_SIGNATURE_BYTES = 97;
 // Keep bounded dapp-facing messages local so this subpath stays client-runtime free.
@@ -246,6 +248,28 @@ function requireExactKeys(
   }
 }
 
+function requireExactKeysWithOptional(
+  value: unknown,
+  requiredKeys: readonly string[],
+  optionalKeys: readonly string[],
+  errorMessage: string,
+): asserts value is Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(errorMessage);
+  }
+  const allowed = new Set([...requiredKeys, ...optionalKeys]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new Error(errorMessage);
+    }
+  }
+  for (const key of requiredKeys) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      throw new Error(errorMessage);
+    }
+  }
+}
+
 function decodeCanonicalBase64(value: unknown, expectedBytes: number): Uint8Array {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error("invalid_base64");
@@ -294,10 +318,16 @@ function validateWalletSigningCapabilities(value: unknown): Array<typeof SuiSign
 
   const seenMethods = new Set<string>();
   for (const method of value.methods) {
-    requireExactKeys(method, ["chain", "method"], message);
+    requireExactKeysWithOptional(method, ["chain", "method"], ["payload"], message);
     const methodName = method.method;
     if (method.chain !== "sui" || (methodName !== "sign_transaction" && methodName !== "sign_personal_message")) {
       throw new Error(message);
+    }
+    if (method.payload !== undefined) {
+      if (methodName !== "sign_transaction") {
+        throw new Error(message);
+      }
+      validateWalletSigningPayloadCapability(method.payload, message);
     }
     if (seenMethods.has(methodName)) {
       throw new Error(message);
@@ -320,6 +350,30 @@ function validateWalletSigningCapabilities(value: unknown): Array<typeof SuiSign
     throw new Error(message);
   }
   return [SuiSignTransaction, SuiSignPersonalMessage];
+}
+
+function validateWalletSigningPayloadCapability(value: unknown, message: string): void {
+  requireExactKeys(value, ["kind", "inlineMaxBytes", "chunkMaxBytes", "payloadMaxBytes"], message);
+  if (value.kind !== "transaction") {
+    throw new Error(message);
+  }
+  parseWalletPayloadCapabilityUint(value.inlineMaxBytes, message);
+  const chunkMaxBytes = parseWalletPayloadCapabilityUint(value.chunkMaxBytes, message);
+  parseWalletPayloadCapabilityUint(value.payloadMaxBytes, message);
+  if (chunkMaxBytes < WALLET_PAYLOAD_DELIVERY_MIN_CHUNK_BYTES) {
+    throw new Error(message);
+  }
+}
+
+function parseWalletPayloadCapabilityUint(value: unknown, message: string): number {
+  if (typeof value !== "string" || !UINT_DECIMAL_STRING_PATTERN.test(value)) {
+    throw new Error(message);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(message);
+  }
+  return parsed;
 }
 
 function validateWalletAccount(value: unknown): AgentQSuiWalletSuiAccount {

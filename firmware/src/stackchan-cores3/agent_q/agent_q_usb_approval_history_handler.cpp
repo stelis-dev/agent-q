@@ -131,6 +131,10 @@ void handle_usb_get_approval_history_request(
         ops.write_busy_if_pending_or_local_flow_active(id)) {
         return;
     }
+    if (ops.write_payload_delivery_safe_read_admission_error != nullptr &&
+        ops.write_payload_delivery_safe_read_admission_error(id)) {
+        return;
+    }
 
     const char* session_id = nullptr;
     if (!agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {

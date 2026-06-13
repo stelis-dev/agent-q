@@ -8,6 +8,7 @@
 #include "agent_q_signing_mode.h"
 #include "agent_q_signing_retry_delivery.h"
 #include "agent_q_sui_signing_preparation.h"
+#include "agent_q_timeout_window.h"
 
 namespace agent_q {
 
@@ -42,6 +43,7 @@ using AgentQSigningPreflightRetryResponder =
         void* context);
 
 struct AgentQSigningPreflightRuntime {
+    AgentQTimeoutTick now_tick;
     AgentQSigningModeReadFn read_signing_mode;
     void* signing_mode_context;
     AgentQSigningPreflightRetryResponder retry_responder;

@@ -41,6 +41,10 @@ void handle_usb_disconnect_request(
         ops.write_busy_if_pending_or_local_flow_active(id)) {
         return;
     }
+    if (ops.write_payload_delivery_disconnect_admission_error != nullptr &&
+        ops.write_payload_delivery_disconnect_admission_error(id)) {
+        return;
+    }
     if (ops.clear_active_session != nullptr) {
         ops.clear_active_session();
     }

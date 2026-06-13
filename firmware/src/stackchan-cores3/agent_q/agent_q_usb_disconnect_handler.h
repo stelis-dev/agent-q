@@ -11,6 +11,7 @@ struct AgentQUsbDisconnectHandlerOps {
     bool (*disconnect_pending_policy_update_for_session)(const char* id, const char* session_id);
     bool (*disconnect_pending_user_signing_for_session)(const char* id, const char* session_id);
     bool (*write_busy_if_pending_or_local_flow_active)(const char* id);
+    bool (*write_payload_delivery_disconnect_admission_error)(const char* id);
     void (*clear_active_session)();
 };
 

@@ -5,6 +5,7 @@
 
 #include <ArduinoJson.h>
 
+#include "agent_q_payload_delivery_primitives.h"
 #include "agent_q_session.h"
 #include "agent_q_sign_route.h"
 #include "agent_q_user_signing_limits.h"
@@ -22,6 +23,8 @@ enum class AgentQSignTransactionUserValidationResult {
     unsupported_method,
     invalid_network,
     invalid_tx_bytes,
+    invalid_payload_ref,
+    invalid_payload_descriptor,
 };
 
 struct AgentQSignTransactionUserEnvelope {
@@ -32,10 +35,20 @@ struct AgentQSignTransactionUserSessionRef {
     char session_id[kAgentQSessionIdSize];
 };
 
+enum class AgentQSignTransactionPayloadForm {
+    inline_tx_bytes,
+    staged_payload_ref,
+};
+
 struct AgentQSignTransactionUserParams {
+    AgentQSignTransactionPayloadForm payload_form;
     char network[kAgentQUserSigningNetworkSize];
     const char* tx_bytes_base64;
     size_t tx_bytes_decoded_size;
+    char payload_ref[kAgentQPayloadDeliveryPayloadRefSize];
+    char payload_kind[kAgentQPayloadDeliveryPayloadKindSize];
+    size_t payload_size_bytes;
+    char payload_digest[kAgentQApprovalHistoryDigestSize];
 };
 
 AgentQSignTransactionUserValidationResult validate_sign_transaction_user_envelope(

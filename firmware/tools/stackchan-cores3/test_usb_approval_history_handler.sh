@@ -96,11 +96,13 @@ int g_write_error_calls = 0;
 int g_log_write_failure_calls = 0;
 int g_material_calls = 0;
 int g_busy_calls = 0;
+int g_payload_admission_calls = 0;
 int g_require_session_calls = 0;
 int g_read_history_calls = 0;
 int g_json_write_calls = 0;
 bool g_material_ready = true;
 bool g_busy = false;
+bool g_payload_admission_error = false;
 bool g_session_valid = true;
 agent_q::AgentQApprovalHistoryReadResult g_read_history_result = agent_q::AgentQApprovalHistoryReadResult::ok;
 bool g_json_write_ok = true;
@@ -128,11 +130,13 @@ void reset_state()
     g_log_write_failure_calls = 0;
     g_material_calls = 0;
     g_busy_calls = 0;
+    g_payload_admission_calls = 0;
     g_require_session_calls = 0;
     g_read_history_calls = 0;
     g_json_write_calls = 0;
     g_material_ready = true;
     g_busy = false;
+    g_payload_admission_error = false;
     g_session_valid = true;
     g_read_history_result = agent_q::AgentQApprovalHistoryReadResult::ok;
     g_json_write_ok = true;
@@ -184,6 +188,16 @@ bool write_busy(const char* id)
     return g_busy;
 }
 
+bool write_payload_admission_error(const char* id)
+{
+    g_payload_admission_calls += 1;
+    g_last_id = id;
+    if (!g_payload_admission_error) {
+        return false;
+    }
+    return write_error(id, "busy", "Device has a pending signable payload.");
+}
+
 bool require_session(const char* id, const char* session_id)
 {
     g_require_session_calls += 1;
@@ -231,6 +245,7 @@ agent_q::AgentQUsbApprovalHistoryHandlerOps make_ops()
     return agent_q::AgentQUsbApprovalHistoryHandlerOps{
         material_ready,
         write_busy,
+        write_payload_admission_error,
         require_session,
         read_history_page,
     };
@@ -281,6 +296,7 @@ int main()
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(g_busy_calls == 0);
+        assert(g_payload_admission_calls == 0);
         assert(g_require_session_calls == 0);
         assert(g_read_history_calls == 0);
         assert(g_json_write_calls == 0);
@@ -293,7 +309,23 @@ int main()
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_material_calls == 1);
         assert(g_busy_calls == 1);
+        assert(g_payload_admission_calls == 0);
         assert(g_write_error_calls == 0);
+        assert(g_require_session_calls == 0);
+        assert(g_read_history_calls == 0);
+        assert(g_json_write_calls == 0);
+    }
+
+    {
+        reset_state();
+        g_payload_admission_error = true;
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\"}");
+        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        assert(g_material_calls == 1);
+        assert(g_busy_calls == 1);
+        assert(g_payload_admission_calls == 1);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "busy") == 0);
         assert(g_require_session_calls == 0);
         assert(g_read_history_calls == 0);
         assert(g_json_write_calls == 0);
@@ -305,6 +337,7 @@ int main()
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
+        assert(g_payload_admission_calls == 1);
         assert(g_require_session_calls == 0);
         assert(g_read_history_calls == 0);
         assert(g_json_write_calls == 0);

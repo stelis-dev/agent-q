@@ -52,10 +52,12 @@ namespace {
 int g_write_error_calls = 0;
 int g_log_write_failure_calls = 0;
 int g_refresh_calls = 0;
+int g_payload_admission_calls = 0;
 int g_write_json_calls = 0;
 int g_busy_calls = 0;
 int g_show_calls = 0;
 bool g_busy = false;
+bool g_payload_admission_error = false;
 bool g_safe_code = true;
 bool g_write_json_ok = true;
 const char* g_last_id = nullptr;
@@ -74,10 +76,12 @@ void reset_state()
     g_write_error_calls = 0;
     g_log_write_failure_calls = 0;
     g_refresh_calls = 0;
+    g_payload_admission_calls = 0;
     g_write_json_calls = 0;
     g_busy_calls = 0;
     g_show_calls = 0;
     g_busy = false;
+    g_payload_admission_error = false;
     g_safe_code = true;
     g_write_json_ok = true;
     g_last_id = nullptr;
@@ -154,6 +158,16 @@ bool write_busy(const char* id)
     return g_busy;
 }
 
+bool write_payload_admission_error(const char* id)
+{
+    g_payload_admission_calls += 1;
+    g_last_id = id;
+    if (!g_payload_admission_error) {
+        return false;
+    }
+    return write_error(id, "busy", "Device has a pending signable payload.");
+}
+
 bool is_safe_code(const char* value)
 {
     g_last_code = value;
@@ -197,6 +211,7 @@ agent_q::AgentQUsbGetStatusHandlerOps make_status_ops()
 {
     return agent_q::AgentQUsbGetStatusHandlerOps{
         refresh_material,
+        write_payload_admission_error,
         device_info,
     };
 }
@@ -228,6 +243,7 @@ int main()
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"type\":\"get_status\"}");
         agent_q::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
+        assert(g_payload_admission_calls == 1);
         assert(g_refresh_calls == 1);
         assert(g_write_json_calls == 1);
         assert(g_write_error_calls == 0);
@@ -242,8 +258,22 @@ int main()
         agent_q::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
         assert(g_write_json_calls == 0);
         assert(g_write_error_calls == 1);
+        assert(g_payload_admission_calls == 0);
+        assert(g_refresh_calls == 0);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(strcmp(g_last_error_message, "get_status request contains unsupported fields.") == 0);
+    }
+
+    {
+        reset_state();
+        g_payload_admission_error = true;
+        JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"type\":\"get_status\"}");
+        agent_q::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
+        assert(g_payload_admission_calls == 1);
+        assert(g_refresh_calls == 0);
+        assert(g_write_json_calls == 0);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "busy") == 0);
     }
 
     {

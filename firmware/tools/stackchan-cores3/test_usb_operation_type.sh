@@ -61,6 +61,10 @@ int main()
     expect_type("policy_get", Type::policy_get);
     expect_type("get_approval_history", Type::get_approval_history);
     expect_type("policy_propose", Type::policy_propose);
+    expect_type("payload_upload_begin", Type::payload_upload_begin);
+    expect_type("payload_upload_chunk", Type::payload_upload_chunk);
+    expect_type("payload_upload_finish", Type::payload_upload_finish);
+    expect_type("payload_upload_abort", Type::payload_upload_abort);
     expect_type("", Type::unsupported);
     expect_type("sign_transaction_user", Type::unsupported);
     expect_type("sign_transaction_policy", Type::unsupported);

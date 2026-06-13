@@ -359,6 +359,12 @@ expect_present "${USB_SERVER}" 'user_signing_flow_begin' \
 SIGN_TRANSACTION_BRANCH_SNIPPET="${TMP_DIR}/sign-transaction-branch.cpp"
 SIGN_TRANSACTION_PREFLIGHT_SNIPPET="${TMP_DIR}/sign-transaction-preflight.cpp"
 COMMON_POST_INGRESS_PREFLIGHT_SNIPPET="${TMP_DIR}/common-post-ingress-preflight.cpp"
+POST_IDENTITY_PREFLIGHT_SNIPPET="${TMP_DIR}/post-identity-preflight.cpp"
+awk '
+  /AgentQSigningPreflightResult evaluate_post_identity_preflight/ { capture = 1 }
+  capture { print }
+  /AgentQSigningPreflightResult evaluate_common_post_ingress_preflight/ { capture = 0 }
+' "${SIGNING_PREFLIGHT_SOURCE}" >"${POST_IDENTITY_PREFLIGHT_SNIPPET}"
 awk '
   /AgentQSigningPreflightResult evaluate_common_post_ingress_preflight/ { capture = 1 }
   capture { print }
@@ -386,9 +392,9 @@ expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'classify_sign_route\(Agent
   "sign_transaction preflight must identify the route before state/session work"
 expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'evaluate_sign_transaction_user_ingress' 'evaluate_common_post_ingress_preflight' \
   "sign_transaction preflight must complete before common request identity/retry work"
-expect_order "${COMMON_POST_INGRESS_PREFLIGHT_SNIPPET}" 'sign_request_identity' 'retry_allows_preflight_to_continue' \
-  "common signing preflight must bind request identity before stored-result replay"
-expect_order "${COMMON_POST_INGRESS_PREFLIGHT_SNIPPET}" 'retry_allows_preflight_to_continue' 'read_signing_mode' \
+expect_order "${COMMON_POST_INGRESS_PREFLIGHT_SNIPPET}" 'sign_request_identity' 'evaluate_post_identity_preflight' \
+  "common signing preflight must bind request identity before post-identity replay work"
+expect_order "${POST_IDENTITY_PREFLIGHT_SNIPPET}" 'retry_allows_preflight_to_continue' 'read_signing_mode' \
   "common signing preflight replay must complete before reading signing mode"
 expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'evaluate_common_post_ingress_preflight' 'prepare_sui_sign_transaction' \
   "sign_transaction replay must complete before Sui adapter preparation"

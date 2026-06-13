@@ -8,6 +8,7 @@ namespace agent_q {
 
 struct AgentQUsbRetainedResultHandlerOps {
     bool (*material_ready)();
+    bool (*write_payload_delivery_retained_result_admission_error)(const char* id);
     bool (*require_active_matching_session)(const char* id, const char* session_id);
 };
 

@@ -1,6 +1,7 @@
 import {
   HASH_ID_PATTERN,
   RULE_REF_PATTERN,
+  UINT_DECIMAL_STRING_PATTERN,
 } from "./protocol-primitives.js";
 
 export const AGENT_Q_POLICY_SCHEMA = "agentq.policy.v0";
@@ -15,7 +16,7 @@ export const MAX_POLICY_METHOD_LENGTH = 64;
 export const MAX_POLICY_VALUE_LENGTH = 96;
 export const MAX_POLICY_UPDATE_REQUEST_JSON_BYTES = 4096;
 export const MAX_APPROVAL_HISTORY_RECORDS = 4;
-export const UINT_DECIMAL_STRING_PATTERN = /^(0|[1-9][0-9]{0,19})$/;
+export { UINT_DECIMAL_STRING_PATTERN };
 export const POLICY_ACTIONS = ["reject", "sign"] as const;
 export const POLICY_OPERATORS = ["eq", "in", "lte"] as const;
 export const POLICY_RULE_ID_PATTERN = /^[a-z][a-z0-9_.:/-]{0,31}$/;

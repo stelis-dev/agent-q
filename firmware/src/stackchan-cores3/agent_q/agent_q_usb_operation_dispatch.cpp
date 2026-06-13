@@ -59,6 +59,14 @@ bool dispatch_usb_operation(
             return call_handler(handlers.get_approval_history, id, request, response_writer);
         case AgentQUsbOperationType::policy_propose:
             return call_handler(handlers.policy_propose, id, request, response_writer);
+        case AgentQUsbOperationType::payload_upload_begin:
+            return call_handler(handlers.payload_upload_begin, id, request, response_writer);
+        case AgentQUsbOperationType::payload_upload_chunk:
+            return call_handler(handlers.payload_upload_chunk, id, request, response_writer);
+        case AgentQUsbOperationType::payload_upload_finish:
+            return call_handler(handlers.payload_upload_finish, id, request, response_writer);
+        case AgentQUsbOperationType::payload_upload_abort:
+            return call_handler(handlers.payload_upload_abort, id, request, response_writer);
         case AgentQUsbOperationType::unsupported:
             if (response_writer.write_error != nullptr) {
                 response_writer.write_error(id, "unsupported_type", "Unsupported request type.");

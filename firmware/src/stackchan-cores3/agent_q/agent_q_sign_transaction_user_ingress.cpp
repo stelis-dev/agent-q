@@ -35,6 +35,10 @@ AgentQSignTransactionUserIngressResult map_validation_result(
             return AgentQSignTransactionUserIngressResult::invalid_network;
         case AgentQSignTransactionUserValidationResult::invalid_tx_bytes:
             return AgentQSignTransactionUserIngressResult::invalid_tx_bytes;
+        case AgentQSignTransactionUserValidationResult::invalid_payload_ref:
+            return AgentQSignTransactionUserIngressResult::invalid_payload_ref;
+        case AgentQSignTransactionUserValidationResult::invalid_payload_descriptor:
+            return AgentQSignTransactionUserIngressResult::invalid_payload_descriptor;
     }
     return AgentQSignTransactionUserIngressResult::invalid_request_shape;
 }
@@ -78,6 +82,75 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_identit
     }
 
     return AgentQSignTransactionUserValidationResult::ok;
+}
+
+struct AgentQSignTransactionPayloadSourceForAdmission {
+    bool staged_payload_ref;
+    const char* payload_ref;
+};
+
+bool object_has_key(JsonObjectConst object, const char* key)
+{
+    if (key == nullptr) {
+        return false;
+    }
+    for (JsonPairConst pair : object) {
+        if (agent_q_json_string_equals(pair.key(), key)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+AgentQSignTransactionUserIngressResult map_payload_delivery_admission_result(
+    const AgentQPayloadDeliveryAdmissionDecision& decision)
+{
+    switch (decision.result) {
+        case AgentQPayloadDeliveryAdmissionResult::ok:
+            return AgentQSignTransactionUserIngressResult::ok;
+        case AgentQPayloadDeliveryAdmissionResult::busy:
+            return AgentQSignTransactionUserIngressResult::busy;
+        case AgentQPayloadDeliveryAdmissionResult::invalid_session:
+            return AgentQSignTransactionUserIngressResult::invalid_session;
+        case AgentQPayloadDeliveryAdmissionResult::invalid_payload_ref:
+        case AgentQPayloadDeliveryAdmissionResult::unknown_request:
+            return AgentQSignTransactionUserIngressResult::invalid_payload_ref;
+    }
+    return AgentQSignTransactionUserIngressResult::invalid_params_shape;
+}
+
+AgentQSignTransactionUserIngressResult read_payload_source_for_admission(
+    JsonDocument& request,
+    AgentQSignTransactionPayloadSourceForAdmission* output)
+{
+    if (output != nullptr) {
+        memset(output, 0, sizeof(*output));
+    }
+    if (output == nullptr) {
+        return AgentQSignTransactionUserIngressResult::invalid_params_shape;
+    }
+    JsonObjectConst request_object = request.as<JsonObjectConst>();
+    if (request_object.isNull()) {
+        return AgentQSignTransactionUserIngressResult::invalid_params_shape;
+    }
+    JsonObjectConst params = request_object["params"].as<JsonObjectConst>();
+    if (params.isNull()) {
+        return AgentQSignTransactionUserIngressResult::invalid_params_shape;
+    }
+
+    const bool has_tx_bytes = object_has_key(params, "txBytes");
+    const bool has_payload_ref = object_has_key(params, "payloadRef");
+    if (has_tx_bytes == has_payload_ref) {
+        return AgentQSignTransactionUserIngressResult::invalid_params_shape;
+    }
+    if (has_payload_ref) {
+        if (!params["payloadRef"].is<const char*>()) {
+            return AgentQSignTransactionUserIngressResult::invalid_payload_ref;
+        }
+        output->staged_payload_ref = true;
+        output->payload_ref = params["payloadRef"].as<const char*>();
+    }
+    return AgentQSignTransactionUserIngressResult::ok;
 }
 
 }  // namespace
@@ -125,6 +198,29 @@ AgentQSignTransactionUserIngressResult evaluate_sign_transaction_user_ingress(
         return map_validation_result(validation);
     }
 
+    AgentQSignTransactionPayloadSourceForAdmission payload_source = {};
+    AgentQSignTransactionUserIngressResult payload_source_result =
+        read_payload_source_for_admission(request, &payload_source);
+    if (payload_source_result != AgentQSignTransactionUserIngressResult::ok) {
+        return payload_source_result;
+    }
+    if (state.admit_payload_delivery != nullptr) {
+        const AgentQPayloadDeliveryAdmissionDecision admission =
+            state.admit_payload_delivery(
+                AgentQPayloadDeliverySignTransactionAdmissionInput{
+                    state.now_tick,
+                    session.session_id,
+                    payload_source.staged_payload_ref,
+                    payload_source.payload_ref,
+                },
+                state.payload_delivery_admission_context);
+        const AgentQSignTransactionUserIngressResult mapped_result =
+            map_payload_delivery_admission_result(admission);
+        if (mapped_result != AgentQSignTransactionUserIngressResult::ok) {
+            return mapped_result;
+        }
+    }
+
     AgentQSignTransactionUserParams params = {};
     validation = validate_sign_transaction_user_params(request, route, &params);
     if (validation != AgentQSignTransactionUserValidationResult::ok) {
@@ -165,6 +261,10 @@ const char* sign_transaction_user_ingress_result_name(
             return "invalid_network";
         case AgentQSignTransactionUserIngressResult::invalid_tx_bytes:
             return "invalid_tx_bytes";
+        case AgentQSignTransactionUserIngressResult::invalid_payload_ref:
+            return "invalid_payload_ref";
+        case AgentQSignTransactionUserIngressResult::invalid_payload_descriptor:
+            return "invalid_payload_descriptor";
     }
     return "invalid_request_shape";
 }

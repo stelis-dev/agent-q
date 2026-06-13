@@ -38,8 +38,8 @@ void handle_usb_connect_request(
         writer.write_error(id, "invalid_state", "Connect is available only after provisioning is complete.");
         return;
     }
-    if (ops.write_busy_if_pending_or_local_flow_active != nullptr &&
-        ops.write_busy_if_pending_or_local_flow_active(id)) {
+    if (ops.write_connect_admission_error != nullptr &&
+        ops.write_connect_admission_error(id)) {
         return;
     }
 

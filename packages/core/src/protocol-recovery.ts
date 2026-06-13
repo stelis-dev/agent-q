@@ -1,6 +1,7 @@
 import { isSafeRequestId, isSessionId } from "./safe-text.js";
 import { ProtocolError } from "./protocol-error.js";
 import {
+  INVALID_ID_ERROR_CODE,
   PROTOCOL_VERSION,
   isRecord,
   requireOnlyKeys,
@@ -91,7 +92,7 @@ export function assertAckResultResponse(response: unknown): AckResultResponse {
 
 function validateRequestId(id: string): void {
   if (!isSafeRequestId(id)) {
-    throw new ProtocolError("invalid_request_id", "Invalid request id.");
+    throw new ProtocolError(INVALID_ID_ERROR_CODE, "Invalid request id.");
   }
 }
 

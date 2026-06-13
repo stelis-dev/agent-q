@@ -52,8 +52,7 @@ AgentQSignTransactionPolicyRuntimeResult make_result(
 bool fill_sign_metadata(
     AgentQSignTransactionPolicyRuntimeResult* result,
     const char* code,
-    const char* chain,
-    const char* method,
+    AgentQSupportedSignRoute route,
     const char* payload_digest,
     const char* policy_hash,
     const char* rule_ref)
@@ -61,8 +60,8 @@ bool fill_sign_metadata(
     if (result == nullptr) {
         return false;
     }
-    return copy_runtime_string(result->chain, sizeof(result->chain), chain, true) &&
-           copy_runtime_string(result->method, sizeof(result->method), method, true) &&
+    return copy_runtime_string(result->chain, sizeof(result->chain), sign_route_wire_chain(route), true) &&
+           copy_runtime_string(result->method, sizeof(result->method), sign_route_wire_method(route), true) &&
            copy_runtime_string(result->reason_code, sizeof(result->reason_code), code, true) &&
            copy_runtime_string(result->payload_digest, sizeof(result->payload_digest), payload_digest, true) &&
            copy_runtime_string(result->policy_hash, sizeof(result->policy_hash), policy_hash, true) &&
@@ -83,6 +82,7 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
     const AgentQSuiPreparedSignTransaction& prepared)
 {
     if (prepared.tx_bytes_size == 0 ||
+        prepared.tx_bytes == nullptr ||
         prepared.payload_digest[0] == '\0') {
         return make_result(
             AgentQSignTransactionPolicyRuntimeStatus::invalid_params,
@@ -124,8 +124,7 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
         if (!fill_sign_metadata(
                 &result,
                 "policy_rejected",
-                "sui",
-                "sign_transaction",
+                prepared.route,
                 prepared.payload_digest,
                 policy_summary.policy_id,
                 rule_ref)) {
@@ -144,8 +143,7 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
     if (!fill_sign_metadata(
             &result,
             "policy_signed",
-            "sui",
-            "sign_transaction",
+            prepared.route,
             prepared.payload_digest,
             policy_summary.policy_id,
             rule_ref)) {
@@ -154,7 +152,7 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
             "policy_error",
             "Active policy is unavailable.");
     }
-    memcpy(result.tx_bytes, prepared.tx_bytes, prepared.tx_bytes_size);
+    result.tx_bytes = prepared.tx_bytes;
     result.tx_bytes_size = prepared.tx_bytes_size;
     return result;
 }
@@ -181,7 +179,6 @@ void clear_sign_transaction_policy_runtime_result(AgentQSignTransactionPolicyRun
     if (result == nullptr) {
         return;
     }
-    wipe_sensitive_buffer(result->tx_bytes, sizeof(result->tx_bytes));
     memset(result, 0, sizeof(*result));
 }
 

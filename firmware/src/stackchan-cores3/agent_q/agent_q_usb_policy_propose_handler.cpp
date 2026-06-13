@@ -15,8 +15,8 @@ void handle_usb_policy_propose_request(
         writer.write_error(id, "invalid_state", "Policy update is available only after provisioning is complete.");
         return;
     }
-    if (ops.write_busy_if_pending_or_local_flow_active != nullptr &&
-        ops.write_busy_if_pending_or_local_flow_active(id)) {
+    if (ops.write_policy_propose_admission_error != nullptr &&
+        ops.write_policy_propose_admission_error(id)) {
         return;
     }
 

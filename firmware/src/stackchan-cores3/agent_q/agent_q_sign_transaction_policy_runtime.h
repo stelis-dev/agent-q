@@ -29,7 +29,7 @@ struct AgentQSignTransactionPolicyRuntimeResult {
     char payload_digest[kAgentQApprovalHistoryDigestSize];
     char policy_hash[kAgentQApprovalHistoryDigestSize];
     char rule_ref[kAgentQApprovalHistoryRuleRefSize];
-    uint8_t tx_bytes[kAgentQSuiSignTransactionTxBytesMaxBytes];
+    const uint8_t* tx_bytes;
     size_t tx_bytes_size;
 };
 

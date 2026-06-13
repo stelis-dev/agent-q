@@ -38,6 +38,7 @@ using TickType_t = uint32_t;
 H
 
 cat >"${TMP_DIR}/user_signing_test.cpp" <<'CPP'
+#include <assert.h>
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -179,9 +180,15 @@ agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
 {
     const std::vector<uint8_t>& payload = valid_payload();
     static agent_q::AgentQSuiPreparedSignTransaction prepared = {};
+    if (prepared.tx_bytes != nullptr) {
+        memset(prepared.tx_bytes, 0, prepared.tx_bytes_size);
+        free(prepared.tx_bytes);
+    }
     prepared = {};
     prepared.route = agent_q::AgentQSupportedSignRoute::sui_sign_transaction;
     snprintf(prepared.network, sizeof(prepared.network), "%s", "devnet");
+    prepared.tx_bytes = static_cast<uint8_t*>(malloc(payload.size()));
+    assert(prepared.tx_bytes != nullptr);
     memcpy(prepared.tx_bytes, payload.data(), payload.size());
     prepared.tx_bytes_size = payload.size();
     snprintf(prepared.payload_digest, sizeof(prepared.payload_digest),

@@ -75,7 +75,7 @@ struct AgentQUserSigningTransactionBeginInput {
     const uint8_t* request_identity;
     const char* session_id;
     AgentQSigningRoute route;
-    const AgentQSuiPreparedSignTransaction* prepared;
+    AgentQSuiPreparedSignTransaction* prepared;
     AgentQTimeoutWindow request_window;
 };
 
@@ -152,6 +152,9 @@ user_signing_flow_record_physical_confirmed_and_write_confirmation_history(
 AgentQUserSigningTransitionResult user_signing_flow_consume_signable_payload(
     uint8_t* output,
     size_t output_capacity,
+    size_t* output_size);
+AgentQUserSigningTransitionResult user_signing_flow_take_signable_payload(
+    uint8_t** output,
     size_t* output_size);
 
 AgentQUserSigningTransitionResult user_signing_flow_record_device_rejected();

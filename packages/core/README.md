@@ -67,10 +67,10 @@ client cannot choose the device signing mode.
   see policy proposal or server management methods.
 - `@stelis/agent-q-core/protocol` exposes the shared protocol builders,
   parsers, constants, and response types. It also exposes low-level
-  `get_result` / `ack_result` wire primitives for official transport and
-  provider implementations. Direct application use is unsupported; those
-  primitives are not a signing API and do not authorize, replay, or create
-  signing requests.
+  `get_result` / `ack_result` and payload-upload wire primitives for official
+  transport and provider implementations. Direct application use is
+  unsupported; those primitives are not a signing API and do not authorize,
+  replay, create, or execute signing requests.
 - `@stelis/agent-q-core/provider-protocol` exposes the browser-safe provider
   protocol projection used by official dapp-facing adapters. It includes
   provider request builders, an exact provider request serializer, provider
@@ -113,7 +113,8 @@ client cannot choose the device signing mode.
   resolving state/session. Sui is currently the only executable chain.
   Method-parameter validation remains after a runtime session exists. Common
   Core validation owns transport bounds and canonical base64 syntax, not the
-  current Sui Firmware adapter's decoded-payload capacities.
+  current Sui Firmware adapter's inline, staged-payload, or decoded semantic
+  capacities.
 
 ## Development
 

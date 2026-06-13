@@ -203,11 +203,12 @@ flowchart LR
   Core --> Firmware[Firmware]
 ```
 
-Current executable signing routes:
+Current signing routes in source, with product-active evidence tracked in
+`docs/IMPLEMENTATION_STATUS.md`:
 
 | Chain | Method | Current behavior |
 | --- | --- | --- |
-| `sui` | `sign_transaction` | Bounded Sui transaction signing. Firmware chooses policy authorization or user authorization from its device-local signing mode. |
+| `sui` | `sign_transaction` | Sui transaction signing over inline or same-session staged bytes; current semantic support is the restricted SUI transfer projection, and unsupported shapes fail closed. Firmware chooses policy authorization or user authorization from its device-local signing mode. |
 | `sui` | `sign_personal_message` | Bounded Sui personal-message signing in user authorization mode. Policy authorization mode fails closed for this method. |
 
 Unsupported chains and unsupported methods fail explicitly. Chains are exposed
@@ -240,7 +241,8 @@ source, docs, tests, build, hardware, and visual evidence are complete.
 Current limitations:
 
 - Sui is the only executable chain.
-- Arbitrary Sui transaction signing is not implemented.
+- Sui transaction semantics outside the supported restricted transfer projection
+  fail closed.
 - Sponsored Sui transactions are not implemented.
 - Sui transaction execution / submit-to-network is not an Agent-Q signing
   responsibility.

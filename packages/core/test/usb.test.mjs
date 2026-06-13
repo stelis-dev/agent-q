@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   consumeFirmwareSessionInvalidated,
@@ -24,6 +25,7 @@ import {
   makeSignTransactionRequest,
   MAX_PROTOCOL_RESPONSE_LINE_BYTES,
 } from "../dist/protocol.js";
+import { PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES } from "../dist/provider-protocol.js";
 import { AgentQError } from "../dist/errors.js";
 
 const SUI_SIGNATURE = Buffer.alloc(97, 1).toString("base64");
@@ -235,6 +237,42 @@ function signedTransactionResult(id) {
     chain: "sui",
     method: "sign_transaction",
     signature: SUI_SIGNATURE,
+  };
+}
+
+function capabilitiesResult(id, { payload = false, payloadCapability = null } = {}) {
+  return {
+    id,
+    version: 1,
+    type: "capabilities",
+    chains: [
+      {
+        id: "sui",
+        accounts: [{ keyScheme: "ed25519", derivationPath: "m/44'/784'/0'/0'/0'" }],
+        methods: [],
+      },
+    ],
+    signing: {
+      authorization: "user",
+      methods: [
+        {
+          chain: "sui",
+          method: "sign_transaction",
+          ...(payload
+            ? {
+              payload: {
+                kind: "transaction",
+                inlineMaxBytes: "384",
+                chunkMaxBytes: "2048",
+                payloadMaxBytes: "131072",
+                ...(payloadCapability ?? {}),
+              },
+            }
+            : {}),
+        },
+        { chain: "sui", method: "sign_personal_message" },
+      ],
+    },
   };
 }
 
@@ -660,6 +698,9 @@ test("node USB write-started failure is recovery eligible", async () => {
       if (request.type === "ack_result") {
         return { response: { id: request.id, version: 1, type: "ack_result", status: "acked" } };
       }
+      if (request.type === "get_capabilities") {
+        return { response: capabilitiesResult(request.id) };
+      }
       return { response: status };
     },
   }));
@@ -673,7 +714,432 @@ test("node USB write-started failure is recovery eligible", async () => {
       100,
     );
     assert.equal(result.status, "signed");
-    assert.deepEqual(seen, ["sign_transaction", "get_result", "ack_result"]);
+    assert.deepEqual(seen, ["get_capabilities", "sign_transaction", "get_result", "ack_result"]);
+  } finally {
+    setSerialPortFactoryForTest(null);
+  }
+});
+
+test("node USB validates sign_transaction params before serial I/O", async () => {
+  const ports = [];
+  setSerialPortFactoryForTest(() => {
+    ports.push(new FakeSerialPort());
+    return ports.at(-1);
+  });
+  try {
+    const driver = new SerialPortUsbDriver();
+    await assert.rejects(
+      () => driver.signTransaction(
+        "/dev/cu.agentq-invalid-sign-params",
+        "session_abcdef",
+        { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
+        { network: "mainnet", txBytes: "%%%" },
+        100,
+      ),
+      (error) => error?.code === "invalid_params",
+    );
+    assert.equal(ports.length, 0, "invalid sign params must fail before opening the serial port");
+  } finally {
+    setSerialPortFactoryForTest(null);
+  }
+});
+
+test("node USB uploads a synthetic large transaction payload before staged signing", async () => {
+  const payload = Buffer.alloc(128 * 1024);
+  for (let index = 0; index < payload.length; index += 1) {
+    payload[index] = (index * 31 + 17) & 0xff;
+  }
+  const payloadDigest = `sha256:${createHash("sha256").update(payload).digest("hex")}`;
+  const chunkMaxBytes = 2048;
+  const seen = [];
+  const chunks = [];
+  let receivedBytes = 0;
+  setSerialPortFactoryForTest(() => new FakeSerialPort({
+    write: (request) => {
+      seen.push(request.type);
+      if (request.type === "get_capabilities") {
+        return { response: capabilitiesResult(request.id, { payload: true }) };
+      }
+      if (request.type === "payload_upload_begin") {
+        assert.equal(request.chain, "sui");
+        assert.equal(request.method, "sign_transaction");
+        assert.equal(request.payloadKind, "transaction");
+        assert.equal(request.sizeBytes, String(payload.length));
+        assert.equal(request.payloadDigest, payloadDigest);
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "payload_upload_begin_result",
+            uploadId: "upload_synthetic_0001",
+            receivedBytes: "0",
+            chunkMaxBytes: String(chunkMaxBytes),
+          },
+        };
+      }
+      if (request.type === "payload_upload_chunk") {
+        assert.equal(request.uploadId, "upload_synthetic_0001");
+        assert.equal(request.offsetBytes, String(receivedBytes));
+        const chunk = Buffer.from(request.chunk, "base64");
+        chunks.push(chunk);
+        receivedBytes += chunk.length;
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "payload_upload_chunk_result",
+            receivedBytes: String(receivedBytes),
+          },
+        };
+      }
+      if (request.type === "payload_upload_finish") {
+        assert.equal(request.uploadId, "upload_synthetic_0001");
+        assert.equal(receivedBytes, payload.length);
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "payload_upload_finish_result",
+            payloadRef: "payload_synthetic_0001",
+            chain: "sui",
+            method: "sign_transaction",
+            payloadKind: "transaction",
+            sizeBytes: String(payload.length),
+            payloadDigest,
+          },
+        };
+      }
+      if (request.type === "sign_transaction") {
+        assert.deepEqual(request.params, {
+          network: "mainnet",
+          payloadRef: "payload_synthetic_0001",
+          payloadKind: "transaction",
+          sizeBytes: String(payload.length),
+          payloadDigest,
+        });
+        return { response: signedTransactionResult(request.id) };
+      }
+      return { response: status };
+    },
+  }));
+  try {
+    const driver = new SerialPortUsbDriver();
+    const result = await driver.signTransaction(
+      "/dev/cu.agentq-staged-sign",
+      "session_abcdef",
+      { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
+      { network: "mainnet", txBytes: payload.toString("base64") },
+      1000,
+    );
+    assert.equal(result.status, "signed");
+    assert.equal(seen[0], "get_capabilities");
+    assert.equal(seen[1], "payload_upload_begin");
+    assert.equal(seen.at(-2), "payload_upload_finish");
+    assert.equal(seen.at(-1), "sign_transaction");
+    assert.equal(
+      seen.filter((type) => type === "payload_upload_chunk").length,
+      Math.ceil(payload.length / chunkMaxBytes),
+    );
+    assert.deepEqual(Buffer.concat(chunks), payload);
+  } finally {
+    setSerialPortFactoryForTest(null);
+  }
+});
+
+test("node USB aborts finalized staged payload by payloadRef after descriptor mismatch", async () => {
+  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x44);
+  const seen = [];
+  let receivedBytes = 0;
+  let abortRequest = null;
+  setSerialPortFactoryForTest(() => new FakeSerialPort({
+    write: (request) => {
+      seen.push(request.type);
+      if (request.type === "get_capabilities") {
+        return { response: capabilitiesResult(request.id, { payload: true }) };
+      }
+      if (request.type === "payload_upload_begin") {
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "payload_upload_begin_result",
+            uploadId: "upload_descriptor_mismatch",
+            receivedBytes: "0",
+            chunkMaxBytes: String(payload.length),
+          },
+        };
+      }
+      if (request.type === "payload_upload_chunk") {
+        receivedBytes += Buffer.from(request.chunk, "base64").length;
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "payload_upload_chunk_result",
+            receivedBytes: String(receivedBytes),
+          },
+        };
+      }
+      if (request.type === "payload_upload_finish") {
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "payload_upload_finish_result",
+            payloadRef: "payload_descriptor_mismatch",
+            chain: "sui",
+            method: "sign_transaction",
+            payloadKind: "transaction",
+            sizeBytes: String(payload.length),
+            payloadDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          },
+        };
+      }
+      if (request.type === "payload_upload_abort") {
+        abortRequest = request;
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "payload_upload_abort_result",
+            status: "aborted",
+          },
+        };
+      }
+      return { response: signedTransactionResult(request.id) };
+    },
+  }));
+  try {
+    const driver = new SerialPortUsbDriver();
+    await assert.rejects(
+      () => driver.signTransaction(
+        "/dev/cu.agentq-descriptor-mismatch",
+        "session_abcdef",
+        { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
+        { network: "mainnet", txBytes: payload.toString("base64") },
+        1000,
+      ),
+      (error) => error instanceof AgentQError && error.code === "protocol_error",
+    );
+    assert.equal(seen.at(-1), "payload_upload_abort");
+    assert.equal(abortRequest.payloadRef, "payload_descriptor_mismatch");
+    assert.equal("uploadId" in abortRequest, false);
+  } finally {
+    setSerialPortFactoryForTest(null);
+  }
+});
+
+test("node USB preserves staged failure and marks session invalidated when abort reports invalid_session", async () => {
+  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x45);
+  let receivedBytes = 0;
+  setSerialPortFactoryForTest(() => new FakeSerialPort({
+    write: (request) => {
+      if (request.type === "get_capabilities") {
+        return { response: capabilitiesResult(request.id, { payload: true }) };
+      }
+      if (request.type === "payload_upload_begin") {
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "payload_upload_begin_result",
+            uploadId: "upload_abort_invalid_session",
+            receivedBytes: "0",
+            chunkMaxBytes: String(payload.length),
+          },
+        };
+      }
+      if (request.type === "payload_upload_chunk") {
+        receivedBytes += Buffer.from(request.chunk, "base64").length;
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "payload_upload_chunk_result",
+            receivedBytes: String(receivedBytes),
+          },
+        };
+      }
+      if (request.type === "payload_upload_finish") {
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "payload_upload_finish_result",
+            payloadRef: "payload_abort_invalid_session",
+            chain: "sui",
+            method: "sign_transaction",
+            payloadKind: "transaction",
+            sizeBytes: String(payload.length),
+            payloadDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          },
+        };
+      }
+      if (request.type === "payload_upload_abort") {
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "error",
+            error: { code: "invalid_session", message: "Session is unknown or already ended." },
+          },
+        };
+      }
+      return { response: signedTransactionResult(request.id) };
+    },
+  }));
+  try {
+    const driver = new SerialPortUsbDriver();
+    let thrown = null;
+    try {
+      await driver.signTransaction(
+        "/dev/cu.agentq-abort-invalid-session",
+        "session_abcdef",
+        { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
+        { network: "mainnet", txBytes: payload.toString("base64") },
+        1000,
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    assert.ok(thrown instanceof AgentQError);
+    assert.equal(thrown.code, "protocol_error");
+    assert.equal(consumeFirmwareSessionInvalidated(thrown), true);
+    assert.equal(consumeFirmwareSessionInvalidated(thrown), false);
+  } finally {
+    setSerialPortFactoryForTest(null);
+  }
+});
+
+test("node USB aborts active staged upload by uploadId after progress mismatch", async () => {
+  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x61);
+  let abortRequest = null;
+  setSerialPortFactoryForTest(() => new FakeSerialPort({
+    write: (request) => {
+      if (request.type === "get_capabilities") {
+        return { response: capabilitiesResult(request.id, { payload: true }) };
+      }
+      if (request.type === "payload_upload_begin") {
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "payload_upload_begin_result",
+            uploadId: "upload_progress_mismatch",
+            receivedBytes: "0",
+            chunkMaxBytes: String(payload.length),
+          },
+        };
+      }
+      if (request.type === "payload_upload_chunk") {
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "payload_upload_chunk_result",
+            receivedBytes: "1",
+          },
+        };
+      }
+      if (request.type === "payload_upload_abort") {
+        abortRequest = request;
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            type: "payload_upload_abort_result",
+            status: "aborted",
+          },
+        };
+      }
+      return { response: signedTransactionResult(request.id) };
+    },
+  }));
+  try {
+    const driver = new SerialPortUsbDriver();
+    await assert.rejects(
+      () => driver.signTransaction(
+        "/dev/cu.agentq-progress-mismatch",
+        "session_abcdef",
+        { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
+        { network: "mainnet", txBytes: payload.toString("base64") },
+        1000,
+      ),
+      (error) => error instanceof AgentQError && error.code === "protocol_error",
+    );
+    assert.equal(abortRequest.uploadId, "upload_progress_mismatch");
+    assert.equal("payloadRef" in abortRequest, false);
+  } finally {
+    setSerialPortFactoryForTest(null);
+  }
+});
+
+test("node USB rejects chunk capabilities below the staged deadline lower bound before upload", async () => {
+  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x5a);
+  const advertisedChunkMaxBytes = PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES - 1;
+  const seen = [];
+  setSerialPortFactoryForTest(() => new FakeSerialPort({
+    write: (request) => {
+      seen.push(request.type);
+      if (request.type === "get_capabilities") {
+        return {
+          response: capabilitiesResult(request.id, {
+            payload: true,
+            payloadCapability: { chunkMaxBytes: String(advertisedChunkMaxBytes) },
+          }),
+        };
+      }
+      return { response: signedTransactionResult(request.id) };
+    },
+  }));
+  try {
+    const driver = new SerialPortUsbDriver();
+    await assert.rejects(
+      () => driver.signTransaction(
+        "/dev/cu.agentq-small-chunk-capability",
+        "session_abcdef",
+        { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
+        { network: "mainnet", txBytes: payload.toString("base64") },
+        1000,
+      ),
+      (error) => error instanceof AgentQError && error.code === "protocol_error",
+    );
+    assert.deepEqual(seen, ["get_capabilities"]);
+  } finally {
+    setSerialPortFactoryForTest(null);
+  }
+});
+
+test("node USB rejects payloads above advertised payload max before upload", async () => {
+  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x33);
+  const seen = [];
+  setSerialPortFactoryForTest(() => new FakeSerialPort({
+    write: (request) => {
+      seen.push(request.type);
+      if (request.type === "get_capabilities") {
+        return {
+          response: capabilitiesResult(request.id, {
+            payload: true,
+            payloadCapability: { payloadMaxBytes: String(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES) },
+          }),
+        };
+      }
+      return { response: signedTransactionResult(request.id) };
+    },
+  }));
+  try {
+    const driver = new SerialPortUsbDriver();
+    await assert.rejects(
+      () => driver.signTransaction(
+        "/dev/cu.agentq-payload-max-capability",
+        "session_abcdef",
+        { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
+        { network: "mainnet", txBytes: payload.toString("base64") },
+        1000,
+      ),
+      (error) => error instanceof AgentQError && error.code === "unsupported_payload_size",
+    );
+    assert.deepEqual(seen, ["get_capabilities"]);
   } finally {
     setSerialPortFactoryForTest(null);
   }

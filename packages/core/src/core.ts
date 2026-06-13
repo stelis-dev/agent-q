@@ -902,6 +902,7 @@ export class AgentQCore {
       }
       return result;
     } catch (error) {
+      this.clearRuntimeSessionMirrorIfFirmwareInvalidatedSideEffect(target.deviceId, error);
       const reason = this.clearRuntimeSessionMirrorIfFirmwareInvalidated(target.deviceId, error);
       if (reason !== null) {
         return { source: "session_ended", deviceId: target.deviceId, reason };
@@ -961,6 +962,7 @@ export class AgentQCore {
       }
       return result;
     } catch (error) {
+      this.clearRuntimeSessionMirrorIfFirmwareInvalidatedSideEffect(target.deviceId, error);
       const reason = this.clearRuntimeSessionMirrorIfFirmwareInvalidated(target.deviceId, error);
       if (reason !== null) {
         return { source: "session_ended", deviceId: target.deviceId, reason };
@@ -1021,6 +1023,17 @@ export class AgentQCore {
     }
     this.clearRuntimeSessionMirror(deviceId);
     return "invalid_session";
+  }
+
+  private clearRuntimeSessionMirrorIfFirmwareInvalidatedSideEffect(
+    deviceId: string,
+    error: unknown,
+  ): boolean {
+    if (!consumeFirmwareSessionInvalidated(error)) {
+      return false;
+    }
+    this.clearRuntimeSessionMirror(deviceId);
+    return true;
   }
 
   private async resolveTargetDevice(input: {

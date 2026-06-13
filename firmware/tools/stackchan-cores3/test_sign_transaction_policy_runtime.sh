@@ -59,6 +59,7 @@ cat >"${TMP_DIR}/stubs/esp_log.h" <<'H'
 H
 
 cat >"${TMP_DIR}/sign_transaction_policy_runtime_test.cpp" <<'CPP'
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -334,6 +335,8 @@ int main(int argc, char** argv)
     agent_q::AgentQSuiPreparedSignTransaction prepared = {};
     prepared.route = agent_q::AgentQSupportedSignRoute::sui_sign_transaction;
     snprintf(prepared.network, sizeof(prepared.network), "%s", "devnet");
+    prepared.tx_bytes = static_cast<uint8_t*>(malloc(tx_bytes.size()));
+    assert(prepared.tx_bytes != nullptr);
     memcpy(prepared.tx_bytes, tx_bytes.data(), tx_bytes.size());
     prepared.tx_bytes_size = tx_bytes.size();
     snprintf(prepared.payload_digest, sizeof(prepared.payload_digest), "%s", kPayloadDigest);
@@ -375,6 +378,21 @@ int main(int argc, char** argv)
     expect(approved.tx_bytes_size == tx_bytes.size(), "policy approval owns signable tx bytes");
     expect(memcmp(approved.tx_bytes, tx_bytes.data(), tx_bytes.size()) == 0,
            "policy approval preserves signable tx bytes");
+
+    std::vector<uint8_t> max_policy_payload(
+        agent_q::kAgentQSuiSignTransactionTxBytesMaxBytes,
+        0x6B);
+    agent_q::AgentQSuiPreparedSignTransaction max_prepared = prepared;
+    max_prepared.tx_bytes = max_policy_payload.data();
+    max_prepared.tx_bytes_size = max_policy_payload.size();
+    const agent_q::AgentQSignTransactionPolicyRuntimeResult max_approved =
+        agent_q::evaluate_sign_transaction_policy(max_prepared);
+    expect(max_approved.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized,
+           "bounded policy sign rule can authorize max-size prepared payload");
+    expect(max_approved.tx_bytes == max_policy_payload.data(),
+           "policy approval preserves max-size signable payload pointer");
+    expect(max_approved.tx_bytes_size == max_policy_payload.size(),
+           "policy approval preserves max-size signable payload size");
 
     agent_q::AgentQSignTransactionPolicyRuntimeResult cleared = approved;
     agent_q::clear_sign_transaction_policy_runtime_result(&cleared);

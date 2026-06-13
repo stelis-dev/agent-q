@@ -95,17 +95,18 @@ The current implementation includes:
   tracked in `docs/IMPLEMENTATION_STATUS.md`.
 - a USB JSONL `sign_transaction` path. It requires material-backed `provisioned`
   state plus a matching active session, keeps unknown methods rejected with
-  `unsupported_method`, and validates Sui `sign_transaction` restricted SUI
-  transfer request inputs. Firmware reads the device-local signing
-  authorization mode: policy mode evaluates active policy, shows speech-bubble
-  status notifications, and signs without per-request confirmation when policy
-  authorizes the bounded request, while user mode shows clear-signing review
-  and requires the current human approval input mode without applying active
-  policy as an additional filter. It returns `signed` only after required
-  history is durable and signing succeeds. Sponsored gas, arbitrary Sui
-  transactions, caller-selected authorization, caller-controlled timing fields,
-  and chain-specific top-level signing APIs are not implemented. Product-active
-  status is tracked in `docs/IMPLEMENTATION_STATUS.md`.
+  `unsupported_method`, and accepts Sui transaction bytes either inline or
+  through same-session staged payload delivery before Firmware parsing.
+  Firmware reads the device-local signing authorization mode: policy mode
+  evaluates active policy, shows speech-bubble status notifications, and signs
+  without per-request confirmation when policy authorizes the bounded request,
+  while user mode shows clear-signing review and requires the current human
+  approval input mode without applying active policy as an additional filter.
+  It returns `signed` only after required history is durable and signing
+  succeeds. Unsupported Sui transaction semantics, caller-selected
+  authorization, caller-controlled timing fields, and chain-specific top-level
+  signing APIs fail closed or are not implemented. Product-active status is
+  tracked in `docs/IMPLEMENTATION_STATUS.md`.
 - a common bounded `(type, chain, method)` signing route classifier before
   state/session work. Unsupported chains return `unsupported_chain`;
   unsupported or type-mismatched Sui methods return `unsupported_method`. The
@@ -169,9 +170,9 @@ methods plus top-level `signing`, derives read-only public account identity
 plus a common stored-policy runtime boundary. The current
 `sign_transaction` path reads the Firmware-local signing authorization mode and
 uses exactly one gate: policy mode evaluates the committed active policy, while
-user mode performs device confirmation for the bounded restricted transfer
-shape after clear-signing review, the current human approval input mode, and
-required history. It rejects
+user mode performs device confirmation after Firmware parses the inline or
+staged Sui transaction bytes, prepares the supported review model, applies the
+current human approval input mode, and records required history. It rejects
 unsupported transactions and returns `signed`, `policy_rejected`,
 `user_rejected`, `user_timed_out`, or `signing_failed` through `sign_result` as
 applicable. Product-active status is tracked in
@@ -318,7 +319,7 @@ The Sui transaction facts parser test is a common host-side check. It compiles
 facts, MoveCall package/module/function facts, malformed ref rejection, and the
 currently signable derived restricted SUI transfer fact. StackChan CoreS3
 connects the extractor to Sui `sign_transaction` policy and user authorization
-gates.
+gates for inline and staged transaction bytes.
 
 The policy test is also a common host-side check. It compiles
 `firmware/src/common/agent_q/policy` plus the Sui method adapter and

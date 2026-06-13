@@ -53,10 +53,12 @@ namespace {
 
 int g_write_error_calls = 0;
 int g_log_write_failure_calls = 0;
+int g_payload_admission_calls = 0;
 int g_require_session_calls = 0;
 int g_write_json_calls = 0;
 int g_ack_result_calls = 0;
 bool g_material_ready = true;
+bool g_payload_admission_error = false;
 bool g_session_valid = true;
 bool g_ack_write_ok = true;
 const char* g_last_id = nullptr;
@@ -70,10 +72,12 @@ void reset_state()
 {
     g_write_error_calls = 0;
     g_log_write_failure_calls = 0;
+    g_payload_admission_calls = 0;
     g_require_session_calls = 0;
     g_write_json_calls = 0;
     g_ack_result_calls = 0;
     g_material_ready = true;
+    g_payload_admission_error = false;
     g_session_valid = true;
     g_ack_write_ok = true;
     g_last_id = nullptr;
@@ -129,6 +133,16 @@ bool material_ready()
     return g_material_ready;
 }
 
+bool write_payload_admission_error(const char* id)
+{
+    g_payload_admission_calls += 1;
+    g_last_id = id;
+    if (!g_payload_admission_error) {
+        return false;
+    }
+    return write_error(id, "busy", "Device has a pending signable payload.");
+}
+
 bool require_session(const char* id, const char* session_id)
 {
     g_require_session_calls += 1;
@@ -149,6 +163,7 @@ agent_q::AgentQUsbRetainedResultHandlerOps make_ops()
 {
     return agent_q::AgentQUsbRetainedResultHandlerOps{
         material_ready,
+        write_payload_admission_error,
         require_session,
     };
 }
@@ -203,6 +218,19 @@ int main()
         agent_q::handle_usb_get_result_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
+        assert(g_payload_admission_calls == 0);
+        assert(g_require_session_calls == 0);
+        assert(g_write_json_calls == 0);
+    }
+
+    {
+        reset_state();
+        g_payload_admission_error = true;
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_result\",\"sessionId\":\"session\"}");
+        agent_q::handle_usb_get_result_request("req", request, make_writer(), make_ops());
+        assert(g_payload_admission_calls == 1);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "busy") == 0);
         assert(g_require_session_calls == 0);
         assert(g_write_json_calls == 0);
     }
@@ -213,6 +241,7 @@ int main()
         agent_q::handle_usb_get_result_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
+        assert(g_payload_admission_calls == 1);
         assert(g_require_session_calls == 0);
         assert(g_write_json_calls == 0);
     }
@@ -276,6 +305,19 @@ int main()
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(strcmp(g_last_error_message, "ack_result request contains unsupported fields.") == 0);
+        assert(g_payload_admission_calls == 1);
+        assert(g_ack_result_calls == 0);
+    }
+
+    {
+        reset_state();
+        g_payload_admission_error = true;
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"ack_result\",\"sessionId\":\"session\"}");
+        agent_q::handle_usb_ack_result_request("req", request, make_writer(), make_ops());
+        assert(g_payload_admission_calls == 1);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "busy") == 0);
+        assert(g_require_session_calls == 0);
         assert(g_ack_result_calls == 0);
     }
 

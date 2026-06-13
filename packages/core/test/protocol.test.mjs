@@ -27,15 +27,22 @@ import {
   makeAckResultRequest,
   makeGetApprovalHistoryRequest,
   makeGetResultRequest,
+  makePayloadUploadAbortRequest,
+  makePayloadUploadBeginRequest,
+  makePayloadUploadChunkRequest,
+  makePayloadUploadFinishRequest,
   makePolicyGetRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
   makePolicyProposeRequest,
+  makeStagedSignTransactionRequest,
   makeSignPersonalMessageRequest,
   makeSignTransactionRequest,
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
   MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
+  MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
+  normalizePayloadUploadRequest,
   parseProtocolResponse,
   sanitizeDisplayText,
   serializeRequest,
@@ -54,6 +61,9 @@ const SIGN_ROUTE_VECTORS = readFileSync(
   });
 
 const CANONICAL_TX_BYTES_BASE64 = "AQID";
+const VALID_PAYLOAD_DIGEST = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const VALID_PAYLOAD_REF = "payload_0123456789abcdef01234567";
+const VALID_UPLOAD_ID = "upload_0123456789abcdef01234567";
 const VALID_DEVICE_STATUS = {
   deviceId: "a508d833-5c83-4680-88bb-18aee976881e",
   state: "idle",
@@ -170,6 +180,319 @@ test("parseProtocolResponse accepts and exact-validates ack_result as full proto
     }),
     { code: "protocol_error" },
   );
+});
+
+test("builds and exact-normalizes payload upload requests", () => {
+  const sessionId = "session_abcdef0123456789";
+
+  const begin = makePayloadUploadBeginRequest(
+    sessionId,
+    "sui",
+    "sign_transaction",
+    { payloadKind: "transaction", sizeBytes: "131072", payloadDigest: VALID_PAYLOAD_DIGEST },
+    "req_upload_begin",
+  );
+  assert.deepEqual(begin, {
+    id: "req_upload_begin",
+    version: 1,
+    type: "payload_upload_begin",
+    sessionId,
+    chain: "sui",
+    method: "sign_transaction",
+    payloadKind: "transaction",
+    sizeBytes: "131072",
+    payloadDigest: VALID_PAYLOAD_DIGEST,
+  });
+  assert.deepEqual(normalizePayloadUploadRequest(begin), begin);
+
+  const chunk = makePayloadUploadChunkRequest(
+    sessionId,
+    VALID_UPLOAD_ID,
+    "3",
+    CANONICAL_TX_BYTES_BASE64,
+    "req_upload_chunk",
+  );
+  assert.deepEqual(chunk, {
+    id: "req_upload_chunk",
+    version: 1,
+    type: "payload_upload_chunk",
+    sessionId,
+    uploadId: VALID_UPLOAD_ID,
+    offsetBytes: "3",
+    chunk: CANONICAL_TX_BYTES_BASE64,
+  });
+  assert.deepEqual(normalizePayloadUploadRequest(chunk), chunk);
+
+  const finish = makePayloadUploadFinishRequest(sessionId, VALID_UPLOAD_ID, "req_upload_finish");
+  assert.deepEqual(finish, {
+    id: "req_upload_finish",
+    version: 1,
+    type: "payload_upload_finish",
+    sessionId,
+    uploadId: VALID_UPLOAD_ID,
+  });
+  assert.deepEqual(normalizePayloadUploadRequest(finish), finish);
+
+  const abortUpload = makePayloadUploadAbortRequest(sessionId, { uploadId: VALID_UPLOAD_ID }, "req_upload_abort");
+  assert.deepEqual(normalizePayloadUploadRequest(abortUpload), abortUpload);
+  const abortPayload = makePayloadUploadAbortRequest(sessionId, { payloadRef: VALID_PAYLOAD_REF }, "req_payload_abort");
+  assert.deepEqual(normalizePayloadUploadRequest(abortPayload), abortPayload);
+
+  assert.throws(
+    () => normalizePayloadUploadRequest({ ...begin, extra: true }),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () => makePayloadUploadAbortRequest(sessionId, { uploadId: VALID_UPLOAD_ID, payloadRef: VALID_PAYLOAD_REF }),
+    { code: "invalid_params" },
+  );
+  assert.throws(
+    () => makePayloadUploadBeginRequest(sessionId, "evm", "sign_transaction", {
+      payloadKind: "transaction",
+      sizeBytes: "1",
+      payloadDigest: VALID_PAYLOAD_DIGEST,
+    }),
+    { code: "unsupported_chain" },
+  );
+  assert.throws(
+    () => makePayloadUploadBeginRequest(sessionId, "evm", "sign_transaction", {
+      payloadKind: "message",
+      sizeBytes: "not-decimal",
+      payloadDigest: "not-digest",
+    }),
+    { code: "unsupported_chain" },
+  );
+  assert.throws(
+    () => makePayloadUploadBeginRequest(sessionId, "sui", "sign_personal_message", {
+      payloadKind: "transaction",
+      sizeBytes: "1",
+      payloadDigest: VALID_PAYLOAD_DIGEST,
+    }),
+    { code: "unsupported_method" },
+  );
+  assert.throws(
+    () => makePayloadUploadBeginRequest(sessionId, "sui", "future_method", {
+      payloadKind: "message",
+      sizeBytes: "not-decimal",
+      payloadDigest: "not-digest",
+    }),
+    { code: "unsupported_method" },
+  );
+  assert.throws(
+    () => makePayloadUploadBeginRequest(sessionId, "SUI", "sign_transaction", {
+      payloadKind: "transaction",
+      sizeBytes: "1",
+      payloadDigest: VALID_PAYLOAD_DIGEST,
+    }),
+    { code: "invalid_params" },
+  );
+  assert.throws(
+    () => makePayloadUploadBeginRequest(sessionId, "sui", "sign_transaction", {
+      payloadKind: "message",
+      sizeBytes: "1",
+      payloadDigest: VALID_PAYLOAD_DIGEST,
+    }),
+    { code: "invalid_params" },
+  );
+  assert.throws(
+    () => makePayloadUploadBeginRequest(sessionId, "sui", "sign_transaction", {
+      payloadKind: "transaction",
+      sizeBytes: "18446744073709551616",
+      payloadDigest: VALID_PAYLOAD_DIGEST,
+    }),
+    { code: "invalid_params" },
+  );
+  assert.throws(
+    () => makePayloadUploadChunkRequest(
+      sessionId,
+      VALID_UPLOAD_ID,
+      "18446744073709551616",
+      CANONICAL_TX_BYTES_BASE64,
+    ),
+    { code: "invalid_params" },
+  );
+});
+
+test("payload upload chunk frame budget fits the advertised transport chunk size", () => {
+  const maxRequestId = "r".repeat(79);
+  const maxSessionId = `session_${"a".repeat(128)}`;
+  const maxUploadId = `upload_${"b".repeat(72)}`;
+  const maxUint64Offset = "18446744073709551615";
+  const advertisedChunk = Buffer.alloc(2700, 7).toString("base64");
+  const request = makePayloadUploadChunkRequest(
+    maxSessionId,
+    maxUploadId,
+    maxUint64Offset,
+    advertisedChunk,
+    maxRequestId,
+  );
+
+  assert.equal(Buffer.from(advertisedChunk, "base64").length, 2700);
+  assert.ok(Buffer.byteLength(JSON.stringify(request), "utf8") <= MAX_RAW_PROTOCOL_JSON_BYTES);
+  assert.ok(Buffer.byteLength(serializeRequest(request), "utf8") <= MAX_RAW_PROTOCOL_JSON_BYTES + 1);
+  assert.deepEqual(normalizePayloadUploadRequest(request), request);
+});
+
+test("builds staged sign_transaction requests without txBytes", () => {
+  const request = makeStagedSignTransactionRequest(
+    "session_abcdef0123456789",
+    "sui",
+    "sign_transaction",
+    {
+      network: "mainnet",
+      payloadRef: VALID_PAYLOAD_REF,
+      payloadKind: "transaction",
+      sizeBytes: "131072",
+      payloadDigest: VALID_PAYLOAD_DIGEST,
+    },
+    "req_staged_sign",
+  );
+  assert.deepEqual(request, {
+    id: "req_staged_sign",
+    version: 1,
+    type: "sign_transaction",
+    sessionId: "session_abcdef0123456789",
+    chain: "sui",
+    method: "sign_transaction",
+    params: {
+      network: "mainnet",
+      payloadRef: VALID_PAYLOAD_REF,
+      payloadKind: "transaction",
+      sizeBytes: "131072",
+      payloadDigest: VALID_PAYLOAD_DIGEST,
+    },
+  });
+  assert.equal("txBytes" in request.params, false);
+  assert.throws(
+    () => makeStagedSignTransactionRequest(
+      "session_abcdef0123456789",
+      "sui",
+      "sign_transaction",
+      {
+        network: "mainnet",
+        payloadRef: VALID_PAYLOAD_REF,
+        payloadKind: "transaction",
+        sizeBytes: "131072",
+        payloadDigest: VALID_PAYLOAD_DIGEST,
+        txBytes: CANONICAL_TX_BYTES_BASE64,
+      },
+    ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () => makeStagedSignTransactionRequest(
+      "session_abcdef0123456789",
+      "sui",
+      "sign_transaction",
+      { network: "mainnet", payloadRef: VALID_PAYLOAD_REF },
+    ),
+    { code: "invalid_params" },
+  );
+  assert.throws(
+    () => makeStagedSignTransactionRequest(
+      "session_abcdef0123456789",
+      "sui",
+      "sign_transaction",
+      {
+        network: "mainnet",
+        payloadRef: VALID_PAYLOAD_REF,
+        payloadKind: "transaction",
+        sizeBytes: "18446744073709551616",
+        payloadDigest: VALID_PAYLOAD_DIGEST,
+      },
+    ),
+    { code: "invalid_params" },
+  );
+});
+
+test("parseProtocolResponse accepts and exact-validates payload upload responses", () => {
+  const begin = parseProtocolResponse(JSON.stringify({
+    id: "req_upload_begin",
+    version: 1,
+    type: "payload_upload_begin_result",
+    uploadId: VALID_UPLOAD_ID,
+    receivedBytes: "0",
+    chunkMaxBytes: "2048",
+  }), "req_upload_begin");
+  assert.equal(begin.type, "payload_upload_begin_result");
+  assert.equal(begin.uploadId, VALID_UPLOAD_ID);
+  assert.throws(
+    () => parseProtocolResponse(JSON.stringify({
+      id: "req_upload_begin",
+      version: 1,
+      type: "payload_upload_begin_result",
+      uploadId: VALID_UPLOAD_ID,
+      receivedBytes: "0",
+      chunkMaxBytes: "2047",
+    }), "req_upload_begin"),
+    { code: "protocol_error" },
+  );
+
+  const chunk = parseProtocolResponse(JSON.stringify({
+    id: "req_upload_chunk",
+    version: 1,
+    type: "payload_upload_chunk_result",
+    receivedBytes: "3",
+  }), "req_upload_chunk");
+  assert.equal(chunk.type, "payload_upload_chunk_result");
+  assert.equal(chunk.receivedBytes, "3");
+
+  const finish = parseProtocolResponse(JSON.stringify({
+    id: "req_upload_finish",
+    version: 1,
+    type: "payload_upload_finish_result",
+    payloadRef: VALID_PAYLOAD_REF,
+    chain: "sui",
+    method: "sign_transaction",
+    payloadKind: "transaction",
+    sizeBytes: "131072",
+    payloadDigest: VALID_PAYLOAD_DIGEST,
+  }), "req_upload_finish");
+  assert.equal(finish.type, "payload_upload_finish_result");
+  assert.equal(finish.payloadRef, VALID_PAYLOAD_REF);
+
+  const abort = parseProtocolResponse(JSON.stringify({
+    id: "req_payload_abort",
+    version: 1,
+    type: "payload_upload_abort_result",
+    status: "aborted",
+  }), "req_payload_abort");
+  assert.equal(abort.type, "payload_upload_abort_result");
+
+  assert.throws(
+    () => parseProtocolResponse(JSON.stringify({
+      id: "req_upload_finish",
+      version: 1,
+      type: "payload_upload_finish_result",
+      payloadRef: VALID_PAYLOAD_REF,
+      chain: "sui",
+      method: "sign_transaction",
+      payloadKind: "transaction",
+      sizeBytes: "131072",
+      payloadDigest: VALID_PAYLOAD_DIGEST,
+      txBytes: CANONICAL_TX_BYTES_BASE64,
+    }), "req_upload_finish"),
+    { code: "protocol_error" },
+  );
+  for (const routePatch of [
+    { chain: "evm", method: "sign_transaction" },
+    { chain: "sui", method: "sign_personal_message" },
+  ]) {
+    assert.throws(
+      () => parseProtocolResponse(JSON.stringify({
+        id: "req_upload_finish",
+        version: 1,
+        type: "payload_upload_finish_result",
+        payloadRef: VALID_PAYLOAD_REF,
+        chain: routePatch.chain,
+        method: routePatch.method,
+        payloadKind: "transaction",
+        sizeBytes: "131072",
+        payloadDigest: VALID_PAYLOAD_DIGEST,
+      }), "req_upload_finish"),
+      { code: "protocol_error" },
+    );
+  }
 });
 
 test("identifySignRoute matches the shared protocol route vectors", () => {
@@ -625,6 +948,15 @@ test("makeSignTransactionRequest builds bounded signing params without caller-se
     ).params.txBytes,
     aboveCurrentAdapterCapacity,
   );
+  assert.throws(
+    () => makeSignTransactionRequest(
+      "session_abcdef0123456789",
+      "sui",
+      "sign_transaction",
+      { network: "devnet", txBytes: Buffer.alloc(MAX_SUI_SIGN_TRANSACTION_TX_BYTES + 1).toString("base64") },
+    ),
+    /maximum decoded byte length/,
+  );
 });
 
 test("makeSignPersonalMessageRequest builds bounded personal-message params without caller-selected authorization", () => {
@@ -786,6 +1118,60 @@ test("parseProtocolResponse accepts a valid capabilities response with signing m
     assert.deepEqual(response.chains[0].methods, []);
     assert.deepEqual(response.signing, signing);
   }
+});
+
+test("parseProtocolResponse preserves sign_transaction payload capability metadata", () => {
+  const payload = {
+    kind: "transaction",
+    inlineMaxBytes: "384",
+    chunkMaxBytes: "2048",
+    payloadMaxBytes: "131072",
+  };
+  const signing = {
+    authorization: "user",
+    methods: [
+      { chain: "sui", method: "sign_transaction", payload },
+      { chain: "sui", method: "sign_personal_message" },
+    ],
+  };
+  const response = assertCapabilitiesResponse(
+    parseProtocolResponse(capabilitiesLine({}, {}, { signing }), "req_capabilities"),
+  );
+  assert.deepEqual(response.signing, signing);
+  assert.throws(
+    () => parseProtocolResponse(
+      capabilitiesLine({}, {}, {
+        signing: {
+          authorization: "user",
+          methods: [
+            {
+              chain: "sui",
+              method: "sign_transaction",
+              payload: { ...payload, chunkMaxBytes: "2047" },
+            },
+          ],
+        },
+      }),
+      "req_capabilities",
+    ),
+    { code: "protocol_error" },
+  );
+
+  assert.throws(
+    () => parseProtocolResponse(
+      capabilitiesLine({}, {}, {
+        signing: {
+          authorization: "user",
+          methods: [
+            { chain: "sui", method: "sign_transaction" },
+            { chain: "sui", method: "sign_personal_message", payload },
+          ],
+        },
+      }),
+      "req_capabilities",
+    ),
+    { code: "protocol_error" },
+  );
 });
 
 test("parseProtocolResponse rejects unsupported capabilities", () => {

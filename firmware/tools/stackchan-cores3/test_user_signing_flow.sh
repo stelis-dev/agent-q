@@ -37,6 +37,7 @@ using TickType_t = uint32_t;
 H
 
 cat >"${TMP_DIR}/user_signing_flow_test.cpp" <<'CPP'
+#include <assert.h>
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -189,10 +190,16 @@ agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
     TickType_t deadline = 300)
 {
     static agent_q::AgentQSuiPreparedSignTransaction prepared = {};
+    if (prepared.tx_bytes != nullptr) {
+        memset(prepared.tx_bytes, 0, prepared.tx_bytes_size);
+        free(prepared.tx_bytes);
+    }
     prepared = {};
     prepared.route = agent_q::AgentQSupportedSignRoute::sui_sign_transaction;
     snprintf(prepared.network, sizeof(prepared.network), "%s", "devnet");
-    if (payload != nullptr && payload_size <= sizeof(prepared.tx_bytes)) {
+    if (payload != nullptr && payload_size > 0) {
+        prepared.tx_bytes = static_cast<uint8_t*>(malloc(payload_size));
+        assert(prepared.tx_bytes != nullptr);
         memcpy(prepared.tx_bytes, payload, payload_size);
         prepared.tx_bytes_size = payload_size;
         snprintf(prepared.payload_digest, sizeof(prepared.payload_digest),
@@ -476,11 +483,34 @@ int main()
                terminal == Terminal::rejected,
            "personal-message rejected terminal consumed");
 
-    const std::vector<uint8_t>& payload = valid_payload();
+    std::vector<uint8_t> max_transaction_payload(
+        agent_q::kAgentQSuiSignTransactionTxBytesMaxBytes,
+        0x5A);
     expect(agent_q::user_signing_flow_begin(
-               make_valid_input("req_signature_1", agent_q::session_id(), payload.data(), payload.size())) ==
+               make_valid_input(
+                   "req_max_transaction_payload",
+                   agent_q::session_id(),
+                   max_transaction_payload.data(),
+                   max_transaction_payload.size())) ==
                Begin::ok,
+           "max transaction payload begins without a smaller user-flow cap");
+    agent_q::AgentQUserSigningFlowSnapshot max_payload_snapshot =
+        agent_q::user_signing_flow_snapshot();
+    expect(max_payload_snapshot.signable_payload_available,
+           "max transaction payload is available to user-flow owner");
+    expect(max_payload_snapshot.signable_payload_size == max_transaction_payload.size(),
+           "max transaction payload size is stored without truncation");
+    expect(agent_q::user_signing_flow_clear() == Transition::ok,
+           "max transaction payload flow clears");
+
+    const std::vector<uint8_t>& payload = valid_payload();
+    agent_q::AgentQUserSigningTransactionBeginInput first_begin =
+        make_valid_input("req_signature_1", agent_q::session_id(), payload.data(), payload.size());
+    expect(agent_q::user_signing_flow_begin(first_begin) == Begin::ok,
            "valid request begins in reviewing stage");
+    expect(first_begin.prepared->tx_bytes == nullptr &&
+               first_begin.prepared->tx_bytes_size == 0,
+           "transaction begin transfers prepared payload ownership to user flow");
     agent_q::AgentQUserSigningFlowSnapshot snapshot =
         agent_q::user_signing_flow_snapshot();
     expect(snapshot.active, "snapshot is active");

@@ -19,6 +19,10 @@ enum class AgentQUsbOperationType {
     policy_get,
     get_approval_history,
     policy_propose,
+    payload_upload_begin,
+    payload_upload_chunk,
+    payload_upload_finish,
+    payload_upload_abort,
 };
 
 inline AgentQUsbOperationType classify_usb_operation_type(const char* type)
@@ -64,6 +68,18 @@ inline AgentQUsbOperationType classify_usb_operation_type(const char* type)
     }
     if (strcmp(type, "policy_propose") == 0) {
         return AgentQUsbOperationType::policy_propose;
+    }
+    if (strcmp(type, "payload_upload_begin") == 0) {
+        return AgentQUsbOperationType::payload_upload_begin;
+    }
+    if (strcmp(type, "payload_upload_chunk") == 0) {
+        return AgentQUsbOperationType::payload_upload_chunk;
+    }
+    if (strcmp(type, "payload_upload_finish") == 0) {
+        return AgentQUsbOperationType::payload_upload_finish;
+    }
+    if (strcmp(type, "payload_upload_abort") == 0) {
+        return AgentQUsbOperationType::payload_upload_abort;
     }
     return AgentQUsbOperationType::unsupported;
 }

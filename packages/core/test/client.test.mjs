@@ -337,12 +337,25 @@ test("package self-reference resolves only core entrypoints", async () => {
   assert.equal(typeof protocol.makeGetResultRequest, "function");
   assert.equal(typeof protocol.makeAckResultRequest, "function");
   assert.equal(typeof protocol.assertAckResultResponse, "function");
+  assert.equal(typeof protocol.makePayloadUploadBeginRequest, "function");
+  assert.equal(typeof protocol.makePayloadUploadChunkRequest, "function");
+  assert.equal(typeof protocol.makePayloadUploadFinishRequest, "function");
+  assert.equal(typeof protocol.makePayloadUploadAbortRequest, "function");
+  assert.equal(typeof protocol.makeStagedSignTransactionRequest, "function");
   await assert.rejects(() => import("@stelis/agent-q-core/protocol-recovery"), {
+    code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
+  });
+  await assert.rejects(() => import("@stelis/agent-q-core/protocol-payload-delivery"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
   });
   assert.equal(providerProtocol.makeGetResultRequest, undefined);
   assert.equal(providerProtocol.makeAckResultRequest, undefined);
   assert.equal(providerProtocol.assertAckResultResponse, undefined);
+  assert.equal(providerProtocol.makePayloadUploadBeginRequest, undefined);
+  assert.equal(providerProtocol.makePayloadUploadChunkRequest, undefined);
+  assert.equal(providerProtocol.makePayloadUploadFinishRequest, undefined);
+  assert.equal(providerProtocol.makePayloadUploadAbortRequest, undefined);
+  assert.equal(providerProtocol.makeStagedSignTransactionRequest, undefined);
   assert.equal(providerProtocol.makeGetStatusRequest, undefined);
   assert.equal(providerProtocol.makePolicyGetRequest, undefined);
   assert.equal(providerProtocol.makePolicyProposeRequest, undefined);
@@ -395,8 +408,16 @@ test("provider-protocol declaration stays type-bounded to provider requests", as
   assert.doesNotMatch(types, /AckResultRequest/);
   assert.doesNotMatch(types, /AckResultResponse/);
   assert.doesNotMatch(types, /protocol-recovery/);
+  assert.doesNotMatch(types, /protocol-payload-delivery/);
+  assert.doesNotMatch(types, /makePayloadUploadBeginRequest/);
+  assert.doesNotMatch(types, /makePayloadUploadChunkRequest/);
+  assert.doesNotMatch(types, /makePayloadUploadFinishRequest/);
+  assert.doesNotMatch(types, /makePayloadUploadAbortRequest/);
+  assert.doesNotMatch(types, /makeStagedSignTransactionRequest/);
+  assert.doesNotMatch(types, /PayloadUploadRequest/);
   assert.doesNotMatch(types, /get_result/);
   assert.doesNotMatch(types, /ack_result/);
+  assert.doesNotMatch(types, /payload_upload_/);
 });
 
 test("client internals keep signing and recovery helper ownership separated", async () => {

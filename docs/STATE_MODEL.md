@@ -102,7 +102,7 @@ hardware and must be documented in each target's `SPEC.md`.
 | Layer | Examples | Owner | May gate protocol APIs? |
 |---|---|---|---:|
 | Persistent device state | provisioning state, stored root material, policy, local PIN verifier, signing authorization mode, approval history, policy-update terminal marker, account availability | Firmware | Yes |
-| Volatile sensitive scratch | generated backup phrase, setup entropy, pending backup confirmation, typed PIN digits | Firmware | Yes |
+| Volatile sensitive scratch | generated backup phrase, setup entropy, pending backup confirmation, typed PIN digits, signable payload upload bytes, finalized payload descriptors | Firmware | Yes |
 | Local PIN authorization state | connect/settings/policy-update/reset PIN entry purpose, verification stage, Firmware-owned input deadline, RAM-only lockout | Firmware | Yes |
 | Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or local PIN approval; Firmware-owned deadline; requested action | Firmware | Yes |
 | Pending policy update state | validated policy proposal summary, policy hash, review/PIN/commit stage, review deadline | Firmware | Yes |
@@ -213,9 +213,12 @@ Allowed:
 - `get_accounts` (read-only, session-scoped)
 - `policy_get` (read-only, session-scoped)
 - `get_approval_history` (read-only, session-scoped)
+- `payload_upload_begin`, `payload_upload_chunk`, `payload_upload_finish`, and
+  `payload_upload_abort` for same-session volatile signable payload delivery
 - `sign_transaction` (session-scoped; unknown methods reject; Sui
-  `sign_transaction` validates bounded restricted SUI transfer request inputs
-  and returns the selected gate's bounded `sign_result` terminal status:
+  `sign_transaction` accepts inline `txBytes` or a same-session finalized
+  `payloadRef`, validates the decoded transaction through the Sui adapter, and
+  returns the selected gate's bounded `sign_result` terminal status:
   policy mode can return `signed`, `policy_rejected`, or `signing_failed`;
   user mode can return `signed`, `user_rejected`, `user_timed_out`, or
   `signing_failed`)
@@ -243,8 +246,10 @@ and top-level `signing`, read-only `get_accounts` (Sui Ed25519 account 0),
 read-only `policy_get` for the committed active policy document, read-only
 `get_approval_history` for Firmware-owned persistent decision metadata, and the
 session-scoped Sign API runtime. `sign_transaction` has
-`source-wired-not-product-active` status for the bounded Sui `sign_transaction`
-shape. Product-active status is not claimed unless
+`source-wired-not-product-active` status for inline or same-session staged Sui
+transaction bytes, currently signable only when the Firmware route adapter
+derives the supported restricted SUI transfer semantic projection.
+Product-active status is not claimed unless
 `docs/IMPLEMENTATION_STATUS.md` says the matching source, docs, tests, build,
 hardware, and visual evidence are complete.
 `sign_personal_message` also has `source-wired-not-product-active` status for
@@ -285,10 +290,14 @@ route. Unsupported or malformed routes fail without reaching state/session,
 replay, approval, policy, history, adapter, or signing work. For a supported
 route, state/session checks occur before method-parameter validation and
 chain-adapter decoding. After shallow method-parameter validation, Firmware
-computes a versioned internal signing-request identity from the selected route
-and validated method parameters. A same-id retry replays only when that
-identity matches and the bounded RAM result entry is still retained; a
-different request reusing the id fails with `request_id_conflict` before
+computes a form-discriminated internal signing-request identity from the selected
+route and validated method parameters. For staged transaction signing, that identity
+uses the request's descriptor echo (`payloadKind`, `sizeBytes`,
+`payloadDigest`) and not the live `payloadRef` handle; a fresh staged request
+must still match the same-session finalized descriptor before Firmware consumes
+live payload bytes. A same-id retry replays only when that identity matches and
+the bounded RAM result entry is still retained; a different request reusing the
+id fails with `request_id_conflict` before
 adapter, approval, policy, history, or signing work only while the original
 entry is still buffered. Stored signing results are runtime recovery state, not
 persistent replay protection. They are cleared by ack, session cleanup,
@@ -367,6 +376,81 @@ Failure requirements for a device-confirmed signing request:
   durable confirmation record, terminal history and the user-visible result must
   distinguish signature generation, signed terminal proof, and host receipt;
 - every terminal path must wipe signable payload and signature scratch.
+
+#### Signable Payload Delivery Scratch
+
+Signable payload delivery is a volatile Firmware-owned substate under
+`provisioned` with an active matching session. It exists to carry large
+signable bytes to Firmware before a supported signing request consumes them.
+It is not a protocol state setter and does not authorize signing.
+
+Store states and ownership phases:
+
+- `idle`: no active upload or finalized payload exists.
+- `receiving`: one same-session upload is receiving sequential chunks.
+- `finalized`: one same-session immutable payload descriptor exists.
+- `consuming`: not a payload-store enum value; a same-session signing request
+  has taken ownership of the finalized bytes for adapter parsing,
+  authorization, and signing.
+- `cleanup`: not a payload-store enum value; Firmware is wiping or releasing
+  volatile payload scratch under the owner that currently holds the bytes.
+
+Allowed in `receiving`:
+
+- same-session `payload_upload_chunk`;
+- same-session `payload_upload_finish`;
+- same-session `payload_upload_abort`;
+- read-only session requests that do not mutate, dismiss, or leak upload state:
+  `get_status`, `get_capabilities`, `get_accounts`, `policy_get`,
+  `get_approval_history`, `get_result`, and `ack_result`.
+
+Rejected in `receiving`:
+
+- nested `payload_upload_begin`;
+- `sign_transaction` using an incomplete upload;
+- `sign_personal_message`;
+- `policy_propose`;
+- local settings sensitive subflows;
+- different-session upload operations.
+
+Allowed in `finalized`:
+
+- same-session `sign_transaction` whose shallow payload source matches the
+  finalized `payloadRef`; the signing preflight must still compare the echoed
+  immutable descriptor fields with the finalized descriptor before consuming
+  bytes;
+- same-session `payload_upload_abort`;
+- read-only session requests that do not mutate, dismiss, or leak the payload.
+
+Rejected in `finalized`:
+
+- chunk append or payload mutation;
+- different-session `payloadRef` use;
+- nested upload or signing work that would leave hidden finalized payload;
+- policy proposal, connection approval, identification display, personal-message
+  signing, or local settings sensitive flows unless Firmware first owns and
+  completes an explicit cleanup transition for the finalized payload.
+
+Cleanup requirements:
+
+- upload abort, timeout, declared-size overflow, digest mismatch, session
+  cleanup, disconnect/session end, material error, reset, and signing terminal
+  cleanup must wipe or release the payload so it cannot later be confirmed or
+  signed invisibly. Unrelated sensitive-flow attempts are rejected while payload
+  scratch is pending unless Firmware explicitly owns a cleanup-before-replace
+  transition;
+- retained-result recovery for `(session, request id)` must not depend on the
+  finalized payload still existing. A same-id retry reaches retained-result
+  lookup using the descriptor echo before live `payloadRef` bytes are resolved.
+
+Payload delivery request admission is owned by the Firmware operation admission
+matrix, not by the display/device-state projection. The projection treats
+receiving and finalized payload scratch as `busy` for ordinary USB requests.
+A matching same-session staged signing request is a request-aware admission
+exception that enters through the payload-aware operation path and still must
+pass preflight descriptor matching before consuming bytes. Unrelated sensitive
+operations must be rejected unless Firmware first owns an explicit cleanup
+transition.
 
 The user-mode signing runtime models human approval for implemented
 device-confirmed signing methods. Terminal stages for user-mode signing are:
