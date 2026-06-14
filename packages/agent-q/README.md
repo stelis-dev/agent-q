@@ -30,7 +30,7 @@ device signing mode.
 Run the local server as an MCP server:
 
 ```sh
-npx -y @stelis/agent-q serve --request-connect
+npx -y @stelis/agent-q@latest serve --request-connect
 ```
 
 If installed globally, use `agent-q`.
@@ -53,7 +53,7 @@ MCP client config example:
   "mcpServers": {
     "agent-q": {
       "command": "npx",
-      "args": ["-y", "@stelis/agent-q", "serve", "--request-connect"]
+      "args": ["-y", "@stelis/agent-q@latest", "serve", "--request-connect"]
     }
   }
 }
@@ -87,14 +87,14 @@ Start the local Agent-Q server and confirm the connection request on the
 device. With a global install:
 
 ```sh
-npm install -g @stelis/agent-q
+npm install -g @stelis/agent-q@latest
 agent-q serve --request-connect
 ```
 
 Without a global install:
 
 ```sh
-npm exec --yes --package @stelis/agent-q -- agent-q serve --request-connect
+npm exec --yes --package @stelis/agent-q@latest -- agent-q serve --request-connect
 ```
 
 After approval, the server writes an operator-facing summary to stderr. The
@@ -142,13 +142,13 @@ If you do not install the package globally, run both setup and Sui CLI commands
 through `npm exec` so `agent-q-sui-signer` is on `PATH` for that command:
 
 ```sh
-npm exec --yes --package @stelis/agent-q -- \
+npm exec --yes --package @stelis/agent-q@latest -- \
   sui external-keys list-keys agent-q-sui-signer
-npm exec --yes --package @stelis/agent-q -- \
+npm exec --yes --package @stelis/agent-q@latest -- \
   sui external-keys add-existing "<KEY_ID_FROM_LIST_KEYS>" agent-q-sui-signer
 ```
 
-Use the same `npm exec --yes --package @stelis/agent-q -- ...` wrapper for
+Use the same `npm exec --yes --package @stelis/agent-q@latest -- ...` wrapper for
 subsequent `sui client ...` commands when the package is not globally installed.
 
 `agent-q-sui-signer` uses the active Sui CLI environment when it is `mainnet`,
