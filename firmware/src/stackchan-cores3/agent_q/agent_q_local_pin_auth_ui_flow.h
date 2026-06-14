@@ -34,7 +34,7 @@ struct AgentQLocalPinAuthUiFlowOps {
     void (*show_message)(const char* message, AgentQMessageKind kind);
     void (*record_material_failure)(AgentQPersistentMaterialRuntimeFailure failure);
     void (*clear_connect_approval)();
-    bool (*connect_approval_return_to_review)(AgentQTimeoutWindow window);
+    bool (*connect_approval_return_to_review)(TickType_t now, AgentQTimeoutWindow window);
     void (*show_connect_review)();
     bool (*replace_active_session)();
     bool (*write_error)(const char* id, const char* code, const char* message);

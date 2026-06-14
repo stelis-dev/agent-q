@@ -118,7 +118,8 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
             out->tx_bytes_size,
             &out->sui_policy_subject,
             &out->sui_review,
-            &authorization_coverage);
+            &authorization_coverage,
+            &out->sui_token_flow);
     if (adapter_result != AgentQSuiSignTransactionAdapterResult::ok) {
         clear_prepared_sui_sign_transaction(out);
         return adapter_result ==
@@ -130,6 +131,8 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
         authorization_coverage.user_mode_authorization_covered;
     out->policy_mode_authorization_covered =
         authorization_coverage.policy_mode_authorization_covered;
+    out->user_authorization_outcome = authorization_coverage.user_outcome;
+    out->policy_authorization_outcome = authorization_coverage.policy_outcome;
     const AgentQSuiSigningAccountBindingResult account_result =
         verify_sui_signing_stored_account_binding(out->sui_policy_subject);
     if (account_result != AgentQSuiSigningAccountBindingResult::ok) {

@@ -66,7 +66,7 @@ int main()
     expect(!agent_q::connect_approval_choose(Choice::approved, 0),
            "cleared state ignores stale approve choice");
 
-    expect(agent_q::connect_approval_begin("connect-1", "Agent-Q", {10, 100}),
+    expect(agent_q::connect_approval_begin("connect-1", "Agent-Q", 10, {10, 100}),
            "connect approval begins");
     agent_q::AgentQConnectApprovalSnapshot snapshot =
         agent_q::connect_approval_snapshot();
@@ -87,7 +87,7 @@ int main()
     expect(!agent_q::connect_approval_review_action_available(100),
            "review action is unavailable at deadline");
 
-    expect(!agent_q::connect_approval_begin("connect-2", "Other Agent-Q", {25, 125}),
+    expect(!agent_q::connect_approval_begin("connect-2", "Other Agent-Q", 25, {25, 125}),
            "active approval cannot be overwritten");
     snapshot = agent_q::connect_approval_snapshot();
     expect(strcmp(snapshot.request_id, "connect-1") == 0 &&
@@ -104,29 +104,44 @@ int main()
            "recorded choice cannot be overwritten");
     snapshot = agent_q::connect_approval_snapshot();
     expect(snapshot.choice == Choice::approved, "approved choice retained");
+    expect(!agent_q::connect_approval_return_to_review(50, {30, 40}),
+           "return to review rejects stale approval window at state owner boundary");
+    expect(!agent_q::connect_approval_return_to_review(20, {30, 130}),
+           "return to review rejects future approval window at state owner boundary");
+    expect(agent_q::connect_approval_return_to_review(60, {60, 160}),
+           "return to review stores fresh approval window");
+    snapshot = agent_q::connect_approval_snapshot();
+    expect(snapshot.choice == Choice::none &&
+               snapshot.approval_window.started_at == 60 &&
+               snapshot.approval_window.deadline == 160,
+           "return to review resets choice and stores window");
 
     agent_q::connect_approval_clear();
     char too_long_id[agent_q::kAgentQConnectApprovalRequestIdSize + 4] = {};
     memset(too_long_id, 'a', sizeof(too_long_id) - 1);
-    expect(!agent_q::connect_approval_begin(too_long_id, "Agent-Q", {20, 200}),
+    expect(!agent_q::connect_approval_begin(too_long_id, "Agent-Q", 20, {20, 200}),
            "overlong request id is rejected");
     expect(!agent_q::connect_approval_active(), "overlong request id does not activate state");
 
     char too_long_client[agent_q::kAgentQConnectApprovalClientNameSize + 4] = {};
     memset(too_long_client, 'b', sizeof(too_long_client) - 1);
-    expect(!agent_q::connect_approval_begin("connect-3", too_long_client, {20, 200}),
+    expect(!agent_q::connect_approval_begin("connect-3", too_long_client, 20, {20, 200}),
            "overlong client name is rejected");
     expect(!agent_q::connect_approval_active(), "overlong client name does not activate state");
-    expect(!agent_q::connect_approval_begin("connect-3", "", {20, 200}),
+    expect(!agent_q::connect_approval_begin("connect-3", "", 20, {20, 200}),
            "empty client name is rejected");
-    expect(!agent_q::connect_approval_begin("", "Agent-Q", {20, 200}),
+    expect(!agent_q::connect_approval_begin("", "Agent-Q", 20, {20, 200}),
            "empty request id is rejected");
-    expect(!agent_q::connect_approval_begin("connect-3", "Agent-Q", {200, 200}),
+    expect(!agent_q::connect_approval_begin("connect-3", "Agent-Q", 200, {200, 200}),
            "already expired approval window is rejected");
-    expect(!agent_q::connect_approval_begin("connect-3", "Agent-Q", {20, 0}),
+    expect(!agent_q::connect_approval_begin("connect-3", "Agent-Q", 20, {20, 0}),
            "zero approval deadline is rejected");
+    expect(!agent_q::connect_approval_begin("connect-3", "Agent-Q", 30, {10, 20}),
+           "stale approval window is rejected at state owner boundary");
+    expect(!agent_q::connect_approval_begin("connect-3", "Agent-Q", 10, {20, 40}),
+           "future approval window is rejected at state owner boundary");
 
-    expect(agent_q::connect_approval_begin("connect-expired-choice", "Agent-Q", {30, 90}),
+    expect(agent_q::connect_approval_begin("connect-expired-choice", "Agent-Q", 30, {30, 90}),
            "connect approval can begin for expired-choice test");
     expect(!agent_q::connect_approval_choose(Choice::approved, 90),
            "approve choice at deadline is rejected");
@@ -136,7 +151,7 @@ int main()
            "expired approve keeps state awaiting timeout response");
     agent_q::connect_approval_clear();
 
-    expect(agent_q::connect_approval_begin("connect-4", "Agent-Q", {30, 300}),
+    expect(agent_q::connect_approval_begin("connect-4", "Agent-Q", 30, {30, 300}),
            "connect approval can begin after clear");
     char small_request_id[4] = {};
     expect(!agent_q::connect_approval_request_id(small_request_id, sizeof(small_request_id)),

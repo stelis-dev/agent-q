@@ -22,6 +22,7 @@ struct AgentQLocalPinAuthSignatureBinding {
 
 bool local_pin_auth_begin_user_signing(
     const AgentQLocalPinAuthSignatureBinding& binding,
+    TickType_t now,
     AgentQTimeoutWindow input_window);
 bool local_pin_auth_user_signing_matches(
     const AgentQLocalPinAuthSignatureBinding& binding);

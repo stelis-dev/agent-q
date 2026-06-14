@@ -139,10 +139,10 @@ Rules:
   ProgrammableTransaction` facts extractor, and for user-mode Sui
   `sign_personal_message`.
   Firmware reads its local signing authorization mode and selects one gate:
-  policy mode returns a policy rejection for valid Sui transactions whose
-  policy coverage is incomplete, and does not sign until complete policy
-  coverage and accepted sign-rule validation are implemented. User mode uses
-  device-local clear-signing review when complete offline facts review coverage
+  policy mode signs only current-contract GasCoin-derived proven-SUI split-result transfer transactions
+  with a matching bounded `sign` rule; other valid policy-incomplete Sui
+  transactions return a policy rejection. User mode uses
+  device-local offline facts review when complete offline facts review coverage
   exists, or an explicit blind-signing warning when Firmware can validate and
   bind the transaction but offline facts review coverage is incomplete.
   Requests cannot choose this mode or the human approval input mode.
@@ -193,7 +193,9 @@ malformed bytes, out-of-range command references, and transactions whose
 minimum sender/gas-owner facts cannot be extracted and bound fail closed.
 Valid account-bound transactions whose offline review facts are incomplete may
 enter the explicit user-mode blind-signing path; policy mode rejects
-policy-incomplete transactions. Product-active claims still depend on the
+policy-incomplete transactions and signs only current-contract GasCoin-derived
+proven-SUI split-result transfer transactions with a matching bounded `sign`
+rule. Product-active claims still depend on the
 target evidence tracked in `docs/IMPLEMENTATION_STATUS.md`.
 Current StackChan CoreS3 source can generate a BIP-39 backup
 phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
@@ -351,11 +353,11 @@ policy facts and rules for personal-message signing are not implemented.
 Sui transaction parsing is bounded and offline. Parser facts may be available
 for broader programmable transactions, but parser success is not signing
 authorization. Sui `sign_transaction` policy mode returns a policy rejection for
-valid transactions whose policy coverage is incomplete, and does not sign until
-Firmware can mark the parsed shape as policy-coverage complete and accept a
-sign-rule schema that binds the actual transaction values needed for automatic
-authorization. Full Admin policy editing beyond the current policy proposal
-template and USER_PROFILE secure provisioning are not implemented.
+valid transactions outside the current automatic signing contract, and signs
+only current-contract GasCoin-derived proven-SUI split-result transfer transactions with a matching
+bounded `sign` rule. Full Admin policy editing beyond the
+current policy proposal template and USER_PROFILE secure provisioning are not
+implemented.
 
 ## Completion Criteria
 

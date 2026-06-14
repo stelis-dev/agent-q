@@ -178,7 +178,7 @@ AgentQTimeoutWindow local_pin_auth_next_input_window(
     if (!request_backed_local_pin_purpose(purpose)) {
         return kAgentQTimeoutWindowNone;
     }
-    return request_backed_local_pin_cap_input_window(purpose, next_input_window);
+    return request_backed_local_pin_cap_input_window(purpose, now, next_input_window);
 }
 
 bool resume_request_backed_pin_input_window(
@@ -411,9 +411,12 @@ bool local_pin_auth_ui_begin_connect(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
     identification_display_clear();
+    const TickType_t now = now_or_zero(ops);
     const AgentQTimeoutWindow request_window =
-        window_from_now_ms(ops, ops.connect_approval_ms);
-    if (!protocol_pin_approval_begin_connect(request_id, request_window)) {
+        timeout_window_from_deadline(
+            now,
+            now + pdMS_TO_TICKS(ops.connect_approval_ms));
+    if (!protocol_pin_approval_begin_connect(request_id, now, request_window)) {
         if (ops.write_connect_rejected != nullptr) {
             ops.write_connect_rejected(
                 request_id,
@@ -426,7 +429,7 @@ bool local_pin_auth_ui_begin_connect(
         show_message(ops, "Connect unavailable", AgentQMessageKind::error);
         return false;
     }
-    if (!local_pin_auth_begin_connect(request_window)) {
+    if (!local_pin_auth_begin_connect(now, request_window)) {
         if (ops.write_connect_rejected != nullptr) {
             ops.write_connect_rejected(
                 request_id,
@@ -478,9 +481,13 @@ void local_pin_auth_ui_start_settings_human_approval_input(
         current_mode == AgentQHumanApprovalInputMode::pin
             ? AgentQHumanApprovalInputMode::confirm
             : AgentQHumanApprovalInputMode::pin;
+    const TickType_t now = now_or_zero(ops);
     if (!local_pin_auth_begin_human_approval_input_setting(
             target_mode,
-            window_from_now_ms(ops, ops.local_reset_entry_ms))) {
+            now,
+            timeout_window_from_deadline(
+                now,
+                now + pdMS_TO_TICKS(ops.local_reset_entry_ms)))) {
         show_message(ops, "Settings unavailable", AgentQMessageKind::error);
         return;
     }
@@ -514,9 +521,13 @@ void local_pin_auth_ui_start_settings_signing_mode(
         current_mode == AgentQSigningAuthorizationMode::policy
             ? AgentQSigningAuthorizationMode::user
             : AgentQSigningAuthorizationMode::policy;
+    const TickType_t now = now_or_zero(ops);
     if (!local_pin_auth_begin_signing_mode_setting(
             target_mode,
-            window_from_now_ms(ops, ops.local_reset_entry_ms))) {
+            now,
+            timeout_window_from_deadline(
+                now,
+                now + pdMS_TO_TICKS(ops.local_reset_entry_ms)))) {
         show_message(ops, "Settings unavailable", AgentQMessageKind::error);
         return;
     }
@@ -538,8 +549,12 @@ void local_pin_auth_ui_start_settings_change_pin(
         return;
     }
 
+    const TickType_t now = now_or_zero(ops);
     if (!local_pin_auth_begin_change_pin(
-            window_from_now_ms(ops, ops.local_reset_entry_ms))) {
+            now,
+            timeout_window_from_deadline(
+                now,
+                now + pdMS_TO_TICKS(ops.local_reset_entry_ms)))) {
         show_message(ops, "Change PIN unavailable", AgentQMessageKind::error);
         return;
     }
@@ -582,7 +597,10 @@ void local_pin_auth_ui_cancel(
         protocol_pin_approval_clear();
         const AgentQPolicyUpdateFlowTransitionResult transition =
             policy_update_flow_return_to_review(
-                window_from_now_ms(ops, ops.provisioning_approval_ms));
+                now,
+                timeout_window_from_deadline(
+                    now,
+                    now + pdMS_TO_TICKS(ops.provisioning_approval_ms)));
         if (transition != AgentQPolicyUpdateFlowTransitionResult::ok) {
             finish_policy_update_error_terminal(
                 ops,
@@ -607,7 +625,10 @@ void local_pin_auth_ui_cancel(
         protocol_pin_approval_clear();
         if (ops.connect_approval_return_to_review == nullptr ||
             !ops.connect_approval_return_to_review(
-                window_from_now_ms(ops, ops.connect_approval_ms))) {
+                now,
+                timeout_window_from_deadline(
+                    now,
+                    now + pdMS_TO_TICKS(ops.connect_approval_ms)))) {
             if (ops.write_connect_rejected != nullptr) {
                 ops.write_connect_rejected(
                     request_id,

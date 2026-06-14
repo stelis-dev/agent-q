@@ -72,6 +72,9 @@ int g_show_unavailable_calls = 0;
 int g_reset_queue_calls = 0;
 int g_show_review_calls = 0;
 int g_record_waiting_calls = 0;
+agent_q::AgentQTimeoutTick g_current_tick = 17;
+agent_q::AgentQTimeoutTick g_last_make_window_now = 0;
+agent_q::AgentQTimeoutTick g_last_begin_now = 0;
 bool g_material_ready = true;
 bool g_busy = false;
 bool g_begin_ok = true;
@@ -96,6 +99,9 @@ void reset_state()
     g_reset_queue_calls = 0;
     g_show_review_calls = 0;
     g_record_waiting_calls = 0;
+    g_current_tick = 17;
+    g_last_make_window_now = 0;
+    g_last_begin_now = 0;
     g_material_ready = true;
     g_busy = false;
     g_begin_ok = true;
@@ -137,17 +143,28 @@ bool write_busy(const char* id)
     return g_busy;
 }
 
-agent_q::AgentQTimeoutWindow make_window()
+agent_q::AgentQTimeoutTick current_tick()
 {
-    g_make_window_calls += 1;
-    return agent_q::AgentQTimeoutWindow{11, 29};
+    return g_current_tick;
 }
 
-bool begin_connect(const char* request_id, const char* client_name, agent_q::AgentQTimeoutWindow window)
+agent_q::AgentQTimeoutWindow make_window(agent_q::AgentQTimeoutTick now)
+{
+    g_make_window_calls += 1;
+    g_last_make_window_now = now;
+    return agent_q::AgentQTimeoutWindow{now, now + 18};
+}
+
+bool begin_connect(
+    const char* request_id,
+    const char* client_name,
+    agent_q::AgentQTimeoutTick now,
+    agent_q::AgentQTimeoutWindow window)
 {
     g_begin_calls += 1;
     g_last_id = request_id;
     g_last_client_name = client_name;
+    g_last_begin_now = now;
     g_last_window = window;
     return g_begin_ok;
 }
@@ -204,6 +221,7 @@ agent_q::AgentQUsbConnectHandlerOps make_ops()
     return agent_q::AgentQUsbConnectHandlerOps{
         material_ready,
         write_busy,
+        current_tick,
         make_window,
         begin_connect,
         show_unavailable,
@@ -332,8 +350,10 @@ int main()
         assert(g_make_window_calls == 1);
         assert(g_begin_calls == 1);
         assert(strcmp(g_last_client_name, "Agent-Q") == 0);
-        assert(g_last_window.started_at == 11);
-        assert(g_last_window.deadline == 29);
+        assert(g_last_make_window_now == g_current_tick);
+        assert(g_last_begin_now == g_current_tick);
+        assert(g_last_window.started_at == g_current_tick);
+        assert(g_last_window.deadline == g_current_tick + 18);
         assert(g_write_rejected_calls == 1);
         assert(strcmp(g_last_rejected_code, "invalid_state") == 0);
         assert(strcmp(g_last_rejected_message, "Connect is unavailable.") == 0);
@@ -350,6 +370,10 @@ int main()
         assert(g_make_window_calls == 1);
         assert(g_begin_calls == 1);
         assert(strcmp(g_last_client_name, "Agent-Q") == 0);
+        assert(g_last_make_window_now == g_current_tick);
+        assert(g_last_begin_now == g_current_tick);
+        assert(g_last_window.started_at == g_current_tick);
+        assert(g_last_window.deadline == g_current_tick + 18);
         assert(g_reset_queue_calls == 1);
         assert(g_show_review_calls == 1);
         assert(g_record_waiting_calls == 1);

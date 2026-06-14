@@ -67,9 +67,10 @@ AgentQProtocolPinApprovalSnapshot protocol_pin_approval_snapshot()
 
 bool protocol_pin_approval_begin_connect(
     const char* request_id,
+    TickType_t now,
     AgentQTimeoutWindow request_window)
 {
-    if (g_state.active || !timeout_window_valid(request_window)) {
+    if (g_state.active || !timeout_window_valid_and_open_at(request_window, now)) {
         return false;
     }
     ProtocolPinApprovalState next = {};
@@ -87,9 +88,10 @@ bool protocol_pin_approval_begin_connect(
 bool protocol_pin_approval_begin_policy_update(
     const char* request_id,
     const char* session_id,
+    TickType_t now,
     AgentQTimeoutWindow request_window)
 {
-    if (g_state.active || !timeout_window_valid(request_window)) {
+    if (g_state.active || !timeout_window_valid_and_open_at(request_window, now)) {
         return false;
     }
     ProtocolPinApprovalState next = {};

@@ -23,6 +23,7 @@ bool request_backed_local_pin_request_id(
     size_t output_size);
 AgentQTimeoutWindow request_backed_local_pin_cap_input_window(
     AgentQLocalPinAuthPurpose purpose,
+    TickType_t now,
     AgentQTimeoutWindow input_window);
 bool request_backed_local_pin_resume_input_window(
     AgentQLocalPinAuthPurpose purpose,

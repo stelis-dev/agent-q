@@ -98,13 +98,14 @@ The current implementation includes:
   `unsupported_method`, and accepts Sui transaction bytes either inline or
   through same-session staged payload delivery before Firmware parsing.
   Firmware reads the device-local signing authorization mode. Policy mode
-  evaluates active policy only after the parsed transaction shape has complete
-  policy coverage; valid policy-incomplete shapes return `policy_rejected`
-  before signing. User mode starts clear-signing review when complete offline
-  facts review coverage exists, or a blind-signing warning when Firmware can
-  validate and bind the transaction but offline facts review coverage is
-  incomplete. Both user paths require the current human approval input mode
-  without applying active policy as an additional filter.
+  evaluates active policy only after Firmware proves the transaction is the
+  current GasCoin-derived proven-SUI split-result transfer shape; valid
+  policy-incomplete shapes return `policy_rejected` before signing. User mode
+  starts offline facts review when complete offline facts review coverage
+  exists, or a blind-signing warning when Firmware can validate and bind the
+  transaction but offline facts review coverage is incomplete. Both user paths
+  require the current human approval input mode without applying active policy
+  as an additional filter.
   It returns `signed` only after required history is durable and signing
   succeeds. Unsupported Sui transaction semantics, caller-selected
   authorization, caller-controlled timing fields, and chain-specific top-level
@@ -172,10 +173,11 @@ methods plus top-level `signing`, derives read-only public account identity
 (`get_accounts`), and links a host-tested Sui `TransactionData` facts extractor
 plus a common stored-policy runtime boundary. The current
 `sign_transaction` path reads the Firmware-local signing authorization mode and
-uses exactly one gate: policy mode may sign only after Firmware marks the parsed
-shape as having complete policy coverage and the committed active policy
-authorizes signing, while user mode may enter clear review or blind-signing
-device confirmation after Firmware validates and account-binds the transaction.
+uses exactly one gate: policy mode may sign only after Firmware proves the
+transaction is the current GasCoin-derived proven-SUI split-result transfer
+shape and the committed active policy authorizes signing, while user mode may
+enter offline facts review or blind-signing device confirmation after Firmware
+validates and account-binds the transaction.
 User mode then applies the current human approval input mode and records
 required history. Policy-incomplete valid transactions return `policy_rejected`
 in policy mode. It rejects unsupported transactions and returns `signed`,
@@ -329,13 +331,15 @@ gates for inline and staged transaction bytes.
 
 The policy test is also a common host-side check. It compiles
 `firmware/src/common/agent_q/policy` plus the Sui method adapter and
-verifies deny-by-default reject decisions, sign-rule invalidation while policy
-coverage is incomplete, default provider behavior, missing/invalid policy
-provider rejection, malformed policy rejection, and unsupported-facts
-rejection. StackChan CoreS3 consumes the committed active policy for Sui
-`sign_transaction` policy evaluation only after the parsed shape has complete
-policy coverage. Custom policy updates enter separately through the
-Firmware-owned `policy_propose` proposal flow.
+verifies deny-by-default reject decisions, current-contract transfer sign-rule
+acceptance, unbounded sign-rule invalidation, policy coverage fail-closed
+behavior, token-flow provenance cases, default provider behavior,
+missing/invalid policy provider rejection, malformed policy rejection, and
+unsupported-facts rejection. StackChan CoreS3 consumes the committed active
+policy for Sui `sign_transaction` policy evaluation only after the parsed shape
+matches the current GasCoin-derived proven-SUI split-result transfer contract.
+Custom policy updates enter separately through the Firmware-owned
+`policy_propose` proposal flow.
 
 The StackChan policy-store test is target-specific. It compiles the tracked
 `agent_q_policy_store.cpp` provider with ESP-IDF mbedTLS SHA-256 sources and

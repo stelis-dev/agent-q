@@ -25,6 +25,8 @@ constexpr size_t kAgentQPolicyMaxMethodDescriptors = 16;
 extern const AgentQPolicyFieldDescriptor
     kAgentQPolicyCommonFieldDescriptors[kAgentQPolicyCommonFieldDescriptorCount];
 
+using AgentQPolicySignRuleValidator = bool (*)(const AgentQPolicyRule& rule);
+
 struct AgentQPolicyMethodDescriptor {
     const char* chain;
     const char* operation;
@@ -32,6 +34,7 @@ struct AgentQPolicyMethodDescriptor {
     size_t field_descriptor_count;
     bool supports_reject;
     bool supports_sign;
+    AgentQPolicySignRuleValidator sign_rule_validator;
 };
 
 bool agent_q_policy_is_known_action(AgentQPolicyAction action);
@@ -56,6 +59,9 @@ bool agent_q_policy_validate_method_descriptor(
 bool agent_q_policy_validate_method_descriptors(
     const AgentQPolicyMethodDescriptor* descriptors,
     size_t descriptor_count);
+bool agent_q_policy_method_sign_rule_is_bounded(
+    const AgentQPolicyMethodDescriptor& descriptor,
+    const AgentQPolicyRule& rule);
 bool agent_q_policy_sign_rule_is_bounded(const AgentQPolicyRule& rule);
 bool agent_q_policy_sign_rule_count_is_supported(const AgentQPolicyDocument& policy);
 

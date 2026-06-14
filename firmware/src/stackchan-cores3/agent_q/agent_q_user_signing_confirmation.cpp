@@ -163,7 +163,7 @@ user_signing_confirmation_accept_review_and_begin_pin(
     if (flow.stage != AgentQUserSigningStage::reviewing) {
         return AgentQUserSigningConfirmationResult::wrong_stage;
     }
-    if (!timeout_window_valid(pin_input_window)) {
+    if (!timeout_window_valid_and_open_at(pin_input_window, now)) {
         return AgentQUserSigningConfirmationResult::invalid_deadline;
     }
     if (local_pin_auth_flow_active()) {
@@ -173,15 +173,14 @@ user_signing_confirmation_accept_review_and_begin_pin(
         timeout_window_cap_deadline(flow.request_window, pin_input_window.deadline);
     pin_input_window =
         timeout_window_from_deadline(pin_input_window.started_at, capped_pin_deadline);
-    if (!timeout_window_valid(pin_input_window) ||
-        timeout_window_reached(pin_input_window, now)) {
+    if (!timeout_window_valid_and_open_at(pin_input_window, now)) {
         return AgentQUserSigningConfirmationResult::deadline_expired;
     }
     SignaturePinBinding next_binding = {};
     next_binding.active = true;
     next_binding.pin.token = next_signature_pin_token();
     next_binding.flow = flow;
-    if (!local_pin_auth_begin_user_signing(next_binding.pin, pin_input_window)) {
+    if (!local_pin_auth_begin_user_signing(next_binding.pin, now, pin_input_window)) {
         return AgentQUserSigningConfirmationResult::local_pin_unavailable;
     }
 

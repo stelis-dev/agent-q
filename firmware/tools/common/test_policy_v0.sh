@@ -23,6 +23,7 @@ COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
 COMMON_POLICY_DIR="${COMMON_ROOT}/policy"
 COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
+CONTRACT_PATH="${REPO_ROOT}/specs/sui-sign-transaction-policy-contract.tsv"
 
 for required in \
   "${COMMON_ROOT}/agent_q_u64_decimal.h" \
@@ -36,9 +37,12 @@ for required in \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.h" \
+  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.h" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
+  "${CONTRACT_PATH}" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
-  "${FIXTURE_DIR}/unsupported_merge_coins_tx.bcs.hex"; do
+  "${FIXTURE_DIR}/merge_coins_tx.bcs.hex"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required file: ${required}" >&2
     exit 1
@@ -57,6 +61,7 @@ cat >"${TMP_DIR}/policy_v0_test.cpp" <<'CPP'
 #include <string.h>
 
 #include <string>
+#include <sstream>
 #include <vector>
 
 #include "agent_q_u64_decimal.h"
@@ -66,6 +71,25 @@ cat >"${TMP_DIR}/policy_v0_test.cpp" <<'CPP'
 #include "agent_q_sui_transaction_facts.h"
 
 namespace {
+
+struct PolicyContractField {
+    std::string field;
+    agent_q::AgentQPolicyValueType type;
+    bool allow_eq;
+    bool allow_in;
+    bool allow_lte;
+};
+
+struct PolicyContractSignBound {
+    std::string kind;
+    std::string field;
+    std::string value;
+};
+
+struct PolicyContract {
+    std::vector<PolicyContractField> fields;
+    std::vector<PolicyContractSignBound> sign_bounds;
+};
 
 std::string read_file(const char* path)
 {
@@ -92,6 +116,149 @@ std::string read_file(const char* path)
     }
     fclose(file);
     return data;
+}
+
+bool parse_contract_bool(const std::string& value, bool* out)
+{
+    if (out == nullptr) {
+        return false;
+    }
+    if (value == "yes") {
+        *out = true;
+        return true;
+    }
+    if (value == "no") {
+        *out = false;
+        return true;
+    }
+    return false;
+}
+
+bool parse_contract_type(const std::string& value, agent_q::AgentQPolicyValueType* out)
+{
+    if (out == nullptr) {
+        return false;
+    }
+    if (value == "string") {
+        *out = agent_q::AgentQPolicyValueType::string;
+        return true;
+    }
+    if (value == "u64_decimal") {
+        *out = agent_q::AgentQPolicyValueType::u64_decimal;
+        return true;
+    }
+    return false;
+}
+
+std::string replace_first_placeholder(const std::string& pattern, size_t value)
+{
+    const std::string placeholder = "{}";
+    const size_t offset = pattern.find(placeholder);
+    if (offset == std::string::npos) {
+        return pattern;
+    }
+    std::string output = pattern;
+    output.replace(offset, placeholder.size(), std::to_string(value));
+    return output;
+}
+
+PolicyContractField make_contract_field(
+    const std::string& field,
+    const std::string& type_name,
+    const std::string& allow_eq,
+    const std::string& allow_in,
+    const std::string& allow_lte,
+    int* failures)
+{
+    PolicyContractField output = {};
+    output.field = field;
+    if (!parse_contract_type(type_name, &output.type) ||
+        !parse_contract_bool(allow_eq, &output.allow_eq) ||
+        !parse_contract_bool(allow_in, &output.allow_in) ||
+        !parse_contract_bool(allow_lte, &output.allow_lte)) {
+        fprintf(stderr, "Invalid policy contract field row for %s\n", field.c_str());
+        *failures += 1;
+    }
+    return output;
+}
+
+PolicyContract read_policy_contract(const char* path, int* failures)
+{
+    PolicyContract contract = {};
+    const std::string raw = read_file(path);
+    std::istringstream lines(raw);
+    std::string line;
+    size_t line_number = 0;
+    while (std::getline(lines, line)) {
+        ++line_number;
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        std::istringstream columns(line);
+        std::vector<std::string> parts;
+        std::string part;
+        while (columns >> part) {
+            parts.push_back(part);
+        }
+        if (parts.empty()) {
+            continue;
+        }
+        if (parts[0] == "field" && parts.size() == 6) {
+            contract.fields.push_back(make_contract_field(
+                parts[1],
+                parts[2],
+                parts[3],
+                parts[4],
+                parts[5],
+                failures));
+            continue;
+        }
+        if (parts[0] == "generated" && parts.size() == 7) {
+            const size_t count = static_cast<size_t>(strtoull(parts[2].c_str(), nullptr, 10));
+            for (size_t index = 0; index < count; ++index) {
+                contract.fields.push_back(make_contract_field(
+                    replace_first_placeholder(parts[1], index),
+                    parts[3],
+                    parts[4],
+                    parts[5],
+                    parts[6],
+                    failures));
+            }
+            continue;
+        }
+        if (parts[0] == "generated2" && parts.size() == 8) {
+            const size_t outer_count = static_cast<size_t>(strtoull(parts[2].c_str(), nullptr, 10));
+            const size_t inner_count = static_cast<size_t>(strtoull(parts[3].c_str(), nullptr, 10));
+            for (size_t outer = 0; outer < outer_count; ++outer) {
+                for (size_t inner = 0; inner < inner_count; ++inner) {
+                    contract.fields.push_back(make_contract_field(
+                        replace_first_placeholder(
+                            replace_first_placeholder(parts[1], outer),
+                            inner),
+                        parts[4],
+                        parts[5],
+                        parts[6],
+                        parts[7],
+                        failures));
+                }
+            }
+            continue;
+        }
+        if ((parts[0] == "sign_eq" && parts.size() == 3) ||
+            (parts[0] == "sign_string" && parts.size() == 2) ||
+            (parts[0] == "sign_string_eq" && parts.size() == 2) ||
+            (parts[0] == "sign_lte" && parts.size() == 2)) {
+            contract.sign_bounds.push_back(PolicyContractSignBound{
+                parts[0],
+                parts[1],
+                parts.size() == 3 ? parts[2] : "",
+            });
+            continue;
+        }
+        fprintf(stderr, "Invalid policy contract row at line %zu: %s\n", line_number, line.c_str());
+        *failures += 1;
+    }
+    return contract;
 }
 
 int hex_value(char value)
@@ -186,6 +353,34 @@ void expect_runtime_decision(
     }
 }
 
+void expect_method_runtime_decision(
+    const char* label,
+    const agent_q::AgentQPolicyProvider& provider,
+    const agent_q::AgentQPolicyFacts& facts,
+    const agent_q::AgentQPolicyMethodDescriptor* methods,
+    size_t method_count,
+    agent_q::AgentQPolicyAction expected_action,
+    agent_q::AgentQPolicyDecisionReason expected_reason,
+    const char* expected_rule_id,
+    int* failures)
+{
+    const agent_q::AgentQPolicyDecision decision =
+        agent_q::evaluate_agent_q_policy_runtime(provider, facts, methods, method_count);
+    if (decision.action != expected_action || decision.reason != expected_reason ||
+        ((expected_rule_id == nullptr) != (decision.rule_id == nullptr)) ||
+        (expected_rule_id != nullptr && strcmp(expected_rule_id, decision.rule_id) != 0)) {
+        fprintf(stderr, "%s mismatch\n  expected: %s/%s/%s\n  actual:   %s/%s/%s\n",
+                label,
+                agent_q::agent_q_policy_action_name(expected_action),
+                agent_q::agent_q_policy_decision_reason_name(expected_reason),
+                expected_rule_id == nullptr ? "(none)" : expected_rule_id,
+                agent_q::agent_q_policy_action_name(decision.action),
+                agent_q::agent_q_policy_decision_reason_name(decision.reason),
+                decision.rule_id == nullptr ? "(none)" : decision.rule_id);
+        *failures += 1;
+    }
+}
+
 void expect_u64_format(uint64_t value, const char* expected, int* failures)
 {
     char buffer[agent_q::kAgentQU64DecimalBufferBytes] = {};
@@ -195,6 +390,192 @@ void expect_u64_format(uint64_t value, const char* expected, int* failures)
                 expected,
                 buffer);
         *failures += 1;
+    }
+}
+
+const agent_q::AgentQPolicyFieldDescriptor* find_policy_contract_descriptor(
+    const char* field,
+    const agent_q::AgentQPolicyMethodDescriptor& method)
+{
+    const agent_q::AgentQPolicyFieldDescriptor* common =
+        agent_q::agent_q_policy_find_common_field_descriptor(field);
+    if (common != nullptr) {
+        return common;
+    }
+    for (size_t index = 0; index < method.field_descriptor_count; ++index) {
+        const agent_q::AgentQPolicyFieldDescriptor& descriptor = method.field_descriptors[index];
+        if (strcmp(descriptor.field, field) == 0) {
+            return &descriptor;
+        }
+    }
+    return nullptr;
+}
+
+const PolicyContractField* find_contract_field(
+    const PolicyContract& contract,
+    const char* field)
+{
+    for (const PolicyContractField& entry : contract.fields) {
+        if (entry.field == field) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+agent_q::AgentQPolicyOperator sign_bound_operator(const std::string& kind)
+{
+    if (kind == "sign_lte") {
+        return agent_q::AgentQPolicyOperator::lte;
+    }
+    return agent_q::AgentQPolicyOperator::eq;
+}
+
+std::string sign_bound_value(const PolicyContractSignBound& bound)
+{
+    if (bound.kind == "sign_eq") {
+        return bound.value;
+    }
+    if (bound.kind == "sign_lte") {
+        return "1";
+    }
+    if (bound.field == "sui.sender_address" ||
+        bound.field == "sui.gas_owner_address" ||
+        bound.field == "sui.recipient0_address") {
+        return "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    }
+    if (bound.field == "sui.expiration_kind") {
+        return "none";
+    }
+    return "value";
+}
+
+bool build_sign_rule_from_contract(
+    const PolicyContract& contract,
+    size_t omitted_bound,
+    std::vector<std::string>* field_storage,
+    std::vector<std::string>* value_storage,
+    std::vector<agent_q::AgentQPolicyCriterion>* criteria,
+    agent_q::AgentQPolicyRule* rule)
+{
+    if (field_storage == nullptr || value_storage == nullptr || criteria == nullptr || rule == nullptr) {
+        return false;
+    }
+    field_storage->clear();
+    value_storage->clear();
+    criteria->clear();
+    field_storage->reserve(contract.sign_bounds.size());
+    value_storage->reserve(contract.sign_bounds.size());
+    criteria->reserve(contract.sign_bounds.size());
+    for (size_t index = 0; index < contract.sign_bounds.size(); ++index) {
+        if (index == omitted_bound) {
+            continue;
+        }
+        const PolicyContractSignBound& bound = contract.sign_bounds[index];
+        field_storage->push_back(bound.field);
+        value_storage->push_back(sign_bound_value(bound));
+    }
+    size_t storage_index = 0;
+    for (size_t index = 0; index < contract.sign_bounds.size(); ++index) {
+        if (index == omitted_bound) {
+            continue;
+        }
+        const PolicyContractSignBound& bound = contract.sign_bounds[index];
+        criteria->push_back(agent_q::AgentQPolicyCriterion{
+            field_storage->at(storage_index).c_str(),
+            sign_bound_operator(bound.kind),
+            value_storage->at(storage_index).c_str(),
+            nullptr,
+            0,
+        });
+        ++storage_index;
+    }
+    *rule = agent_q::AgentQPolicyRule{
+        "contract-sign",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        criteria->empty() ? nullptr : criteria->data(),
+        criteria->size(),
+    };
+    return true;
+}
+
+void verify_policy_contract_parity(
+    const PolicyContract& contract,
+    int* failures)
+{
+    const agent_q::AgentQPolicyMethodDescriptor method =
+        agent_q::sui_sign_transaction_policy_method_descriptor();
+    const size_t expected_field_count =
+        agent_q::kAgentQPolicyCommonFieldDescriptorCount + method.field_descriptor_count;
+    if (contract.fields.size() != expected_field_count) {
+        fprintf(stderr,
+                "policy contract field count mismatch: expected %zu actual %zu\n",
+                expected_field_count,
+                contract.fields.size());
+        *failures += 1;
+    }
+    for (const PolicyContractField& field : contract.fields) {
+        const agent_q::AgentQPolicyFieldDescriptor* descriptor =
+            find_policy_contract_descriptor(field.field.c_str(), method);
+        if (descriptor == nullptr) {
+            fprintf(stderr, "policy contract field missing from firmware descriptor: %s\n", field.field.c_str());
+            *failures += 1;
+            continue;
+        }
+        if (descriptor->type != field.type ||
+            descriptor->allow_eq != field.allow_eq ||
+            descriptor->allow_in != field.allow_in ||
+            descriptor->allow_lte != field.allow_lte) {
+            fprintf(stderr, "policy contract descriptor mismatch for %s\n", field.field.c_str());
+            *failures += 1;
+        }
+    }
+    for (size_t index = 0; index < agent_q::kAgentQPolicyCommonFieldDescriptorCount; ++index) {
+        if (find_contract_field(contract, agent_q::kAgentQPolicyCommonFieldDescriptors[index].field) == nullptr) {
+            fprintf(stderr,
+                    "firmware common descriptor missing from policy contract: %s\n",
+                    agent_q::kAgentQPolicyCommonFieldDescriptors[index].field);
+            *failures += 1;
+        }
+    }
+    for (size_t index = 0; index < method.field_descriptor_count; ++index) {
+        if (find_contract_field(contract, method.field_descriptors[index].field) == nullptr) {
+            fprintf(stderr,
+                    "firmware Sui descriptor missing from policy contract: %s\n",
+                    method.field_descriptors[index].field);
+            *failures += 1;
+        }
+    }
+
+    std::vector<std::string> fields;
+    std::vector<std::string> values;
+    std::vector<agent_q::AgentQPolicyCriterion> criteria;
+    agent_q::AgentQPolicyRule sign_rule = {};
+    if (!build_sign_rule_from_contract(
+            contract,
+            static_cast<size_t>(-1),
+            &fields,
+            &values,
+            &criteria,
+            &sign_rule) ||
+        !agent_q::sui_sign_transaction_policy_sign_rule_is_bounded(sign_rule)) {
+        fprintf(stderr, "policy contract sign bounds should satisfy firmware Sui sign-rule validator\n");
+        *failures += 1;
+    }
+    for (size_t omitted = 0; omitted < contract.sign_bounds.size(); ++omitted) {
+        if (!build_sign_rule_from_contract(contract, omitted, &fields, &values, &criteria, &sign_rule)) {
+            fprintf(stderr, "could not build policy contract sign rule\n");
+            *failures += 1;
+            continue;
+        }
+        if (agent_q::sui_sign_transaction_policy_sign_rule_is_bounded(sign_rule)) {
+            fprintf(stderr,
+                    "policy contract sign bound is not enforced by firmware validator: %s\n",
+                    contract.sign_bounds[omitted].field.c_str());
+            *failures += 1;
+        }
     }
 }
 
@@ -231,7 +612,8 @@ bool load_missing_policy(agent_q::AgentQPolicyDocument* out, void* context)
 agent_q::SuiTransactionFactsResult parse_policy_subject(
     const uint8_t* bytes,
     size_t size,
-    agent_q::SuiPolicySubjectFacts* out)
+    const char* request_network,
+    agent_q::AgentQSuiSignTransactionPolicySubject* out)
 {
     if (out != nullptr) {
         *out = {};
@@ -242,7 +624,7 @@ agent_q::SuiTransactionFactsResult parse_policy_subject(
     if (result != agent_q::SuiTransactionFactsResult::ok) {
         return result;
     }
-    return agent_q::build_sui_policy_subject_facts(parsed, out)
+    return agent_q::build_sui_sign_transaction_policy_subject(parsed, request_network, out)
                ? agent_q::SuiTransactionFactsResult::ok
                : agent_q::SuiTransactionFactsResult::unsupported_shape;
 }
@@ -251,13 +633,17 @@ agent_q::SuiTransactionFactsResult parse_policy_subject(
 
 int main(int argc, char** argv)
 {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s /path/to/fixture_dir\n", argv[0]);
+    if (argc != 3) {
+        fprintf(stderr, "Usage: %s /path/to/fixture_dir /path/to/policy_contract.tsv\n", argv[0]);
         return 2;
     }
 
     const std::string fixture_dir = argv[1];
+    const std::string contract_path = argv[2];
     int failures = 0;
+
+    const PolicyContract contract = read_policy_contract(contract_path.c_str(), &failures);
+    verify_policy_contract_parity(contract, &failures);
 
     expect_u64_format(0, "0", &failures);
     expect_u64_format(1, "1", &failures);
@@ -271,16 +657,17 @@ int main(int argc, char** argv)
 
     const std::vector<uint8_t> valid =
         read_hex_fixture((fixture_dir + "/valid_sui_transfer_tx.bcs.hex").c_str());
-    agent_q::SuiPolicySubjectFacts sui_facts = {};
+    agent_q::AgentQSuiSignTransactionPolicySubject sui_subject = {};
     const agent_q::SuiTransactionFactsResult parse_result =
-        parse_policy_subject(valid.data(), valid.size(), &sui_facts);
+        parse_policy_subject(valid.data(), valid.size(), "testnet", &sui_subject);
     if (parse_result != agent_q::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "valid Sui transfer fixture did not parse\n");
         return 1;
     }
+    const agent_q::SuiPolicySubjectFacts& sui_facts = sui_subject.transaction;
 
     agent_q::AgentQSuiSignTransactionPolicyFacts policy_facts = {};
-    if (!agent_q::make_sui_sign_transaction_policy_facts(sui_facts, &policy_facts)) {
+    if (!agent_q::make_sui_sign_transaction_policy_facts(sui_subject, &policy_facts)) {
         fprintf(stderr, "Sui method adapter rejected valid transfer facts\n");
         return 1;
     }
@@ -317,23 +704,23 @@ int main(int argc, char** argv)
         nullptr,
         &failures);
 
-    agent_q::SuiPolicySubjectFacts missing_gas_owner_facts = sui_facts;
-    missing_gas_owner_facts.gas_owner[0] = '\0';
+    agent_q::AgentQSuiSignTransactionPolicySubject missing_gas_owner_subject = sui_subject;
+    missing_gas_owner_subject.transaction.gas_owner[0] = '\0';
     agent_q::AgentQSuiSignTransactionPolicyFacts invalid_owner_facts = {};
     if (agent_q::make_sui_sign_transaction_policy_facts(
-            missing_gas_owner_facts,
+            missing_gas_owner_subject,
             &invalid_owner_facts)) {
         fprintf(stderr, "Sui method adapter accepted missing gas owner\n");
         failures += 1;
     }
-    agent_q::SuiPolicySubjectFacts sponsored_gas_owner_facts = sui_facts;
+    agent_q::AgentQSuiSignTransactionPolicySubject sponsored_gas_owner_subject = sui_subject;
     snprintf(
-        sponsored_gas_owner_facts.gas_owner,
-        sizeof(sponsored_gas_owner_facts.gas_owner),
+        sponsored_gas_owner_subject.transaction.gas_owner,
+        sizeof(sponsored_gas_owner_subject.transaction.gas_owner),
         "%s",
         "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
     if (!agent_q::make_sui_sign_transaction_policy_facts(
-            sponsored_gas_owner_facts,
+            sponsored_gas_owner_subject,
             &invalid_owner_facts)) {
         fprintf(stderr, "Sui method adapter rejected parse-derived sender/gas-owner mismatch facts\n");
         failures += 1;
@@ -366,11 +753,147 @@ int main(int argc, char** argv)
         "reject-transfer-shape",
         &failures);
 
+    agent_q::AgentQSuiSignTransactionPolicySubject mainnet_subject = {};
+    if (parse_policy_subject(valid.data(), valid.size(), "mainnet", &mainnet_subject) !=
+        agent_q::SuiTransactionFactsResult::ok) {
+        fprintf(stderr, "valid Sui transfer fixture did not parse with mainnet context\n");
+        failures += 1;
+    }
+
+    agent_q::AgentQSuiSignTransactionPolicySubject invalid_network_subject = {};
+    if (parse_policy_subject(valid.data(), valid.size(), "unknownnet", &invalid_network_subject) ==
+        agent_q::SuiTransactionFactsResult::ok) {
+        fprintf(stderr, "Sui method adapter accepted unsupported request network\n");
+        failures += 1;
+    }
+
+    const agent_q::AgentQPolicyCriterion token_limit_criteria[] = {
+        {"sui.sui_total_out_complete", agent_q::AgentQPolicyOperator::eq, "yes", nullptr, 0},
+        {"sui.sui_total_out_raw", agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},
+        {"sui.recipient0_amount_raw", agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule token_limit_rule = {
+        "reject-token-limit",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::reject,
+        token_limit_criteria,
+        sizeof(token_limit_criteria) / sizeof(token_limit_criteria[0]),
+    };
+    expect_decision(
+        "token amount facts match",
+        one_rule_policy(&token_limit_rule),
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::matched_rule,
+        "reject-token-limit",
+        &failures);
+
+    const agent_q::AgentQPolicyCriterion token_limit_too_low_criteria[] = {
+        {"sui.sui_total_out_complete", agent_q::AgentQPolicyOperator::eq, "yes", nullptr, 0},
+        {"sui.sui_total_out_raw", agent_q::AgentQPolicyOperator::lte, "999999", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule token_limit_too_low_rule = {
+        "reject-token-limit-too-low",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::reject,
+        token_limit_too_low_criteria,
+        sizeof(token_limit_too_low_criteria) / sizeof(token_limit_too_low_criteria[0]),
+    };
+    expect_decision(
+        "token amount over limit does not match",
+        one_rule_policy(&token_limit_too_low_rule),
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::default_reject,
+        nullptr,
+        &failures);
+
+    const agent_q::AgentQPolicyCriterion complete_transfer_sign_criteria[] = {
+        {"common.chain", agent_q::AgentQPolicyOperator::eq, "sui", nullptr, 0},
+        {"common.method", agent_q::AgentQPolicyOperator::eq, "sign_transaction", nullptr, 0},
+        {"common.intent", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQPolicyIntentProgrammableTransaction, nullptr, 0},
+        {"sui.transaction_kind", agent_q::AgentQPolicyOperator::eq, "programmable_transaction", nullptr, 0},
+        {"sui.sender_address", agent_q::AgentQPolicyOperator::eq, sui_facts.sender, nullptr, 0},
+        {"sui.gas_owner_address", agent_q::AgentQPolicyOperator::eq, sui_facts.gas_owner, nullptr, 0},
+        {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "50000000", nullptr, 0},
+        {"sui.gas_price", agent_q::AgentQPolicyOperator::lte, sui_facts.gas_price, nullptr, 0},
+        {"sui.expiration_kind", agent_q::AgentQPolicyOperator::eq, "none", nullptr, 0},
+        {"sui.sui_total_out_complete", agent_q::AgentQPolicyOperator::eq, "yes", nullptr, 0},
+        {"sui.sui_total_out_raw", agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},
+        {"sui.command_count", agent_q::AgentQPolicyOperator::eq, "2", nullptr, 0},
+        {"sui.command0_kind", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQSuiPolicyCommandKindSplitCoins, nullptr, 0},
+        {"sui.command1_kind", agent_q::AgentQPolicyOperator::eq, agent_q::kAgentQSuiPolicyCommandKindTransferObjects, nullptr, 0},
+        {"sui.recipient_count", agent_q::AgentQPolicyOperator::eq, "1", nullptr, 0},
+        {"sui.recipient0_address", agent_q::AgentQPolicyOperator::eq, sui_subject.token_flow.recipient0_address, nullptr, 0},
+        {"sui.recipient0_amount_raw", agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},
+        {"sui.coin_flow0_source_kind", agent_q::AgentQPolicyOperator::eq, "split_result", nullptr, 0},
+        {"sui.coin_flow0_asset_state", agent_q::AgentQPolicyOperator::eq, "proven_sui", nullptr, 0},
+        {"sui.coin_flow0_amount_known", agent_q::AgentQPolicyOperator::eq, "yes", nullptr, 0},
+        {"sui.coin_flow0_sink_kind", agent_q::AgentQPolicyOperator::eq, "transfer_recipient", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule complete_transfer_sign_rule = {
+        "sign-complete-transfer",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        complete_transfer_sign_criteria,
+        sizeof(complete_transfer_sign_criteria) / sizeof(complete_transfer_sign_criteria[0]),
+    };
+    if (!agent_q::sui_sign_transaction_policy_sign_rule_is_bounded(complete_transfer_sign_rule)) {
+        fprintf(stderr, "complete transfer sign rule should be bounded by the Sui method adapter\n");
+        failures += 1;
+    }
+    char complete_transfer_sign_summary[128] = {};
+    if (!agent_q::sui_sign_transaction_policy_build_sign_rule_summary(
+            complete_transfer_sign_rule,
+            complete_transfer_sign_summary,
+            sizeof(complete_transfer_sign_summary)) ||
+        strstr(complete_transfer_sign_summary, "GasCoin split-result transfer") == nullptr ||
+        strstr(complete_transfer_sign_summary, "amt<=1000000") == nullptr ||
+        strstr(complete_transfer_sign_summary, "total<=1000000") == nullptr ||
+        strstr(complete_transfer_sign_summary, "gas<=50000000/") == nullptr) {
+        fprintf(stderr,
+                "complete transfer sign summary mismatch: %s\n",
+                complete_transfer_sign_summary);
+        failures += 1;
+    }
+    expect_decision(
+        "generic policy evaluator keeps sign disabled without method descriptors",
+        one_rule_policy(&complete_transfer_sign_rule),
+        facts,
+        agent_q::AgentQPolicyAction::reject,
+        agent_q::AgentQPolicyDecisionReason::invalid_policy,
+        nullptr,
+        &failures);
+    const agent_q::AgentQPolicyMethodDescriptor sui_methods[] = {
+        agent_q::sui_sign_transaction_policy_method_descriptor(),
+    };
+    FixedPolicyProviderContext complete_transfer_sign_context = {
+        one_rule_policy(&complete_transfer_sign_rule),
+    };
+    const agent_q::AgentQPolicyProvider complete_transfer_sign_provider = {
+        load_fixed_policy,
+        &complete_transfer_sign_context,
+    };
+    expect_method_runtime_decision(
+        "method-aware runtime authorizes bounded transfer sign rule",
+        complete_transfer_sign_provider,
+        facts,
+        sui_methods,
+        sizeof(sui_methods) / sizeof(sui_methods[0]),
+        agent_q::AgentQPolicyAction::sign,
+        agent_q::AgentQPolicyDecisionReason::matched_rule,
+        "sign-complete-transfer",
+        &failures);
+
     const std::vector<uint8_t> move_call_tx =
         read_hex_fixture((fixture_dir + "/move_call_tx.bcs.hex").c_str());
-    agent_q::SuiPolicySubjectFacts move_call_sui_facts = {};
+    agent_q::AgentQSuiSignTransactionPolicySubject move_call_subject = {};
     const agent_q::SuiTransactionFactsResult move_call_parse_result =
-        parse_policy_subject(move_call_tx.data(), move_call_tx.size(), &move_call_sui_facts);
+        parse_policy_subject(move_call_tx.data(), move_call_tx.size(), "testnet", &move_call_subject);
+    const agent_q::SuiPolicySubjectFacts& move_call_sui_facts = move_call_subject.transaction;
     if (move_call_parse_result != agent_q::SuiTransactionFactsResult::ok ||
         move_call_sui_facts.command_count != 1 ||
         move_call_sui_facts.commands[0].kind != agent_q::SuiCommandFactKind::move_call ||
@@ -388,7 +911,7 @@ int main(int argc, char** argv)
         static_cast<unsigned>(move_call_sui_facts.commands[0].type_argument_count));
     agent_q::AgentQSuiSignTransactionPolicyFacts move_call_policy_facts = {};
     if (!agent_q::make_sui_sign_transaction_policy_facts(
-            move_call_sui_facts,
+            move_call_subject,
             &move_call_policy_facts)) {
         fprintf(stderr, "Sui method adapter rejected generic MoveCall policy facts\n");
         failures += 1;
@@ -412,8 +935,16 @@ int main(int argc, char** argv)
         move_call_sign_criteria,
         sizeof(move_call_sign_criteria) / sizeof(move_call_sign_criteria[0]),
     };
+    char unsupported_sign_summary[128] = {};
+    if (agent_q::sui_sign_transaction_policy_build_sign_rule_summary(
+            move_call_sign_rule,
+            unsupported_sign_summary,
+            sizeof(unsupported_sign_summary))) {
+        fprintf(stderr, "MoveCall sign rule should not produce a bounded sign summary\n");
+        failures += 1;
+    }
     expect_decision(
-        "MoveCall sign rule is invalid until policy coverage is implemented",
+        "MoveCall sign rule is outside the current automatic signing contract",
         one_rule_policy(&move_call_sign_rule),
         move_call_policy_facts.facts,
         agent_q::AgentQPolicyAction::reject,
@@ -499,7 +1030,7 @@ int main(int argc, char** argv)
         sizeof(multi_package_sign_criteria) / sizeof(multi_package_sign_criteria[0]),
     };
     expect_decision(
-        "multi-package sign rule is invalid until policy coverage is implemented",
+        "multi-package sign rule missing common policy bounds is invalid",
         one_rule_policy(&multi_package_sign_rule),
         move_call_policy_facts.facts,
         agent_q::AgentQPolicyAction::reject,
@@ -523,7 +1054,7 @@ int main(int argc, char** argv)
         sizeof(two_sign_rules) / sizeof(two_sign_rules[0]),
     };
     expect_decision(
-        "multiple sign rules are invalid until policy coverage is implemented",
+        "multiple sign rules remain invalid",
         two_sign_rule_policy,
         move_call_policy_facts.facts,
         agent_q::AgentQPolicyAction::reject,
@@ -902,12 +1433,12 @@ int main(int argc, char** argv)
         &failures);
 
     const std::vector<uint8_t> unsupported_tx =
-        read_hex_fixture((fixture_dir + "/unsupported_merge_coins_tx.bcs.hex").c_str());
-    sui_facts = {};
+        read_hex_fixture((fixture_dir + "/merge_coins_tx.bcs.hex").c_str());
+    agent_q::AgentQSuiSignTransactionPolicySubject unsupported_subject = {};
     const agent_q::SuiTransactionFactsResult unsupported_parse_result =
-        parse_policy_subject(unsupported_tx.data(), unsupported_tx.size(), &sui_facts);
+        parse_policy_subject(unsupported_tx.data(), unsupported_tx.size(), "testnet", &unsupported_subject);
     if (unsupported_parse_result == agent_q::SuiTransactionFactsResult::ok &&
-        sui_facts.command_count == 0) {
+        unsupported_subject.transaction.command_count == 0) {
         fprintf(stderr, "parsed Sui fixture should preserve generic command facts\n");
         failures += 1;
     }
@@ -935,7 +1466,8 @@ CPP
   "${COMMON_POLICY_DIR}/agent_q_policy_runtime.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   -o "${TMP_DIR}/policy_v0_test"
 
-"${TMP_DIR}/policy_v0_test" "${FIXTURE_DIR}"
+"${TMP_DIR}/policy_v0_test" "${FIXTURE_DIR}" "${CONTRACT_PATH}"

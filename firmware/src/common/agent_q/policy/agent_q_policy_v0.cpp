@@ -24,19 +24,30 @@ bool string_eq(const char* left, const char* right)
 }
 
 const AgentQPolicyFieldDescriptor* find_adapter_field_descriptor(
-    const AgentQPolicyFacts& facts,
+    const AgentQPolicyFieldDescriptor* descriptors,
+    size_t descriptor_count,
     const char* field)
 {
-    if (facts.field_descriptors == nullptr) {
+    if (descriptors == nullptr) {
         return nullptr;
     }
-    for (size_t index = 0; index < facts.field_descriptor_count; ++index) {
-        const AgentQPolicyFieldDescriptor& descriptor = facts.field_descriptors[index];
+    for (size_t index = 0; index < descriptor_count; ++index) {
+        const AgentQPolicyFieldDescriptor& descriptor = descriptors[index];
         if (string_eq(descriptor.field, field)) {
             return &descriptor;
         }
     }
     return nullptr;
+}
+
+const AgentQPolicyFieldDescriptor* find_adapter_field_descriptor(
+    const AgentQPolicyFacts& facts,
+    const char* field)
+{
+    return find_adapter_field_descriptor(
+        facts.field_descriptors,
+        facts.field_descriptor_count,
+        field);
 }
 
 const AgentQPolicyFieldDescriptor* find_field_descriptor(
@@ -50,12 +61,24 @@ const AgentQPolicyFieldDescriptor* find_field_descriptor(
     return find_adapter_field_descriptor(facts, field);
 }
 
-bool validate_criterion(
-    const AgentQPolicyCriterion& criterion,
-    const AgentQPolicyFacts& facts)
+const AgentQPolicyFieldDescriptor* find_field_descriptor(
+    const AgentQPolicyMethodDescriptor& method,
+    const char* field)
 {
-    const AgentQPolicyFieldDescriptor* descriptor =
-        find_field_descriptor(facts, criterion.field);
+    const AgentQPolicyFieldDescriptor* descriptor = agent_q_policy_find_common_field_descriptor(field);
+    if (descriptor != nullptr) {
+        return descriptor;
+    }
+    return find_adapter_field_descriptor(
+        method.field_descriptors,
+        method.field_descriptor_count,
+        field);
+}
+
+bool validate_criterion_against_descriptor(
+    const AgentQPolicyCriterion& criterion,
+    const AgentQPolicyFieldDescriptor* descriptor)
+{
     if (descriptor == nullptr || !agent_q_policy_is_known_operator(criterion.op) ||
         !agent_q_policy_operator_allowed(*descriptor, criterion.op)) {
         return false;
@@ -88,16 +111,30 @@ bool validate_criterion(
     return false;
 }
 
-bool validate_rule(
-    const AgentQPolicyRule& rule,
+bool validate_criterion(
+    const AgentQPolicyCriterion& criterion,
     const AgentQPolicyFacts& facts)
+{
+    return validate_criterion_against_descriptor(
+        criterion,
+        find_field_descriptor(facts, criterion.field));
+}
+
+bool validate_rule_shape(const AgentQPolicyRule& rule)
 {
     if (!string_present(rule.id) || !string_present(rule.chain) ||
         !string_present(rule.operation) || !agent_q_policy_is_known_action(rule.action)) {
         return false;
     }
-    if (rule.criterion_count > kAgentQPolicyMaxRuleCriteria ||
-        (rule.criterion_count != 0 && rule.criteria == nullptr)) {
+    return rule.criterion_count <= kAgentQPolicyMaxRuleCriteria &&
+           (rule.criterion_count == 0 || rule.criteria != nullptr);
+}
+
+bool validate_rule(
+    const AgentQPolicyRule& rule,
+    const AgentQPolicyFacts& facts)
+{
+    if (!validate_rule_shape(rule)) {
         return false;
     }
     for (size_t index = 0; index < rule.criterion_count; ++index) {
@@ -108,9 +145,53 @@ bool validate_rule(
     return true;
 }
 
+const AgentQPolicyMethodDescriptor* find_method_descriptor(
+    const AgentQPolicyMethodDescriptor* descriptors,
+    size_t descriptor_count,
+    const char* chain,
+    const char* operation)
+{
+    if (descriptors == nullptr || chain == nullptr || operation == nullptr) {
+        return nullptr;
+    }
+    for (size_t index = 0; index < descriptor_count; ++index) {
+        const AgentQPolicyMethodDescriptor& descriptor = descriptors[index];
+        if (string_eq(descriptor.chain, chain) &&
+            string_eq(descriptor.operation, operation)) {
+            return &descriptor;
+        }
+    }
+    return nullptr;
+}
+
+bool validate_rule_method(
+    const AgentQPolicyRule& rule,
+    const AgentQPolicyMethodDescriptor* method_descriptors,
+    size_t method_descriptor_count)
+{
+    if (method_descriptors == nullptr || method_descriptor_count == 0) {
+        return agent_q_policy_sign_rule_is_bounded(rule);
+    }
+    const AgentQPolicyMethodDescriptor* method =
+        find_method_descriptor(
+            method_descriptors,
+            method_descriptor_count,
+            rule.chain,
+            rule.operation);
+    if (method == nullptr) {
+        return false;
+    }
+    if (rule.action == AgentQPolicyAction::reject) {
+        return method->supports_reject;
+    }
+    return agent_q_policy_method_sign_rule_is_bounded(*method, rule);
+}
+
 bool validate_policy(
     const AgentQPolicyDocument& policy,
-    const AgentQPolicyFacts& facts)
+    const AgentQPolicyFacts& facts,
+    const AgentQPolicyMethodDescriptor* method_descriptors,
+    size_t method_descriptor_count)
 {
     if (policy.schema != kAgentQPolicyV0Schema ||
         policy.default_action != AgentQPolicyAction::reject ||
@@ -119,12 +200,16 @@ bool validate_policy(
         !agent_q_policy_sign_rule_count_is_supported(policy)) {
         return false;
     }
+    if (method_descriptors != nullptr &&
+        !validate_agent_q_policy_v0_document_for_methods(policy, method_descriptors, method_descriptor_count)) {
+        return false;
+    }
     for (size_t index = 0; index < policy.rule_count; ++index) {
-        if (!validate_rule(policy.rules[index], facts)) {
-            return false;
-        }
-        if (!agent_q_policy_sign_rule_is_bounded(policy.rules[index])) {
-            return false;
+        if (method_descriptors == nullptr) {
+            if (!validate_rule(policy.rules[index], facts) ||
+                !validate_rule_method(policy.rules[index], method_descriptors, method_descriptor_count)) {
+                return false;
+            }
         }
     }
     return true;
@@ -231,6 +316,67 @@ bool rule_matches(const AgentQPolicyRule& rule, const AgentQPolicyFacts& facts)
 
 }  // namespace
 
+bool validate_agent_q_policy_v0_rule_for_methods(
+    const AgentQPolicyRule& rule,
+    const AgentQPolicyMethodDescriptor* method_descriptors,
+    size_t method_descriptor_count)
+{
+    if (!validate_rule_shape(rule) ||
+        !agent_q_policy_validate_method_descriptors(method_descriptors, method_descriptor_count)) {
+        return false;
+    }
+    const AgentQPolicyMethodDescriptor* method =
+        find_method_descriptor(
+            method_descriptors,
+            method_descriptor_count,
+            rule.chain,
+            rule.operation);
+    if (method == nullptr) {
+        return false;
+    }
+    if ((rule.action == AgentQPolicyAction::reject && !method->supports_reject) ||
+        !agent_q_policy_method_sign_rule_is_bounded(*method, rule)) {
+        return false;
+    }
+    for (size_t index = 0; index < rule.criterion_count; ++index) {
+        if (!validate_criterion_against_descriptor(
+                rule.criteria[index],
+                find_field_descriptor(*method, rule.criteria[index].field))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validate_agent_q_policy_v0_document_for_methods(
+    const AgentQPolicyDocument& policy,
+    const AgentQPolicyMethodDescriptor* method_descriptors,
+    size_t method_descriptor_count)
+{
+    if (policy.schema != kAgentQPolicyV0Schema ||
+        policy.default_action != AgentQPolicyAction::reject ||
+        policy.rule_count > kAgentQPolicyMaxRules ||
+        (policy.rule_count != 0 && policy.rules == nullptr) ||
+        !agent_q_policy_sign_rule_count_is_supported(policy)) {
+        return false;
+    }
+    if (policy.rule_count == 0) {
+        return true;
+    }
+    if (!agent_q_policy_validate_method_descriptors(method_descriptors, method_descriptor_count)) {
+        return false;
+    }
+    for (size_t index = 0; index < policy.rule_count; ++index) {
+        if (!validate_agent_q_policy_v0_rule_for_methods(
+                policy.rules[index],
+                method_descriptors,
+                method_descriptor_count)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 const char* agent_q_policy_action_name(AgentQPolicyAction action)
 {
     switch (action) {
@@ -274,10 +420,19 @@ AgentQPolicyDecision evaluate_agent_q_policy_v0(
     const AgentQPolicyDocument& policy,
     const AgentQPolicyFacts& facts)
 {
+    return evaluate_agent_q_policy_v0_for_methods(policy, facts, nullptr, 0);
+}
+
+AgentQPolicyDecision evaluate_agent_q_policy_v0_for_methods(
+    const AgentQPolicyDocument& policy,
+    const AgentQPolicyFacts& facts,
+    const AgentQPolicyMethodDescriptor* method_descriptors,
+    size_t method_descriptor_count)
+{
     if (!validate_facts(facts)) {
         return reject_decision(AgentQPolicyDecisionReason::unsupported_facts);
     }
-    if (!validate_policy(policy, facts)) {
+    if (!validate_policy(policy, facts, method_descriptors, method_descriptor_count)) {
         return reject_decision(AgentQPolicyDecisionReason::invalid_policy);
     }
 

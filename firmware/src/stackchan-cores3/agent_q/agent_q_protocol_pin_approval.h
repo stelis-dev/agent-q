@@ -33,10 +33,12 @@ AgentQProtocolPinApprovalSnapshot protocol_pin_approval_snapshot();
 
 bool protocol_pin_approval_begin_connect(
     const char* request_id,
+    TickType_t now,
     AgentQTimeoutWindow request_window);
 bool protocol_pin_approval_begin_policy_update(
     const char* request_id,
     const char* session_id,
+    TickType_t now,
     AgentQTimeoutWindow request_window);
 
 bool protocol_pin_approval_request_id_for_local_pin_purpose(

@@ -223,8 +223,8 @@ For Sui transaction signing, Firmware reads its device-local signing mode and
 uses exactly one gate:
 
 - policy mode evaluates the active Firmware policy;
-- user mode shows device-local clear-signing review and requires local
-  confirmation.
+- user mode shows device-local offline facts review or an explicit
+  blind-signing warning, then requires local confirmation.
 
 Personal-message signing is user-mode only in the current implementation.
 Policy mode fails closed for `sign_personal_message`.

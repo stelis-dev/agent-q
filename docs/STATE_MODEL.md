@@ -198,10 +198,10 @@ binary BIP-39 entropy blob, a canonical active policy record, and a local
 `provisioned`; the normal product flow installs the default-reject policy, while
 read-only Sui account derivation, read-only active policy document readback,
 source-level local reset/material wipe, and the Firmware-owned
-`policy_propose` proposal flow for current-schema reject policies is
-implemented. The `sign` action value is known by the schema, but Sui
-`sign_transaction` sign rules are rejected while complete policy coverage is
-not implemented. USER_PROFILE secure storage gates are still separate work.
+`policy_propose` proposal flow for current-schema policies is implemented. Sui
+`sign_transaction` policy-mode signing is source-wired for current-contract
+GasCoin-derived proven-SUI split-result transfer transactions whose active policy has a matching
+bounded `sign` rule. USER_PROFILE secure storage gates are still separate work.
 
 Allowed:
 
@@ -248,10 +248,10 @@ read-only `policy_get` for the committed active policy document, read-only
 session-scoped Sign API runtime. `sign_transaction` has
 `source-wired-not-product-active` status for inline or same-session staged Sui
 transaction bytes decoded by the Firmware Sui `TransactionData::V1 ->
-ProgrammableTransaction` facts extractor. Policy authorization currently returns
-a policy rejection for valid transactions whose policy coverage is incomplete,
-and does not sign until complete policy coverage and accepted sign-rule
-validation are implemented. User authorization enters device review only when
+ProgrammableTransaction` facts extractor. Policy authorization signs only
+current-contract GasCoin-derived proven-SUI split-result transfer transactions with a matching bounded
+`sign` rule; other valid policy-incomplete transactions return
+`policy_rejected`. User authorization enters device review only when
 the parsed shape has either complete offline facts review coverage or an
 explicit blind-signing warning for a valid, account-bound transaction whose
 offline facts review coverage is incomplete.
@@ -278,9 +278,10 @@ Firmware-owned signing gate
 for the requested method:
 
 - policy mode evaluates the active policy only after the parsed transaction
-  shape has complete policy coverage, treats policy authorization as sufficient
-  for `sign_transaction`, shows speech-bubble status notifications, and does
-  not fall back to user confirmation on reject. `sign_personal_message` is
+  matches the current automatic policy-signing contract for GasCoin-derived
+  proven-SUI split-result transfer facts, treats policy authorization as sufficient for
+  `sign_transaction`, shows speech-bubble status notifications, and does not
+  fall back to user confirmation on reject. `sign_personal_message` is
   unsupported in policy mode and fails closed;
 - user mode shows covered offline facts when offline facts review coverage is
   complete, or an explicit blind-signing warning when Firmware can validate and
@@ -486,7 +487,7 @@ device-confirmed signing methods. Terminal stages for user-mode signing are:
 
 For device-confirmed signing, review Reject is the terminal
 `user_rejected` action. Back from the PIN screen is not a terminal reject: it
-wipes only PIN scratch and returns to the clear-signing review with the
+wipes only PIN scratch and returns to the offline facts review with the
 signable request still owned by the signing state owner. If the user rejects
 from that review, the request then records terminal `user_rejected`.
 
@@ -667,17 +668,20 @@ local authentication unavailable. Protocol-backed PIN purposes (`connect`,
 `policy_update`, and device-confirmed signing) also have an immutable outer
 request window owned by their protocol state owner. That request window is the
 admission boundary for review/PIN entry and caps PIN input windows before the
-PIN is submitted. After a complete PIN has been submitted, the request window
-is not the terminal timeout authority for stored-PIN cryptographic processing;
-the local-auth worker watchdog, session/material checks, and the next state
-guards remain authoritative. For policy updates,
+PIN is submitted. A request-backed sensitive flow owner stores a timeout window
+only when it is structurally valid and currently open at the owner-observed
+tick; callers may create candidate windows, but caller freshness is not the
+state authority. After a complete PIN has been submitted, the request window is
+not the terminal timeout authority for stored-PIN cryptographic processing; the
+local-auth worker watchdog, session/material checks, and the next state guards
+remain authoritative. For policy updates,
 `local_pin_auth` owns
 only PIN verification; the pending proposal summary, policy hash, commit stage,
 and terminal result remain owned by the policy-update flow. For
 device-confirmed signing, `local_pin_auth` is only a verifier input; the
 request identity, signable payload scratch, history-write transition, and
 terminal cleanup remain owned by the user-signing state owner and confirmation
-coordinator. Signing PIN Back returns to the clear-signing review instead of
+coordinator. Signing PIN Back returns to the offline facts review instead of
 writing a terminal rejection; only review Reject is recorded as
 `user_rejected`. The internal signing PIN purpose is not a protocol
 request, signing API, or capability advertisement. The UI panel may display

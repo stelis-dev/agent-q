@@ -195,6 +195,70 @@ int main()
         "reject-only Sui policy canonicalizes",
         agent_q::canonicalize_agent_q_policy_v0(reject_policy, sui_methods, 1, &canonical),
         agent_q::AgentQPolicyCanonicalStatus::ok);
+    const char* asset_states[] = {"proven_sui", "unproven"};
+    const agent_q::AgentQPolicyCriterion asset_state_in_criteria[] = {
+        {"sui.coin_flow0_asset_state", agent_q::AgentQPolicyOperator::in, nullptr, asset_states, 2},
+    };
+    const agent_q::AgentQPolicyRule asset_state_in_rule = {
+        "reject-asset-state",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::reject,
+        asset_state_in_criteria,
+        sizeof(asset_state_in_criteria) / sizeof(asset_state_in_criteria[0]),
+    };
+    const agent_q::AgentQPolicyDocument asset_state_in_policy = {
+        agent_q::kAgentQPolicyV0Schema,
+        agent_q::AgentQPolicyAction::reject,
+        &asset_state_in_rule,
+        1,
+    };
+    expect_status(
+        "Sui coin flow asset state supports in operator",
+        agent_q::canonicalize_agent_q_policy_v0(asset_state_in_policy, sui_methods, 1, &canonical),
+        agent_q::AgentQPolicyCanonicalStatus::ok);
+
+    const agent_q::AgentQPolicyCriterion complete_sign_criteria[] = {
+        {"common.chain", agent_q::AgentQPolicyOperator::eq, "sui", nullptr, 0},
+        {"common.method", agent_q::AgentQPolicyOperator::eq, "sign_transaction", nullptr, 0},
+        {"common.intent", agent_q::AgentQPolicyOperator::eq, "programmable_transaction", nullptr, 0},
+        {"sui.transaction_kind", agent_q::AgentQPolicyOperator::eq, "programmable_transaction", nullptr, 0},
+        {"sui.sender_address", agent_q::AgentQPolicyOperator::eq, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nullptr, 0},
+        {"sui.gas_owner_address", agent_q::AgentQPolicyOperator::eq, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nullptr, 0},
+        {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "50000000", nullptr, 0},
+        {"sui.gas_price", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
+        {"sui.expiration_kind", agent_q::AgentQPolicyOperator::eq, "none", nullptr, 0},
+        {"sui.sui_total_out_complete", agent_q::AgentQPolicyOperator::eq, "yes", nullptr, 0},
+        {"sui.sui_total_out_raw", agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},
+        {"sui.command_count", agent_q::AgentQPolicyOperator::eq, "2", nullptr, 0},
+        {"sui.command0_kind", agent_q::AgentQPolicyOperator::eq, "split_coins", nullptr, 0},
+        {"sui.command1_kind", agent_q::AgentQPolicyOperator::eq, "transfer_objects", nullptr, 0},
+        {"sui.recipient_count", agent_q::AgentQPolicyOperator::eq, "1", nullptr, 0},
+        {"sui.recipient0_address", agent_q::AgentQPolicyOperator::eq, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", nullptr, 0},
+        {"sui.recipient0_amount_raw", agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},
+        {"sui.coin_flow0_source_kind", agent_q::AgentQPolicyOperator::eq, "split_result", nullptr, 0},
+        {"sui.coin_flow0_asset_state", agent_q::AgentQPolicyOperator::eq, "proven_sui", nullptr, 0},
+        {"sui.coin_flow0_amount_known", agent_q::AgentQPolicyOperator::eq, "yes", nullptr, 0},
+        {"sui.coin_flow0_sink_kind", agent_q::AgentQPolicyOperator::eq, "transfer_recipient", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule complete_sign_rule = {
+        "sign-complete-transfer",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        complete_sign_criteria,
+        sizeof(complete_sign_criteria) / sizeof(complete_sign_criteria[0]),
+    };
+    const agent_q::AgentQPolicyDocument complete_sign_policy = {
+        agent_q::kAgentQPolicyV0Schema,
+        agent_q::AgentQPolicyAction::reject,
+        &complete_sign_rule,
+        1,
+    };
+    expect_status(
+        "complete bounded Sui sign policy canonicalizes",
+        agent_q::canonicalize_agent_q_policy_v0(complete_sign_policy, sui_methods, 1, &canonical),
+        agent_q::AgentQPolicyCanonicalStatus::ok);
 
     const agent_q::AgentQPolicyCriterion sign_criteria[] = {
         {"sui.command_count", agent_q::AgentQPolicyOperator::eq, "1", nullptr, 0},
@@ -231,8 +295,22 @@ int main()
         sizeof(two_sign_rules) / sizeof(two_sign_rules[0]),
     };
     expect_status(
-        "multiple sign rules are invalid until policy coverage is implemented",
+        "multiple sign rules are invalid",
         agent_q::canonicalize_agent_q_policy_v0(two_sign_rule_policy, sui_methods, 1, &canonical),
+        agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
+    expect_status(
+        "complete bounded Sui sign policy re-canonicalizes before decoded semantic test",
+        agent_q::canonicalize_agent_q_policy_v0(complete_sign_policy, sui_methods, 1, &canonical),
+        agent_q::AgentQPolicyCanonicalStatus::ok);
+    agent_q::AgentQPolicyCanonicalDocument decoded_multi_sign_canonical = canonical;
+    decoded_multi_sign_canonical.rule_count = 2;
+    decoded_multi_sign_canonical.rules[1] = decoded_multi_sign_canonical.rules[0];
+    expect_status(
+        "decoded canonical document rejects multiple sign rules",
+        agent_q::validate_agent_q_policy_v0_canonical_document(
+            decoded_multi_sign_canonical,
+            sui_methods,
+            1),
         agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
 
     const agent_q::AgentQPolicyCriterion move_call_sign_criteria[] = {
@@ -261,7 +339,7 @@ int main()
         1,
     };
     expect_status(
-        "MoveCall graph sign policy is invalid until policy coverage is implemented",
+        "MoveCall sign policy is outside the current automatic signing contract",
         agent_q::canonicalize_agent_q_policy_v0(move_call_sign_policy, sui_methods, 1, &canonical),
         agent_q::AgentQPolicyCanonicalStatus::invalid_policy);
 
@@ -418,6 +496,7 @@ int main()
             sizeof(duplicate_fields) / sizeof(duplicate_fields[0]),
             true,
             true,
+            nullptr,
         },
     };
     expect_status(
@@ -468,7 +547,10 @@ CPP
   "${COMMON_POLICY_DIR}/agent_q_policy_canonical.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   -o "${TMP_DIR}/policy_canonical_test"
 
 "${TMP_DIR}/policy_canonical_test"

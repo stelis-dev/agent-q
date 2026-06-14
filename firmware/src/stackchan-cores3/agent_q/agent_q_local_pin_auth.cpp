@@ -217,10 +217,10 @@ void local_pin_auth_clear_flow()
     g_state.clear_flow();
 }
 
-bool local_pin_auth_begin_connect(AgentQTimeoutWindow input_window)
+bool local_pin_auth_begin_connect(TickType_t now, AgentQTimeoutWindow input_window)
 {
     g_state.clear_flow();
-    if (!timeout_window_valid(input_window)) {
+    if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
     g_state.purpose = AgentQLocalPinAuthPurpose::connect;
@@ -231,10 +231,11 @@ bool local_pin_auth_begin_connect(AgentQTimeoutWindow input_window)
 
 bool local_pin_auth_begin_human_approval_input_setting(
     AgentQHumanApprovalInputMode target_human_approval_input_mode,
+    TickType_t now,
     AgentQTimeoutWindow input_window)
 {
     g_state.clear_flow();
-    if (!timeout_window_valid(input_window)) {
+    if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
     g_state.purpose = AgentQLocalPinAuthPurpose::settings_human_approval_input;
@@ -246,10 +247,11 @@ bool local_pin_auth_begin_human_approval_input_setting(
 
 bool local_pin_auth_begin_signing_mode_setting(
     AgentQSigningAuthorizationMode target_mode,
+    TickType_t now,
     AgentQTimeoutWindow input_window)
 {
     g_state.clear_flow();
-    if (!timeout_window_valid(input_window)) {
+    if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
     g_state.purpose = AgentQLocalPinAuthPurpose::settings_signing_mode;
@@ -259,10 +261,10 @@ bool local_pin_auth_begin_signing_mode_setting(
     return true;
 }
 
-bool local_pin_auth_begin_change_pin(AgentQTimeoutWindow input_window)
+bool local_pin_auth_begin_change_pin(TickType_t now, AgentQTimeoutWindow input_window)
 {
     g_state.clear_flow();
-    if (!timeout_window_valid(input_window)) {
+    if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
     g_state.purpose = AgentQLocalPinAuthPurpose::settings_change_pin;
@@ -271,10 +273,10 @@ bool local_pin_auth_begin_change_pin(AgentQTimeoutWindow input_window)
     return true;
 }
 
-bool local_pin_auth_begin_policy_update(AgentQTimeoutWindow input_window)
+bool local_pin_auth_begin_policy_update(TickType_t now, AgentQTimeoutWindow input_window)
 {
     g_state.clear_flow();
-    if (!timeout_window_valid(input_window)) {
+    if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
     g_state.purpose = AgentQLocalPinAuthPurpose::policy_update;
@@ -285,13 +287,14 @@ bool local_pin_auth_begin_policy_update(AgentQTimeoutWindow input_window)
 
 bool local_pin_auth_begin_user_signing(
     const AgentQLocalPinAuthSignatureBinding& binding,
+    TickType_t now,
     AgentQTimeoutWindow input_window)
 {
     if (g_state.flow_active() ||
         binding.token == 0) {
         return false;
     }
-    if (!timeout_window_valid(input_window)) {
+    if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
     g_state.purpose = AgentQLocalPinAuthPurpose::user_signing;

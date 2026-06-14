@@ -132,6 +132,19 @@ agent_q::AgentQUserSigningReviewRowKind row_kind(
     return agent_q::AgentQUserSigningReviewRowKind::normal;
 }
 
+size_t row_label_count(
+    const agent_q::AgentQUserSigningReviewViewModel& model,
+    const char* label)
+{
+    size_t count = 0;
+    for (size_t index = 0; index < model.row_count; ++index) {
+        if (strcmp(model.rows[index].label, label) == 0) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 }  // namespace
 
 int main()
@@ -169,14 +182,28 @@ int main()
 
     snapshot = valid_snapshot();
     snapshot.sui_review.status = agent_q::SuiReviewSummaryStatus::insufficient_review;
+    snapshot.sui_review.risk = agent_q::SuiReviewRiskLevel::high;
+    copy_field(snapshot.sui_review.type_summary, sizeof(snapshot.sui_review.type_summary), "Unparsed transaction");
+    copy_field(snapshot.sui_review.risk_label, sizeof(snapshot.sui_review.risk_label), "High");
+    snapshot.sui_review.row_count = 0;
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::warning, "Type", "Unparsed transaction");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::warning, "Reason", "Transaction shape cannot be fully shown");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::wrapped_value, "Sender",
+                    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::wrapped_value, "Gas owner",
+                    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Gas max", "5000000");
+    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Gas price", "1000");
     expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
            "incomplete review snapshot builds blind-signing confirmation model");
-    expect(model.row_count == 16,
-           "blind-signing confirmation adds bounded warning rows");
+    expect(model.row_count == 11,
+           "blind-signing confirmation includes mode warnings and adapter blind summary rows");
     expect(strcmp(row_value(model, "Review"), "Blind signing") == 0,
            "blind-signing review row names the signing mode");
-    expect(strcmp(row_value(model, "Reason"), "Transaction details cannot be fully shown") == 0,
-           "blind-signing reason row is included");
+    expect(strcmp(row_value(model, "Reason"), "Transaction shape cannot be fully shown") == 0,
+           "adapter-provided blind-signing reason row is included");
+    expect(row_label_count(model, "Reason") == 1,
+           "blind-signing model uses exactly one reason source");
     expect(strcmp(row_value(model, "Warning"),
                   "Confirm only if you accept blind signing") == 0,
            "blind-signing warning row is included");

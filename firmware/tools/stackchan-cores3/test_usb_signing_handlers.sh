@@ -356,16 +356,18 @@ void clear_policy_runtime(agent_q::AgentQSignTransactionPolicyRuntimeResult*)
     g_clear_policy_runtime_calls += 1;
 }
 
-agent_q::AgentQTimeoutWindow make_window()
+agent_q::AgentQTimeoutWindow make_window(agent_q::AgentQTimeoutTick now)
 {
     g_make_window_calls += 1;
-    return agent_q::AgentQTimeoutWindow{10, 20};
+    return agent_q::AgentQTimeoutWindow{now, static_cast<agent_q::AgentQTimeoutTick>(now + 10)};
 }
 
 agent_q::AgentQUserSigningFlowBeginResult begin_tx(
+    agent_q::AgentQTimeoutTick now,
     const agent_q::AgentQUserSigningTransactionBeginInput& input)
 {
     g_begin_tx_calls += 1;
+    assert(now == 10);
     assert(strcmp(input.request_id, "req-1") == 0);
     assert(strcmp(input.session_id, "session-1") == 0);
     assert(input.request_identity[0] == 0x42);
@@ -376,9 +378,11 @@ agent_q::AgentQUserSigningFlowBeginResult begin_tx(
 }
 
 agent_q::AgentQUserSigningFlowBeginResult begin_pm(
+    agent_q::AgentQTimeoutTick now,
     const agent_q::AgentQUserSigningPersonalMessageBeginInput& input)
 {
     g_begin_pm_calls += 1;
+    assert(now == 10);
     assert(strcmp(input.request_id, "req-2") == 0);
     assert(strcmp(input.session_id, "session-2") == 0);
     assert(input.request_identity[0] == 0x43);
@@ -445,7 +449,7 @@ void log_policy_signed(const char*, const char*, const char*, const char*)
 
 agent_q::AgentQTimeoutTick current_tick()
 {
-    return 0;
+    return 10;
 }
 
 agent_q::AgentQUsbSigningHandlerOps make_ops()

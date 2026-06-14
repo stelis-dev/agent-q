@@ -58,13 +58,14 @@ AgentQConnectApprovalSnapshot connect_approval_snapshot()
 bool connect_approval_begin(
     const char* request_id,
     const char* client_name,
+    TickType_t now,
     AgentQTimeoutWindow approval_window)
 {
     if (g_state.active) {
         return false;
     }
     ConnectApprovalState next = {};
-    if (!timeout_window_valid(approval_window)) {
+    if (!timeout_window_valid_and_open_at(approval_window, now)) {
         return false;
     }
     if (!copy_nonempty_c_string(request_id, next.request_id, sizeof(next.request_id)) ||
@@ -94,10 +95,10 @@ bool connect_approval_choose(AgentQConnectApprovalChoice choice, TickType_t now)
     return true;
 }
 
-bool connect_approval_return_to_review(AgentQTimeoutWindow approval_window)
+bool connect_approval_return_to_review(TickType_t now, AgentQTimeoutWindow approval_window)
 {
     if (!g_state.active ||
-        !timeout_window_valid(approval_window)) {
+        !timeout_window_valid_and_open_at(approval_window, now)) {
         return false;
     }
     g_state.choice = AgentQConnectApprovalChoice::none;

@@ -129,8 +129,10 @@ bool user_signing_flow_snapshot_copy(AgentQUserSigningFlowSnapshot* output);
 AgentQUserSigningFlowSnapshot user_signing_flow_snapshot();
 
 AgentQUserSigningFlowBeginResult user_signing_flow_begin(
+    TickType_t now,
     const AgentQUserSigningTransactionBeginInput& input);
 AgentQUserSigningFlowBeginResult user_signing_flow_begin_personal_message(
+    TickType_t now,
     const AgentQUserSigningPersonalMessageBeginInput& input);
 AgentQUserSigningTransitionResult user_signing_flow_accept_review(
     TickType_t now,

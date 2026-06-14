@@ -7,6 +7,7 @@ AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
 COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
+COVERAGE_MATRIX="${COMMON_SUI_DIR}/testdata/sui_transaction_authorization_coverage.tsv"
 DEFAULT_SIGNING_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
 SIGNING_ROOT="${AGENT_Q_SIGNING_CRYPTO_ROOT:-${DEFAULT_SIGNING_DIR}}"
 SIGNING_CORE="${SIGNING_ROOT}/src/microsui_core"
@@ -25,6 +26,8 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdlib.h>
 #include <string.h>
 
+#include <fstream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -89,6 +92,160 @@ std::string base64(const std::vector<uint8_t>& bytes)
     return out;
 }
 
+std::vector<std::string> split_tabs(const std::string& line)
+{
+    std::vector<std::string> parts;
+    size_t offset = 0;
+    while (true) {
+        const size_t tab = line.find('\t', offset);
+        if (tab == std::string::npos) {
+            parts.push_back(line.substr(offset));
+            return parts;
+        }
+        parts.push_back(line.substr(offset, tab - offset));
+        offset = tab + 1;
+    }
+}
+
+struct MatrixRow {
+    std::map<std::string, std::string> fields;
+};
+
+const std::string& field(const MatrixRow& row, const char* name)
+{
+    const auto found = row.fields.find(name);
+    assert(found != row.fields.end());
+    return found->second;
+}
+
+std::vector<MatrixRow> read_matrix(const std::string& path)
+{
+    std::ifstream input(path);
+    assert(input.good());
+    std::vector<std::string> headers;
+    std::vector<MatrixRow> rows;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        std::vector<std::string> columns = split_tabs(line);
+        if (headers.empty()) {
+            headers = columns;
+            assert(!headers.empty() && headers[0] == "fixture");
+            continue;
+        }
+        assert(columns.size() == headers.size());
+        MatrixRow row;
+        for (size_t index = 0; index < headers.size(); ++index) {
+            row.fields[headers[index]] = columns[index];
+        }
+        rows.push_back(row);
+    }
+    assert(!rows.empty());
+    return rows;
+}
+
+agent_q::AgentQSuiUserAuthorizationOutcome expected_user_authorization_outcome(
+    const MatrixRow& row)
+{
+    const std::string& user_gate = field(row, "expected_user_gate_after_adapter");
+    if (user_gate == "ok_review_pending") {
+        return agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review;
+    }
+    if (user_gate == "blind_signing_confirmation") {
+        return agent_q::AgentQSuiUserAuthorizationOutcome::blind_signing;
+    }
+    return agent_q::AgentQSuiUserAuthorizationOutcome::unavailable;
+}
+
+agent_q::AgentQSuiPolicyAuthorizationOutcome expected_policy_authorization_outcome(
+    const MatrixRow& row)
+{
+    const std::string& policy_gate = field(row, "expected_policy_gate_after_adapter");
+    if (policy_gate == "policy_evaluation_pending") {
+        return agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation;
+    }
+    return agent_q::AgentQSuiPolicyAuthorizationOutcome::unavailable;
+}
+
+const char* preparation_result_outcome(agent_q::AgentQSuiSigningPreparationResult result)
+{
+    switch (result) {
+        case agent_q::AgentQSuiSigningPreparationResult::ok:
+            return "ok";
+        case agent_q::AgentQSuiSigningPreparationResult::malformed_transaction:
+            return "malformed_transaction";
+        case agent_q::AgentQSuiSigningPreparationResult::unsupported_transaction:
+            return "unsupported_transaction";
+        case agent_q::AgentQSuiSigningPreparationResult::invalid_account:
+            return "invalid_account";
+        default:
+            return "other_error";
+    }
+}
+
+std::string user_outcome_for_prepared(
+    agent_q::AgentQSuiSigningPreparationResult result,
+    const agent_q::AgentQSuiPreparedSignTransaction& prepared)
+{
+    if (result != agent_q::AgentQSuiSigningPreparationResult::ok) {
+        return preparation_result_outcome(result);
+    }
+    if (!prepared.user_mode_authorization_covered) {
+        return "unsupported_transaction";
+    }
+    if (prepared.user_authorization_outcome ==
+        agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review) {
+        return "offline_facts_review_confirmation";
+    }
+    if (prepared.user_authorization_outcome ==
+        agent_q::AgentQSuiUserAuthorizationOutcome::blind_signing) {
+        return "blind_signing_confirmation";
+    }
+    return "unsupported_transaction";
+}
+
+std::string policy_outcome_for_prepared(
+    agent_q::AgentQSuiSigningPreparationResult result,
+    const agent_q::AgentQSuiPreparedSignTransaction& prepared)
+{
+    if (result != agent_q::AgentQSuiSigningPreparationResult::ok) {
+        return preparation_result_outcome(result);
+    }
+    return prepared.policy_mode_authorization_covered &&
+               prepared.policy_authorization_outcome ==
+                   agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation
+               ? "policy_evaluation"
+               : "policy_rejected";
+}
+
+void verify_matrix_final_outcomes(const std::string& root, const std::string& matrix_path)
+{
+    for (const MatrixRow& row : read_matrix(matrix_path)) {
+        const std::string fixture = field(row, "fixture");
+        const std::vector<uint8_t> bytes = read_hex((root + "/" + fixture + ".bcs.hex").c_str());
+        agent_q::AgentQSuiPreparedSignTransaction tx = {};
+        const agent_q::AgentQSuiSigningPreparationResult result =
+            agent_q::prepare_sui_sign_transaction(
+                agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+                "devnet",
+                base64(bytes).c_str(),
+                bytes.size(),
+                &tx);
+
+        const std::string user_outcome = user_outcome_for_prepared(result, tx);
+        const std::string policy_outcome = policy_outcome_for_prepared(result, tx);
+        assert(user_outcome == field(row, "final_user_mode_outcome"));
+        assert(policy_outcome == field(row, "final_policy_mode_outcome"));
+        if (result == agent_q::AgentQSuiSigningPreparationResult::ok) {
+            assert(tx.user_authorization_outcome == expected_user_authorization_outcome(row));
+            assert(tx.policy_authorization_outcome == expected_policy_authorization_outcome(row));
+        }
+        agent_q::clear_prepared_sui_sign_transaction(&tx);
+    }
+}
+
 }  // namespace
 
 namespace agent_q {
@@ -133,8 +290,11 @@ SuiAccountDerivationResult derive_sui_ed25519_account_from_stored_root(
 
 int main(int argc, char** argv)
 {
-    assert(argc == 2);
+    assert(argc == 3);
     const std::string root = argv[1];
+    const std::string matrix = argv[2];
+    verify_matrix_final_outcomes(root, matrix);
+
     const std::vector<uint8_t> valid = read_hex((root + "/valid_sui_transfer_tx.bcs.hex").c_str());
     const std::vector<uint8_t> malformed = read_hex((root + "/malformed_short_tx.bcs.hex").c_str());
     const std::vector<uint8_t> result_reference_transfer =
@@ -158,7 +318,11 @@ int main(int argc, char** argv)
     assert(tx.sui_review.status == agent_q::SuiReviewSummaryStatus::ok);
     assert(tx.sui_review.row_count > 0);
     assert(tx.user_mode_authorization_covered);
-    assert(!tx.policy_mode_authorization_covered);
+    assert(tx.policy_mode_authorization_covered);
+    assert(tx.user_authorization_outcome ==
+           agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review);
+    assert(tx.policy_authorization_outcome ==
+           agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation);
     agent_q::clear_prepared_sui_sign_transaction(&tx);
     assert(tx.tx_bytes_size == 0);
 
@@ -177,7 +341,11 @@ int main(int argc, char** argv)
     assert(tx.sui_policy_subject.command_count > 0);
     assert(tx.sui_review.status == agent_q::SuiReviewSummaryStatus::ok);
     assert(tx.user_mode_authorization_covered);
-    assert(!tx.policy_mode_authorization_covered);
+    assert(tx.policy_mode_authorization_covered);
+    assert(tx.user_authorization_outcome ==
+           agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review);
+    assert(tx.policy_authorization_outcome ==
+           agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation);
     agent_q::clear_prepared_sui_sign_transaction(&tx);
     assert(agent_q::prepare_sui_sign_transaction(
                agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
@@ -189,6 +357,10 @@ int main(int argc, char** argv)
     assert(tx.sui_review.status == agent_q::SuiReviewSummaryStatus::insufficient_review);
     assert(tx.user_mode_authorization_covered);
     assert(!tx.policy_mode_authorization_covered);
+    assert(tx.user_authorization_outcome ==
+           agent_q::AgentQSuiUserAuthorizationOutcome::blind_signing);
+    assert(tx.policy_authorization_outcome ==
+           agent_q::AgentQSuiPolicyAuthorizationOutcome::unavailable);
     agent_q::clear_prepared_sui_sign_transaction(&tx);
     assert(agent_q::prepare_sui_sign_transaction(
                agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
@@ -321,10 +493,12 @@ CPP
   "${AGENT_Q_DIR}/agent_q_sui_signing_authority.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${TMP_DIR}/byte_conversions.o" \
   -o "${TMP_DIR}/test"
 
-"${TMP_DIR}/test" "${FIXTURE_DIR}"
+"${TMP_DIR}/test" "${FIXTURE_DIR}" "${COVERAGE_MATRIX}"
 echo "Sui signing preparation tests passed"

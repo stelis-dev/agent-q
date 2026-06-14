@@ -1,0 +1,67 @@
+# Current Sui sign_transaction policy contract manifest.
+# This file is the reviewed contract source for public Core/Firmware parity
+# tests. Firmware remains the product authority for policy evaluation and
+# signing decisions; production code must match this manifest before a change is
+# considered complete.
+#
+# field <field> <type> <allow_eq> <allow_in> <allow_lte>
+# generated <pattern> <count> <type> <allow_eq> <allow_in> <allow_lte>
+# generated2 <pattern> <outer_count> <inner_count> <type> <allow_eq> <allow_in> <allow_lte>
+# sign_eq <field> <value>
+# sign_string <field>
+# sign_string_eq <field>
+# sign_lte <field>
+field	common.chain	string	yes	yes	no
+field	common.method	string	yes	yes	no
+field	common.intent	string	yes	yes	no
+field	sui.transaction_kind	string	yes	yes	no
+field	sui.sender_address	string	yes	yes	no
+field	sui.gas_owner_address	string	yes	yes	no
+field	sui.command_count	u64_decimal	yes	no	yes
+field	sui.gas_budget	u64_decimal	yes	no	yes
+field	sui.gas_price	u64_decimal	yes	no	yes
+field	sui.expiration_kind	string	yes	yes	no
+field	sui.sui_total_out_complete	string	yes	no	no
+field	sui.sui_total_out_raw	u64_decimal	yes	yes	yes
+field	sui.transfer_total_out_raw	u64_decimal	yes	yes	yes
+field	sui.move_call_total_in_raw	u64_decimal	yes	yes	yes
+field	sui.recipient_count	u64_decimal	yes	yes	yes
+field	sui.recipient0_address	string	yes	yes	no
+field	sui.recipient0_amount_raw	u64_decimal	yes	yes	yes
+field	sui.move_call0_package	string	yes	yes	no
+field	sui.move_call0_module	string	yes	yes	no
+field	sui.move_call0_function	string	yes	yes	no
+field	sui.move_call0_sui_amount_raw	u64_decimal	yes	yes	yes
+field	sui.coin_flow0_source_kind	string	yes	yes	no
+field	sui.coin_flow0_asset_state	string	yes	yes	no
+field	sui.coin_flow0_amount_known	string	yes	no	no
+field	sui.coin_flow0_amount_raw	u64_decimal	yes	yes	yes
+field	sui.coin_flow0_sink_kind	string	yes	yes	no
+field	sui.coin_flow0_object_id	string	yes	yes	no
+generated	sui.command{}_kind	8	string	yes	yes	no
+generated	sui.command{}_move_call_package	8	string	yes	yes	no
+generated	sui.command{}_move_call_module	8	string	yes	yes	no
+generated	sui.command{}_move_call_function	8	string	yes	yes	no
+generated	sui.command{}_move_call_type_args	8	u64_decimal	yes	no	yes
+generated2	sui.command{}_move_call_type_arg{}	8	4	string	yes	yes	no
+sign_eq	common.chain	sui
+sign_eq	common.method	sign_transaction
+sign_eq	common.intent	programmable_transaction
+sign_eq	sui.transaction_kind	programmable_transaction
+sign_string	sui.sender_address
+sign_string	sui.gas_owner_address
+sign_lte	sui.gas_budget
+sign_lte	sui.gas_price
+sign_string	sui.expiration_kind
+sign_eq	sui.sui_total_out_complete	yes
+sign_lte	sui.sui_total_out_raw
+sign_eq	sui.command_count	2
+sign_eq	sui.command0_kind	split_coins
+sign_eq	sui.command1_kind	transfer_objects
+sign_eq	sui.recipient_count	1
+sign_string_eq	sui.recipient0_address
+sign_lte	sui.recipient0_amount_raw
+sign_eq	sui.coin_flow0_source_kind	split_result
+sign_eq	sui.coin_flow0_asset_state	proven_sui
+sign_eq	sui.coin_flow0_amount_known	yes
+sign_eq	sui.coin_flow0_sink_kind	transfer_recipient

@@ -139,6 +139,7 @@ AgentQUserSigningFlowBeginResult prepare_common_begin_metadata(
     AgentQSigningRoute route,
     const char* network,
     AgentQTimeoutWindow request_window,
+    TickType_t now,
     AgentQUserSigningBeginMetadata* output)
 {
     if (output == nullptr) {
@@ -153,7 +154,7 @@ AgentQUserSigningFlowBeginResult prepare_common_begin_metadata(
         network == nullptr) {
         return AgentQUserSigningFlowBeginResult::invalid_argument;
     }
-    if (!timeout_window_valid(request_window)) {
+    if (!timeout_window_valid_and_open_at(request_window, now)) {
         return AgentQUserSigningFlowBeginResult::invalid_deadline;
     }
     if (!copy_nonempty_c_string(request_id, output->request_id, sizeof(output->request_id)) ||
@@ -500,6 +501,7 @@ AgentQUserSigningFlowSnapshot user_signing_flow_snapshot()
 }
 
 AgentQUserSigningFlowBeginResult user_signing_flow_begin(
+    TickType_t now,
     const AgentQUserSigningTransactionBeginInput& input)
 {
     if (g_state.active()) {
@@ -526,13 +528,22 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin(
     if (!input.prepared->user_mode_authorization_covered) {
         return AgentQUserSigningFlowBeginResult::unsupported_transaction;
     }
-    const bool clear_review =
-        input.prepared->sui_review.status == SuiReviewSummaryStatus::ok;
-    const bool blind_signing_review =
-        input.prepared->sui_review.status ==
-        SuiReviewSummaryStatus::insufficient_review;
-    if (!clear_review && !blind_signing_review) {
-        return AgentQUserSigningFlowBeginResult::unsupported_transaction;
+    bool blind_signing_review = false;
+    switch (input.prepared->user_authorization_outcome) {
+        case AgentQSuiUserAuthorizationOutcome::offline_facts_review:
+            if (input.prepared->sui_review.status != SuiReviewSummaryStatus::ok) {
+                return AgentQUserSigningFlowBeginResult::unsupported_transaction;
+            }
+            break;
+        case AgentQSuiUserAuthorizationOutcome::blind_signing:
+            if (input.prepared->sui_review.status !=
+                SuiReviewSummaryStatus::insufficient_review) {
+                return AgentQUserSigningFlowBeginResult::unsupported_transaction;
+            }
+            blind_signing_review = true;
+            break;
+        case AgentQSuiUserAuthorizationOutcome::unavailable:
+            return AgentQUserSigningFlowBeginResult::unsupported_transaction;
     }
     AgentQUserSigningBeginMetadata metadata = {};
     const AgentQUserSigningFlowBeginResult metadata_result =
@@ -543,6 +554,7 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin(
             input.route,
             input.prepared->network,
             input.request_window,
+            now,
             &metadata);
     if (metadata_result != AgentQUserSigningFlowBeginResult::ok) {
         return metadata_result;
@@ -567,6 +579,7 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin(
 }
 
 AgentQUserSigningFlowBeginResult user_signing_flow_begin_personal_message(
+    TickType_t now,
     const AgentQUserSigningPersonalMessageBeginInput& input)
 {
     if (g_state.active()) {
@@ -588,6 +601,7 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin_personal_message(
             input.route,
             input.prepared->network,
             input.request_window,
+            now,
             &metadata);
     if (metadata_result != AgentQUserSigningFlowBeginResult::ok) {
         return metadata_result;
@@ -622,7 +636,7 @@ AgentQUserSigningTransitionResult user_signing_flow_accept_review(
     if (g_state.stage != AgentQUserSigningStage::reviewing) {
         return AgentQUserSigningTransitionResult::wrong_stage;
     }
-    if (!timeout_window_valid(pin_input_window)) {
+    if (!timeout_window_valid_and_open_at(pin_input_window, now)) {
         return AgentQUserSigningTransitionResult::invalid_deadline;
     }
     AgentQUserSigningTransitionResult guard = require_active_session();
@@ -643,7 +657,7 @@ AgentQUserSigningTransitionResult user_signing_flow_accept_review(
     g_state.paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
     g_state.pin_input_window =
         timeout_window_from_deadline(pin_input_window.started_at, capped_pin_deadline);
-    if (!timeout_window_valid(g_state.pin_input_window)) {
+    if (!timeout_window_valid_and_open_at(g_state.pin_input_window, now)) {
         g_state.terminalize(AgentQUserSigningTerminalResult::timed_out);
         return AgentQUserSigningTransitionResult::deadline_expired;
     }
@@ -660,7 +674,7 @@ AgentQUserSigningTransitionResult user_signing_flow_return_to_review(
     if (g_state.stage != AgentQUserSigningStage::pin_entry) {
         return AgentQUserSigningTransitionResult::wrong_stage;
     }
-    if (!timeout_window_valid(review_window)) {
+    if (!timeout_window_valid_and_open_at(review_window, now)) {
         return AgentQUserSigningTransitionResult::invalid_deadline;
     }
     AgentQUserSigningTransitionResult guard = require_active_session();

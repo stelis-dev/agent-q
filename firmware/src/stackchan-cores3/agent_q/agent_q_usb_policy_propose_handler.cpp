@@ -52,7 +52,8 @@ void handle_usb_policy_propose_request(
         return;
     }
 
-    if (ops.make_review_window == nullptr ||
+    if (ops.current_tick == nullptr ||
+        ops.make_review_window == nullptr ||
         ops.begin_policy_update == nullptr ||
         ops.begin_result_reason == nullptr ||
         ops.show_policy_update_review == nullptr ||
@@ -62,12 +63,14 @@ void handle_usb_policy_propose_request(
         return;
     }
 
-    const AgentQTimeoutWindow review_window = ops.make_review_window();
+    const AgentQTimeoutTick now = ops.current_tick();
+    const AgentQTimeoutWindow review_window = ops.make_review_window(now);
     const AgentQPolicyUpdateFlowBeginResult begin_result =
         ops.begin_policy_update(
             params_object["policy"],
             id,
             session_id,
+            now,
             review_window);
     if (begin_result != AgentQPolicyUpdateFlowBeginResult::ok) {
         if (!usb_policy_propose_result_write(

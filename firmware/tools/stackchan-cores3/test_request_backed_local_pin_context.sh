@@ -252,19 +252,34 @@ int main()
     agent_q::AgentQTimeoutWindow capped =
         agent_q::request_backed_local_pin_cap_input_window(
             Purpose::connect,
+            30,
             window(30, 150));
     expect(capped.started_at == 30 && capped.deadline == 100,
            "protocol-backed PIN input deadline caps to request window");
     capped = agent_q::request_backed_local_pin_cap_input_window(
         Purpose::user_signing,
+        40,
         window(40, 120));
     expect(capped.started_at == 40 && capped.deadline == 80,
            "user-signing PIN input deadline caps to request window");
     capped = agent_q::request_backed_local_pin_cap_input_window(
         Purpose::settings_signing_mode,
+        40,
         window(40, 120));
     expect(!agent_q::timeout_window_valid(capped),
            "non-request-backed purpose cannot cap request window");
+    capped = agent_q::request_backed_local_pin_cap_input_window(
+        Purpose::connect,
+        70,
+        window(30, 60));
+    expect(!agent_q::timeout_window_valid(capped),
+           "request-backed PIN cap rejects stale input windows");
+    capped = agent_q::request_backed_local_pin_cap_input_window(
+        Purpose::connect,
+        70,
+        window(90, 120));
+    expect(!agent_q::timeout_window_valid(capped),
+           "request-backed PIN cap rejects future input windows");
 
     g_protocol_refresh_result = true;
     expect(agent_q::request_backed_local_pin_resume_input_window(Purpose::policy_update, 55),

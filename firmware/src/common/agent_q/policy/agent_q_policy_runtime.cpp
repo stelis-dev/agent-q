@@ -40,6 +40,15 @@ AgentQPolicyDecision evaluate_agent_q_policy_runtime(
     const AgentQPolicyProvider& provider,
     const AgentQPolicyFacts& facts)
 {
+    return evaluate_agent_q_policy_runtime(provider, facts, nullptr, 0);
+}
+
+AgentQPolicyDecision evaluate_agent_q_policy_runtime(
+    const AgentQPolicyProvider& provider,
+    const AgentQPolicyFacts& facts,
+    const AgentQPolicyMethodDescriptor* method_descriptors,
+    size_t method_descriptor_count)
+{
     if (provider.load == nullptr) {
         return reject_invalid_policy();
     }
@@ -49,7 +58,11 @@ AgentQPolicyDecision evaluate_agent_q_policy_runtime(
         return reject_invalid_policy();
     }
 
-    return evaluate_agent_q_policy_v0(policy, facts);
+    return evaluate_agent_q_policy_v0_for_methods(
+        policy,
+        facts,
+        method_descriptors,
+        method_descriptor_count);
 }
 
 }  // namespace agent_q

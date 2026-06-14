@@ -73,9 +73,11 @@ AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(
     JsonVariantConst policy,
     const char* request_id,
     const char* session_id,
+    TickType_t now,
     AgentQTimeoutWindow review_window);
 AgentQPolicyUpdateFlowTransitionResult policy_update_flow_continue_to_pin(TickType_t now);
 AgentQPolicyUpdateFlowTransitionResult policy_update_flow_return_to_review(
+    TickType_t now,
     AgentQTimeoutWindow review_window);
 AgentQPolicyUpdateFlowTransitionResult policy_update_flow_return_to_pin_entry();
 AgentQPolicyUpdateFlowTransitionResult policy_update_flow_mark_pin_verifying();

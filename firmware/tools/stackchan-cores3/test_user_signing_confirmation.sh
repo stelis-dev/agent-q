@@ -83,7 +83,7 @@ char g_current_pin[agent_q::kLocalPinBufferSize] = "123456";
 char g_account_address[agent_q::kSuiAddressBufferSize] =
     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 uint32_t g_last_worker_job_id = 0;
-constexpr TickType_t kDefaultRequestWindowStart = 10;
+constexpr TickType_t kDefaultRequestWindowStart = 0;
 
 void expect(bool condition, const char* label)
 {
@@ -241,6 +241,8 @@ void fill_prepared_sui_facts(
     assert(agent_q::build_sui_policy_subject_facts(parsed, &prepared->sui_policy_subject));
     assert(agent_q::build_sui_review_summary(parsed, &prepared->sui_review));
     prepared->user_mode_authorization_covered = true;
+    prepared->user_authorization_outcome =
+        agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review;
 }
 
 agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
@@ -308,7 +310,7 @@ bool begin_valid_flow_with_deadline(const char* request_id, TickType_t deadline)
         agent_q::AgentQSessionStartResult::ok) {
         return false;
     }
-    return agent_q::user_signing_flow_begin(
+    return agent_q::user_signing_flow_begin(0,
                make_valid_input(
                    request_id,
                    agent_q::session_id(),
@@ -330,7 +332,7 @@ bool begin_valid_flow_in_current_session(const char* request_id, const char* net
     if (!agent_q::session_active()) {
         return false;
     }
-    return agent_q::user_signing_flow_begin(
+    return agent_q::user_signing_flow_begin(0,
                make_valid_input(
                    request_id,
                    agent_q::session_id(),
@@ -507,7 +509,7 @@ int main()
     {
         reset_all();
         expect(begin_valid_flow("req_pin_busy"), "begin before local PIN conflict");
-        expect(agent_q::local_pin_auth_begin_connect(pin_window(99, 200)),
+        expect(agent_q::local_pin_auth_begin_connect(99, pin_window(99, 200)),
                "unrelated local PIN flow begins before conflict test");
         expect(agent_q::user_signing_confirmation_accept_review_and_begin_pin(99, pin_window(99, 200)) ==
                    Confirm::local_pin_busy,
@@ -967,6 +969,8 @@ CPP
   "${AGENT_Q_DIR}/agent_q_pin_attempt.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_sign_transaction_adapter.cpp" \
+  "${COMMON_ROOT}/sui/agent_q_sui_method_adapter.cpp" \
+  "${COMMON_ROOT}/sui/agent_q_sui_token_flow_facts.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_bcs_reader.cpp" \
   -o "${TMP_DIR}/user_signing_confirmation_test"

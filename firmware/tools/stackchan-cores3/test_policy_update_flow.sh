@@ -166,6 +166,7 @@ bool begin_valid_policy()
                document.as<JsonVariantConst>(),
                kTestRequestId,
                kTestSessionId,
+               10,
                test_review_window()) ==
            agent_q::AgentQPolicyUpdateFlowBeginResult::ok;
 }
@@ -197,17 +198,30 @@ JsonDocument parse_sign_policy_json()
         "\"schema\":\"agentq.policy.v0\","
         "\"defaultAction\":\"reject\","
         "\"rules\":[{"
-        "\"id\":\"sign_move_call\","
+        "\"id\":\"sign_transfer\","
         "\"chain\":\"sui\","
         "\"method\":\"sign_transaction\","
         "\"action\":\"sign\","
         "\"criteria\":["
-        "{\"field\":\"sui.command_count\",\"op\":\"eq\",\"value\":\"1\"},"
-        "{\"field\":\"sui.command0_kind\",\"op\":\"eq\",\"value\":\"move_call\"},"
-        "{\"field\":\"sui.command0_move_call_package\",\"op\":\"eq\",\"value\":\"0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},"
-        "{\"field\":\"sui.command0_move_call_module\",\"op\":\"eq\",\"value\":\"demo\"},"
-        "{\"field\":\"sui.command0_move_call_function\",\"op\":\"eq\",\"value\":\"mint\"},"
-        "{\"field\":\"sui.command0_move_call_type_args\",\"op\":\"eq\",\"value\":\"0\"},"
+        "{\"field\":\"common.chain\",\"op\":\"eq\",\"value\":\"sui\"},"
+        "{\"field\":\"common.method\",\"op\":\"eq\",\"value\":\"sign_transaction\"},"
+        "{\"field\":\"common.intent\",\"op\":\"eq\",\"value\":\"programmable_transaction\"},"
+        "{\"field\":\"sui.transaction_kind\",\"op\":\"eq\",\"value\":\"programmable_transaction\"},"
+        "{\"field\":\"sui.sender_address\",\"op\":\"eq\",\"value\":\"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},"
+        "{\"field\":\"sui.gas_owner_address\",\"op\":\"eq\",\"value\":\"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},"
+        "{\"field\":\"sui.expiration_kind\",\"op\":\"eq\",\"value\":\"none\"},"
+        "{\"field\":\"sui.sui_total_out_complete\",\"op\":\"eq\",\"value\":\"yes\"},"
+        "{\"field\":\"sui.sui_total_out_raw\",\"op\":\"lte\",\"value\":\"1000000\"},"
+        "{\"field\":\"sui.command_count\",\"op\":\"eq\",\"value\":\"2\"},"
+        "{\"field\":\"sui.command0_kind\",\"op\":\"eq\",\"value\":\"split_coins\"},"
+        "{\"field\":\"sui.command1_kind\",\"op\":\"eq\",\"value\":\"transfer_objects\"},"
+        "{\"field\":\"sui.recipient_count\",\"op\":\"eq\",\"value\":\"1\"},"
+        "{\"field\":\"sui.recipient0_address\",\"op\":\"eq\",\"value\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},"
+        "{\"field\":\"sui.recipient0_amount_raw\",\"op\":\"lte\",\"value\":\"1000000\"},"
+        "{\"field\":\"sui.coin_flow0_source_kind\",\"op\":\"eq\",\"value\":\"split_result\"},"
+        "{\"field\":\"sui.coin_flow0_asset_state\",\"op\":\"eq\",\"value\":\"proven_sui\"},"
+        "{\"field\":\"sui.coin_flow0_amount_known\",\"op\":\"eq\",\"value\":\"yes\"},"
+        "{\"field\":\"sui.coin_flow0_sink_kind\",\"op\":\"eq\",\"value\":\"transfer_recipient\"},"
         "{\"field\":\"sui.gas_budget\",\"op\":\"lte\",\"value\":\"10000000\"},"
         "{\"field\":\"sui.gas_price\",\"op\":\"lte\",\"value\":\"1000\"}"
         "]"
@@ -225,6 +239,7 @@ agent_q::AgentQPolicyUpdateFlowBeginResult begin_sign_policy()
                document.as<JsonVariantConst>(),
                kTestRequestId,
                kTestSessionId,
+               10,
                test_review_window());
 }
 
@@ -379,7 +394,7 @@ int main()
     expect(agent_q::policy_update_flow_record_rejected(60) ==
                agent_q::AgentQPolicyUpdateFlowTerminalResult::invalid_state,
            "PIN stage cancel is not terminal rejected by flow");
-    expect(agent_q::policy_update_flow_return_to_review(test_review_window(30, 130)) ==
+    expect(agent_q::policy_update_flow_return_to_review(30, test_review_window(30, 130)) ==
                agent_q::AgentQPolicyUpdateFlowTransitionResult::ok,
            "PIN Back returns to review with a new window");
     snapshot = agent_q::policy_update_flow_snapshot();
@@ -401,6 +416,12 @@ int main()
     snapshot = agent_q::policy_update_flow_snapshot();
     expect(snapshot.stage == agent_q::AgentQPolicyUpdateFlowStage::pin_entry,
            "snapshot reports PIN entry after wrong PIN transition");
+    expect(agent_q::policy_update_flow_return_to_review(50, test_review_window(30, 40)) ==
+               agent_q::AgentQPolicyUpdateFlowTransitionResult::invalid_deadline,
+           "PIN Back rejects stale review window at state owner boundary");
+    expect(agent_q::policy_update_flow_return_to_review(20, test_review_window(30, 130)) ==
+               agent_q::AgentQPolicyUpdateFlowTransitionResult::invalid_deadline,
+           "PIN Back rejects future review window at state owner boundary");
 
     reset_stubs();
     {
@@ -409,6 +430,25 @@ int main()
                    document.as<JsonVariantConst>(),
                    kTestRequestId,
                    kTestSessionId,
+                   25,
+                   test_review_window(10, 20)) ==
+                   agent_q::AgentQPolicyUpdateFlowBeginResult::invalid_argument,
+               "begin rejects stale review window at state owner boundary");
+        expect(!agent_q::policy_update_flow_active(), "stale begin leaves no active proposal");
+        expect(agent_q::policy_update_flow_begin(
+                   document.as<JsonVariantConst>(),
+                   kTestRequestId,
+                   kTestSessionId,
+                   5,
+                   test_review_window(10, 20)) ==
+                   agent_q::AgentQPolicyUpdateFlowBeginResult::invalid_argument,
+               "begin rejects future review window at state owner boundary");
+        expect(!agent_q::policy_update_flow_active(), "future begin leaves no active proposal");
+        expect(agent_q::policy_update_flow_begin(
+                   document.as<JsonVariantConst>(),
+                   kTestRequestId,
+                   kTestSessionId,
+                   10,
                    test_review_window(10, 20)) ==
                    agent_q::AgentQPolicyUpdateFlowBeginResult::ok,
                "begin before expired review continue");
@@ -462,9 +502,24 @@ int main()
            "applied commit history metadata");
 
     reset_stubs();
-    expect(begin_sign_policy() == agent_q::AgentQPolicyUpdateFlowBeginResult::invalid_policy,
-           "sign policy is rejected until policy coverage is implemented");
-    expect(!agent_q::policy_update_flow_active(), "rejected sign policy does not activate proposal flow");
+    expect(begin_sign_policy() == agent_q::AgentQPolicyUpdateFlowBeginResult::ok,
+           "bounded sign policy begins flow");
+    snapshot = agent_q::policy_update_flow_snapshot();
+    expect(snapshot.active, "bounded sign policy activates proposal flow");
+    expect(strcmp(snapshot.highest_action, "sign") == 0, "bounded sign policy snapshot exposes sign highest action");
+    expect(strcmp(snapshot.review_summary, "sha256:aaaaaaaa r1 reject->sign\nsui/sign_transaction\nGasCoin split-result transfer\n0xbbbb..bbbb amt<=1000000 total<=1000000\ngas<=10000000/1000") == 0,
+           "bounded sign policy review summary");
+    expect(agent_q::policy_update_flow_continue_to_pin(20) ==
+               agent_q::AgentQPolicyUpdateFlowTransitionResult::ok &&
+               agent_q::policy_update_flow_mark_pin_verifying() ==
+                   agent_q::AgentQPolicyUpdateFlowTransitionResult::ok &&
+               agent_q::policy_update_flow_commit(300) ==
+                   agent_q::AgentQPolicyUpdateFlowTerminalResult::applied,
+           "bounded sign policy commits after device confirmation");
+    expect(strcmp(g_last_highest_action, "sign") == 0 &&
+               strcmp(g_last_marker_highest_action, "sign") == 0 &&
+               g_last_rule_count == 1,
+           "bounded sign policy stores sign metadata");
 
     reset_stubs();
     {
@@ -473,9 +528,10 @@ int main()
                    multi_sign.as<JsonVariantConst>(),
                    kTestRequestId,
                    kTestSessionId,
+                   10,
                    test_review_window()) ==
                    agent_q::AgentQPolicyUpdateFlowBeginResult::invalid_policy,
-               "multi-sign policy is rejected until policy coverage is implemented");
+               "unbounded multi-sign policy is rejected");
         expect(!agent_q::policy_update_flow_active(), "rejected multi-sign policy does not activate proposal flow");
     }
 
@@ -532,6 +588,7 @@ int main()
                invalid.as<JsonVariantConst>(),
                kTestRequestId,
                kTestSessionId,
+               10,
                test_review_window()) ==
                agent_q::AgentQPolicyUpdateFlowBeginResult::invalid_policy,
            "invalid policy is rejected before flow activation");
@@ -544,6 +601,7 @@ int main()
                valid_but_undigestable.as<JsonVariantConst>(),
                kTestRequestId,
                kTestSessionId,
+               10,
                test_review_window()) ==
                agent_q::AgentQPolicyUpdateFlowBeginResult::encode_error,
            "canonical digest/id failure is reported as encode_error");
@@ -571,7 +629,10 @@ CPP
   "${COMMON_POLICY_DIR}/agent_q_policy_canonical.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   -o "${TMP_DIR}/policy_update_flow_test"
 
 "${TMP_DIR}/policy_update_flow_test"

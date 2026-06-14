@@ -98,15 +98,17 @@ bool local_pin_auth_fail_processing_if_expired(TickType_t now);
 AgentQLocalPinAuthLockoutReleaseResult local_pin_auth_release_lockout_if_elapsed(TickType_t now);
 
 void local_pin_auth_clear_flow();
-bool local_pin_auth_begin_connect(AgentQTimeoutWindow input_window);
+bool local_pin_auth_begin_connect(TickType_t now, AgentQTimeoutWindow input_window);
 bool local_pin_auth_begin_human_approval_input_setting(
     AgentQHumanApprovalInputMode target_human_approval_input_mode,
+    TickType_t now,
     AgentQTimeoutWindow input_window);
 bool local_pin_auth_begin_signing_mode_setting(
     AgentQSigningAuthorizationMode target_mode,
+    TickType_t now,
     AgentQTimeoutWindow input_window);
-bool local_pin_auth_begin_change_pin(AgentQTimeoutWindow input_window);
-bool local_pin_auth_begin_policy_update(AgentQTimeoutWindow input_window);
+bool local_pin_auth_begin_change_pin(TickType_t now, AgentQTimeoutWindow input_window);
+bool local_pin_auth_begin_policy_update(TickType_t now, AgentQTimeoutWindow input_window);
 
 AgentQLocalPinAuthInputResult local_pin_auth_add_digit(char digit);
 bool local_pin_auth_clear_pin();

@@ -271,8 +271,10 @@ agent_q::AgentQPolicyUpdateFlowTransitionResult continue_to_pin(TickType_t tick)
 bool protocol_pin_begin(
     const char* request_id,
     const char* session_id,
+    TickType_t now,
     agent_q::AgentQTimeoutWindow window)
 {
+    expect(now == g_now, "policy protocol PIN begin receives current tick");
     expect(strcmp(request_id, "policy-1") == 0, "policy PIN begin uses request id");
     expect(strcmp(session_id, "session-1") == 0, "policy PIN begin uses session id");
     expect(window.started_at == g_now, "policy PIN window starts now");
@@ -280,8 +282,9 @@ bool protocol_pin_begin(
     return g_protocol_pin_begin_result;
 }
 void protocol_pin_clear() { ++g_protocol_pin_clear_calls; }
-bool local_pin_begin(agent_q::AgentQTimeoutWindow)
+bool local_pin_begin(TickType_t now, agent_q::AgentQTimeoutWindow)
 {
+    expect(now == g_now, "policy local PIN begin receives current tick");
     ++g_local_pin_begin_calls;
     return g_local_pin_begin_result;
 }

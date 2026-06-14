@@ -1,0 +1,62 @@
+{
+  "version": 2,
+  "sender": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expiration": {
+    "None": true,
+    "$kind": "None"
+  },
+  "gasData": {
+    "budget": "50000000",
+    "price": "1000",
+    "owner": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "payment": [
+      {
+        "objectId": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "version": "7",
+        "digest": "Fw5KdYvFgue4q1HAQ264JTZax6VUr3jDVBJ1szuQ7dHE"
+      }
+    ]
+  },
+  "inputs": [
+    {
+      "FundsWithdrawal": {
+        "reservation": {
+          "MaxAmountU64": "1000000",
+          "$kind": "MaxAmountU64"
+        },
+        "typeArg": {
+          "Balance": "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
+          "$kind": "Balance"
+        },
+        "withdrawFrom": {
+          "Sender": true,
+          "$kind": "Sender"
+        }
+      },
+      "$kind": "FundsWithdrawal"
+    },
+    {
+      "Pure": {
+        "bytes": "u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s="
+      },
+      "$kind": "Pure"
+    }
+  ],
+  "commands": [
+    {
+      "TransferObjects": {
+        "objects": [
+          {
+            "Input": 0,
+            "$kind": "Input"
+          }
+        ],
+        "address": {
+          "Input": 1,
+          "$kind": "Input"
+        }
+      },
+      "$kind": "TransferObjects"
+    }
+  ]
+}

@@ -61,6 +61,81 @@ const SIGN_ROUTE_VECTORS = readFileSync(
     return { operation, chain, method, expected };
   });
 
+function replaceFirstPlaceholder(pattern, value) {
+  return pattern.replace("{}", String(value));
+}
+
+function parsePolicyContract(raw) {
+  const fields = [];
+  const signBounds = [];
+  for (const [index, originalLine] of raw.split(/\r?\n/).entries()) {
+    const line = originalLine.trim();
+    if (line === "" || line.startsWith("#")) {
+      continue;
+    }
+    const parts = line.split(/\s+/);
+    if (parts[0] === "field" && parts.length === 6) {
+      fields.push({
+        field: parts[1],
+        type: parts[2],
+        allowEq: parts[3] === "yes",
+        allowIn: parts[4] === "yes",
+        allowLte: parts[5] === "yes",
+      });
+      continue;
+    }
+    if (parts[0] === "generated" && parts.length === 7) {
+      const count = Number(parts[2]);
+      for (let generatedIndex = 0; generatedIndex < count; generatedIndex += 1) {
+        fields.push({
+          field: replaceFirstPlaceholder(parts[1], generatedIndex),
+          type: parts[3],
+          allowEq: parts[4] === "yes",
+          allowIn: parts[5] === "yes",
+          allowLte: parts[6] === "yes",
+        });
+      }
+      continue;
+    }
+    if (parts[0] === "generated2" && parts.length === 8) {
+      const outerCount = Number(parts[2]);
+      const innerCount = Number(parts[3]);
+      for (let outer = 0; outer < outerCount; outer += 1) {
+        for (let inner = 0; inner < innerCount; inner += 1) {
+          fields.push({
+            field: replaceFirstPlaceholder(replaceFirstPlaceholder(parts[1], outer), inner),
+            type: parts[4],
+            allowEq: parts[5] === "yes",
+            allowIn: parts[6] === "yes",
+            allowLte: parts[7] === "yes",
+          });
+        }
+      }
+      continue;
+    }
+    if (
+      (parts[0] === "sign_eq" && parts.length === 3) ||
+      (parts[0] === "sign_string" && parts.length === 2) ||
+      (parts[0] === "sign_string_eq" && parts.length === 2) ||
+      (parts[0] === "sign_lte" && parts.length === 2)
+    ) {
+      signBounds.push({
+        kind: parts[0],
+        field: parts[1],
+        value: parts[2],
+      });
+      continue;
+    }
+    throw new Error(`Invalid Sui policy contract row ${index + 1}: ${originalLine}`);
+  }
+  return { fields, signBounds };
+}
+
+const SUI_POLICY_CONTRACT = parsePolicyContract(readFileSync(
+  new URL("../../../specs/sui-sign-transaction-policy-contract.tsv", import.meta.url),
+  "utf8",
+));
+
 const CANONICAL_TX_BYTES_BASE64 = "AQID";
 const VALID_PAYLOAD_DIGEST = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const VALID_PAYLOAD_REF = "payload_0123456789abcdef01234567";
@@ -1415,6 +1490,68 @@ const unsupportedSignPolicyRule = () => ({
   ],
 });
 
+function contractCriterionValue(field, type) {
+  if (type === "u64_decimal") {
+    return "1";
+  }
+  if (field === "sui.sender_address" ||
+      field === "sui.gas_owner_address" ||
+      field === "sui.recipient0_address") {
+    return "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  }
+  if (field === "sui.expiration_kind") {
+    return "none";
+  }
+  return "value";
+}
+
+function contractPolicyCriterion(field, type, op) {
+  if (op === "in") {
+    return {
+      field,
+      op,
+      values: type === "u64_decimal" ? ["1", "2"] : [contractCriterionValue(field, type), "other"],
+    };
+  }
+  return {
+    field,
+    op,
+    value: contractCriterionValue(field, type),
+  };
+}
+
+function contractSignCriterion(bound) {
+  if (bound.kind === "sign_eq") {
+    return {
+      field: bound.field,
+      op: "eq",
+      value: bound.value,
+    };
+  }
+  if (bound.kind === "sign_lte") {
+    return {
+      field: bound.field,
+      op: "lte",
+      value: "1",
+    };
+  }
+  return {
+    field: bound.field,
+    op: "eq",
+    value: contractCriterionValue(bound.field, "string"),
+  };
+}
+
+const contractSignCriteria = () => SUI_POLICY_CONTRACT.signBounds.map(contractSignCriterion);
+
+const validSignPolicyRule = () => ({
+  id: "sign_current_transfer",
+  chain: "sui",
+  method: "sign_transaction",
+  action: "sign",
+  criteria: contractSignCriteria(),
+});
+
 const validRejectPolicyRule = () => ({
   id: "reject_supported_sui_tx",
   chain: "sui",
@@ -1459,7 +1596,68 @@ test("parseProtocolResponse accepts a bounded reject policy document", () => {
   assert.equal(response.policy.rules[0].criteria.length, 2);
 });
 
-test("parseProtocolResponse rejects Sui sign policy documents until policy coverage is implemented", () => {
+test("parseProtocolResponse accepts descriptor-supported Sui policy in operators", () => {
+  const response = assertPolicyResponse(parseProtocolResponse(policyLineWithRule(
+    policyRuleWithCriteria([
+      {
+        field: "sui.coin_flow0_asset_state",
+        op: "in",
+        values: ["proven_sui", "unproven"],
+      },
+    ]),
+  ), "req_policy"));
+  assert.equal(response.policy.rules[0].criteria[0].field, "sui.coin_flow0_asset_state");
+  assert.equal(response.policy.rules[0].criteria[0].op, "in");
+});
+
+test("parseProtocolResponse policy field operators match the shared Sui policy contract", () => {
+  for (const field of SUI_POLICY_CONTRACT.fields) {
+    for (const [op, allowed] of [
+      ["eq", field.allowEq],
+      ["in", field.allowIn],
+      ["lte", field.allowLte],
+    ]) {
+      const line = policyLineWithRule(policyRuleWithCriteria([
+        contractPolicyCriterion(field.field, field.type, op),
+      ]));
+      if (allowed) {
+        assert.doesNotThrow(
+          () => parseProtocolResponse(line, "req_policy"),
+          `${field.field} should allow ${op}`,
+        );
+      } else {
+        assert.throws(
+          () => parseProtocolResponse(line, "req_policy"),
+          { code: "protocol_error" },
+          `${field.field} should reject ${op}`,
+        );
+      }
+    }
+  }
+});
+
+test("parseProtocolResponse accepts a current-contract bounded Sui sign policy document", () => {
+  const response = assertPolicyResponse(parseProtocolResponse(policyLineWithRule(validSignPolicyRule()), "req_policy"));
+  assert.equal(response.type, "policy");
+  assert.equal(response.policy.ruleCount, 1);
+  assert.equal(response.policy.rules[0].action, "sign");
+  assert.equal(response.policy.rules[0].criteria.length, validSignPolicyRule().criteria.length);
+});
+
+test("parseProtocolResponse rejects Sui sign policy documents missing shared contract bounds", () => {
+  for (const [index, bound] of SUI_POLICY_CONTRACT.signBounds.entries()) {
+    assert.throws(
+      () => parseProtocolResponse(policyLineWithRule({
+        ...validSignPolicyRule(),
+        criteria: contractSignCriteria().filter((_, criterionIndex) => criterionIndex !== index),
+      }), "req_policy"),
+      { code: "protocol_error" },
+      `missing ${bound.field} should reject the sign policy`,
+    );
+  }
+});
+
+test("parseProtocolResponse rejects unsupported Sui MoveCall sign policy documents", () => {
   assert.throws(() => parseProtocolResponse(policyLineWithRule(unsupportedSignPolicyRule()), "req_policy"), {
     code: "protocol_error",
   });
@@ -1525,6 +1723,12 @@ test("parseProtocolResponse rejects malformed policy documents", () => {
     "req_policy",
   ));
   assert.equal(multiRuleResponse.policy.ruleCount, 2);
+  assert.throws(() => parseProtocolResponse(policyLine({
+    ruleCount: 2,
+    rules: [validSignPolicyRule(), { ...validSignPolicyRule(), id: "sign_second_current_transfer" }],
+  }), "req_policy"), {
+    code: "protocol_error",
+  });
   assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 1, rules: [{ ...unsupportedSignPolicyRule(), method: "sign_personal_message" }] }), "req_policy"), {
     code: "protocol_error",
   });

@@ -272,7 +272,47 @@ int main()
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
 
     expect_status(
-        "sign policy rules are invalid until policy coverage is implemented",
+        "complete bounded sign policy parses",
+        parse_policy(
+            "complete-sign-rule",
+            R"JSON({
+              "schema":"agentq.policy.v0",
+              "defaultAction":"reject",
+              "rules":[{
+                "id":"sign-complete-transfer",
+                "chain":"sui",
+                "method":"sign_transaction",
+                "action":"sign",
+                "criteria":[
+                  {"field":"common.chain","op":"eq","value":"sui"},
+                  {"field":"common.method","op":"eq","value":"sign_transaction"},
+                  {"field":"common.intent","op":"eq","value":"programmable_transaction"},
+                  {"field":"sui.transaction_kind","op":"eq","value":"programmable_transaction"},
+                  {"field":"sui.sender_address","op":"eq","value":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                  {"field":"sui.gas_owner_address","op":"eq","value":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                  {"field":"sui.gas_budget","op":"lte","value":"50000000"},
+                  {"field":"sui.gas_price","op":"lte","value":"1000"},
+                  {"field":"sui.expiration_kind","op":"eq","value":"none"},
+                  {"field":"sui.sui_total_out_complete","op":"eq","value":"yes"},
+                  {"field":"sui.sui_total_out_raw","op":"lte","value":"1000000"},
+                  {"field":"sui.command_count","op":"eq","value":"2"},
+                  {"field":"sui.command0_kind","op":"eq","value":"split_coins"},
+                  {"field":"sui.command1_kind","op":"eq","value":"transfer_objects"},
+                  {"field":"sui.recipient_count","op":"eq","value":"1"},
+                  {"field":"sui.recipient0_address","op":"eq","value":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+                  {"field":"sui.recipient0_amount_raw","op":"lte","value":"1000000"},
+                  {"field":"sui.coin_flow0_source_kind","op":"eq","value":"split_result"},
+                  {"field":"sui.coin_flow0_asset_state","op":"eq","value":"proven_sui"},
+                  {"field":"sui.coin_flow0_amount_known","op":"eq","value":"yes"},
+                  {"field":"sui.coin_flow0_sink_kind","op":"eq","value":"transfer_recipient"}
+                ]
+              }]
+            })JSON",
+            &proposal),
+        agent_q::AgentQPolicyProposalParseStatus::ok);
+
+    expect_status(
+        "unbounded multi-sign policy is invalid",
         parse_policy(
             "multi-sign-rule",
             R"JSON({
@@ -360,7 +400,10 @@ CPP
   "${COMMON_POLICY_DIR}/agent_q_policy_canonical.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   -o "${TMP_DIR}/policy_proposal_parser_test"
 
 "${TMP_DIR}/policy_proposal_parser_test"

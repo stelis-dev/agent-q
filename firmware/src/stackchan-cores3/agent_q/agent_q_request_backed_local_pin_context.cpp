@@ -68,9 +68,10 @@ bool request_backed_local_pin_request_id(
 
 AgentQTimeoutWindow request_backed_local_pin_cap_input_window(
     AgentQLocalPinAuthPurpose purpose,
+    TickType_t now,
     AgentQTimeoutWindow input_window)
 {
-    if (!timeout_window_valid(input_window)) {
+    if (!timeout_window_valid_and_open_at(input_window, now)) {
         return kAgentQTimeoutWindowNone;
     }
 

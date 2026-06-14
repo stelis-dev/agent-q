@@ -260,8 +260,7 @@ AgentQPolicyProposalParseStatus parse_rule(
     if (method_descriptor == nullptr) {
         return AgentQPolicyProposalParseStatus::unsupported_method;
     }
-    if ((action == AgentQPolicyAction::reject && !method_descriptor->supports_reject) ||
-        (action == AgentQPolicyAction::sign && !method_descriptor->supports_sign)) {
+    if ((action == AgentQPolicyAction::reject && !method_descriptor->supports_reject)) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
 
@@ -293,7 +292,7 @@ AgentQPolicyProposalParseStatus parse_rule(
             return status;
         }
     }
-    if (!agent_q_policy_sign_rule_is_bounded(output)) {
+    if (!agent_q_policy_method_sign_rule_is_bounded(*method_descriptor, output)) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
     return AgentQPolicyProposalParseStatus::ok;

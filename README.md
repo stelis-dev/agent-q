@@ -208,7 +208,7 @@ Current signing routes in source, with product-active evidence tracked in
 
 | Chain | Method | Current behavior |
 | --- | --- | --- |
-| `sui` | `sign_transaction` | Sui transaction signing over inline or same-session staged bytes. Firmware parses bounded offline `TransactionData::V1 -> ProgrammableTransaction` facts, then chooses policy authorization or user authorization from its device-local signing mode. Policy authorization currently rejects valid transactions whose policy coverage is incomplete and does not sign until complete policy coverage and accepted sign-rule validation are implemented. User authorization shows covered offline facts when offline facts review coverage is complete, or a device-local blind-signing warning when Firmware can validate and bind the transaction but offline facts review coverage is incomplete. |
+| `sui` | `sign_transaction` | Sui transaction signing over inline or same-session staged bytes. Firmware parses bounded offline `TransactionData::V1 -> ProgrammableTransaction` facts, then chooses policy authorization or user authorization from its device-local signing mode. Current policy authorization signs only GasCoin-derived proven-SUI split-result transfer transactions that match one bounded `sign` rule; other valid policy-incomplete transactions return `policy_rejected`. User authorization shows covered offline facts when offline facts review coverage is complete, meaning Firmware can display the bounded offline facts it extracted rather than simulate execution effects. If Firmware can validate and bind the transaction but offline facts review coverage is incomplete, user authorization shows a device-local blind-signing warning. |
 | `sui` | `sign_personal_message` | Bounded Sui personal-message signing in user authorization mode. Policy authorization mode fails closed for this method. |
 
 Unsupported chains and unsupported methods fail explicitly. Chains are exposed
@@ -246,9 +246,10 @@ Current limitations:
   authorization. Firmware user mode shows a covered offline facts review when
   offline facts review coverage is complete and otherwise shows a blind-signing
   warning for valid, account-bound transactions whose offline facts review
-  coverage is incomplete. Firmware policy mode returns a policy rejection for
-  valid transactions whose policy coverage is incomplete
-  and does not sign until policy coverage is complete for the parsed shape.
+  coverage is incomplete. Firmware policy mode signs only GasCoin-derived
+  proven-SUI split-result transfer transactions that match one bounded `sign`
+  rule; valid transactions outside that current automatic signing contract
+  return `policy_rejected`.
   Agent-Q does not simulate Sui execution or fetch chain state.
 - Sponsored Sui transactions are not implemented.
 - Sui transaction execution / submit-to-network is not an Agent-Q signing
@@ -262,6 +263,7 @@ Current limitations:
 - Protocol contract: `specs/PROTOCOL.md`
 - Security model: `docs/SECURITY_MODEL.md`
 - State model: `docs/STATE_MODEL.md`
+- Current policy schema and Sui policy facts: `docs/POLICY_SCHEMA.md`
 - Implementation status: `docs/IMPLEMENTATION_STATUS.md`
 - Firmware overview: `firmware/README.md`
 - StackChan CoreS3 target: `firmware/src/stackchan-cores3/README.md`

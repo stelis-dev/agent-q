@@ -4,28 +4,40 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "agent_q_sui_method_adapter.h"
+
 namespace agent_q {
 namespace {
 
 AgentQSuiSignTransactionAuthorizationCoverage incomplete_authorization_coverage()
 {
-    // Current parser facts are useful for diagnostics, review work, and policy
-    // work, but policy coverage is not complete for broad PTB signing yet.
-    return AgentQSuiSignTransactionAuthorizationCoverage{false, false};
+    return AgentQSuiSignTransactionAuthorizationCoverage{
+        false,
+        false,
+        AgentQSuiUserAuthorizationOutcome::unavailable,
+        AgentQSuiPolicyAuthorizationOutcome::unavailable,
+    };
 }
 
 AgentQSuiSignTransactionAuthorizationCoverage authorization_coverage_from_review(
-    const SuiReviewSummary& review)
+    const SuiReviewSummary& review,
+    bool policy_mode_authorization_covered)
 {
     AgentQSuiSignTransactionAuthorizationCoverage coverage =
         incomplete_authorization_coverage();
-    // User-mode authorization can proceed with either full clear-signing
-    // coverage or the explicit blind-signing confirmation path. Policy-mode
-    // authorization remains unavailable until policy facts cover the actual
-    // signable value.
-    coverage.user_mode_authorization_covered =
-        review.status == SuiReviewSummaryStatus::ok ||
-        review.status == SuiReviewSummaryStatus::insufficient_review;
+    if (review.status == SuiReviewSummaryStatus::ok) {
+        coverage.user_mode_authorization_covered = true;
+        coverage.user_outcome =
+            AgentQSuiUserAuthorizationOutcome::offline_facts_review;
+    } else if (review.status == SuiReviewSummaryStatus::insufficient_review) {
+        coverage.user_mode_authorization_covered = true;
+        coverage.user_outcome = AgentQSuiUserAuthorizationOutcome::blind_signing;
+    }
+    coverage.policy_mode_authorization_covered = policy_mode_authorization_covered;
+    coverage.policy_outcome =
+        policy_mode_authorization_covered
+            ? AgentQSuiPolicyAuthorizationOutcome::policy_evaluation
+            : AgentQSuiPolicyAuthorizationOutcome::unavailable;
     return coverage;
 }
 
@@ -106,14 +118,7 @@ const char* minimum_blind_signing_reason(SuiTransactionFactsResult result)
             return "Transaction details exceed parser limits";
         case SuiTransactionFactsResult::unsupported_shape:
             return "Transaction shape cannot be fully shown";
-        case SuiTransactionFactsResult::transaction_kind_only:
-            return "Transaction data is incomplete";
-        case SuiTransactionFactsResult::unsupported_version:
-            return "Transaction version is unsupported";
-        case SuiTransactionFactsResult::unsupported_kind:
-            return "Transaction kind is unsupported";
-        case SuiTransactionFactsResult::ok:
-        case SuiTransactionFactsResult::malformed:
+        default:
             break;
     }
     return "Transaction details cannot be fully shown";
@@ -146,7 +151,8 @@ AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
     size_t tx_bytes_size,
     SuiPolicySubjectFacts* policy_subject_out,
     SuiReviewSummary* review_summary_out,
-    AgentQSuiSignTransactionAuthorizationCoverage* coverage_out)
+    AgentQSuiSignTransactionAuthorizationCoverage* coverage_out,
+    SuiTokenFlowFacts* token_flow_out)
 {
     if (policy_subject_out != nullptr) {
         *policy_subject_out = {};
@@ -156,6 +162,9 @@ AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
     }
     if (coverage_out != nullptr) {
         *coverage_out = incomplete_authorization_coverage();
+    }
+    if (token_flow_out != nullptr) {
+        *token_flow_out = {};
     }
     if (tx_bytes == nullptr ||
         tx_bytes_size == 0 ||
@@ -183,7 +192,7 @@ AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
                 parse_result,
                 policy_subject_out,
                 review_summary_out)) {
-            *coverage_out = authorization_coverage_from_review(*review_summary_out);
+            *coverage_out = authorization_coverage_from_review(*review_summary_out, false);
             free(parsed);
             return AgentQSuiSignTransactionAdapterResult::ok;
         }
@@ -204,7 +213,7 @@ AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
                 minimum,
                 "Transaction review cannot be fully shown",
                 review_summary_out)) {
-            *coverage_out = authorization_coverage_from_review(*review_summary_out);
+            *coverage_out = authorization_coverage_from_review(*review_summary_out, false);
             free(parsed);
             return AgentQSuiSignTransactionAdapterResult::ok;
         }
@@ -213,7 +222,18 @@ AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
         free(parsed);
         return AgentQSuiSignTransactionAdapterResult::unsupported_transaction;
     }
-    *coverage_out = authorization_coverage_from_review(*review_summary_out);
+    SuiTokenFlowFacts token_flow = {};
+    const bool token_flow_ok =
+        build_sui_token_flow_facts(*parsed, &token_flow) == SuiTokenFlowFactsResult::ok;
+    if (token_flow_out != nullptr) {
+        *token_flow_out = token_flow_ok ? token_flow : SuiTokenFlowFacts{};
+    }
+    *coverage_out = authorization_coverage_from_review(
+        *review_summary_out,
+        token_flow_ok &&
+            sui_sign_transaction_policy_authorization_covered(
+                *policy_subject_out,
+                token_flow));
     free(parsed);
     return AgentQSuiSignTransactionAdapterResult::ok;
 }

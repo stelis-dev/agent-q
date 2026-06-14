@@ -25,9 +25,10 @@ struct AgentQPolicyUpdateReviewUiFlowOps {
     bool (*protocol_pin_begin_policy_update)(
         const char* request_id,
         const char* session_id,
+        TickType_t now,
         AgentQTimeoutWindow window);
     void (*protocol_pin_clear)();
-    bool (*local_pin_begin_policy_update)(AgentQTimeoutWindow window);
+    bool (*local_pin_begin_policy_update)(TickType_t now, AgentQTimeoutWindow window);
     bool (*draw_local_pin_auth_panel)();
     void (*wipe_local_pin_auth_scratch)(const char* reason);
     bool (*review_deadline_reached)(TickType_t now);

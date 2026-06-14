@@ -28,10 +28,16 @@ for required in \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
   "${FIXTURE_DIR}/move_call_tx.bcs.hex" \
+  "${FIXTURE_DIR}/split_move_call_tx.bcs.hex" \
+  "${FIXTURE_DIR}/direct_object_transfer_tx.bcs.hex" \
+  "${FIXTURE_DIR}/non_gas_split_transfer_tx.bcs.hex" \
+  "${FIXTURE_DIR}/merge_known_known_tx.bcs.hex" \
+  "${FIXTURE_DIR}/merge_known_unknown_tx.bcs.hex" \
   "${FIXTURE_DIR}/move_call_vector_type_arg_tx.bcs.hex" \
   "${FIXTURE_DIR}/publish_tx.bcs.hex" \
   "${FIXTURE_DIR}/upgrade_tx.bcs.hex" \
   "${FIXTURE_DIR}/funds_withdrawal_tx.bcs.hex" \
+  "${FIXTURE_DIR}/funds_withdrawal_transfer_tx.bcs.hex" \
   "${FIXTURE_DIR}/valid_during_tx.bcs.hex" \
   "${FIXTURE_DIR}/epoch_expiration_tx.bcs.hex" \
   "${FIXTURE_DIR}/make_move_vec_tx.bcs.hex" \
@@ -43,12 +49,18 @@ for required in \
   "${FIXTURE_DIR}/sponsored_gas_owner_tx.bcs.hex" \
   "${FIXTURE_DIR}/valid_sui_transfer_facts.json" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.sdk-v2-facts.json" \
-  "${FIXTURE_DIR}/unsupported_merge_coins_tx.sdk-v2-facts.json" \
+  "${FIXTURE_DIR}/merge_coins_tx.sdk-v2-facts.json" \
   "${FIXTURE_DIR}/move_call_tx.sdk-v2-facts.json" \
+  "${FIXTURE_DIR}/split_move_call_tx.sdk-v2-facts.json" \
+  "${FIXTURE_DIR}/direct_object_transfer_tx.sdk-v2-facts.json" \
+  "${FIXTURE_DIR}/non_gas_split_transfer_tx.sdk-v2-facts.json" \
+  "${FIXTURE_DIR}/merge_known_known_tx.sdk-v2-facts.json" \
+  "${FIXTURE_DIR}/merge_known_unknown_tx.sdk-v2-facts.json" \
   "${FIXTURE_DIR}/move_call_vector_type_arg_tx.sdk-v2-facts.json" \
   "${FIXTURE_DIR}/publish_tx.sdk-v2-facts.json" \
   "${FIXTURE_DIR}/upgrade_tx.sdk-v2-facts.json" \
   "${FIXTURE_DIR}/funds_withdrawal_tx.sdk-v2-facts.json" \
+  "${FIXTURE_DIR}/funds_withdrawal_transfer_tx.sdk-v2-facts.json" \
   "${FIXTURE_DIR}/valid_during_tx.sdk-v2-facts.json" \
   "${FIXTURE_DIR}/epoch_expiration_tx.sdk-v2-facts.json" \
   "${FIXTURE_DIR}/make_move_vec_tx.sdk-v2-facts.json" \
@@ -938,12 +950,18 @@ int main(int argc, char** argv)
     expect_parsed_transaction_facts("valid_sui_transfer_tx", valid, expected_json, &failures);
     expect_minimum_transaction_facts("valid_sui_transfer_tx", valid, expected_json, &failures);
     expect_sdk_v2_oracle_facts(fixture_dir, "valid_sui_transfer_tx", &failures);
-    expect_sdk_v2_oracle_facts(fixture_dir, "unsupported_merge_coins_tx", &failures);
+    expect_sdk_v2_oracle_facts(fixture_dir, "merge_coins_tx", &failures);
     expect_sdk_v2_oracle_facts(fixture_dir, "move_call_tx", &failures);
+    expect_sdk_v2_oracle_facts(fixture_dir, "split_move_call_tx", &failures);
+    expect_sdk_v2_oracle_facts(fixture_dir, "direct_object_transfer_tx", &failures);
+    expect_sdk_v2_oracle_facts(fixture_dir, "non_gas_split_transfer_tx", &failures);
+    expect_sdk_v2_oracle_facts(fixture_dir, "merge_known_known_tx", &failures);
+    expect_sdk_v2_oracle_facts(fixture_dir, "merge_known_unknown_tx", &failures);
     expect_sdk_v2_oracle_facts(fixture_dir, "move_call_vector_type_arg_tx", &failures);
     expect_sdk_v2_oracle_facts(fixture_dir, "publish_tx", &failures);
     expect_sdk_v2_oracle_facts(fixture_dir, "upgrade_tx", &failures);
     expect_sdk_v2_oracle_facts(fixture_dir, "funds_withdrawal_tx", &failures);
+    expect_sdk_v2_oracle_facts(fixture_dir, "funds_withdrawal_transfer_tx", &failures);
     expect_sdk_v2_oracle_facts(fixture_dir, "valid_during_tx", &failures);
     expect_sdk_v2_oracle_facts(fixture_dir, "epoch_expiration_tx", &failures);
     expect_sdk_v2_oracle_facts(fixture_dir, "make_move_vec_tx", &failures);
@@ -975,7 +993,7 @@ int main(int argc, char** argv)
         agent_q::SuiReviewSummaryStatus::insufficient_review,
         &failures);
     expect_review_summary(
-        (fixture_dir + "/unsupported_merge_coins_tx.bcs.hex").c_str(),
+        (fixture_dir + "/merge_coins_tx.bcs.hex").c_str(),
         "Programmable transaction",
         "High",
         agent_q::SuiReviewSummaryStatus::ok,
@@ -1059,7 +1077,7 @@ int main(int argc, char** argv)
         agent_q::SuiTransactionFactsResult::transaction_kind_only,
         &failures);
     expect_supported_policy_subject(
-        (fixture_dir + "/unsupported_merge_coins_tx.bcs.hex").c_str(),
+        (fixture_dir + "/merge_coins_tx.bcs.hex").c_str(),
         &failures);
     expect_move_call_metadata(
         (fixture_dir + "/move_call_tx.bcs.hex").c_str(),

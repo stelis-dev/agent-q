@@ -65,7 +65,8 @@ void handle_usb_connect_request(
         return;
     }
 
-    if (ops.make_approval_window == nullptr ||
+    if (ops.current_tick == nullptr ||
+        ops.make_approval_window == nullptr ||
         ops.begin_connect_approval == nullptr ||
         ops.show_connect_unavailable == nullptr ||
         ops.reset_review_choice_queue == nullptr ||
@@ -75,8 +76,9 @@ void handle_usb_connect_request(
         return;
     }
 
-    const AgentQTimeoutWindow approval_window = ops.make_approval_window();
-    if (!ops.begin_connect_approval(id, client_name, approval_window)) {
+    const AgentQTimeoutTick now = ops.current_tick();
+    const AgentQTimeoutWindow approval_window = ops.make_approval_window(now);
+    if (!ops.begin_connect_approval(id, client_name, now, approval_window)) {
         usb_response_write_connect_rejected(id, "invalid_state", "Connect is unavailable.");
         ops.show_connect_unavailable();
         return;

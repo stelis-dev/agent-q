@@ -498,7 +498,7 @@ int main()
            "error recovery wipe cannot start without confirmation state");
 
     reset_stubs();
-    expect(agent_q::local_pin_auth_begin_connect(pin_window(1, 100)),
+    expect(agent_q::local_pin_auth_begin_connect(1, pin_window(1, 100)),
            "shared attempt setup starts connect PIN auth");
     for (int attempt = 0; attempt < 5; ++attempt) {
         g_now = 10 + attempt;

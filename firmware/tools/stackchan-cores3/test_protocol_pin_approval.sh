@@ -164,7 +164,7 @@ int main()
                sizeof(request_id)),
            "inactive state has no connect request id");
     expect(request_id[0] == '\0', "inactive request id output is cleared");
-    expect(agent_q::protocol_pin_approval_begin_connect("connect-1", timeout_window(10, 100)),
+    expect(agent_q::protocol_pin_approval_begin_connect("connect-1", 10, timeout_window(10, 100)),
            "connect protocol PIN approval begins");
     agent_q::AgentQProtocolPinApprovalSnapshot snapshot =
         agent_q::protocol_pin_approval_snapshot();
@@ -240,7 +240,7 @@ int main()
 
     char too_long[agent_q::kAgentQProtocolPinRequestIdSize + 4] = {};
     memset(too_long, 'a', sizeof(too_long) - 1);
-    expect(!agent_q::protocol_pin_approval_begin_connect(too_long, timeout_window(20, 200)),
+    expect(!agent_q::protocol_pin_approval_begin_connect(too_long, 20, timeout_window(20, 200)),
            "overlong request id is rejected");
     snapshot = agent_q::protocol_pin_approval_snapshot();
     expect(strcmp(snapshot.request_id, "connect-1") == 0,
@@ -248,6 +248,7 @@ int main()
     expect(!agent_q::protocol_pin_approval_begin_policy_update(
                "policy-overwrite",
                "session_aaaaaaaaaaaaaaaa",
+               20,
                timeout_window(20, 225)),
            "active protocol PIN approval cannot be overwritten");
     snapshot = agent_q::protocol_pin_approval_snapshot();
@@ -260,9 +261,32 @@ int main()
            "test session starts");
     const char* session_id = agent_q::session_id();
     agent_q::protocol_pin_approval_clear();
+    expect(!agent_q::protocol_pin_approval_begin_connect(
+               "connect-stale",
+               30,
+               timeout_window(10, 20)),
+           "connect protocol PIN rejects stale request window");
+    expect(!agent_q::protocol_pin_approval_begin_connect(
+               "connect-future",
+               10,
+               timeout_window(20, 40)),
+           "connect protocol PIN rejects future request window");
+    expect(!agent_q::protocol_pin_approval_begin_policy_update(
+               "policy-stale",
+               session_id,
+               30,
+               timeout_window(10, 20)),
+           "policy protocol PIN rejects stale request window");
+    expect(!agent_q::protocol_pin_approval_begin_policy_update(
+               "policy-future",
+               session_id,
+               10,
+               timeout_window(20, 40)),
+           "policy protocol PIN rejects future request window");
     expect(agent_q::protocol_pin_approval_begin_policy_update(
                "policy-1",
                session_id,
+               20,
                timeout_window(20, 250)),
            "policy update protocol PIN approval begins");
     snapshot = agent_q::protocol_pin_approval_snapshot();

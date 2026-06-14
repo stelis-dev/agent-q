@@ -365,7 +365,7 @@ int main()
         constexpr TickType_t lockout_until = 130;
         constexpr TickType_t resumed_input_deadline = 190;
 
-        expect(agent_q::local_pin_auth_begin_connect(pin_window(start, original_input_deadline)),
+        expect(agent_q::local_pin_auth_begin_connect(start, pin_window(start, original_input_deadline)),
                "connect PIN auth begins before lockout test");
 
         for (int attempt = 0; attempt < 4; ++attempt) {
@@ -400,19 +400,27 @@ int main()
 
     {
         agent_q::test_set_tick(200);
-        expect(!agent_q::local_pin_auth_begin_connect(pin_window(200, 200)),
+        expect(!agent_q::local_pin_auth_begin_connect(200, pin_window(200, 200)),
                "expired connect PIN window is rejected");
         expect(!agent_q::local_pin_auth_snapshot(200).flow_active,
                "expired connect PIN window leaves flow inactive");
-        expect(!agent_q::local_pin_auth_begin_change_pin(agent_q::kAgentQTimeoutWindowNone),
+        expect(!agent_q::local_pin_auth_begin_connect(200, pin_window(100, 150)),
+               "stale connect PIN window is rejected by state owner");
+        expect(!agent_q::local_pin_auth_begin_connect(200, pin_window(220, 260)),
+               "future connect PIN window is rejected by state owner");
+        expect(!agent_q::local_pin_auth_begin_change_pin(0, agent_q::kAgentQTimeoutWindowNone),
                "zero local PIN auth deadline is rejected");
         expect(!agent_q::local_pin_auth_snapshot(200).flow_active,
                "zero local PIN auth deadline leaves flow inactive");
+        expect(!agent_q::local_pin_auth_begin_policy_update(200, pin_window(100, 150)),
+               "stale policy update PIN window is rejected by state owner");
+        expect(!agent_q::local_pin_auth_begin_policy_update(200, pin_window(220, 260)),
+               "future policy update PIN window is rejected by state owner");
     }
 
     {
         agent_q::test_set_tick(200);
-        expect(agent_q::local_pin_auth_begin_connect(pin_window(200, 260)),
+        expect(agent_q::local_pin_auth_begin_connect(200, pin_window(200, 260)),
                "connect PIN auth begins with future deadline");
         expect(agent_q::local_pin_auth_snapshot(200).input_window.started_at == 200,
                "snapshot exposes current PIN input start for UI");
@@ -429,7 +437,7 @@ int main()
 
     {
         agent_q::test_set_tick(200);
-        expect(agent_q::local_pin_auth_begin_connect(pin_window(200, 260)),
+        expect(agent_q::local_pin_auth_begin_connect(200, pin_window(200, 260)),
                "connect PIN auth begins before input test");
         expect(agent_q::local_pin_auth_add_digit('1') ==
                    agent_q::AgentQLocalPinAuthInputResult::accepted,
@@ -454,6 +462,7 @@ int main()
         agent_q::test_set_tick(300);
         expect(agent_q::local_pin_auth_begin_human_approval_input_setting(
                    agent_q::AgentQHumanApprovalInputMode::confirm,
+                   300,
                    pin_window(300, 360)),
                "human approval setting PIN auth begins");
         enter_pin("123456");
@@ -481,6 +490,7 @@ int main()
         agent_q::test_set_tick(320);
         expect(agent_q::local_pin_auth_begin_human_approval_input_setting(
                    agent_q::AgentQHumanApprovalInputMode::confirm,
+                   320,
                    pin_window(320, 360)),
                "human approval setting PIN auth begins before wrong PIN");
         enter_pin("000000");
@@ -507,6 +517,7 @@ int main()
         agent_q::test_set_tick(330);
         expect(agent_q::local_pin_auth_begin_signing_mode_setting(
                    agent_q::AgentQSigningAuthorizationMode::policy,
+                   330,
                    pin_window(330, 360)),
                "signing mode setting PIN auth begins before wrong PIN");
         enter_pin("000000");
@@ -526,7 +537,7 @@ int main()
 
     {
         agent_q::test_set_tick(340);
-        expect(agent_q::local_pin_auth_begin_change_pin(pin_window(340, 370)),
+        expect(agent_q::local_pin_auth_begin_change_pin(340, pin_window(340, 370)),
                "change PIN auth begins before current-PIN wrong PIN");
         enter_pin("000000");
         expect(agent_q::local_pin_auth_submit(341, 0, test_input_window(360), 350) ==
@@ -545,7 +556,7 @@ int main()
 
     {
         agent_q::test_set_tick(360);
-        expect(agent_q::local_pin_auth_begin_policy_update(pin_window(360, 420)),
+        expect(agent_q::local_pin_auth_begin_policy_update(360, pin_window(360, 420)),
                "policy update PIN auth begins before capped retry test");
         enter_pin("000000");
         expect(agent_q::local_pin_auth_submit(361, 0, test_input_window(390), 380) ==
@@ -566,7 +577,7 @@ int main()
     {
         agent_q::pin_attempt_clear();
         agent_q::test_set_tick(370);
-        expect(agent_q::local_pin_auth_begin_connect(pin_window(370, 420)),
+        expect(agent_q::local_pin_auth_begin_connect(370, pin_window(370, 420)),
                "connect PIN auth begins before late wrong-PIN result test");
         enter_pin("000000");
         agent_q::test_set_tick(371);
@@ -589,7 +600,7 @@ int main()
 
     {
         agent_q::test_set_tick(400);
-        expect(agent_q::local_pin_auth_begin_policy_update(pin_window(400, 460)),
+        expect(agent_q::local_pin_auth_begin_policy_update(400, pin_window(400, 460)),
                "policy update PIN auth begins");
         enter_pin("123456");
         expect(agent_q::local_pin_auth_submit(401, 0, test_input_window(460), 430) ==
@@ -608,7 +619,7 @@ int main()
 
     {
         agent_q::test_set_tick(400);
-        expect(agent_q::local_pin_auth_begin_change_pin(pin_window(400, 460)),
+        expect(agent_q::local_pin_auth_begin_change_pin(400, pin_window(400, 460)),
                "change PIN auth begins");
         enter_pin("123456");
         expect(agent_q::local_pin_auth_submit(401, 0, test_input_window(460), 430) ==
@@ -661,7 +672,7 @@ int main()
 
     {
         agent_q::test_set_tick(500);
-        expect(agent_q::local_pin_auth_begin_connect(pin_window(500, 560)),
+        expect(agent_q::local_pin_auth_begin_connect(500, pin_window(500, 560)),
                "connect PIN auth begins before processing test");
         enter_pin("654321");
         expect(agent_q::local_pin_auth_submit(501, 0, test_input_window(560), 620) ==
@@ -679,7 +690,7 @@ int main()
 
     {
         agent_q::test_set_tick(620);
-        expect(agent_q::local_pin_auth_begin_connect(pin_window(620, 680)),
+        expect(agent_q::local_pin_auth_begin_connect(620, pin_window(620, 680)),
                "connect PIN auth begins before worker-timeout test");
         enter_pin("654321");
         expect(agent_q::local_pin_auth_submit(621, 0, test_input_window(680), 650) ==
@@ -698,7 +709,7 @@ int main()
 
     {
         agent_q::test_set_tick(700);
-        expect(agent_q::local_pin_auth_begin_connect(pin_window(700, 760)),
+        expect(agent_q::local_pin_auth_begin_connect(700, pin_window(700, 760)),
                "connect PIN auth begins before late-result test");
         enter_pin("654321");
         expect(agent_q::local_pin_auth_submit(701, 0, test_input_window(760), 720) ==
@@ -715,7 +726,7 @@ int main()
 
     {
         agent_q::test_set_tick(600);
-        expect(agent_q::local_pin_auth_begin_change_pin(pin_window(600, 660)),
+        expect(agent_q::local_pin_auth_begin_change_pin(600, pin_window(600, 660)),
                "change PIN auth begins before commit-timeout test");
         enter_pin("654321");
         expect(agent_q::local_pin_auth_submit(601, 0, test_input_window(660), 620) ==

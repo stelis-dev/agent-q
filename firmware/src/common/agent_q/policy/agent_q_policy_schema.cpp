@@ -2,8 +2,6 @@
 
 #include <string.h>
 
-#include "agent_q_policy_u64.h"
-
 namespace agent_q {
 namespace {
 
@@ -211,7 +209,8 @@ bool agent_q_policy_validate_method_descriptor(
 {
     if (!agent_q_policy_is_identifier_string(descriptor.chain, kAgentQPolicyMaxChainIdLength) ||
         !agent_q_policy_is_identifier_string(descriptor.operation, kAgentQPolicyMaxOperationLength) ||
-        (!descriptor.supports_reject && !descriptor.supports_sign)) {
+        (!descriptor.supports_reject && !descriptor.supports_sign) ||
+        (descriptor.supports_sign && descriptor.sign_rule_validator == nullptr)) {
         return false;
     }
     return agent_q_policy_validate_adapter_field_descriptors(
@@ -243,6 +242,18 @@ bool agent_q_policy_validate_method_descriptors(
     return true;
 }
 
+bool agent_q_policy_method_sign_rule_is_bounded(
+    const AgentQPolicyMethodDescriptor& descriptor,
+    const AgentQPolicyRule& rule)
+{
+    if (rule.action != AgentQPolicyAction::sign) {
+        return true;
+    }
+    return descriptor.supports_sign &&
+           descriptor.sign_rule_validator != nullptr &&
+           descriptor.sign_rule_validator(rule);
+}
+
 bool agent_q_policy_sign_rule_is_bounded(const AgentQPolicyRule& rule)
 {
     return rule.action != AgentQPolicyAction::sign;
@@ -250,7 +261,22 @@ bool agent_q_policy_sign_rule_is_bounded(const AgentQPolicyRule& rule)
 
 bool agent_q_policy_sign_rule_count_is_supported(const AgentQPolicyDocument& policy)
 {
-    return policy.rule_count == 0 || policy.rules != nullptr;
+    if (policy.rule_count == 0) {
+        return true;
+    }
+    if (policy.rules == nullptr) {
+        return false;
+    }
+    size_t sign_rule_count = 0;
+    for (size_t index = 0; index < policy.rule_count; ++index) {
+        if (policy.rules[index].action == AgentQPolicyAction::sign) {
+            ++sign_rule_count;
+            if (sign_rule_count > 1) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 }  // namespace agent_q

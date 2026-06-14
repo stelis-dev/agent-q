@@ -151,11 +151,6 @@ bool add_blind_signing_review_rows(AgentQUserSigningReviewViewModel* output)
            add_row(
                output,
                AgentQUserSigningReviewRowKind::warning,
-               "Reason",
-               "Transaction details cannot be fully shown") &&
-           add_row(
-               output,
-               AgentQUserSigningReviewRowKind::warning,
                "Warning",
                "Confirm only if you accept blind signing");
 }

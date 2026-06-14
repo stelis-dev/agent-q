@@ -86,12 +86,13 @@ Implemented today:
   record in ordinary NVS and can load canonical current-schema policy records
   through its internal storage boundary. Firmware exposes read-only active policy
   document readback through `policy_get`, consumes that active policy only when
-  the Firmware-local signing authorization mode is `policy`, rejects Sui
-  `sign_transaction` sign rules while policy coverage is incomplete, and still
-  requires Sui transaction policy coverage to be complete for the parsed shape
-  before a policy `sign` decision can lead to signing. It exposes policy
-  update authorization only through the Firmware-owned `policy_propose`
-  proposal flow. Policy actions do not authorize user-mode signing.
+  the Firmware-local signing authorization mode is `policy`, accepts at most one
+  current-contract bounded Sui `sign_transaction` sign rule, and requires the
+  parsed transaction to match the GasCoin-derived proven-SUI split-result
+  transfer contract before a policy `sign` decision can lead to signing. It
+  exposes policy update authorization only through the Firmware-owned
+  `policy_propose` proposal flow. Policy actions do not authorize user-mode
+  signing.
 - A local Admin Page for read-only device metadata and the
   current policy proposal template. It uses the same host core
   boundary as MCP and is not a policy authority.
@@ -112,8 +113,9 @@ Implemented today:
   metadata, and owns cleanup. Unsupported versions, unsupported transaction
   kinds, `TransactionKind`-only bytes, malformed bytes, trailing bytes,
   oversized bytes, unbindable transactions, and out-of-range command references
-  fail closed. Policy mode evaluates active policy only
-  after complete policy coverage; valid policy-incomplete shapes return
+  fail closed. Policy mode evaluates active policy only for transactions that
+  match the current automatic policy-signing contract for GasCoin-derived
+  proven-SUI split-result transfer facts; other valid policy-incomplete shapes return
   `policy_rejected` there.
   User mode shows covered offline facts when offline facts review coverage is
   complete, or an explicit blind-signing warning when Firmware can validate and
@@ -153,8 +155,8 @@ Not implemented:
 - USER_PROFILE mnemonic generation or import.
 - zkLogin signing material.
 - USER_PROFILE policy storage and policy update authorization.
-- Arbitrary Sui transactions, policy-authorized Sui personal-message signing,
-  and other chains.
+- Execution-effect-complete arbitrary Sui transaction review or policy
+  simulation, policy-authorized Sui personal-message signing, and other chains.
 - Full Admin policy editing beyond the current policy proposal template.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.
 - Secure Boot, Flash Encryption, and NVS Encryption setup flow.
@@ -251,14 +253,17 @@ gates. Firmware chooses the gate from device-local signing authorization mode;
 requests, adapters, and host callers cannot choose it.
 
 - Policy mode evaluates the active policy for transaction signing only after
-  the parsed transaction shape has complete policy coverage. A policy reject,
-  including rejection for incomplete policy coverage, is terminal and must not
-  fall back to user confirmation.
+  the parsed transaction matches the current automatic policy-signing contract
+  for GasCoin-derived proven-SUI split-result transfer facts. A policy reject,
+  including rejection for
+  incomplete policy coverage, is terminal and must not fall back to user
+  confirmation. The current policy document shape and currently exposed Sui
+  policy facts are cataloged in `docs/POLICY_SCHEMA.md`.
 - Policy mode treats policy authorization as sufficient for signing only after
-  that policy coverage gate and the required policy history record, with
+  that automatic signing gate and the required policy history record, with
   speech-bubble status notifications instead of per-request device-local
   confirmation.
-- User mode uses device-local clear-signing review when complete offline facts
+- User mode uses device-local offline facts review when complete offline facts
   review coverage exists. When Firmware can validate and account-bind a
   transaction but offline facts review coverage is incomplete, user mode shows
   an explicit blind-signing warning before the current human approval input
@@ -562,9 +567,10 @@ Enforcement today:
   personal-message signing. Those adapter surfaces are not the signing
   authority. Firmware state gates, method adapters, the device-local signing
   authorization mode, active policy evaluation in policy mode, and local
-  confirmation in user mode remain the boundaries. Arbitrary Sui transactions,
-  policy-authorized personal-message signing, and other chains are not
-  implemented. The top-level tool allowlist does not grant authority to method
+  confirmation in user mode remain the boundaries. Execution-effect-complete
+  arbitrary Sui transaction review or policy simulation, policy-authorized
+  personal-message signing, and other chains are not implemented. The top-level
+  tool allowlist does not grant authority to method
   names carried inside Sign API requests; Firmware method adapters and active
   policy validation remain the method boundary.
 

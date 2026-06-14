@@ -2778,12 +2778,11 @@ void handle_identify_device_request(
         usb_identify_device_handler_ops());
 }
 
-agent_q::AgentQTimeoutWindow make_connect_approval_window()
+agent_q::AgentQTimeoutWindow make_connect_approval_window(agent_q::AgentQTimeoutTick now)
 {
-    const TickType_t started_at = xTaskGetTickCount();
     return agent_q::timeout_window_from_deadline(
-        started_at,
-        started_at + pdMS_TO_TICKS(kConnectApprovalDefaultMs));
+        now,
+        now + pdMS_TO_TICKS(kConnectApprovalDefaultMs));
 }
 
 void show_connect_unavailable()
@@ -2810,6 +2809,7 @@ const agent_q::AgentQUsbConnectHandlerOps& connect_handler_ops()
     static const agent_q::AgentQUsbConnectHandlerOps ops = {
         provisioned_material_ready,
         write_payload_delivery_connect_busy,
+        current_timeout_tick,
         make_connect_approval_window,
         agent_q::connect_approval_begin,
         show_connect_unavailable,
@@ -3082,10 +3082,9 @@ void handle_get_approval_history_request(
         approval_history_handler_ops());
 }
 
-agent_q::AgentQTimeoutWindow make_policy_update_review_window()
+agent_q::AgentQTimeoutWindow make_policy_update_review_window(agent_q::AgentQTimeoutTick now)
 {
-    const TickType_t review_started_at = xTaskGetTickCount();
-    return timeout_window_from_now_ms(review_started_at, kProvisioningApprovalMaxMs);
+    return timeout_window_from_now_ms(now, kProvisioningApprovalMaxMs);
 }
 
 void record_policy_update_waiting_for_review(const char* id)
@@ -3099,6 +3098,7 @@ const agent_q::AgentQUsbPolicyProposeHandlerOps& policy_propose_handler_ops()
         provisioned_material_ready,
         write_payload_delivery_policy_propose_busy,
         require_active_matching_session,
+        current_timeout_tick,
         make_policy_update_review_window,
         agent_q::policy_update_flow_begin,
         agent_q::policy_update_flow_begin_result_reason,
@@ -3131,12 +3131,11 @@ agent_q::AgentQPolicySigningExecutionResult execute_policy_sign_transaction_for_
     return agent_q::execute_policy_sign_transaction(policy_result, persistent_material_ops());
 }
 
-agent_q::AgentQTimeoutWindow make_user_signing_window()
+agent_q::AgentQTimeoutWindow make_user_signing_window(agent_q::AgentQTimeoutTick now)
 {
-    const TickType_t signing_started_at = xTaskGetTickCount();
     return agent_q::timeout_window_from_deadline(
-        signing_started_at,
-        signing_started_at + pdMS_TO_TICKS(agent_q::kAgentQUserSigningApprovalWindowMs));
+        now,
+        now + pdMS_TO_TICKS(agent_q::kAgentQUserSigningApprovalWindowMs));
 }
 
 void show_user_signing_display_error()

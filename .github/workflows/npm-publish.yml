@@ -40,6 +40,7 @@ jobs:
           ];
 
           const readPackage = (path) => JSON.parse(fs.readFileSync(path, 'utf8'));
+          const server = JSON.parse(fs.readFileSync('server.json', 'utf8'));
           const packages = new Map(
             publishPackages.map((path) => {
               const pkg = readPackage(path);
@@ -74,6 +75,18 @@ jobs:
             if (actual !== core.version) {
               throw new Error(`${pkg.name} must depend on ${core.name}@${core.version}, found ${actual ?? 'missing'}`);
             }
+          }
+
+          const agentQ = packages.get('@stelis/agent-q');
+          const mcpPackage = server.packages?.[0];
+          if (agentQ.mcpName !== server.name) {
+            throw new Error(`${agentQ.name} mcpName must match server.json name`);
+          }
+          if (mcpPackage?.registryType !== 'npm' || mcpPackage.identifier !== agentQ.name) {
+            throw new Error(`server.json must register the npm package ${agentQ.name}`);
+          }
+          if (server.version !== agentQ.version || mcpPackage.version !== agentQ.version) {
+            throw new Error(`server.json versions must match ${agentQ.name}@${agentQ.version}`);
           }
           NODE
 
@@ -112,3 +125,49 @@ jobs:
           token: ${{ secrets.NPM_TOKEN }}
           package: packages/provider-sui/package.json
           strategy: upgrade
+
+  publish-mcp-registry:
+    name: Register on the MCP Registry
+    needs: publish-npm
+    if: ${{ !github.event.release.prerelease && contains(github.event.release.tag_name, '-front') == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync server.json version to @stelis/agent-q
+        run: |
+          VERSION="$(jq -r .version packages/agent-q/package.json)"
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.json.tmp
+          mv server.json.tmp server.json
+
+      - name: Verify MCP Registry package marker
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const server = JSON.parse(fs.readFileSync('server.json', 'utf8'));
+          const pkg = JSON.parse(fs.readFileSync('packages/agent-q/package.json', 'utf8'));
+          const publishedPackage = server.packages?.[0];
+
+          if (server.name !== pkg.mcpName) {
+            throw new Error(`server.json name "${server.name}" must match ${pkg.name} mcpName "${pkg.mcpName}"`);
+          }
+          if (publishedPackage?.registryType !== 'npm' || publishedPackage.identifier !== pkg.name) {
+            throw new Error(`server.json must register the npm package ${pkg.name}`);
+          }
+          if (server.version !== pkg.version || publishedPackage.version !== pkg.version) {
+            throw new Error(`server.json versions must match ${pkg.name}@${pkg.version}`);
+          }
+          NODE
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Authenticate to the MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to the MCP Registry
+        run: ./mcp-publisher publish

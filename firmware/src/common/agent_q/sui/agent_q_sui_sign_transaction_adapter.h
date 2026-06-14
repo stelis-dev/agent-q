@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "agent_q_sui_token_flow_facts.h"
 #include "agent_q_sui_transaction_facts.h"
 
 namespace agent_q {
@@ -14,9 +15,22 @@ enum class AgentQSuiSignTransactionAdapterResult {
     unsupported_transaction,
 };
 
+enum class AgentQSuiUserAuthorizationOutcome {
+    unavailable,
+    offline_facts_review,
+    blind_signing,
+};
+
+enum class AgentQSuiPolicyAuthorizationOutcome {
+    unavailable,
+    policy_evaluation,
+};
+
 struct AgentQSuiSignTransactionAuthorizationCoverage {
     bool user_mode_authorization_covered;
     bool policy_mode_authorization_covered;
+    AgentQSuiUserAuthorizationOutcome user_outcome;
+    AgentQSuiPolicyAuthorizationOutcome policy_outcome;
 };
 
 AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
@@ -24,6 +38,7 @@ AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
     size_t tx_bytes_size,
     SuiPolicySubjectFacts* policy_subject_out,
     SuiReviewSummary* review_summary_out,
-    AgentQSuiSignTransactionAuthorizationCoverage* coverage_out);
+    AgentQSuiSignTransactionAuthorizationCoverage* coverage_out,
+    SuiTokenFlowFacts* token_flow_out = nullptr);
 
 }  // namespace agent_q

@@ -115,7 +115,9 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
             "invalid_params",
             "Prepared sui/sign_transaction request is invalid.");
     }
-    if (!prepared.policy_mode_authorization_covered) {
+    if (!prepared.policy_mode_authorization_covered ||
+        prepared.policy_authorization_outcome !=
+            AgentQSuiPolicyAuthorizationOutcome::policy_evaluation) {
         AgentQStoredPolicySummary policy_summary = {};
         if (!read_active_policy_summary(&policy_summary)) {
             return make_result(
@@ -132,7 +134,15 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
     }
 
     AgentQSuiSignTransactionPolicyFacts policy_facts = {};
-    if (!make_sui_sign_transaction_policy_facts(prepared.sui_policy_subject, &policy_facts)) {
+    AgentQSuiSignTransactionPolicySubject policy_subject = {};
+    policy_subject.transaction = prepared.sui_policy_subject;
+    policy_subject.token_flow = prepared.sui_token_flow;
+    if (!copy_runtime_string(
+            policy_subject.request_network,
+            sizeof(policy_subject.request_network),
+            prepared.network,
+            true) ||
+        !make_sui_sign_transaction_policy_facts(policy_subject, &policy_facts)) {
         return make_result(
             AgentQSignTransactionPolicyRuntimeStatus::unsupported_transaction,
             "unsupported_transaction",
@@ -147,8 +157,15 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
             "Active policy is unavailable.");
     }
 
+    const AgentQPolicyMethodDescriptor methods[] = {
+        sui_sign_transaction_policy_method_descriptor(),
+    };
     const AgentQPolicyDecision decision =
-        evaluate_agent_q_policy_runtime(active_policy_provider(), policy_facts.facts);
+        evaluate_agent_q_policy_runtime(
+            active_policy_provider(),
+            policy_facts.facts,
+            methods,
+            sizeof(methods) / sizeof(methods[0]));
     if (decision.reason == AgentQPolicyDecisionReason::invalid_policy) {
         return make_result(
             AgentQSignTransactionPolicyRuntimeStatus::policy_error,

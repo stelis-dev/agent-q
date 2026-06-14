@@ -51,6 +51,15 @@ inline bool timeout_window_valid(const AgentQTimeoutWindow& window)
     return timeout_window_open_at(window, window.started_at);
 }
 
+inline bool timeout_window_valid_and_open_at(
+    const AgentQTimeoutWindow& window,
+    AgentQTimeoutTick now)
+{
+    return timeout_window_valid(window) &&
+           static_cast<int32_t>(now - window.started_at) >= 0 &&
+           timeout_window_open_at(window, now);
+}
+
 inline bool timeout_paused_window_valid(const AgentQPausedTimeoutWindow& paused_window)
 {
     return timeout_window_valid(paused_window.window) &&

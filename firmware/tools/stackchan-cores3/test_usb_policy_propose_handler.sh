@@ -221,19 +221,26 @@ bool require_session(const char* id, const char* session_id)
     return g_session_valid;
 }
 
-agent_q::AgentQTimeoutWindow make_review_window()
+agent_q::AgentQTimeoutTick current_tick()
+{
+    return 10;
+}
+
+agent_q::AgentQTimeoutWindow make_review_window(agent_q::AgentQTimeoutTick now)
 {
     g_make_window_calls += 1;
-    return agent_q::AgentQTimeoutWindow{10, 20};
+    return agent_q::AgentQTimeoutWindow{now, static_cast<agent_q::AgentQTimeoutTick>(now + 10)};
 }
 
 agent_q::AgentQPolicyUpdateFlowBeginResult begin_policy_update(
     JsonVariantConst policy,
     const char* request_id,
     const char* session_id,
+    TickType_t now,
     agent_q::AgentQTimeoutWindow review_window)
 {
     g_begin_calls += 1;
+    assert(now == 10);
     assert(!policy.isNull());
     g_last_id = request_id;
     g_last_session = session_id;
@@ -295,6 +302,7 @@ agent_q::AgentQUsbPolicyProposeHandlerOps make_ops()
         material_ready,
         write_busy,
         require_session,
+        current_tick,
         make_review_window,
         begin_policy_update,
         begin_result_reason,
@@ -311,6 +319,7 @@ agent_q::AgentQUsbPolicyProposeHandlerOps make_payload_admission_ops()
         material_ready,
         write_busy_from_payload_delivery,
         require_session,
+        current_tick,
         make_review_window,
         begin_policy_update,
         begin_result_reason,

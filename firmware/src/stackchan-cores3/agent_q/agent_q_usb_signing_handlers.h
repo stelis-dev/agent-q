@@ -61,10 +61,12 @@ struct AgentQUsbSigningHandlerOps {
         const AgentQPolicySigningExecutionResult& result);
     void (*clear_policy_execution_result)(AgentQPolicySigningExecutionResult* result);
     void (*clear_transaction_policy_result)(AgentQSignTransactionPolicyRuntimeResult* result);
-    AgentQTimeoutWindow (*make_user_signing_window)();
+    AgentQTimeoutWindow (*make_user_signing_window)(AgentQTimeoutTick now);
     AgentQUserSigningFlowBeginResult (*begin_transaction_user_signing)(
+        AgentQTimeoutTick now,
         const AgentQUserSigningTransactionBeginInput& input);
     AgentQUserSigningFlowBeginResult (*begin_personal_message_user_signing)(
+        AgentQTimeoutTick now,
         const AgentQUserSigningPersonalMessageBeginInput& input);
     void (*clear_prepared_transaction)(AgentQSuiPreparedSignTransaction* prepared);
     void (*clear_prepared_personal_message)(AgentQSuiPreparedPersonalMessage* prepared);

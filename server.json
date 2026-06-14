@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.stelis-dev/agent-q",
+  "description": "Local MCP server for requesting signatures from Agent-Q Firmware.",
+  "websiteUrl": "https://github.com/stelis-dev/agent-q",
+  "repository": {
+    "url": "https://github.com/stelis-dev/agent-q",
+    "source": "github"
+  },
+  "version": "0.0.5",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@stelis/agent-q",
+      "version": "0.0.5",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

@@ -61,10 +61,11 @@ authorization mode and chooses one Firmware-owned signing gate:
   implemented bounded signing request. Policy authorization is sufficient for
   signing, this path does not require device-local confirmation for each
   signing request, and policy rejection must not fall back to asking the user.
-- `authorization: "user"` means Firmware uses device-local clear-signing review
-  and the current human approval input mode for an implemented bounded signing
-  request. User rejection or timeout is terminal and must not fall back to
-  policy-only signing.
+- `authorization: "user"` means Firmware uses device-local review and the
+  current human approval input mode for an implemented bounded signing request.
+  For Sui `sign_transaction`, that review is either offline facts review or an
+  explicit blind-signing warning. User rejection or timeout is terminal and
+  must not fall back to policy-only signing.
 
 Both modes return a Firmware-authored `sign_result` that records the
 authorization actually used. Adapter package surfaces may choose different UX
@@ -221,12 +222,12 @@ rejected, accepts inline `txBytes` or same-session staged payload references
 for Sui `sign_transaction`, recognizes bounded Sui personal-message bytes for
 `sign_personal_message`, records required approval-history metadata, and
 returns `sign_result`. In policy authorization mode, the active policy can
-reject `sign_transaction`; Sui transaction signing through a policy `sign` rule
-is not accepted until complete policy coverage and sign-rule validation are
-implemented.
+reject `sign_transaction`, and can sign only current-contract GasCoin-derived
+proven-SUI split-result transfer transactions with one matching bounded `sign`
+rule.
 `sign_personal_message` is user-mode only and fails closed in policy mode. In
-user authorization mode, Firmware uses device-local clear-signing review and
-the device-local human approval input mode. Product-active status is tracked in
+user authorization mode, Firmware uses device-local review and the device-local
+human approval input mode. Product-active status is tracked in
 `docs/IMPLEMENTATION_STATUS.md`.
 
 Provisioning and material reset transitions are not USB protocol requests in the
@@ -271,9 +272,10 @@ view of Firmware-owned persistent decision metadata. The current Sign API
 runtime paths are session-scoped: unknown methods are rejected, Sui
 `sign_transaction` uses the current Sui `TransactionData::V1 ->
 ProgrammableTransaction` facts extractor and uses the Firmware-local signing
-authorization mode. Policy authorization signs only when the parsed transaction
-shape has complete policy coverage and the active policy has a matching bounded
-rule; user authorization enters device review only when the parsed shape has
+authorization mode. Policy authorization signs only when the transaction matches
+the current automatic policy-signing contract for GasCoin-derived proven-SUI
+split-result transfer facts and the active policy has a matching bounded rule;
+user authorization enters device review only when the parsed shape has
 complete offline facts review coverage or when Firmware can validate and
 account-bind the transaction but must show an explicit blind-signing warning
 because offline facts review coverage is incomplete.
@@ -401,10 +403,10 @@ PIN verifier storage, signing authorization mode storage, local reset, and
 read-only `get_accounts` Sui account derivation are implemented.
 USB, host process, or MCP mnemonic import is not implemented.
 Policy updates are available only through the Firmware-owned
-`policy_propose` proposal flow for current-schema reject policies. The `sign`
-action value is part of the current schema, but Sui `sign_transaction` sign
-rules are not accepted until policy coverage can bind the actual transaction
-values needed for automatic authorization.
+`policy_propose` proposal flow for current-schema policies. The `sign` action
+value is part of the current schema. Sui `sign_transaction` accepts bounded
+`sign` rules only when the selected method descriptor can prove the rule binds
+the actual transaction values needed for automatic authorization.
 
 If a target boots with `prov_state = provisioned` but missing, unreadable, or
 unsupported current active policy or signing authorization mode material,
@@ -949,6 +951,9 @@ active Firmware-owned policy document used by `sign_transaction`. It does not
 return policy secrets, signing material, pending policy proposals, approval
 history, or an editor surface.
 
+The current policy document shape and currently exposed Sui policy facts are
+cataloged in `docs/POLICY_SCHEMA.md`.
+
 Request:
 
 ```json
@@ -1083,13 +1088,13 @@ Rules:
   size, unsupported transaction, and unsupported policy-action errors are not
   persisted as approval history.
 - User signing confirmation records use `reasonCode: "device_confirmed"` for
-  clear review confirmation and `reasonCode: "blind_signing_confirmed"` when
-  the device showed the blind-signing warning for a valid account-bound
+  offline facts review confirmation and `reasonCode: "blind_signing_confirmed"`
+  when the device showed the blind-signing warning for a valid account-bound
   transaction whose offline facts review coverage was incomplete.
-- The clear/blind distinction is recorded on the required confirmation record.
+- The offline-facts/blind distinction is recorded on the required confirmation record.
   Terminal records describe the terminal result (`signed`, `user_rejected`,
   `user_timed_out`, or `signing_failed`) and do not repeat whether the preceding
-  confirmation was clear review or blind signing.
+  confirmation was offline facts review or blind signing.
 - Approval-history persistence is part of the terminal decision contract for
   decisions that are recorded. If Firmware cannot persist a required history
   record or its write budget is exhausted, `sign_transaction` returns the top-level
@@ -1299,13 +1304,15 @@ gate:
 - both modes validate the request envelope, parse the transaction bytes, bind
   sender and gas owner to the stored device account, and reject when their
   selected gate rejects the request;
-- `policy`: sign only when the parsed transaction shape has complete policy
-  coverage, policy facts can be built, and the active policy authorizes the
-  bounded request. A valid account-bound transaction whose policy coverage is
-  incomplete returns `status: "policy_rejected"`; malformed, unbindable,
+- `policy`: sign only when the parsed transaction matches the current automatic
+  policy-signing contract, policy facts can be built, and the active policy
+  authorizes the bounded request. The current automatic signing contract is
+  limited to transaction-derived GasCoin split results transferred to a single
+  recipient with proven SUI provenance. A valid account-bound transaction whose
+  policy coverage is incomplete returns `status: "policy_rejected"`; malformed, unbindable,
   unsupported-version/kind, `TransactionKind`-only, trailing, or oversized
   transaction bytes remain request errors;
-- `user`: build a clear-signing review when complete offline facts review
+- `user`: build an offline facts review when complete offline facts review
   coverage exists.
   If Firmware can still validate and account-bind the transaction but cannot
   provide complete offline facts review coverage, it may show an explicit
@@ -1372,17 +1379,19 @@ Current implementation rules:
   serialized payload/input capacity overflow, and transactions whose sender and
   gas owner cannot be extracted and bound to the stored device account fail
   closed.
-  Policy authorization currently returns `policy_rejected` for valid
-  transactions whose policy coverage is incomplete, and does not sign until
-  complete policy coverage and accepted sign-rule validation are implemented.
+  Policy authorization signs only when the transaction matches the current
+  automatic policy-signing contract and the active policy has a matching
+  bounded `sign` rule. Current automatic policy signing is limited to
+  GasCoin-derived proven-SUI split-result transfer facts. Valid transactions
+  whose policy coverage is incomplete return `policy_rejected`.
   User authorization shows covered offline facts when offline facts review
   coverage is complete, or an explicit blind-signing warning when Firmware can
   validate and bind the transaction but offline facts review coverage is
   incomplete.
 - `params.network` is required and must be one of `mainnet`, `testnet`,
   `devnet`, or `localnet`. Current Sui transaction bytes do not carry network
-  identity, so Firmware validates this only as request context and does not
-  expose it as a policy fact or transaction-derived history proof.
+  identity, so Firmware validates this as request context only. It is not
+  emitted as a policy authorization fact.
 - `params` must contain exactly one payload source: inline `txBytes` or staged
   `payloadRef`. `txBytes` must be canonical base64 and fit the shared
   transport/frame bound. A staged request must echo the immutable descriptor
@@ -1437,7 +1446,7 @@ Policy authorization mode:
 
 User authorization mode:
 
-- Firmware must parse enough input to show a bounded clear-signing summary
+- Firmware must parse enough input to show a bounded offline facts summary
   before entering device confirmation. Unsupported or malformed transactions
   must fail before any signing approval UI can be confirmed. The displayed
   summary must be derived from the same inline or staged transaction bytes that
@@ -1456,7 +1465,7 @@ User authorization mode:
   shared wrong-PIN lockout is active. The internal local-auth worker watchdog
   still fails closed as authentication unavailable.
 - Review Reject is the terminal `user_rejected` action. Back from the PIN
-  screen wipes only PIN scratch and returns to the clear-signing review; it
+  screen wipes only PIN scratch and returns to the offline facts review; it
   must not be reported as `user_rejected` or written as a terminal rejection.
 - The state owner must validate the session immediately before performing the
   required confirmation history write and must enter the signing critical
@@ -1798,16 +1807,17 @@ Policy document rules for the current version:
   `_`, `-`, `.`, `:`, or `/`.
 - Each rule has `chain`, `method`, `action`, and `criteria`.
 - The current policy schema accepts only `reject` and `sign`.
+- The current policy document shape and currently exposed Sui policy facts are
+  cataloged in `docs/POLICY_SCHEMA.md`.
 - Action values outside the current schema are invalid policy input. A policy
   update must not store dormant behavior. Disabled policy drafts are out
   of scope for the current version.
 - A `reject` rule may have zero criteria.
-- A `sign` rule must be backed by complete policy coverage for the selected
-  method. Sui `sign_transaction` does not currently accept policy `sign` rules:
-  graph-level MoveCall criteria and gas bounds do not bind enough of the actual
-  transaction values to authorize signing. Policy mode for Sui transaction
-  signing therefore remains fail-closed until a complete policy-coverage
-  contract is implemented.
+- A `sign` rule must be backed by the selected method's current automatic
+  policy-signing contract. Sui `sign_transaction` accepts at most one `sign`
+  rule, and only when the Sui method descriptor classifies it as bounded for
+  GasCoin-derived proven-SUI split-result transfer facts. Incomplete or
+  unsupported `sign` rules are invalid policy input.
 - A rule may contain at most 96 criteria.
 - Criterion `field` is a bounded namespace/field id such as `common.intent`,
   `sui.gas_budget`, or `sui.command0_move_call_package`. Common fields are

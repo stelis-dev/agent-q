@@ -81,12 +81,28 @@ struct AgentQPolicyDecision {
     AgentQPolicyDecisionReason reason;
 };
 
+struct AgentQPolicyMethodDescriptor;
+
 const char* agent_q_policy_action_name(AgentQPolicyAction action);
 const char* agent_q_policy_operator_name(AgentQPolicyOperator op);
 const char* agent_q_policy_decision_reason_name(AgentQPolicyDecisionReason reason);
 
+bool validate_agent_q_policy_v0_rule_for_methods(
+    const AgentQPolicyRule& rule,
+    const AgentQPolicyMethodDescriptor* method_descriptors,
+    size_t method_descriptor_count);
+bool validate_agent_q_policy_v0_document_for_methods(
+    const AgentQPolicyDocument& policy,
+    const AgentQPolicyMethodDescriptor* method_descriptors,
+    size_t method_descriptor_count);
+
 AgentQPolicyDecision evaluate_agent_q_policy_v0(
     const AgentQPolicyDocument& policy,
     const AgentQPolicyFacts& facts);
+AgentQPolicyDecision evaluate_agent_q_policy_v0_for_methods(
+    const AgentQPolicyDocument& policy,
+    const AgentQPolicyFacts& facts,
+    const AgentQPolicyMethodDescriptor* method_descriptors,
+    size_t method_descriptor_count);
 
 }  // namespace agent_q

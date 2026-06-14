@@ -12,11 +12,13 @@ struct AgentQUsbPolicyProposeHandlerOps {
     bool (*material_ready)();
     bool (*write_policy_propose_admission_error)(const char* id);
     bool (*require_active_matching_session)(const char* id, const char* session_id);
-    AgentQTimeoutWindow (*make_review_window)();
+    AgentQTimeoutTick (*current_tick)();
+    AgentQTimeoutWindow (*make_review_window)(AgentQTimeoutTick now);
     AgentQPolicyUpdateFlowBeginResult (*begin_policy_update)(
         JsonVariantConst policy,
         const char* request_id,
         const char* session_id,
+        TickType_t now,
         AgentQTimeoutWindow review_window);
     const char* (*begin_result_reason)(AgentQPolicyUpdateFlowBeginResult result);
     bool (*show_policy_update_review)();

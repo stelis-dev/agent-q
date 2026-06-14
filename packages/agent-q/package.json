@@ -1,6 +1,7 @@
 {
   "name": "@stelis/agent-q",
   "version": "0.0.5",
+  "mcpName": "io.github.stelis-dev/agent-q",
   "description": "Agent-Q host process that routes MCP, local API, and Sui CLI signing requests to Agent-Q Firmware.",
   "license": "UNLICENSED",
   "type": "module",

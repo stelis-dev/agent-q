@@ -789,15 +789,17 @@ void handle_usb_sign_transaction_request(
     }
 
     const AgentQSigningRoute route = preflight.route;
+    const AgentQTimeoutWindow request_window = ops.make_user_signing_window(now_tick);
     const AgentQUserSigningFlowBeginResult begin_result =
         ops.begin_transaction_user_signing(
+            now_tick,
             AgentQUserSigningTransactionBeginInput{
                 preflight.ingress.envelope.request_id,
                 preflight.request_identity,
                 preflight.ingress.session.session_id,
                 preflight.route,
                 &preflight.prepared,
-                ops.make_user_signing_window(),
+                request_window,
             });
     clear_sign_transaction_preflight_scratch(ops, preflight);
     finish_user_signing_review_entry(id, route, begin_result, writer, ops);
@@ -834,13 +836,14 @@ void handle_usb_sign_personal_message_request(
 
     const AgentQUserSigningFlowBeginResult begin_result =
         ops.begin_personal_message_user_signing(
+            now_tick,
             AgentQUserSigningPersonalMessageBeginInput{
                 preflight.ingress.envelope.request_id,
                 preflight.request_identity,
                 preflight.ingress.session.session_id,
                 preflight.route,
                 &preflight.prepared,
-                ops.make_user_signing_window(),
+                ops.make_user_signing_window(now_tick),
             });
     ops.clear_prepared_personal_message(&preflight.prepared);
     finish_user_signing_review_entry(id, preflight.route, begin_result, writer, ops);

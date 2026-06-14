@@ -165,7 +165,7 @@ const std::vector<uint8_t>& valid_payload()
     return payload;
 }
 
-constexpr TickType_t kDefaultRequestWindowStart = 10;
+constexpr TickType_t kDefaultRequestWindowStart = 0;
 
 agent_q::AgentQTimeoutWindow request_window(TickType_t deadline)
 {
@@ -185,6 +185,8 @@ void fill_prepared_sui_facts(
     assert(agent_q::build_sui_policy_subject_facts(parsed, &prepared->sui_policy_subject));
     assert(agent_q::build_sui_review_summary(parsed, &prepared->sui_review));
     prepared->user_mode_authorization_covered = true;
+    prepared->user_authorization_outcome =
+        agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review;
 }
 
 agent_q::AgentQUserSigningTransactionBeginInput make_valid_input(
@@ -281,7 +283,7 @@ void begin_reviewing_request(const char* request_id)
     expect(agent_q::session_replace(random_bytes, nullptr) ==
                agent_q::AgentQSessionStartResult::ok,
            "session starts");
-    expect(agent_q::user_signing_flow_begin(
+    expect(agent_q::user_signing_flow_begin(0,
                make_valid_input(request_id, agent_q::session_id())) ==
                agent_q::AgentQUserSigningFlowBeginResult::ok,
            "user_signing begins");
@@ -292,7 +294,7 @@ void begin_personal_message_reviewing_request(const char* request_id)
     expect(agent_q::session_replace(random_bytes, nullptr) ==
                agent_q::AgentQSessionStartResult::ok,
            "session starts");
-    expect(agent_q::user_signing_flow_begin_personal_message(
+    expect(agent_q::user_signing_flow_begin_personal_message(0,
                make_valid_personal_message_input(request_id, agent_q::session_id())) ==
                agent_q::AgentQUserSigningFlowBeginResult::ok,
            "sign_personal_message user flow begins");
@@ -670,6 +672,8 @@ CPP
   "${AGENT_Q_DIR}/agent_q_sui_signing_authority.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_sign_transaction_adapter.cpp" \
+  "${COMMON_ROOT}/sui/agent_q_sui_method_adapter.cpp" \
+  "${COMMON_ROOT}/sui/agent_q_sui_token_flow_facts.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_bcs_reader.cpp" \
   -o "${TMP_DIR}/user_signing_test"

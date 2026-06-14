@@ -71,6 +71,8 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_signing_result_store.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_signing_preparation.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex"; do
@@ -612,15 +614,17 @@ void handler_clear_policy_runtime(agent_q::AgentQSignTransactionPolicyRuntimeRes
     }
 }
 
-agent_q::AgentQTimeoutWindow handler_user_signing_window()
+agent_q::AgentQTimeoutWindow handler_user_signing_window(agent_q::AgentQTimeoutTick now)
 {
-    return agent_q::AgentQTimeoutWindow{1, 1000};
+    return agent_q::AgentQTimeoutWindow{now, static_cast<agent_q::AgentQTimeoutTick>(now + 999)};
 }
 
 agent_q::AgentQUserSigningFlowBeginResult handler_begin_transaction_user_signing(
+    agent_q::AgentQTimeoutTick now,
     const agent_q::AgentQUserSigningTransactionBeginInput& input)
 {
     ++g_handler_begin_transaction_calls;
+    assert(now == 0);
     assert(input.request_id != nullptr);
     assert(strcmp(input.request_id, "req_usb_full_staged_1") == 0);
     assert(input.request_identity != nullptr);
@@ -635,6 +639,7 @@ agent_q::AgentQUserSigningFlowBeginResult handler_begin_transaction_user_signing
 }
 
 agent_q::AgentQUserSigningFlowBeginResult handler_begin_personal_message_user_signing(
+    agent_q::AgentQTimeoutTick,
     const agent_q::AgentQUserSigningPersonalMessageBeginInput&)
 {
     return agent_q::AgentQUserSigningFlowBeginResult::ok;
@@ -1695,6 +1700,8 @@ CPP
   "${AGENT_Q_DIR}/agent_q_signing_result_store.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_signing_preparation.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${TMP_DIR}/byte_conversions.o" \

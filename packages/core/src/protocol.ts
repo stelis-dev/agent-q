@@ -56,6 +56,13 @@ import {
   type SigningCapabilityEntry,
 } from "./provider-protocol.js";
 import {
+  COMMON_POLICY_FIELDS,
+  SUI_CURRENT_SIGN_RULE_BOUNDS,
+  SUI_SIGN_TRANSACTION_POLICY_FIELDS,
+  type PolicyFieldDescriptor,
+  type SignRuleBound,
+} from "./sui-policy-contract.js";
+import {
   sanitizeAckResultResponse,
   type AckResultRequest,
   type AckResultResponse,
@@ -1008,54 +1015,6 @@ function isPolicyIdentifierString(value: unknown, maxLength: number): value is s
   return isBoundedPolicyString(value, maxLength) && POLICY_IDENTIFIER_PATTERN.test(value);
 }
 
-type PolicyValueType = "string" | "u64_decimal";
-
-interface PolicyFieldDescriptor {
-  type: PolicyValueType;
-  allowEq: boolean;
-  allowIn: boolean;
-  allowLte: boolean;
-}
-
-const COMMON_POLICY_FIELDS: Record<string, PolicyFieldDescriptor> = {
-  "common.chain": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-  "common.method": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-  "common.intent": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-};
-
-const SUI_POLICY_MAX_COMMANDS = 8;
-const SUI_POLICY_MAX_MOVE_CALL_TYPE_ARGS = 4;
-
-function makeSuiSignTransactionPolicyFields(): Record<string, PolicyFieldDescriptor> {
-  const fields: Record<string, PolicyFieldDescriptor> = {
-    "sui.sender_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.gas_owner_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.command_count": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
-    "sui.gas_budget": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
-    "sui.gas_price": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
-    "sui.transaction_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.expiration_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-  };
-  for (let commandIndex = 0; commandIndex < SUI_POLICY_MAX_COMMANDS; commandIndex += 1) {
-    fields[`sui.command${commandIndex}_kind`] = { type: "string", allowEq: true, allowIn: true, allowLte: false };
-    fields[`sui.command${commandIndex}_move_call_package`] = { type: "string", allowEq: true, allowIn: true, allowLte: false };
-    fields[`sui.command${commandIndex}_move_call_module`] = { type: "string", allowEq: true, allowIn: true, allowLte: false };
-    fields[`sui.command${commandIndex}_move_call_function`] = { type: "string", allowEq: true, allowIn: true, allowLte: false };
-    fields[`sui.command${commandIndex}_move_call_type_args`] = { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true };
-    for (let typeArgIndex = 0; typeArgIndex < SUI_POLICY_MAX_MOVE_CALL_TYPE_ARGS; typeArgIndex += 1) {
-      fields[`sui.command${commandIndex}_move_call_type_arg${typeArgIndex}`] = {
-        type: "string",
-        allowEq: true,
-        allowIn: true,
-        allowLte: false,
-      };
-    }
-  }
-  return fields;
-}
-
-const SUI_SIGN_TRANSACTION_POLICY_FIELDS = makeSuiSignTransactionPolicyFields();
-
 function policyRuleHasSupportedMethod(rule: Pick<PolicyRule, "chain" | "method">): boolean {
   return rule.chain === SUI_CHAIN_ID && rule.method === SUI_SIGN_TRANSACTION_METHOD;
 }
@@ -1099,8 +1058,66 @@ function policyCriterionMatchesDescriptor(
   return descriptor.type !== "u64_decimal" || isUint64DecimalString(criterion.value);
 }
 
+function findPolicyCriterion(rule: PolicyRule, field: string): PolicyCriterion | null {
+  return rule.criteria.find((criterion) => criterion.field === field) ?? null;
+}
+
+function criterionEqValue(rule: PolicyRule, field: string, value: string): boolean {
+  const criterion = findPolicyCriterion(rule, field);
+  return criterion?.op === "eq" && criterion.value === value && criterion.values === undefined;
+}
+
+function criterionLteBoundPresent(rule: PolicyRule, field: string): boolean {
+  const criterion = findPolicyCriterion(rule, field);
+  return criterion?.op === "lte" &&
+    criterion.value !== undefined &&
+    criterion.values === undefined &&
+    isUint64DecimalString(criterion.value);
+}
+
+function stringCriterionBounded(rule: PolicyRule, field: string): boolean {
+  const criterion = findPolicyCriterion(rule, field);
+  if (criterion?.op === "eq") {
+    return criterion.value !== undefined && criterion.values === undefined;
+  }
+  return criterion?.op === "in" &&
+    criterion.value === undefined &&
+    criterion.values !== undefined &&
+    criterion.values.length > 0;
+}
+
+function stringEqBoundPresent(rule: PolicyRule, field: string): boolean {
+  const criterion = findPolicyCriterion(rule, field);
+  return criterion?.op === "eq" &&
+    criterion.value !== undefined &&
+    criterion.values === undefined;
+}
+
+function signRuleBoundPresent(rule: PolicyRule, bound: SignRuleBound): boolean {
+  switch (bound.kind) {
+    case "eq":
+      return bound.value !== undefined && criterionEqValue(rule, bound.field, bound.value);
+    case "string":
+      return stringCriterionBounded(rule, bound.field);
+    case "string_eq":
+      return stringEqBoundPresent(rule, bound.field);
+    case "lte":
+      return criterionLteBoundPresent(rule, bound.field);
+  }
+}
+
 function policySignRuleIsBounded(rule: PolicyRule): boolean {
-  return rule.action !== "sign";
+  if (rule.action !== "sign") {
+    return true;
+  }
+  if (rule.chain !== SUI_CHAIN_ID || rule.method !== SUI_SIGN_TRANSACTION_METHOD) {
+    return false;
+  }
+  return SUI_CURRENT_SIGN_RULE_BOUNDS.every((bound) => signRuleBoundPresent(rule, bound));
+}
+
+function policySignRuleCountIsSupported(rules: PolicyRule[]): boolean {
+  return rules.filter((rule) => rule.action === "sign").length <= 1;
 }
 
 function sanitizePolicyCriterion(value: unknown): PolicyCriterion | null {
@@ -1216,6 +1233,9 @@ export function sanitizeCurrentPolicyDocument(value: unknown): PolicyDocument | 
   }
   const rules = value.rules.map((rule) => sanitizePolicyRule(rule));
   if (rules.some((rule) => rule === null)) {
+    return null;
+  }
+  if (!policySignRuleCountIsSupported(rules as PolicyRule[])) {
     return null;
   }
   return {

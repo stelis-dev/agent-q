@@ -286,6 +286,67 @@ bool make_reject_rule_record(
     return true;
 }
 
+bool make_multi_sign_rule_record(std::vector<uint8_t>* output)
+{
+    if (output == nullptr) {
+        return false;
+    }
+    const agent_q::AgentQPolicyCriterion complete_sign_criteria[] = {
+        {"common.chain", agent_q::AgentQPolicyOperator::eq, "sui", nullptr, 0},
+        {"common.method", agent_q::AgentQPolicyOperator::eq, "sign_transaction", nullptr, 0},
+        {"common.intent", agent_q::AgentQPolicyOperator::eq, "programmable_transaction", nullptr, 0},
+        {"sui.transaction_kind", agent_q::AgentQPolicyOperator::eq, "programmable_transaction", nullptr, 0},
+        {"sui.sender_address", agent_q::AgentQPolicyOperator::eq, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nullptr, 0},
+        {"sui.gas_owner_address", agent_q::AgentQPolicyOperator::eq, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nullptr, 0},
+        {"sui.gas_budget", agent_q::AgentQPolicyOperator::lte, "50000000", nullptr, 0},
+        {"sui.gas_price", agent_q::AgentQPolicyOperator::lte, "1000", nullptr, 0},
+        {"sui.expiration_kind", agent_q::AgentQPolicyOperator::eq, "none", nullptr, 0},
+        {"sui.sui_total_out_complete", agent_q::AgentQPolicyOperator::eq, "yes", nullptr, 0},
+        {"sui.sui_total_out_raw", agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},
+        {"sui.command_count", agent_q::AgentQPolicyOperator::eq, "2", nullptr, 0},
+        {"sui.command0_kind", agent_q::AgentQPolicyOperator::eq, "split_coins", nullptr, 0},
+        {"sui.command1_kind", agent_q::AgentQPolicyOperator::eq, "transfer_objects", nullptr, 0},
+        {"sui.recipient_count", agent_q::AgentQPolicyOperator::eq, "1", nullptr, 0},
+        {"sui.recipient0_address", agent_q::AgentQPolicyOperator::eq, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", nullptr, 0},
+        {"sui.recipient0_amount_raw", agent_q::AgentQPolicyOperator::lte, "1000000", nullptr, 0},
+        {"sui.coin_flow0_source_kind", agent_q::AgentQPolicyOperator::eq, "split_result", nullptr, 0},
+        {"sui.coin_flow0_asset_state", agent_q::AgentQPolicyOperator::eq, "proven_sui", nullptr, 0},
+        {"sui.coin_flow0_amount_known", agent_q::AgentQPolicyOperator::eq, "yes", nullptr, 0},
+        {"sui.coin_flow0_sink_kind", agent_q::AgentQPolicyOperator::eq, "transfer_recipient", nullptr, 0},
+    };
+    const agent_q::AgentQPolicyRule sign_rule = {
+        "sign-current-transfer",
+        "sui",
+        "sign_transaction",
+        agent_q::AgentQPolicyAction::sign,
+        complete_sign_criteria,
+        sizeof(complete_sign_criteria) / sizeof(complete_sign_criteria[0]),
+    };
+    const agent_q::AgentQPolicyDocument policy = {
+        agent_q::kAgentQPolicyV0Schema,
+        agent_q::AgentQPolicyAction::reject,
+        &sign_rule,
+        1,
+    };
+    const agent_q::AgentQPolicyMethodDescriptor method =
+        agent_q::sui_sign_transaction_policy_method_descriptor();
+    agent_q::AgentQPolicyCanonicalDocument canonical = {};
+    uint8_t bytes[agent_q::kAgentQPolicyMaxCanonicalRecordBytes] = {};
+    size_t size = 0;
+    if (agent_q::canonicalize_agent_q_policy_v0(policy, &method, 1, &canonical) !=
+        agent_q::AgentQPolicyCanonicalStatus::ok) {
+        return false;
+    }
+    canonical.rule_count = 2;
+    canonical.rules[1] = canonical.rules[0];
+    if (agent_q::encode_agent_q_policy_v0_canonical_record(canonical, bytes, sizeof(bytes), &size) !=
+        agent_q::AgentQPolicyCanonicalStatus::ok) {
+        return false;
+    }
+    output->assign(bytes, bytes + size);
+    return true;
+}
+
 bool fill_generated_policy(JsonDocument* policy, size_t rule_count, size_t value_length)
 {
     if (policy == nullptr ||
@@ -477,6 +538,29 @@ void write_u64_be(uint64_t value, uint8_t* output)
     }
 }
 
+bool set_committed_policy_record(uint8_t commit_index, uint8_t slot, uint64_t sequence, const std::vector<uint8_t>& record)
+{
+    if (commit_index >= 2 || slot >= 2 || sequence == 0 || record.empty()) {
+        return false;
+    }
+    uint8_t digest[32] = {};
+    if (!agent_q::policy_store_digest_for_record(record.data(), record.size(), digest, sizeof(digest))) {
+        return false;
+    }
+    std::vector<uint8_t> commit(48, 0);
+    commit[0] = 'A';
+    commit[1] = 'Q';
+    commit[2] = 'P';
+    commit[3] = 'C';
+    commit[4] = 0;
+    commit[5] = slot;
+    write_u64_be(sequence, commit.data() + 8);
+    memcpy(commit.data() + 16, digest, sizeof(digest));
+    g_blobs[slot == 0 ? "pol_s0" : "pol_s1"] = record;
+    g_blobs[commit_index == 0 ? "pol_c0" : "pol_c1"] = commit;
+    return true;
+}
+
 void set_pending_policy_write(uint8_t commit_index, uint8_t slot, uint64_t sequence)
 {
     std::vector<uint8_t> pending(16, 0);
@@ -627,9 +711,11 @@ int main()
     std::vector<uint8_t> default_record;
     std::vector<uint8_t> custom_record;
     std::vector<uint8_t> custom_record_2;
+    std::vector<uint8_t> invalid_multi_sign_record;
     expect(make_default_record(&default_record), "build default record fixture");
     expect(make_reject_rule_record("reject-programmable", "programmable_transaction", &custom_record), "build custom policy record");
     expect(make_reject_rule_record("reject-other-intent", "unsupported_intent", &custom_record_2), "build second custom policy record");
+    expect(make_multi_sign_rule_record(&invalid_multi_sign_record), "build semantic-invalid multi-sign policy record");
 
     expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing, "missing policy status");
     expect(!agent_q::read_active_policy_summary(&summary), "missing policy summary fails closed");
@@ -672,6 +758,25 @@ int main()
     decision = evaluate_active_policy();
     expect(decision.action == agent_q::AgentQPolicyAction::reject, "default policy rejects");
     expect(decision.reason == agent_q::AgentQPolicyDecisionReason::default_reject, "default policy reason");
+    expect(store_record(invalid_multi_sign_record) == agent_q::AgentQPolicyStoreWriteResult::invalid_record,
+           "store rejects semantic-invalid multi-sign canonical record");
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active,
+           "rejected semantic-invalid record preserves active policy");
+    expect(set_committed_policy_record(0, 0, 7, invalid_multi_sign_record),
+           "inject semantic-invalid committed policy record");
+    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::invalid,
+           "semantic-invalid committed policy record fails closed");
+    expect(!agent_q::read_active_policy_summary(&summary),
+           "semantic-invalid committed policy summary fails closed");
+    expect(!agent_q::read_active_policy_document(&document),
+           "semantic-invalid committed policy document fails closed");
+    decision = evaluate_active_policy();
+    expect(decision.action == agent_q::AgentQPolicyAction::reject,
+           "semantic-invalid committed policy rejects");
+    expect(decision.reason == agent_q::AgentQPolicyDecisionReason::invalid_policy,
+           "semantic-invalid committed policy reason is invalid_policy");
+    expect(agent_q::wipe_policy(), "wipe semantic-invalid committed policy");
+    expect(agent_q::store_default_policy(), "restore default policy after semantic-invalid record");
 
     set_pending_policy_write(0, 1, 2);
     expect(g_blobs["pol_p"][4] == 0, "policy pending marker current version is zero");
@@ -896,7 +1001,10 @@ CXX_BIN="${CXX:-c++}"
   "${COMMON_ROOT}/policy/agent_q_policy_schema.cpp" \
   "${COMMON_ROOT}/policy/agent_q_policy_v0.cpp" \
   "${COMMON_ROOT}/policy/agent_q_policy_runtime.cpp" \
+  "${COMMON_ROOT}/sui/agent_q_sui_bcs_reader.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_method_adapter.cpp" \
+  "${COMMON_ROOT}/sui/agent_q_sui_token_flow_facts.cpp" \
+  "${COMMON_ROOT}/sui/agent_q_sui_transaction_facts.cpp" \
   "${TMP_DIR}/sha256.o" \
   "${TMP_DIR}/platform_util.o" \
   -o "${TMP_DIR}/policy_store_test"

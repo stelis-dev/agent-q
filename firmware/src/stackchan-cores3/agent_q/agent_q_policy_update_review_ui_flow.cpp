@@ -45,14 +45,6 @@ bool clear_review_panel(const AgentQPolicyUpdateReviewUiFlowOps& ops)
                SensitiveUiClearPolicy::preserve);
 }
 
-AgentQTimeoutWindow window_from_now_ms(
-    const AgentQPolicyUpdateReviewUiFlowOps& ops,
-    uint32_t duration_ms)
-{
-    const TickType_t now = now_or_zero(ops);
-    return timeout_window_from_deadline(now, now + pdMS_TO_TICKS(duration_ms));
-}
-
 void finish_terminal(
     const AgentQPolicyUpdateReviewUiFlowOps& ops,
     const char* request_id,
@@ -140,11 +132,14 @@ void policy_update_review_ui_continue(const AgentQPolicyUpdateReviewUiFlowOps& o
     }
 
     const AgentQTimeoutWindow request_window =
-        window_from_now_ms(ops, ops.review_pin_window_ms);
+        timeout_window_from_deadline(
+            started_at,
+            started_at + pdMS_TO_TICKS(ops.review_pin_window_ms));
     if (ops.protocol_pin_begin_policy_update == nullptr ||
         !ops.protocol_pin_begin_policy_update(
             current.request_id,
             current.session_id,
+            started_at,
             request_window)) {
         finish_error_terminal(
             ops,
@@ -155,7 +150,7 @@ void policy_update_review_ui_continue(const AgentQPolicyUpdateReviewUiFlowOps& o
         return;
     }
     if (ops.local_pin_begin_policy_update == nullptr ||
-        !ops.local_pin_begin_policy_update(request_window)) {
+        !ops.local_pin_begin_policy_update(started_at, request_window)) {
         if (ops.protocol_pin_clear != nullptr) {
             ops.protocol_pin_clear();
         }
