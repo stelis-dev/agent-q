@@ -34,14 +34,8 @@ for required in \
   "${TARGET_ROOT}/agent_q/agent_q_policy_update_flow.h" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_proposal_parser.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_proposal_parser.h" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_canonical.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_canonical.h" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_schema.h" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_v0.h" \
-  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.h"; do
+  "${COMMON_POLICY_DIR}/agent_q_policy_document.cpp" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_document.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required file: ${required}" >&2
     exit 1
@@ -98,7 +92,7 @@ char g_last_history_reason[32] = {};
 char g_last_history_policy_hash[72] = {};
 char g_last_highest_action[8] = {};
 char g_last_marker_highest_action[8] = {};
-size_t g_last_rule_count = 0;
+size_t g_last_policy_count = 0;
 uint64_t g_last_uptime_ms = 0;
 
 constexpr const char* kTestRequestId = "policy-test-request";
@@ -135,7 +129,7 @@ void reset_stubs()
     memset(g_last_history_policy_hash, 0, sizeof(g_last_history_policy_hash));
     memset(g_last_highest_action, 0, sizeof(g_last_highest_action));
     memset(g_last_marker_highest_action, 0, sizeof(g_last_marker_highest_action));
-    g_last_rule_count = 0;
+    g_last_policy_count = 0;
     g_last_uptime_ms = 0;
 }
 
@@ -144,14 +138,14 @@ JsonDocument parse_policy_json()
     JsonDocument document;
     const char* json =
         "{"
-        "\"schema\":\"agentq.policy.v0\","
+        "\"schema\":\"agentq.policy\","
         "\"defaultAction\":\"reject\","
-        "\"rules\":[{"
-        "\"id\":\"reject_programmable\","
-        "\"chain\":\"sui\","
-        "\"method\":\"sign_transaction\","
-        "\"action\":\"reject\","
-        "\"criteria\":[{\"field\":\"common.intent\",\"op\":\"eq\",\"value\":\"programmable_transaction\"}]"
+        "\"blockchains\":[{"
+        "\"blockchain\":\"sui\","
+        "\"networks\":[{"
+        "\"network\":\"testnet\","
+        "\"policies\":[]"
+        "}]"
         "}]"
         "}";
     const DeserializationError error = deserializeJson(document, json);
@@ -195,36 +189,22 @@ JsonDocument parse_sign_policy_json()
     JsonDocument document;
     const char* json =
         "{"
-        "\"schema\":\"agentq.policy.v0\","
+        "\"schema\":\"agentq.policy\","
         "\"defaultAction\":\"reject\","
-        "\"rules\":[{"
-        "\"id\":\"sign_transfer\","
-        "\"chain\":\"sui\","
-        "\"method\":\"sign_transaction\","
+        "\"blockchains\":[{"
+        "\"blockchain\":\"sui\","
+        "\"networks\":[{"
+        "\"network\":\"testnet\","
+        "\"policies\":[{"
+        "\"id\":\"sign-max-one-sui\","
         "\"action\":\"sign\","
-        "\"criteria\":["
-        "{\"field\":\"common.chain\",\"op\":\"eq\",\"value\":\"sui\"},"
-        "{\"field\":\"common.method\",\"op\":\"eq\",\"value\":\"sign_transaction\"},"
-        "{\"field\":\"common.intent\",\"op\":\"eq\",\"value\":\"programmable_transaction\"},"
-        "{\"field\":\"sui.transaction_kind\",\"op\":\"eq\",\"value\":\"programmable_transaction\"},"
-        "{\"field\":\"sui.sender_address\",\"op\":\"eq\",\"value\":\"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},"
-        "{\"field\":\"sui.gas_owner_address\",\"op\":\"eq\",\"value\":\"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},"
-        "{\"field\":\"sui.expiration_kind\",\"op\":\"eq\",\"value\":\"none\"},"
-        "{\"field\":\"sui.sui_total_out_complete\",\"op\":\"eq\",\"value\":\"yes\"},"
-        "{\"field\":\"sui.sui_total_out_raw\",\"op\":\"lte\",\"value\":\"1000000\"},"
-        "{\"field\":\"sui.command_count\",\"op\":\"eq\",\"value\":\"2\"},"
-        "{\"field\":\"sui.command0_kind\",\"op\":\"eq\",\"value\":\"split_coins\"},"
-        "{\"field\":\"sui.command1_kind\",\"op\":\"eq\",\"value\":\"transfer_objects\"},"
-        "{\"field\":\"sui.recipient_count\",\"op\":\"eq\",\"value\":\"1\"},"
-        "{\"field\":\"sui.recipient0_address\",\"op\":\"eq\",\"value\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},"
-        "{\"field\":\"sui.recipient0_amount_raw\",\"op\":\"lte\",\"value\":\"1000000\"},"
-        "{\"field\":\"sui.coin_flow0_source_kind\",\"op\":\"eq\",\"value\":\"split_result\"},"
-        "{\"field\":\"sui.coin_flow0_asset_state\",\"op\":\"eq\",\"value\":\"proven_sui\"},"
-        "{\"field\":\"sui.coin_flow0_amount_known\",\"op\":\"eq\",\"value\":\"yes\"},"
-        "{\"field\":\"sui.coin_flow0_sink_kind\",\"op\":\"eq\",\"value\":\"transfer_recipient\"},"
-        "{\"field\":\"sui.gas_budget\",\"op\":\"lte\",\"value\":\"10000000\"},"
-        "{\"field\":\"sui.gas_price\",\"op\":\"lte\",\"value\":\"1000\"}"
+        "\"conditions\":["
+        "{\"field\":\"sui.token_totals_by_type.amount_raw\",\"where\":{\"type\":\"0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI\"},\"op\":\"lte\",\"value\":\"1000000000\"},"
+        "{\"field\":\"sui.token_sources.type\",\"op\":\"in\",\"values\":[\"0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI\"]},"
+        "{\"field\":\"sui.gas_budget_raw\",\"op\":\"lte\",\"value\":\"10000000\"}"
         "]"
+        "}]"
+        "}]"
         "}]"
         "}";
     const DeserializationError error = deserializeJson(document, json);
@@ -248,45 +228,33 @@ JsonDocument parse_multi_sign_policy_json()
     JsonDocument document;
     const char* json =
         "{"
-        "\"schema\":\"agentq.policy.v0\","
+        "\"schema\":\"agentq.policy\","
         "\"defaultAction\":\"reject\","
-        "\"rules\":["
+        "\"blockchains\":[{"
+        "\"blockchain\":\"sui\","
+        "\"networks\":[{"
+        "\"network\":\"testnet\","
+        "\"policies\":["
         "{"
-        "\"id\":\"sign_move_call_one\","
-        "\"chain\":\"sui\","
-        "\"method\":\"sign_transaction\","
+        "\"id\":\"sign-one\","
         "\"action\":\"sign\","
-        "\"criteria\":["
-        "{\"field\":\"sui.command_count\",\"op\":\"eq\",\"value\":\"1\"},"
-        "{\"field\":\"sui.command0_kind\",\"op\":\"eq\",\"value\":\"move_call\"},"
-        "{\"field\":\"sui.command0_move_call_package\",\"op\":\"eq\",\"value\":\"0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},"
-        "{\"field\":\"sui.command0_move_call_module\",\"op\":\"eq\",\"value\":\"demo\"},"
-        "{\"field\":\"sui.command0_move_call_function\",\"op\":\"eq\",\"value\":\"mint\"},"
-        "{\"field\":\"sui.command0_move_call_type_args\",\"op\":\"eq\",\"value\":\"0\"},"
-        "{\"field\":\"sui.gas_budget\",\"op\":\"lte\",\"value\":\"10000000\"},"
-        "{\"field\":\"sui.gas_price\",\"op\":\"lte\",\"value\":\"1000\"}"
+        "\"conditions\":["
+        "{\"field\":\"sui.move_call_packages\",\"op\":\"contains\",\"value\":\"0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"
         "]"
         "},"
         "{"
-        "\"id\":\"sign_move_call_two\","
-        "\"chain\":\"sui\","
-        "\"method\":\"sign_transaction\","
+        "\"id\":\"sign-two\","
         "\"action\":\"sign\","
-        "\"criteria\":["
-        "{\"field\":\"sui.command_count\",\"op\":\"eq\",\"value\":\"1\"},"
-        "{\"field\":\"sui.command0_kind\",\"op\":\"eq\",\"value\":\"move_call\"},"
-        "{\"field\":\"sui.command0_move_call_package\",\"op\":\"eq\",\"value\":\"0x1111111111111111111111111111111111111111111111111111111111111111\"},"
-        "{\"field\":\"sui.command0_move_call_module\",\"op\":\"eq\",\"value\":\"demo\"},"
-        "{\"field\":\"sui.command0_move_call_function\",\"op\":\"eq\",\"value\":\"mint\"},"
-        "{\"field\":\"sui.command0_move_call_type_args\",\"op\":\"eq\",\"value\":\"0\"},"
-        "{\"field\":\"sui.gas_budget\",\"op\":\"lte\",\"value\":\"1\"},"
-        "{\"field\":\"sui.gas_price\",\"op\":\"lte\",\"value\":\"1\"}"
+        "\"conditions\":["
+        "{\"field\":\"sui.move_call_packages\",\"op\":\"contains\",\"value\":\"0x1111111111111111111111111111111111111111111111111111111111111111\"}"
         "]"
         "}"
         "]"
+        "}]"
+        "}]"
         "}";
     const DeserializationError error = deserializeJson(document, json);
-    expect(!error, "test multi-sign policy JSON parses");
+    expect(!error, "test multiple sign policy JSON parses");
     return document;
 }
 
@@ -327,7 +295,7 @@ bool approval_history_append_required_policy_update(
     strlcpy(g_last_history_reason, input.reason_code != nullptr ? input.reason_code : "", sizeof(g_last_history_reason));
     strlcpy(g_last_history_policy_hash, input.policy_hash != nullptr ? input.policy_hash : "", sizeof(g_last_history_policy_hash));
     strlcpy(g_last_highest_action, input.highest_action != nullptr ? input.highest_action : "", sizeof(g_last_highest_action));
-    g_last_rule_count = input.rule_count;
+    g_last_policy_count = input.policy_count;
     g_last_uptime_ms = uptime_ms;
     return g_history_result;
 }
@@ -335,14 +303,13 @@ bool approval_history_append_required_policy_update(
 AgentQPolicyUpdateMarkerBeginResult policy_update_marker_begin(
     const uint8_t* policy_digest,
     size_t policy_digest_size,
-    size_t rule_count,
+    size_t policy_count,
     AgentQPolicyUpdateHighestAction highest_action)
 {
     ++g_marker_begin_calls;
     if (policy_digest == nullptr ||
         policy_digest_size != kAgentQPolicyUpdateDigestBytes ||
-        rule_count == 0 ||
-        rule_count > agent_q::kAgentQPolicyMaxRules) {
+        policy_count > agent_q::kAgentQCurrentPolicyMaxTotalPolicies) {
         return AgentQPolicyUpdateMarkerBeginResult::invalid_input;
     }
     strlcpy(
@@ -373,12 +340,20 @@ int main()
     expect(agent_q::timeout_window_valid(snapshot.review_window), "snapshot exposes review window");
     expect(strcmp(snapshot.policy_hash, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0,
            "snapshot exposes policy hash");
-    expect(snapshot.rule_count == 1, "snapshot exposes rule count");
+    expect(snapshot.blockchain_count == 1, "snapshot exposes blockchain count");
+    expect(snapshot.network_count == 1, "snapshot exposes network count");
+    expect(snapshot.policy_count == 0, "snapshot exposes policy count");
+    expect(snapshot.condition_count == 0, "snapshot exposes condition count");
     expect(strcmp(snapshot.highest_action, "reject") == 0, "snapshot exposes highest action");
     expect(strcmp(snapshot.default_action, "reject") == 0, "snapshot exposes default action");
-    expect(strcmp(snapshot.method_summary, "sui/sign_transaction") == 0, "snapshot exposes method summary");
-    expect(strcmp(snapshot.review_summary, "sha256:aaaaaaaa r1 reject->reject\nsui/sign_transaction reject policy") == 0,
-           "snapshot exposes reject policy review summary");
+    expect(strcmp(snapshot.scope_summary, "scopes=1/1 policies=0 conditions=0") == 0, "snapshot exposes scope summary");
+    expect(strcmp(snapshot.review_summary,
+                  "sha256:aaaaaaaa b1 n1 p0 c0 reject->reject\n"
+                  "scopes=1/1 policies=0 conditions=0\n"
+                  "scope sui\n"
+                  "  network testnet\n"
+                  "    no policy entries\n") == 0,
+           "snapshot exposes scoped empty policy review summary");
 
     reset_stubs();
     expect(begin_valid_policy(), "begin before transition checks");
@@ -498,28 +473,40 @@ int main()
     expect(strcmp(g_last_history_result, "applied") == 0 &&
                strcmp(g_last_history_reason, "device_confirmed") == 0 &&
                strcmp(g_last_highest_action, "reject") == 0 &&
-               g_last_rule_count == 1,
+               g_last_policy_count == 0,
            "applied commit history metadata");
 
     reset_stubs();
     expect(begin_sign_policy() == agent_q::AgentQPolicyUpdateFlowBeginResult::ok,
-           "bounded sign policy begins flow");
+           "non-empty sign policy begins flow");
     snapshot = agent_q::policy_update_flow_snapshot();
-    expect(snapshot.active, "bounded sign policy activates proposal flow");
-    expect(strcmp(snapshot.highest_action, "sign") == 0, "bounded sign policy snapshot exposes sign highest action");
-    expect(strcmp(snapshot.review_summary, "sha256:aaaaaaaa r1 reject->sign\nsui/sign_transaction\nGasCoin split-result transfer\n0xbbbb..bbbb amt<=1000000 total<=1000000\ngas<=10000000/1000") == 0,
-           "bounded sign policy review summary");
+    expect(snapshot.active, "non-empty sign policy is pending review");
+    expect(snapshot.policy_count == 1, "sign policy count");
+    expect(snapshot.condition_count == 3, "sign policy condition count");
+    expect(strcmp(snapshot.highest_action, "sign") == 0, "sign policy highest action");
+    expect(strstr(snapshot.review_summary, "policy sign-max-one-sui sign") != nullptr,
+           "sign policy summary includes policy id and action");
+    expect(strstr(snapshot.review_summary,
+                  "- sui.token_totals_by_type.amount_raw lte where.type=0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI 1000000000") != nullptr,
+           "sign policy summary includes type-bound amount condition");
+    expect(strstr(snapshot.review_summary, "- sui.token_sources.type in [0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI]") != nullptr,
+           "sign policy summary includes token type condition");
+    expect(strstr(snapshot.review_summary, "- sui.gas_budget_raw lte 10000000") != nullptr,
+           "sign policy summary includes gas condition");
     expect(agent_q::policy_update_flow_continue_to_pin(20) ==
                agent_q::AgentQPolicyUpdateFlowTransitionResult::ok &&
                agent_q::policy_update_flow_mark_pin_verifying() ==
-                   agent_q::AgentQPolicyUpdateFlowTransitionResult::ok &&
-               agent_q::policy_update_flow_commit(300) ==
-                   agent_q::AgentQPolicyUpdateFlowTerminalResult::applied,
-           "bounded sign policy commits after device confirmation");
-    expect(strcmp(g_last_highest_action, "sign") == 0 &&
-               strcmp(g_last_marker_highest_action, "sign") == 0 &&
-               g_last_rule_count == 1,
-           "bounded sign policy stores sign metadata");
+                   agent_q::AgentQPolicyUpdateFlowTransitionResult::ok,
+           "sign policy reaches commit stage");
+    expect(agent_q::policy_update_flow_commit(900) ==
+               agent_q::AgentQPolicyUpdateFlowTerminalResult::applied,
+           "sign policy commit applies");
+    expect(strcmp(g_last_history_result, "applied") == 0 &&
+               strcmp(g_last_history_reason, "device_confirmed") == 0 &&
+               strcmp(g_last_highest_action, "sign") == 0 &&
+               g_last_policy_count == 1 &&
+               strcmp(g_last_marker_highest_action, "sign") == 0,
+           "sign policy commit history and marker metadata");
 
     reset_stubs();
     {
@@ -530,9 +517,16 @@ int main()
                    kTestSessionId,
                    10,
                    test_review_window()) ==
-                   agent_q::AgentQPolicyUpdateFlowBeginResult::invalid_policy,
-               "unbounded multi-sign policy is rejected");
-        expect(!agent_q::policy_update_flow_active(), "rejected multi-sign policy does not activate proposal flow");
+               agent_q::AgentQPolicyUpdateFlowBeginResult::ok,
+               "multiple current policies begin review");
+        snapshot = agent_q::policy_update_flow_snapshot();
+        expect(snapshot.active, "multiple current policies leave an active proposal");
+        expect(snapshot.policy_count == 2, "multiple current policy count");
+        expect(snapshot.condition_count == 2, "multiple current condition count");
+        expect(strstr(snapshot.review_summary, "policy sign-one sign") != nullptr,
+               "multi-policy summary includes first policy");
+        expect(strstr(snapshot.review_summary, "policy sign-two sign") != nullptr,
+               "multi-policy summary includes second policy");
     }
 
     reset_stubs();
@@ -583,7 +577,7 @@ int main()
 
     reset_stubs();
     JsonDocument invalid;
-    deserializeJson(invalid, "{\"schema\":\"bad\",\"defaultAction\":\"reject\",\"rules\":[]}");
+    deserializeJson(invalid, "{\"schema\":\"bad\",\"defaultAction\":\"reject\",\"blockchains\":[]}");
     expect(agent_q::policy_update_flow_begin(
                invalid.as<JsonVariantConst>(),
                kTestRequestId,
@@ -626,13 +620,7 @@ CPP
   "${TMP_DIR}/policy_update_flow_test.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_update_flow.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_proposal_parser.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_canonical.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_document.cpp" \
   -o "${TMP_DIR}/policy_update_flow_test"
 
 "${TMP_DIR}/policy_update_flow_test"

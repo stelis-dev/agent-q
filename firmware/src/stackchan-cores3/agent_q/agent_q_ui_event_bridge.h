@@ -19,6 +19,7 @@ enum class AgentQUiEventKind {
     settings_cancel_requested,
     settings_human_approval_input_requested,
     settings_signing_mode_requested,
+    settings_policy_reset_requested,
     settings_change_pin_requested,
     settings_reset_requested,
     error_recovery_erase_requested,

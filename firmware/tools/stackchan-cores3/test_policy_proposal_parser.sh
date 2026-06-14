@@ -5,10 +5,11 @@ usage() {
   cat >&2 <<'EOF'
 Usage: firmware/tools/stackchan-cores3/test_policy_proposal_parser.sh
 
-Compiles the StackChan CoreS3 policy proposal parser against ArduinoJson and
-the common policy canonicalizer with a host C++ compiler. This test does not
-require ESP-IDF, but it uses the pinned StackChan ArduinoJson source by default.
-Set ARDUINOJSON_ROOT to override the ArduinoJson source root.
+Compiles the StackChan CoreS3 current policy proposal parser against
+ArduinoJson and the current common policy document implementation with a host
+C++ compiler. This test does not require ESP-IDF, but it uses the pinned
+StackChan ArduinoJson source by default. Set ARDUINOJSON_ROOT to override the
+ArduinoJson source root.
 EOF
 }
 
@@ -22,7 +23,6 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
 COMMON_POLICY_DIR="${COMMON_ROOT}/policy"
-COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
@@ -31,15 +31,9 @@ for required in \
   "${COMMON_ROOT}/agent_q_u64_decimal.h" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_proposal_parser.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_proposal_parser.h" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_canonical.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_canonical.h" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_schema.h" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_u64.h" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_v0.h" \
-  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.h"; do
+  "${COMMON_POLICY_DIR}/agent_q_policy_document.cpp" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_document.h" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_u64.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required file: ${required}" >&2
     exit 1
@@ -58,9 +52,8 @@ cat >"${TMP_DIR}/policy_proposal_parser_test.cpp" <<'CPP'
 
 #include <ArduinoJson.h>
 
-#include "agent_q_policy_canonical.h"
 #include "agent_q_policy_proposal_parser.h"
-#include "agent_q_sui_method_adapter.h"
+#include "agent_q_common/policy/agent_q_policy_document.h"
 
 namespace {
 
@@ -88,20 +81,6 @@ void expect_status(
     }
 }
 
-void expect_canonical_status(
-    const char* label,
-    agent_q::AgentQPolicyCanonicalStatus actual,
-    agent_q::AgentQPolicyCanonicalStatus expected)
-{
-    if (actual != expected) {
-        fprintf(stderr, "FAILED: %s expected %s got %s\n",
-                label,
-                agent_q::agent_q_policy_canonical_status_name(expected),
-                agent_q::agent_q_policy_canonical_status_name(actual));
-        ++failures;
-    }
-}
-
 JsonDocument parse_json(const char* label, const char* json)
 {
     JsonDocument document;
@@ -113,297 +92,242 @@ JsonDocument parse_json(const char* label, const char* json)
     return document;
 }
 
-const agent_q::AgentQPolicyMethodDescriptor kMethods[] = {
-    agent_q::sui_sign_transaction_policy_method_descriptor(),
-};
-
 agent_q::AgentQPolicyProposalParseStatus parse_policy(
     const char* label,
     const char* json,
     agent_q::AgentQParsedPolicyProposal* out)
 {
     JsonDocument document = parse_json(label, json);
-    return agent_q::parse_agent_q_policy_proposal(
-        document.as<JsonVariantConst>(),
-        kMethods,
-        sizeof(kMethods) / sizeof(kMethods[0]),
-        out);
+    return agent_q::parse_agent_q_policy_proposal(document.as<JsonVariantConst>(), out);
 }
 
 }  // namespace
 
 int main()
 {
-    static agent_q::AgentQParsedPolicyProposal proposal = {};
-    agent_q::AgentQPolicyCanonicalDocument canonical = {};
-    uint8_t record[agent_q::kAgentQPolicyMaxCanonicalRecordBytes] = {};
+    auto* proposal = new agent_q::AgentQParsedPolicyProposal();
+    auto* canonical = new agent_q::AgentQCurrentPolicyCanonicalDocument();
+    uint8_t* record = new uint8_t[agent_q::kAgentQCurrentPolicyMaxCanonicalRecordBytes]();
     size_t record_size = 0;
 
     expect_status(
-        "default reject policy parses",
+        "empty default-reject policy parses",
         parse_policy(
-            "default",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[]})JSON",
-            &proposal),
+            "empty",
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","blockchains":[]})JSON",
+            proposal),
         agent_q::AgentQPolicyProposalParseStatus::ok);
-    expect(proposal.document.rule_count == 0, "default reject rule count");
-    expect_canonical_status(
-        "default parsed policy canonicalizes",
-        agent_q::canonicalize_agent_q_policy_v0(proposal.document, kMethods, 1, &canonical),
-        agent_q::AgentQPolicyCanonicalStatus::ok);
+    expect(proposal->document.blockchain_count == 0, "empty policy has no blockchain scopes");
+    expect(agent_q::canonicalize_agent_q_current_policy_document(proposal->document, canonical) ==
+               agent_q::AgentQCurrentPolicyDocumentStatus::ok,
+           "empty parsed policy canonicalizes");
+    expect(agent_q::encode_agent_q_current_policy_canonical_record(
+               *canonical,
+               record,
+               agent_q::kAgentQCurrentPolicyMaxCanonicalRecordBytes,
+               &record_size) == agent_q::AgentQCurrentPolicyDocumentStatus::ok,
+           "empty parsed policy encodes");
+    expect(record_size == agent_q::kAgentQCurrentPolicyDefaultCanonicalRecordBytes,
+           "empty policy encodes as default-reject record");
 
     expect_status(
-        "valid Sui reject policy parses",
+        "current scoped empty policy parses",
         parse_policy(
-            "valid",
+            "scoped-empty",
             R"JSON({
-              "schema":"agentq.policy.v0",
+              "schema":"agentq.policy",
               "defaultAction":"reject",
-              "rules":[{
-                "id":"reject-move-call-shape",
-                "chain":"sui",
-                "method":"sign_transaction",
-                "action":"reject",
-                "criteria":[
-                  {"field":"common.intent","op":"eq","value":"programmable_transaction"},
-                  {"field":"sui.command0_kind","op":"eq","value":"move_call"},
-                  {"field":"sui.gas_budget","op":"lte","value":"1000"}
-                ]
+              "blockchains":[{
+                "blockchain":"sui",
+                "networks":[{
+                  "network":"testnet",
+                  "policies":[]
+                }]
               }]
             })JSON",
-            &proposal),
+            proposal),
         agent_q::AgentQPolicyProposalParseStatus::ok);
-    expect(proposal.document.rule_count == 1, "valid policy rule count");
-    expect(proposal.rules[0].criterion_count == 3, "valid policy criterion count");
-    expect_canonical_status(
-        "valid parsed policy canonicalizes",
-        agent_q::canonicalize_agent_q_policy_v0(proposal.document, kMethods, 1, &canonical),
-        agent_q::AgentQPolicyCanonicalStatus::ok);
-    expect_canonical_status(
-        "valid parsed policy encodes",
-        agent_q::encode_agent_q_policy_v0_canonical_record(canonical, record, sizeof(record), &record_size),
-        agent_q::AgentQPolicyCanonicalStatus::ok);
-    expect(record_size > agent_q::kAgentQPolicyDefaultCanonicalRecordBytes, "valid encoded record is custom");
+    expect(proposal->document.blockchain_count == 1, "scoped empty policy blockchain count");
+    expect(proposal->network_count == 1, "scoped empty policy network count");
+    expect(proposal->policy_count == 0, "scoped empty policy count");
+    expect(proposal->condition_count == 0, "scoped empty condition count");
+    expect(strcmp(proposal->blockchains[0].blockchain, "sui") == 0, "blockchain scope is sui");
+    expect(strcmp(proposal->networks[0].network, "testnet") == 0, "network scope is testnet");
+    expect(agent_q::canonicalize_agent_q_current_policy_document(proposal->document, canonical) ==
+               agent_q::AgentQCurrentPolicyDocumentStatus::ok,
+           "scoped empty parsed policy canonicalizes");
+    expect(agent_q::encode_agent_q_current_policy_canonical_record(
+               *canonical,
+               record,
+               agent_q::kAgentQCurrentPolicyMaxCanonicalRecordBytes,
+               &record_size) == agent_q::AgentQCurrentPolicyDocumentStatus::ok,
+           "scoped empty parsed policy encodes");
+    expect(record_size > agent_q::kAgentQCurrentPolicyDefaultCanonicalRecordBytes,
+           "scoped empty encoded record includes scope body");
 
     expect_status(
-        "rule id must be history-safe",
+        "non-empty current policy entries parse",
         parse_policy(
-            "invalid-rule-id",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"1_rule","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"common.intent","op":"eq","value":"programmable_transaction"}]}]})JSON",
-            &proposal),
-        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
+            "non-empty",
+            R"JSON({
+              "schema":"agentq.policy",
+              "defaultAction":"reject",
+              "blockchains":[{
+                "blockchain":"sui",
+                "networks":[{
+                  "network":"testnet",
+                  "policies":[{
+                    "id":"sign-small-sui",
+                    "action":"sign",
+                    "conditions":[
+                      {"field":"sui.token_sources.type","op":"eq","value":"0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"},
+                      {"field":"sui.token_totals_by_type.amount_raw","where":{"type":"0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"},"op":"lte","value":"1000000000"},
+                      {"field":"sui.token_unknown_amount_present","op":"eq","value":"false"}
+                    ]
+                  }]
+                }]
+              }]
+            })JSON",
+            proposal),
+        agent_q::AgentQPolicyProposalParseStatus::ok);
+    expect(proposal->document.blockchain_count == 1, "non-empty policy blockchain count");
+    expect(proposal->network_count == 1, "non-empty policy network count");
+    expect(proposal->policy_count == 1, "non-empty policy count");
+    expect(proposal->condition_count == 3, "non-empty condition count");
+    expect(strcmp(proposal->policies[0].id, "sign-small-sui") == 0, "non-empty policy id");
+    expect(proposal->policies[0].action == agent_q::AgentQCurrentPolicyAction::sign,
+           "non-empty policy action");
+    expect(strcmp(proposal->conditions[0].field, "sui.token_sources.type") == 0,
+           "first condition field");
+    expect(proposal->conditions[0].op == agent_q::AgentQCurrentPolicyOperator::eq,
+           "first condition op");
+    expect(strcmp(proposal->conditions[0].values[0], "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI") == 0,
+           "first condition value");
+    expect(strcmp(proposal->conditions[1].field, "sui.token_totals_by_type.amount_raw") == 0,
+           "second condition field");
+    expect(strcmp(proposal->conditions[1].where_type, "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI") == 0,
+           "second condition selector");
 
+    expect_status(
+        "flat rules key is rejected",
+        parse_policy(
+            "flat",
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","rules":[]})JSON",
+            proposal),
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
+    expect_status(
+        "unsupported schema is rejected",
+        parse_policy(
+            "unsupported-schema",
+            R"JSON({"schema":"other.policy","defaultAction":"reject","blockchains":[]})JSON",
+            proposal),
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
     expect_status(
         "unknown top-level key rejected",
         parse_policy(
             "unknown-top-level",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[],"extra":true})JSON",
-            &proposal),
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","blockchains":[],"extra":true})JSON",
+            proposal),
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
     expect_status(
-        "embedded nul top-level key rejected",
+        "network is not a condition field",
         parse_policy(
-            "embedded-nul-top-level-key",
-            R"JSON({"schema\u0000x":"agentq.policy.v0","defaultAction":"reject","rules":[]})JSON",
-            &proposal),
-        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
-
-    expect_status(
-        "unsupported method rejected",
-        parse_policy(
-            "unsupported-method",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_personal_message","action":"reject","criteria":[]}]})JSON",
-            &proposal),
-        agent_q::AgentQPolicyProposalParseStatus::unsupported_method);
-
-    expect_status(
-        "schema-external action rejected",
-        parse_policy(
-            "invalid-action",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"invalid-action","chain":"sui","method":"sign_transaction","action":"approve","criteria":[{"field":"common.intent","op":"eq","value":"programmable_transaction"}]}]})JSON",
-            &proposal),
-        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
-
+            "network-condition",
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","blockchains":[{"blockchain":"sui","networks":[{"network":"testnet","policies":[{"id":"bad-network-field","action":"reject","conditions":[{"field":"network","op":"eq","value":"testnet"}]}]}]}]})JSON",
+            proposal),
+        agent_q::AgentQPolicyProposalParseStatus::unsupported_field);
     expect_status(
         "unknown field rejected",
         parse_policy(
             "unknown-field",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"sui.unknown","op":"eq","value":"x"}]}]})JSON",
-            &proposal),
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","blockchains":[{"blockchain":"sui","networks":[{"network":"testnet","policies":[{"id":"unknown-field","action":"reject","conditions":[{"field":"sui.unknown","op":"eq","value":"x"}]}]}]}]})JSON",
+            proposal),
         agent_q::AgentQPolicyProposalParseStatus::unsupported_field);
-
     expect_status(
-        "eq with values rejected",
+        "unsupported operator rejected",
         parse_policy(
-            "eq-values",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"common.intent","op":"eq","value":"programmable_transaction","values":["programmable_transaction"]}]}]})JSON",
-            &proposal),
+            "unsupported-op",
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","blockchains":[{"blockchain":"sui","networks":[{"network":"testnet","policies":[{"id":"bad-op","action":"reject","conditions":[{"field":"sui.gas_budget_raw","op":"contains","value":"1000"}]}]}]}]})JSON",
+            proposal),
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
-
     expect_status(
-        "in with scalar rejected",
+        "token total amount missing selector rejected",
         parse_policy(
-            "in-scalar",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"common.intent","op":"in","value":"programmable_transaction","values":["programmable_transaction"]}]}]})JSON",
-            &proposal),
+            "missing-selector",
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","blockchains":[{"blockchain":"sui","networks":[{"network":"testnet","policies":[{"id":"missing-selector","action":"sign","conditions":[{"field":"sui.token_totals_by_type.amount_raw","op":"lte","value":"1000000000"}]}]}]}]})JSON",
+            proposal),
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
-
+    expect_status(
+        "where selector on scalar field rejected",
+        parse_policy(
+            "forbidden-selector",
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","blockchains":[{"blockchain":"sui","networks":[{"network":"testnet","policies":[{"id":"forbidden-selector","action":"reject","conditions":[{"field":"sui.gas_budget_raw","where":{"type":"0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"},"op":"lte","value":"10000000"}]}]}]}]})JSON",
+            proposal),
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
     expect_status(
         "u64 overflow rejected",
         parse_policy(
             "u64-overflow",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"sui.gas_budget","op":"lte","value":"18446744073709551616"}]}]})JSON",
-            &proposal),
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","blockchains":[{"blockchain":"sui","networks":[{"network":"testnet","policies":[{"id":"u64-overflow","action":"reject","conditions":[{"field":"sui.gas_budget_raw","op":"lte","value":"18446744073709551616"}]}]}]}]})JSON",
+            proposal),
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
-
     expect_status(
         "u64 leading zero rejected",
         parse_policy(
             "u64-leading-zero",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"sui.gas_budget","op":"lte","value":"0001"}]}]})JSON",
-            &proposal),
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","blockchains":[{"blockchain":"sui","networks":[{"network":"testnet","policies":[{"id":"u64-leading-zero","action":"reject","conditions":[{"field":"sui.gas_budget_raw","op":"lte","value":"0001"}]}]}]}]})JSON",
+            proposal),
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
     expect_status(
-        "embedded nul scalar rejected",
+        "sign policy requires conditions",
         parse_policy(
-            "embedded-nul-scalar",
-            R"JSON({"schema":"agentq.policy.v0","defaultAction":"reject","rules":[{"id":"r","chain":"sui","method":"sign_transaction","action":"reject","criteria":[{"field":"common.intent","op":"eq","value":"programmable_transaction\u0000suffix"}]}]})JSON",
-            &proposal),
+            "empty-sign",
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","blockchains":[{"blockchain":"sui","networks":[{"network":"testnet","policies":[{"id":"empty-sign","action":"sign","conditions":[]}]}]}]})JSON",
+            proposal),
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
+    expect_status(
+        "duplicate policy id rejected in scope",
+        parse_policy(
+            "duplicate-policy",
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","blockchains":[{"blockchain":"sui","networks":[{"network":"testnet","policies":[{"id":"same","action":"reject","conditions":[]},{"id":"same","action":"reject","conditions":[]}]}]}]})JSON",
+            proposal),
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
+    expect_status(
+        "duplicate network rejected in blockchain scope",
+        parse_policy(
+            "duplicate-network",
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","blockchains":[{"blockchain":"sui","networks":[{"network":"testnet","policies":[]},{"network":"testnet","policies":[]}]}]})JSON",
+            proposal),
+        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
+    expect_status(
+        "duplicate blockchain rejected",
+        parse_policy(
+            "duplicate-blockchain",
+            R"JSON({"schema":"agentq.policy","defaultAction":"reject","blockchains":[{"blockchain":"sui","networks":[]},{"blockchain":"sui","networks":[]}]})JSON",
+            proposal),
         agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
 
-    expect_status(
-        "complete bounded sign policy parses",
-        parse_policy(
-            "complete-sign-rule",
-            R"JSON({
-              "schema":"agentq.policy.v0",
-              "defaultAction":"reject",
-              "rules":[{
-                "id":"sign-complete-transfer",
-                "chain":"sui",
-                "method":"sign_transaction",
-                "action":"sign",
-                "criteria":[
-                  {"field":"common.chain","op":"eq","value":"sui"},
-                  {"field":"common.method","op":"eq","value":"sign_transaction"},
-                  {"field":"common.intent","op":"eq","value":"programmable_transaction"},
-                  {"field":"sui.transaction_kind","op":"eq","value":"programmable_transaction"},
-                  {"field":"sui.sender_address","op":"eq","value":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-                  {"field":"sui.gas_owner_address","op":"eq","value":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-                  {"field":"sui.gas_budget","op":"lte","value":"50000000"},
-                  {"field":"sui.gas_price","op":"lte","value":"1000"},
-                  {"field":"sui.expiration_kind","op":"eq","value":"none"},
-                  {"field":"sui.sui_total_out_complete","op":"eq","value":"yes"},
-                  {"field":"sui.sui_total_out_raw","op":"lte","value":"1000000"},
-                  {"field":"sui.command_count","op":"eq","value":"2"},
-                  {"field":"sui.command0_kind","op":"eq","value":"split_coins"},
-                  {"field":"sui.command1_kind","op":"eq","value":"transfer_objects"},
-                  {"field":"sui.recipient_count","op":"eq","value":"1"},
-                  {"field":"sui.recipient0_address","op":"eq","value":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
-                  {"field":"sui.recipient0_amount_raw","op":"lte","value":"1000000"},
-                  {"field":"sui.coin_flow0_source_kind","op":"eq","value":"split_result"},
-                  {"field":"sui.coin_flow0_asset_state","op":"eq","value":"proven_sui"},
-                  {"field":"sui.coin_flow0_amount_known","op":"eq","value":"yes"},
-                  {"field":"sui.coin_flow0_sink_kind","op":"eq","value":"transfer_recipient"}
-                ]
-              }]
-            })JSON",
-            &proposal),
-        agent_q::AgentQPolicyProposalParseStatus::ok);
-
-    expect_status(
-        "unbounded multi-sign policy is invalid",
-        parse_policy(
-            "multi-sign-rule",
-            R"JSON({
-              "schema":"agentq.policy.v0",
-              "defaultAction":"reject",
-              "rules":[{
-                "id":"sign-one",
-                "chain":"sui",
-                "method":"sign_transaction",
-                "action":"sign",
-                "criteria":[
-                  {"field":"sui.command_count","op":"eq","value":"1"},
-                  {"field":"sui.command0_kind","op":"eq","value":"move_call"},
-                  {"field":"sui.command0_move_call_package","op":"eq","value":"0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
-                  {"field":"sui.command0_move_call_module","op":"eq","value":"demo"},
-                  {"field":"sui.command0_move_call_function","op":"eq","value":"mint"},
-                  {"field":"sui.command0_move_call_type_args","op":"eq","value":"0"},
-                  {"field":"sui.gas_budget","op":"lte","value":"10000000"},
-                  {"field":"sui.gas_price","op":"lte","value":"1000"}
-                ]
-              },{
-                "id":"sign-two",
-                "chain":"sui",
-                "method":"sign_transaction",
-                "action":"sign",
-                "criteria":[
-                  {"field":"sui.command_count","op":"eq","value":"1"},
-                  {"field":"sui.command0_kind","op":"eq","value":"move_call"},
-                  {"field":"sui.command0_move_call_package","op":"eq","value":"0x1111111111111111111111111111111111111111111111111111111111111111"},
-                  {"field":"sui.command0_move_call_module","op":"eq","value":"demo"},
-                  {"field":"sui.command0_move_call_function","op":"eq","value":"mint"},
-                  {"field":"sui.command0_move_call_type_args","op":"eq","value":"0"},
-                  {"field":"sui.gas_budget","op":"lte","value":"1"},
-                  {"field":"sui.gas_price","op":"lte","value":"1"}
-                ]
-              }]
-            })JSON",
-            &proposal),
-        agent_q::AgentQPolicyProposalParseStatus::invalid_policy);
-
-    JsonDocument oversized;
-    JsonObject policy = oversized.to<JsonObject>();
-    policy["schema"] = "agentq.policy.v0";
-    policy["defaultAction"] = "reject";
-    JsonArray rules = policy["rules"].to<JsonArray>();
-    JsonObject rule = rules.add<JsonObject>();
-    rule["id"] = "r";
-    rule["chain"] = "sui";
-    rule["method"] = "sign_transaction";
-    rule["action"] = "reject";
-    JsonArray criteria = rule["criteria"].to<JsonArray>();
-    JsonObject criterion = criteria.add<JsonObject>();
-    criterion["field"] = "common.intent";
-    criterion["op"] = "eq";
-    char large_value[agent_q::kAgentQPolicyProposalMaxSerializedObjectBytes + 1] = {};
-    memset(large_value, 'a', sizeof(large_value) - 1);
-    criterion["value"] = large_value;
-    expect_status(
-        "oversized serialized policy object rejected",
-        agent_q::parse_agent_q_policy_proposal(
-            oversized.as<JsonVariantConst>(),
-            kMethods,
-            sizeof(kMethods) / sizeof(kMethods[0]),
-            &proposal),
-        agent_q::AgentQPolicyProposalParseStatus::too_large);
+    delete[] record;
+    delete canonical;
+    delete proposal;
 
     if (failures != 0) {
-        fprintf(stderr, "Policy proposal parser tests failed: %d\n", failures);
+        fprintf(stderr, "%d failure(s)\n", failures);
         return 1;
     }
-    printf("Policy proposal parser tests passed\n");
+    printf("policy proposal parser tests passed\n");
     return 0;
 }
 CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${ARDUINOJSON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${TARGET_ROOT}/agent_q" \
   -I"${COMMON_ROOT}" \
-  -I"${COMMON_POLICY_DIR}" \
-  -I"${COMMON_SUI_DIR}" \
+  -I"${ARDUINOJSON_ROOT}" \
   "${TMP_DIR}/policy_proposal_parser_test.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_policy_proposal_parser.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_canonical.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_schema.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
+  "${COMMON_POLICY_DIR}/agent_q_policy_document.cpp" \
   -o "${TMP_DIR}/policy_proposal_parser_test"
 
 "${TMP_DIR}/policy_proposal_parser_test"

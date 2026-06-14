@@ -22,6 +22,7 @@ struct AgentQLocalPinAuthUiFlowOps {
     bool (*human_approval_requires_pin)();
     bool (*read_human_approval_input_mode)(AgentQHumanApprovalInputMode* output);
     bool (*read_signing_authorization_mode)(AgentQSigningAuthorizationMode* output);
+    bool (*store_default_policy)();
     bool (*begin_settings_pin_auth_handoff)(const char* stale_log_message);
     void (*restore_settings_menu)(
         const char* display_failure_wipe_reason,
@@ -84,6 +85,8 @@ bool local_pin_auth_ui_begin_connect(
 void local_pin_auth_ui_start_settings_human_approval_input(
     const AgentQLocalPinAuthUiFlowOps& ops);
 void local_pin_auth_ui_start_settings_signing_mode(
+    const AgentQLocalPinAuthUiFlowOps& ops);
+void local_pin_auth_ui_start_settings_policy_reset(
     const AgentQLocalPinAuthUiFlowOps& ops);
 void local_pin_auth_ui_start_settings_change_pin(
     const AgentQLocalPinAuthUiFlowOps& ops);

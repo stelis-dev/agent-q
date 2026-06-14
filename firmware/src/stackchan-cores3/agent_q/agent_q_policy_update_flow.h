@@ -18,7 +18,6 @@ enum class AgentQPolicyUpdateFlowBeginResult {
     invalid_argument,
     too_large,
     invalid_policy,
-    unsupported_method,
     unsupported_field,
     encode_error,
 };
@@ -58,10 +57,13 @@ struct AgentQPolicyUpdateFlowSnapshot {
     const char* session_id;
     AgentQTimeoutWindow review_window;
     const char* policy_hash;
-    size_t rule_count;
+    size_t blockchain_count;
+    size_t network_count;
+    size_t policy_count;
+    size_t condition_count;
     const char* highest_action;
     const char* default_action;
-    const char* method_summary;
+    const char* scope_summary;
     const char* review_summary;
 };
 

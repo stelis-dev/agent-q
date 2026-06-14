@@ -293,10 +293,6 @@ commands also work from `packages/core/`, `packages/agent-q/`, and
 Current root commands:
 
 - Build host process: `npm run build`
-- Regenerate Sui policy contract projections:
-  `npm run generate:sui-policy-contract`
-- Check generated Sui policy contract projections:
-  `npm run test:generated`
 - Test host process: `npm test`
 
 Current core package commands:
@@ -320,10 +316,12 @@ Current common firmware helper commands:
   `firmware/tools/common/generate_sui_transaction_fixtures.mjs`
 - Test common Sui transaction facts parser fixtures (host C++ compiler only;
   does not require ESP-IDF): `firmware/tools/common/test_sui_transaction_facts.sh`
-- Test common policy v0 evaluator fixtures (host C++ compiler only; does not
-  require ESP-IDF): `firmware/tools/common/test_policy_v0.sh`
-- Test common policy v0 canonicalization fixtures (host C++ compiler only; does
-  not require ESP-IDF): `firmware/tools/common/test_policy_canonical.sh`
+- Test current policy document parser/canonicalization fixtures (host C++
+  compiler only; does not require ESP-IDF):
+  `firmware/tools/common/test_policy_document.sh`
+- Test current Sui offline policy facts fixtures (host C++ compiler only; does
+  not require ESP-IDF):
+  `firmware/tools/common/test_sui_offline_policy_facts.sh`
 
 Hardware-specific firmware commands live in the corresponding target
 documentation under `firmware/src/<hardware-id>/`. Read that target's

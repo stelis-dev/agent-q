@@ -199,9 +199,11 @@ binary BIP-39 entropy blob, a canonical active policy record, and a local
 read-only Sui account derivation, read-only active policy document readback,
 source-level local reset/material wipe, and the Firmware-owned
 `policy_propose` proposal flow for current-schema policies is implemented. Sui
-`sign_transaction` policy-mode signing is source-wired for current-contract
-GasCoin-derived proven-SUI split-result transfer transactions whose active policy has a matching
-bounded `sign` rule. USER_PROFILE secure storage gates are still separate work.
+`sign_transaction` policy mode evaluates the active current policy after active
+policy availability, request network, account-binding, and complete offline
+condition-facts gates. It signs only when a matching `sign` policy authorizes
+the request.
+USER_PROFILE secure storage gates are still separate work.
 
 Allowed:
 
@@ -234,6 +236,9 @@ Allowed:
 - device-local Settings action for the human approval input mode used by
   external-request human approval branches; changing it requires stored PIN
   verification
+- device-local Settings action for resetting active policy to the current
+  default reject policy; changing it requires stored PIN verification and is
+  not exposed as a protocol, host, Admin, or MCP reset request
 - policy update through the Firmware-owned `policy_propose` proposal
   flow, which requires an active session, Firmware validation, and device-local
   approval; the pending approval remains tied to the same session and cannot
@@ -248,10 +253,10 @@ read-only `policy_get` for the committed active policy document, read-only
 session-scoped Sign API runtime. `sign_transaction` has
 `source-wired-not-product-active` status for inline or same-session staged Sui
 transaction bytes decoded by the Firmware Sui `TransactionData::V1 ->
-ProgrammableTransaction` facts extractor. Policy authorization signs only
-current-contract GasCoin-derived proven-SUI split-result transfer transactions with a matching bounded
-`sign` rule; other valid policy-incomplete transactions return
-`policy_rejected`. User authorization enters device review only when
+ProgrammableTransaction` facts extractor. Policy authorization currently
+returns `policy_rejected` for missing, incomplete, unmatched, or reject-matched
+policy coverage, and signs only when a matching current `sign` policy authorizes
+the request. User authorization enters device review only when
 the parsed shape has either complete offline facts review coverage or an
 explicit blind-signing warning for a valid, account-bound transaction whose
 offline facts review coverage is incomplete.
@@ -277,12 +282,13 @@ reads the device-local signing authorization mode and chooses the supported
 Firmware-owned signing gate
 for the requested method:
 
-- policy mode evaluates the active policy only after the parsed transaction
-  matches the current automatic policy-signing contract for GasCoin-derived
-  proven-SUI split-result transfer facts, treats policy authorization as sufficient for
-  `sign_transaction`, shows speech-bubble status notifications, and does not
-  fall back to user confirmation on reject. `sign_personal_message` is
-  unsupported in policy mode and fails closed;
+- policy mode validates active policy availability, request network scope,
+  account binding, and complete offline policy condition facts, then signs only
+  when the active current policy has a matching `sign` policy. It returns
+  `policy_rejected` for missing, incomplete, unmatched, or reject-matched policy
+  coverage, shows speech-bubble status notifications for rejection, and does not
+  fall back to user confirmation. `sign_personal_message` is unsupported in
+  policy mode and fails closed;
 - user mode shows covered offline facts when offline facts review coverage is
   complete, or an explicit blind-signing warning when Firmware can validate and
   bind the transaction but offline facts review coverage is incomplete. Both

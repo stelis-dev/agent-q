@@ -67,6 +67,11 @@ the example does not spend test tokens to an external address.
 Policy-rejected transfers are not executed because Agent-Q does not return a
 signature for them. The example does not use fake txBytes.
 
+When the device is in policy signing mode and the Admin Page has committed the
+minimal Sui testnet policy template, the 0.5 SUI button is the intended pass
+case and the 1.25 SUI button is the intended reject case. The page does not
+evaluate policy locally; it shows the Firmware result.
+
 The browser example does not read, set, or display policy configuration. In
 policy signing mode it only shows transaction-signing actions and reports the
 Firmware result. Policy setup and readback remain MCP/Admin workflows, not part

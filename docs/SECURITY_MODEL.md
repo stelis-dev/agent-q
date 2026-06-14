@@ -80,22 +80,20 @@ Implemented today:
   on demand and does not return mnemonic, seed, entropy, or private key
   material. Hardware coverage level is tracked in
   `docs/IMPLEMENTATION_STATUS.md`.
-- A common firmware policy evaluator and a StackChan CoreS3 DEV_PROFILE active
-  policy provider. The current product flow installs the default-reject policy,
-  while the target stores the committed active policy as a canonical binary
-  record in ordinary NVS and can load canonical current-schema policy records
-  through its internal storage boundary. Firmware exposes read-only active policy
-  document readback through `policy_get`, consumes that active policy only when
-  the Firmware-local signing authorization mode is `policy`, accepts at most one
-  current-contract bounded Sui `sign_transaction` sign rule, and requires the
-  parsed transaction to match the GasCoin-derived proven-SUI split-result
-  transfer contract before a policy `sign` decision can lead to signing. It
-  exposes policy update authorization only through the Firmware-owned
-  `policy_propose` proposal flow. Policy actions do not authorize user-mode
-  signing.
-- A local Admin Page for read-only device metadata and the
-  current Sui transfer policy example. It uses the same host core
-  boundary as MCP and is not a policy authority.
+- A current policy document parser, active policy store/readback boundary, and
+  Sui offline policy condition-facts extractor. The current product flow
+  installs the default-reject policy, while the target stores committed
+  current-schema policy material as a canonical binary record in ordinary NVS.
+  Firmware exposes read-only active policy document readback through
+  `policy_get`, consumes that active policy only when the Firmware-local signing
+  authorization mode is `policy`, and authorizes Sui transaction signing only
+  when the active current policy has a matching `sign` policy over complete
+  Firmware-derived offline condition facts. It exposes policy update
+  authorization only through the Firmware-owned `policy_propose` proposal flow.
+  Policy actions do not authorize user-mode signing.
+- A local Admin Page for device metadata, active policy readback,
+  approval-history readback, and current-schema policy proposal submission. It
+  uses the same host core boundary as MCP and is not a policy authority.
 - A bounded persistent approval-history read path. The current StackChan CoreS3
   target stores Firmware-authored signing confirmation/terminal metadata for
   `sign_transaction` and user-mode `sign_personal_message`, plus recordable
@@ -113,10 +111,11 @@ Implemented today:
   metadata, and owns cleanup. Unsupported versions, unsupported transaction
   kinds, `TransactionKind`-only bytes, malformed bytes, trailing bytes,
   oversized bytes, unbindable transactions, and out-of-range command references
-  fail closed. Policy mode evaluates active policy only for transactions that
-  match the current automatic policy-signing contract for GasCoin-derived
-  proven-SUI split-result transfer facts; other valid policy-incomplete shapes return
-  `policy_rejected` there.
+  fail closed. Policy mode validates active policy availability, request network
+  scope, account binding, and offline policy condition facts, then signs only
+  when the active current policy has a matching `sign` policy. Missing,
+  incomplete, unmatched, or reject-matched policy coverage returns
+  `policy_rejected`.
   User mode shows covered offline facts when offline facts review coverage is
   complete, or an explicit blind-signing warning when Firmware can validate and
   account-bind the transaction but offline facts review coverage is incomplete.
@@ -157,7 +156,8 @@ Not implemented:
 - USER_PROFILE policy storage and policy update authorization.
 - Execution-effect-complete arbitrary Sui transaction review or policy
   simulation, policy-authorized Sui personal-message signing, and other chains.
-- Full Admin policy editing beyond the current Sui transfer policy example.
+- Admin-side policy authority. Admin may submit current-schema policy proposals,
+  but Firmware validates, reviews, commits, and evaluates policy.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.
 - Secure Boot, Flash Encryption, and NVS Encryption setup flow.
 
@@ -252,17 +252,16 @@ policy-write proposals. A connection session alone does not authorize signing.
 gates. Firmware chooses the gate from device-local signing authorization mode;
 requests, adapters, and host callers cannot choose it.
 
-- Policy mode evaluates the active policy for transaction signing only after
-  the parsed transaction matches the current automatic policy-signing contract
-  for GasCoin-derived proven-SUI split-result transfer facts. A policy reject,
-  including rejection for
-  incomplete policy coverage, is terminal and must not fall back to user
-  confirmation. The current policy document shape and currently exposed Sui
-  policy facts are cataloged in `docs/POLICY_SCHEMA.md`.
-- Policy mode treats policy authorization as sufficient for signing only after
-  that automatic signing gate and the required policy history record, with
-  speech-bubble status notifications instead of per-request device-local
-  confirmation.
+- Policy mode validates active policy availability, request network scope,
+  account binding, and current condition facts before transaction signing. A
+  policy reject is terminal and must not fall back to user confirmation. The
+  current policy document shape and currently exposed Sui policy facts are
+  cataloged in `docs/POLICY_SCHEMA.md`.
+- Policy mode treats a matching current `sign` policy as sufficient for signing
+  only after complete Firmware-derived condition facts, account binding, and the
+  required policy history record. Missing, incomplete, unmatched, or
+  reject-matched policy coverage fails closed with speech-bubble status
+  notifications instead of per-request device-local confirmation.
 - User mode uses device-local offline facts review when complete offline facts
   review coverage exists. When Firmware can validate and account-bind a
   transaction but offline facts review coverage is incomplete, user mode shows

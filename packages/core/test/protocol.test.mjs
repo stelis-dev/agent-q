@@ -61,80 +61,72 @@ const SIGN_ROUTE_VECTORS = readFileSync(
     return { operation, chain, method, expected };
   });
 
-function replaceFirstPlaceholder(pattern, value) {
-  return pattern.replace("{}", String(value));
-}
+const POLICY_OPERATOR_ORDER = [
+  "eq",
+  "in",
+  "not_in",
+  "lte",
+  "contains",
+  "not_contains",
+  "all_in",
+  "none_in",
+];
 
-function parsePolicyContract(raw) {
-  const fields = [];
-  const signBounds = [];
-  for (const [index, originalLine] of raw.split(/\r?\n/).entries()) {
-    const line = originalLine.trim();
-    if (line === "" || line.startsWith("#")) {
-      continue;
-    }
-    const parts = line.split(/\s+/);
-    if (parts[0] === "field" && parts.length === 6) {
-      fields.push({
-        field: parts[1],
-        type: parts[2],
-        allowEq: parts[3] === "yes",
-        allowIn: parts[4] === "yes",
-        allowLte: parts[5] === "yes",
-      });
-      continue;
-    }
-    if (parts[0] === "generated" && parts.length === 7) {
-      const count = Number(parts[2]);
-      for (let generatedIndex = 0; generatedIndex < count; generatedIndex += 1) {
-        fields.push({
-          field: replaceFirstPlaceholder(parts[1], generatedIndex),
-          type: parts[3],
-          allowEq: parts[4] === "yes",
-          allowIn: parts[5] === "yes",
-          allowLte: parts[6] === "yes",
-        });
-      }
-      continue;
-    }
-    if (parts[0] === "generated2" && parts.length === 8) {
-      const outerCount = Number(parts[2]);
-      const innerCount = Number(parts[3]);
-      for (let outer = 0; outer < outerCount; outer += 1) {
-        for (let inner = 0; inner < innerCount; inner += 1) {
-          fields.push({
-            field: replaceFirstPlaceholder(replaceFirstPlaceholder(parts[1], outer), inner),
-            type: parts[4],
-            allowEq: parts[5] === "yes",
-            allowIn: parts[6] === "yes",
-            allowLte: parts[7] === "yes",
-          });
-        }
-      }
-      continue;
-    }
-    if (
-      (parts[0] === "sign_eq" && parts.length === 3) ||
-      (parts[0] === "sign_string" && parts.length === 2) ||
-      (parts[0] === "sign_string_eq" && parts.length === 2) ||
-      (parts[0] === "sign_lte" && parts.length === 2)
-    ) {
-      signBounds.push({
-        kind: parts[0],
-        field: parts[1],
-        value: parts[2],
-      });
-      continue;
-    }
-    throw new Error(`Invalid Sui policy contract row ${index + 1}: ${originalLine}`);
+function parseFirmwarePolicyFieldDescriptors() {
+  const source = readFileSync(
+    new URL(
+      "../../../firmware/src/common/agent_q/policy/agent_q_policy_document.cpp",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const descriptors = new Map();
+  const rowPattern =
+    /\{"([^"]+)", AgentQCurrentPolicyValueKind::([a-z0-9_]+), (true|false), (true|false), (true|false), (true|false), (true|false), (true|false), (true|false), (true|false)\}/g;
+  for (const match of source.matchAll(rowPattern)) {
+    const [, field, type, ...allowed] = match;
+    descriptors.set(field, {
+      type,
+      operators: POLICY_OPERATOR_ORDER.filter((_, index) => allowed[index] === "true"),
+    });
   }
-  return { fields, signBounds };
+  assert.notEqual(descriptors.size, 0, "Firmware policy field descriptors parsed");
+  return descriptors;
 }
 
-const SUI_POLICY_CONTRACT = parsePolicyContract(readFileSync(
-  new URL("../../../specs/sui-sign-transaction-policy-contract.tsv", import.meta.url),
-  "utf8",
-));
+function parseCorePolicyFieldDescriptors() {
+  const source = readFileSync(new URL("../src/protocol.ts", import.meta.url), "utf8");
+  const table = source.match(/const CURRENT_POLICY_FIELD_DESCRIPTORS:[\s\S]*?= \{([\s\S]*?)\n\};/);
+  assert.notEqual(table, null, "Core policy field descriptor table exists");
+  const descriptors = new Map();
+  const rowPattern =
+    /"([^"]+)": \{ type: "([^"]+)", operators: \[([^\]]*)\](?:, whereType: "required")? \}/g;
+  for (const match of table[1].matchAll(rowPattern)) {
+    const [, field, type, operators] = match;
+    descriptors.set(field, {
+      type,
+      operators: [...operators.matchAll(/"([^"]+)"/g)].map((operator) => operator[1]),
+    });
+  }
+  assert.notEqual(descriptors.size, 0, "Core policy field descriptors parsed");
+  return descriptors;
+}
+
+function parseDocumentedPolicyFieldOperators() {
+  const source = readFileSync(new URL("../../../docs/POLICY_SCHEMA.md", import.meta.url), "utf8");
+  const descriptors = new Map();
+  for (const line of source.split(/\r?\n/)) {
+    const columns = line.split("|").map((column) => column.trim()).filter(Boolean);
+    if (columns.length !== 3 || !columns[0].startsWith("`sui.")) {
+      continue;
+    }
+    const field = columns[0].replaceAll("`", "");
+    const operators = columns[2].split(",").map((operator) => operator.trim().replaceAll("`", ""));
+    descriptors.set(field, { operators });
+  }
+  assert.notEqual(descriptors.size, 0, "documented policy field table parsed");
+  return descriptors;
+}
 
 const CANONICAL_TX_BYTES_BASE64 = "AQID";
 const VALID_PAYLOAD_DIGEST = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -1085,15 +1077,23 @@ test("makeSignPersonalMessageRequest builds bounded personal-message params with
 
 test("makePolicyProposeRequest builds admin proposal requests without chain authority", () => {
   const policy = {
-    schema: "agentq.policy.v0",
+    schema: "agentq.policy",
     defaultAction: "reject",
-    rules: [
+    blockchains: [
       {
-        id: "reject_devnet",
-        chain: "sui",
-        method: "sign_transaction",
-        action: "reject",
-        criteria: [{ field: "common.intent", op: "eq", value: "programmable_transaction" }],
+        blockchain: "sui",
+        networks: [
+          {
+            network: "testnet",
+            policies: [
+              {
+                id: "reject_devnet",
+                action: "reject",
+                conditions: [{ field: "sui.command_kinds", op: "not_contains", values: ["publish"] }],
+              },
+            ],
+          },
+        ],
       },
     ],
   };
@@ -1114,15 +1114,23 @@ test("makePolicyProposeRequest builds admin proposal requests without chain auth
 
   const longRejectValue = "x".repeat(256);
   const largePolicy = {
-    schema: "agentq.policy.v0",
+    schema: "agentq.policy",
     defaultAction: "reject",
-    rules: Array.from({ length: 16 }, (_, index) => ({
-      id: `reject_big_${index}`,
-      chain: "sui",
-      method: "sign_transaction",
-      action: "reject",
-      criteria: [{ field: "common.intent", op: "eq", value: longRejectValue }],
-    })),
+    blockchains: [
+      {
+        blockchain: "sui",
+        networks: [
+          {
+            network: "testnet",
+            policies: Array.from({ length: 16 }, (_, index) => ({
+              id: `reject_big_${index}`,
+              action: "reject",
+              conditions: [{ field: "sui.command_kinds", op: "not_contains", values: [longRejectValue] }],
+            })),
+          },
+        ],
+      },
+    ],
   };
   const largeRequest = makePolicyProposeRequest(
     "session_abcdef0123456789",
@@ -1456,222 +1464,152 @@ test("parseProtocolResponse rejects an accounts response exceeding the supported
   assert.throws(() => parseProtocolResponse(empty, "req_accounts"), { code: "protocol_error" });
 });
 
+const POLICY_HASH = "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3";
+const SUI_TYPE_TAG = "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
+
+const rejectGasPolicy = () => ({
+  id: "reject_expensive_gas",
+  action: "reject",
+  conditions: [
+    { field: "sui.gas_budget_raw", op: "lte", value: "50000000" },
+    { field: "sui.command_kinds", op: "not_contains", value: "publish" },
+  ],
+});
+
+const signGasCoinSourceAmountPolicy = () => ({
+  id: "sign_gas_source_amount",
+  action: "sign",
+  conditions: [
+    { field: "sui.token_sources.source", op: "eq", value: "gas_coin" },
+    { field: "sui.token_sources.amount_raw", op: "lte", value: "1000000000" },
+    { field: "sui.token_unknown_amount_present", op: "eq", value: "false" },
+  ],
+});
+
+const signSuiTotalPolicy = () => ({
+  id: "sign_sui_total_limit",
+  action: "sign",
+  conditions: [
+    {
+      field: "sui.token_totals_by_type.amount_raw",
+      where: { type: SUI_TYPE_TAG },
+      op: "lte",
+      value: "1000000000",
+    },
+  ],
+});
+
+function policyBlockchains(policies = []) {
+  return [
+    {
+      blockchain: "sui",
+      networks: [
+        {
+          network: "testnet",
+          policies,
+        },
+      ],
+    },
+  ];
+}
+
+function countPolicyDocument(blockchains) {
+  let networkCount = 0;
+  let policyCount = 0;
+  let conditionCount = 0;
+  for (const blockchain of blockchains) {
+    networkCount += blockchain.networks.length;
+    for (const network of blockchain.networks) {
+      policyCount += network.policies.length;
+      for (const policy of network.policies) {
+        conditionCount += policy.conditions.length;
+      }
+    }
+  }
+  return {
+    blockchainCount: blockchains.length,
+    networkCount,
+    policyCount,
+    conditionCount,
+  };
+}
+
+function policyDocument(overrides = {}) {
+  const blockchains = overrides.blockchains ?? policyBlockchains();
+  return {
+    schema: "agentq.policy",
+    policyId: POLICY_HASH,
+    defaultAction: "reject",
+    ...countPolicyDocument(blockchains),
+    ...overrides,
+    blockchains,
+  };
+}
+
+test("current policy field descriptors stay aligned across Firmware, Core, and docs", () => {
+  const firmware = parseFirmwarePolicyFieldDescriptors();
+  const core = parseCorePolicyFieldDescriptors();
+  const docs = parseDocumentedPolicyFieldOperators();
+  const fields = [...firmware.keys()].sort();
+
+  assert.deepEqual([...core.keys()].sort(), fields, "Core policy fields match Firmware");
+  assert.deepEqual([...docs.keys()].sort(), fields, "documented policy fields match Firmware");
+
+  for (const field of fields) {
+    assert.deepEqual(
+      core.get(field),
+      firmware.get(field),
+      `${field} Core descriptor matches Firmware`,
+    );
+    assert.deepEqual(
+      docs.get(field).operators,
+      firmware.get(field).operators,
+      `${field} documented operators match Firmware`,
+    );
+  }
+});
+
 const policyLine = (policyOverrides = {}, topLevelOverrides = {}) =>
   JSON.stringify({
     id: "req_policy",
     version: 1,
     type: "policy",
-    policy: {
-      schema: "agentq.policy.v0",
-      policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-      defaultAction: "reject",
-      ruleCount: 0,
-      rules: [],
-      ...policyOverrides,
-    },
+    policy: policyDocument(policyOverrides),
     ...topLevelOverrides,
   });
 
-const unsupportedSignPolicyRule = () => ({
-  id: "allow_specific_move_call",
-  chain: "sui",
-  method: "sign_transaction",
-  action: "sign",
-  criteria: [
-    { field: "sui.command_count", op: "eq", value: "1" },
-    { field: "sui.command0_kind", op: "eq", value: "move_call" },
-    { field: "sui.command0_move_call_package", op: "eq", value: "0x4b7ba5768f9ed7d0ecbcad64be775f49951f215495a10134a8acc4bdeab7da97" },
-    { field: "sui.command0_move_call_module", op: "eq", value: "demo" },
-    { field: "sui.command0_move_call_function", op: "eq", value: "mint" },
-    { field: "sui.command0_move_call_type_args", op: "eq", value: "1" },
-    { field: "sui.command0_move_call_type_arg0", op: "eq", value: "u64" },
-    { field: "sui.gas_budget", op: "lte", value: "50000000" },
-    { field: "sui.gas_price", op: "lte", value: "10000" },
-  ],
-});
-
-function contractCriterionValue(field, type) {
-  if (type === "u64_decimal") {
-    return "1";
-  }
-  if (field === "sui.sender_address" ||
-      field === "sui.gas_owner_address" ||
-      field === "sui.recipient0_address") {
-    return "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-  }
-  if (field === "sui.expiration_kind") {
-    return "none";
-  }
-  return "value";
-}
-
-function contractPolicyCriterion(field, type, op) {
-  if (op === "in") {
-    return {
-      field,
-      op,
-      values: type === "u64_decimal" ? ["1", "2"] : [contractCriterionValue(field, type), "other"],
-    };
-  }
-  return {
-    field,
-    op,
-    value: contractCriterionValue(field, type),
-  };
-}
-
-function contractSignCriterion(bound) {
-  if (bound.kind === "sign_eq") {
-    return {
-      field: bound.field,
-      op: "eq",
-      value: bound.value,
-    };
-  }
-  if (bound.kind === "sign_lte") {
-    return {
-      field: bound.field,
-      op: "lte",
-      value: "1",
-    };
-  }
-  return {
-    field: bound.field,
-    op: "eq",
-    value: contractCriterionValue(bound.field, "string"),
-  };
-}
-
-const contractSignCriteria = () => SUI_POLICY_CONTRACT.signBounds.map(contractSignCriterion);
-
-const validSignPolicyRule = () => ({
-  id: "sign_current_transfer",
-  chain: "sui",
-  method: "sign_transaction",
-  action: "sign",
-  criteria: contractSignCriteria(),
-});
-
-const validRejectPolicyRule = () => ({
-  id: "reject_supported_sui_tx",
-  chain: "sui",
-  method: "sign_transaction",
-  action: "reject",
-  criteria: [
-    { field: "common.intent", op: "eq", value: "programmable_transaction" },
-    { field: "sui.gas_budget", op: "lte", value: "50000000" },
-  ],
-});
-
-const policyLineWithRule = (rule) => policyLine({ ruleCount: 1, rules: [rule] });
-const policyRuleWithCriteria = (criteria) => ({ ...validRejectPolicyRule(), criteria });
-const replacePolicyRuleCriterion = (field, replacement) =>
-  validRejectPolicyRule().criteria.map((criterion) => criterion.field === field ? replacement : criterion);
-const validEmptyRejectPolicyRule = () => ({
-  id: "reject_supported_sui_tx",
-  chain: "sui",
-  method: "sign_transaction",
-  action: "reject",
-  criteria: [],
-});
-
-test("parseProtocolResponse accepts a valid active policy document", () => {
+test("parseProtocolResponse accepts a valid current active policy document", () => {
   const response = assertPolicyResponse(parseProtocolResponse(policyLine(), "req_policy"));
   assert.equal(response.type, "policy");
-  assert.equal(response.policy.schema, "agentq.policy.v0");
+  assert.equal(response.policy.schema, "agentq.policy");
   assert.equal(response.policy.defaultAction, "reject");
-  assert.equal(response.policy.ruleCount, 0);
-  assert.deepEqual(response.policy.rules, []);
+  assert.equal(response.policy.blockchainCount, 1);
+  assert.equal(response.policy.networkCount, 1);
+  assert.equal(response.policy.policyCount, 0);
+  assert.equal(response.policy.conditionCount, 0);
+  assert.deepEqual(response.policy.blockchains, policyBlockchains());
   assert.match(response.policy.policyId, /^sha256:[0-9a-f]{64}$/);
 });
 
-test("parseProtocolResponse accepts a bounded reject policy document", () => {
-  const response = assertPolicyResponse(parseProtocolResponse(policyLine({
-    ruleCount: 1,
-    rules: [validRejectPolicyRule()],
-  }), "req_policy"));
+test("parseProtocolResponse accepts current scoped policy conditions", () => {
+  const blockchains = policyBlockchains([rejectGasPolicy(), signGasCoinSourceAmountPolicy(), signSuiTotalPolicy()]);
+  const response = assertPolicyResponse(parseProtocolResponse(policyLine({ blockchains }), "req_policy"));
   assert.equal(response.type, "policy");
-  assert.equal(response.policy.ruleCount, 1);
-  assert.equal(response.policy.rules.length, 1);
-  assert.equal(response.policy.rules[0].criteria.length, 2);
+  assert.equal(response.policy.blockchainCount, 1);
+  assert.equal(response.policy.networkCount, 1);
+  assert.equal(response.policy.policyCount, 3);
+  assert.equal(response.policy.conditionCount, 6);
+  assert.equal(response.policy.blockchains[0].blockchain, "sui");
+  assert.equal(response.policy.blockchains[0].networks[0].network, "testnet");
+  assert.deepEqual(response.policy.blockchains[0].networks[0].policies, [
+    rejectGasPolicy(),
+    signGasCoinSourceAmountPolicy(),
+    signSuiTotalPolicy(),
+  ]);
 });
 
-test("parseProtocolResponse accepts descriptor-supported Sui policy in operators", () => {
-  const response = assertPolicyResponse(parseProtocolResponse(policyLineWithRule(
-    policyRuleWithCriteria([
-      {
-        field: "sui.coin_flow0_asset_state",
-        op: "in",
-        values: ["proven_sui", "unproven"],
-      },
-    ]),
-  ), "req_policy"));
-  assert.equal(response.policy.rules[0].criteria[0].field, "sui.coin_flow0_asset_state");
-  assert.equal(response.policy.rules[0].criteria[0].op, "in");
-});
-
-test("parseProtocolResponse policy field operators match the shared Sui policy contract", () => {
-  for (const field of SUI_POLICY_CONTRACT.fields) {
-    for (const [op, allowed] of [
-      ["eq", field.allowEq],
-      ["in", field.allowIn],
-      ["lte", field.allowLte],
-    ]) {
-      const line = policyLineWithRule(policyRuleWithCriteria([
-        contractPolicyCriterion(field.field, field.type, op),
-      ]));
-      if (allowed) {
-        assert.doesNotThrow(
-          () => parseProtocolResponse(line, "req_policy"),
-          `${field.field} should allow ${op}`,
-        );
-      } else {
-        assert.throws(
-          () => parseProtocolResponse(line, "req_policy"),
-          { code: "protocol_error" },
-          `${field.field} should reject ${op}`,
-        );
-      }
-    }
-  }
-});
-
-test("parseProtocolResponse accepts a current-contract bounded Sui sign policy document", () => {
-  const response = assertPolicyResponse(parseProtocolResponse(policyLineWithRule(validSignPolicyRule()), "req_policy"));
-  assert.equal(response.type, "policy");
-  assert.equal(response.policy.ruleCount, 1);
-  assert.equal(response.policy.rules[0].action, "sign");
-  assert.equal(response.policy.rules[0].criteria.length, validSignPolicyRule().criteria.length);
-});
-
-test("parseProtocolResponse rejects Sui sign policy documents missing shared contract bounds", () => {
-  for (const [index, bound] of SUI_POLICY_CONTRACT.signBounds.entries()) {
-    assert.throws(
-      () => parseProtocolResponse(policyLineWithRule({
-        ...validSignPolicyRule(),
-        criteria: contractSignCriteria().filter((_, criterionIndex) => criterionIndex !== index),
-      }), "req_policy"),
-      { code: "protocol_error" },
-      `missing ${bound.field} should reject the sign policy`,
-    );
-  }
-});
-
-test("parseProtocolResponse rejects unsupported Sui MoveCall sign policy documents", () => {
-  assert.throws(() => parseProtocolResponse(policyLineWithRule(unsupportedSignPolicyRule()), "req_policy"), {
-    code: "protocol_error",
-  });
-});
-
-test("parseProtocolResponse accepts an empty reject rule for a supported current method", () => {
-  const response = assertPolicyResponse(parseProtocolResponse(policyLineWithRule(validEmptyRejectPolicyRule()), "req_policy"));
-  assert.equal(response.type, "policy");
-  assert.equal(response.policy.ruleCount, 1);
-  assert.deepEqual(response.policy.rules[0], validEmptyRejectPolicyRule());
-});
-
-test("parseProtocolResponse rejects malformed policy documents", () => {
-  assert.throws(() => parseProtocolResponse(policyLine({ schema: "agentq.policy.v1" }), "req_policy"), {
+test("parseProtocolResponse rejects malformed current policy documents", () => {
+  assert.throws(() => parseProtocolResponse(policyLine({ schema: "other.policy" }), "req_policy"), {
     code: "protocol_error",
   });
   assert.throws(() => parseProtocolResponse(policyLine({ policyId: "not-a-hash" }), "req_policy"), {
@@ -1680,72 +1618,108 @@ test("parseProtocolResponse rejects malformed policy documents", () => {
   assert.throws(() => parseProtocolResponse(policyLine({ defaultAction: "approve" }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 17 }), "req_policy"), {
+  assert.throws(() => parseProtocolResponse(policyLine({ blockchainCount: 2 }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: -1 }), "req_policy"), {
+  assert.throws(() => parseProtocolResponse(policyLine({ networkCount: 2 }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 1.5 }), "req_policy"), {
+  assert.throws(() => parseProtocolResponse(policyLine({ policyCount: 1 }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 1, rules: [] }), "req_policy"), {
+  assert.throws(() => parseProtocolResponse(policyLine({ conditionCount: 1 }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLine({ rules: [{ ...validRejectPolicyRule(), privateKey: "x" }] }), "req_policy"), {
+  assert.throws(() => parseProtocolResponse(policyLine({ unexpected: [] }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLineWithRule(
-    policyRuleWithCriteria([{ field: "sui.gas_budget", op: "lte", values: ["1"] }]),
-  ), "req_policy"), {
+  assert.throws(() => parseProtocolResponse(policyLine({ blockchains: [{ blockchain: "sui", networks: [] }, { blockchain: "sui", networks: [] }] }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLineWithRule(
-    policyRuleWithCriteria(replacePolicyRuleCriterion("sui.gas_budget", {
-      field: "sui.gas_budget",
-      op: "lte",
-      value: "000500000000",
-    })),
-  ), "req_policy"), {
-    code: "protocol_error",
-  });
-  assert.throws(() => parseProtocolResponse(policyLineWithRule(
-    policyRuleWithCriteria(replacePolicyRuleCriterion("sui.gas_budget", {
-      field: "sui.gas_budget",
-      op: "in",
-      values: ["500000000"],
-    })),
-  ), "req_policy"), {
-    code: "protocol_error",
-  });
-  const multiRuleResponse = assertPolicyResponse(parseProtocolResponse(
-    policyLine({ ruleCount: 2, rules: [validRejectPolicyRule(), { ...validRejectPolicyRule(), id: "reject_second_move_call" }] }),
-    "req_policy",
-  ));
-  assert.equal(multiRuleResponse.policy.ruleCount, 2);
   assert.throws(() => parseProtocolResponse(policyLine({
-    ruleCount: 2,
-    rules: [validSignPolicyRule(), { ...validSignPolicyRule(), id: "sign_second_current_transfer" }],
+    blockchains: [
+      {
+        blockchain: "sui",
+        networks: [
+          { network: "testnet", policies: [] },
+          { network: "testnet", policies: [] },
+        ],
+      },
+    ],
   }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLine({ ruleCount: 1, rules: [{ ...unsupportedSignPolicyRule(), method: "sign_personal_message" }] }), "req_policy"), {
-    code: "protocol_error",
-  });
-  assert.throws(() => parseProtocolResponse(policyLineWithRule({
-    ...validEmptyRejectPolicyRule(),
-    method: "sign_personal_message",
+  assert.throws(() => parseProtocolResponse(policyLine({
+    blockchains: policyBlockchains([
+      { ...rejectGasPolicy(), id: "dup" },
+      { ...signGasCoinSourceAmountPolicy(), id: "dup" },
+    ]),
   }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLineWithRule({
-    ...validEmptyRejectPolicyRule(),
-    chain: "unknown",
-    method: "unknown_method",
+  assert.throws(() => parseProtocolResponse(policyLine({
+    blockchains: policyBlockchains([{ ...rejectGasPolicy(), action: "approve" }]),
   }), "req_policy"), {
     code: "protocol_error",
   });
-  assert.throws(() => parseProtocolResponse(policyLine({}, { sessionId: "session_abcdef0123456789" }), "req_policy"), {
+  assert.throws(() => parseProtocolResponse(policyLine({
+    blockchains: policyBlockchains([{ ...rejectGasPolicy(), privateKey: "x" }]),
+  }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({
+    blockchains: policyBlockchains([
+      {
+        id: "bad_field",
+        action: "reject",
+        conditions: [{ field: "network", op: "eq", value: "testnet" }],
+      },
+    ]),
+  }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({
+    blockchains: policyBlockchains([
+      {
+        id: "bad_u64",
+        action: "reject",
+        conditions: [{ field: "sui.gas_budget_raw", op: "lte", value: "000500000000" }],
+      },
+    ]),
+  }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({
+    blockchains: policyBlockchains([
+      {
+        id: "bad_operator",
+        action: "reject",
+        conditions: [{ field: "sui.gas_budget_raw", op: "in", values: ["500000000"] }],
+      },
+    ]),
+  }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({
+    blockchains: policyBlockchains([
+      {
+        id: "missing_selector",
+        action: "sign",
+        conditions: [{ field: "sui.token_totals_by_type.amount_raw", op: "lte", value: "1000000000" }],
+      },
+    ]),
+  }), "req_policy"), {
+    code: "protocol_error",
+  });
+  assert.throws(() => parseProtocolResponse(policyLine({
+    blockchains: policyBlockchains([
+      {
+        id: "forbidden_selector",
+        action: "reject",
+        conditions: [{ field: "sui.gas_budget_raw", where: { type: SUI_TYPE_TAG }, op: "lte", value: "1000000" }],
+      },
+    ]),
+  }), "req_policy"), {
     code: "protocol_error",
   });
 });
@@ -1797,7 +1771,7 @@ const approvalHistoryPolicyUpdateRecord = (overrides = {}) => ({
   reasonCode: "device_confirmed",
   result: "applied",
   policyHash: APPROVAL_DIGEST,
-  ruleCount: 1,
+  policyCount: 1,
   highestAction: "reject",
   ...overrides,
 });
@@ -1879,7 +1853,7 @@ test("parseProtocolResponse accepts policy update approval history records", () 
   assert.equal(response.records[0].eventKind, "policy_update");
   assert.equal(response.records[0].result, "applied");
   assert.equal(response.records[0].policyHash, APPROVAL_DIGEST);
-  assert.equal(response.records[0].ruleCount, 1);
+  assert.equal(response.records[0].policyCount, 1);
   assert.equal(response.records[0].highestAction, "reject");
 });
 
@@ -1971,7 +1945,7 @@ test("parseProtocolResponse rejects malformed approval history records", () => {
     { policyHash: "not-a-digest" },
     { ruleRef: "has space" },
     { result: "applied" },
-    { ruleCount: 1 },
+    { policyCount: 1 },
     { highestAction: "reject" },
     { sessionId: "session_abcdef0123456789" },
   ]) {
@@ -1988,9 +1962,9 @@ test("parseProtocolResponse rejects malformed policy update approval history rec
     { result: "success" },
     { reasonCode: "DeviceConfirmed" },
     { policyHash: "not-a-digest" },
-    { ruleCount: -1 },
-    { ruleCount: 17 },
-    { ruleCount: 1.5 },
+    { policyCount: -1 },
+    { policyCount: 65 },
+    { policyCount: 1.5 },
     { highestAction: "approve" },
     { confirmationKind: "policy" },
     { chain: "sui" },
@@ -2052,7 +2026,10 @@ test("parseProtocolResponse rejects unsupported approval history response shape"
 
 const policyProposeResultPolicy = (overrides = {}) => ({
   policyHash: APPROVAL_DIGEST,
-  ruleCount: 1,
+  blockchainCount: 1,
+  networkCount: 1,
+  policyCount: 1,
+  conditionCount: 2,
   highestAction: "reject",
   ...overrides,
 });
@@ -2077,7 +2054,10 @@ test("parseProtocolResponse accepts policy_propose_result terminal outcomes", ()
     assert.equal(response.status, status);
     assert.equal(response.reasonCode, "device_confirmed");
     assert.equal(response.policy.policyHash, APPROVAL_DIGEST);
-    assert.equal(response.policy.ruleCount, 1);
+    assert.equal(response.policy.blockchainCount, 1);
+    assert.equal(response.policy.networkCount, 1);
+    assert.equal(response.policy.policyCount, 1);
+    assert.equal(response.policy.conditionCount, 2);
     assert.equal(response.policy.highestAction, "reject");
   }
 
@@ -2109,9 +2089,18 @@ test("parseProtocolResponse rejects malformed policy_propose_result responses", 
 
   for (const policyOverride of [
     { policyHash: "not-a-digest" },
-    { ruleCount: -1 },
-    { ruleCount: 17 },
-    { ruleCount: 1.5 },
+    { blockchainCount: -1 },
+    { blockchainCount: 17 },
+    { blockchainCount: 1.5 },
+    { networkCount: -1 },
+    { networkCount: 17 },
+    { networkCount: 1.5 },
+    { policyCount: -1 },
+    { policyCount: 65 },
+    { policyCount: 1.5 },
+    { conditionCount: -1 },
+    { conditionCount: 257 },
+    { conditionCount: 1.5 },
     { highestAction: "approve" },
     { sessionId: "session_abcdef0123456789" },
   ]) {

@@ -3,7 +3,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "agent_q_sui_token_flow_facts.h"
 #include "agent_q_sui_transaction_facts.h"
 
 namespace agent_q {
@@ -38,7 +37,6 @@ AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
     size_t tx_bytes_size,
     SuiPolicySubjectFacts* policy_subject_out,
     SuiReviewSummary* review_summary_out,
-    AgentQSuiSignTransactionAuthorizationCoverage* coverage_out,
-    SuiTokenFlowFacts* token_flow_out = nullptr);
+    AgentQSuiSignTransactionAuthorizationCoverage* coverage_out);
 
 }  // namespace agent_q

@@ -59,48 +59,83 @@ function validLiveStatus() {
 
 function validPolicyDocument() {
   return {
-    schema: "agentq.policy.v0",
+    schema: "agentq.policy",
     policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
     defaultAction: "reject",
-    ruleCount: 0,
-    rules: [],
-  };
-}
-
-function invalidUnboundedSignPolicyDocument() {
-  return {
-    schema: "agentq.policy.v0",
-    policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-    defaultAction: "reject",
-    ruleCount: 1,
-    rules: [
+    blockchainCount: 1,
+    networkCount: 1,
+    policyCount: 0,
+    conditionCount: 0,
+    blockchains: [
       {
-        id: "allow_unbounded_move_call",
-        chain: "sui",
-        method: "sign_transaction",
-        action: "sign",
-        criteria: [
-          { field: "sui.command0_kind", op: "eq", value: "move_call" },
-          { field: "sui.gas_budget", op: "lte", value: "500000000" },
+        blockchain: "sui",
+        networks: [
+          {
+            network: "testnet",
+            policies: [],
+          },
         ],
       },
     ],
   };
 }
 
-function invalidUnsupportedRejectPolicyDocument() {
+function invalidMalformedSignPolicyDocument() {
   return {
-    schema: "agentq.policy.v0",
+    schema: "agentq.policy",
     policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
     defaultAction: "reject",
-    ruleCount: 1,
-    rules: [
+    blockchainCount: 1,
+    networkCount: 1,
+    policyCount: 1,
+    conditionCount: 2,
+    blockchains: [
       {
-        id: "reject_unknown_method",
-        chain: "unknown",
-        method: "unknown_method",
-        action: "reject",
-        criteria: [],
+        blockchain: "sui",
+        networks: [
+          {
+            network: "testnet",
+            policies: [
+              {
+                id: "sign_bad_field",
+                action: "sign",
+                conditions: [
+                  { field: "sui.unsupported_field", op: "eq", value: "move_call" },
+                  { field: "sui.gas_budget_raw", op: "lte", value: "500000000" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function invalidUnsupportedScopePolicyDocument() {
+  return {
+    schema: "agentq.policy",
+    policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+    defaultAction: "reject",
+    blockchainCount: 1,
+    networkCount: 1,
+    policyCount: 1,
+    conditionCount: 0,
+    blockchains: [
+      {
+        blockchain: "unknown",
+        networks: [
+          {
+            network: "testnet",
+            policies: [
+              {
+                id: "reject_unknown_scope",
+                action: "reject",
+                conditions: [],
+              },
+            ],
+          },
+        ],
       },
     ],
   };
@@ -185,7 +220,10 @@ function validAgentQSuccessOutputSamples() {
       reasonCode: "device_confirmed",
       policy: {
         policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-        ruleCount: 0,
+        blockchainCount: 1,
+        networkCount: 1,
+        policyCount: 0,
+        conditionCount: 0,
         highestAction: "reject",
       },
     },
@@ -265,11 +303,11 @@ test("agent-q success output schemas reject semantically invalid policy document
   const samples = validAgentQSuccessOutputSamples();
   assert.throws(() => hostSuccessOutputSchemas.policyGet.parse({
     ...samples.policyGet,
-    policy: invalidUnboundedSignPolicyDocument(),
+    policy: invalidMalformedSignPolicyDocument(),
   }));
   assert.throws(() => hostSuccessOutputSchemas.policyGet.parse({
     ...samples.policyGet,
-    policy: invalidUnsupportedRejectPolicyDocument(),
+    policy: invalidUnsupportedScopePolicyDocument(),
   }));
 });
 
@@ -361,7 +399,7 @@ test("package self-reference resolves only core entrypoints", async () => {
   assert.equal(providerProtocol.makePolicyProposeRequest, undefined);
   assert.equal(providerProtocol.makeGetApprovalHistoryRequest, undefined);
   assert.equal(providerProtocol.AGENT_Q_POLICY_SCHEMA, undefined);
-  assert.equal(providerProtocol.MAX_POLICY_RULE_COUNT, undefined);
+  assert.equal(providerProtocol.MAX_POLICY_TOTAL_POLICIES, undefined);
   assert.equal(providerProtocol.MAX_APPROVAL_HISTORY_RECORDS, undefined);
   assert.equal(providerProtocol.POLICY_PROPOSE_RESULT_STATUSES, undefined);
   assert.equal(providerProtocol.serializeRequest, undefined);
@@ -398,7 +436,7 @@ test("provider-protocol declaration stays type-bounded to provider requests", as
   assert.doesNotMatch(types, /PolicyProposeRequest/);
   assert.doesNotMatch(types, /GetApprovalHistoryRequest/);
   assert.doesNotMatch(types, /AGENT_Q_POLICY_SCHEMA/);
-  assert.doesNotMatch(types, /MAX_POLICY_RULE_COUNT/);
+  assert.doesNotMatch(types, /MAX_POLICY_TOTAL_POLICIES/);
   assert.doesNotMatch(types, /MAX_APPROVAL_HISTORY_RECORDS/);
   assert.doesNotMatch(types, /POLICY_PROPOSE_RESULT_STATUSES/);
   assert.doesNotMatch(types, /makeGetResultRequest/);

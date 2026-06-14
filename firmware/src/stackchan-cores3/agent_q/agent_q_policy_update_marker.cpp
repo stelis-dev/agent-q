@@ -19,7 +19,7 @@ struct StoredPolicyUpdateMarker {
     uint8_t magic[4];
     uint8_t version;
     uint8_t highest_action;
-    uint16_t rule_count;
+    uint16_t policy_count;
     uint8_t policy_digest[kAgentQPolicyUpdateDigestBytes];
     uint8_t reserved[8];
 };
@@ -56,7 +56,7 @@ bool marker_valid(const StoredPolicyUpdateMarker& marker)
            marker.magic[2] == kPolicyUpdateMarkerMagic[2] &&
            marker.magic[3] == kPolicyUpdateMarkerMagic[3] &&
            marker.version == kPolicyUpdateMarkerVersion &&
-           marker.rule_count <= kAgentQPolicyMaxRules &&
+           marker.policy_count <= kAgentQCurrentPolicyMaxTotalPolicies &&
            stored_highest_action_valid(marker.highest_action);
 }
 
@@ -117,12 +117,12 @@ AgentQPolicyUpdateMarkerStatus policy_update_marker_status()
 AgentQPolicyUpdateMarkerBeginResult policy_update_marker_begin(
     const uint8_t* policy_digest,
     size_t policy_digest_size,
-    size_t rule_count,
+    size_t policy_count,
     AgentQPolicyUpdateHighestAction highest_action)
 {
     if (policy_digest == nullptr ||
         policy_digest_size != kAgentQPolicyUpdateDigestBytes ||
-        rule_count > kAgentQPolicyMaxRules ||
+        policy_count > kAgentQCurrentPolicyMaxTotalPolicies ||
         !highest_action_input_valid(highest_action)) {
         return AgentQPolicyUpdateMarkerBeginResult::invalid_input;
     }
@@ -131,7 +131,7 @@ AgentQPolicyUpdateMarkerBeginResult policy_update_marker_begin(
     memcpy(marker.magic, kPolicyUpdateMarkerMagic, sizeof(marker.magic));
     marker.version = kPolicyUpdateMarkerVersion;
     marker.highest_action = stored_highest_action(highest_action);
-    marker.rule_count = static_cast<uint16_t>(rule_count);
+    marker.policy_count = static_cast<uint16_t>(policy_count);
     memcpy(marker.policy_digest, policy_digest, kAgentQPolicyUpdateDigestBytes);
 
     nvs_handle_t nvs = 0;

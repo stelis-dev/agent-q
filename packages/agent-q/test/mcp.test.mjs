@@ -26,6 +26,44 @@ const expectedToolNames = [
   "sign_transaction",
 ];
 
+const policyHash = "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3";
+
+function currentPolicyDocument(policies = []) {
+  const conditionCount = policies.reduce((sum, policy) => sum + policy.conditions.length, 0);
+  return {
+    schema: "agentq.policy",
+    policyId: policyHash,
+    defaultAction: "reject",
+    blockchainCount: 1,
+    networkCount: 1,
+    policyCount: policies.length,
+    conditionCount,
+    blockchains: [
+      {
+        blockchain: "sui",
+        networks: [
+          {
+            network: "testnet",
+            policies,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function currentPolicyProposeSummary(overrides = {}) {
+  return {
+    policyHash,
+    blockchainCount: 1,
+    networkCount: 1,
+    policyCount: 1,
+    conditionCount: 1,
+    highestAction: "reject",
+    ...overrides,
+  };
+}
+
 test("local server package metadata exposes MCP and local API entrypoints", async () => {
   const packagePath = fileURLToPath(new URL("../package.json", import.meta.url));
   const corePackagePath = fileURLToPath(new URL("../../core/package.json", import.meta.url));
@@ -160,13 +198,7 @@ const noOpCore = {
     return {
       source: "live",
       deviceId: "device-1",
-      policy: {
-        schema: "agentq.policy.v0",
-        policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-        defaultAction: "reject",
-        ruleCount: 0,
-        rules: [],
-      },
+      policy: currentPolicyDocument(),
     };
   },
   async getApprovalHistory() {
@@ -225,11 +257,7 @@ const noOpCore = {
       deviceId: "device-1",
       status: "applied",
       reasonCode: "device_confirmed",
-      policy: {
-        policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-        ruleCount: 1,
-        highestAction: "reject",
-      },
+      policy: currentPolicyProposeSummary(),
     };
   },
 };
@@ -489,11 +517,7 @@ const dispatchCases = [
   {
     name: "policy_propose",
     arguments: {
-      policy: {
-        schema: "agentq.policy.v0",
-        defaultAction: "reject",
-        rules: [],
-      },
+      policy: currentPolicyDocument(),
     },
   },
 ];
@@ -597,11 +621,7 @@ test("MCP tool inputs reject unknown fields before core dispatch", async () => {
       coreMethod: "policyPropose",
       arguments: {
         privateKey: "must-not-strip",
-        policy: {
-          schema: "agentq.policy.v0",
-          defaultAction: "reject",
-          rules: [],
-        },
+        policy: currentPolicyDocument(),
       },
     },
   ];
@@ -645,9 +665,7 @@ test("policy_propose input strictness leaves policy payload validation to core",
       name: "policy_propose",
       arguments: {
         policy: {
-          schema: "agentq.policy.v0",
-          defaultAction: "reject",
-          rules: [],
+          ...currentPolicyDocument(),
           policyValidatorOwnedField: "kept-for-core-validation",
         },
       },
@@ -683,14 +701,14 @@ test("policy_get dispatch returns the active policy document without a session t
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "policy_get", arguments: {} });
     assert.equal(result.structuredContent.source, "live");
-    assert.equal(result.structuredContent.policy.schema, "agentq.policy.v0");
+    assert.equal(result.structuredContent.policy.schema, "agentq.policy");
     assert.equal(
       result.structuredContent.policy.policyId,
-      "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+      policyHash,
     );
     assert.equal(result.structuredContent.policy.defaultAction, "reject");
-    assert.equal(result.structuredContent.policy.ruleCount, 0);
-    assert.deepEqual(result.structuredContent.policy.rules, []);
+    assert.equal(result.structuredContent.policy.policyCount, 0);
+    assert.deepEqual(result.structuredContent.policy.blockchains, currentPolicyDocument().blockchains);
     assert.equal("sessionId" in result.structuredContent, false, "sessionId must not reach the client");
   });
 });
@@ -842,11 +860,7 @@ test("policy_propose dispatch returns Firmware-authored terminal metadata withou
     const result = await client.callTool({
       name: "policy_propose",
       arguments: {
-        policy: {
-          schema: "agentq.policy.v0",
-          defaultAction: "reject",
-          rules: [],
-        },
+        policy: currentPolicyDocument(),
       },
     });
     assert.equal(result.structuredContent.source, "live");
@@ -1143,13 +1157,7 @@ const leakyCore = {
     return {
       source: "live",
       deviceId: "device-1",
-      policy: {
-        schema: "agentq.policy.v0",
-        policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-        defaultAction: "reject",
-        ruleCount: 0,
-        rules: [],
-      },
+      policy: currentPolicyDocument(),
       ...SECRET_EXTRAS,
     };
   },
@@ -1214,9 +1222,7 @@ const leakyCore = {
       status: "applied",
       reasonCode: "device_confirmed",
       policy: {
-        policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-        ruleCount: 1,
-        highestAction: "reject",
+        ...currentPolicyProposeSummary(),
         ...SECRET_EXTRAS,
       },
       ...SECRET_EXTRAS,
@@ -1289,11 +1295,8 @@ test("policy_get rejects unsupported live policy shapes", async () => {
         source: "live",
         deviceId: "device-1",
         policy: {
-          schema: "agentq.policy.v0",
-          policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
+          ...currentPolicyDocument(),
           defaultAction: "approve",
-          ruleCount: 0,
-          rules: [],
         },
       };
     },
@@ -1313,22 +1316,16 @@ test("policy_get rejects semantically invalid active policy documents", async ()
         source: "live",
         deviceId: "device-1",
         policy: {
-          schema: "agentq.policy.v0",
-          policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-          defaultAction: "reject",
-          ruleCount: 1,
-          rules: [
+          ...currentPolicyDocument([
             {
-              id: "allow_unbounded_move_call",
-              chain: "sui",
-              method: "sign_transaction",
+              id: "sign_bad_field",
               action: "sign",
-              criteria: [
-                { field: "sui.command0_kind", op: "eq", value: "move_call" },
-                { field: "sui.gas_budget", op: "lte", value: "500000000" },
+              conditions: [
+                { field: "sui.unsupported_field", op: "eq", value: "move_call" },
+                { field: "sui.gas_budget_raw", op: "lte", value: "500000000" },
               ],
             },
-          ],
+          ]),
         },
       };
     },
@@ -1340,7 +1337,7 @@ test("policy_get rejects semantically invalid active policy documents", async ()
   }, malformedCore);
 });
 
-test("policy_get rejects active policy documents with unsupported reject-rule methods", async () => {
+test("policy_get rejects active policy documents with unsupported scopes", async () => {
   const malformedCore = {
     ...noOpCore,
     async policyGet() {
@@ -1348,17 +1345,16 @@ test("policy_get rejects active policy documents with unsupported reject-rule me
         source: "live",
         deviceId: "device-1",
         policy: {
-          schema: "agentq.policy.v0",
-          policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-          defaultAction: "reject",
-          ruleCount: 1,
-          rules: [
+          ...currentPolicyDocument(),
+          blockchains: [
             {
-              id: "reject_unknown_method",
-              chain: "unknown",
-              method: "unknown_method",
-              action: "reject",
-              criteria: [],
+              blockchain: "unknown",
+              networks: [
+                {
+                  network: "testnet",
+                  policies: [],
+                },
+              ],
             },
           ],
         },
@@ -1588,7 +1584,7 @@ test("session lifecycle result reasons are source-specific at the MCP boundary",
               message: Buffer.from("Agent-Q personal message").toString("base64"),
             }
         : testCase.name === "policy_propose"
-          ? { policy: { schema: "agentq.policy.v0", defaultAction: "reject", rules: [] } }
+          ? { policy: currentPolicyDocument() }
           : {};
       const result = await client.callTool({ name: testCase.name, arguments: args });
       assert.equal(result.isError, true, `${testCase.name}: source/reason mismatch must fail closed`);

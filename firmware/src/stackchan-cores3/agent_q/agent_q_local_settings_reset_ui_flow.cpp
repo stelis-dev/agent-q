@@ -1,6 +1,7 @@
 #include "agent_q_local_settings_reset_ui_flow.h"
 
 #include "agent_q_local_settings_touch_entry.h"
+#include "agent_q_modal_transition.h"
 #include "agent_q_timeout_window.h"
 #include "freertos/task.h"
 
@@ -132,12 +133,57 @@ bool draw_reset_pin_panel(
            ops.draw_reset_pin_panel(notice);
 }
 
-bool draw_processing_overlay_on_current_panel(
-    const AgentQLocalSettingsResetUiFlowOps& ops,
-    AgentQUiPanelKind kind)
+AgentQModalTransitionOps modal_transition_ops(const AgentQLocalSettingsResetUiFlowOps& ops)
 {
-    return ops.draw_processing_overlay_on_current_panel != nullptr &&
-           ops.draw_processing_overlay_on_current_panel(kind);
+    return AgentQModalTransitionOps{
+        ops.clear_panel_if_kind,
+        ops.draw_processing_overlay_on_current_panel,
+        ops.log_warn,
+    };
+}
+
+struct ErrorRecoveryPanelDrawContext {
+    const AgentQLocalSettingsResetUiFlowOps* ops = nullptr;
+    bool confirm = false;
+};
+
+struct ResetPinPanelDrawContext {
+    const AgentQLocalSettingsResetUiFlowOps* ops = nullptr;
+    const char* notice = nullptr;
+};
+
+struct ResetCommitResultContext {
+    const AgentQLocalSettingsResetUiFlowOps* ops = nullptr;
+    const char* message = nullptr;
+    AgentQMessageKind kind = AgentQMessageKind::info;
+};
+
+bool draw_error_recovery_panel_for_transition(void* context)
+{
+    const auto* draw_context = static_cast<const ErrorRecoveryPanelDrawContext*>(context);
+    return draw_context != nullptr &&
+           draw_context->ops != nullptr &&
+           draw_error_recovery_panel(*draw_context->ops, draw_context->confirm);
+}
+
+bool draw_reset_pin_panel_for_transition(void* context)
+{
+    const auto* draw_context = static_cast<const ResetPinPanelDrawContext*>(context);
+    return draw_context != nullptr &&
+           draw_context->ops != nullptr &&
+           draw_reset_pin_panel(*draw_context->ops, draw_context->notice);
+}
+
+void show_reset_commit_result_for_transition(void* context)
+{
+    const auto* result_context = static_cast<const ResetCommitResultContext*>(context);
+    if (result_context == nullptr || result_context->ops == nullptr) {
+        return;
+    }
+    show_result(
+        *result_context->ops,
+        result_context->message,
+        result_context->kind);
 }
 
 void record_material_failure(
@@ -257,28 +303,28 @@ void local_settings_reset_ui_commit_if_ready(const AgentQLocalSettingsResetUiFlo
         return;
     }
 
+    const AgentQUiPanelKind processing_panel =
+        panel_active(ops, AgentQUiPanelKind::reset_pin_entry)
+            ? AgentQUiPanelKind::reset_pin_entry
+            : (panel_active(ops, AgentQUiPanelKind::error_recovery)
+                ? AgentQUiPanelKind::error_recovery
+                : AgentQUiPanelKind::none);
     const ResetCommitResult result = local_reset_commit_material(ops.persistence_ops);
-    clear_panel_if_kind(
-        ops,
-        AgentQUiPanelKind::reset_pin_entry,
-        SensitiveUiClearPolicy::preserve);
-    clear_panel_if_kind(
-        ops,
-        AgentQUiPanelKind::error_recovery,
-        SensitiveUiClearPolicy::preserve);
     wipe_local_reset_scratch(ops, "local reset completed");
+    const char* display_message = "Reset error";
+    AgentQMessageKind display_kind = AgentQMessageKind::error;
     switch (result) {
         case ResetCommitResult::ok:
             log_warn(ops, "Local reset completed; device returned to unprovisioned");
-            show_result(ops, "Device reset", AgentQMessageKind::success);
+            display_message = "Device reset";
+            display_kind = AgentQMessageKind::success;
             break;
         case ResetCommitResult::missing_state:
             log_warn(ops, "Local reset commit missing state");
-            show_result(ops, "Reset unavailable", AgentQMessageKind::error);
+            display_message = "Reset unavailable";
             break;
         case ResetCommitResult::reset_marker_storage_error:
             log_warn(ops, "Local reset aborted before wiping material because the reset marker could not be stored");
-            show_result(ops, "Reset error", AgentQMessageKind::error);
             break;
         case ResetCommitResult::root_wipe_error:
         case ResetCommitResult::policy_wipe_error:
@@ -290,9 +336,18 @@ void local_settings_reset_ui_commit_if_ready(const AgentQLocalSettingsResetUiFlo
         case ResetCommitResult::material_remaining_error:
         case ResetCommitResult::state_storage_error:
             log_error(ops, "Local reset failed and device entered consistency error");
-            show_result(ops, "Reset error", AgentQMessageKind::error);
             break;
     }
+    ResetCommitResultContext context{&ops, display_message, display_kind};
+    if (processing_panel == AgentQUiPanelKind::none) {
+        show_reset_commit_result_for_transition(&context);
+        return;
+    }
+    modal_transition_complete_processing_to_result(
+        modal_transition_ops(ops),
+        processing_panel,
+        show_reset_commit_result_for_transition,
+        &context);
 }
 
 void local_settings_reset_ui_start_from_touch(const AgentQLocalSettingsResetUiFlowOps& ops)
@@ -424,8 +479,12 @@ void local_settings_reset_ui_confirm_error_recovery_from_ui(
         return;
     }
 
-    if (!draw_processing_overlay_on_current_panel(ops, AgentQUiPanelKind::error_recovery) &&
-        !draw_error_recovery_panel(ops, true)) {
+    ErrorRecoveryPanelDrawContext draw_context{&ops, true};
+    if (!modal_transition_show_processing_or_redraw_panel(
+            modal_transition_ops(ops),
+            AgentQUiPanelKind::error_recovery,
+            draw_error_recovery_panel_for_transition,
+            &draw_context)) {
         wipe_local_reset_scratch(
             ops,
             "error recovery wiping display allocation failed");
@@ -566,8 +625,12 @@ void local_settings_reset_ui_handle_reset_pin_submit(
         return;
     }
 
-    if (!draw_processing_overlay_on_current_panel(ops, AgentQUiPanelKind::reset_pin_entry) &&
-        !draw_reset_pin_panel(ops)) {
+    ResetPinPanelDrawContext draw_context{&ops, nullptr};
+    if (!modal_transition_show_processing_or_redraw_panel(
+            modal_transition_ops(ops),
+            AgentQUiPanelKind::reset_pin_entry,
+            draw_reset_pin_panel_for_transition,
+            &draw_context)) {
         wipe_local_reset_scratch(
             ops,
             "local reset PIN verification display allocation failed");

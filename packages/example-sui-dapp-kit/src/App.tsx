@@ -19,6 +19,7 @@ import "./style.css";
 type AgentQTransferAction = {
   id: string;
   label: string;
+  policyNote: string;
   amountMist: string;
   gasBudgetMist: string;
   gasPriceMist: string;
@@ -31,6 +32,7 @@ const AGENT_Q_TRANSFER_ACTIONS: AgentQTransferAction[] = [
   {
     id: "self-transfer-0-5-sui",
     label: "Self-transfer 0.5 SUI",
+    policyNote: "Candidate pass case for the Admin minimal test policy.",
     amountMist: "500000000",
     gasBudgetMist: "10000000",
     gasPriceMist: "1000",
@@ -38,6 +40,7 @@ const AGENT_Q_TRANSFER_ACTIONS: AgentQTransferAction[] = [
   {
     id: "self-transfer-1-25-sui",
     label: "Self-transfer 1.25 SUI",
+    policyNote: "Candidate reject case for the Admin minimal test policy.",
     amountMist: "1250000000",
     gasBudgetMist: "10000000",
     gasPriceMist: "1000",
@@ -238,6 +241,7 @@ function WalletStatus() {
             <p>
               Self-transfer {transfer.amountMist} MIST to {shortValue(account.address)}.
             </p>
+            <p>{transfer.policyNote}</p>
             <button
               type="button"
               disabled={signingActionDisabled}

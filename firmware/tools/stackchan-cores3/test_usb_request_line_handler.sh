@@ -58,6 +58,7 @@ enum class HandlerSlot {
     none,
     get_status,
     sign_transaction,
+    policy_propose,
 };
 
 HandlerSlot g_last_handler = HandlerSlot::none;
@@ -123,6 +124,22 @@ void handle_sign_transaction(
     snprintf(g_last_id, sizeof(g_last_id), "%s", id == nullptr ? "" : id);
 }
 
+void handle_policy_propose(
+    const char* id,
+    JsonDocument& request,
+    const agent_q::AgentQUsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    const char* type = request["type"] | "";
+    const char* condition_field =
+        request["params"]["policy"]["blockchains"][0]["networks"][0]["policies"][0]["conditions"][0]["field"] | "";
+    assert(strcmp(type, "policy_propose") == 0);
+    assert(strcmp(condition_field, "sui.token_sources.source") == 0);
+    g_last_handler = HandlerSlot::policy_propose;
+    g_handler_calls += 1;
+    snprintf(g_last_id, sizeof(g_last_id), "%s", id == nullptr ? "" : id);
+}
+
 agent_q::AgentQUsbOperationResponseWriter make_writer()
 {
     return agent_q::AgentQUsbOperationResponseWriter{
@@ -136,6 +153,7 @@ agent_q::AgentQUsbOperationHandlers make_handlers()
     agent_q::AgentQUsbOperationHandlers handlers = {};
     handlers.get_status = handle_get_status;
     handlers.sign_transaction = handle_sign_transaction;
+    handlers.policy_propose = handle_policy_propose;
     return handlers;
 }
 
@@ -183,6 +201,10 @@ int main()
         "{\"id\":\"req_sign\",\"version\":1,\"type\":\"sign_transaction\",\"chain\":\"sui\"}",
         HandlerSlot::sign_transaction,
         "req_sign");
+    expect_handler(
+        "{\"id\":\"req_policy\",\"version\":1,\"type\":\"policy_propose\",\"sessionId\":\"session_abc\",\"params\":{\"policy\":{\"schema\":\"agentq.policy\",\"defaultAction\":\"reject\",\"blockchains\":[{\"blockchain\":\"sui\",\"networks\":[{\"network\":\"testnet\",\"policies\":[{\"id\":\"reject-source\",\"action\":\"reject\",\"conditions\":[{\"field\":\"sui.token_sources.source\",\"op\":\"eq\",\"value\":\"gas_coin\"}]}]}]}]}}}",
+        HandlerSlot::policy_propose,
+        "req_policy");
 
     expect_error("{not-json", nullptr, "invalid_json", "Invalid JSON.");
     expect_error(

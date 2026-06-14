@@ -73,12 +73,13 @@ constexpr int kPinKeypadGridLeft = kPanelGridLeft;
 constexpr int kPinKeypadGridTop = 78;
 constexpr int kPinKeypadRowHeight = 25;
 constexpr int kSettingsMenuButtonCenterX = (kPanelContentWidth - kBackupPhraseButtonWidth) / 2;
-constexpr int kSettingsMenuRowLabelX = 24;
-constexpr int kSettingsMenuRowControlX = 218;
-constexpr int kSettingsMenuRowOneY = 54;
-constexpr int kSettingsMenuRowTwoY = 86;
-constexpr int kSettingsMenuRowThreeY = 118;
-constexpr int kSettingsMenuRowFourY = 150;
+constexpr int kSettingsMenuContentY = 44;
+constexpr int kSettingsMenuContentBottomGap = 8;
+constexpr int kSettingsMenuContentHeight =
+    kSetupActionButtonY - kSettingsMenuContentY - kSettingsMenuContentBottomGap;
+constexpr int kSettingsMenuRowLabelX = 18;
+constexpr int kSettingsMenuRowControlX = 208;
+constexpr int kSettingsMenuRowHeight = 34;
 constexpr int kSettingsMenuActionButtonWidth = 72;
 constexpr int kSettingsMenuActionButtonHeight = 26;
 constexpr int kConnectReviewTextLeft = 24;
@@ -98,6 +99,8 @@ constexpr int kPolicyUpdateReviewRowTop = 50;
 constexpr int kPolicyUpdateReviewRowHeight = 16;
 constexpr int kPolicyUpdateReviewRowWidth = kInsetPanelWidth - 36;
 constexpr int kPolicyUpdateReviewSummaryTop = 132;
+constexpr int kPolicyUpdateReviewSummaryHeight =
+    kSetupActionButtonY - kPolicyUpdateReviewSummaryTop - 6;
 // Setup choice: three stacked buttons, vertically centered between the title and the
 // bottom of the full-screen panel. Coordinates are panel-relative == screen (panel at
 // 0,0); a child whose bottom exceeds kPanelContentHeight (240) is clipped, and it must
@@ -441,6 +444,32 @@ static bool make_settings_row_label(lv_obj_t* parent, const char* text, int y)
     lv_obj_set_style_text_color(label, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(label, LV_ALIGN_TOP_LEFT, kSettingsMenuRowLabelX, y + 4);
     return true;
+}
+
+static bool make_settings_menu_row(
+    lv_obj_t* parent,
+    const char* label,
+    const char* button_text,
+    int row_index,
+    SetupButtonKind button_kind,
+    lv_color_t color,
+    lv_event_cb_t callback,
+    bool enabled = true)
+{
+    const int y = row_index * kSettingsMenuRowHeight;
+    return make_settings_row_label(parent, label, y) &&
+           make_setup_button(
+               parent,
+               button_text,
+               kSettingsMenuRowControlX,
+               y,
+               kSettingsMenuActionButtonWidth,
+               kSettingsMenuActionButtonHeight,
+               button_kind,
+               color,
+               callback,
+               nullptr,
+               enabled);
 }
 
 static bool make_user_signing_review_row(
@@ -1555,57 +1584,64 @@ bool modal_draw_settings_menu_panel()
     const bool signing_mode_read_ok =
         agent_q::read_signing_authorization_mode(&signing_mode);
 
-    // Settings are fixed rows: add settings by appending the same label/control
-    // pair, not by adding explanatory text blocks.
-    if (!make_settings_row_label(panel, "Approval input", kSettingsMenuRowOneY) ||
-        !make_setup_button(
-            panel,
+    lv_obj_t* content = lv_obj_create(panel);
+    if (content == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_obj_set_size(content, kPanelContentWidth, kSettingsMenuContentHeight);
+    lv_obj_align(content, LV_ALIGN_TOP_LEFT, 0, kSettingsMenuContentY);
+    lv_obj_set_style_radius(content, 0, 0);
+    lv_obj_set_style_border_width(content, 0, 0);
+    lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(content, 0, 0);
+    lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(content, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
+
+    if (!make_settings_menu_row(
+            content,
+            "Approval input",
             human_approval_setting_read_ok
                 ? agent_q::human_approval_input_mode_label(human_approval_input_mode)
                 : "ERR",
-            kSettingsMenuRowControlX,
-            kSettingsMenuRowOneY,
-            kSettingsMenuActionButtonWidth,
-            kSettingsMenuActionButtonHeight,
+            0,
             SetupButtonKind::outlined_keypad,
             lv_color_hex(theme::kPrimary),
             human_approval_setting_read_ok ? g_callbacks.on_settings_human_approval_input_clicked : nullptr,
-            nullptr,
             human_approval_setting_read_ok) ||
-        !make_settings_row_label(panel, "Sign auth", kSettingsMenuRowTwoY) ||
-        !make_setup_button(
-            panel,
+        !make_settings_menu_row(
+            content,
+            "Sign auth",
             signing_mode_read_ok
                 ? (signing_mode == AgentQSigningAuthorizationMode::policy ? "POLICY" : "USER")
                 : "ERR",
-            kSettingsMenuRowControlX,
-            kSettingsMenuRowTwoY,
-            kSettingsMenuActionButtonWidth,
-            kSettingsMenuActionButtonHeight,
+            1,
             SetupButtonKind::outlined_keypad,
             lv_color_hex(theme::kPrimary),
             signing_mode_read_ok ? g_callbacks.on_settings_signing_mode_clicked : nullptr,
-            nullptr,
             signing_mode_read_ok) ||
-        !make_settings_row_label(panel, "Change PIN", kSettingsMenuRowThreeY) ||
-        !make_setup_button(
-            panel,
+        !make_settings_menu_row(
+            content,
+            "Change PIN",
             "CHANGE",
-            kSettingsMenuRowControlX,
-            kSettingsMenuRowThreeY,
-            kSettingsMenuActionButtonWidth,
-            kSettingsMenuActionButtonHeight,
+            2,
             SetupButtonKind::outlined_keypad,
             lv_color_hex(theme::kPrimary),
             g_callbacks.on_settings_change_pin_clicked) ||
-        !make_settings_row_label(panel, "Reset device", kSettingsMenuRowFourY) ||
-        !make_setup_button(
-            panel,
+        !make_settings_menu_row(
+            content,
+            "Reset policy",
             "RESET",
-            kSettingsMenuRowControlX,
-            kSettingsMenuRowFourY,
-            kSettingsMenuActionButtonWidth,
-            kSettingsMenuActionButtonHeight,
+            3,
+            SetupButtonKind::solid_action,
+            lv_color_hex(theme::kError),
+            g_callbacks.on_settings_policy_reset_clicked) ||
+        !make_settings_menu_row(
+            content,
+            "Reset device",
+            "RESET",
+            4,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
             g_callbacks.on_settings_reset_clicked) ||
@@ -1885,6 +1921,9 @@ static const char* local_pin_auth_default_message(
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_signing_mode) {
         return "Enter PIN to change signing mode.";
     }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_policy_reset) {
+        return "Enter PIN to reset policy.";
+    }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {
             return "Enter new PIN.";
@@ -1914,6 +1953,9 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_signing_mode) {
         return "Signing Mode";
     }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_policy_reset) {
+        return "Reset Policy";
+    }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {
             return "New PIN";
@@ -1933,7 +1975,7 @@ bool modal_draw_policy_update_review_panel(
     if (model.policy_hash == nullptr || model.policy_hash[0] == '\0' ||
         model.default_action == nullptr ||
         model.highest_action == nullptr ||
-        model.method_summary == nullptr ||
+        model.scope_summary == nullptr ||
         model.review_summary == nullptr || model.review_summary[0] == '\0') {
         return false;
     }
@@ -1985,10 +2027,22 @@ bool modal_draw_policy_update_review_panel(
     lv_obj_set_style_text_color(subtitle, lv_color_hex(theme::kOnSurfaceVariant), 0);
     lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
 
-    char rule_count[16] = {};
+    char scope_count[24] = {};
+    char policy_count[24] = {};
     char policy_hash_prefix[24] = {};
     char action_summary[32] = {};
-    snprintf(rule_count, sizeof(rule_count), "%u", static_cast<unsigned>(model.rule_count));
+    snprintf(
+        scope_count,
+        sizeof(scope_count),
+        "%u/%u",
+        static_cast<unsigned>(model.blockchain_count),
+        static_cast<unsigned>(model.network_count));
+    snprintf(
+        policy_count,
+        sizeof(policy_count),
+        "%u/%u",
+        static_cast<unsigned>(model.policy_count),
+        static_cast<unsigned>(model.condition_count));
     format_policy_hash_prefix(model.policy_hash, policy_hash_prefix, sizeof(policy_hash_prefix));
     snprintf(
         action_summary,
@@ -1998,25 +2052,37 @@ bool modal_draw_policy_update_review_panel(
         model.highest_action);
     int row_y = kPolicyUpdateReviewRowTop;
     if (!make_policy_update_review_row(panel, "Hash", policy_hash_prefix, row_y) ||
-        !make_policy_update_review_row(panel, "Rules", rule_count, row_y + kPolicyUpdateReviewRowHeight) ||
+        !make_policy_update_review_row(panel, "Scopes", scope_count, row_y + kPolicyUpdateReviewRowHeight) ||
         !make_policy_update_review_row(panel, "Action", action_summary, row_y + 2 * kPolicyUpdateReviewRowHeight) ||
-        !make_policy_update_review_row(panel, "Method", model.method_summary, row_y + 3 * kPolicyUpdateReviewRowHeight)) {
+        !make_policy_update_review_row(panel, "Policies/Cond", policy_count, row_y + 3 * kPolicyUpdateReviewRowHeight)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
 
-    lv_obj_t* summary = lv_label_create(panel);
+    lv_obj_t* summary_area = lv_obj_create(panel);
+    if (summary_area == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_obj_set_size(summary_area, kPolicyUpdateReviewRowWidth, kPolicyUpdateReviewSummaryHeight);
+    lv_obj_align(summary_area, LV_ALIGN_TOP_LEFT, 18, kPolicyUpdateReviewSummaryTop);
+    lv_obj_set_style_bg_opa(summary_area, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(summary_area, 0, 0);
+    lv_obj_set_style_pad_all(summary_area, 0, 0);
+    lv_obj_set_scrollbar_mode(summary_area, LV_SCROLLBAR_MODE_AUTO);
+
+    lv_obj_t* summary = lv_label_create(summary_area);
     if (summary == nullptr) {
         drawing_surface_clear_panel_locked();
         return false;
     }
-    lv_label_set_text(summary, "Continue opens PIN entry to apply this policy.");
+    lv_label_set_text(summary, model.review_summary);
     lv_label_set_long_mode(summary, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(summary, kPolicyUpdateReviewRowWidth);
     lv_obj_set_style_text_align(summary, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(summary, &lv_font_unscii_8, 0);
     lv_obj_set_style_text_color(summary, lv_color_hex(theme::kWarning), 0);
-    lv_obj_align(summary, LV_ALIGN_TOP_LEFT, 18, kPolicyUpdateReviewSummaryTop);
+    lv_obj_align(summary, LV_ALIGN_TOP_LEFT, 0, 0);
 
     if (!make_screen_bottom_timeout_timer_bar(
             panel,

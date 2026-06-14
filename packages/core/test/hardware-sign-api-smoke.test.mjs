@@ -42,7 +42,7 @@ import { AgentQCore, SerialPortUsbDriver } from "../dist/core.js";
 import {
   FORBIDDEN_SECRET_FIELD_NAMES,
   MAX_APPROVAL_HISTORY_RECORDS,
-  MAX_POLICY_RULE_COUNT,
+  MAX_POLICY_TOTAL_POLICIES,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
 } from "../dist/protocol.js";
 
@@ -60,6 +60,29 @@ const POLICY_SIGNING_METHODS = Object.freeze([
   { chain: "sui", method: "sign_transaction", payload: SIGN_TRANSACTION_PAYLOAD_CAPABILITY },
 ]);
 const DEFAULT_PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q personal message check").toString("base64");
+
+function smokePolicyDocument(policies = []) {
+  const conditionCount = policies.reduce((sum, policy) => sum + policy.conditions.length, 0);
+  return {
+    schema: "agentq.policy",
+    defaultAction: "reject",
+    blockchains: [
+      {
+        blockchain: "sui",
+        networks: [
+          {
+            network: "testnet",
+            policies,
+          },
+        ],
+      },
+    ],
+    blockchainCount: 1,
+    networkCount: 1,
+    policyCount: policies.length,
+    conditionCount,
+  };
+}
 
 const userSigningEnabled = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER === "1";
 const userSigningScenario = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO ?? "";
@@ -325,7 +348,7 @@ function assertNewestPolicyUpdateRecord(history, previousTopSeq, updateResult) {
   assert.equal(topRecord.result, "applied");
   assert.equal(topRecord.reasonCode, updateResult.reasonCode);
   assert.equal(topRecord.policyHash, updateResult.policy.policyHash);
-  assert.equal(topRecord.ruleCount, updateResult.policy.ruleCount);
+  assert.equal(topRecord.policyCount, updateResult.policy.policyCount);
   assert.equal(topRecord.highestAction, updateResult.policy.highestAction);
 }
 
@@ -392,7 +415,7 @@ test("client hardware smoke policy-update proof requires the newest record from 
     reasonCode: "device_confirmed",
     policy: {
       policyHash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      ruleCount: 1,
+      policyCount: 1,
       highestAction: "reject",
     },
   };
@@ -405,7 +428,7 @@ test("client hardware smoke policy-update proof requires the newest record from 
         result: "applied",
         reasonCode: "device_confirmed",
         policyHash: updateResult.policy.policyHash,
-        ruleCount: 1,
+        policyCount: 1,
         highestAction: "reject",
       },
     ],
@@ -419,7 +442,7 @@ test("client hardware smoke policy-update proof requires the newest record from 
         result: "applied",
         reasonCode: "storage_error",
         policyHash: updateResult.policy.policyHash,
-        ruleCount: 1,
+        policyCount: 1,
         highestAction: "reject",
       },
     ],
@@ -433,7 +456,7 @@ test("client hardware smoke policy-update proof requires the newest record from 
         result: "applied",
         reasonCode: "device_confirmed",
         policyHash: updateResult.policy.policyHash,
-        ruleCount: 1,
+        policyCount: 1,
         highestAction: "reject",
       },
     ],
@@ -911,19 +934,13 @@ test(
         assert.equal(historyBeforeUpdate.source, "live");
         const previousHistoryTopSeq = approvalHistoryTopSeq(historyBeforeUpdate);
 
-        const proposal = {
-          schema: "agentq.policy.v0",
-          defaultAction: "reject",
-          rules: [
-            {
-              id: "reject_devnet",
-              chain: "sui",
-              method: "sign_transaction",
-              action: "reject",
-              criteria: [{ field: "common.intent", op: "eq", value: "programmable_transaction" }],
-            },
-          ],
-        };
+        const proposal = smokePolicyDocument([
+          {
+            id: "reject_devnet",
+            action: "reject",
+            conditions: [{ field: "sui.command_kinds", op: "not_contains", values: ["publish"] }],
+          },
+        ]);
 
         console.log("[client-policy-update-smoke] proposing reject-only policy — enter the device PIN within 30s...");
         const update = await core.policyPropose({
@@ -934,7 +951,10 @@ test(
         assert.equal(update.source, "live");
         assert.equal(update.status, "applied");
         assert.equal(update.reasonCode, "device_confirmed");
-        assert.equal(update.policy.ruleCount, 1);
+        assert.equal(update.policy.blockchainCount, 1);
+        assert.equal(update.policy.networkCount, 1);
+        assert.equal(update.policy.policyCount, 1);
+        assert.equal(update.policy.conditionCount, 1);
         assert.equal(update.policy.highestAction, "reject");
         assert.match(update.policy.policyHash, /^sha256:[0-9a-f]{64}$/);
         assertNoSmokeOutputLeak(update);
@@ -942,12 +962,13 @@ test(
         console.log("[client-policy-update-smoke] verifying committed policy document...");
         const policy = await core.policyGet({ deviceId, purpose: POLICY_UPDATE_PURPOSE });
         assert.equal(policy.source, "live");
-        assert.equal(policy.policy.schema, "agentq.policy.v0");
+        assert.equal(policy.policy.schema, "agentq.policy");
         assert.equal(policy.policy.policyId, update.policy.policyHash);
         assert.equal(policy.policy.defaultAction, "reject");
-        assert.equal(policy.policy.ruleCount, 1);
-        assert.equal(policy.policy.rules.length, 1);
-        assert.ok(policy.policy.ruleCount <= MAX_POLICY_RULE_COUNT);
+        assert.equal(policy.policy.policyCount, 1);
+        assert.equal(policy.policy.conditionCount, 1);
+        assert.equal(policy.policy.blockchains[0].networks[0].policies.length, 1);
+        assert.ok(policy.policy.policyCount <= MAX_POLICY_TOTAL_POLICIES);
         assertNoSmokeOutputLeak(policy);
 
         console.log("[client-policy-update-smoke] verifying policy-update approval-history record...");

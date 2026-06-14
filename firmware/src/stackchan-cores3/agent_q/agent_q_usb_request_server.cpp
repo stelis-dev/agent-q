@@ -802,6 +802,7 @@ agent_q::AgentQUsbSessionLossLocalPinPurpose local_pin_loss_purpose(
         case LocalPinAuthPurpose::none:
         case LocalPinAuthPurpose::settings_human_approval_input:
         case LocalPinAuthPurpose::settings_signing_mode:
+        case LocalPinAuthPurpose::settings_policy_reset:
         case LocalPinAuthPurpose::settings_change_pin:
             return agent_q::AgentQUsbSessionLossLocalPinPurpose::other;
     }
@@ -1931,6 +1932,7 @@ agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops()
         agent_q::human_approval_requires_pin,
         agent_q::read_human_approval_input_mode,
         agent_q::read_signing_authorization_mode,
+        agent_q::store_default_policy,
         begin_settings_pin_auth_handoff_for_local_pin_auth,
         restore_settings_menu_for_local_pin_auth,
         clear_agent_q_panel_if_kind,
@@ -2219,6 +2221,12 @@ void start_settings_human_approval_input_from_settings_menu()
 void start_settings_signing_mode_from_settings_menu()
 {
     agent_q::local_pin_auth_ui_start_settings_signing_mode(
+        local_pin_auth_ui_flow_ops());
+}
+
+void start_settings_policy_reset_from_settings_menu()
+{
+    agent_q::local_pin_auth_ui_start_settings_policy_reset(
         local_pin_auth_ui_flow_ops());
 }
 
@@ -2565,6 +2573,11 @@ void drain_ui_events()
             continue;
         }
 
+        if (event.kind == AgentQUiEventKind::settings_policy_reset_requested) {
+            start_settings_policy_reset_from_settings_menu();
+            continue;
+        }
+
         if (event.kind == AgentQUiEventKind::settings_change_pin_requested) {
             start_settings_change_pin_from_settings_menu();
             continue;
@@ -2888,14 +2901,20 @@ bool read_active_policy_for_session_read(
     char* policy_id_out,
     size_t policy_id_out_size,
     const char** default_action,
-    size_t* rule_count,
-    const agent_q::AgentQPolicyDocument** document)
+    size_t* blockchain_count,
+    size_t* network_count,
+    size_t* policy_count,
+    size_t* condition_count,
+    const agent_q::AgentQCurrentPolicyDocument** document)
 {
     if (schema == nullptr ||
         policy_id_out == nullptr ||
         policy_id_out_size == 0 ||
         default_action == nullptr ||
-        rule_count == nullptr ||
+        blockchain_count == nullptr ||
+        network_count == nullptr ||
+        policy_count == nullptr ||
+        condition_count == nullptr ||
         document == nullptr) {
         return false;
     }
@@ -2908,7 +2927,10 @@ bool read_active_policy_for_session_read(
     *schema = stored_policy.schema;
     snprintf(policy_id_out, policy_id_out_size, "%s", stored_policy.policy_id);
     *default_action = stored_policy.default_action;
-    *rule_count = stored_policy.rule_count;
+    *blockchain_count = stored_policy.blockchain_count;
+    *network_count = stored_policy.network_count;
+    *policy_count = stored_policy.policy_count;
+    *condition_count = stored_policy.condition_count;
     *document = stored_policy.document;
     return true;
 }

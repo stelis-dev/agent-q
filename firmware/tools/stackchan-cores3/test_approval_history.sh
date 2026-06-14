@@ -40,7 +40,7 @@ fi
 for required in \
   "${TARGET_ROOT}/agent_q/agent_q_approval_history.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_approval_history.h" \
-  "${COMMON_ROOT}/policy/agent_q_policy_schema.h"; do
+  "${COMMON_ROOT}/policy/agent_q_policy_document.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -425,7 +425,7 @@ int main()
     expect(strcmp(page.records[0].policy_result, "applied") == 0 &&
                strcmp(page.records[0].reason_code, "device_confirmed") == 0 &&
                strcmp(page.records[0].highest_action, "reject") == 0 &&
-               page.records[0].rule_count == 1,
+               page.records[0].policy_count == 1,
            "policy-update record metadata is preserved");
     expect(agent_q::approval_history_append_required_signing(
                user_signing_confirmation_input(),
@@ -533,10 +533,10 @@ int main()
 	    invalid_policy_hash.policy_hash = "not-a-digest";
 	    expect(!agent_q::approval_history_append_required_policy_update(invalid_policy_hash, 1204),
 	           "policy-update history rejects invalid policy hash");
-	    agent_q::AgentQPolicyUpdateHistoryAppendInput overlarge_rule_count = policy_update_input();
-	    overlarge_rule_count.rule_count = agent_q::kAgentQPolicyMaxRules + 1;
-	    expect(!agent_q::approval_history_append_required_policy_update(overlarge_rule_count, 1205),
-	           "policy-update history rejects overlarge rule count");
+	    agent_q::AgentQPolicyUpdateHistoryAppendInput overlarge_policy_count = policy_update_input();
+	    overlarge_policy_count.policy_count = agent_q::kAgentQCurrentPolicyMaxTotalPolicies + 1;
+	    expect(!agent_q::approval_history_append_required_policy_update(overlarge_policy_count, 1205),
+	           "policy-update history rejects overlarge policy count");
     expect(agent_q::approval_history_wipe(), "wipe before user_signing invalid input tests");
     agent_q::AgentQSigningHistoryAppendInput invalid_signature = user_signing_confirmation_input();
     invalid_signature.confirmation_kind = agent_q::AgentQApprovalHistoryConfirmationKind::policy;

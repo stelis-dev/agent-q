@@ -25,6 +25,8 @@ CXX_BIN="${CXX:-c++}"
 
 for required in \
   "${AGENT_Q_DIR}/agent_q_local_settings_reset_ui_flow.cpp" \
+  "${AGENT_Q_DIR}/agent_q_modal_transition.cpp" \
+  "${AGENT_Q_DIR}/agent_q_modal_transition.h" \
   "${AGENT_Q_DIR}/agent_q_local_settings_reset_ui_flow.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -108,6 +110,10 @@ int g_record_failure_calls = 0;
 int g_commit_calls = 0;
 int g_begin_settings_calls = 0;
 int g_wipe_calls = 0;
+int g_order_counter = 0;
+int g_commit_order = 0;
+int g_clear_panel_order = 0;
+int g_show_message_order = 0;
 const char* g_last_message = nullptr;
 const char* g_last_reset_notice = nullptr;
 agent_q::AgentQMessageKind g_last_kind = agent_q::AgentQMessageKind::info;
@@ -149,6 +155,10 @@ void reset_harness()
     g_commit_calls = 0;
     g_begin_settings_calls = 0;
     g_wipe_calls = 0;
+    g_order_counter = 0;
+    g_commit_order = 0;
+    g_clear_panel_order = 0;
+    g_show_message_order = 0;
     g_last_message = nullptr;
     g_last_reset_notice = nullptr;
     g_last_kind = agent_q::AgentQMessageKind::info;
@@ -173,12 +183,14 @@ bool local_reset_panel_active()
 bool clear_panel(agent_q::AgentQUiPanelKind, agent_q::SensitiveUiClearPolicy)
 {
     ++g_clear_panel_calls;
+    g_clear_panel_order = ++g_order_counter;
     return true;
 }
 
 bool clear_local_reset_panel(agent_q::SensitiveUiClearPolicy)
 {
     ++g_clear_panel_calls;
+    g_clear_panel_order = ++g_order_counter;
     return true;
 }
 
@@ -214,6 +226,7 @@ void clear_touch()
 void show_message(const char* message, agent_q::AgentQMessageKind kind)
 {
     ++g_show_message_calls;
+    g_show_message_order = ++g_order_counter;
     g_last_message = message;
     g_last_kind = kind;
 }
@@ -349,6 +362,7 @@ AgentQLocalResetPinVerifyResult local_reset_complete_pin_verify_job(
 AgentQLocalResetCommitResult local_reset_commit_material(const AgentQLocalResetPersistenceOps&)
 {
     ++g_commit_calls;
+    g_commit_order = ++g_order_counter;
     return g_commit_result;
 }
 
@@ -410,10 +424,15 @@ int main()
     reset_harness();
     g_wipe_ready = true;
     g_stage = agent_q::AgentQLocalResetStage::wiping;
+    g_panel_active[static_cast<int>(agent_q::AgentQUiPanelKind::reset_pin_entry)] = true;
     agent_q::local_settings_reset_ui_commit_if_ready(ops());
     expect(g_commit_calls == 1, "ready reset commit calls persistence boundary");
     expect(g_last_message != nullptr && strcmp(g_last_message, "Device reset") == 0,
            "successful reset commit reports device reset");
+    expect(g_commit_order < g_show_message_order,
+           "reset commit reports result only after persistence boundary");
+    expect(g_show_message_order < g_clear_panel_order,
+           "reset commit keeps processing panel until result overlay is prepared");
 
     if (failures != 0) {
         return 1;
@@ -428,6 +447,7 @@ CPP
   -I"${TMP_DIR}" \
   -I"${AGENT_Q_DIR}" \
   "${TMP_DIR}/test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_modal_transition.cpp" \
   "${AGENT_Q_DIR}/agent_q_local_settings_reset_ui_flow.cpp" \
   -o "${TMP_DIR}/test"
 

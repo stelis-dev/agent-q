@@ -11,16 +11,7 @@ CXX_BIN="${CXX:-c++}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sui-sign-transaction-adapter.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-while IFS= read -r fixture_path; do
-  fixture_name="$(basename "${fixture_path}" .bcs.hex)"
-  if ! grep -q "^${fixture_name}"$'\t' "${COVERAGE_MATRIX}"; then
-    echo "Sui authorization coverage matrix is missing fixture row: ${fixture_name}" >&2
-    exit 1
-  fi
-done < <(find "${FIXTURE_DIR}" -maxdepth 1 -name '*.bcs.hex' | sort)
-
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
-#include <assert.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,12 +19,10 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 
 #include <fstream>
 #include <map>
-#include <sstream>
 #include <string>
 #include <vector>
 
 #include "agent_q_sui_sign_transaction_adapter.h"
-#include "agent_q_sui_method_adapter.h"
 
 void expect(bool condition, const std::string& message)
 {
@@ -165,13 +154,23 @@ agent_q::AgentQSuiUserAuthorizationOutcome expected_user_outcome(const MatrixRow
     return agent_q::AgentQSuiUserAuthorizationOutcome::unavailable;
 }
 
-agent_q::AgentQSuiPolicyAuthorizationOutcome expected_policy_outcome(const MatrixRow& row)
+agent_q::SuiTransactionFactsResult expected_parse_result(const MatrixRow& row)
 {
-    const std::string& policy_gate = field(row, "expected_policy_gate_after_adapter");
-    if (policy_gate == "policy_evaluation_pending") {
-        return agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation;
+    const std::string& parse_result = field(row, "full_facts_parse_result");
+    if (parse_result == "ok") {
+        return agent_q::SuiTransactionFactsResult::ok;
     }
-    return agent_q::AgentQSuiPolicyAuthorizationOutcome::unavailable;
+    if (parse_result == "malformed") {
+        return agent_q::SuiTransactionFactsResult::malformed;
+    }
+    if (parse_result == "transaction_kind_only") {
+        return agent_q::SuiTransactionFactsResult::transaction_kind_only;
+    }
+    if (parse_result == "too_large") {
+        return agent_q::SuiTransactionFactsResult::too_large;
+    }
+    expect(false, "unsupported matrix full_facts_parse_result: " + parse_result);
+    return agent_q::SuiTransactionFactsResult::malformed;
 }
 
 const char* adapter_result_name(agent_q::AgentQSuiSignTransactionAdapterResult result)
@@ -187,34 +186,6 @@ const char* adapter_result_name(agent_q::AgentQSuiSignTransactionAdapterResult r
             return "unsupported_transaction";
     }
     return "unknown";
-}
-
-agent_q::SuiTransactionFactsResult expected_parse_result(const MatrixRow& row)
-{
-    const std::string& parse_result = field(row, "full_facts_parse_result");
-    if (parse_result == "ok") {
-        return agent_q::SuiTransactionFactsResult::ok;
-    }
-    if (parse_result == "malformed") {
-        return agent_q::SuiTransactionFactsResult::malformed;
-    }
-    if (parse_result == "transaction_kind_only") {
-        return agent_q::SuiTransactionFactsResult::transaction_kind_only;
-    }
-    if (parse_result == "unsupported_version") {
-        return agent_q::SuiTransactionFactsResult::unsupported_version;
-    }
-    if (parse_result == "unsupported_kind") {
-        return agent_q::SuiTransactionFactsResult::unsupported_kind;
-    }
-    if (parse_result == "unsupported_shape") {
-        return agent_q::SuiTransactionFactsResult::unsupported_shape;
-    }
-    if (parse_result == "too_large") {
-        return agent_q::SuiTransactionFactsResult::too_large;
-    }
-    expect(false, "unsupported matrix full_facts_parse_result: " + parse_result);
-    return agent_q::SuiTransactionFactsResult::malformed;
 }
 
 const char* review_status_name(agent_q::SuiReviewSummaryStatus status)
@@ -251,16 +222,6 @@ std::vector<uint8_t> read_hex(const std::string& path)
     return bytes;
 }
 
-bool facts_include_field(const agent_q::AgentQPolicyFacts& facts, const char* field)
-{
-    for (size_t index = 0; index < facts.entry_count; ++index) {
-        if (strcmp(facts.entries[index].field, field) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 bool review_includes_label(const agent_q::SuiReviewSummary& review, const char* label)
 {
     for (uint16_t index = 0; index < review.row_count; ++index) {
@@ -283,93 +244,13 @@ void validate_required_review_fields(
     }
 }
 
-void validate_required_policy_fields(
-    const MatrixRow& row,
-    const agent_q::AgentQPolicyFacts& facts)
-{
-    const std::vector<std::string> required = split_commas(field(row, "required_policy_fields"));
-    for (const std::string& name : required) {
-        expect(
-            facts_include_field(facts, name.c_str()),
-            field(row, "fixture") + ": required policy fact missing: " + name);
-    }
-}
-
-void verify_undecoded_recipient_blocks_policy_coverage(const std::string& root)
-{
-    const auto bytes = read_hex(root + "/valid_sui_transfer_tx.bcs.hex");
-    agent_q::SuiParsedTransactionFacts parsed = {};
-    expect(
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &parsed) ==
-            agent_q::SuiTransactionFactsResult::ok,
-        "valid transfer fixture must parse before recipient mutation");
-
-    bool mutated = false;
-    for (uint16_t command_index = 0; command_index < parsed.command_count; ++command_index) {
-        agent_q::SuiCommandFact& command = parsed.commands[command_index];
-        if (command.kind != agent_q::SuiCommandFactKind::transfer_objects ||
-            command.argument_count == 0) {
-            continue;
-        }
-        const agent_q::SuiArgumentFact& recipient_arg =
-            command.arguments[command.argument_count - 1];
-        expect(
-            recipient_arg.kind == agent_q::SuiArgumentFactKind::input &&
-                recipient_arg.index < parsed.input_count,
-            "valid transfer fixture recipient must be an input argument");
-        parsed.inputs[recipient_arg.index].pure_length = 31;
-        mutated = true;
-        break;
-    }
-    expect(mutated, "valid transfer fixture must contain TransferObjects recipient");
-
-    agent_q::SuiTokenFlowFacts token_flow = {};
-    expect(
-        agent_q::build_sui_token_flow_facts(parsed, &token_flow) ==
-            agent_q::SuiTokenFlowFactsResult::ok,
-        "recipient decode failure still allows non-authorizing token-flow extraction");
-    expect(token_flow.recipient_count == 1, "mutated transfer still has one recipient command");
-    expect(!token_flow.recipient0_address_known, "mutated recipient address must be unknown");
-    expect(strcmp(token_flow.recipient0_address, "none") == 0,
-           "mutated recipient address must keep display sentinel only");
-
-    agent_q::SuiPolicySubjectFacts transaction = {};
-    expect(
-        agent_q::build_sui_policy_subject_facts(parsed, &transaction),
-        "mutated transfer still produces base transaction policy facts");
-    expect(
-        !agent_q::sui_sign_transaction_policy_authorization_covered(transaction, token_flow),
-        "undecoded recipient must make automatic policy signing coverage incomplete");
-
-    agent_q::AgentQSuiSignTransactionPolicySubject subject = {};
-    expect(
-        agent_q::build_sui_sign_transaction_policy_subject(parsed, "testnet", &subject),
-        "mutated transfer still builds policy subject for reject/default evaluation");
-    agent_q::AgentQSuiSignTransactionPolicyFacts policy_facts = {};
-    expect(
-        agent_q::make_sui_sign_transaction_policy_facts(subject, &policy_facts),
-        "mutated transfer still emits policy facts");
-    expect(
-        !facts_include_field(policy_facts.facts, "sui.recipient0_address"),
-        "undecoded recipient must not emit a recipient policy fact");
-}
-
 void validate_matrix_row_shape(const MatrixRow& row)
 {
-    const std::string& parse_result = field(row, "full_facts_parse_result");
-    const std::string& parse_limit_scope = field(row, "full_facts_limit_scope");
     const std::string& offline_review = field(row, "offline_review_coverage");
-    const std::string& policy_facts = field(row, "policy_facts_coverage");
     const std::string& minimum_facts = field(row, "minimum_facts_coverage");
     const std::string& user_after_adapter = field(row, "expected_user_gate_after_adapter");
     const std::string& policy_after_adapter = field(row, "expected_policy_gate_after_adapter");
-    const std::string& final_binding = field(row, "final_signing_account_binding");
-    const std::string& final_user = field(row, "final_user_mode_outcome");
-    const std::string& final_policy = field(row, "final_policy_mode_outcome");
 
-    expect(
-        parse_limit_scope == "none" || parse_limit_scope == "detail_review_limit",
-        "invalid full_facts_limit_scope for " + field(row, "fixture"));
     expect(
         minimum_facts == "yes" || minimum_facts == "no",
         "invalid minimum_facts_coverage for " + field(row, "fixture"));
@@ -378,10 +259,6 @@ void validate_matrix_row_shape(const MatrixRow& row)
             offline_review == "unsupported",
         "invalid offline_review_coverage for " + field(row, "fixture"));
     expect(
-        policy_facts == "complete" || policy_facts == "incomplete" ||
-            policy_facts == "unsupported",
-        "invalid policy_facts_coverage for " + field(row, "fixture"));
-    expect(
         user_after_adapter == "ok_review_pending" ||
             user_after_adapter == "blind_signing_confirmation" ||
             user_after_adapter == "malformed_transaction" ||
@@ -389,47 +266,15 @@ void validate_matrix_row_shape(const MatrixRow& row)
         "invalid expected_user_gate_after_adapter for " + field(row, "fixture"));
     expect(
         policy_after_adapter == "policy_rejected" ||
-            policy_after_adapter == "policy_evaluation_pending" ||
             policy_after_adapter == "malformed_transaction" ||
             policy_after_adapter == "unsupported_transaction",
         "invalid expected_policy_gate_after_adapter for " + field(row, "fixture"));
-    expect(
-        final_binding == "sender_and_gas_owner_must_match_stored_account" ||
-            final_binding == "not_reached",
-        "invalid final_signing_account_binding for " + field(row, "fixture"));
-    expect(
-        final_user == "offline_facts_review_confirmation" ||
-            final_user == "blind_signing_confirmation" ||
-            final_user == "invalid_account" ||
-            final_user == "malformed_transaction" ||
-            final_user == "unsupported_transaction",
-        "invalid final_user_mode_outcome for " + field(row, "fixture"));
-    expect(
-        final_policy == "policy_rejected" ||
-            final_policy == "policy_evaluation" ||
-            final_policy == "invalid_account" ||
-            final_policy == "malformed_transaction" ||
-            final_policy == "unsupported_transaction",
-        "invalid final_policy_mode_outcome for " + field(row, "fixture"));
-
     if (user_after_adapter == "ok_review_pending") {
-        expect(offline_review == "complete", "offline facts user adapter gate requires complete review coverage for " + field(row, "fixture"));
+        expect(offline_review == "complete", "clear user adapter gate requires complete review coverage for " + field(row, "fixture"));
     }
     if (user_after_adapter == "blind_signing_confirmation") {
         expect(offline_review == "incomplete", "blind user adapter gate requires incomplete review coverage for " + field(row, "fixture"));
         expect(minimum_facts == "yes", "blind user adapter gate requires minimum facts coverage for " + field(row, "fixture"));
-    }
-    if (parse_result == "too_large") {
-        expect(parse_limit_scope == "detail_review_limit", "full facts too_large rows must name detail review limit scope for " + field(row, "fixture"));
-        expect(user_after_adapter == "blind_signing_confirmation", "detail review limit rows must reach explicit blind signing after adapter for " + field(row, "fixture"));
-    } else {
-        expect(parse_limit_scope == "none", "non-limit rows must use full_facts_limit_scope=none for " + field(row, "fixture"));
-    }
-    if (policy_after_adapter == "policy_rejected") {
-        expect(policy_facts == "incomplete", "policy rejection row must mark policy facts incomplete for " + field(row, "fixture"));
-    }
-    if (policy_after_adapter == "policy_evaluation_pending") {
-        expect(policy_facts == "complete", "policy evaluation row must mark policy facts complete for " + field(row, "fixture"));
     }
 }
 
@@ -464,7 +309,6 @@ void validate_adapter_against_row(const std::string& root, const MatrixRow& row)
     agent_q::SuiPolicySubjectFacts facts = {};
     agent_q::SuiReviewSummary review = {};
     agent_q::AgentQSuiSignTransactionAuthorizationCoverage coverage = {};
-    agent_q::SuiTokenFlowFacts token_flow = {};
 
     const auto result =
         agent_q::classify_sui_sign_transaction(
@@ -472,17 +316,13 @@ void validate_adapter_against_row(const std::string& root, const MatrixRow& row)
             bytes.size(),
             &facts,
             &review,
-            &coverage,
-            &token_flow);
+            &coverage);
     const auto expected = expected_adapter_result(row);
     expect(
         result == expected,
         fixture + ": expected adapter result " + adapter_result_name(expected) +
             ", got " + adapter_result_name(result));
 
-    expect(
-        yes_no(row, "tx_format_valid") == (result == agent_q::AgentQSuiSignTransactionAdapterResult::ok),
-        fixture + ": tx_format_valid does not match adapter result");
     expect(
         coverage.user_mode_authorization_covered == yes_no(row, "adapter_user_gate_covered"),
         fixture + ": user adapter coverage mismatch");
@@ -493,8 +333,8 @@ void validate_adapter_against_row(const std::string& root, const MatrixRow& row)
         coverage.user_outcome == expected_user_outcome(row),
         fixture + ": user authorization outcome mismatch");
     expect(
-        coverage.policy_outcome == expected_policy_outcome(row),
-        fixture + ": policy authorization outcome mismatch");
+        coverage.policy_outcome == agent_q::AgentQSuiPolicyAuthorizationOutcome::unavailable,
+        fixture + ": policy authorization must stay unavailable before current evaluator is connected");
 
     if (result != agent_q::AgentQSuiSignTransactionAdapterResult::ok) {
         return;
@@ -519,24 +359,6 @@ void validate_adapter_against_row(const std::string& root, const MatrixRow& row)
     expect(facts.sender[0] != '\0', fixture + ": successful adapter rows must include sender fact");
     expect(facts.gas_owner[0] != '\0', fixture + ": successful adapter rows must include gas owner fact");
     validate_required_review_fields(row, review);
-
-    const std::vector<std::string> required_policy_fields =
-        split_commas(field(row, "required_policy_fields"));
-    if (!required_policy_fields.empty()) {
-        agent_q::AgentQSuiSignTransactionPolicySubject policy_subject = {};
-        policy_subject.transaction = facts;
-        policy_subject.token_flow = token_flow;
-        snprintf(
-            policy_subject.request_network,
-            sizeof(policy_subject.request_network),
-            "%s",
-            "devnet");
-        agent_q::AgentQSuiSignTransactionPolicyFacts policy_facts = {};
-        expect(
-            agent_q::make_sui_sign_transaction_policy_facts(policy_subject, &policy_facts),
-            fixture + ": policy facts must be buildable for required policy field checks");
-        validate_required_policy_fields(row, policy_facts.facts);
-    }
 }
 
 int main(int argc, char** argv)
@@ -549,7 +371,6 @@ int main(int argc, char** argv)
     for (const MatrixRow& row : rows) {
         validate_adapter_against_row(root, row);
     }
-    verify_undecoded_recipient_blocks_policy_coverage(root);
 
     agent_q::SuiPolicySubjectFacts facts = {};
     agent_q::SuiReviewSummary review = {};
@@ -567,8 +388,6 @@ CPP
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   -o "${TMP_DIR}/test"

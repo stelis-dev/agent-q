@@ -4,8 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "agent_q_sui_method_adapter.h"
-
 namespace agent_q {
 namespace {
 
@@ -151,8 +149,7 @@ AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
     size_t tx_bytes_size,
     SuiPolicySubjectFacts* policy_subject_out,
     SuiReviewSummary* review_summary_out,
-    AgentQSuiSignTransactionAuthorizationCoverage* coverage_out,
-    SuiTokenFlowFacts* token_flow_out)
+    AgentQSuiSignTransactionAuthorizationCoverage* coverage_out)
 {
     if (policy_subject_out != nullptr) {
         *policy_subject_out = {};
@@ -162,9 +159,6 @@ AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
     }
     if (coverage_out != nullptr) {
         *coverage_out = incomplete_authorization_coverage();
-    }
-    if (token_flow_out != nullptr) {
-        *token_flow_out = {};
     }
     if (tx_bytes == nullptr ||
         tx_bytes_size == 0 ||
@@ -222,18 +216,7 @@ AgentQSuiSignTransactionAdapterResult classify_sui_sign_transaction(
         free(parsed);
         return AgentQSuiSignTransactionAdapterResult::unsupported_transaction;
     }
-    SuiTokenFlowFacts token_flow = {};
-    const bool token_flow_ok =
-        build_sui_token_flow_facts(*parsed, &token_flow) == SuiTokenFlowFactsResult::ok;
-    if (token_flow_out != nullptr) {
-        *token_flow_out = token_flow_ok ? token_flow : SuiTokenFlowFacts{};
-    }
-    *coverage_out = authorization_coverage_from_review(
-        *review_summary_out,
-        token_flow_ok &&
-            sui_sign_transaction_policy_authorization_covered(
-                *policy_subject_out,
-                token_flow));
+    *coverage_out = authorization_coverage_from_review(*review_summary_out, false);
     free(parsed);
     return AgentQSuiSignTransactionAdapterResult::ok;
 }

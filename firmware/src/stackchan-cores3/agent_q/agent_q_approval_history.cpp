@@ -13,9 +13,8 @@ namespace {
 constexpr const char* kTag = "AgentQApprovalHist";
 constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kApprovalHistoryKey = "approval_hist";
-// Current-only storage layout. Version 1 accepts records without a placeholder
-// decision byte; unsupported blobs fail closed through the normal
-// invalid-history path rather than being migrated.
+// Current-only storage layout. Format version 1 is the only accepted blob shape;
+// unsupported blobs fail closed through the normal invalid-history path.
 constexpr uint8_t kStoredApprovalHistoryFormatVersion = 1;
 constexpr uint8_t kStoredConfirmationNone = 0;
 constexpr uint8_t kStoredConfirmationPolicy = 1;
@@ -41,7 +40,7 @@ struct StoredApprovalHistoryRecord {
     uint8_t confirmation_kind;
     uint8_t flags;
     uint8_t event_kind;
-    uint16_t rule_count;
+    uint16_t policy_count;
     uint8_t signing_record_kind;
     uint8_t signing_terminal_result;
     char chain[kAgentQApprovalHistoryChainSize];
@@ -135,7 +134,7 @@ bool stored_has_policy_metadata(const StoredApprovalHistoryRecord& record)
 bool stored_record_metadata_valid(const StoredApprovalHistoryRecord& record)
 {
     if (!stored_event_kind_valid(record.event_kind) ||
-        record.rule_count > kAgentQPolicyMaxRules) {
+        record.policy_count > kAgentQCurrentPolicyMaxTotalPolicies) {
         return false;
     }
     if (record.event_kind == kStoredEventPolicyUpdate) {
@@ -653,11 +652,11 @@ bool materialize_record(const StoredApprovalHistoryRecord& stored, AgentQApprova
     }
     if ((stored.flags & kStoredDigestPolicy) == 0 ||
         !digest_to_string(stored.policy_hash, output->policy_hash, sizeof(output->policy_hash)) ||
-        stored.rule_count > kAgentQPolicyMaxRules) {
+        stored.policy_count > kAgentQCurrentPolicyMaxTotalPolicies) {
         memset(output, 0, sizeof(*output));
         return false;
     }
-    output->rule_count = stored.rule_count;
+    output->policy_count = stored.policy_count;
     return true;
 }
 
@@ -748,7 +747,7 @@ bool approval_history_append_required_policy_update(
     record->uptime_ms = uptime_ms;
     record->event_kind = kStoredEventPolicyUpdate;
     record->confirmation_kind = kStoredConfirmationPolicy;
-    if (input.rule_count > kAgentQPolicyMaxRules ||
+    if (input.policy_count > kAgentQCurrentPolicyMaxTotalPolicies ||
         !policy_update_result_supported(input.result) ||
         !highest_action_supported(input.highest_action) ||
         !store_history_token(record->policy_result, sizeof(record->policy_result), input.result, true, history_policy_result_char) ||
@@ -758,7 +757,7 @@ bool approval_history_append_required_policy_update(
         ESP_LOGW(kTag, "Refusing policy update history record with invalid metadata");
         return false;
     }
-    record->rule_count = static_cast<uint16_t>(input.rule_count);
+    record->policy_count = static_cast<uint16_t>(input.policy_count);
     record->flags |= kStoredDigestPolicy;
     return store_history(history);
 }

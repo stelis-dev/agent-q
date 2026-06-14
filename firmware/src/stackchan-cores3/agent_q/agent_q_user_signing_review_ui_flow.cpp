@@ -1,5 +1,6 @@
 #include "agent_q_user_signing_review_ui_flow.h"
 
+#include "agent_q_modal_transition.h"
 #include "agent_q_timeout_window.h"
 
 #include <string.h>
@@ -58,6 +59,15 @@ bool clear_review_panel(const AgentQUserSigningReviewUiFlowOps& ops)
                SensitiveUiClearPolicy::preserve);
 }
 
+AgentQModalTransitionOps modal_transition_ops(const AgentQUserSigningReviewUiFlowOps& ops)
+{
+    return AgentQModalTransitionOps{
+        ops.clear_panel_if_kind,
+        nullptr,
+        ops.log_warn,
+    };
+}
+
 AgentQTimeoutWindow window_from_now_ms(
     const AgentQUserSigningReviewUiFlowOps& ops,
     uint32_t duration_ms)
@@ -94,6 +104,34 @@ void finish_error_terminal(
 bool terminal_pending(const AgentQUserSigningReviewUiFlowOps& ops)
 {
     return ops.terminal_pending != nullptr && ops.terminal_pending();
+}
+
+struct UserSigningWorkContext {
+    const AgentQUserSigningReviewUiFlowOps* ops = nullptr;
+    const char* request_id = nullptr;
+};
+
+void execute_user_signing_for_transition(void* context)
+{
+    const auto* work_context = static_cast<const UserSigningWorkContext*>(context);
+    if (work_context == nullptr ||
+        work_context->ops == nullptr ||
+        work_context->ops->execute_critical_section_and_finish == nullptr) {
+        return;
+    }
+    work_context->ops->execute_critical_section_and_finish(work_context->request_id);
+}
+
+void run_user_signing_then_clear_review_panel(
+    const AgentQUserSigningReviewUiFlowOps& ops,
+    const char* request_id)
+{
+    UserSigningWorkContext context{&ops, request_id};
+    modal_transition_run_work_then_clear_panel(
+        modal_transition_ops(ops),
+        AgentQUiPanelKind::user_signing_review,
+        execute_user_signing_for_transition,
+        &context);
 }
 
 }  // namespace
@@ -135,11 +173,8 @@ void user_signing_review_ui_accept(const AgentQUserSigningReviewUiFlowOps& ops)
                     ops.write_confirmation_history,
                     nullptr)
                 : AgentQUserSigningTransitionResult::invalid_argument;
-        clear_review_panel(ops);
         if (result == AgentQUserSigningTransitionResult::ok) {
-            if (ops.execute_critical_section_and_finish != nullptr) {
-                ops.execute_critical_section_and_finish(current.request_id);
-            }
+            run_user_signing_then_clear_review_panel(ops, current.request_id);
             return;
         }
         if (terminal_pending(ops)) {

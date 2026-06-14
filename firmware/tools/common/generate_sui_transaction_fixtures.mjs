@@ -26,6 +26,7 @@ const recipient = '0x' + 'bb'.repeat(32);
 const sponsoredGasOwner = '0x' + 'ee'.repeat(32);
 const gasObjectId = '0x' + 'cc'.repeat(32);
 const gasDigest = 'dd'.repeat(32);
+const nonSuiTokenPackage = '0x' + '99'.repeat(32);
 const amount = 1_000_000n;
 const amount2 = 2_000_000n;
 const gasPrice = 1_000n;
@@ -141,6 +142,10 @@ function splitCoinsCommand() {
   return enumVariant(2, concat(argGasCoin(), vector([argInput(0)])));
 }
 
+function splitGasCoinInput1Command() {
+  return enumVariant(2, concat(argGasCoin(), vector([argInput(1)])));
+}
+
 function splitInputCoinCommand() {
   return enumVariant(2, concat(argInput(0), vector([argInput(1)])));
 }
@@ -163,6 +168,10 @@ function transferNestedResultToInput2Command() {
 
 function resultReferenceTransferObjectsCommand() {
   return enumVariant(1, concat(vector([argResult(0)]), argInput(1)));
+}
+
+function transferResult1ToInput2Command() {
+  return enumVariant(1, concat(vector([argResult(1)]), argInput(2)));
 }
 
 function mergeCoinsCommand() {
@@ -437,6 +446,27 @@ function mergeKnownUnknownTx() {
   );
 }
 
+function mergeKnownKnownThenTransferTx() {
+  return transactionDataWithInputs(
+    [pure(u64(amount)), pure(u64(amount2)), pure(hexToBytes(recipient))],
+    [splitCoinsTwoAmountsCommand(), mergeSplitResultsCommand(), transferNestedResultToInput2Command()],
+  );
+}
+
+function mergeResultReferenceTransferTx() {
+  return transactionDataWithInputs(
+    [pure(u64(amount)), pure(u64(amount2)), pure(hexToBytes(recipient))],
+    [splitCoinsTwoAmountsCommand(), mergeSplitResultsCommand(), transferResult1ToInput2Command()],
+  );
+}
+
+function tokenAmountOverflowTx() {
+  return transactionDataWithInputs(
+    [pure(u64(18_446_744_073_709_551_615n)), pure(u64(1n))],
+    [splitCoinsTwoAmountsCommand()],
+  );
+}
+
 function moveCallVectorTypeArgTx() {
   return transactionDataWithInputs([pure(u64(amount))], [moveCallVectorTypeArgCommand()]);
 }
@@ -449,12 +479,12 @@ function upgradeTx() {
   return transactionDataWithInputs([pure(u64(amount))], [upgradeCommand()]);
 }
 
-function fundsWithdrawalInput(withdrawFromVariant = 0) {
+function fundsWithdrawalInput(withdrawFromVariant = 0, typeTag = typeTagStruct('0x' + '02'.padStart(64, '0'), 'sui', 'SUI')) {
   return enumVariant(
     2,
     concat(
       enumVariant(0, u64(amount)),
-      enumVariant(0, typeTagStruct('0x' + '02'.padStart(64, '0'), 'sui', 'SUI')),
+      enumVariant(0, typeTag),
       enumVariant(withdrawFromVariant),
     ),
   );
@@ -464,10 +494,24 @@ function fundsWithdrawalTx() {
   return transactionDataWithInputs([fundsWithdrawalInput(0)], [moveCallCommand()]);
 }
 
+function mixedSuiSourceTotalTx() {
+  return transactionDataWithInputs(
+    [fundsWithdrawalInput(0), pure(u64(amount))],
+    [moveCallCommand(), splitGasCoinInput1Command()],
+  );
+}
+
 function fundsWithdrawalTransferTx() {
   return transactionDataWithInputs(
     [fundsWithdrawalInput(0), pure(hexToBytes(recipient))],
     [transferInputObjectCommand()],
+  );
+}
+
+function nonSuiFundsWithdrawalTx() {
+  return transactionDataWithInputs(
+    [fundsWithdrawalInput(0, typeTagStruct(nonSuiTokenPackage, 'token', 'TEST'))],
+    [moveCallCommand()],
   );
 }
 
@@ -639,6 +683,15 @@ async function main() {
   const mergeKnownUnknown = mergeKnownUnknownTx();
   await writeText('merge_known_unknown_tx.bcs.hex', bytesToHex(mergeKnownUnknown));
   await writeSdkV2Oracle('merge_known_unknown_tx', mergeKnownUnknown);
+  const mergeKnownKnownThenTransfer = mergeKnownKnownThenTransferTx();
+  await writeText('merge_known_known_then_transfer_tx.bcs.hex', bytesToHex(mergeKnownKnownThenTransfer));
+  await writeSdkV2Oracle('merge_known_known_then_transfer_tx', mergeKnownKnownThenTransfer);
+  const mergeResultReferenceTransfer = mergeResultReferenceTransferTx();
+  await writeText('merge_result_reference_transfer_tx.bcs.hex', bytesToHex(mergeResultReferenceTransfer));
+  await writeSdkV2Oracle('merge_result_reference_transfer_tx', mergeResultReferenceTransfer);
+  const tokenAmountOverflow = tokenAmountOverflowTx();
+  await writeText('token_amount_overflow_tx.bcs.hex', bytesToHex(tokenAmountOverflow));
+  await writeSdkV2Oracle('token_amount_overflow_tx', tokenAmountOverflow);
   const moveCallVectorTypeArg = moveCallVectorTypeArgTx();
   await writeText('move_call_vector_type_arg_tx.bcs.hex', bytesToHex(moveCallVectorTypeArg));
   await writeSdkV2Oracle('move_call_vector_type_arg_tx', moveCallVectorTypeArg);
@@ -651,6 +704,12 @@ async function main() {
   const fundsWithdrawal = fundsWithdrawalTx();
   await writeText('funds_withdrawal_tx.bcs.hex', bytesToHex(fundsWithdrawal));
   await writeSdkV2Oracle('funds_withdrawal_tx', fundsWithdrawal);
+  const mixedSuiSourceTotal = mixedSuiSourceTotalTx();
+  await writeText('mixed_sui_source_total_tx.bcs.hex', bytesToHex(mixedSuiSourceTotal));
+  await writeSdkV2Oracle('mixed_sui_source_total_tx', mixedSuiSourceTotal);
+  const nonSuiFundsWithdrawal = nonSuiFundsWithdrawalTx();
+  await writeText('non_sui_funds_withdrawal_tx.bcs.hex', bytesToHex(nonSuiFundsWithdrawal));
+  await writeSdkV2Oracle('non_sui_funds_withdrawal_tx', nonSuiFundsWithdrawal);
   const fundsWithdrawalTransfer = fundsWithdrawalTransferTx();
   await writeText('funds_withdrawal_transfer_tx.bcs.hex', bytesToHex(fundsWithdrawalTransfer));
   await writeSdkV2Oracle('funds_withdrawal_transfer_tx', fundsWithdrawalTransfer);

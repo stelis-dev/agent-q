@@ -56,13 +56,6 @@ import {
   type SigningCapabilityEntry,
 } from "./provider-protocol.js";
 import {
-  COMMON_POLICY_FIELDS,
-  SUI_CURRENT_SIGN_RULE_BOUNDS,
-  SUI_SIGN_TRANSACTION_POLICY_FIELDS,
-  type PolicyFieldDescriptor,
-  type SignRuleBound,
-} from "./sui-policy-contract.js";
-import {
   sanitizeAckResultResponse,
   type AckResultRequest,
   type AckResultResponse,
@@ -92,23 +85,27 @@ import {
   APPROVAL_HISTORY_POLICY_UPDATE_RESULTS,
   APPROVAL_HISTORY_REASON_CODE_PATTERN,
   APPROVAL_HISTORY_RULE_REF_PATTERN,
+  MAX_POLICY_BLOCKCHAIN_LENGTH,
+  MAX_POLICY_BLOCKCHAINS,
+  MAX_POLICY_CONDITION_VALUES,
+  MAX_POLICY_CONDITIONS_PER_POLICY,
   MAX_APPROVAL_HISTORY_RECORDS,
-  MAX_POLICY_CHAIN_ID_LENGTH,
-  MAX_POLICY_CRITERION_VALUES,
   MAX_POLICY_FIELD_ID_LENGTH,
-  MAX_POLICY_METHOD_LENGTH,
-  MAX_POLICY_RULE_CRITERIA,
-  MAX_POLICY_RULE_COUNT,
-  MAX_POLICY_RULE_ID_LENGTH,
+  MAX_POLICY_ID_LENGTH,
+  MAX_POLICY_NETWORK_LENGTH,
+  MAX_POLICY_NETWORKS_PER_BLOCKCHAIN,
+  MAX_POLICY_POLICIES_PER_NETWORK,
+  MAX_POLICY_TOTAL_CONDITIONS,
+  MAX_POLICY_TOTAL_NETWORKS,
+  MAX_POLICY_TOTAL_POLICIES,
   MAX_POLICY_UPDATE_REQUEST_JSON_BYTES,
   MAX_POLICY_VALUE_LENGTH,
   POLICY_ACTIONS,
+  POLICY_ENTRY_ID_PATTERN,
   POLICY_FIELD_ID_PATTERN,
   POLICY_ID_PATTERN,
-  POLICY_IDENTIFIER_PATTERN,
   POLICY_OPERATORS,
   POLICY_PROPOSE_RESULT_STATUSES,
-  POLICY_RULE_ID_PATTERN,
   SIGNING_HISTORY_RECORD_KINDS,
   SIGNING_HISTORY_TERMINAL_RESULTS,
   SIGN_CHAIN_PATTERN,
@@ -170,13 +167,18 @@ export {
   MAX_APPROVAL_HISTORY_RECORDS,
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
-  MAX_POLICY_CHAIN_ID_LENGTH,
-  MAX_POLICY_CRITERION_VALUES,
+  MAX_POLICY_BLOCKCHAIN_LENGTH,
+  MAX_POLICY_BLOCKCHAINS,
+  MAX_POLICY_CONDITION_VALUES,
+  MAX_POLICY_CONDITIONS_PER_POLICY,
   MAX_POLICY_FIELD_ID_LENGTH,
-  MAX_POLICY_METHOD_LENGTH,
-  MAX_POLICY_RULE_CRITERIA,
-  MAX_POLICY_RULE_COUNT,
-  MAX_POLICY_RULE_ID_LENGTH,
+  MAX_POLICY_ID_LENGTH,
+  MAX_POLICY_NETWORK_LENGTH,
+  MAX_POLICY_NETWORKS_PER_BLOCKCHAIN,
+  MAX_POLICY_POLICIES_PER_NETWORK,
+  MAX_POLICY_TOTAL_CONDITIONS,
+  MAX_POLICY_TOTAL_NETWORKS,
+  MAX_POLICY_TOTAL_POLICIES,
   MAX_POLICY_UPDATE_REQUEST_JSON_BYTES,
   MAX_POLICY_VALUE_LENGTH,
   MAX_PROTOCOL_RESPONSE_LINE_BYTES,
@@ -189,12 +191,11 @@ export {
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS,
   POLICY_ACTIONS,
+  POLICY_ENTRY_ID_PATTERN,
   POLICY_FIELD_ID_PATTERN,
   POLICY_ID_PATTERN,
-  POLICY_IDENTIFIER_PATTERN,
   POLICY_OPERATORS,
   POLICY_PROPOSE_RESULT_STATUSES,
-  POLICY_RULE_ID_PATTERN,
   PROTOCOL_VERSION,
   SIGNING_HISTORY_RECORD_KINDS,
   SIGNING_HISTORY_TERMINAL_RESULTS,
@@ -396,29 +397,51 @@ export interface IdentifyDeviceResponse {
 }
 
 export type PolicyAction = "reject" | "sign";
-export type PolicyOperator = "eq" | "in" | "lte";
+export type PolicyOperator =
+  | "eq"
+  | "in"
+  | "not_in"
+  | "lte"
+  | "contains"
+  | "not_contains"
+  | "all_in"
+  | "none_in";
 
-export interface PolicyCriterion {
+export interface PolicyCondition {
   field: string;
   op: PolicyOperator;
+  where?: {
+    type: string;
+  };
   value?: string;
   values?: string[];
 }
 
-export interface PolicyRule {
+export interface PolicyEntry {
   id: string;
-  chain: string;
-  method: string;
   action: PolicyAction;
-  criteria: PolicyCriterion[];
+  conditions: PolicyCondition[];
+}
+
+export interface PolicyNetworkScope {
+  network: string;
+  policies: PolicyEntry[];
+}
+
+export interface PolicyBlockchainScope {
+  blockchain: string;
+  networks: PolicyNetworkScope[];
 }
 
 export interface PolicyDocument {
   schema: string;
   policyId: string;
   defaultAction: PolicyAction;
-  ruleCount: number;
-  rules: PolicyRule[];
+  blockchainCount: number;
+  networkCount: number;
+  policyCount: number;
+  conditionCount: number;
+  blockchains: PolicyBlockchainScope[];
 }
 
 export interface PolicyResponse {
@@ -457,7 +480,7 @@ export interface PolicyUpdateApprovalHistoryRecord extends ApprovalHistoryRecord
   eventKind: "policy_update";
   result: ApprovalHistoryPolicyUpdateResult;
   policyHash: string;
-  ruleCount: number;
+  policyCount: number;
   highestAction: ApprovalHistoryHighestAction;
 }
 
@@ -497,7 +520,10 @@ export type PolicyProposeResultStatus =
 
 export interface PolicyProposeResultPolicySummary {
   policyHash: string;
-  ruleCount: number;
+  blockchainCount: number;
+  networkCount: number;
+  policyCount: number;
+  conditionCount: number;
   highestAction: ApprovalHistoryHighestAction;
 }
 
@@ -1011,121 +1037,87 @@ function isBoundedPolicyString(value: unknown, maxLength: number): value is stri
   return typeof value === "string" && value.length > 0 && value.length <= maxLength;
 }
 
-function isPolicyIdentifierString(value: unknown, maxLength: number): value is string {
-  return isBoundedPolicyString(value, maxLength) && POLICY_IDENTIFIER_PATTERN.test(value);
+function isSupportedPolicyBlockchain(value: unknown): value is string {
+  return value === SUI_CHAIN_ID;
 }
 
-function policyRuleHasSupportedMethod(rule: Pick<PolicyRule, "chain" | "method">): boolean {
-  return rule.chain === SUI_CHAIN_ID && rule.method === SUI_SIGN_TRANSACTION_METHOD;
+function isSupportedPolicyNetwork(value: unknown): value is string {
+  return typeof value === "string" &&
+    SUI_SIGN_TRANSACTION_NETWORKS.includes(value as SuiSignTransactionNetwork);
 }
 
-function findPolicyFieldDescriptor(rule: Pick<PolicyRule, "chain" | "method">, field: string): PolicyFieldDescriptor | null {
-  if (!policyRuleHasSupportedMethod(rule)) {
-    return null;
-  }
-  return COMMON_POLICY_FIELDS[field] ?? SUI_SIGN_TRANSACTION_POLICY_FIELDS[field] ?? null;
+type PolicyValueKind = "string" | "u64_decimal" | "bool_string";
+
+interface CurrentPolicyFieldDescriptor {
+  type: PolicyValueKind;
+  operators: readonly PolicyOperator[];
+  whereType?: "required";
 }
 
-function policyOperatorAllowed(descriptor: PolicyFieldDescriptor, op: PolicyOperator): boolean {
-  switch (op) {
-    case "eq":
-      return descriptor.allowEq;
-    case "in":
-      return descriptor.allowIn;
-    case "lte":
-      return descriptor.allowLte;
-  }
+const CURRENT_POLICY_FIELD_DESCRIPTORS: Record<string, CurrentPolicyFieldDescriptor> = {
+  "sui.gas_budget_raw": { type: "u64_decimal", operators: ["eq", "lte"] },
+  "sui.gas_price_raw": { type: "u64_decimal", operators: ["eq", "lte"] },
+  "sui.gas_owner": { type: "string", operators: ["eq", "in", "not_in"] },
+  "sui.sponsored": { type: "bool_string", operators: ["eq"] },
+  "sui.command_count": { type: "u64_decimal", operators: ["eq", "lte"] },
+  "sui.command_kinds": { type: "string", operators: ["contains", "not_contains", "all_in", "none_in"] },
+  "sui.move_call_packages": { type: "string", operators: ["contains", "not_contains", "all_in", "none_in"] },
+  "sui.move_call_modules": { type: "string", operators: ["contains", "not_contains", "all_in", "none_in"] },
+  "sui.move_call_functions": { type: "string", operators: ["contains", "not_contains", "all_in", "none_in"] },
+  "sui.publish_present": { type: "bool_string", operators: ["eq"] },
+  "sui.upgrade_present": { type: "bool_string", operators: ["eq"] },
+  "sui.recipient_addresses": { type: "string", operators: ["contains", "not_contains", "all_in", "none_in"] },
+  "sui.pure_address_arguments": { type: "string", operators: ["contains", "not_contains", "none_in"] },
+  "sui.token_sources.type": { type: "string", operators: ["eq", "in", "not_in"] },
+  "sui.token_sources.source": { type: "string", operators: ["eq", "in"] },
+  "sui.token_sources.amount_raw": { type: "u64_decimal", operators: ["eq", "lte"] },
+  "sui.token_totals_by_type.amount_raw": { type: "u64_decimal", operators: ["eq", "lte"], whereType: "required" },
+  "sui.token_unknown_amount_present": { type: "bool_string", operators: ["eq"] },
+};
+
+function policyOperatorUsesValueList(op: PolicyOperator): boolean {
+  return op === "in" || op === "not_in" || op === "all_in" || op === "none_in";
 }
 
-function policyCriterionMatchesDescriptor(
-  rule: Pick<PolicyRule, "chain" | "method">,
-  criterion: PolicyCriterion,
-): boolean {
-  const descriptor = findPolicyFieldDescriptor(rule, criterion.field);
-  if (descriptor === null || !policyOperatorAllowed(descriptor, criterion.op)) {
+function policyConditionValueValid(type: PolicyValueKind, value: unknown): value is string {
+  if (!isBoundedPolicyString(value, MAX_POLICY_VALUE_LENGTH)) {
     return false;
   }
-  if (criterion.op === "in") {
-    if (criterion.values === undefined || criterion.value !== undefined) {
-      return false;
-    }
-    return descriptor.type !== "u64_decimal" ||
-      criterion.values.every((value) => isUint64DecimalString(value));
+  if (type === "u64_decimal") {
+    return isUint64DecimalString(value);
   }
-  if (criterion.value === undefined || criterion.values !== undefined) {
-    return false;
+  if (type === "bool_string") {
+    return value === "true" || value === "false";
   }
-  return descriptor.type !== "u64_decimal" || isUint64DecimalString(criterion.value);
+  return true;
 }
 
-function findPolicyCriterion(rule: PolicyRule, field: string): PolicyCriterion | null {
-  return rule.criteria.find((criterion) => criterion.field === field) ?? null;
+function policyConditionTypeSelectorValid(value: unknown): value is string {
+  return isBoundedPolicyString(value, MAX_POLICY_VALUE_LENGTH) && value.includes("::");
 }
 
-function criterionEqValue(rule: PolicyRule, field: string, value: string): boolean {
-  const criterion = findPolicyCriterion(rule, field);
-  return criterion?.op === "eq" && criterion.value === value && criterion.values === undefined;
-}
-
-function criterionLteBoundPresent(rule: PolicyRule, field: string): boolean {
-  const criterion = findPolicyCriterion(rule, field);
-  return criterion?.op === "lte" &&
-    criterion.value !== undefined &&
-    criterion.values === undefined &&
-    isUint64DecimalString(criterion.value);
-}
-
-function stringCriterionBounded(rule: PolicyRule, field: string): boolean {
-  const criterion = findPolicyCriterion(rule, field);
-  if (criterion?.op === "eq") {
-    return criterion.value !== undefined && criterion.values === undefined;
-  }
-  return criterion?.op === "in" &&
-    criterion.value === undefined &&
-    criterion.values !== undefined &&
-    criterion.values.length > 0;
-}
-
-function stringEqBoundPresent(rule: PolicyRule, field: string): boolean {
-  const criterion = findPolicyCriterion(rule, field);
-  return criterion?.op === "eq" &&
-    criterion.value !== undefined &&
-    criterion.values === undefined;
-}
-
-function signRuleBoundPresent(rule: PolicyRule, bound: SignRuleBound): boolean {
-  switch (bound.kind) {
-    case "eq":
-      return bound.value !== undefined && criterionEqValue(rule, bound.field, bound.value);
-    case "string":
-      return stringCriterionBounded(rule, bound.field);
-    case "string_eq":
-      return stringEqBoundPresent(rule, bound.field);
-    case "lte":
-      return criterionLteBoundPresent(rule, bound.field);
-  }
-}
-
-function policySignRuleIsBounded(rule: PolicyRule): boolean {
-  if (rule.action !== "sign") {
-    return true;
-  }
-  if (rule.chain !== SUI_CHAIN_ID || rule.method !== SUI_SIGN_TRANSACTION_METHOD) {
-    return false;
-  }
-  return SUI_CURRENT_SIGN_RULE_BOUNDS.every((bound) => signRuleBoundPresent(rule, bound));
-}
-
-function policySignRuleCountIsSupported(rules: PolicyRule[]): boolean {
-  return rules.filter((rule) => rule.action === "sign").length <= 1;
-}
-
-function sanitizePolicyCriterion(value: unknown): PolicyCriterion | null {
+function sanitizePolicyConditionWhere(value: unknown): { type: string } | null {
   if (!isRecord(value)) {
     return null;
   }
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Policy criterion must not include secret material.");
+    throw new ProtocolError("protocol_error", "Policy condition selector must not include secret material.");
+  }
+  if (!hasOnlyObjectKeys(value, ["type"])) {
+    throw new ProtocolError("protocol_error", "Policy condition selector contains unsupported fields.");
+  }
+  if (!policyConditionTypeSelectorValid(value.type)) {
+    return null;
+  }
+  return { type: value.type };
+}
+
+function sanitizePolicyCondition(value: unknown): PolicyCondition | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (hasSecretPayloadKey(value)) {
+    throw new ProtocolError("protocol_error", "Policy condition must not include secret material.");
   }
   if (!isBoundedPolicyString(value.field, MAX_POLICY_FIELD_ID_LENGTH) ||
       !POLICY_FIELD_ID_PATTERN.test(value.field) ||
@@ -1135,76 +1127,160 @@ function sanitizePolicyCriterion(value: unknown): PolicyCriterion | null {
   }
 
   const op = value.op as PolicyOperator;
-  if (op === "in") {
-    if (!hasOnlyObjectKeys(value, ["field", "op", "values"])) {
-      throw new ProtocolError("protocol_error", "Policy criterion contains unsupported fields.");
+  const descriptor = CURRENT_POLICY_FIELD_DESCRIPTORS[value.field];
+  if (descriptor === undefined || !descriptor.operators.includes(op)) {
+    return null;
+  }
+  const hasWhere = Object.prototype.hasOwnProperty.call(value, "where");
+  if (hasWhere && descriptor.whereType !== "required") {
+    return null;
+  }
+  let where: { type: string } | undefined;
+  if (hasWhere) {
+    const parsedWhere = sanitizePolicyConditionWhere(value.where);
+    if (parsedWhere === null) {
+      return null;
+    }
+    where = parsedWhere;
+  }
+  if (descriptor.whereType === "required" && where === undefined) {
+    return null;
+  }
+  if (policyOperatorUsesValueList(op)) {
+    const allowedKeys = descriptor.whereType === "required"
+      ? ["field", "op", "where", "values"]
+      : ["field", "op", "values"];
+    if (!hasOnlyObjectKeys(value, allowedKeys)) {
+      throw new ProtocolError("protocol_error", "Policy condition contains unsupported fields.");
     }
     if (!Array.isArray(value.values) ||
         value.values.length === 0 ||
-        value.values.length > MAX_POLICY_CRITERION_VALUES ||
-        !value.values.every((item) => isBoundedPolicyString(item, MAX_POLICY_VALUE_LENGTH))) {
+        value.values.length > MAX_POLICY_CONDITION_VALUES ||
+        !value.values.every((item) => policyConditionValueValid(descriptor.type, item))) {
       return null;
     }
-    return {
+    const output: PolicyCondition = {
       field: value.field,
       op,
       values: [...value.values],
     };
+    if (where !== undefined) {
+      output.where = where;
+    }
+    return output;
   }
 
-  if (!hasOnlyObjectKeys(value, ["field", "op", "value"])) {
-    throw new ProtocolError("protocol_error", "Policy criterion contains unsupported fields.");
+  const allowedKeys = descriptor.whereType === "required"
+    ? ["field", "op", "where", "value"]
+    : ["field", "op", "value"];
+  if (!hasOnlyObjectKeys(value, allowedKeys)) {
+    throw new ProtocolError("protocol_error", "Policy condition contains unsupported fields.");
   }
-  if (!isBoundedPolicyString(value.value, MAX_POLICY_VALUE_LENGTH)) {
+  if (!policyConditionValueValid(descriptor.type, value.value)) {
     return null;
   }
-  return {
+  const output: PolicyCondition = {
     field: value.field,
     op,
     value: value.value,
   };
+  if (where !== undefined) {
+    output.where = where;
+  }
+  return output;
 }
 
-function sanitizePolicyRule(value: unknown): PolicyRule | null {
+function sanitizePolicyEntry(value: unknown): PolicyEntry | null {
   if (!isRecord(value)) {
     return null;
   }
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Policy rule must not include secret material.");
+    throw new ProtocolError("protocol_error", "Policy entry must not include secret material.");
   }
-  if (!hasOnlyObjectKeys(value, ["id", "chain", "method", "action", "criteria"])) {
-    throw new ProtocolError("protocol_error", "Policy rule contains unsupported fields.");
+  if (!hasOnlyObjectKeys(value, ["id", "action", "conditions"])) {
+    throw new ProtocolError("protocol_error", "Policy entry contains unsupported fields.");
   }
   if (
-    !isBoundedPolicyString(value.id, MAX_POLICY_RULE_ID_LENGTH) ||
-    !POLICY_RULE_ID_PATTERN.test(value.id) ||
-    !isPolicyIdentifierString(value.chain, MAX_POLICY_CHAIN_ID_LENGTH) ||
-    !isPolicyIdentifierString(value.method, MAX_POLICY_METHOD_LENGTH) ||
+    !isBoundedPolicyString(value.id, MAX_POLICY_ID_LENGTH) ||
+    !POLICY_ENTRY_ID_PATTERN.test(value.id) ||
     typeof value.action !== "string" ||
     !POLICY_ACTIONS.includes(value.action as PolicyAction) ||
-    !Array.isArray(value.criteria) ||
-    value.criteria.length > MAX_POLICY_RULE_CRITERIA
+    !Array.isArray(value.conditions) ||
+    value.conditions.length > MAX_POLICY_CONDITIONS_PER_POLICY ||
+    (value.action === "sign" && value.conditions.length === 0)
   ) {
     return null;
   }
 
-  const criteria = value.criteria.map((criterion) => sanitizePolicyCriterion(criterion));
-  if (criteria.some((criterion) => criterion === null)) {
+  const conditions = value.conditions.map((condition) => sanitizePolicyCondition(condition));
+  if (conditions.some((condition) => condition === null)) {
     return null;
   }
-  const rule = {
+  return {
     id: value.id,
-    chain: value.chain,
-    method: value.method,
     action: value.action as PolicyAction,
-    criteria: criteria as PolicyCriterion[],
+    conditions: conditions as PolicyCondition[],
   };
-  if (!policyRuleHasSupportedMethod(rule) ||
-      !rule.criteria.every((criterion) => policyCriterionMatchesDescriptor(rule, criterion)) ||
-      !policySignRuleIsBounded(rule)) {
+}
+
+function sanitizePolicyNetworkScope(value: unknown): PolicyNetworkScope | null {
+  if (!isRecord(value)) {
     return null;
   }
-  return rule;
+  if (hasSecretPayloadKey(value)) {
+    throw new ProtocolError("protocol_error", "Policy network scope must not include secret material.");
+  }
+  if (!hasOnlyObjectKeys(value, ["network", "policies"])) {
+    throw new ProtocolError("protocol_error", "Policy network scope contains unsupported fields.");
+  }
+  if (!isBoundedPolicyString(value.network, MAX_POLICY_NETWORK_LENGTH) ||
+      !isSupportedPolicyNetwork(value.network) ||
+      !Array.isArray(value.policies) ||
+      value.policies.length > MAX_POLICY_POLICIES_PER_NETWORK) {
+    return null;
+  }
+  const policies = value.policies.map((policy) => sanitizePolicyEntry(policy));
+  if (policies.some((policy) => policy === null)) {
+    return null;
+  }
+  const policyIds = new Set((policies as PolicyEntry[]).map((policy) => policy.id));
+  if (policyIds.size !== policies.length) {
+    return null;
+  }
+  return {
+    network: value.network,
+    policies: policies as PolicyEntry[],
+  };
+}
+
+function sanitizePolicyBlockchainScope(value: unknown): PolicyBlockchainScope | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (hasSecretPayloadKey(value)) {
+    throw new ProtocolError("protocol_error", "Policy blockchain scope must not include secret material.");
+  }
+  if (!hasOnlyObjectKeys(value, ["blockchain", "networks"])) {
+    throw new ProtocolError("protocol_error", "Policy blockchain scope contains unsupported fields.");
+  }
+  if (!isBoundedPolicyString(value.blockchain, MAX_POLICY_BLOCKCHAIN_LENGTH) ||
+      !isSupportedPolicyBlockchain(value.blockchain) ||
+      !Array.isArray(value.networks) ||
+      value.networks.length > MAX_POLICY_NETWORKS_PER_BLOCKCHAIN) {
+    return null;
+  }
+  const networks = value.networks.map((network) => sanitizePolicyNetworkScope(network));
+  if (networks.some((network) => network === null)) {
+    return null;
+  }
+  const networkIds = new Set((networks as PolicyNetworkScope[]).map((network) => network.network));
+  if (networkIds.size !== networks.length) {
+    return null;
+  }
+  return {
+    blockchain: value.blockchain,
+    networks: networks as PolicyNetworkScope[],
+  };
 }
 
 export function sanitizeCurrentPolicyDocument(value: unknown): PolicyDocument | null {
@@ -1214,7 +1290,16 @@ export function sanitizeCurrentPolicyDocument(value: unknown): PolicyDocument | 
   if (hasSecretPayloadKey(value)) {
     throw new ProtocolError("protocol_error", "Policy document must not include secret material.");
   }
-  if (!hasOnlyObjectKeys(value, ["schema", "policyId", "defaultAction", "ruleCount", "rules"])) {
+  if (!hasOnlyObjectKeys(value, [
+    "schema",
+    "policyId",
+    "defaultAction",
+    "blockchainCount",
+    "networkCount",
+    "policyCount",
+    "conditionCount",
+    "blockchains",
+  ])) {
     throw new ProtocolError("protocol_error", "Policy document contains unsupported fields.");
   }
   if (
@@ -1222,28 +1307,60 @@ export function sanitizeCurrentPolicyDocument(value: unknown): PolicyDocument | 
     typeof value.policyId !== "string" ||
     !POLICY_ID_PATTERN.test(value.policyId) ||
     value.defaultAction !== "reject" ||
-    typeof value.ruleCount !== "number" ||
-    !Number.isInteger(value.ruleCount) ||
-    value.ruleCount < 0 ||
-    value.ruleCount > MAX_POLICY_RULE_COUNT ||
-    !Array.isArray(value.rules) ||
-    value.rules.length !== value.ruleCount
+    typeof value.blockchainCount !== "number" ||
+    !Number.isInteger(value.blockchainCount) ||
+    value.blockchainCount < 0 ||
+    value.blockchainCount > MAX_POLICY_BLOCKCHAINS ||
+    typeof value.networkCount !== "number" ||
+    !Number.isInteger(value.networkCount) ||
+    value.networkCount < 0 ||
+    value.networkCount > MAX_POLICY_TOTAL_NETWORKS ||
+    typeof value.policyCount !== "number" ||
+    !Number.isInteger(value.policyCount) ||
+    value.policyCount < 0 ||
+    value.policyCount > MAX_POLICY_TOTAL_POLICIES ||
+    typeof value.conditionCount !== "number" ||
+    !Number.isInteger(value.conditionCount) ||
+    value.conditionCount < 0 ||
+    value.conditionCount > MAX_POLICY_TOTAL_CONDITIONS ||
+    !Array.isArray(value.blockchains) ||
+    value.blockchains.length !== value.blockchainCount
   ) {
     return null;
   }
-  const rules = value.rules.map((rule) => sanitizePolicyRule(rule));
-  if (rules.some((rule) => rule === null)) {
+  const blockchains = value.blockchains.map((blockchain) => sanitizePolicyBlockchainScope(blockchain));
+  if (blockchains.some((blockchain) => blockchain === null)) {
     return null;
   }
-  if (!policySignRuleCountIsSupported(rules as PolicyRule[])) {
+  const blockchainIds = new Set((blockchains as PolicyBlockchainScope[]).map((blockchain) => blockchain.blockchain));
+  if (blockchainIds.size !== blockchains.length) {
+    return null;
+  }
+  const networkCount = (blockchains as PolicyBlockchainScope[])
+    .reduce((sum, blockchain) => sum + blockchain.networks.length, 0);
+  const policyCount = (blockchains as PolicyBlockchainScope[])
+    .reduce((sum, blockchain) => sum + blockchain.networks
+      .reduce((networkSum, network) => networkSum + network.policies.length, 0), 0);
+  const conditionCount = (blockchains as PolicyBlockchainScope[])
+    .reduce((sum, blockchain) => sum + blockchain.networks
+      .reduce((networkSum, network) => networkSum + network.policies
+        .reduce((policySum, policy) => policySum + policy.conditions.length, 0), 0), 0);
+  if (
+    networkCount !== value.networkCount ||
+    policyCount !== value.policyCount ||
+    conditionCount !== value.conditionCount
+  ) {
     return null;
   }
   return {
     schema: value.schema,
     policyId: value.policyId,
     defaultAction: value.defaultAction,
-    ruleCount: value.ruleCount,
-    rules: rules as PolicyRule[],
+    blockchainCount: value.blockchainCount,
+    networkCount: value.networkCount,
+    policyCount: value.policyCount,
+    conditionCount: value.conditionCount,
+    blockchains: blockchains as PolicyBlockchainScope[],
   };
 }
 
@@ -1257,23 +1374,45 @@ function sanitizePolicyProposeResultPolicy(value: unknown): PolicyProposeResultP
   if (hasSecretPayloadKey(value)) {
     throw new ProtocolError("protocol_error", "policy_propose_result policy metadata must not include secret material.");
   }
-  if (!hasOnlyObjectKeys(value, ["policyHash", "ruleCount", "highestAction"])) {
+  if (!hasOnlyObjectKeys(value, [
+    "policyHash",
+    "blockchainCount",
+    "networkCount",
+    "policyCount",
+    "conditionCount",
+    "highestAction",
+  ])) {
     throw new ProtocolError("protocol_error", "policy_propose_result policy metadata contains unsupported fields.");
   }
   if (
     typeof value.policyHash !== "string" ||
     !POLICY_ID_PATTERN.test(value.policyHash) ||
-    typeof value.ruleCount !== "number" ||
-    !Number.isInteger(value.ruleCount) ||
-    value.ruleCount < 0 ||
-    value.ruleCount > MAX_POLICY_RULE_COUNT ||
+    typeof value.blockchainCount !== "number" ||
+    !Number.isInteger(value.blockchainCount) ||
+    value.blockchainCount < 0 ||
+    value.blockchainCount > MAX_POLICY_BLOCKCHAINS ||
+    typeof value.networkCount !== "number" ||
+    !Number.isInteger(value.networkCount) ||
+    value.networkCount < 0 ||
+    value.networkCount > MAX_POLICY_TOTAL_NETWORKS ||
+    typeof value.policyCount !== "number" ||
+    !Number.isInteger(value.policyCount) ||
+    value.policyCount < 0 ||
+    value.policyCount > MAX_POLICY_TOTAL_POLICIES ||
+    typeof value.conditionCount !== "number" ||
+    !Number.isInteger(value.conditionCount) ||
+    value.conditionCount < 0 ||
+    value.conditionCount > MAX_POLICY_TOTAL_CONDITIONS ||
     !APPROVAL_HISTORY_HIGHEST_ACTIONS.includes(value.highestAction as ApprovalHistoryHighestAction)
   ) {
     throw new ProtocolError("protocol_error", "policy_propose_result policy metadata is malformed.");
   }
   return {
     policyHash: value.policyHash,
-    ruleCount: value.ruleCount,
+    blockchainCount: value.blockchainCount,
+    networkCount: value.networkCount,
+    policyCount: value.policyCount,
+    conditionCount: value.conditionCount,
     highestAction: value.highestAction as ApprovalHistoryHighestAction,
   };
 }
@@ -1299,7 +1438,7 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
     "policyHash",
     "ruleRef",
     "result",
-    "ruleCount",
+    "policyCount",
     "highestAction",
     "recordKind",
     "terminalResult",
@@ -1331,10 +1470,10 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
       !APPROVAL_HISTORY_POLICY_UPDATE_RESULTS.includes(value.result as ApprovalHistoryPolicyUpdateResult) ||
       typeof value.policyHash !== "string" ||
       !POLICY_ID_PATTERN.test(value.policyHash) ||
-      typeof value.ruleCount !== "number" ||
-      !Number.isInteger(value.ruleCount) ||
-      value.ruleCount < 0 ||
-      value.ruleCount > MAX_POLICY_RULE_COUNT ||
+      typeof value.policyCount !== "number" ||
+      !Number.isInteger(value.policyCount) ||
+      value.policyCount < 0 ||
+      value.policyCount > MAX_POLICY_TOTAL_POLICIES ||
       !APPROVAL_HISTORY_HIGHEST_ACTIONS.includes(value.highestAction as ApprovalHistoryHighestAction)
     ) {
       throw new ProtocolError("protocol_error", "Approval history policy update record is malformed.");
@@ -1347,7 +1486,7 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
       reasonCode: value.reasonCode,
       result: value.result as ApprovalHistoryPolicyUpdateResult,
       policyHash: value.policyHash,
-      ruleCount: value.ruleCount,
+      policyCount: value.policyCount,
       highestAction: value.highestAction as ApprovalHistoryHighestAction,
     };
   }
@@ -1355,7 +1494,7 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
   if (value.eventKind === "signing") {
     if (
       value.result !== undefined ||
-      value.ruleCount !== undefined ||
+      value.policyCount !== undefined ||
       value.highestAction !== undefined ||
       !SIGNING_HISTORY_RECORD_KINDS.includes(value.recordKind as SigningHistoryRecordKind) ||
       (value.authorization !== "user" && value.authorization !== "policy") ||

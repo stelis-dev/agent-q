@@ -9,8 +9,8 @@
 #include "agent_q_sign_transaction_limits.h"
 #include "agent_q_user_signing_limits.h"
 #include "agent_q_sui_account.h"
+#include "agent_q_common/sui/agent_q_sui_offline_policy_facts.h"
 #include "agent_q_common/sui/agent_q_sui_sign_transaction_adapter.h"
-#include "agent_q_common/sui/agent_q_sui_token_flow_facts.h"
 #include "agent_q_common/sui/agent_q_sui_transaction_facts.h"
 
 namespace agent_q {
@@ -34,7 +34,7 @@ struct AgentQSuiPreparedSignTransaction {
     size_t tx_bytes_size;
     char payload_digest[kAgentQApprovalHistoryDigestSize];
     SuiPolicySubjectFacts sui_policy_subject;
-    SuiTokenFlowFacts sui_token_flow;
+    SuiOfflinePolicyConditionFacts* sui_offline_policy_facts;
     SuiReviewSummary sui_review;
     bool user_mode_authorization_covered;
     bool policy_mode_authorization_covered;

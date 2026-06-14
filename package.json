@@ -8,8 +8,6 @@
     "build": "npm --workspace @stelis/agent-q-core run build:self && npm --workspace @stelis/agent-q run build:self && npm --workspace @stelis/agent-q-provider-sui run build:self",
     "build:example-sui-dapp-kit": "npm --workspace @stelis/agent-q-example-sui-dapp-kit run build",
     "build:examples": "npm run build:example-sui-dapp-kit",
-    "generate:sui-policy-contract": "node tools/generate_sui_policy_contract.mjs",
-    "test:generated": "node tools/generate_sui_policy_contract.mjs --check",
-    "test": "npm run test:generated && npm run build && npm --workspace @stelis/agent-q-core run test:self && npm --workspace @stelis/agent-q run test:self && npm --workspace @stelis/agent-q-provider-sui run test:self"
+    "test": "npm run build && npm --workspace @stelis/agent-q-core run test:self && npm --workspace @stelis/agent-q run test:self && npm --workspace @stelis/agent-q-provider-sui run test:self"
   }
 }

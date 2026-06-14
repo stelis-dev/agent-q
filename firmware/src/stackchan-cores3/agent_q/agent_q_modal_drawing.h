@@ -19,6 +19,7 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_settings_cancel_clicked = nullptr;
     lv_event_cb_t on_settings_human_approval_input_clicked = nullptr;
     lv_event_cb_t on_settings_signing_mode_clicked = nullptr;
+    lv_event_cb_t on_settings_policy_reset_clicked = nullptr;
     lv_event_cb_t on_settings_change_pin_clicked = nullptr;
     lv_event_cb_t on_settings_reset_clicked = nullptr;
     lv_event_cb_t on_error_recovery_erase_clicked = nullptr;
@@ -46,10 +47,13 @@ struct AgentQModalDrawingCallbacks {
 
 struct AgentQPolicyUpdateReviewViewModel {
     const char* policy_hash = nullptr;
-    size_t rule_count = 0;
+    size_t blockchain_count = 0;
+    size_t network_count = 0;
+    size_t policy_count = 0;
+    size_t condition_count = 0;
     const char* default_action = nullptr;
     const char* highest_action = nullptr;
-    const char* method_summary = nullptr;
+    const char* scope_summary = nullptr;
     const char* review_summary = nullptr;
 };
 

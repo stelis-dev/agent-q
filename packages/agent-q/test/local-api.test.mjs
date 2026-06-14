@@ -5,15 +5,41 @@ import { createServer } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-  buildCurrentSuiTransferPolicyExample,
+  buildMinimalSuiTestnetPolicy,
   createLocalApiHttpServer,
   startLocalApiServer,
 } from "../dist/local-api.js";
 import { AgentQError } from "@stelis/agent-q-core/adapter-internal";
+import { MAX_SUI_SIGN_TRANSACTION_TX_BYTES } from "@stelis/agent-q-core/protocol";
 
 const deviceId = "a508d833-5c83-4680-88bb-18aee976881e";
 const suiAddress = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
 const suiPublicKey = "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=";
+const policyHash = "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3";
+
+function currentPolicyDocument(policies = []) {
+  const conditionCount = policies.reduce((sum, policy) => sum + policy.conditions.length, 0);
+  return {
+    schema: "agentq.policy",
+    policyId: policyHash,
+    defaultAction: "reject",
+    blockchainCount: 1,
+    networkCount: 1,
+    policyCount: policies.length,
+    conditionCount,
+    blockchains: [
+      {
+        blockchain: "sui",
+        networks: [
+          {
+            network: "testnet",
+            policies,
+          },
+        ],
+      },
+    ],
+  };
+}
 
 function defaultCore(overrides = {}) {
   return {
@@ -74,13 +100,7 @@ function defaultCore(overrides = {}) {
       return {
         source: "live",
         deviceId,
-        policy: {
-          schema: "agentq.policy.v0",
-          policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-          defaultAction: "reject",
-          ruleCount: 0,
-          rules: [],
-        },
+        policy: currentPolicyDocument(),
       };
     },
     async getApprovalHistory() {
@@ -119,8 +139,11 @@ function defaultCore(overrides = {}) {
         status: "applied",
         reasonCode: "device_confirmed",
         policy: {
-          policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-          ruleCount: 1,
+          policyHash: policyHash,
+          blockchainCount: 1,
+          networkCount: 1,
+          policyCount: 1,
+          conditionCount: 1,
           highestAction: "sign",
         },
       };
@@ -171,11 +194,33 @@ test("Admin page serves the local management UI without session tokens", async (
     const body = await response.text();
     assert.equal(response.status, 200);
     assert.match(body, /Agent-Q Admin/);
+    assert.match(body, /id="policySaveOverlay"/);
     assert.doesNotMatch(body, /sessionId/);
     const jsResponse = await fetch(`${baseUrl}/admin.js`);
     const jsBody = await jsResponse.text();
     assert.equal(jsResponse.status, 200);
+    assert.match(jsBody, /showPolicySaveOverlay\("Waiting for device-local approval\."\)/);
+    assert.match(jsBody, /showPolicySaveOverlay\("Refreshing active policy\."\)/);
+    assert.match(jsBody, /showPolicySaveOverlay\("Updating approval history\."\)/);
     assert.doesNotMatch(jsBody, /sessionId/);
+  });
+});
+
+test("Admin policy save overlay closes when save and refresh requests complete", async () => {
+  await withAdminServer(defaultCore(), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/admin.js`);
+    const jsBody = await response.text();
+    assert.equal(response.status, 200);
+    const proposeIndex = jsBody.indexOf('api("/api/policy_propose"');
+    const policyGetIndex = jsBody.indexOf('api("/api/policy_get"', proposeIndex);
+    const historyIndex = jsBody.indexOf('api("/api/get_approval_history"', policyGetIndex);
+    const hideIndex = jsBody.indexOf("hidePolicySaveOverlay();", historyIndex);
+    assert.ok(proposeIndex > 0, "policy propose request must exist");
+    assert.ok(policyGetIndex > proposeIndex, "active policy refresh must follow policy propose");
+    assert.ok(historyIndex > policyGetIndex, "history refresh must follow active policy refresh");
+    assert.ok(hideIndex > historyIndex, "overlay must hide after save and refresh requests complete");
+    assert.doesNotMatch(jsBody, /requestAnimationFrame/);
+    assert.doesNotMatch(jsBody, /setTimeout/);
   });
 });
 
@@ -208,7 +253,7 @@ test("Local API rejects cross-origin or non-JSON POST before core dispatch", asy
     async (baseUrl) => {
       const textPlain = await postRaw(
         baseUrl,
-        "/api/policy_propose_example",
+        "/api/policy_propose",
         { "Content-Type": "text/plain" },
         JSON.stringify({}),
       );
@@ -218,7 +263,7 @@ test("Local API rejects cross-origin or non-JSON POST before core dispatch", asy
 
       const crossOrigin = await postRaw(
         baseUrl,
-        "/api/policy_propose_example",
+        "/api/policy_propose",
         {
           "Content-Type": "application/json",
           Origin: "https://example.invalid",
@@ -238,7 +283,7 @@ test("Local API accepts same-origin JSON requests", async () => {
   await withAdminServer(defaultCore(), async (baseUrl) => {
     const response = await postRaw(
       baseUrl,
-      "/api/policy_preview",
+      "/api/policy_template_minimal_sui_testnet",
       {
         "Content-Type": "application/json; charset=utf-8",
         Origin: baseUrl,
@@ -248,7 +293,7 @@ test("Local API accepts same-origin JSON requests", async () => {
     );
     assert.equal(response.status, 200);
     assert.equal(response.body.ok, true);
-    assert.deepEqual(response.body.result.policy, buildCurrentSuiTransferPolicyExample());
+    assert.deepEqual(response.body.result.policy, buildMinimalSuiTestnetPolicy());
   });
 });
 
@@ -291,17 +336,42 @@ test("Local API fails closed when a core success result is malformed", async () 
   );
 });
 
-test("Admin policy preview builds the current supported Sui transfer policy example", async () => {
+test("Admin policy templates build current policy documents", async () => {
   await withAdminServer(defaultCore(), async (baseUrl) => {
-    const response = await postJson(baseUrl, "/api/policy_preview");
-    assert.equal(response.status, 200);
-    assert.equal(response.body.ok, true);
-    assert.deepEqual(response.body.result.policy, buildCurrentSuiTransferPolicyExample());
+    const minimal = await postJson(baseUrl, "/api/policy_template_minimal_sui_testnet");
+    assert.equal(minimal.status, 200);
+    assert.equal(minimal.body.ok, true);
+    assert.deepEqual(minimal.body.result.policy, buildMinimalSuiTestnetPolicy());
+    const policy = minimal.body.result.policy.blockchains[0].networks[0].policies[0];
+    assert.equal(policy.action, "sign");
+    assert.deepEqual(policy.conditions.map((condition) => condition.field), [
+      "sui.token_sources.source",
+      "sui.token_totals_by_type.amount_raw",
+      "sui.token_unknown_amount_present",
+    ]);
+    assert.deepEqual(policy.conditions[1].where, {
+      type: "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
+    });
   });
 });
 
-test("Admin propose path forwards a server-built proposal through Agent-Q core", async () => {
+test("Local API does not expose policy reset shortcuts", async () => {
+  await withAdminServer(defaultCore(), async (baseUrl) => {
+    for (const path of [
+      "/api/policy_template_default_reject",
+      "/api/policy_reset_to_default_reject",
+    ]) {
+      const response = await postJson(baseUrl, path, { deviceId });
+      assert.equal(response.status, 404);
+      assert.equal(response.body.ok, false);
+      assert.equal(response.body.error.code, "unsupported_method");
+    }
+  });
+});
+
+test("Admin propose path forwards editor policy through Agent-Q core", async () => {
   let submitted;
+  const policy = buildMinimalSuiTestnetPolicy();
   await withAdminServer(
     defaultCore({
       async policyPropose(input) {
@@ -312,20 +382,24 @@ test("Admin propose path forwards a server-built proposal through Agent-Q core",
           status: "applied",
           reasonCode: "device_confirmed",
           policy: {
-            policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-            ruleCount: 1,
+            policyHash: policyHash,
+            blockchainCount: 1,
+            networkCount: 1,
+            policyCount: 1,
+            conditionCount: 1,
             highestAction: "sign",
           },
         };
       },
     }),
     async (baseUrl) => {
-      const response = await postJson(baseUrl, "/api/policy_propose_example", {
+      const response = await postJson(baseUrl, "/api/policy_propose", {
         deviceId,
+        policy,
       });
       assert.equal(response.status, 200);
       assert.equal(response.body.ok, true);
-      assert.deepEqual(submitted.policy, buildCurrentSuiTransferPolicyExample());
+      assert.deepEqual(submitted.policy, policy);
       assert.equal(submitted.deviceId, deviceId);
       assert.equal(response.body.result.status, "applied");
     },
@@ -396,13 +470,26 @@ async function waitForExit(child) {
 
 test("Local API rejects unsupported fields instead of silently ignoring them", async () => {
   await withAdminServer(defaultCore(), async (baseUrl) => {
-    const response = await postJson(baseUrl, "/api/policy_propose_example", {
+    const response = await postJson(baseUrl, "/api/policy_propose", {
+      policy: buildMinimalSuiTestnetPolicy(),
       privateKey: "must-not-forward",
     });
     assert.equal(response.status, 400);
     assert.equal(response.body.ok, false);
     assert.equal(response.body.error.code, "invalid_params");
     assert.equal(response.body.error.message, "The provided method parameters are invalid.");
+  });
+});
+
+test("Local API rejects policy proposals without an object policy", async () => {
+  await withAdminServer(defaultCore(), async (baseUrl) => {
+    const response = await postJson(baseUrl, "/api/policy_propose", {
+      deviceId,
+      policy: [],
+    });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.error.code, "invalid_params");
   });
 });
 
@@ -466,6 +553,41 @@ test("Local API exposes signer account and transaction-signing endpoints", async
   assert.equal(calls[1][1].purpose, "sui-cli");
 });
 
+test("Local API forwards a max-size Sui transaction body to core", async () => {
+  let signedTxBytes = "";
+  const txBytes = Buffer.alloc(MAX_SUI_SIGN_TRANSACTION_TX_BYTES, 0xa5).toString("base64");
+  await withAdminServer(
+    defaultCore({
+      async signTransaction(input) {
+        signedTxBytes = input.txBytes;
+        return {
+          source: "live",
+          deviceId,
+          status: "signed",
+          authorization: "user",
+          chain: "sui",
+          method: "sign_transaction",
+          signature: `${"A".repeat(130)}==`,
+        };
+      },
+    }),
+    async (baseUrl) => {
+      const response = await postJson(baseUrl, "/api/sign_transaction", {
+        deviceId,
+        purpose: "sui-cli",
+        chain: "sui",
+        method: "sign_transaction",
+        network: "testnet",
+        txBytes,
+      });
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      assert.equal(response.body.ok, true);
+      assert.equal(response.body.result.status, "signed");
+    },
+  );
+  assert.equal(signedTxBytes, txBytes);
+});
+
 test("Local API preserves blind-signing approval history metadata", async () => {
   await withAdminServer(
     defaultCore({
@@ -520,7 +642,7 @@ test("Local API rejects an explicit invalid deviceId instead of using the defaul
   });
 });
 
-test("Local API rejects active policy documents with unsupported reject-rule methods", async () => {
+test("Local API rejects active policy documents with unsupported scopes", async () => {
   await withAdminServer(
     defaultCore({
       async policyGet() {
@@ -528,17 +650,16 @@ test("Local API rejects active policy documents with unsupported reject-rule met
           source: "live",
           deviceId,
           policy: {
-            schema: "agentq.policy.v0",
-            policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-            defaultAction: "reject",
-            ruleCount: 1,
-            rules: [
+            ...currentPolicyDocument(),
+            blockchains: [
               {
-                id: "reject_unknown_method",
-                chain: "unknown",
-                method: "unknown_method",
-                action: "reject",
-                criteria: [],
+                blockchain: "unknown",
+                networks: [
+                  {
+                    network: "testnet",
+                    policies: [],
+                  },
+                ],
               },
             ],
           },

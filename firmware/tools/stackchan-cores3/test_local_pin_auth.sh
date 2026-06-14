@@ -536,6 +536,27 @@ int main()
     }
 
     {
+        agent_q::test_set_tick(335);
+        expect(agent_q::local_pin_auth_begin_policy_reset_setting(
+                   335,
+                   pin_window(335, 365)),
+               "policy reset setting PIN auth begins");
+        enter_pin("123456");
+        expect(agent_q::local_pin_auth_submit(336, 0, test_input_window(360), 345) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "policy reset setting starts current-PIN verification");
+        agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
+        expect(agent_q::local_pin_auth_complete_verify_job(verify_result, pin_window(336, 360), 0, 0) ==
+                   agent_q::AgentQLocalPinAuthVerifyResult::verified_settings_policy_reset,
+               "verified policy reset setting stays local-settings owned");
+        expect_stage(
+            agent_q::AgentQLocalPinAuthPurpose::settings_policy_reset,
+            agent_q::AgentQLocalPinAuthStage::pin_verifying,
+            "policy reset setting waits for UI-owned commit handling");
+        agent_q::local_pin_auth_clear_flow();
+    }
+
+    {
         agent_q::test_set_tick(340);
         expect(agent_q::local_pin_auth_begin_change_pin(340, pin_window(340, 370)),
                "change PIN auth begins before current-PIN wrong PIN");

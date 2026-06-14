@@ -1,264 +1,269 @@
 # Agent-Q Policy Schema
 
-This document describes the current Agent-Q policy document shape, request
-context validation, and Sui `sign_transaction` facts that Firmware currently
-derives from serialized transaction bytes.
+This document describes the current Agent-Q policy document shape and the Sui
+`sign_transaction` facts that Firmware can derive from serialized transaction
+bytes for offline policy evaluation.
 
-It describes implemented source behavior only. It is not a product-active
-claim.
+It describes source behavior only. It is not a product-active claim.
 
-The current Sui `sign_transaction` policy field/operator list and required
-bounded `sign` rule shape are authored in
-`specs/sui-sign-transaction-policy-contract.tsv`. Core and Firmware consume
-generated projections from that manifest, and freshness checks fail when the
-tracked projections drift. Firmware remains the runtime authority for policy
-evaluation and signing decisions.
+## Current Status
 
-## 1. Current Status
-
-- The current policy schema is `agentq.policy.v0`.
+- The current policy schema is `agentq.policy`.
 - Firmware stores one active policy document.
-- Firmware evaluates policy rules.
+- Firmware owns policy validation, policy storage, policy evaluation, and
+  signing decisions.
 - Host process, MCP, provider, Sui CLI signer, Admin Page, apps, SDK JSON,
-  dry-run output, and display strings are not policy authorities.
-- Sui `sign_transaction` policy-mode signing is source-wired for
-  current-contract GasCoin-derived proven-SUI split-result transfer
-  transactions whose active policy has one matching bounded `sign` rule.
-  Firmware rejects other valid policy-incomplete Sui transactions.
+  dry-run output, and display strings are request surfaces, not policy
+  authorities.
 - Policy mode does not fall back to user confirmation or user-mode blind
   signing.
+- Current source contains the policy document parser/storage/readback boundary,
+  the Sui offline condition-facts extractor, and the current policy evaluator for
+  Sui `sign_transaction`. Firmware signs in policy mode only when the active
+  current policy has a matching `sign` policy over complete Firmware-derived
+  offline condition facts. Missing, incomplete, unmatched, or reject-matched
+  policy coverage fails closed with `policy_rejected`.
 
-## 2. Current Policy Document Shape
+## Policy Document Shape
 
 ```text
-schema = agentq.policy.v0
-default_action = reject
+schema = agentq.policy
+defaultAction = reject
 
-rules[]:
-  rule A OR rule B OR rule C
-
-criteria[] inside one rule:
-  criterion 1 AND criterion 2 AND criterion 3
+blockchains[]
+  blockchain
+  networks[]
+    network
+    policies[] = OR
+      id
+      action
+      conditions[] = AND
+        field
+        op
+        value | values
 ```
+
+`blockchain` and `network` are scope selectors. They are not condition fields.
+Network is request metadata; serialized Sui transaction bytes do not prove
+network identity.
 
 Current actions:
 
 | Action | Meaning |
 | --- | --- |
-| `reject` | Reject the request. |
-| `sign` | Sign only for methods whose policy descriptor supports signing and whose matching rule is bounded. |
+| `reject` | Reject when the policy matches. |
+| `sign` | Allow policy-mode signing only when every selected condition evaluates true in Firmware. |
 
 Current operators:
 
-| Operator | Meaning |
-| --- | --- |
-| `eq` | The field value equals one value. |
-| `in` | The field value equals one value from a bounded list. |
-| `lte` | The unsigned decimal field value is less than or equal to one bound. |
+| Operator | Shape | Meaning |
+| --- | --- | --- |
+| `eq` | `value` | Scalar field equals one value. |
+| `in` | `values[]` | Scalar field equals one value from a bounded list. |
+| `not_in` | `values[]` | Scalar field does not equal any listed value. |
+| `lte` | `value` | Unsigned decimal field is less than or equal to one bound. |
+| `contains` | `value` | Set field contains one value. |
+| `not_contains` | `value` | Set field does not contain one value. |
+| `all_in` | `values[]` | Every observed set value is inside the allow list. |
+| `none_in` | `values[]` | No observed set value is inside the deny list. |
 
-Current policy fact value types:
+Current value types:
 
 | Type | Representation |
 | --- | --- |
 | `string` | Canonical ASCII string. |
 | `u64_decimal` | Canonical unsigned decimal string. |
+| `bool_string` | `true` or `false`. |
 
-## 3. Current Sui `sign_transaction` Policy Behavior
+Sui type strings used in token conditions must match the canonical type string
+that Firmware derives from transaction bytes. For SUI, use:
 
-Current Sui `sign_transaction` policy behavior:
+```text
+0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI
+```
+
+## Sui Policy Fields
+
+Firmware derives these fields from the same serialized `TransactionData` bytes
+that would be signed. It does not trust host JSON or SDK JSON for policy facts.
+
+### Scope
+
+| Selector | Source | Values |
+| --- | --- | --- |
+| `blockchain` | Policy document scope | `sui` |
+| `network` | Request metadata and policy document scope | `mainnet`, `testnet`, `devnet`, `localnet` |
+
+### Transaction Fields
+
+| Field | Type | Operators |
+| --- | --- | --- |
+| `sui.gas_budget_raw` | `u64_decimal` | `eq`, `lte` |
+| `sui.gas_price_raw` | `u64_decimal` | `eq`, `lte` |
+| `sui.gas_owner` | `string` | `eq`, `in`, `not_in` |
+| `sui.sponsored` | `bool_string` | `eq` |
+| `sui.command_count` | `u64_decimal` | `eq`, `lte` |
+
+### Command Fields
+
+| Field | Type | Operators |
+| --- | --- | --- |
+| `sui.command_kinds` | string set | `contains`, `not_contains`, `all_in`, `none_in` |
+| `sui.move_call_packages` | string set | `contains`, `not_contains`, `all_in`, `none_in` |
+| `sui.move_call_modules` | string set | `contains`, `not_contains`, `all_in`, `none_in` |
+| `sui.move_call_functions` | string set | `contains`, `not_contains`, `all_in`, `none_in` |
+| `sui.publish_present` | `bool_string` | `eq` |
+| `sui.upgrade_present` | `bool_string` | `eq` |
+
+`TransferObjects`, `SplitCoins`, and `MergeCoins` can be controlled through
+`sui.command_kinds` as coarse command switches. They are not token type or
+token amount facts by themselves.
+
+### Address Fields
+
+| Field | Type | Operators |
+| --- | --- | --- |
+| `sui.recipient_addresses` | address string set | `contains`, `not_contains`, `all_in`, `none_in` |
+| `sui.pure_address_arguments` | address string set | `contains`, `not_contains`, `none_in` |
+
+Firmware treats arbitrary pure bytes as addresses only when the transaction
+context expects an address and the bytes decode as a canonical Sui address.
+
+### Token Fields
+
+| Field | Type | Operators |
+| --- | --- | --- |
+| `sui.token_sources.type` | type string | `eq`, `in`, `not_in` |
+| `sui.token_sources.source` | string | `eq`, `in` |
+| `sui.token_sources.amount_raw` | `u64_decimal` | `eq`, `lte` |
+| `sui.token_totals_by_type.amount_raw` | `u64_decimal` | `eq`, `lte` |
+| `sui.token_unknown_amount_present` | `bool_string` | `eq` |
+
+`sui.token_totals_by_type.amount_raw` requires a `where.type` selector. The
+selector is the canonical token type whose aggregate amount is compared:
+
+```json
+{
+  "field": "sui.token_totals_by_type.amount_raw",
+  "where": {
+    "type": "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
+  },
+  "op": "lte",
+  "value": "1000000000"
+}
+```
+
+Without `where.type`, a token-total amount condition is invalid policy material.
+Do not combine `sui.token_sources.type` with `sui.token_sources.amount_raw` to
+express a per-token total amount policy. `token_sources` fields describe every
+observed bounded source; they are not a row-join mechanism for selecting one
+token type's total.
+
+Supported offline token amount sources:
+
+- `GasCoin` split: SUI only, amount from a pure `u64` split amount.
+- `FundsWithdrawal<T>`: SUI or non-SUI, type and amount from transaction bytes,
+  source from sender or sponsor.
+
+Unsupported token amount sources:
+
+- Direct object input.
+- Object id, version, or digest used to infer token type or balance.
+- Split or merge paths whose input token provenance is unknown.
+- Any value requiring online object state, dry-run output, or registry metadata.
+
+Unknown amount is not zero. If a token condition needs an amount or type that
+Firmware cannot derive offline, policy evaluation must fail closed.
+
+## Minimal Sui Testnet Policy Template
+
+The Admin Page includes this current-schema template for testing policy-mode
+signing on Sui testnet. It authorizes only requests whose Firmware-derived
+offline facts show SUI from `GasCoin` splits, no unknown token amount, and a
+total amount of at most 1 SUI.
+
+```json
+{
+  "schema": "agentq.policy",
+  "defaultAction": "reject",
+  "blockchains": [
+    {
+      "blockchain": "sui",
+      "networks": [
+        {
+          "network": "testnet",
+          "policies": [
+            {
+              "id": "sign-testnet-sui-up-to-one",
+              "action": "sign",
+              "conditions": [
+                {
+                  "field": "sui.token_sources.source",
+                  "op": "eq",
+                  "value": "gas_coin"
+                },
+                {
+                  "field": "sui.token_totals_by_type.amount_raw",
+                  "where": {
+                    "type": "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
+                  },
+                  "op": "lte",
+                  "value": "1000000000"
+                },
+                {
+                  "field": "sui.token_unknown_amount_present",
+                  "op": "eq",
+                  "value": "false"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+This template is intentionally narrow. It is not a claim that every Sui
+transaction spending at most 1 SUI will pass; the Firmware evaluator only uses
+offline facts it can derive from the exact transaction bytes it signs.
+
+## Requester Guidance
+
+For policy-mode requests that need a SUI amount limit, build the transaction so
+the amount is observable from transaction bytes:
+
+- use `SplitCoins(GasCoin, [amount])` for SUI;
+- keep split amounts as pure `u64` values;
+- pass the split result into transfer or application commands;
+- avoid direct coin-object inputs when the policy depends on token type or
+  amount, because Firmware cannot know a direct object coin balance offline;
+- avoid mixing known and unknown token provenance when the policy depends on
+  token amount;
+- send the request with the intended policy scope network, such as `testnet`.
+
+For non-SUI token amount policy, use `FundsWithdrawal<T>` inputs when available
+for the transaction form. Firmware can derive the type and amount from those
+bytes. Object ids, object versions, object digests, symbols, decimals, dry-run
+results, and fullnode state are not policy facts.
+
+## Policy-Mode Outcomes
 
 | Condition | Outcome |
 | --- | --- |
-| Malformed transaction bytes | No signing. |
-| Unsupported transaction identity, version, or kind | No signing. |
-| Wrong account or sponsored gas owner | No signing. |
-| Valid transaction with incomplete policy coverage | `policy_rejected`. |
-| Valid transaction with matching `reject` rule | `policy_rejected`. |
-| Valid transaction matching the current automatic signing contract and a bounded `sign` rule | Signed through policy mode. |
-| User-mode clear or blind signing is available | Not used by policy mode. |
+| Malformed or unsupported transaction bytes | No signing. |
+| Wrong account or unsupported account binding | No signing. |
+| No active policy or no matching blockchain/network scope | Reject. |
+| Missing or incomplete condition facts | Reject. |
+| Unknown token type, unknown token amount, mixed known/unknown token provenance, or amount overflow | Reject. |
+| Matching reject policy | Reject. |
+| Matching sign policy | Authorize policy-mode Sui `sign_transaction` signing after the active policy, request network, account-binding, and complete offline condition-facts gates pass. |
 
-The current Sui method descriptor supports policy `reject` rules and bounded
-policy `sign` rules for Sui `sign_transaction`.
+User-mode clear or blind signing is separate. Policy mode must not route to user
+confirmation or blind signing.
 
-Current policy examples:
-
-- Default reject: `defaultAction: "reject"` with no rules. This rejects all
-  policy-mode signing requests.
-- Explicit reject rule: `action: "reject"` with criteria over the supported
-  fields below. Matching requests are rejected. A broader transaction whose
-  policy coverage is incomplete is rejected before active rules are evaluated.
-- Automatic Sui transfer sign rule: exactly one `action: "sign"` rule that
-  bounds the current GasCoin-derived split-result transfer contract. The
-  `policy_propose` example in `specs/PROTOCOL.md` and the Admin Page policy
-  example use this shape.
-
-Current automatic policy `sign` rules are intentionally narrower than the full
-parser. They are accepted only for transaction-derived SUI transfer facts whose
-amount and SUI provenance are both proven by Firmware without unexposed
-arguments:
-
-- Sui `TransactionData::V1 -> ProgrammableTransaction`.
-- Stored-account sender and gas owner, gas budget, gas price, transaction kind,
-  expiration kind, command count, command kinds, total SUI out, recipient count,
-  recipient address, recipient amount, and first token-flow source/provenance
-  are all bounded by the rule.
-- The command list is exactly `SplitCoins` followed by one `TransferObjects`
-  command. The transferred object must be the first split result, and that
-  split result must come from `GasCoin`; non-gas coin sources are not automatic
-  policy-signable.
-- The policy document may contain at most one `sign` rule, because the current
-  device review summary represents only one automatic signing rule.
-
-`MoveCall`, `MergeCoins`, `Publish`, `Upgrade`, `MakeMoveVec`, direct-object
-amounts, funds-withdrawal inputs, non-gas split sources, and unknown amounts do
-not currently satisfy automatic policy signing coverage.
-
-User-mode review is separate from policy-mode evaluation. Some broader parsed
-transactions can still be shown for device-confirmed review when user review
-coverage allows. In the product `sign_transaction` policy path, a valid
-transaction whose policy coverage is incomplete returns `policy_rejected`
-before the active policy document is evaluated, so broader parsed facts do not
-currently create product-path `reject` rule matches.
-
-## 4. Current Parser-Observable Sui Facts
-
-Firmware currently parses Sui `TransactionData::V1` with
-`ProgrammableTransaction` kind into bounded offline facts.
-
-Source of truth:
-
-- `firmware/src/common/agent_q/sui/agent_q_sui_transaction_facts.h`
-- `firmware/src/common/agent_q/sui/agent_q_sui_transaction_facts.cpp`
-- `firmware/src/common/agent_q/sui/testdata/sui_transaction_authorization_coverage.tsv`
-
-Catalog columns:
-
-| Column | Meaning |
-| --- | --- |
-| Policy field | Current policy field name, or `none` when Firmware observes the value but does not currently expose it as a policy fact. |
-| Field type | Current policy value type when the value is a policy fact. |
-| Source struct/path | Firmware parser struct or path that owns the observation. |
-| Offline observable | Whether Firmware observes this from serialized transaction bytes without online lookup. |
-| Policy usable now | Whether current policy facts expose this value. |
-| Reason | Current reason for the classification. |
-| Allowed operators | Current operators for the policy field. |
-
-### Common Transaction Facts
-
-| Policy field | Field type | Source struct/path | Offline observable | Policy usable now | Reason | Allowed operators |
-| --- | --- | --- | --- | --- | --- | --- |
-| `common.chain` | `string` | Sui method adapter constant | yes | yes | Route identity is known after `(type, chain, method)` classification. | `eq`, `in` |
-| `common.method` | `string` | Sui method adapter constant | yes | yes | Method identity is known after route classification. | `eq`, `in` |
-| `common.intent` | `string` | Sui method adapter constant | yes | yes | Current supported intent is `programmable_transaction`. | `eq`, `in` |
-| `sui.transaction_kind` | `string` | `SuiParsedTransactionFacts.transaction_kind` | yes | yes | Firmware accepts Sui `ProgrammableTransaction` for this path. | `eq`, `in` |
-| `sui.sender_address` | `string` | `SuiParsedTransactionFacts.sender` | yes | yes | Sender is encoded in transaction bytes. | `eq`, `in` |
-| `sui.gas_owner_address` | `string` | `SuiParsedTransactionFacts.gas_owner` | yes | yes | Gas owner is encoded in transaction bytes. | `eq`, `in` |
-| `sui.gas_budget` | `u64_decimal` | `SuiParsedTransactionFacts.gas_budget` | yes | yes | Gas budget is encoded as `u64`. | `eq`, `lte` |
-| `sui.gas_price` | `u64_decimal` | `SuiParsedTransactionFacts.gas_price` | yes | yes | Gas price is encoded as `u64`. | `eq`, `lte` |
-| `sui.expiration_kind` | `string` | `SuiParsedTransactionFacts.expiration_kind` | yes | yes | Expiration variant is encoded in transaction bytes. | `eq`, `in` |
-| `none` | `n/a` | `SuiParsedTransactionFacts.expiration_epoch` | yes | no | Firmware parses epoch expiration, but current Sui policy facts do not expose it. | none |
-| `none` | `n/a` | `SuiParsedTransactionFacts.valid_during` | yes | no | Firmware parses valid-during bounds, but current Sui policy facts do not expose them. | none |
-| `sui.command_count` | `u64_decimal` | `SuiParsedTransactionFacts.command_count` | yes | yes | Command count is parsed and bounded by Firmware capacity. | `eq`, `lte` |
-| `none` | `n/a` | `SuiParsedTransactionFacts.input_count` | yes | no | Firmware parses input count, but current Sui policy facts do not expose it. | none |
-
-### Request Context
-
-Request context values are not Sui transaction facts. They are protocol fields
-validated by Firmware before signing work.
-
-| Policy field | Field type | Source struct/path | Offline observable | Policy usable now | Reason | Allowed operators |
-| --- | --- | --- | --- | --- | --- | --- |
-| `none` | `n/a` | `sign_transaction params.network` | no | no | Firmware validates the request network as one of `mainnet`, `testnet`, `devnet`, or `localnet`, but current Sui transaction bytes do not prove network identity. Request network is not emitted as a policy authorization fact. | none |
-
-### Gas Payment Object Facts
-
-| Policy field | Field type | Source struct/path | Offline observable | Policy usable now | Reason | Allowed operators |
-| --- | --- | --- | --- | --- | --- | --- |
-| `none` | `n/a` | `SuiParsedTransactionFacts.gas_payments[].object_id` | yes | no | Firmware parses gas payment object ids, but current Sui policy facts do not expose them. | none |
-| `none` | `n/a` | `SuiParsedTransactionFacts.gas_payments[].version` | yes | no | Firmware parses gas payment object versions, but current Sui policy facts do not expose them. | none |
-| `none` | `n/a` | `SuiParsedTransactionFacts.gas_payments[].digest_hex` | yes | no | Firmware parses gas payment object digests, but current Sui policy facts do not expose them. | none |
-
-### Input Facts
-
-| Policy field | Field type | Source struct/path | Offline observable | Policy usable now | Reason | Allowed operators |
-| --- | --- | --- | --- | --- | --- | --- |
-| `none` | `n/a` | `SuiCallArgFact.kind` | yes | no | Firmware parses input kind, but current Sui policy facts do not expose it. | none |
-| `none` | `n/a` | `SuiCallArgFact.pure_length` and `pure_bytes` | yes | no | Pure bytes are observable, but current Sui policy facts do not type or expose them. | none |
-| `none` | `n/a` | `SuiCallArgFact.object_ref.object_id` | yes | no | Firmware parses input object ids, but current Sui policy facts do not expose them. | none |
-| `none` | `n/a` | `SuiCallArgFact.object_ref.version` | yes | no | Firmware parses input object versions, but current Sui policy facts do not expose them. | none |
-| `none` | `n/a` | `SuiCallArgFact.object_ref.digest_hex` | yes | no | Firmware parses input object digests, but current Sui policy facts do not expose them. | none |
-| `none` | `n/a` | `SuiCallArgFact.shared_initial_version` | yes | no | Firmware parses shared object initial version, but current Sui policy facts do not expose it. | none |
-| `none` | `n/a` | `SuiCallArgFact.shared_mutable` | yes | no | Firmware parses shared object mutability, but current Sui policy facts do not expose it. | none |
-| `none` | `n/a` | `SuiCallArgFact.object_receiving` | yes | no | Firmware parses receiving object refs, but current Sui policy facts do not expose them. | none |
-| `none` | `n/a` | `SuiFundsWithdrawalFact.amount` | yes | no | Firmware parses funds withdrawal amount, but current Sui policy facts do not expose it. | none |
-| `none` | `n/a` | `SuiFundsWithdrawalFact.type` | yes | no | Firmware parses funds withdrawal type, but current Sui policy facts do not expose it. | none |
-| `none` | `n/a` | `SuiFundsWithdrawalFact.source` | yes | no | Firmware parses funds withdrawal source, but current Sui policy facts do not expose it. | none |
-
-### Command Facts
-
-Policy field names with `N` mean `0 <= N < 8`, the current bounded command
-capacity.
-
-`Policy usable now` means the fact can be used by current policy evaluation.
-It does not mean the command shape is automatically policy-signable. Automatic
-policy signing is limited to the current transfer contract described above.
-
-| Policy field | Field type | Source struct/path | Offline observable | Policy usable now | Reason | Allowed operators |
-| --- | --- | --- | --- | --- | --- | --- |
-| `sui.commandN_kind` | `string` | `SuiCommandFact.kind` | yes | yes | Command kind is parsed from transaction bytes. | `eq`, `in` |
-| `sui.commandN_move_call_package` | `string` | `SuiCommandFact.move_call.package` | yes | yes | MoveCall package id is encoded in transaction bytes. | `eq`, `in` |
-| `sui.commandN_move_call_module` | `string` | `SuiCommandFact.move_call.module` | yes | yes | MoveCall module name is encoded in transaction bytes. | `eq`, `in` |
-| `sui.commandN_move_call_function` | `string` | `SuiCommandFact.move_call.function` | yes | yes | MoveCall function name is encoded in transaction bytes. | `eq`, `in` |
-| `sui.commandN_move_call_type_args` | `u64_decimal` | `SuiCommandFact.move_call.type_argument_count` | yes | yes | MoveCall type-argument count is parsed and bounded. | `eq`, `lte` |
-| `sui.commandN_move_call_type_argM` | `string` | `SuiCommandFact.move_call.type_arguments[M].canonical` | yes | yes | MoveCall type arguments are parsed into canonical strings. | `eq`, `in` |
-| `none` | `n/a` | `SuiCommandFact.move_call.arguments[]` | yes | no | Firmware parses argument references, but current Sui policy facts do not expose them. | none |
-| `sui.recipient_count` | `u64_decimal` | `TransferObjects` recipient commands | yes | yes | Firmware counts transfer-recipient commands in bounded parser output. | `eq`, `in`, `lte` |
-| `sui.recipient0_address` | `string` | First `TransferObjects` recipient when it is a typed address input | yes | yes | Firmware emits this fact only when the first transfer recipient is decoded as an address. If decoding fails, policy coverage is incomplete. Automatic `sign` rules require `eq` for this field. | `eq`, `in` |
-| `sui.recipient0_amount_raw` | `u64_decimal` | Known amount sent to the first transfer recipient | yes | yes when known | Firmware exposes the amount only when it is known from transaction bytes. Unknown object balances do not create this fact. | `eq`, `in`, `lte` |
-| `sui.move_call0_package` | `string` | First `MoveCall` package | yes | yes | Firmware exposes the first MoveCall package for token-flow policy matching. | `eq`, `in` |
-| `sui.move_call0_module` | `string` | First `MoveCall` module | yes | yes | Firmware exposes the first MoveCall module for token-flow policy matching. | `eq`, `in` |
-| `sui.move_call0_function` | `string` | First `MoveCall` function | yes | yes | Firmware exposes the first MoveCall function for token-flow policy matching. | `eq`, `in` |
-| `sui.move_call0_sui_amount_raw` | `u64_decimal` | Known SUI amount passed into the first MoveCall | yes | yes when known | Firmware exposes this amount only when the argument graph resolves to known transaction-encoded amounts. | `eq`, `in`, `lte` |
-| `sui.sui_total_out_complete` | `string` | Token-flow analyzer aggregate state | yes | yes | Value is `yes` only when the total outgoing SUI amount is fully known from transaction bytes. | `eq` |
-| `sui.sui_total_out_raw` | `u64_decimal` | Known total outgoing SUI amount | yes | yes when complete | Firmware exposes the aggregate only when every contributing amount is known. | `eq`, `in`, `lte` |
-| `sui.transfer_total_out_raw` | `u64_decimal` | Known SUI amount sent through `TransferObjects` | yes | yes when complete | Firmware exposes the aggregate only when every contributing transfer amount is known. | `eq`, `in`, `lte` |
-| `sui.move_call_total_in_raw` | `u64_decimal` | Known SUI amount passed into MoveCall arguments | yes | yes when complete | Firmware exposes the aggregate only when every contributing MoveCall amount is known. | `eq`, `in`, `lte` |
-| `sui.coin_flow0_source_kind` | `string` | First token-flow source kind | yes | yes | Source kind is one of the Firmware-defined token-flow source labels. | `eq`, `in` |
-| `sui.coin_flow0_asset_state` | `string` | First token-flow SUI provenance state | yes | yes | Value is `proven_sui` only when Firmware can prove the flow is SUI, currently from `GasCoin`; otherwise `unproven`. Automatic `sign` rules require `eq proven_sui`. | `eq`, `in` |
-| `sui.coin_flow0_amount_known` | `string` | First token-flow amount state | yes | yes | Value is `yes` when the first flow amount is known and `no` otherwise. | `eq` |
-| `sui.coin_flow0_amount_raw` | `u64_decimal` | First token-flow known amount | yes | yes when known | Firmware exposes the amount only when known from transaction bytes. | `eq`, `in`, `lte` |
-| `sui.coin_flow0_sink_kind` | `string` | First token-flow sink kind | yes | yes | Sink kind is one of the Firmware-defined token-flow sink labels. | `eq`, `in` |
-| `sui.coin_flow0_object_id` | `string` | First token-flow object id when present | yes | yes when present | Firmware exposes the object id only when the flow is tied to an object reference. | `eq`, `in` |
-| `none` | `n/a` | `SplitCoins` source, amount args, and result refs beyond the exposed aggregates | yes | no | Firmware parses bounded command references but exposes only the current aggregate and first-flow policy fields. | none |
-| `none` | `n/a` | `MergeCoins` destination and source refs beyond the exposed aggregates | yes | no | Firmware parses bounded command references but exposes merge effects through current aggregate policy fields. | none |
-| `none` | `n/a` | `MakeMoveVec` type and argument refs | yes | no | Firmware parses vector construction facts, but current Sui policy facts do not expose them. | none |
-| `none` | `n/a` | `Publish` module count and dependencies | yes | no | Firmware parses publish metadata, but current Sui policy facts do not expose it. | none |
-| `none` | `n/a` | `Upgrade` module count, dependencies, package, and ticket | yes | no | Firmware parses upgrade metadata, but current Sui policy facts do not expose it. | none |
-
-## 5. Current Token Amount Policy Status
-
-Current Sui policy facts expose bounded token-flow amount fields when Firmware
-can derive those amounts from serialized transaction bytes.
-
-Firmware can observe `SplitCoins` amount arguments and connect split results to
-`TransferObjects`, `MoveCall`, and `MergeCoins` uses inside the bounded parser
-capacity. A split amount is counted as automatic-policy-signable SUI only when
-the split source is `GasCoin`. A known numeric amount from a non-gas coin
-source, direct object, funds-withdrawal input, or unproven merge result is not a
-known SUI amount for automatic policy signing. `MergeCoins` is modeled as an
-internal coin-state update, not as external SUI outflow. Firmware cannot infer
-the balance or asset type of an existing coin object from its object id,
-version, or digest.
-
-Unknown amount is not zero. When an amount is unknown or incomplete, Firmware
-does not emit the corresponding raw amount fact. A policy criterion that
-requires that missing amount fact does not match. Sui policy-mode signing
-requires the current automatic signing contract and a matching bounded `sign`
-rule. Current automatic signing coverage is limited to GasCoin-derived
-proven-SUI split-result transfer facts; broader parsed facts do not
-automatically make a transaction policy-signable.
-
-## 6. Unsupported Online-State Facts
+## Unsupported Online-State Facts
 
 These values are not policy facts because Firmware cannot verify them from
 serialized transaction bytes alone:
@@ -273,4 +278,3 @@ serialized transaction bytes alone:
 | Token decimal or symbol | Requires registry or package metadata outside transaction bytes. |
 | Upstream user/app/dapp/agent intent | Firmware cannot observe why the request was created. |
 | Whether the host built the transaction online successfully | Firmware can validate bytes, not the host's build path. |
-| Current network object availability or lock state | Requires online chain state. |

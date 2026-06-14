@@ -25,6 +25,8 @@ CXX_BIN="${CXX:-c++}"
 for required in \
   "${AGENT_Q_DIR}/agent_q_policy_update_review_ui_flow.cpp" \
   "${AGENT_Q_DIR}/agent_q_policy_update_review_ui_flow.h" \
+  "${AGENT_Q_DIR}/agent_q_modal_transition.cpp" \
+  "${AGENT_Q_DIR}/agent_q_modal_transition.h" \
   "${AGENT_Q_DIR}/agent_q_user_signing_review_ui_flow.cpp" \
   "${AGENT_Q_DIR}/agent_q_user_signing_review_ui_flow.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -138,6 +140,9 @@ int g_user_display_error_calls = 0;
 int g_user_execute_calls = 0;
 int g_user_finish_terminal_calls = 0;
 int g_user_finish_error_calls = 0;
+int g_user_order_counter = 0;
+int g_user_execute_order = 0;
+int g_user_clear_review_order = 0;
 char g_user_last_error_code[48] = {};
 
 void expect(bool condition, const char* label)
@@ -159,10 +164,13 @@ void reset_policy()
     g_policy_snapshot.session_id = "session-1";
     g_policy_snapshot.review_window = {10, 200};
     g_policy_snapshot.policy_hash = "hash";
-    g_policy_snapshot.rule_count = 2;
+    g_policy_snapshot.blockchain_count = 1;
+    g_policy_snapshot.network_count = 1;
+    g_policy_snapshot.policy_count = 2;
+    g_policy_snapshot.condition_count = 3;
     g_policy_snapshot.default_action = "reject";
-    g_policy_snapshot.highest_action = "allow";
-    g_policy_snapshot.method_summary = "methods";
+    g_policy_snapshot.highest_action = "sign";
+    g_policy_snapshot.scope_summary = "scopes=1/1 policies=2 conditions=3";
     g_policy_snapshot.review_summary = "summary";
     g_policy_continue_result = agent_q::AgentQPolicyUpdateFlowTransitionResult::ok;
     g_policy_draw_result = true;
@@ -223,6 +231,9 @@ void reset_user()
     g_user_execute_calls = 0;
     g_user_finish_terminal_calls = 0;
     g_user_finish_error_calls = 0;
+    g_user_order_counter = 0;
+    g_user_execute_order = 0;
+    g_user_clear_review_order = 0;
     g_user_last_error_code[0] = '\0';
 }
 
@@ -240,7 +251,11 @@ bool draw_policy_review(
 {
     ++g_policy_draw_calls;
     expect(strcmp(model.policy_hash, "hash") == 0, "policy show passes hash");
-    expect(model.rule_count == 2, "policy show passes rule count");
+    expect(model.blockchain_count == 1, "policy show passes blockchain count");
+    expect(model.network_count == 1, "policy show passes network count");
+    expect(model.policy_count == 2, "policy show passes policy count");
+    expect(model.condition_count == 3, "policy show passes condition count");
+    expect(strcmp(model.scope_summary, "scopes=1/1 policies=2 conditions=3") == 0, "policy show passes scope summary");
     expect(window.deadline == 200, "policy show passes review window");
     return g_policy_draw_result;
 }
@@ -253,6 +268,7 @@ bool clear_panel(agent_q::AgentQUiPanelKind kind, agent_q::SensitiveUiClearPolic
     }
     if (kind == agent_q::AgentQUiPanelKind::user_signing_review) {
         ++g_user_clear_review_calls;
+        g_user_clear_review_order = ++g_user_order_counter;
     }
     if (kind == agent_q::AgentQUiPanelKind::local_pin_auth) {
         ++g_user_clear_pin_calls;
@@ -421,6 +437,7 @@ void execute_signing(const char* request_id)
 {
     expect(strcmp(request_id, "sign-1") == 0, "execute uses request id");
     ++g_user_execute_calls;
+    g_user_execute_order = ++g_user_order_counter;
 }
 void finish_user_terminal(const char* request_id)
 {
@@ -545,6 +562,8 @@ void test_user_accept_reject_and_pin()
     expect(g_user_physical_calls == 1, "user no-PIN accept records physical confirmation");
     expect(g_user_clear_review_calls == 1, "user no-PIN accept clears review");
     expect(g_user_execute_calls == 1, "user no-PIN accept executes signing");
+    expect(g_user_execute_order < g_user_clear_review_order,
+           "user no-PIN accept keeps review panel until signing work completes");
 
     reset_user();
     g_user_requires_pin = true;
@@ -616,6 +635,7 @@ CPP
   -I"${REPO_ROOT}/firmware/src/common" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_modal_transition.cpp" \
   "${AGENT_Q_DIR}/agent_q_policy_update_review_ui_flow.cpp" \
   "${AGENT_Q_DIR}/agent_q_user_signing_review_ui_flow.cpp" \
   -o "${TMP_DIR}/review_ui_flows_test"

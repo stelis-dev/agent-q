@@ -26,6 +26,8 @@ ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${COMMON_AGENT_Q_DIR}/agent_q_sign_route.h" \
+  "${COMMON_AGENT_Q_DIR}/policy/agent_q_policy_document.cpp" \
+  "${COMMON_AGENT_Q_DIR}/policy/agent_q_policy_document.h" \
   "${AGENT_Q_DIR}/agent_q_usb_session_read_handlers.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_session_read_handlers.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h"; do
@@ -107,14 +109,16 @@ char g_last_json_auth[16] = {};
 char g_last_json_account_address[80] = {};
 char g_last_json_account_public_key[64] = {};
 char g_last_json_policy_id[80] = {};
+char g_last_json_condition_where_type[256] = {};
 char g_last_payload_kind[24] = {};
 char g_last_payload_inline_max[24] = {};
 char g_last_payload_chunk_max[24] = {};
 char g_last_payload_max[24] = {};
 size_t g_last_json_signing_method_count = 0;
-size_t g_last_json_policy_rule_count = 0;
+size_t g_last_json_policy_count = 0;
+size_t g_last_json_policy_condition_count = 0;
 
-agent_q::AgentQPolicyDocument g_policy_document = {};
+agent_q::AgentQCurrentPolicyDocument g_policy_document = {};
 
 void reset_state()
 {
@@ -148,18 +152,43 @@ void reset_state()
     g_last_json_account_address[0] = '\0';
     g_last_json_account_public_key[0] = '\0';
     g_last_json_policy_id[0] = '\0';
+    g_last_json_condition_where_type[0] = '\0';
     g_last_payload_kind[0] = '\0';
     g_last_payload_inline_max[0] = '\0';
     g_last_payload_chunk_max[0] = '\0';
     g_last_payload_max[0] = '\0';
     g_last_json_signing_method_count = 0;
-    g_last_json_policy_rule_count = 0;
-    g_policy_document = agent_q::AgentQPolicyDocument{
-        0,
-        agent_q::AgentQPolicyAction::reject,
+    g_last_json_policy_count = 0;
+    g_last_json_policy_condition_count = 0;
+    g_policy_document = agent_q::AgentQCurrentPolicyDocument{
+        agent_q::kAgentQCurrentPolicySchema,
+        agent_q::AgentQCurrentPolicyAction::reject,
         nullptr,
         0,
     };
+}
+
+void count_policy_document(
+    const agent_q::AgentQCurrentPolicyDocument& document,
+    size_t* network_count,
+    size_t* policy_count,
+    size_t* condition_count)
+{
+    *network_count = 0;
+    *policy_count = 0;
+    *condition_count = 0;
+    for (size_t blockchain_index = 0; blockchain_index < document.blockchain_count; ++blockchain_index) {
+        const agent_q::AgentQCurrentPolicyBlockchainScope& blockchain =
+            document.blockchains[blockchain_index];
+        *network_count += blockchain.network_count;
+        for (size_t network_index = 0; network_index < blockchain.network_count; ++network_index) {
+            const agent_q::AgentQCurrentPolicyNetworkScope& network = blockchain.networks[network_index];
+            *policy_count += network.policy_count;
+            for (size_t policy_index = 0; policy_index < network.policy_count; ++policy_index) {
+                *condition_count += network.policies[policy_index].condition_count;
+            }
+        }
+    }
 }
 
 }  // namespace
@@ -169,25 +198,6 @@ namespace agent_q {
 const char* signing_authorization_mode_name(AgentQSigningAuthorizationMode mode)
 {
     return mode == AgentQSigningAuthorizationMode::policy ? "policy" : "user";
-}
-
-const char* agent_q_policy_action_name(AgentQPolicyAction action)
-{
-    return action == AgentQPolicyAction::sign ? "sign" : "reject";
-}
-
-const char* agent_q_policy_operator_name(AgentQPolicyOperator op)
-{
-    switch (op) {
-        case AgentQPolicyOperator::eq:
-            return "eq";
-        case AgentQPolicyOperator::in:
-            return "in";
-        case AgentQPolicyOperator::lte:
-            return "lte";
-        default:
-            return "";
-    }
 }
 
 bool usb_response_write_json(JsonDocument& response)
@@ -210,7 +220,11 @@ bool usb_response_write_json(JsonDocument& response)
     snprintf(g_last_json_account_public_key, sizeof(g_last_json_account_public_key), "%s", account_public_key);
     const char* policy_id = response["policy"]["policyId"] | "";
     snprintf(g_last_json_policy_id, sizeof(g_last_json_policy_id), "%s", policy_id);
-    g_last_json_policy_rule_count = response["policy"]["ruleCount"] | 0;
+    const char* where_type =
+        response["policy"]["blockchains"][0]["networks"][0]["policies"][0]["conditions"][0]["where"]["type"] | "";
+    snprintf(g_last_json_condition_where_type, sizeof(g_last_json_condition_where_type), "%s", where_type);
+    g_last_json_policy_count = response["policy"]["policyCount"] | 0;
+    g_last_json_policy_condition_count = response["policy"]["conditionCount"] | 0;
     return g_write_json_ok;
 }
 
@@ -294,17 +308,31 @@ bool read_active_policy(
     char* policy_id_out,
     size_t policy_id_out_size,
     const char** default_action,
-    size_t* rule_count,
-    const agent_q::AgentQPolicyDocument** document)
+    size_t* blockchain_count,
+    size_t* network_count,
+    size_t* policy_count,
+    size_t* condition_count,
+    const agent_q::AgentQCurrentPolicyDocument** document)
 {
     g_read_policy_calls += 1;
     if (!g_read_policy_ok) {
         return false;
     }
-    *schema = "agentq.policy.v0";
+    *schema = agent_q::kAgentQCurrentPolicySchema;
     snprintf(policy_id_out, policy_id_out_size, "sha256:test");
     *default_action = "reject";
-    *rule_count = 0;
+    size_t counted_networks = 0;
+    size_t counted_policies = 0;
+    size_t counted_conditions = 0;
+    count_policy_document(
+        g_policy_document,
+        &counted_networks,
+        &counted_policies,
+        &counted_conditions);
+    *blockchain_count = g_policy_document.blockchain_count;
+    *network_count = counted_networks;
+    *policy_count = counted_policies;
+    *condition_count = counted_conditions;
     *document = g_policy_has_document ? &g_policy_document : nullptr;
     return true;
 }
@@ -515,8 +543,61 @@ int main()
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_type, "policy") == 0);
         assert(strcmp(g_last_json_policy_id, "sha256:test") == 0);
-        assert(g_last_json_policy_rule_count == 0);
+        assert(g_last_json_policy_count == 0);
+        assert(g_last_json_policy_condition_count == 0);
         assert(g_record_policy_unavailable_calls == 0);
+    }
+
+    {
+        reset_state();
+        constexpr const char* kSuiTypeTag =
+            "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
+        const char* amount_values[] = {"1000000000"};
+        const agent_q::AgentQCurrentPolicyCondition conditions[] = {
+            {
+                "sui.token_totals_by_type.amount_raw",
+                agent_q::AgentQCurrentPolicyOperator::lte,
+                amount_values,
+                sizeof(amount_values) / sizeof(amount_values[0]),
+                kSuiTypeTag,
+            },
+        };
+        const agent_q::AgentQCurrentPolicy policies[] = {
+            {
+                "sui-testnet-max-one-sui",
+                agent_q::AgentQCurrentPolicyAction::sign,
+                conditions,
+                sizeof(conditions) / sizeof(conditions[0]),
+            },
+        };
+        const agent_q::AgentQCurrentPolicyNetworkScope networks[] = {
+            {
+                "testnet",
+                policies,
+                sizeof(policies) / sizeof(policies[0]),
+            },
+        };
+        const agent_q::AgentQCurrentPolicyBlockchainScope blockchains[] = {
+            {
+                "sui",
+                networks,
+                sizeof(networks) / sizeof(networks[0]),
+            },
+        };
+        g_policy_document = agent_q::AgentQCurrentPolicyDocument{
+            agent_q::kAgentQCurrentPolicySchema,
+            agent_q::AgentQCurrentPolicyAction::reject,
+            blockchains,
+            sizeof(blockchains) / sizeof(blockchains[0]),
+        };
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"policy_get\",\"sessionId\":\"session\"}");
+        agent_q::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
+        assert(g_write_error_calls == 0);
+        assert(g_read_policy_calls == 1);
+        assert(g_write_json_calls == 1);
+        assert(g_last_json_policy_count == 1);
+        assert(g_last_json_policy_condition_count == 1);
+        assert(strcmp(g_last_json_condition_where_type, kSuiTypeTag) == 0);
     }
 
     {
@@ -575,6 +656,7 @@ CPP
   -I"${COMMON_AGENT_Q_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_session_read_handlers.cpp" \
+  "${COMMON_AGENT_Q_DIR}/policy/agent_q_policy_document.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

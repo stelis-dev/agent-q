@@ -20,7 +20,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
 LOCAL_PIN_AUTH_UI_SOURCE="${AGENT_Q_DIR}/agent_q_local_pin_auth_ui_flow.cpp"
+MODAL_TRANSITION_SOURCE="${AGENT_Q_DIR}/agent_q_modal_transition.cpp"
 CXX_BIN="${CXX:-c++}"
+
+check_modal_transition_owner_present() {
+  if [[ ! -f "${MODAL_TRANSITION_SOURCE}" ]]; then
+    echo "FAILED: ModalTransitionOwner source is missing" >&2
+    exit 1
+  fi
+  if ! grep -q 'modal_transition_complete_processing_to_result' "${MODAL_TRANSITION_SOURCE}" ||
+     ! grep -q 'modal_transition_run_work_then_clear_panel' "${MODAL_TRANSITION_SOURCE}"; then
+    echo "FAILED: ModalTransitionOwner must own processing-to-result and work-then-clear transitions" >&2
+    exit 1
+  fi
+  if ! grep -q 'agent_q_modal_transition.h' "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
+    echo "FAILED: local PIN UI flow must use ModalTransitionOwner" >&2
+    exit 1
+  fi
+}
 
 check_local_pin_ui_deadline_order() {
   local deadline_line
@@ -83,6 +100,98 @@ check_local_pin_worker_timeout_order() {
   if [[ -z "${timeout_line}" || -z "${complete_line}" || "${timeout_line}" -ge "${complete_line}" ]]; then
     echo "FAILED: protocol-backed PIN worker completion must check input timeout before local PIN verify result" >&2
     echo "timeout_line=${timeout_line:-missing} complete_line=${complete_line:-missing}" >&2
+    exit 1
+  fi
+}
+
+check_settings_policy_reset_keeps_panel_until_store() {
+  local snippet="${TMP_DIR}/settings_policy_reset_case.cpp"
+  local store_line
+  local clear_before_store_line
+  local restore_line
+
+  awk '
+    /case AgentQLocalPinAuthVerifyResult::verified_settings_policy_reset:/ { in_case = 1 }
+    in_case { print }
+    in_case && /return;/ { exit }
+  ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
+
+  store_line="$(grep -En 'store_default_policy' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  restore_line="$(grep -En 'complete_local_pin_processing_to_settings|restore_settings_menu_after_pin' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  clear_before_store_line="$(
+    grep -En 'clear_local_pin_panel' "${snippet}" |
+      awk -F: -v store="${store_line:-0}" '$1 < store { print $1; exit }' || true
+  )"
+
+  if [[ -z "${store_line}" || -z "${restore_line}" || "${store_line}" -ge "${restore_line}" ]]; then
+    echo "FAILED: settings policy reset must store before restoring Settings" >&2
+    echo "store_line=${store_line:-missing} restore_line=${restore_line:-missing}" >&2
+    exit 1
+  fi
+  if [[ -n "${clear_before_store_line}" ]]; then
+    echo "FAILED: settings policy reset must keep the processing panel visible until policy storage completes" >&2
+    echo "clear_before_store_line=${clear_before_store_line} store_line=${store_line}" >&2
+    exit 1
+  fi
+}
+
+check_policy_update_keeps_panel_until_commit() {
+  local snippet="${TMP_DIR}/verified_policy_update_case.cpp"
+  local approved_line
+  local commit_line
+  local clear_between_approved_and_commit_line
+  local transition_line
+  local finish_line
+
+  awk '
+    /case AgentQLocalPinAuthVerifyResult::verified_policy_update:/ { in_case = 1 }
+    in_case && /case AgentQLocalPinAuthVerifyResult::started_setting_commit:/ { exit }
+    in_case { print }
+  ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
+
+  approved_line="$(grep -En 'policy update PIN approved"' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  commit_line="$(grep -En 'policy_update_flow_commit' "${snippet}" | awk -F: -v approved="${approved_line:-0}" '$1 > approved { print $1; exit }' || true)"
+  transition_line="$(grep -En 'complete_local_pin_processing_to_policy_terminal' "${snippet}" | awk -F: -v commit="${commit_line:-0}" '$1 > commit { print $1; exit }' || true)"
+  finish_line="$(grep -En 'complete_local_pin_processing_to_policy_terminal|finish_policy_update_terminal' "${snippet}" | tail -n 1 | cut -d: -f1 || true)"
+  clear_between_approved_and_commit_line="$(
+    grep -En 'clear_local_pin_panel' "${snippet}" |
+      awk -F: -v approved="${approved_line:-0}" -v commit="${commit_line:-0}" '$1 > approved && $1 < commit { print $1; exit }' || true
+  )"
+
+  if [[ -z "${approved_line}" || -z "${commit_line}" || -z "${transition_line}" || "${commit_line}" -ge "${transition_line}" ]]; then
+    echo "FAILED: policy update PIN approval must commit policy before ModalTransitionOwner finishes the terminal result" >&2
+    echo "approved_line=${approved_line:-missing} commit_line=${commit_line:-missing} transition_line=${transition_line:-missing}" >&2
+    exit 1
+  fi
+  if [[ -n "${clear_between_approved_and_commit_line}" ]]; then
+    echo "FAILED: policy update PIN approval must keep the processing panel visible until policy commit completes" >&2
+    echo "clear_between_approved_and_commit_line=${clear_between_approved_and_commit_line} commit_line=${commit_line}" >&2
+    exit 1
+  fi
+  if [[ -z "${finish_line}" || "${transition_line}" -gt "${finish_line}" ]]; then
+    echo "FAILED: policy update PIN approval must finish through ModalTransitionOwner" >&2
+    echo "transition_line=${transition_line:-missing} finish_line=${finish_line:-missing}" >&2
+    exit 1
+  fi
+}
+
+check_user_signing_keeps_panel_until_signing_work() {
+  local work_line
+  local raw_execute_line
+  local helper_line
+
+  helper_line="$(grep -En 'run_user_signing_then_clear_local_pin_panel' "${LOCAL_PIN_AUTH_UI_SOURCE}" | head -n 1 | cut -d: -f1 || true)"
+  work_line="$(grep -En 'modal_transition_run_work_then_clear_panel' "${LOCAL_PIN_AUTH_UI_SOURCE}" | head -n 1 | cut -d: -f1 || true)"
+  raw_execute_line="$(grep -En 'execute_user_signing_critical_section_and_finish\\(request_id\\)' "${LOCAL_PIN_AUTH_UI_SOURCE}" | head -n 1 | cut -d: -f1 || true)"
+
+  if [[ -z "${helper_line}" || -z "${work_line}" ]]; then
+    echo "FAILED: user signing local PIN approval must route signing work through ModalTransitionOwner" >&2
+    echo "helper_line=${helper_line:-missing} work_line=${work_line:-missing}" >&2
+    exit 1
+  fi
+  if [[ -n "${raw_execute_line}" ]]; then
+    echo "FAILED: local PIN user signing must not call signing work directly from the verified path" >&2
+    echo "raw_execute_line=${raw_execute_line}" >&2
     exit 1
   fi
 }
@@ -346,6 +455,7 @@ CPP
   -o "${TMP_DIR}/protocol_pin_approval_test"
 
 "${TMP_DIR}/protocol_pin_approval_test"
+check_modal_transition_owner_present
 check_local_pin_ui_deadline_order
 check_local_pin_ui_handler_timeout_order \
   local_pin_auth_ui_handle_digit \
@@ -368,3 +478,6 @@ check_local_pin_ui_handler_timeout_order \
   'policy_update_flow_return_to_review|usb_response_write_connect_rejected|user_signing_confirmation_return_to_review_from_pin' \
   "request-backed PIN cancel handler must timeout before cancel/back action"
 check_local_pin_worker_timeout_order
+check_settings_policy_reset_keeps_panel_until_store
+check_policy_update_keeps_panel_until_commit
+check_user_signing_keeps_panel_until_signing_work

@@ -43,6 +43,43 @@ const secondStatus = {
 
 const CANONICAL_TX_BYTES_BASE64 = "AQID";
 const signTransactionParams = { network: "devnet", txBytes: CANONICAL_TX_BYTES_BASE64 };
+const POLICY_HASH = "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3";
+
+function currentPolicyDocument(policies = []) {
+  const conditionCount = policies.reduce((sum, policy) => sum + policy.conditions.length, 0);
+  return {
+    schema: "agentq.policy",
+    policyId: POLICY_HASH,
+    defaultAction: "reject",
+    blockchainCount: 1,
+    networkCount: 1,
+    policyCount: policies.length,
+    conditionCount,
+    blockchains: [
+      {
+        blockchain: "sui",
+        networks: [
+          {
+            network: "testnet",
+            policies,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function currentPolicyProposeSummary(overrides = {}) {
+  return {
+    policyHash: POLICY_HASH,
+    blockchainCount: 1,
+    networkCount: 1,
+    policyCount: 1,
+    conditionCount: 1,
+    highestAction: "reject",
+    ...overrides,
+  };
+}
 
 function identifyResponse(code, identifiedDevice = device) {
   return {
@@ -144,13 +181,7 @@ function defaultDriver(overrides = {}) {
         id: "req_policy",
         version: 1,
         type: "policy",
-        policy: {
-          schema: "agentq.policy.v0",
-          policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-          defaultAction: "reject",
-          ruleCount: 0,
-          rules: [],
-        },
+        policy: currentPolicyDocument(),
       };
     },
     async getApprovalHistory() {
@@ -185,11 +216,7 @@ function defaultDriver(overrides = {}) {
         type: "policy_propose_result",
         status: "applied",
         reasonCode: "device_confirmed",
-        policy: {
-          policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-          ruleCount: 1,
-          highestAction: "reject",
-        },
+        policy: currentPolicyProposeSummary(),
       };
     },
     async signTransaction() {
@@ -1323,11 +1350,11 @@ test("policyGet returns the active Firmware policy document and keeps the sessio
 
     const result = await core.policyGet({});
     assert.equal(result.source, "live");
-    assert.equal(result.policy.schema, "agentq.policy.v0");
-    assert.equal(result.policy.policyId, "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3");
+    assert.equal(result.policy.schema, "agentq.policy");
+    assert.equal(result.policy.policyId, POLICY_HASH);
     assert.equal(result.policy.defaultAction, "reject");
-    assert.equal(result.policy.ruleCount, 0);
-    assert.deepEqual(result.policy.rules, []);
+    assert.equal(result.policy.policyCount, 0);
+    assert.deepEqual(result.policy.blockchains, currentPolicyDocument().blockchains);
 
     // Read-only: the session is retained after policy_get.
     const listed = await core.listDevices();
@@ -1432,11 +1459,7 @@ test("session-scoped APIs reject unsupported fields before USB live-port probing
     listPortsCalls = 0;
     requestStatusCalls = 0;
 
-    const validPolicy = {
-      schema: "agentq.policy.v0",
-      defaultAction: "reject",
-      rules: [],
-    };
+    const validPolicy = currentPolicyDocument();
     const validMessage = Buffer.from("hello").toString("base64");
     const invalidConnectedCalls = [
       ["disconnectDevice", () => core.disconnectDevice({ unexpected: true })],
@@ -2539,19 +2562,13 @@ test("policyPropose returns not_connected before validating policy payload", asy
 test("policyPropose forwards a bounded proposal and returns Firmware terminal metadata", async () => {
   await withStore(async (store) => {
     let observed = null;
-    const policy = {
-      schema: "agentq.policy.v0",
-      defaultAction: "reject",
-      rules: [
-        {
-          id: "reject_devnet",
-          chain: "sui",
-          method: "sign_transaction",
-          action: "reject",
-          criteria: [{ field: "common.intent", op: "eq", value: "programmable_transaction" }],
-        },
-      ],
-    };
+    const policy = currentPolicyDocument([
+      {
+        id: "reject_devnet",
+        action: "reject",
+        conditions: [{ field: "sui.command_kinds", op: "not_contains", values: ["publish"] }],
+      },
+    ]);
     const core = new AgentQCore(
       store,
       defaultDriver({
@@ -2563,11 +2580,7 @@ test("policyPropose forwards a bounded proposal and returns Firmware terminal me
             type: "policy_propose_result",
             status: "applied",
             reasonCode: "device_confirmed",
-            policy: {
-              policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-              ruleCount: 1,
-              highestAction: "reject",
-            },
+            policy: currentPolicyProposeSummary(),
           };
         },
       }),
@@ -2580,7 +2593,7 @@ test("policyPropose forwards a bounded proposal and returns Firmware terminal me
     assert.equal(result.source, "live");
     assert.equal(result.status, "applied");
     assert.equal(result.reasonCode, "device_confirmed");
-    assert.equal(result.policy.ruleCount, 1);
+    assert.equal(result.policy.policyCount, 1);
     assert.deepEqual(observed, {
       portPath: "/dev/cu.usbmodem1",
       sessionId: "session_aabbccdd",
@@ -2637,9 +2650,7 @@ test("policyPropose validates proposals before live-port probing", async () => {
     await assert.rejects(
       () => core.policyPropose({
         policy: {
-          schema: "agentq.policy.v0",
-          defaultAction: "reject",
-          rules: [],
+          ...currentPolicyDocument(),
           padding: "x".repeat(20000),
         },
       }),
@@ -2650,7 +2661,7 @@ test("policyPropose validates proposals before live-port probing", async () => {
     assert.equal(proposeCalls, 0);
 
     await assert.rejects(
-      () => core.policyPropose({ policy: { schema: "agentq.policy.v0" }, extra: true }),
+      () => core.policyPropose({ policy: { schema: "agentq.policy" }, extra: true }),
       { code: "invalid_params" },
     );
     assert.equal(listPortsCalls, 0);
@@ -2674,11 +2685,7 @@ test("policyPropose clears the local session when Firmware reports invalid_sessi
     await core.connectDevice({});
 
     const result = await core.policyPropose({
-      policy: {
-        schema: "agentq.policy.v0",
-        defaultAction: "reject",
-        rules: [],
-      },
+      policy: currentPolicyDocument(),
     });
     assert.equal(result.source, "session_ended");
     assert.equal(result.reason, "invalid_session");
@@ -2699,11 +2706,7 @@ test("policyPropose clears the local session when Firmware reports consistency_e
             type: "policy_propose_result",
             status: "consistency_error",
             reasonCode: "consistency_error",
-            policy: {
-              policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-              ruleCount: 1,
-              highestAction: "reject",
-            },
+            policy: currentPolicyProposeSummary(),
           };
         },
       }),
@@ -2713,11 +2716,7 @@ test("policyPropose clears the local session when Firmware reports consistency_e
     await core.connectDevice({});
 
     const result = await core.policyPropose({
-      policy: {
-        schema: "agentq.policy.v0",
-        defaultAction: "reject",
-        rules: [],
-      },
+      policy: currentPolicyDocument(),
     });
     assert.equal(result.source, "live");
     assert.equal(result.status, "consistency_error");

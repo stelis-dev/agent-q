@@ -22,7 +22,10 @@ bool usb_policy_propose_result_write(
     if (policy != nullptr) {
         JsonObject policy_json = response["policy"].to<JsonObject>();
         policy_json["policyHash"] = policy->policy_hash;
-        policy_json["ruleCount"] = policy->rule_count;
+        policy_json["blockchainCount"] = policy->blockchain_count;
+        policy_json["networkCount"] = policy->network_count;
+        policy_json["policyCount"] = policy->policy_count;
+        policy_json["conditionCount"] = policy->condition_count;
         policy_json["highestAction"] = policy->highest_action;
     }
     return usb_response_write_json(response);

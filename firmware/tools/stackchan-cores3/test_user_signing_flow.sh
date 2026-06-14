@@ -1251,8 +1251,6 @@ CPP
   "${AGENT_Q_DIR}/agent_q_sui_signing_authority.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_sign_transaction_adapter.cpp" \
-  "${COMMON_ROOT}/sui/agent_q_sui_method_adapter.cpp" \
-  "${COMMON_ROOT}/sui/agent_q_sui_token_flow_facts.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_ROOT}/sui/agent_q_sui_bcs_reader.cpp" \
   -o "${TMP_DIR}/user_signing_flow_test"

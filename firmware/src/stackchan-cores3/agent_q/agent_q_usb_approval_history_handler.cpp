@@ -80,7 +80,7 @@ bool write_approval_history_response(const char* id, const AgentQApprovalHistory
             record["eventKind"] = "policy_update";
             record["result"] = source.policy_result;
             record["policyHash"] = source.policy_hash;
-            record["ruleCount"] = source.rule_count;
+            record["policyCount"] = source.policy_count;
             record["highestAction"] = source.highest_action;
         } else if (source.event_kind == AgentQApprovalHistoryEventKind::signing) {
             record["eventKind"] = "signing";

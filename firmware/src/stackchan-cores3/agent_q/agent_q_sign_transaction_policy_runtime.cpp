@@ -5,8 +5,7 @@
 #include "agent_q_bip39.h"
 #include "agent_q_policy_store.h"
 #include "agent_q_sign_route.h"
-#include "agent_q_common/policy/agent_q_policy_runtime.h"
-#include "agent_q_common/sui/agent_q_sui_method_adapter.h"
+#include "agent_q_common/policy/agent_q_policy_evaluator.h"
 
 namespace agent_q {
 namespace {
@@ -68,16 +67,6 @@ bool fill_sign_metadata(
            copy_runtime_string(result->rule_ref, sizeof(result->rule_ref), rule_ref, true);
 }
 
-const char* policy_rule_ref(const AgentQPolicyDecision& decision)
-{
-    if (decision.reason == AgentQPolicyDecisionReason::matched_rule &&
-        decision.rule_id != nullptr &&
-        decision.rule_id[0] != '\0') {
-        return decision.rule_id;
-    }
-    return "default";
-}
-
 AgentQSignTransactionPolicyRuntimeResult make_policy_rejected_result(
     AgentQSupportedSignRoute route,
     const char* payload_digest,
@@ -104,6 +93,79 @@ AgentQSignTransactionPolicyRuntimeResult make_policy_rejected_result(
     return result;
 }
 
+AgentQSignTransactionPolicyRuntimeResult make_policy_authorized_result(
+    const AgentQSuiPreparedSignTransaction& prepared,
+    const AgentQStoredPolicyDocument& policy,
+    const char* rule_ref,
+    const char* reason_code)
+{
+    AgentQSignTransactionPolicyRuntimeResult result = make_result(
+        AgentQSignTransactionPolicyRuntimeStatus::policy_authorized,
+        "policy_authorized",
+        "Device policy authorized signing.");
+    if (!fill_sign_metadata(
+            &result,
+            reason_code,
+            prepared.route,
+            prepared.payload_digest,
+            policy.policy_id,
+            rule_ref)) {
+        return make_result(
+            AgentQSignTransactionPolicyRuntimeStatus::policy_error,
+            "policy_error",
+            "Active policy is unavailable.");
+    }
+    result.tx_bytes = prepared.tx_bytes;
+    result.tx_bytes_size = prepared.tx_bytes_size;
+    return result;
+}
+
+AgentQSignTransactionPolicyRuntimeResult policy_evaluation_result_to_runtime_result(
+    const AgentQSuiPreparedSignTransaction& prepared,
+    const AgentQStoredPolicyDocument& policy,
+    const AgentQCurrentPolicyEvaluationResult& evaluation)
+{
+    const char* rule_ref =
+        evaluation.rule_ref != nullptr && evaluation.rule_ref[0] != '\0'
+            ? evaluation.rule_ref
+            : "default";
+    const char* reason_code =
+        evaluation.reason_code != nullptr && evaluation.reason_code[0] != '\0'
+            ? evaluation.reason_code
+            : "policy_rejected";
+    switch (evaluation.status) {
+        case AgentQCurrentPolicyEvaluationStatus::authorized:
+            return make_policy_authorized_result(
+                prepared,
+                policy,
+                rule_ref,
+                reason_code);
+        case AgentQCurrentPolicyEvaluationStatus::invalid_argument:
+            return make_policy_rejected_result(
+                prepared.route,
+                prepared.payload_digest,
+                policy.policy_id,
+                rule_ref,
+                "invalid_policy");
+        case AgentQCurrentPolicyEvaluationStatus::facts_incomplete:
+        case AgentQCurrentPolicyEvaluationStatus::no_matching_scope:
+        case AgentQCurrentPolicyEvaluationStatus::no_matching_policy:
+        case AgentQCurrentPolicyEvaluationStatus::rejected:
+            return make_policy_rejected_result(
+                prepared.route,
+                prepared.payload_digest,
+                policy.policy_id,
+                rule_ref,
+                reason_code);
+    }
+    return make_policy_rejected_result(
+        prepared.route,
+        prepared.payload_digest,
+        policy.policy_id,
+        rule_ref,
+        "policy_rejected");
+}
+
 AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
     const AgentQSuiPreparedSignTransaction& prepared)
 {
@@ -117,7 +179,8 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
     }
     if (!prepared.policy_mode_authorization_covered ||
         prepared.policy_authorization_outcome !=
-            AgentQSuiPolicyAuthorizationOutcome::policy_evaluation) {
+            AgentQSuiPolicyAuthorizationOutcome::policy_evaluation ||
+        prepared.sui_offline_policy_facts == nullptr) {
         AgentQStoredPolicySummary policy_summary = {};
         if (!read_active_policy_summary(&policy_summary)) {
             return make_result(
@@ -133,75 +196,23 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
             "policy_coverage_incomplete");
     }
 
-    AgentQSuiSignTransactionPolicyFacts policy_facts = {};
-    AgentQSuiSignTransactionPolicySubject policy_subject = {};
-    policy_subject.transaction = prepared.sui_policy_subject;
-    policy_subject.token_flow = prepared.sui_token_flow;
-    if (!copy_runtime_string(
-            policy_subject.request_network,
-            sizeof(policy_subject.request_network),
+    AgentQStoredPolicyDocument policy = {};
+    if (!read_active_policy_document(&policy) ||
+        policy.document == nullptr) {
+        return make_result(
+            AgentQSignTransactionPolicyRuntimeStatus::policy_error,
+            "policy_error",
+            "Active policy is unavailable.");
+    }
+    const AgentQCurrentPolicyEvaluationResult evaluation =
+        evaluate_agent_q_current_policy_for_sui_sign_transaction(
+            *policy.document,
             prepared.network,
-            true) ||
-        !make_sui_sign_transaction_policy_facts(policy_subject, &policy_facts)) {
-        return make_result(
-            AgentQSignTransactionPolicyRuntimeStatus::unsupported_transaction,
-            "unsupported_transaction",
-            "Policy cannot evaluate this transaction.");
-    }
-
-    AgentQStoredPolicySummary policy_summary = {};
-    if (!read_active_policy_summary(&policy_summary)) {
-        return make_result(
-            AgentQSignTransactionPolicyRuntimeStatus::policy_error,
-            "policy_error",
-            "Active policy is unavailable.");
-    }
-
-    const AgentQPolicyMethodDescriptor methods[] = {
-        sui_sign_transaction_policy_method_descriptor(),
-    };
-    const AgentQPolicyDecision decision =
-        evaluate_agent_q_policy_runtime(
-            active_policy_provider(),
-            policy_facts.facts,
-            methods,
-            sizeof(methods) / sizeof(methods[0]));
-    if (decision.reason == AgentQPolicyDecisionReason::invalid_policy) {
-        return make_result(
-            AgentQSignTransactionPolicyRuntimeStatus::policy_error,
-            "policy_error",
-            "Active policy is unavailable.");
-    }
-
-    const char* rule_ref = policy_rule_ref(decision);
-    if (decision.action != AgentQPolicyAction::sign) {
-        return make_policy_rejected_result(
-            prepared.route,
-            prepared.payload_digest,
-            policy_summary.policy_id,
-            rule_ref,
-            "policy_rejected");
-    }
-
-    AgentQSignTransactionPolicyRuntimeResult result = make_result(
-        AgentQSignTransactionPolicyRuntimeStatus::policy_authorized,
-        "policy_signed",
-        "Policy authorized signing.");
-    if (!fill_sign_metadata(
-            &result,
-            "policy_signed",
-            prepared.route,
-            prepared.payload_digest,
-            policy_summary.policy_id,
-            rule_ref)) {
-        return make_result(
-            AgentQSignTransactionPolicyRuntimeStatus::policy_error,
-            "policy_error",
-            "Active policy is unavailable.");
-    }
-    result.tx_bytes = prepared.tx_bytes;
-    result.tx_bytes_size = prepared.tx_bytes_size;
-    return result;
+            *prepared.sui_offline_policy_facts);
+    return policy_evaluation_result_to_runtime_result(
+        prepared,
+        policy,
+        evaluation);
 }
 
 }  // namespace

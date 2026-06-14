@@ -90,10 +90,13 @@ bool policy_update_review_ui_show(const AgentQPolicyUpdateReviewUiFlowOps& ops)
     }
     const AgentQPolicyUpdateReviewViewModel model{
         current.policy_hash,
-        current.rule_count,
+        current.blockchain_count,
+        current.network_count,
+        current.policy_count,
+        current.condition_count,
         current.default_action,
         current.highest_action,
-        current.method_summary,
+        current.scope_summary,
         current.review_summary,
     };
     return ops.draw_review_panel != nullptr &&

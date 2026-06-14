@@ -116,9 +116,10 @@ Source-level local settings
 reset/material wipe now exists for provisioned StackChan CoreS3 devices, with
 hardware smoke coverage for local reset.
 Device-local Import is implemented for DEV_PROFILE. USB, host process, and MCP mnemonic
-import, host-assisted import, and arbitrary transaction signing are not
-implemented. Automatic signing outside the bounded policy-authorized
-`sign_transaction` path is not implemented.
+import and host-assisted import are not implemented. Execution-effect-complete
+arbitrary Sui transaction review or policy simulation is not implemented.
+Automatic signing outside the bounded policy-authorized `sign_transaction` path
+is not implemented.
 
 ## Chain Accounts
 
@@ -139,9 +140,10 @@ Rules:
   ProgrammableTransaction` facts extractor, and for user-mode Sui
   `sign_personal_message`.
   Firmware reads its local signing authorization mode and selects one gate:
-  policy mode signs only current-contract GasCoin-derived proven-SUI split-result transfer transactions
-  with a matching bounded `sign` rule; other valid policy-incomplete Sui
-  transactions return a policy rejection. User mode uses
+  policy mode validates active policy availability, request network scope,
+  account binding, and Firmware-derived offline policy condition facts, then
+  signs only when the active current policy has a matching `sign` policy. User
+  mode uses
   device-local offline facts review when complete offline facts review coverage
   exists, or an explicit blind-signing warning when Firmware can validate and
   bind the transaction but offline facts review coverage is incomplete.
@@ -192,10 +194,9 @@ facts extractor. Unsupported versions, unsupported transaction kinds,
 malformed bytes, out-of-range command references, and transactions whose
 minimum sender/gas-owner facts cannot be extracted and bound fail closed.
 Valid account-bound transactions whose offline review facts are incomplete may
-enter the explicit user-mode blind-signing path; policy mode rejects
-policy-incomplete transactions and signs only current-contract GasCoin-derived
-proven-SUI split-result transfer transactions with a matching bounded `sign`
-rule. Product-active claims still depend on the
+enter the explicit user-mode blind-signing path; policy mode signs only when
+the active current policy has a matching `sign` policy over complete offline
+condition facts, and otherwise rejects. Product-active claims still depend on the
 target evidence tracked in `docs/IMPLEMENTATION_STATUS.md`.
 Current StackChan CoreS3 source can generate a BIP-39 backup
 phrase as RAM scratch, display its up-to-4-letter word prefixes on device in a
@@ -352,12 +353,13 @@ Sui `sign_personal_message` is source-wired for user authorization mode only;
 policy facts and rules for personal-message signing are not implemented.
 Sui transaction parsing is bounded and offline. Parser facts may be available
 for broader programmable transactions, but parser success is not signing
-authorization. Sui `sign_transaction` policy mode returns a policy rejection for
-valid transactions outside the current automatic signing contract, and signs
-only current-contract GasCoin-derived proven-SUI split-result transfer transactions with a matching
-bounded `sign` rule. Full Admin policy editing beyond the
-current Sui transfer policy example and USER_PROFILE secure provisioning are not
-implemented.
+authorization. Sui `sign_transaction` policy mode authorizes only matching
+active current policy entries over complete Firmware-derived offline condition
+facts, and rejects missing, incomplete, unmatched, or reject-matched policy
+coverage. Admin policy authority and USER_PROFILE secure provisioning are not
+implemented. Admin may submit current-schema policy proposals, but Firmware owns
+validation, device-local approval, commit, policy evaluation, and signing
+decisions.
 
 ## Completion Criteria
 

@@ -7,6 +7,11 @@
 #include "agent_q_request_id.h"
 
 namespace agent_q {
+namespace {
+
+constexpr uint8_t kUsbRequestJsonNestingLimit = 16;
+
+}  // namespace
 
 AgentQUsbRequestEnvelopeParseStatus parse_usb_request_envelope(
     const char* line,
@@ -23,7 +28,8 @@ AgentQUsbRequestEnvelopeParseStatus parse_usb_request_envelope(
         return AgentQUsbRequestEnvelopeParseStatus::invalid_json;
     }
 
-    const DeserializationError error = deserializeJson(request, line);
+    const DeserializationError error =
+        deserializeJson(request, line, DeserializationOption::NestingLimit(kUsbRequestJsonNestingLimit));
     if (error) {
         return AgentQUsbRequestEnvelopeParseStatus::invalid_json;
     }

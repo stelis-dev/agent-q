@@ -60,6 +60,36 @@ bool digest_string_present(const char* value)
     return value != nullptr && value[0] != '\0';
 }
 
+void prepare_policy_condition_facts(AgentQSuiPreparedSignTransaction* out)
+{
+    if (out == nullptr ||
+        out->tx_bytes == nullptr ||
+        out->tx_bytes_size == 0) {
+        return;
+    }
+    out->policy_mode_authorization_covered = false;
+    out->policy_authorization_outcome = AgentQSuiPolicyAuthorizationOutcome::unavailable;
+    out->sui_offline_policy_facts =
+        static_cast<SuiOfflinePolicyConditionFacts*>(malloc(sizeof(SuiOfflinePolicyConditionFacts)));
+    if (out->sui_offline_policy_facts == nullptr) {
+        return;
+    }
+    memset(out->sui_offline_policy_facts, 0, sizeof(*out->sui_offline_policy_facts));
+    const SuiTransactionFactsResult result =
+        parse_sui_offline_policy_condition_facts(
+            out->tx_bytes,
+            out->tx_bytes_size,
+            out->sui_offline_policy_facts);
+    if (result == SuiTransactionFactsResult::ok &&
+        out->sui_offline_policy_facts->valid_transaction_data &&
+        out->sui_offline_policy_facts->completeness ==
+            SuiOfflinePolicyFactsCompleteness::complete) {
+        out->policy_mode_authorization_covered = true;
+        out->policy_authorization_outcome =
+            AgentQSuiPolicyAuthorizationOutcome::policy_evaluation;
+    }
+}
+
 AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
     AgentQSupportedSignRoute route,
     const char* network,
@@ -118,8 +148,7 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
             out->tx_bytes_size,
             &out->sui_policy_subject,
             &out->sui_review,
-            &authorization_coverage,
-            &out->sui_token_flow);
+            &authorization_coverage);
     if (adapter_result != AgentQSuiSignTransactionAdapterResult::ok) {
         clear_prepared_sui_sign_transaction(out);
         return adapter_result ==
@@ -141,6 +170,7 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
                    ? AgentQSuiSigningPreparationResult::account_unavailable
                    : AgentQSuiSigningPreparationResult::invalid_account;
     }
+    prepare_policy_condition_facts(out);
     return AgentQSuiSigningPreparationResult::ok;
 }
 
@@ -284,6 +314,12 @@ void clear_prepared_sui_sign_transaction(AgentQSuiPreparedSignTransaction* prepa
     if (prepared->tx_bytes != nullptr && prepared->tx_bytes_size > 0) {
         wipe_sensitive_buffer(prepared->tx_bytes, prepared->tx_bytes_size);
         free(prepared->tx_bytes);
+    }
+    if (prepared->sui_offline_policy_facts != nullptr) {
+        wipe_sensitive_buffer(
+            prepared->sui_offline_policy_facts,
+            sizeof(*prepared->sui_offline_policy_facts));
+        free(prepared->sui_offline_policy_facts);
     }
     memset(prepared, 0, sizeof(*prepared));
 }

@@ -39,11 +39,12 @@ Agent-Q Firmware:
 - signs, rejects, or times out only request types implemented by the current
   target/runtime state
 
-The local Admin Page served by the host process exists for read-only device metadata and
-the current Sui transfer policy example. Firmware-owned admin methods exist
-only where this protocol and a target implementation say so; the host process and Admin
-clients submit requests, but Firmware remains the authority for validation,
-device-local approval, persistence, and failure state.
+The local Admin Page served by the host process exists for device metadata,
+policy readback, approval-history readback, and current-schema policy proposal
+submission. Firmware-owned admin methods exist only where this protocol and a
+target implementation say so; the host process and Admin clients submit
+requests, but Firmware remains the authority for validation, device-local
+approval, persistence, and failure state.
 
 ## Request Authority Model
 
@@ -222,9 +223,9 @@ rejected, accepts inline `txBytes` or same-session staged payload references
 for Sui `sign_transaction`, recognizes bounded Sui personal-message bytes for
 `sign_personal_message`, records required approval-history metadata, and
 returns `sign_result`. In policy authorization mode, the active policy can
-reject `sign_transaction`, and can sign only current-contract GasCoin-derived
-proven-SUI split-result transfer transactions with one matching bounded `sign`
-rule.
+authorize or reject `sign_transaction` according to the policy gate defined in
+the Transaction Signing Request section. Missing, incomplete, unmatched, or
+reject-matched policy coverage fails closed.
 `sign_personal_message` is user-mode only and fails closed in policy mode. In
 user authorization mode, Firmware uses device-local review and the device-local
 human approval input mode. Product-active status is tracked in
@@ -272,9 +273,11 @@ view of Firmware-owned persistent decision metadata. The current Sign API
 runtime paths are session-scoped: unknown methods are rejected, Sui
 `sign_transaction` uses the current Sui `TransactionData::V1 ->
 ProgrammableTransaction` facts extractor and uses the Firmware-local signing
-authorization mode. Policy authorization signs only when the transaction matches
-the current automatic policy-signing contract for GasCoin-derived proven-SUI
-split-result transfer facts and the active policy has a matching bounded rule;
+authorization mode. Policy authorization validates active policy availability,
+request network scope, account binding, and offline policy condition facts.
+Policy authorization signs only when the active current policy has a matching
+`sign` policy. Missing, incomplete, unmatched, or reject-matched policy coverage
+fails closed with a policy rejection;
 user authorization enters device review only when the parsed shape has
 complete offline facts review coverage or when Firmware can validate and
 account-bind the transaction but must show an explicit blind-signing warning
@@ -404,9 +407,9 @@ read-only `get_accounts` Sui account derivation are implemented.
 USB, host process, or MCP mnemonic import is not implemented.
 Policy updates are available only through the Firmware-owned
 `policy_propose` proposal flow for current-schema policies. The `sign` action
-value is part of the current schema. Sui `sign_transaction` accepts bounded
-`sign` rules only when the selected method descriptor can prove the rule binds
-the actual transaction values needed for automatic authorization.
+value is part of the current schema, and Sui `sign_transaction` policy mode
+uses it only after active policy availability, request network scope, account
+binding, and complete offline policy condition facts pass.
 
 If a target boots with `prov_state = provisioned` but missing, unreadable, or
 unsupported current active policy or signing authorization mode material,
@@ -973,11 +976,24 @@ Response:
   "version": 1,
   "type": "policy",
   "policy": {
-    "schema": "agentq.policy.v0",
+    "schema": "agentq.policy",
     "policyId": "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
     "defaultAction": "reject",
-    "ruleCount": 0,
-    "rules": []
+    "blockchainCount": 1,
+    "networkCount": 1,
+    "policyCount": 0,
+    "conditionCount": 0,
+    "blockchains": [
+      {
+        "blockchain": "sui",
+        "networks": [
+          {
+            "network": "testnet",
+            "policies": []
+          }
+        ]
+      }
+    ]
   }
 }
 ```
@@ -993,14 +1009,15 @@ Rules:
   made active.
 - `policyId` is the lowercase SHA-256 identifier for the canonical stored
   policy record. It is metadata for drift detection, not an authorization token.
-- The current StackChan CoreS3 target supports only `agentq.policy.v0`,
-  `defaultAction: "reject"`, a bounded `ruleCount`, and bounded `rules[]`
-  matching the current policy proposal rule shape. The normal product flow
-  installs `ruleCount: 0`; custom current-schema policy records may become
-  active only through the Firmware-owned `policy_propose` proposal flow.
-- `ruleCount` must match `rules.length`. Each rule is bounded by the current
-  policy schema: `id`, `chain`, `method`, `action`, and `criteria[]`; each
-  criterion contains `field`, `op`, and either `value` or `values`.
+- The current StackChan CoreS3 target supports `agentq.policy`,
+  `defaultAction: "reject"`, bounded scope counts, and bounded
+  `blockchains[].networks[].policies[]` entries using the current field and
+  operator catalog. The normal product flow installs a valid empty
+  default-reject policy. The Firmware-owned `policy_propose` flow validates,
+  displays, and commits bounded current-schema policy material after
+  device-local approval.
+- `blockchainCount`, `networkCount`, `policyCount`, and `conditionCount` must
+  match the nested document.
 - The host process validates the response strictly, rejects secret-like fields and any
   unexpected `sessionId`, and does not evaluate policy.
 - The host process MCP `policy_get` tool never exposes the session id.
@@ -1063,7 +1080,7 @@ Response:
       "result": "applied",
       "reasonCode": "device_confirmed",
       "policyHash": "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-      "ruleCount": 1,
+      "policyCount": 1,
       "highestAction": "reject"
     }
   ],
@@ -1304,14 +1321,12 @@ gate:
 - both modes validate the request envelope, parse the transaction bytes, bind
   sender and gas owner to the stored device account, and reject when their
   selected gate rejects the request;
-- `policy`: sign only when the parsed transaction matches the current automatic
-  policy-signing contract, policy facts can be built, and the active policy
-  authorizes the bounded request. The current automatic signing contract is
-  limited to transaction-derived GasCoin split results transferred to a single
-  recipient with proven SUI provenance. A valid account-bound transaction whose
-  policy coverage is incomplete returns `status: "policy_rejected"`; malformed, unbindable,
-  unsupported-version/kind, `TransactionKind`-only, trailing, or oversized
-  transaction bytes remain request errors;
+- `policy`: validate active policy availability, request network scope, account
+  binding, and offline policy condition facts, then sign only when the active
+  current policy has a matching `sign` policy. Missing, incomplete, unmatched,
+  or reject-matched policy coverage returns `status: "policy_rejected"`.
+  Malformed, unbindable, unsupported-version/kind, `TransactionKind`-only,
+  trailing, or oversized transaction bytes remain request errors;
 - `user`: build an offline facts review when complete offline facts review
   coverage exists.
   If Firmware can still validate and account-bind the transaction but cannot
@@ -1379,11 +1394,11 @@ Current implementation rules:
   serialized payload/input capacity overflow, and transactions whose sender and
   gas owner cannot be extracted and bound to the stored device account fail
   closed.
-  Policy authorization signs only when the transaction matches the current
-  automatic policy-signing contract and the active policy has a matching
-  bounded `sign` rule. Current automatic policy signing is limited to
-  GasCoin-derived proven-SUI split-result transfer facts. Valid transactions
-  whose policy coverage is incomplete return `policy_rejected`.
+  Policy authorization validates active policy availability, request network
+  scope, account binding, and complete offline policy condition facts, then
+  signs only when the active current policy has a matching `sign` policy.
+  Missing, incomplete, unmatched, or reject-matched policy coverage returns
+  `policy_rejected`.
   User authorization shows covered offline facts when offline facts review
   coverage is complete, or an explicit blind-signing warning when Firmware can
   validate and bind the transaction but offline facts review coverage is
@@ -1738,13 +1753,14 @@ through `sign_transaction`.
 ### `policy_propose`
 
 `policy_propose` is a policy-write proposal request. StackChan CoreS3
-Firmware, host process, and MCP implement the current supported path: a session-scoped
-proposal is validated by Firmware, shown on device as a policy-update summary
-review, advanced to local PIN approval only after device-local Continue,
-committed through the canonical active-policy store, and reported as
-`policy_propose_result`. The local Admin Page can submit the current Sui
-transfer policy example; full policy editing is not implemented.
-MCP/API callers can submit bounded current-schema policy proposals.
+Firmware, host process, and MCP implement the current supported path: a
+session-scoped current-schema policy proposal is validated by Firmware, shown
+on device as a policy-update summary review, advanced to local PIN approval
+only after device-local Continue, committed through the canonical active-policy
+store, and reported as `policy_propose_result`. The local Admin Page can submit
+current-schema policy proposals, including a minimal Sui testnet policy
+template. Policy reset is a Firmware-local Settings action, not a protocol
+request or host API shortcut.
 
 The method is a proposal, not a setter. The host process or Admin may submit a bounded
 policy document, but Firmware remains the authority that validates the document,
@@ -1764,48 +1780,16 @@ Request shape:
   "sessionId": "session_001",
   "params": {
     "policy": {
-      "schema": "agentq.policy.v0",
+      "schema": "agentq.policy",
       "defaultAction": "reject",
-      "rules": [
+      "blockchains": [
         {
-          "id": "sign-sui-transfer-example",
-          "chain": "sui",
-          "method": "sign_transaction",
-          "action": "sign",
-          "criteria": [
-            { "field": "common.chain", "op": "eq", "value": "sui" },
-            { "field": "common.method", "op": "eq", "value": "sign_transaction" },
-            { "field": "common.intent", "op": "eq", "value": "programmable_transaction" },
-            { "field": "sui.transaction_kind", "op": "eq", "value": "programmable_transaction" },
+          "blockchain": "sui",
+          "networks": [
             {
-              "field": "sui.sender_address",
-              "op": "eq",
-              "value": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            {
-              "field": "sui.gas_owner_address",
-              "op": "eq",
-              "value": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            { "field": "sui.gas_budget", "op": "lte", "value": "50000000" },
-            { "field": "sui.gas_price", "op": "lte", "value": "1000" },
-            { "field": "sui.expiration_kind", "op": "eq", "value": "none" },
-            { "field": "sui.sui_total_out_complete", "op": "eq", "value": "yes" },
-            { "field": "sui.sui_total_out_raw", "op": "lte", "value": "1000000" },
-            { "field": "sui.command_count", "op": "eq", "value": "2" },
-            { "field": "sui.command0_kind", "op": "eq", "value": "split_coins" },
-            { "field": "sui.command1_kind", "op": "eq", "value": "transfer_objects" },
-            { "field": "sui.recipient_count", "op": "eq", "value": "1" },
-            {
-              "field": "sui.recipient0_address",
-              "op": "eq",
-              "value": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-            },
-            { "field": "sui.recipient0_amount_raw", "op": "lte", "value": "1000000" },
-            { "field": "sui.coin_flow0_source_kind", "op": "eq", "value": "split_result" },
-            { "field": "sui.coin_flow0_asset_state", "op": "eq", "value": "proven_sui" },
-            { "field": "sui.coin_flow0_amount_known", "op": "eq", "value": "yes" },
-            { "field": "sui.coin_flow0_sink_kind", "op": "eq", "value": "transfer_recipient" }
+              "network": "testnet",
+              "policies": []
+            }
           ]
         }
       ]
@@ -1826,38 +1810,14 @@ Policy document rules for the current version:
   payload chunks.
 - Stored format: a Firmware-canonical binary policy record derived from the
   bounded AST. Policy hash/id is computed over that canonical record.
-- `schema` must be `agentq.policy.v0`.
+- `schema` must be `agentq.policy`.
 - `defaultAction` must be `reject`.
-- A policy may contain at most 16 rules.
-- A rule id is a bounded printable identifier, not an authorization token. It
-  must use the same grammar and 32-character maximum as approval-history
-  `ruleRef`: lowercase letter first, followed by lowercase letters, digits,
-  `_`, `-`, `.`, `:`, or `/`.
-- Each rule has `chain`, `method`, `action`, and `criteria`.
-- The current policy schema accepts only `reject` and `sign`.
-- The current policy document shape and currently exposed Sui policy facts are
-  cataloged in `docs/POLICY_SCHEMA.md`.
-- Action values outside the current schema are invalid policy input. A policy
-  update must not store dormant behavior. Disabled policy drafts are out
-  of scope for the current version.
-- A `reject` rule may have zero criteria.
-- A `sign` rule must be backed by the selected method's current automatic
-  policy-signing contract. Sui `sign_transaction` accepts at most one `sign`
-  rule, and only when the Sui method descriptor classifies it as bounded for
-  GasCoin-derived proven-SUI split-result transfer facts. Incomplete or
-  unsupported `sign` rules are invalid policy input.
-- A rule may contain at most 96 criteria.
-- Criterion `field` is a bounded namespace/field id such as `common.intent`,
-  `sui.gas_budget`, or `sui.command0_move_call_package`. Common fields are
-  owned by the common policy evaluator; chain-specific fields are owned by the
-  corresponding method adapter.
-- Criterion `op` may be `eq`, `in`, or `lte` only where the active method
-  adapter's field descriptor allows that operator.
-- `eq` and `lte` use exactly one scalar `value`. `in` uses exactly one
-  non-empty `values[]` list with at most 16 entries. Unused scalar/list fields
-  are rejected.
-- `u64_decimal` values must be canonical unsigned decimal strings in the
-  `uint64` range.
+- A policy document is scoped as `blockchains[].networks[].policies[]`.
+- `blockchain` and `network` are scope selectors, not condition fields.
+- Current accepted active policy material may include bounded `policies[]`
+  entries using the current field and operator catalog. Policy-mode Sui
+  `sign_transaction` uses those entries only after the active policy, request
+  network, account-binding, and complete offline condition-facts gates pass.
 - No policy may depend on client labels, purpose routing, client name, raw
   request id, session id, external market data, network fetches, JavaScript,
   Rego, CEL, JSONPath, arbitrary code execution, or a Sui host-supplied network
@@ -1876,7 +1836,7 @@ State and authorization rules:
 - A second policy update proposal while one is pending is rejected with `busy`.
 - Device-local approval is required before commit. For the current display
   target, approval is a two-step device flow: first a summary review showing a
-  bounded policy hash prefix, rule count, default action, affected chain/method,
+  bounded policy hash prefix, scope/policy/condition counts, default action,
   highest action, and the current-schema action summary; then local PIN entry
   after device-local Continue. Rejecting or timing out on the summary review
   terminates the proposal without starting PIN state. Back from the PIN screen
@@ -1944,14 +1904,17 @@ When Firmware has a canonical policy proposal, `policy` is required:
   "reasonCode": "device_confirmed",
   "policy": {
     "policyHash": "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-    "ruleCount": 1,
+    "blockchainCount": 1,
+    "networkCount": 1,
+    "policyCount": 1,
+    "conditionCount": 1,
     "highestAction": "reject"
   }
 }
 ```
 
 For `invalid_policy`, `policy` must be omitted because Firmware may not have a
-canonical policy hash, rule count, or highest action:
+canonical policy hash, count metadata, or highest action:
 
 ```json
 {

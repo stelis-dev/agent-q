@@ -2,38 +2,37 @@
 
 #include <ArduinoJson.h>
 
-#include "agent_q_common/policy/agent_q_policy_schema.h"
+#include "agent_q_common/policy/agent_q_policy_document.h"
 
 namespace agent_q {
 
-constexpr const char* kAgentQPolicyProposalSchema = "agentq.policy.v0";
 constexpr size_t kAgentQPolicyProposalMaxSerializedObjectBytes =
-    kAgentQPolicyMaxCanonicalRecordBytes;
+    kAgentQCurrentPolicyMaxCanonicalRecordBytes;
 
 enum class AgentQPolicyProposalParseStatus {
     ok,
     invalid_argument,
     too_large,
     invalid_policy,
-    unsupported_method,
     unsupported_field,
 };
 
 struct AgentQParsedPolicyProposal {
-    // Large caller-owned parse workspace. Firmware runtime code must keep this
-    // in static or module-owned storage, not on the USB request task stack.
-    AgentQPolicyCriterion criteria[kAgentQPolicyMaxRules][kAgentQPolicyMaxRuleCriteria];
-    const char* values[kAgentQPolicyMaxRules][kAgentQPolicyMaxRuleCriteria][kAgentQPolicyMaxCriterionValues];
-    AgentQPolicyRule rules[kAgentQPolicyMaxRules];
-    AgentQPolicyDocument document;
-    char string_pool[kAgentQPolicyCanonicalStringPoolBytes];
+    AgentQCurrentPolicyCondition conditions[kAgentQCurrentPolicyMaxTotalConditions];
+    const char* values[kAgentQCurrentPolicyMaxTotalConditions][kAgentQCurrentPolicyMaxConditionValues];
+    AgentQCurrentPolicy policies[kAgentQCurrentPolicyMaxTotalPolicies];
+    AgentQCurrentPolicyNetworkScope networks[kAgentQCurrentPolicyMaxTotalNetworks];
+    AgentQCurrentPolicyBlockchainScope blockchains[kAgentQCurrentPolicyMaxBlockchains];
+    AgentQCurrentPolicyDocument document;
+    char string_pool[kAgentQCurrentPolicyCanonicalStringPoolBytes];
     size_t string_pool_size;
+    size_t condition_count;
+    size_t policy_count;
+    size_t network_count;
 };
 
 AgentQPolicyProposalParseStatus parse_agent_q_policy_proposal(
     JsonVariantConst policy,
-    const AgentQPolicyMethodDescriptor* method_descriptors,
-    size_t method_descriptor_count,
     AgentQParsedPolicyProposal* out);
 
 const char* agent_q_policy_proposal_parse_status_name(

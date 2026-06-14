@@ -8,8 +8,7 @@
 #include "mbedtls/sha256.h"
 #include "nvs.h"
 
-#include "agent_q_common/policy/agent_q_policy_canonical.h"
-#include "agent_q_common/sui/agent_q_sui_method_adapter.h"
+#include "agent_q_common/policy/agent_q_policy_document.h"
 
 namespace agent_q {
 namespace {
@@ -26,13 +25,13 @@ constexpr uint8_t kPendingRecordVersion = 0;
 constexpr size_t kCommitRecordBytes = 48;
 constexpr size_t kPendingRecordBytes = 16;
 constexpr size_t kCommitHashOffset = 16;
-constexpr size_t kDefaultPolicyRecordBytes = kAgentQPolicyDefaultCanonicalRecordBytes;
+constexpr size_t kDefaultPolicyRecordBytes = kAgentQCurrentPolicyDefaultCanonicalRecordBytes;
 
-static AgentQPolicyCanonicalDocument* g_policy_document = nullptr;
-static AgentQPolicyRuntimeView* g_policy_runtime_view = nullptr;
-static uint8_t g_policy_record_buffer[kAgentQPolicyMaxCanonicalRecordBytes];
-static uint8_t g_policy_encoded_buffer[kAgentQPolicyMaxCanonicalRecordBytes];
-static uint8_t g_policy_scratch_buffer[kAgentQPolicyMaxCanonicalRecordBytes];
+static AgentQCurrentPolicyCanonicalDocument* g_policy_document = nullptr;
+static AgentQCurrentPolicyRuntimeView* g_policy_runtime_view = nullptr;
+static uint8_t g_policy_record_buffer[kAgentQCurrentPolicyMaxCanonicalRecordBytes];
+static uint8_t g_policy_encoded_buffer[kAgentQCurrentPolicyMaxCanonicalRecordBytes];
+static uint8_t g_policy_scratch_buffer[kAgentQCurrentPolicyMaxCanonicalRecordBytes];
 
 struct PolicyCommit {
     bool present;
@@ -65,11 +64,11 @@ AgentQPolicyStoreStatus read_pending_record(PolicyPendingWrite* out, bool log_fa
 bool ensure_policy_workspaces()
 {
     if (g_policy_document == nullptr) {
-        g_policy_document = static_cast<AgentQPolicyCanonicalDocument*>(
+        g_policy_document = static_cast<AgentQCurrentPolicyCanonicalDocument*>(
             malloc(sizeof(*g_policy_document)));
     }
     if (g_policy_runtime_view == nullptr) {
-        g_policy_runtime_view = static_cast<AgentQPolicyRuntimeView*>(
+        g_policy_runtime_view = static_cast<AgentQCurrentPolicyRuntimeView*>(
             malloc(sizeof(*g_policy_runtime_view)));
     }
     if (g_policy_document == nullptr || g_policy_runtime_view == nullptr) {
@@ -153,45 +152,39 @@ bool policy_id_for_record(const uint8_t* record, size_t record_size, char* outpu
 
 bool default_policy_record(uint8_t* output, size_t output_capacity, size_t* output_size)
 {
-    return encode_agent_q_policy_v0_default_record(output, output_capacity, output_size) ==
-               AgentQPolicyCanonicalStatus::ok &&
+    return encode_agent_q_current_policy_default_record(output, output_capacity, output_size) ==
+               AgentQCurrentPolicyDocumentStatus::ok &&
            *output_size == kDefaultPolicyRecordBytes;
 }
 
 bool validate_policy_record(const uint8_t* record, size_t record_size)
 {
     if (record == nullptr || record_size == 0 ||
-        record_size > kAgentQPolicyMaxCanonicalRecordBytes) {
+        record_size > kAgentQCurrentPolicyMaxCanonicalRecordBytes) {
         return false;
     }
     if (!ensure_policy_workspaces()) {
         return false;
     }
     clear_policy_document_workspace();
-    if (decode_agent_q_policy_v0_canonical_record(
+    if (decode_agent_q_current_policy_canonical_record(
             record,
             record_size,
-            g_policy_document) != AgentQPolicyCanonicalStatus::ok) {
+            g_policy_document) != AgentQCurrentPolicyDocumentStatus::ok) {
         return false;
     }
 
-    const AgentQPolicyMethodDescriptor supported_methods[] = {
-        sui_sign_transaction_policy_method_descriptor(),
-    };
-    if (validate_agent_q_policy_v0_canonical_document(
-            *g_policy_document,
-            supported_methods,
-            sizeof(supported_methods) / sizeof(supported_methods[0])) !=
-        AgentQPolicyCanonicalStatus::ok) {
+    if (validate_agent_q_current_policy_canonical_document(*g_policy_document) !=
+        AgentQCurrentPolicyDocumentStatus::ok) {
         return false;
     }
 
     size_t encoded_size = 0;
-    if (encode_agent_q_policy_v0_canonical_record(
+    if (encode_agent_q_current_policy_canonical_record(
             *g_policy_document,
             g_policy_encoded_buffer,
             sizeof(g_policy_encoded_buffer),
-            &encoded_size) != AgentQPolicyCanonicalStatus::ok ||
+            &encoded_size) != AgentQCurrentPolicyDocumentStatus::ok ||
         encoded_size != record_size ||
         memcmp(g_policy_encoded_buffer, record, record_size) != 0) {
         return false;
@@ -744,30 +737,6 @@ AgentQPolicyStoreStatus select_active_policy(ActivePolicySelection* out, bool lo
     return out->status;
 }
 
-bool load_active_policy(AgentQPolicyDocument* out, void* context)
-{
-    (void)context;
-    if (out == nullptr) {
-        return false;
-    }
-    if (!ensure_policy_workspaces()) {
-        return false;
-    }
-    clear_policy_document_workspace();
-    clear_policy_runtime_workspace();
-    ActivePolicySelection selection = {};
-    if (select_active_policy(&selection, true) != AgentQPolicyStoreStatus::active ||
-        decode_agent_q_policy_v0_canonical_record(
-            g_policy_record_buffer,
-            selection.record_size,
-            g_policy_document) != AgentQPolicyCanonicalStatus::ok ||
-        !agent_q_policy_canonical_to_runtime_view(*g_policy_document, g_policy_runtime_view)) {
-        return false;
-    }
-    *out = g_policy_runtime_view->document;
-    return true;
-}
-
 }  // namespace
 
 bool store_default_policy()
@@ -960,11 +929,6 @@ AgentQPolicyStoreStatus active_policy_status()
     return select_active_policy(&selection, false);
 }
 
-AgentQPolicyProvider active_policy_provider()
-{
-    return AgentQPolicyProvider{load_active_policy, nullptr};
-}
-
 bool read_active_policy_summary(AgentQStoredPolicySummary* out)
 {
     if (out == nullptr) {
@@ -978,17 +942,20 @@ bool read_active_policy_summary(AgentQStoredPolicySummary* out)
 
     ActivePolicySelection selection = {};
     if (select_active_policy(&selection, true) != AgentQPolicyStoreStatus::active ||
-        decode_agent_q_policy_v0_canonical_record(
+        decode_agent_q_current_policy_canonical_record(
             g_policy_record_buffer,
             selection.record_size,
-            g_policy_document) != AgentQPolicyCanonicalStatus::ok ||
+            g_policy_document) != AgentQCurrentPolicyDocumentStatus::ok ||
         !policy_id_for_record(g_policy_record_buffer, selection.record_size, out->policy_id, sizeof(out->policy_id))) {
         return false;
     }
 
     out->schema = kAgentQStoredPolicySchema;
-    out->default_action = agent_q_policy_action_name(g_policy_document->default_action);
-    out->rule_count = g_policy_document->rule_count;
+    out->default_action = agent_q_current_policy_action_name(g_policy_document->default_action);
+    out->blockchain_count = g_policy_document->blockchain_count;
+    out->network_count = g_policy_document->total_network_count;
+    out->policy_count = g_policy_document->total_policy_count;
+    out->condition_count = g_policy_document->total_condition_count;
     return true;
 }
 
@@ -1006,18 +973,21 @@ bool read_active_policy_document(AgentQStoredPolicyDocument* out)
 
     ActivePolicySelection selection = {};
     if (select_active_policy(&selection, true) != AgentQPolicyStoreStatus::active ||
-        decode_agent_q_policy_v0_canonical_record(
+        decode_agent_q_current_policy_canonical_record(
             g_policy_record_buffer,
             selection.record_size,
-            g_policy_document) != AgentQPolicyCanonicalStatus::ok ||
+            g_policy_document) != AgentQCurrentPolicyDocumentStatus::ok ||
         !policy_id_for_record(g_policy_record_buffer, selection.record_size, out->policy_id, sizeof(out->policy_id)) ||
-        !agent_q_policy_canonical_to_runtime_view(*g_policy_document, g_policy_runtime_view)) {
+        !agent_q_current_policy_canonical_to_runtime_view(*g_policy_document, g_policy_runtime_view)) {
         return false;
     }
 
     out->schema = kAgentQStoredPolicySchema;
-    out->default_action = agent_q_policy_action_name(g_policy_document->default_action);
-    out->rule_count = g_policy_document->rule_count;
+    out->default_action = agent_q_current_policy_action_name(g_policy_document->default_action);
+    out->blockchain_count = g_policy_document->blockchain_count;
+    out->network_count = g_policy_document->total_network_count;
+    out->policy_count = g_policy_document->total_policy_count;
+    out->condition_count = g_policy_document->total_condition_count;
     out->document = &g_policy_runtime_view->document;
     return true;
 }

@@ -54,7 +54,7 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_usb_response_writer.h" \
   "${AGENT_Q_DIR}/agent_q_policy_update_flow.h" \
   "${AGENT_Q_DIR}/agent_q_timeout_window.h" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_schema.h"; do
+  "${COMMON_POLICY_DIR}/agent_q_policy_document.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -126,7 +126,8 @@ char g_last_policy_status[40] = {};
 char g_last_policy_reason[40] = {};
 bool g_last_policy_included = false;
 char g_last_policy_hash[80] = {};
-size_t g_last_policy_rule_count = 0;
+size_t g_last_policy_count = 0;
+size_t g_last_policy_condition_count = 0;
 char g_last_policy_highest_action[16] = {};
 agent_q::AgentQTimeoutWindow g_last_window = {};
 
@@ -163,7 +164,8 @@ void reset_state()
     g_last_policy_reason[0] = '\0';
     g_last_policy_included = false;
     g_last_policy_hash[0] = '\0';
-    g_last_policy_rule_count = 0;
+    g_last_policy_count = 0;
+    g_last_policy_condition_count = 0;
     g_last_policy_highest_action[0] = '\0';
     g_last_window = agent_q::AgentQTimeoutWindow{0, 0};
 }
@@ -440,7 +442,8 @@ bool usb_response_write_json(JsonDocument& response)
     if (g_last_policy_included) {
         JsonObject policy = response["policy"].as<JsonObject>();
         snprintf(g_last_policy_hash, sizeof(g_last_policy_hash), "%s", policy["policyHash"].as<const char*>());
-        g_last_policy_rule_count = policy["ruleCount"].as<size_t>();
+        g_last_policy_count = policy["policyCount"].as<size_t>();
+        g_last_policy_condition_count = policy["conditionCount"].as<size_t>();
         snprintf(g_last_policy_highest_action, sizeof(g_last_policy_highest_action), "%s", policy["highestAction"].as<const char*>());
     }
     return g_json_write_ok;
@@ -589,10 +592,13 @@ int main()
             "session",
             agent_q::AgentQTimeoutWindow{10, 20},
             "sha256:policy",
+            1,
+            1,
             3,
+            7,
             "reject",
             "reject",
-            "policy_update",
+            "scopes=1/1 policies=3 conditions=7",
             "Update policy",
         };
         assert(agent_q::usb_policy_propose_result_write("req", "applied", "applied", &snapshot));
@@ -603,7 +609,8 @@ int main()
         assert(strcmp(g_last_policy_reason, "applied") == 0);
         assert(g_last_policy_included);
         assert(strcmp(g_last_policy_hash, "sha256:policy") == 0);
-        assert(g_last_policy_rule_count == 3);
+        assert(g_last_policy_count == 3);
+        assert(g_last_policy_condition_count == 7);
         assert(strcmp(g_last_policy_highest_action, "reject") == 0);
     }
 

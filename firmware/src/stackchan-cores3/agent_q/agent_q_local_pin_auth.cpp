@@ -261,6 +261,18 @@ bool local_pin_auth_begin_signing_mode_setting(
     return true;
 }
 
+bool local_pin_auth_begin_policy_reset_setting(TickType_t now, AgentQTimeoutWindow input_window)
+{
+    g_state.clear_flow();
+    if (!timeout_window_valid_and_open_at(input_window, now)) {
+        return false;
+    }
+    g_state.purpose = AgentQLocalPinAuthPurpose::settings_policy_reset;
+    g_state.stage = AgentQLocalPinAuthStage::pin_entry;
+    g_state.set_input_window(input_window);
+    return true;
+}
+
 bool local_pin_auth_begin_change_pin(TickType_t now, AgentQTimeoutWindow input_window)
 {
     g_state.clear_flow();
@@ -517,6 +529,10 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
         }
         g_state.set_input_window(next_input_window);
         return AgentQLocalPinAuthVerifyResult::advanced_to_change_pin;
+    }
+
+    if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_policy_reset) {
+        return AgentQLocalPinAuthVerifyResult::verified_settings_policy_reset;
     }
 
     if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_human_approval_input ||

@@ -2,7 +2,6 @@
 
 #include <string.h>
 
-#include "agent_q_common/policy/agent_q_policy_u64.h"
 #include "agent_q_json_input.h"
 
 namespace agent_q {
@@ -77,223 +76,325 @@ bool copy_string(
     return true;
 }
 
-bool parse_action(const char* value, AgentQPolicyAction* out)
+bool parse_action(const char* value, AgentQCurrentPolicyAction* out)
 {
     if (out == nullptr) {
         return false;
     }
     if (string_eq(value, "reject")) {
-        *out = AgentQPolicyAction::reject;
+        *out = AgentQCurrentPolicyAction::reject;
         return true;
     }
     if (string_eq(value, "sign")) {
-        *out = AgentQPolicyAction::sign;
+        *out = AgentQCurrentPolicyAction::sign;
         return true;
     }
     return false;
 }
 
-bool parse_operator(const char* value, AgentQPolicyOperator* out)
+bool parse_operator(const char* value, AgentQCurrentPolicyOperator* out)
 {
     if (out == nullptr) {
         return false;
     }
     if (string_eq(value, "eq")) {
-        *out = AgentQPolicyOperator::eq;
+        *out = AgentQCurrentPolicyOperator::eq;
         return true;
     }
     if (string_eq(value, "in")) {
-        *out = AgentQPolicyOperator::in;
+        *out = AgentQCurrentPolicyOperator::in;
+        return true;
+    }
+    if (string_eq(value, "not_in")) {
+        *out = AgentQCurrentPolicyOperator::not_in;
         return true;
     }
     if (string_eq(value, "lte")) {
-        *out = AgentQPolicyOperator::lte;
+        *out = AgentQCurrentPolicyOperator::lte;
+        return true;
+    }
+    if (string_eq(value, "contains")) {
+        *out = AgentQCurrentPolicyOperator::contains;
+        return true;
+    }
+    if (string_eq(value, "not_contains")) {
+        *out = AgentQCurrentPolicyOperator::not_contains;
+        return true;
+    }
+    if (string_eq(value, "all_in")) {
+        *out = AgentQCurrentPolicyOperator::all_in;
+        return true;
+    }
+    if (string_eq(value, "none_in")) {
+        *out = AgentQCurrentPolicyOperator::none_in;
         return true;
     }
     return false;
 }
 
-const AgentQPolicyMethodDescriptor* find_method_descriptor(
-    const AgentQPolicyMethodDescriptor* descriptors,
-    size_t descriptor_count,
-    const char* chain,
-    const char* method)
-{
-    if (descriptors == nullptr) {
-        return nullptr;
-    }
-    for (size_t index = 0; index < descriptor_count; ++index) {
-        if (string_eq(descriptors[index].chain, chain) &&
-            string_eq(descriptors[index].operation, method)) {
-            return &descriptors[index];
-        }
-    }
-    return nullptr;
-}
-
-const AgentQPolicyFieldDescriptor* find_field_descriptor(
-    const AgentQPolicyMethodDescriptor& method,
-    const char* field)
-{
-    const AgentQPolicyFieldDescriptor* common =
-        agent_q_policy_find_common_field_descriptor(field);
-    if (common != nullptr) {
-        return common;
-    }
-    if (method.field_descriptors == nullptr) {
-        return nullptr;
-    }
-    for (size_t index = 0; index < method.field_descriptor_count; ++index) {
-        if (string_eq(method.field_descriptors[index].field, field)) {
-            return &method.field_descriptors[index];
-        }
-    }
-    return nullptr;
-}
-
-AgentQPolicyProposalParseStatus parse_criterion(
-    JsonVariantConst criterion_variant,
-    const AgentQPolicyMethodDescriptor& method,
+bool copy_condition_values(
+    JsonObjectConst condition_object,
+    const AgentQCurrentPolicyFieldDescriptor& descriptor,
+    AgentQCurrentPolicyOperator op,
     AgentQParsedPolicyProposal* proposal,
-    size_t rule_index,
-    size_t criterion_index)
+    AgentQCurrentPolicyCondition* output)
 {
-    if (!criterion_variant.is<JsonObjectConst>()) {
-        return AgentQPolicyProposalParseStatus::invalid_policy;
+    if (proposal == nullptr || output == nullptr) {
+        return false;
     }
-    JsonObjectConst criterion_object = criterion_variant.as<JsonObjectConst>();
-    constexpr const char* kAllowedKeys[] = {"field", "op", "value", "values"};
-    if (!object_has_only_keys(criterion_object, kAllowedKeys, sizeof(kAllowedKeys) / sizeof(kAllowedKeys[0]))) {
-        return AgentQPolicyProposalParseStatus::invalid_policy;
-    }
-
-    const char* field = json_string_or_null(criterion_object["field"]);
-    const char* op_text = json_string_or_null(criterion_object["op"]);
-    AgentQPolicyOperator op = AgentQPolicyOperator::eq;
-    if (!agent_q_policy_is_safe_field_id(field) || !parse_operator(op_text, &op)) {
-        return AgentQPolicyProposalParseStatus::invalid_policy;
-    }
-
-    const AgentQPolicyFieldDescriptor* descriptor = find_field_descriptor(method, field);
-    if (descriptor == nullptr || !agent_q_policy_operator_allowed(*descriptor, op)) {
-        return AgentQPolicyProposalParseStatus::unsupported_field;
-    }
-
-    AgentQPolicyCriterion& output = proposal->criteria[rule_index][criterion_index];
-    output = {};
-    output.op = op;
-    if (!copy_string(proposal, field, kAgentQPolicyMaxFieldIdLength, &output.field)) {
-        return AgentQPolicyProposalParseStatus::invalid_policy;
-    }
-
-    if (op == AgentQPolicyOperator::in) {
-        if (object_contains_key(criterion_object, "value") ||
-            !criterion_object["values"].is<JsonArrayConst>()) {
-            return AgentQPolicyProposalParseStatus::invalid_policy;
+    if (agent_q_current_policy_operator_uses_value_list(op)) {
+        if (object_contains_key(condition_object, "value") ||
+            !condition_object["values"].is<JsonArrayConst>()) {
+            return false;
         }
-        JsonArrayConst values = criterion_object["values"].as<JsonArrayConst>();
+        JsonArrayConst values = condition_object["values"].as<JsonArrayConst>();
         const size_t value_count = values.size();
-        if (value_count == 0 || value_count > kAgentQPolicyMaxCriterionValues) {
-            return AgentQPolicyProposalParseStatus::invalid_policy;
+        if (value_count == 0 || value_count > kAgentQCurrentPolicyMaxConditionValues) {
+            return false;
         }
         for (size_t value_index = 0; value_index < value_count; ++value_index) {
             const char* value = json_string_or_null(values[value_index]);
-            if (!string_present(value) ||
-                (descriptor->type == AgentQPolicyValueType::u64_decimal &&
-                 !agent_q_policy_is_canonical_decimal_u64_string(value)) ||
+            if (!agent_q_current_policy_value_valid(descriptor.value_kind, value) ||
                 !copy_string(
                     proposal,
                     value,
-                    kAgentQPolicyMaxValueLength,
-                    &proposal->values[rule_index][criterion_index][value_index])) {
-                return AgentQPolicyProposalParseStatus::invalid_policy;
+                    kAgentQCurrentPolicyMaxValueLength,
+                    &proposal->values[proposal->condition_count][value_index])) {
+                return false;
             }
         }
-        output.values = proposal->values[rule_index][criterion_index];
-        output.value_count = value_count;
-        return AgentQPolicyProposalParseStatus::ok;
+        output->values = proposal->values[proposal->condition_count];
+        output->value_count = value_count;
+        return true;
     }
 
-    if (object_contains_key(criterion_object, "values")) {
+    if (object_contains_key(condition_object, "values")) {
+        return false;
+    }
+    const char* value = json_string_or_null(condition_object["value"]);
+    if (!agent_q_current_policy_value_valid(descriptor.value_kind, value) ||
+        !copy_string(
+            proposal,
+            value,
+            kAgentQCurrentPolicyMaxValueLength,
+            &proposal->values[proposal->condition_count][0])) {
+        return false;
+    }
+    output->values = proposal->values[proposal->condition_count];
+    output->value_count = 1;
+    return true;
+}
+
+bool copy_condition_where(
+    JsonObjectConst condition_object,
+    AgentQParsedPolicyProposal* proposal,
+    AgentQCurrentPolicyCondition* output)
+{
+    if (proposal == nullptr || output == nullptr) {
+        return false;
+    }
+    if (!object_contains_key(condition_object, "where")) {
+        output->where_type = nullptr;
+        return true;
+    }
+    if (!condition_object["where"].is<JsonObjectConst>()) {
+        return false;
+    }
+    JsonObjectConst where_object = condition_object["where"].as<JsonObjectConst>();
+    constexpr const char* kAllowedKeys[] = {"type"};
+    if (!object_has_only_keys(where_object, kAllowedKeys, sizeof(kAllowedKeys) / sizeof(kAllowedKeys[0]))) {
+        return false;
+    }
+    const char* type = json_string_or_null(where_object["type"]);
+    if (!agent_q_current_policy_value_valid(AgentQCurrentPolicyValueKind::string, type) ||
+        strstr(type, "::") == nullptr ||
+        !copy_string(proposal, type, kAgentQCurrentPolicyMaxValueLength, &output->where_type)) {
+        return false;
+    }
+    return true;
+}
+
+AgentQPolicyProposalParseStatus parse_condition(
+    JsonVariantConst condition_variant,
+    AgentQParsedPolicyProposal* proposal,
+    AgentQCurrentPolicyCondition* output)
+{
+    if (proposal == nullptr || output == nullptr ||
+        !condition_variant.is<JsonObjectConst>()) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
-    const char* value = json_string_or_null(criterion_object["value"]);
-    if (!string_present(value) ||
-        (descriptor->type == AgentQPolicyValueType::u64_decimal &&
-         !agent_q_policy_is_canonical_decimal_u64_string(value)) ||
-        !copy_string(proposal, value, kAgentQPolicyMaxValueLength, &output.value)) {
+    JsonObjectConst condition_object = condition_variant.as<JsonObjectConst>();
+    constexpr const char* kAllowedKeys[] = {"field", "op", "value", "values", "where"};
+    if (!object_has_only_keys(condition_object, kAllowedKeys, sizeof(kAllowedKeys) / sizeof(kAllowedKeys[0]))) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
+    if (proposal->condition_count >= kAgentQCurrentPolicyMaxTotalConditions) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+
+    const char* field = json_string_or_null(condition_object["field"]);
+    const char* op_text = json_string_or_null(condition_object["op"]);
+    AgentQCurrentPolicyOperator op = AgentQCurrentPolicyOperator::eq;
+    const AgentQCurrentPolicyFieldDescriptor* descriptor =
+        agent_q_current_policy_find_field_descriptor(field);
+    if (descriptor == nullptr) {
+        return AgentQPolicyProposalParseStatus::unsupported_field;
+    }
+    if (!parse_operator(op_text, &op) ||
+        !agent_q_current_policy_operator_allowed(*descriptor, op)) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+
+    *output = {};
+    output->op = op;
+    if (!copy_string(proposal, field, kAgentQCurrentPolicyMaxFieldIdLength, &output->field) ||
+        !copy_condition_where(condition_object, proposal, output) ||
+        !copy_condition_values(condition_object, *descriptor, op, proposal, output)) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+    proposal->condition_count += 1;
     return AgentQPolicyProposalParseStatus::ok;
 }
 
-AgentQPolicyProposalParseStatus parse_rule(
-    JsonVariantConst rule_variant,
-    const AgentQPolicyMethodDescriptor* method_descriptors,
-    size_t method_descriptor_count,
+AgentQPolicyProposalParseStatus parse_policy(
+    JsonVariantConst policy_variant,
     AgentQParsedPolicyProposal* proposal,
-    size_t rule_index)
+    AgentQCurrentPolicy* output)
 {
-    if (!rule_variant.is<JsonObjectConst>()) {
+    if (proposal == nullptr || output == nullptr ||
+        !policy_variant.is<JsonObjectConst>()) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
-    JsonObjectConst rule_object = rule_variant.as<JsonObjectConst>();
-    constexpr const char* kAllowedKeys[] = {"id", "chain", "method", "action", "criteria"};
-    if (!object_has_only_keys(rule_object, kAllowedKeys, sizeof(kAllowedKeys) / sizeof(kAllowedKeys[0]))) {
+    JsonObjectConst policy_object = policy_variant.as<JsonObjectConst>();
+    constexpr const char* kAllowedKeys[] = {"id", "action", "conditions"};
+    if (!object_has_only_keys(policy_object, kAllowedKeys, sizeof(kAllowedKeys) / sizeof(kAllowedKeys[0])) ||
+        !policy_object["conditions"].is<JsonArrayConst>()) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+    if (proposal->policy_count >= kAgentQCurrentPolicyMaxTotalPolicies) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
 
-    const char* id = json_string_or_null(rule_object["id"]);
-    const char* chain = json_string_or_null(rule_object["chain"]);
-    const char* method = json_string_or_null(rule_object["method"]);
-    const char* action_text = json_string_or_null(rule_object["action"]);
-    AgentQPolicyAction action = AgentQPolicyAction::reject;
-    if (!agent_q_policy_is_rule_id_string(id) ||
-        !agent_q_policy_is_identifier_string(chain, kAgentQPolicyMaxChainIdLength) ||
-        !agent_q_policy_is_identifier_string(method, kAgentQPolicyMaxOperationLength) ||
+    const char* id = json_string_or_null(policy_object["id"]);
+    const char* action_text = json_string_or_null(policy_object["action"]);
+    AgentQCurrentPolicyAction action = AgentQCurrentPolicyAction::reject;
+    if (!agent_q_current_policy_is_safe_policy_id(id) ||
         !parse_action(action_text, &action)) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
 
-    const AgentQPolicyMethodDescriptor* method_descriptor =
-        find_method_descriptor(method_descriptors, method_descriptor_count, chain, method);
-    if (method_descriptor == nullptr) {
-        return AgentQPolicyProposalParseStatus::unsupported_method;
-    }
-    if ((action == AgentQPolicyAction::reject && !method_descriptor->supports_reject)) {
+    JsonArrayConst conditions = policy_object["conditions"].as<JsonArrayConst>();
+    const size_t condition_count = conditions.size();
+    if (condition_count > kAgentQCurrentPolicyMaxConditionsPerPolicy ||
+        (action == AgentQCurrentPolicyAction::sign && condition_count == 0) ||
+        proposal->condition_count + condition_count > kAgentQCurrentPolicyMaxTotalConditions) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
 
-    if (!rule_object["criteria"].is<JsonArrayConst>()) {
+    *output = {};
+    output->action = action;
+    output->condition_count = condition_count;
+    output->conditions = condition_count == 0 ? nullptr : &proposal->conditions[proposal->condition_count];
+    if (!copy_string(proposal, id, kAgentQCurrentPolicyMaxPolicyIdLength, &output->id)) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
-    JsonArrayConst criteria = rule_object["criteria"].as<JsonArrayConst>();
-    const size_t criterion_count = criteria.size();
-    if (criterion_count > kAgentQPolicyMaxRuleCriteria) {
-        return AgentQPolicyProposalParseStatus::invalid_policy;
-    }
-
-    AgentQPolicyRule& output = proposal->rules[rule_index];
-    output = {};
-    output.action = action;
-    output.criterion_count = criterion_count;
-    output.criteria = criterion_count == 0 ? nullptr : proposal->criteria[rule_index];
-
-    if (!copy_string(proposal, id, kAgentQPolicyMaxRuleIdLength, &output.id) ||
-        !copy_string(proposal, chain, kAgentQPolicyMaxChainIdLength, &output.chain) ||
-        !copy_string(proposal, method, kAgentQPolicyMaxOperationLength, &output.operation)) {
-        return AgentQPolicyProposalParseStatus::invalid_policy;
-    }
-
-    for (size_t criterion_index = 0; criterion_index < criterion_count; ++criterion_index) {
+    for (size_t condition_index = 0; condition_index < condition_count; ++condition_index) {
         const AgentQPolicyProposalParseStatus status =
-            parse_criterion(criteria[criterion_index], *method_descriptor, proposal, rule_index, criterion_index);
+            parse_condition(conditions[condition_index], proposal, &proposal->conditions[proposal->condition_count]);
         if (status != AgentQPolicyProposalParseStatus::ok) {
             return status;
         }
     }
-    if (!agent_q_policy_method_sign_rule_is_bounded(*method_descriptor, output)) {
+    proposal->policy_count += 1;
+    return AgentQPolicyProposalParseStatus::ok;
+}
+
+AgentQPolicyProposalParseStatus parse_network(
+    JsonVariantConst network_variant,
+    AgentQParsedPolicyProposal* proposal,
+    AgentQCurrentPolicyNetworkScope* output)
+{
+    if (proposal == nullptr || output == nullptr ||
+        !network_variant.is<JsonObjectConst>()) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+    JsonObjectConst network_object = network_variant.as<JsonObjectConst>();
+    constexpr const char* kAllowedKeys[] = {"network", "policies"};
+    if (!object_has_only_keys(network_object, kAllowedKeys, sizeof(kAllowedKeys) / sizeof(kAllowedKeys[0])) ||
+        !network_object["policies"].is<JsonArrayConst>()) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+    if (proposal->network_count >= kAgentQCurrentPolicyMaxTotalNetworks) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+
+    const char* network = json_string_or_null(network_object["network"]);
+    if (!agent_q_current_policy_is_supported_network(network)) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+    JsonArrayConst policies = network_object["policies"].as<JsonArrayConst>();
+    const size_t policy_count = policies.size();
+    if (policy_count > kAgentQCurrentPolicyMaxPoliciesPerNetwork ||
+        proposal->policy_count + policy_count > kAgentQCurrentPolicyMaxTotalPolicies) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+
+    *output = {};
+    output->policy_count = policy_count;
+    output->policies = policy_count == 0 ? nullptr : &proposal->policies[proposal->policy_count];
+    if (!copy_string(proposal, network, kAgentQCurrentPolicyMaxNetworkLength, &output->network)) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+    for (size_t policy_index = 0; policy_index < policy_count; ++policy_index) {
+        const AgentQPolicyProposalParseStatus status =
+            parse_policy(policies[policy_index], proposal, &proposal->policies[proposal->policy_count]);
+        if (status != AgentQPolicyProposalParseStatus::ok) {
+            return status;
+        }
+    }
+    proposal->network_count += 1;
+    return AgentQPolicyProposalParseStatus::ok;
+}
+
+AgentQPolicyProposalParseStatus parse_blockchain(
+    JsonVariantConst blockchain_variant,
+    AgentQParsedPolicyProposal* proposal,
+    AgentQCurrentPolicyBlockchainScope* output)
+{
+    if (proposal == nullptr || output == nullptr ||
+        !blockchain_variant.is<JsonObjectConst>()) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+    JsonObjectConst blockchain_object = blockchain_variant.as<JsonObjectConst>();
+    constexpr const char* kAllowedKeys[] = {"blockchain", "networks"};
+    if (!object_has_only_keys(blockchain_object, kAllowedKeys, sizeof(kAllowedKeys) / sizeof(kAllowedKeys[0])) ||
+        !blockchain_object["networks"].is<JsonArrayConst>()) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+
+    const char* blockchain = json_string_or_null(blockchain_object["blockchain"]);
+    if (!agent_q_current_policy_is_supported_blockchain(blockchain)) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+    JsonArrayConst networks = blockchain_object["networks"].as<JsonArrayConst>();
+    const size_t network_count = networks.size();
+    if (network_count > kAgentQCurrentPolicyMaxNetworksPerBlockchain ||
+        proposal->network_count + network_count > kAgentQCurrentPolicyMaxTotalNetworks) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+
+    *output = {};
+    output->network_count = network_count;
+    output->networks = network_count == 0 ? nullptr : &proposal->networks[proposal->network_count];
+    if (!copy_string(proposal, blockchain, kAgentQCurrentPolicyMaxBlockchainLength, &output->blockchain)) {
+        return AgentQPolicyProposalParseStatus::invalid_policy;
+    }
+    for (size_t network_index = 0; network_index < network_count; ++network_index) {
+        const AgentQPolicyProposalParseStatus status =
+            parse_network(networks[network_index], proposal, &proposal->networks[proposal->network_count]);
+        if (status != AgentQPolicyProposalParseStatus::ok) {
+            return status;
+        }
     }
     return AgentQPolicyProposalParseStatus::ok;
 }
@@ -302,8 +403,6 @@ AgentQPolicyProposalParseStatus parse_rule(
 
 AgentQPolicyProposalParseStatus parse_agent_q_policy_proposal(
     JsonVariantConst policy,
-    const AgentQPolicyMethodDescriptor* method_descriptors,
-    size_t method_descriptor_count,
     AgentQParsedPolicyProposal* out)
 {
     if (out == nullptr) {
@@ -317,41 +416,39 @@ AgentQPolicyProposalParseStatus parse_agent_q_policy_proposal(
     if (measureJson(policy) > kAgentQPolicyProposalMaxSerializedObjectBytes) {
         return AgentQPolicyProposalParseStatus::too_large;
     }
-    if (!agent_q_policy_validate_method_descriptors(method_descriptors, method_descriptor_count)) {
-        return AgentQPolicyProposalParseStatus::invalid_argument;
-    }
 
     JsonObjectConst policy_object = policy.as<JsonObjectConst>();
-    constexpr const char* kAllowedKeys[] = {"schema", "defaultAction", "rules"};
+    constexpr const char* kAllowedKeys[] = {"schema", "defaultAction", "blockchains"};
     if (!object_has_only_keys(policy_object, kAllowedKeys, sizeof(kAllowedKeys) / sizeof(kAllowedKeys[0])) ||
-        !string_eq(json_string_or_null(policy_object["schema"]), kAgentQPolicyProposalSchema) ||
+        !string_eq(json_string_or_null(policy_object["schema"]), kAgentQCurrentPolicySchema) ||
         !string_eq(json_string_or_null(policy_object["defaultAction"]), "reject") ||
-        !policy_object["rules"].is<JsonArrayConst>()) {
+        !policy_object["blockchains"].is<JsonArrayConst>()) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
 
-    JsonArrayConst rules = policy_object["rules"].as<JsonArrayConst>();
-    const size_t rule_count = rules.size();
-    if (rule_count > kAgentQPolicyMaxRules) {
+    JsonArrayConst blockchains = policy_object["blockchains"].as<JsonArrayConst>();
+    const size_t blockchain_count = blockchains.size();
+    if (blockchain_count > kAgentQCurrentPolicyMaxBlockchains) {
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
 
-    out->document = AgentQPolicyDocument{
-        kAgentQPolicyV0Schema,
-        AgentQPolicyAction::reject,
-        rule_count == 0 ? nullptr : out->rules,
-        rule_count,
+    out->document = AgentQCurrentPolicyDocument{
+        kAgentQCurrentPolicySchema,
+        AgentQCurrentPolicyAction::reject,
+        blockchain_count == 0 ? nullptr : out->blockchains,
+        blockchain_count,
     };
 
-    for (size_t rule_index = 0; rule_index < rule_count; ++rule_index) {
+    for (size_t blockchain_index = 0; blockchain_index < blockchain_count; ++blockchain_index) {
         const AgentQPolicyProposalParseStatus status =
-            parse_rule(rules[rule_index], method_descriptors, method_descriptor_count, out, rule_index);
+            parse_blockchain(blockchains[blockchain_index], out, &out->blockchains[blockchain_index]);
         if (status != AgentQPolicyProposalParseStatus::ok) {
             memset(out, 0, sizeof(*out));
             return status;
         }
     }
-    if (!agent_q_policy_sign_rule_count_is_supported(out->document)) {
+    if (validate_agent_q_current_policy_document(out->document) !=
+        AgentQCurrentPolicyDocumentStatus::ok) {
         memset(out, 0, sizeof(*out));
         return AgentQPolicyProposalParseStatus::invalid_policy;
     }
@@ -370,8 +467,6 @@ const char* agent_q_policy_proposal_parse_status_name(
             return "too_large";
         case AgentQPolicyProposalParseStatus::invalid_policy:
             return "invalid_policy";
-        case AgentQPolicyProposalParseStatus::unsupported_method:
-            return "unsupported_method";
         case AgentQPolicyProposalParseStatus::unsupported_field:
             return "unsupported_field";
     }

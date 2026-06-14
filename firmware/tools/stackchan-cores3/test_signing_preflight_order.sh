@@ -70,9 +70,8 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_result_store.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_signing_preparation.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_offline_policy_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex"; do
@@ -1699,9 +1698,8 @@ CPP
   "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_result_store.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_signing_preparation.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_offline_policy_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${TMP_DIR}/byte_conversions.o" \

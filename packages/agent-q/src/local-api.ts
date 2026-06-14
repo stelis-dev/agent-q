@@ -8,11 +8,19 @@ import {
   toAgentQError,
   toPublicError,
 } from "@stelis/agent-q-core/adapter-internal";
+import {
+  MAX_RAW_PROTOCOL_JSON_BYTES,
+  MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS,
+} from "@stelis/agent-q-core/protocol";
 
 export const DEFAULT_LOCAL_API_HOST = "127.0.0.1";
 export const DEFAULT_LOCAL_API_PORT = 8787;
 const MAX_LOCAL_API_JSON_BYTES = 16384;
+const MAX_LOCAL_API_SIGN_TRANSACTION_JSON_BYTES =
+  MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS + MAX_RAW_PROTOCOL_JSON_BYTES;
 const LOCAL_API_LOOPBACK_HOSTS = new Set([DEFAULT_LOCAL_API_HOST, "localhost", "::1"]);
+const SUI_TYPE_TAG = "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
+const ONE_SUI_MIST = "1000000000";
 
 export type LocalApiAgentQCore = Pick<
   AgentQCore,
@@ -77,50 +85,33 @@ function formatLocalApiHostForUrl(host: string): string {
   return host.includes(":") ? `[${host}]` : host;
 }
 
-export function buildCurrentSuiTransferPolicyExample(): Record<string, unknown> {
+export function buildMinimalSuiTestnetPolicy(): Record<string, unknown> {
   return {
-    schema: "agentq.policy.v0",
+    schema: "agentq.policy",
     defaultAction: "reject",
-    rules: [
+    blockchains: [
       {
-        id: "sign-sui-transfer-example",
-        chain: "sui",
-        method: "sign_transaction",
-        action: "sign",
-        criteria: [
-          { field: "common.chain", op: "eq", value: "sui" },
-          { field: "common.method", op: "eq", value: "sign_transaction" },
-          { field: "common.intent", op: "eq", value: "programmable_transaction" },
-          { field: "sui.transaction_kind", op: "eq", value: "programmable_transaction" },
+        blockchain: "sui",
+        networks: [
           {
-            field: "sui.sender_address",
-            op: "eq",
-            value: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            network: "testnet",
+            policies: [
+              {
+                id: "sign-testnet-sui-up-to-one",
+                action: "sign",
+                conditions: [
+                  { field: "sui.token_sources.source", op: "eq", value: "gas_coin" },
+                  {
+                    field: "sui.token_totals_by_type.amount_raw",
+                    where: { type: SUI_TYPE_TAG },
+                    op: "lte",
+                    value: ONE_SUI_MIST,
+                  },
+                  { field: "sui.token_unknown_amount_present", op: "eq", value: "false" },
+                ],
+              },
+            ],
           },
-          {
-            field: "sui.gas_owner_address",
-            op: "eq",
-            value: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          },
-          { field: "sui.gas_budget", op: "lte", value: "50000000" },
-          { field: "sui.gas_price", op: "lte", value: "1000" },
-          { field: "sui.expiration_kind", op: "eq", value: "none" },
-          { field: "sui.sui_total_out_complete", op: "eq", value: "yes" },
-          { field: "sui.sui_total_out_raw", op: "lte", value: "1000000" },
-          { field: "sui.command_count", op: "eq", value: "2" },
-          { field: "sui.command0_kind", op: "eq", value: "split_coins" },
-          { field: "sui.command1_kind", op: "eq", value: "transfer_objects" },
-          { field: "sui.recipient_count", op: "eq", value: "1" },
-          {
-            field: "sui.recipient0_address",
-            op: "eq",
-            value: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          },
-          { field: "sui.recipient0_amount_raw", op: "lte", value: "1000000" },
-          { field: "sui.coin_flow0_source_kind", op: "eq", value: "split_result" },
-          { field: "sui.coin_flow0_asset_state", op: "eq", value: "proven_sui" },
-          { field: "sui.coin_flow0_amount_known", op: "eq", value: "yes" },
-          { field: "sui.coin_flow0_sink_kind", op: "eq", value: "transfer_recipient" },
         ],
       },
     ],
@@ -155,7 +146,7 @@ async function handleLocalApiRequest(
     }
     validateLocalApiRequest(request);
 
-    const body = await readJsonBody(request);
+    const body = await readJsonBody(request, localApiJsonBodyLimit(request.url));
     switch (request.url) {
       case "/api/list_devices":
         expectKeys(body, []);
@@ -213,20 +204,17 @@ async function handleLocalApiRequest(
           await core.getApprovalHistory({ ...deviceScopedInput(body), limit: 4 }),
         );
         return;
-      case "/api/policy_preview":
+      case "/api/policy_template_minimal_sui_testnet":
         expectKeys(body, []);
-        sendJson(response, 200, { ok: true, result: { policy: buildCurrentSuiTransferPolicyExample() } });
+        sendJson(response, 200, { ok: true, result: { policy: buildMinimalSuiTestnetPolicy() } });
         return;
-      case "/api/policy_propose_example": {
-        expectKeys(body, ["deviceId", "purpose"]);
-        const policy = buildCurrentSuiTransferPolicyExample();
+      case "/api/policy_propose": {
+        expectKeys(body, ["deviceId", "purpose", "policy"]);
+        const { deviceId, purpose, policy } = policyProposalInput(body);
         sendSanitizedSuccess(
           response,
           hostSuccessOutputSchemas.policyPropose,
-          await core.policyPropose({
-            ...deviceScopedInput(body),
-            policy,
-          }),
+          await core.policyPropose({ deviceId, purpose, policy }),
         );
         return;
       }
@@ -287,11 +275,17 @@ function isSameOrigin(origin: string, host: string): boolean {
   }
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<RequestBody> {
+function localApiJsonBodyLimit(url: string | undefined): number {
+  return url === "/api/sign_transaction"
+    ? MAX_LOCAL_API_SIGN_TRANSACTION_JSON_BYTES
+    : MAX_LOCAL_API_JSON_BYTES;
+}
+
+async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<RequestBody> {
   let raw = "";
   for await (const chunk of request) {
     raw += chunk;
-    if (Buffer.byteLength(raw, "utf8") > MAX_LOCAL_API_JSON_BYTES) {
+    if (Buffer.byteLength(raw, "utf8") > maxBytes) {
       throw new AgentQError("invalid_params", "Local API request body is too large.", false);
     }
   }
@@ -341,6 +335,21 @@ function signTransactionInput(body: RequestBody): {
     method: requiredString(body, "method"),
     network: body.network,
     txBytes: requiredString(body, "txBytes"),
+  };
+}
+
+function policyProposalInput(body: RequestBody): {
+  deviceId?: string;
+  purpose?: string;
+  policy: Record<string, unknown>;
+} {
+  const policy = body.policy;
+  if (!isRecord(policy) || Array.isArray(policy)) {
+    throw new AgentQError("invalid_params", "Local API policy proposal must be a JSON object.", false);
+  }
+  return {
+    ...deviceScopedInput(body),
+    policy,
   };
 }
 
@@ -431,23 +440,19 @@ const ADMIN_HTML = `<!doctype html>
 
     <section class="band">
       <div class="sectionHeader">
-        <h2>Active Policy</h2>
-        <button id="policyButton" type="button">Load Policy</button>
-      </div>
-      <pre id="policyOutput" class="output"></pre>
-    </section>
-
-    <section class="band">
-      <div class="sectionHeader">
-        <h2>Sui Transfer Policy Example</h2>
-        <button id="proposalButton" type="button">Submit Example</button>
+        <h2>Policy</h2>
+        <div class="actions">
+          <button id="policyButton" type="button">Load Active</button>
+          <button id="minimalPolicyButton" type="button">Use Minimal Test Policy</button>
+          <button id="submitPolicyButton" type="button">Submit Editor Policy</button>
+        </div>
       </div>
       <p>
-        Submits the current automatic policy-signing example: one bounded Sui
-        sign rule for GasCoin-derived SplitCoins -> TransferObjects. Full Admin
-        policy editing is not implemented.
+        Admin submits policy proposals only. Firmware validates, reviews, commits,
+        and later evaluates policy-mode signing requests.
       </p>
-      <pre id="proposalOutput" class="output"></pre>
+      <textarea id="policyEditor" class="editor" spellcheck="false"></textarea>
+      <pre id="policyOutput" class="output"></pre>
     </section>
 
     <section class="band">
@@ -463,6 +468,13 @@ const ADMIN_HTML = `<!doctype html>
       <pre id="resultOutput" class="output"></pre>
     </section>
   </main>
+  <div id="policySaveOverlay" class="statusOverlay" role="status" aria-live="polite" hidden>
+    <div class="statusCard">
+      <div class="spinner" aria-hidden="true"></div>
+      <h2>Saving policy</h2>
+      <p id="policySaveOverlayText">Waiting for device-local approval.</p>
+    </div>
+  </div>
   <script src="/admin.js" type="module"></script>
 </body>
 </html>
@@ -544,7 +556,8 @@ p,
 }
 
 button,
-select {
+select,
+textarea {
   border: 1px solid var(--line);
   border-radius: 6px;
   min-height: 36px;
@@ -564,6 +577,16 @@ button {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.editor {
+  width: 100%;
+  min-height: 280px;
+  padding: 12px;
+  resize: vertical;
+  background: #ffffff;
+  color: var(--text);
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .field {
@@ -589,6 +612,48 @@ button:disabled {
   white-space: pre-wrap;
 }
 
+.statusOverlay[hidden] {
+  display: none;
+}
+
+.statusOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(15 23 42 / 0.42);
+}
+
+.statusCard {
+  width: min(360px, 100%);
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 18px 40px rgb(15 23 42 / 0.22);
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.spinner {
+  width: 34px;
+  height: 34px;
+  border: 4px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .error {
   color: var(--danger);
 }
@@ -603,7 +668,8 @@ button:disabled {
   }
 
   button,
-  select {
+  select,
+  textarea {
     width: 100%;
   }
 }
@@ -620,14 +686,17 @@ const el = {
   connectButton: document.getElementById("connectButton"),
   disconnectButton: document.getElementById("disconnectButton"),
   policyButton: document.getElementById("policyButton"),
-  proposalButton: document.getElementById("proposalButton"),
+  minimalPolicyButton: document.getElementById("minimalPolicyButton"),
+  submitPolicyButton: document.getElementById("submitPolicyButton"),
   historyButton: document.getElementById("historyButton"),
   deviceSelect: document.getElementById("deviceSelect"),
   deviceOutput: document.getElementById("deviceOutput"),
+  policyEditor: document.getElementById("policyEditor"),
   policyOutput: document.getElementById("policyOutput"),
-  proposalOutput: document.getElementById("proposalOutput"),
   historyOutput: document.getElementById("historyOutput"),
   resultOutput: document.getElementById("resultOutput"),
+  policySaveOverlay: document.getElementById("policySaveOverlay"),
+  policySaveOverlayText: document.getElementById("policySaveOverlayText"),
 };
 
 function pretty(value) {
@@ -661,6 +730,15 @@ function showError(target, error) {
   target.textContent = pretty(error);
 }
 
+function showPolicySaveOverlay(message) {
+  el.policySaveOverlayText.textContent = message;
+  el.policySaveOverlay.hidden = false;
+}
+
+function hidePolicySaveOverlay() {
+  el.policySaveOverlay.hidden = true;
+}
+
 function setBusy(isBusy) {
   for (const button of [
     el.refreshButton,
@@ -668,7 +746,8 @@ function setBusy(isBusy) {
     el.connectButton,
     el.disconnectButton,
     el.policyButton,
-    el.proposalButton,
+    el.minimalPolicyButton,
+    el.submitPolicyButton,
     el.historyButton,
   ]) {
     button.disabled = isBusy;
@@ -731,29 +810,76 @@ async function run(path, target, body = selectedDeviceInput()) {
   }
 }
 
-async function refreshProposalPreview() {
+function setPolicyEditor(policy) {
+  el.policyEditor.value = pretty(policy);
+}
+
+function parsePolicyEditor() {
   try {
-    const result = await api("/api/policy_preview");
-    show(el.proposalOutput, result.policy);
+    return JSON.parse(el.policyEditor.value);
   } catch (error) {
-    showError(el.proposalOutput, error);
+    throw {
+      code: "invalid_json",
+      message: error instanceof Error ? error.message : "Policy editor JSON is invalid.",
+      retryable: false,
+    };
   }
 }
 
-async function submitProposal() {
+async function loadActivePolicy() {
   setBusy(true);
-  show(el.resultOutput, "Waiting for device-local approval.");
   try {
-    const result = await api("/api/policy_propose_example", {
-      ...selectedDeviceInput(),
-    });
-    show(el.resultOutput, result);
-    show(el.policyOutput, await api("/api/policy_get", selectedDeviceInput()));
-    show(el.historyOutput, await api("/api/get_approval_history", selectedDeviceInput()));
+    const result = await api("/api/policy_get", selectedDeviceInput());
+    setPolicyEditor(result.policy);
+    show(el.policyOutput, result);
   } catch (error) {
-    showError(el.resultOutput, error);
+    showError(el.policyOutput, error);
   } finally {
     setBusy(false);
+  }
+}
+
+async function loadPolicyTemplate(path) {
+  try {
+    const result = await api(path);
+    setPolicyEditor(result.policy);
+    show(el.policyOutput, { templateLoaded: true, policy: result.policy });
+  } catch (error) {
+    showError(el.policyOutput, error);
+  }
+}
+
+async function submitEditorPolicy() {
+  setBusy(true);
+  showPolicySaveOverlay("Parsing policy JSON.");
+  let busy = true;
+  const clearBusy = () => {
+    if (busy) {
+      setBusy(false);
+      busy = false;
+    }
+  };
+  try {
+    const policy = parsePolicyEditor();
+    showPolicySaveOverlay("Waiting for device-local approval.");
+    const result = await api("/api/policy_propose", {
+      ...selectedDeviceInput(),
+      policy,
+    });
+    showPolicySaveOverlay("Refreshing active policy.");
+    const active = await api("/api/policy_get", selectedDeviceInput());
+    showPolicySaveOverlay("Updating approval history.");
+    const history = await api("/api/get_approval_history", selectedDeviceInput());
+    setPolicyEditor(active.policy);
+    show(el.policyOutput, active);
+    show(el.historyOutput, history);
+    show(el.resultOutput, result);
+    hidePolicySaveOverlay();
+  } catch (error) {
+    hidePolicySaveOverlay();
+    showError(el.resultOutput, error);
+  } finally {
+    clearBusy();
   }
 }
 
@@ -761,13 +887,14 @@ el.refreshButton.addEventListener("click", refreshDevices);
 el.scanButton.addEventListener("click", scanDevices);
 el.connectButton.addEventListener("click", () => run("/api/connect", el.resultOutput));
 el.disconnectButton.addEventListener("click", () => run("/api/disconnect", el.resultOutput));
-el.policyButton.addEventListener("click", () => run("/api/policy_get", el.policyOutput));
+el.policyButton.addEventListener("click", loadActivePolicy);
 el.historyButton.addEventListener("click", () => run("/api/get_approval_history", el.historyOutput));
-el.proposalButton.addEventListener("click", submitProposal);
+el.minimalPolicyButton.addEventListener("click", () => loadPolicyTemplate("/api/policy_template_minimal_sui_testnet"));
+el.submitPolicyButton.addEventListener("click", submitEditorPolicy);
 el.deviceSelect.addEventListener("change", () => {
   state.selectedDeviceId = el.deviceSelect.value;
 });
 
 await refreshDevices();
-await refreshProposalPreview();
+await loadPolicyTemplate("/api/policy_template_minimal_sui_testnet");
 `;

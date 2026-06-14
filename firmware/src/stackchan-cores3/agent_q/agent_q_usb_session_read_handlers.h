@@ -2,7 +2,7 @@
 
 #include <ArduinoJson.h>
 
-#include "policy/agent_q_policy_v0.h"
+#include "policy/agent_q_policy_document.h"
 #include "agent_q_signing_mode.h"
 #include "agent_q_sui_account_store.h"
 #include "agent_q_usb_operation_response_writer.h"
@@ -25,8 +25,11 @@ struct AgentQUsbSessionReadHandlerOps {
         char* policy_id_out,
         size_t policy_id_out_size,
         const char** default_action,
-        size_t* rule_count,
-        const AgentQPolicyDocument** document);
+        size_t* blockchain_count,
+        size_t* network_count,
+        size_t* policy_count,
+        size_t* condition_count,
+        const AgentQCurrentPolicyDocument** document);
     void (*record_active_policy_unavailable)();
 };
 

@@ -204,11 +204,6 @@ AgentQPolicyStoreStatus active_policy_status()
     return g_policy_status;
 }
 
-AgentQPolicyProvider active_policy_provider()
-{
-    return AgentQPolicyProvider{nullptr, nullptr};
-}
-
 bool read_active_policy_summary(AgentQStoredPolicySummary*)
 {
     return false;
@@ -367,11 +362,11 @@ AgentQPolicyUpdateMarkerStatus policy_update_marker_status()
 AgentQPolicyUpdateMarkerBeginResult policy_update_marker_begin(
     const uint8_t*,
     size_t policy_digest_size,
-    size_t rule_count,
+    size_t policy_count,
     AgentQPolicyUpdateHighestAction)
 {
     if (policy_digest_size != kAgentQPolicyUpdateDigestBytes ||
-        rule_count > kAgentQPolicyMaxRules) {
+        policy_count > kAgentQCurrentPolicyMaxTotalPolicies) {
         return AgentQPolicyUpdateMarkerBeginResult::invalid_input;
     }
     g_policy_update_marker_present = true;

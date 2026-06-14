@@ -145,7 +145,7 @@ if [[ -L "${TARGET_DIR}" || ! -d "${TARGET_DIR}" ]]; then
   echo "prepare.sh did not replace broken target directory symlink: ${TARGET_DIR}" >&2
   exit 1
 fi
-if [[ ! -f "${TARGET_DIR}/agent_q_policy_v0.cpp" ]]; then
+if [[ ! -f "${TARGET_DIR}/agent_q_policy_document.cpp" ]]; then
   echo "prepare.sh did not restore common policy sources under ${TARGET_DIR}" >&2
   exit 1
 fi

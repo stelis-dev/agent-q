@@ -23,7 +23,10 @@ import {
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
   MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
-  MAX_POLICY_RULE_COUNT,
+  MAX_POLICY_BLOCKCHAINS,
+  MAX_POLICY_TOTAL_CONDITIONS,
+  MAX_POLICY_TOTAL_NETWORKS,
+  MAX_POLICY_TOTAL_POLICIES,
   POLICY_ID_PATTERN,
   POLICY_PROPOSE_RESULT_STATUSES,
   SIGN_CHAIN_PATTERN,
@@ -445,7 +448,7 @@ const policyUpdateApprovalHistoryRecordShape = approvalHistoryRecordShape.extend
   eventKind: z.literal("policy_update"),
   result: z.enum(APPROVAL_HISTORY_POLICY_UPDATE_RESULTS),
   policyHash: z.string().regex(POLICY_ID_PATTERN),
-  ruleCount: z.number().int().min(0).max(MAX_POLICY_RULE_COUNT),
+  policyCount: z.number().int().min(0).max(MAX_POLICY_TOTAL_POLICIES),
   highestAction: z.enum(APPROVAL_HISTORY_HIGHEST_ACTIONS),
 }).strict();
 const signingUserConfirmationApprovalHistoryRecordShape = approvalHistoryRecordShape.extend({
@@ -668,7 +671,10 @@ export const signPersonalMessageToolOutputShape = z.union([
 
 const policyProposeResultPolicyShape = z.object({
   policyHash: z.string().regex(POLICY_ID_PATTERN),
-  ruleCount: z.number().int().min(0).max(MAX_POLICY_RULE_COUNT),
+  blockchainCount: z.number().int().min(0).max(MAX_POLICY_BLOCKCHAINS),
+  networkCount: z.number().int().min(0).max(MAX_POLICY_TOTAL_NETWORKS),
+  policyCount: z.number().int().min(0).max(MAX_POLICY_TOTAL_POLICIES),
+  conditionCount: z.number().int().min(0).max(MAX_POLICY_TOTAL_CONDITIONS),
   highestAction: z.enum(APPROVAL_HISTORY_HIGHEST_ACTIONS),
 }).strict();
 const livePolicyProposeOutputShape = z

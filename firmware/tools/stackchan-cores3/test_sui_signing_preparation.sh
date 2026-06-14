@@ -162,8 +162,8 @@ agent_q::AgentQSuiUserAuthorizationOutcome expected_user_authorization_outcome(
 agent_q::AgentQSuiPolicyAuthorizationOutcome expected_policy_authorization_outcome(
     const MatrixRow& row)
 {
-    const std::string& policy_gate = field(row, "expected_policy_gate_after_adapter");
-    if (policy_gate == "policy_evaluation_pending") {
+    const std::string& parse_result = field(row, "full_facts_parse_result");
+    if (parse_result == "ok") {
         return agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation;
     }
     return agent_q::AgentQSuiPolicyAuthorizationOutcome::unavailable;
@@ -210,14 +210,11 @@ std::string policy_outcome_for_prepared(
     agent_q::AgentQSuiSigningPreparationResult result,
     const agent_q::AgentQSuiPreparedSignTransaction& prepared)
 {
+    (void)prepared;
     if (result != agent_q::AgentQSuiSigningPreparationResult::ok) {
         return preparation_result_outcome(result);
     }
-    return prepared.policy_mode_authorization_covered &&
-               prepared.policy_authorization_outcome ==
-                   agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation
-               ? "policy_evaluation"
-               : "policy_rejected";
+    return "policy_rejected";
 }
 
 void verify_matrix_final_outcomes(const std::string& root, const std::string& matrix_path)
@@ -319,12 +316,16 @@ int main(int argc, char** argv)
     assert(tx.sui_review.row_count > 0);
     assert(tx.user_mode_authorization_covered);
     assert(tx.policy_mode_authorization_covered);
+    assert(tx.sui_offline_policy_facts != nullptr);
+    assert(tx.sui_offline_policy_facts->completeness ==
+           agent_q::SuiOfflinePolicyFactsCompleteness::complete);
     assert(tx.user_authorization_outcome ==
            agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review);
     assert(tx.policy_authorization_outcome ==
            agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation);
     agent_q::clear_prepared_sui_sign_transaction(&tx);
     assert(tx.tx_bytes_size == 0);
+    assert(tx.sui_offline_policy_facts == nullptr);
 
     assert(agent_q::prepare_sui_sign_transaction(
                agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
@@ -356,11 +357,11 @@ int main(int argc, char** argv)
     assert(tx.tx_bytes_size == publish.size());
     assert(tx.sui_review.status == agent_q::SuiReviewSummaryStatus::insufficient_review);
     assert(tx.user_mode_authorization_covered);
-    assert(!tx.policy_mode_authorization_covered);
+    assert(tx.policy_mode_authorization_covered);
     assert(tx.user_authorization_outcome ==
            agent_q::AgentQSuiUserAuthorizationOutcome::blind_signing);
     assert(tx.policy_authorization_outcome ==
-           agent_q::AgentQSuiPolicyAuthorizationOutcome::unavailable);
+           agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation);
     agent_q::clear_prepared_sui_sign_transaction(&tx);
     assert(agent_q::prepare_sui_sign_transaction(
                agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
@@ -493,8 +494,7 @@ CPP
   "${AGENT_Q_DIR}/agent_q_sui_signing_authority.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_method_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_token_flow_facts.cpp" \
+  "${COMMON_SUI_DIR}/agent_q_sui_offline_policy_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
   "${TMP_DIR}/byte_conversions.o" \

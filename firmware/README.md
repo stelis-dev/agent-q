@@ -140,10 +140,10 @@ AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
 ```bash
 firmware/tools/common/generate_sui_transaction_fixtures.mjs
 firmware/tools/common/test_sui_transaction_facts.sh
+firmware/tools/common/test_sui_offline_policy_facts.sh
 firmware/tools/common/test_sui_sign_transaction_adapter.sh
 firmware/tools/common/test_sign_route.sh
-firmware/tools/common/test_policy_v0.sh
-firmware/tools/common/test_policy_canonical.sh
+firmware/tools/common/test_policy_document.sh
 firmware/tools/stackchan-cores3/test_signing_retry_response.sh
 firmware/tools/stackchan-cores3/test_sui_signing_preparation.sh
 ```

@@ -1,5 +1,6 @@
 #include "agent_q_policy_update_flow.h"
 
+#include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -7,14 +8,12 @@
 #include "agent_q_approval_history.h"
 #include "agent_q_policy_proposal_parser.h"
 #include "agent_q_policy_store.h"
-#include "agent_q_common/policy/agent_q_policy_canonical.h"
-#include "agent_q_common/policy/agent_q_policy_v0.h"
-#include "agent_q_common/sui/agent_q_sui_method_adapter.h"
+#include "agent_q_common/policy/agent_q_policy_document.h"
 
 namespace agent_q {
 namespace {
 
-constexpr size_t kPolicyUpdateMethodDescriptorCount = 1;
+constexpr size_t kPolicyUpdateReviewSummaryBytes = 8192;
 
 struct AgentQPolicyUpdateFlowState {
     bool active = false;
@@ -23,13 +22,13 @@ struct AgentQPolicyUpdateFlowState {
     char session_id[kAgentQSessionIdSize] = {};
     AgentQTimeoutWindow review_window = kAgentQTimeoutWindowNone;
     AgentQParsedPolicyProposal* parsed = nullptr;
-    AgentQPolicyCanonicalDocument* canonical = nullptr;
+    AgentQCurrentPolicyCanonicalDocument* canonical = nullptr;
     uint8_t* record = nullptr;
     size_t record_size = 0;
     uint8_t digest[kAgentQPolicyUpdateDigestBytes] = {};
     char policy_hash[kAgentQPolicyIdSize] = {};
-    char method_summary[kAgentQPolicyMaxChainIdLength + kAgentQPolicyMaxOperationLength + 2] = {};
-    char review_summary[256] = {};
+    char scope_summary[96] = {};
+    char review_summary[kPolicyUpdateReviewSummaryBytes] = {};
     AgentQPolicyUpdateHighestAction highest_action = AgentQPolicyUpdateHighestAction::reject;
 
     void clear()
@@ -43,7 +42,7 @@ struct AgentQPolicyUpdateFlowState {
             free(canonical);
         }
         if (record != nullptr) {
-            memset(record, 0, kAgentQPolicyMaxCanonicalRecordBytes);
+            memset(record, 0, kAgentQCurrentPolicyMaxCanonicalRecordBytes);
             free(record);
         }
         memset(this, 0, sizeof(*this));
@@ -54,31 +53,46 @@ struct AgentQPolicyUpdateFlowState {
     bool allocate_workspaces()
     {
         parsed = static_cast<AgentQParsedPolicyProposal*>(malloc(sizeof(*parsed)));
-        canonical = static_cast<AgentQPolicyCanonicalDocument*>(malloc(sizeof(*canonical)));
-        record = static_cast<uint8_t*>(malloc(kAgentQPolicyMaxCanonicalRecordBytes));
+        canonical = static_cast<AgentQCurrentPolicyCanonicalDocument*>(malloc(sizeof(*canonical)));
+        record = static_cast<uint8_t*>(malloc(kAgentQCurrentPolicyMaxCanonicalRecordBytes));
         if (parsed == nullptr || canonical == nullptr || record == nullptr) {
             clear();
             return false;
         }
         memset(parsed, 0, sizeof(*parsed));
         memset(canonical, 0, sizeof(*canonical));
-        memset(record, 0, kAgentQPolicyMaxCanonicalRecordBytes);
+        memset(record, 0, kAgentQCurrentPolicyMaxCanonicalRecordBytes);
         return true;
     }
 };
 
 AgentQPolicyUpdateFlowState g_state;
 
-size_t current_policy_rule_count()
+size_t current_policy_blockchain_count()
 {
-    return g_state.parsed != nullptr ? g_state.parsed->document.rule_count : 0;
+    return g_state.parsed != nullptr ? g_state.parsed->document.blockchain_count : 0;
+}
+
+size_t current_policy_network_count()
+{
+    return g_state.parsed != nullptr ? g_state.parsed->network_count : 0;
+}
+
+size_t current_policy_policy_count()
+{
+    return g_state.parsed != nullptr ? g_state.parsed->policy_count : 0;
+}
+
+size_t current_policy_condition_count()
+{
+    return g_state.parsed != nullptr ? g_state.parsed->condition_count : 0;
 }
 
 const char* current_policy_default_action_name()
 {
     return g_state.parsed != nullptr
-               ? agent_q_policy_action_name(g_state.parsed->document.default_action)
-               : agent_q_policy_action_name(AgentQPolicyAction::reject);
+               ? agent_q_current_policy_action_name(g_state.parsed->document.default_action)
+               : agent_q_current_policy_action_name(AgentQCurrentPolicyAction::reject);
 }
 
 bool copy_non_empty_bounded(const char* input, char* output, size_t output_size)
@@ -92,11 +106,6 @@ bool copy_non_empty_bounded(const char* input, char* output, size_t output_size)
     }
     memcpy(output, input, length + 1);
     return true;
-}
-
-AgentQPolicyMethodDescriptor method_descriptor()
-{
-    return sui_sign_transaction_policy_method_descriptor();
 }
 
 bool digest_record(
@@ -119,12 +128,26 @@ bool digest_record(
 }
 
 AgentQPolicyUpdateHighestAction highest_action_for_document(
-    const AgentQPolicyDocument& document)
+    const AgentQCurrentPolicyDocument& document)
 {
-    for (size_t index = 0; index < document.rule_count; ++index) {
-        if (document.rules != nullptr &&
-            document.rules[index].action == AgentQPolicyAction::sign) {
-            return AgentQPolicyUpdateHighestAction::sign;
+    if (document.blockchains == nullptr) {
+        return AgentQPolicyUpdateHighestAction::reject;
+    }
+    for (size_t blockchain_index = 0; blockchain_index < document.blockchain_count; ++blockchain_index) {
+        const AgentQCurrentPolicyBlockchainScope& blockchain = document.blockchains[blockchain_index];
+        if (blockchain.networks == nullptr) {
+            continue;
+        }
+        for (size_t network_index = 0; network_index < blockchain.network_count; ++network_index) {
+            const AgentQCurrentPolicyNetworkScope& network = blockchain.networks[network_index];
+            if (network.policies == nullptr) {
+                continue;
+            }
+            for (size_t policy_index = 0; policy_index < network.policy_count; ++policy_index) {
+                if (network.policies[policy_index].action == AgentQCurrentPolicyAction::sign) {
+                    return AgentQPolicyUpdateHighestAction::sign;
+                }
+            }
         }
     }
     return AgentQPolicyUpdateHighestAction::reject;
@@ -153,9 +176,73 @@ void format_policy_hash_prefix(const char* input, char* output, size_t output_si
     snprintf(output, output_size, "sha256:%.8s", input + 7);
 }
 
+bool append_summaryf(char* output, size_t output_size, size_t* offset, const char* format, ...)
+{
+    if (output == nullptr || output_size == 0 || offset == nullptr || format == nullptr ||
+        *offset >= output_size) {
+        return false;
+    }
+    va_list args;
+    va_start(args, format);
+    const int written = vsnprintf(output + *offset, output_size - *offset, format, args);
+    va_end(args);
+    if (written <= 0 || static_cast<size_t>(written) >= output_size - *offset) {
+        output[output_size - 1] = '\0';
+        return false;
+    }
+    *offset += static_cast<size_t>(written);
+    return true;
+}
+
+bool append_condition_summary(
+    const AgentQCurrentPolicyCondition& condition,
+    char* output,
+    size_t output_size,
+    size_t* offset)
+{
+    if (condition.field == nullptr ||
+        condition.value_count == 0 ||
+        condition.values == nullptr ||
+        !append_summaryf(
+            output,
+            output_size,
+            offset,
+            "      - %s %s ",
+            condition.field,
+            agent_q_current_policy_operator_name(condition.op))) {
+        return false;
+    }
+    if (condition.where_type != nullptr && condition.where_type[0] != '\0') {
+        if (!append_summaryf(output, output_size, offset, "where.type=%s ", condition.where_type)) {
+            return false;
+        }
+    }
+    if (agent_q_current_policy_operator_uses_value_list(condition.op)) {
+        if (!append_summaryf(output, output_size, offset, "[")) {
+            return false;
+        }
+        for (size_t value_index = 0; value_index < condition.value_count; ++value_index) {
+            if (!append_summaryf(
+                    output,
+                    output_size,
+                    offset,
+                    "%s%s",
+                    value_index == 0 ? "" : ",",
+                    condition.values[value_index] != nullptr ? condition.values[value_index] : "")) {
+                return false;
+            }
+        }
+        return append_summaryf(output, output_size, offset, "]\n");
+    }
+    if (condition.value_count != 1 || condition.values[0] == nullptr) {
+        return false;
+    }
+    return append_summaryf(output, output_size, offset, "%s\n", condition.values[0]);
+}
+
 bool build_review_summary(
-    const AgentQPolicyDocument& document,
-    const char* method_summary,
+    const AgentQParsedPolicyProposal& parsed,
+    const char* scope_summary,
     const char* policy_hash,
     AgentQPolicyUpdateHighestAction highest_action,
     char* output,
@@ -165,49 +252,70 @@ bool build_review_summary(
         return false;
     }
     output[0] = '\0';
-    const AgentQPolicyRule* sign_rule = nullptr;
-    for (size_t index = 0; index < document.rule_count; ++index) {
-        if (document.rules != nullptr &&
-            document.rules[index].action == AgentQPolicyAction::sign) {
-            sign_rule = &document.rules[index];
-        }
-    }
-    if (!agent_q_policy_sign_rule_count_is_supported(document)) {
-        return false;
-    }
     char hash_prefix[16] = {};
     format_policy_hash_prefix(policy_hash, hash_prefix, sizeof(hash_prefix));
     if (hash_prefix[0] == '\0') {
         return false;
     }
-    if (sign_rule != nullptr) {
-        char sign_summary[128] = {};
-        if (!sui_sign_transaction_policy_build_sign_rule_summary(
-                *sign_rule,
-                sign_summary,
-                sizeof(sign_summary))) {
-            return false;
-        }
-        const int written = snprintf(
-            output,
-            output_size,
-            "%s r%u reject->%s\n%s\n%s",
-            hash_prefix,
-            static_cast<unsigned>(document.rule_count),
-            highest_action_name(highest_action),
-            method_summary != nullptr && method_summary[0] != '\0' ? method_summary : "none",
-            sign_summary);
-        return written > 0 && static_cast<size_t>(written) < output_size;
-    }
-    const int written = snprintf(
+    size_t offset = 0;
+    if (!append_summaryf(
         output,
         output_size,
-        "%s r%u reject->%s\n%s reject policy",
+        &offset,
+        "%s b%u n%u p%u c%u reject->%s\n%s\n",
         hash_prefix,
-        static_cast<unsigned>(document.rule_count),
+        static_cast<unsigned>(parsed.document.blockchain_count),
+        static_cast<unsigned>(parsed.network_count),
+        static_cast<unsigned>(parsed.policy_count),
+        static_cast<unsigned>(parsed.condition_count),
         highest_action_name(highest_action),
-        method_summary != nullptr && method_summary[0] != '\0' ? method_summary : "none");
-    return written > 0 && static_cast<size_t>(written) < output_size;
+        scope_summary != nullptr && scope_summary[0] != '\0' ? scope_summary : "none")) {
+        return false;
+    }
+    if (parsed.document.blockchain_count == 0) {
+        return append_summaryf(output, output_size, &offset, "no scope\n");
+    }
+    for (size_t blockchain_index = 0; blockchain_index < parsed.document.blockchain_count; ++blockchain_index) {
+        const AgentQCurrentPolicyBlockchainScope& blockchain =
+            parsed.document.blockchains[blockchain_index];
+        if (!append_summaryf(output, output_size, &offset, "scope %s\n", blockchain.blockchain)) {
+            return false;
+        }
+        for (size_t network_index = 0; network_index < blockchain.network_count; ++network_index) {
+            const AgentQCurrentPolicyNetworkScope& network = blockchain.networks[network_index];
+            if (!append_summaryf(output, output_size, &offset, "  network %s\n", network.network)) {
+                return false;
+            }
+            if (network.policy_count == 0) {
+                if (!append_summaryf(output, output_size, &offset, "    no policy entries\n")) {
+                    return false;
+                }
+                continue;
+            }
+            for (size_t policy_index = 0; policy_index < network.policy_count; ++policy_index) {
+                const AgentQCurrentPolicy& policy = network.policies[policy_index];
+                if (!append_summaryf(
+                        output,
+                        output_size,
+                        &offset,
+                        "    policy %s %s\n",
+                        policy.id,
+                        agent_q_current_policy_action_name(policy.action))) {
+                    return false;
+                }
+                for (size_t condition_index = 0; condition_index < policy.condition_count; ++condition_index) {
+                    if (!append_condition_summary(
+                            policy.conditions[condition_index],
+                            output,
+                            output_size,
+                            &offset)) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    return true;
 }
 
 bool append_policy_update_history(const char* result, const char* reason_code, uint64_t uptime_ms)
@@ -216,7 +324,7 @@ bool append_policy_update_history(const char* result, const char* reason_code, u
         result,
         reason_code,
         g_state.policy_hash,
-        current_policy_rule_count(),
+        current_policy_policy_count(),
         highest_action_name(g_state.highest_action),
     };
     return approval_history_append_required_policy_update(input, uptime_ms);
@@ -282,10 +390,13 @@ AgentQPolicyUpdateFlowSnapshot policy_update_flow_snapshot()
         g_state.session_id,
         g_state.review_window,
         g_state.policy_hash,
-        current_policy_rule_count(),
+        current_policy_blockchain_count(),
+        current_policy_network_count(),
+        current_policy_policy_count(),
+        current_policy_condition_count(),
         highest_action_name(g_state.highest_action),
         current_policy_default_action_name(),
-        g_state.method_summary,
+        g_state.scope_summary,
         g_state.review_summary,
     };
 }
@@ -311,15 +422,9 @@ AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(
         return AgentQPolicyUpdateFlowBeginResult::encode_error;
     }
 
-    const AgentQPolicyMethodDescriptor descriptors[kPolicyUpdateMethodDescriptorCount] = {
-        method_descriptor(),
-    };
-
     const AgentQPolicyProposalParseStatus parse_status =
         parse_agent_q_policy_proposal(
             policy,
-            descriptors,
-            kPolicyUpdateMethodDescriptorCount,
             g_state.parsed);
     if (parse_status != AgentQPolicyProposalParseStatus::ok) {
         g_state.clear();
@@ -328,8 +433,6 @@ AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(
                 return AgentQPolicyUpdateFlowBeginResult::invalid_argument;
             case AgentQPolicyProposalParseStatus::too_large:
                 return AgentQPolicyUpdateFlowBeginResult::too_large;
-            case AgentQPolicyProposalParseStatus::unsupported_method:
-                return AgentQPolicyUpdateFlowBeginResult::unsupported_method;
             case AgentQPolicyProposalParseStatus::unsupported_field:
                 return AgentQPolicyUpdateFlowBeginResult::unsupported_field;
             case AgentQPolicyProposalParseStatus::invalid_policy:
@@ -339,16 +442,14 @@ AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(
         }
     }
 
-    if (canonicalize_agent_q_policy_v0(
+    if (canonicalize_agent_q_current_policy_document(
             g_state.parsed->document,
-            descriptors,
-            kPolicyUpdateMethodDescriptorCount,
-            g_state.canonical) != AgentQPolicyCanonicalStatus::ok ||
-        encode_agent_q_policy_v0_canonical_record(
+            g_state.canonical) != AgentQCurrentPolicyDocumentStatus::ok ||
+        encode_agent_q_current_policy_canonical_record(
             *g_state.canonical,
             g_state.record,
-            kAgentQPolicyMaxCanonicalRecordBytes,
-            &g_state.record_size) != AgentQPolicyCanonicalStatus::ok ||
+            kAgentQCurrentPolicyMaxCanonicalRecordBytes,
+            &g_state.record_size) != AgentQCurrentPolicyDocumentStatus::ok ||
         !digest_record(
             g_state.record,
             g_state.record_size,
@@ -361,19 +462,17 @@ AgentQPolicyUpdateFlowBeginResult policy_update_flow_begin(
     }
 
     g_state.highest_action = highest_action_for_document(g_state.parsed->document);
-    if (g_state.parsed->document.rule_count > 0) {
-        snprintf(
-            g_state.method_summary,
-            sizeof(g_state.method_summary),
-            "%s/%s",
-            g_state.parsed->document.rules[0].chain,
-            g_state.parsed->document.rules[0].operation);
-    } else {
-        strlcpy(g_state.method_summary, "none", sizeof(g_state.method_summary));
-    }
+    snprintf(
+        g_state.scope_summary,
+        sizeof(g_state.scope_summary),
+        "scopes=%u/%u policies=%u conditions=%u",
+        static_cast<unsigned>(current_policy_blockchain_count()),
+        static_cast<unsigned>(current_policy_network_count()),
+        static_cast<unsigned>(current_policy_policy_count()),
+        static_cast<unsigned>(current_policy_condition_count()));
     if (!build_review_summary(
-            g_state.parsed->document,
-            g_state.method_summary,
+            *g_state.parsed,
+            g_state.scope_summary,
             g_state.policy_hash,
             g_state.highest_action,
             g_state.review_summary,
@@ -503,7 +602,7 @@ AgentQPolicyUpdateFlowTerminalResult policy_update_flow_commit(uint64_t uptime_m
         policy_update_marker_begin(
             g_state.digest,
             sizeof(g_state.digest),
-            current_policy_rule_count(),
+            current_policy_policy_count(),
             g_state.highest_action);
     if (marker_result == AgentQPolicyUpdateMarkerBeginResult::pending_after_error) {
         return AgentQPolicyUpdateFlowTerminalResult::consistency_error;
@@ -545,8 +644,6 @@ const char* policy_update_flow_begin_result_reason(AgentQPolicyUpdateFlowBeginRe
     switch (result) {
         case AgentQPolicyUpdateFlowBeginResult::too_large:
             return "too_large";
-        case AgentQPolicyUpdateFlowBeginResult::unsupported_method:
-            return "unsupported_method";
         case AgentQPolicyUpdateFlowBeginResult::unsupported_field:
             return "unsupported_field";
         case AgentQPolicyUpdateFlowBeginResult::encode_error:

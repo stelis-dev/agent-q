@@ -98,9 +98,9 @@ The current implementation includes:
   `unsupported_method`, and accepts Sui transaction bytes either inline or
   through same-session staged payload delivery before Firmware parsing.
   Firmware reads the device-local signing authorization mode. Policy mode
-  evaluates active policy only after Firmware proves the transaction is the
-  current GasCoin-derived proven-SUI split-result transfer shape; valid
-  policy-incomplete shapes return `policy_rejected` before signing. User mode
+  validates active policy availability, request network scope, account binding,
+  and Firmware-derived offline policy condition facts, then signs only when the
+  active current policy has a matching `sign` policy. User mode
   starts offline facts review when complete offline facts review coverage
   exists, or a blind-signing warning when Firmware can validate and bind the
   transaction but offline facts review coverage is incomplete. Both user paths
@@ -137,14 +137,18 @@ The current implementation includes:
   authorization mode only after the repeated PIN matches. Local Cancel controls
   wipe volatile setup scratch.
   These setup transitions are not exposed as USB JSONL requests.
-- device-local settings flows for `provisioned` devices. Change PIN verifies the
-  current stored 6-digit PIN, accepts and repeats a new PIN, and replaces only
-  the salt/PIN verifier. Reset requires the local Settings Reset action plus
-  the stored PIN, wipes root material, active policy, PIN verifier, signing
-  authorization mode, approval history, policy-update terminal marker,
-  human approval input mode setting, runtime session, and provisioning state, and is not
-  exposed as a USB JSONL request. Hardware smoke coverage exists for local reset. Targeted hardware
-  verification remains required after settings or reset UI/state changes.
+- device-local settings flows for `provisioned` devices: human approval input
+  mode toggle, signing authorization mode toggle, policy reset to the default
+  reject policy, Change PIN, and Reset. Policy reset, signing-mode changes, and
+  Change PIN require local PIN verification. Change PIN verifies the current
+  stored 6-digit PIN, accepts and repeats a new PIN, and replaces only the
+  salt/PIN verifier. Reset requires the local Settings Reset action plus the
+  stored PIN, wipes root material, active policy, PIN verifier, signing
+  authorization mode, approval history, policy-update terminal marker, human
+  approval input mode setting, runtime session, and provisioning state, and is
+  not exposed as a USB JSONL request. Hardware smoke coverage exists for local
+  reset. Targeted hardware verification remains required after settings or
+  reset UI/state changes.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP
@@ -171,13 +175,15 @@ after material-backed provisioning. Sessions do not authorize signing.
 This target reports read-only identity capability with no delegated public
 methods plus top-level `signing`, derives read-only public account identity
 (`get_accounts`), and links a host-tested Sui `TransactionData` facts extractor
-plus a common stored-policy runtime boundary. The current
+plus current policy document storage/readback and offline condition-facts
+extraction. The current
 `sign_transaction` path reads the Firmware-local signing authorization mode and
-uses exactly one gate: policy mode may sign only after Firmware proves the
-transaction is the current GasCoin-derived proven-SUI split-result transfer
-shape and the committed active policy authorizes signing, while user mode may
-enter offline facts review or blind-signing device confirmation after Firmware
-validates and account-binds the transaction.
+uses exactly one gate: policy mode validates active policy availability,
+request network scope, account binding, and complete offline policy condition
+facts, then signs only when the active current policy has a matching `sign`
+policy, while
+user mode may enter offline facts review or blind-signing device confirmation
+after Firmware validates and account-binds the transaction.
 User mode then applies the current human approval input mode and records
 required history. Policy-incomplete valid transactions return `policy_rejected`
 in policy mode. It rejects unsupported transactions and returns `signed`,
@@ -201,9 +207,9 @@ provisioning state flag, DEV_PROFILE root entropy blob after backup
 confirmation, canonical active policy slots plus commit metadata and a
 pending-write marker, a policy-update terminal marker, a DEV_PROFILE local PIN
 verifier, the human approval input mode setting, and the approval-history ring
-buffer. The normal provisioning flow still installs only the default-reject
-policy; custom policies enter only through the session-scoped
-`policy_propose` proposal path.
+buffer. The normal provisioning flow still installs the default-reject policy;
+the session-scoped `policy_propose` proposal path accepts bounded
+current-schema policy material.
 
 The active policy store treats commit metadata write as the commit point. The
 write path classifies terminal state as applied, previous policy proven
@@ -257,10 +263,10 @@ required:
 ```bash
 firmware/tools/common/generate_sui_transaction_fixtures.mjs
 firmware/tools/common/test_sui_transaction_facts.sh
+firmware/tools/common/test_sui_offline_policy_facts.sh
 firmware/tools/common/test_sui_sign_transaction_adapter.sh
 firmware/tools/common/test_sign_route.sh
-firmware/tools/common/test_policy_v0.sh
-firmware/tools/common/test_policy_canonical.sh
+firmware/tools/common/test_policy_document.sh
 firmware/tools/stackchan-cores3/test_signing_retry_response.sh
 firmware/tools/stackchan-cores3/test_sui_signing_preparation.sh
 firmware/tools/stackchan-cores3/test_sign_transaction_policy_runtime.sh
@@ -329,17 +335,14 @@ facts. StackChan CoreS3
 connects the extractor to Sui `sign_transaction` policy and user authorization
 gates for inline and staged transaction bytes.
 
-The policy test is also a common host-side check. It compiles
-`firmware/src/common/agent_q/policy` plus the Sui method adapter and
-verifies deny-by-default reject decisions, current-contract transfer sign-rule
-acceptance, unbounded sign-rule invalidation, policy coverage fail-closed
-behavior, token-flow provenance cases, default provider behavior,
-missing/invalid policy provider rejection, malformed policy rejection, and
-unsupported-facts rejection. StackChan CoreS3 consumes the committed active
-policy for Sui `sign_transaction` policy evaluation only after the parsed shape
-matches the current GasCoin-derived proven-SUI split-result transfer contract.
-Custom policy updates enter separately through the Firmware-owned
-`policy_propose` proposal flow.
+The policy document tests are common host-side checks. They compile
+`firmware/src/common/agent_q/policy` and verify the current `agentq.policy`
+document shape, field/operator validation, canonical storage payloads, and
+readback projection. The Sui offline policy facts test verifies the transaction
+facts that the current policy evaluator consumes. StackChan CoreS3 connects
+committed active policy material to Sui `sign_transaction` policy-mode signing
+through the Firmware-owned runtime gate. Custom policy updates enter separately
+through the Firmware-owned `policy_propose` proposal flow.
 
 The StackChan policy-store test is target-specific. It compiles the tracked
 `agent_q_policy_store.cpp` provider with ESP-IDF mbedTLS SHA-256 sources and
@@ -373,11 +376,9 @@ hardware smoke test.
 
 The StackChan sign_transaction policy runtime test is target-specific. It compiles the tracked
 `agent_q_sign_transaction_policy_runtime.cpp` runtime boundary with ArduinoJson, the common Sui
-facts parser, the common policy runtime, and pinned MicroSui base64 helpers,
+facts parser, current policy document support, and pinned MicroSui base64 helpers,
 then verifies unsupported method rejection, invalid Sui params, approval-history
-metadata exposure, fail-closed behavior for policy-incomplete transaction coverage,
-the default-reject policy result, policy-authorized handoff metadata only for
-an explicitly coverage-marked fixture, and scratch cleanup.
+metadata exposure, current fail-closed policy behavior, and scratch cleanup.
 
 The StackChan policy-proposal parser test is target-specific. It compiles the
 tracked `agent_q_policy_proposal_parser.cpp` parser with ArduinoJson and the
@@ -440,9 +441,9 @@ In the hardware firmware tree:
 
 - Add `agent_q/*.cpp` to the main firmware component sources.
 - Add `agent_q_common/sui/*.cpp` to the main firmware component sources for the
-  shared hardware-independent Sui parser and method adapter.
+  shared hardware-independent Sui parser and offline policy facts extractor.
 - Add `agent_q_common/policy/*.cpp` to the main firmware component sources for
-  the shared hardware-independent policy evaluator.
+  the shared hardware-independent current policy document support.
 - Add the `signing_crypto` component to the main firmware component
   dependencies.
 - Add `mbedtls` to the main firmware component dependencies for BIP-39

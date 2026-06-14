@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "agent_q_common/policy/agent_q_policy_schema.h"
+#include "agent_q_common/policy/agent_q_policy_document.h"
 
 namespace agent_q {
 
@@ -32,7 +32,7 @@ AgentQPolicyUpdateMarkerStatus policy_update_marker_status();
 AgentQPolicyUpdateMarkerBeginResult policy_update_marker_begin(
     const uint8_t* policy_digest,
     size_t policy_digest_size,
-    size_t rule_count,
+    size_t policy_count,
     AgentQPolicyUpdateHighestAction highest_action);
 bool policy_update_marker_clear();
 
