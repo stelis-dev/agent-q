@@ -1,6 +1,6 @@
 {
   "name": "@stelis/agent-q",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "mcpName": "io.github.stelis-dev/agent-q",
   "description": "Agent-Q host process that routes MCP, local API, and Sui CLI signing requests to Agent-Q Firmware.",
   "license": "UNLICENSED",
@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@stelis/agent-q-core": "0.0.5",
+    "@stelis/agent-q-core": "0.0.6",
     "zod": "4.4.3"
   },
   "devDependencies": {
