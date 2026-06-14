@@ -17,12 +17,7 @@ bool string_eq(const char* left, const char* right)
 
 }  // namespace
 
-const AgentQPolicyFieldDescriptor
-    kAgentQPolicyCommonFieldDescriptors[kAgentQPolicyCommonFieldDescriptorCount] = {
-        {"common.chain", AgentQPolicyValueType::string, true, true, false},
-        {"common.method", AgentQPolicyValueType::string, true, true, false},
-        {"common.intent", AgentQPolicyValueType::string, true, true, false},
-    };
+#include "agent_q_policy_contract.generated.h"
 
 bool agent_q_policy_is_known_action(AgentQPolicyAction action)
 {

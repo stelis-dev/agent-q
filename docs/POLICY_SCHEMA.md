@@ -8,10 +8,11 @@ It describes implemented source behavior only. It is not a product-active
 claim.
 
 The current Sui `sign_transaction` policy field/operator list and required
-bounded `sign` rule shape are mirrored in
-`specs/sui-sign-transaction-policy-contract.tsv`. Core and Firmware tests use
-that manifest to catch descriptor drift. Firmware remains the runtime authority
-for policy evaluation and signing decisions.
+bounded `sign` rule shape are authored in
+`specs/sui-sign-transaction-policy-contract.tsv`. Core and Firmware consume
+generated projections from that manifest, and freshness checks fail when the
+tracked projections drift. Firmware remains the runtime authority for policy
+evaluation and signing decisions.
 
 ## 1. Current Status
 
@@ -78,6 +79,18 @@ Current Sui `sign_transaction` policy behavior:
 
 The current Sui method descriptor supports policy `reject` rules and bounded
 policy `sign` rules for Sui `sign_transaction`.
+
+Current policy examples:
+
+- Default reject: `defaultAction: "reject"` with no rules. This rejects all
+  policy-mode signing requests.
+- Explicit reject rule: `action: "reject"` with criteria over the supported
+  fields below. Matching requests are rejected. A broader transaction whose
+  policy coverage is incomplete is rejected before active rules are evaluated.
+- Automatic Sui transfer sign rule: exactly one `action: "sign"` rule that
+  bounds the current GasCoin-derived split-result transfer contract. The
+  `policy_propose` example in `specs/PROTOCOL.md` and the Admin Page policy
+  example use this shape.
 
 Current automatic policy `sign` rules are intentionally narrower than the full
 parser. They are accepted only for transaction-derived SUI transfer facts whose

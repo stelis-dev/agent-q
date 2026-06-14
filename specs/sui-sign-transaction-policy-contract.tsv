@@ -1,8 +1,8 @@
 # Current Sui sign_transaction policy contract manifest.
-# This file is the reviewed contract source for public Core/Firmware parity
-# tests. Firmware remains the product authority for policy evaluation and
-# signing decisions; production code must match this manifest before a change is
-# considered complete.
+# This file is the authored contract source for generated Core/Firmware
+# projections. Firmware remains the product authority for policy evaluation and
+# signing decisions; production code must be regenerated from this manifest
+# before a change is considered complete.
 #
 # field <field> <type> <allow_eq> <allow_in> <allow_lte>
 # generated <pattern> <count> <type> <allow_eq> <allow_in> <allow_lte>

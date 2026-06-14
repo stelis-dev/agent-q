@@ -237,7 +237,7 @@ separate chain registry. Sui is currently the only executable chain.
 
 The `agent-q` binary also serves a local Admin Page through the same host process
 core instance. The Admin Page supports device discovery, connection, active
-policy readback, approval history, and the current policy proposal template.
+policy readback, approval history, and the current Sui transfer policy example.
 
 The Admin Page is a host process capability. It is not a policy authority.
 

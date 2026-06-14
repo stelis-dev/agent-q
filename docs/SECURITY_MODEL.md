@@ -94,7 +94,7 @@ Implemented today:
   `policy_propose` proposal flow. Policy actions do not authorize user-mode
   signing.
 - A local Admin Page for read-only device metadata and the
-  current policy proposal template. It uses the same host core
+  current Sui transfer policy example. It uses the same host core
   boundary as MCP and is not a policy authority.
 - A bounded persistent approval-history read path. The current StackChan CoreS3
   target stores Firmware-authored signing confirmation/terminal metadata for
@@ -157,7 +157,7 @@ Not implemented:
 - USER_PROFILE policy storage and policy update authorization.
 - Execution-effect-complete arbitrary Sui transaction review or policy
   simulation, policy-authorized Sui personal-message signing, and other chains.
-- Full Admin policy editing beyond the current policy proposal template.
+- Full Admin policy editing beyond the current Sui transfer policy example.
 - USER_PROFILE / OWNER_PROFILE secure provisioning.
 - Secure Boot, Flash Encryption, and NVS Encryption setup flow.
 

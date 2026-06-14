@@ -40,7 +40,7 @@ Agent-Q Firmware:
   target/runtime state
 
 The local Admin Page served by the host process exists for read-only device metadata and
-the current policy proposal template. Firmware-owned admin methods exist
+the current Sui transfer policy example. Firmware-owned admin methods exist
 only where this protocol and a target implementation say so; the host process and Admin
 clients submit requests, but Firmware remains the authority for validation,
 device-local approval, persistence, and failure state.
@@ -1742,8 +1742,8 @@ Firmware, host process, and MCP implement the current supported path: a session-
 proposal is validated by Firmware, shown on device as a policy-update summary
 review, advanced to local PIN approval only after device-local Continue,
 committed through the canonical active-policy store, and reported as
-`policy_propose_result`. The local Admin Page can submit the
-current policy proposal template; full policy editing is not implemented.
+`policy_propose_result`. The local Admin Page can submit the current Sui
+transfer policy example; full policy editing is not implemented.
 MCP/API callers can submit bounded current-schema policy proposals.
 
 The method is a proposal, not a setter. The host process or Admin may submit a bounded
@@ -1768,16 +1768,44 @@ Request shape:
       "defaultAction": "reject",
       "rules": [
         {
-          "id": "reject-sui-ptb",
+          "id": "sign-sui-transfer-example",
           "chain": "sui",
           "method": "sign_transaction",
-          "action": "reject",
+          "action": "sign",
           "criteria": [
+            { "field": "common.chain", "op": "eq", "value": "sui" },
+            { "field": "common.method", "op": "eq", "value": "sign_transaction" },
+            { "field": "common.intent", "op": "eq", "value": "programmable_transaction" },
+            { "field": "sui.transaction_kind", "op": "eq", "value": "programmable_transaction" },
             {
-              "field": "common.intent",
+              "field": "sui.sender_address",
               "op": "eq",
-              "value": "programmable_transaction"
-            }
+              "value": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "field": "sui.gas_owner_address",
+              "op": "eq",
+              "value": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            { "field": "sui.gas_budget", "op": "lte", "value": "50000000" },
+            { "field": "sui.gas_price", "op": "lte", "value": "1000" },
+            { "field": "sui.expiration_kind", "op": "eq", "value": "none" },
+            { "field": "sui.sui_total_out_complete", "op": "eq", "value": "yes" },
+            { "field": "sui.sui_total_out_raw", "op": "lte", "value": "1000000" },
+            { "field": "sui.command_count", "op": "eq", "value": "2" },
+            { "field": "sui.command0_kind", "op": "eq", "value": "split_coins" },
+            { "field": "sui.command1_kind", "op": "eq", "value": "transfer_objects" },
+            { "field": "sui.recipient_count", "op": "eq", "value": "1" },
+            {
+              "field": "sui.recipient0_address",
+              "op": "eq",
+              "value": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            { "field": "sui.recipient0_amount_raw", "op": "lte", "value": "1000000" },
+            { "field": "sui.coin_flow0_source_kind", "op": "eq", "value": "split_result" },
+            { "field": "sui.coin_flow0_asset_state", "op": "eq", "value": "proven_sui" },
+            { "field": "sui.coin_flow0_amount_known", "op": "eq", "value": "yes" },
+            { "field": "sui.coin_flow0_sink_kind", "op": "eq", "value": "transfer_recipient" }
           ]
         }
       ]

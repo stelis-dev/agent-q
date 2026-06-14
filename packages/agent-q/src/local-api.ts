@@ -77,11 +77,53 @@ function formatLocalApiHostForUrl(host: string): string {
   return host.includes(":") ? `[${host}]` : host;
 }
 
-export function buildRejectOnlySuiPolicy(): Record<string, unknown> {
+export function buildCurrentSuiTransferPolicyExample(): Record<string, unknown> {
   return {
     schema: "agentq.policy.v0",
     defaultAction: "reject",
-    rules: [],
+    rules: [
+      {
+        id: "sign-sui-transfer-example",
+        chain: "sui",
+        method: "sign_transaction",
+        action: "sign",
+        criteria: [
+          { field: "common.chain", op: "eq", value: "sui" },
+          { field: "common.method", op: "eq", value: "sign_transaction" },
+          { field: "common.intent", op: "eq", value: "programmable_transaction" },
+          { field: "sui.transaction_kind", op: "eq", value: "programmable_transaction" },
+          {
+            field: "sui.sender_address",
+            op: "eq",
+            value: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          },
+          {
+            field: "sui.gas_owner_address",
+            op: "eq",
+            value: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          },
+          { field: "sui.gas_budget", op: "lte", value: "50000000" },
+          { field: "sui.gas_price", op: "lte", value: "1000" },
+          { field: "sui.expiration_kind", op: "eq", value: "none" },
+          { field: "sui.sui_total_out_complete", op: "eq", value: "yes" },
+          { field: "sui.sui_total_out_raw", op: "lte", value: "1000000" },
+          { field: "sui.command_count", op: "eq", value: "2" },
+          { field: "sui.command0_kind", op: "eq", value: "split_coins" },
+          { field: "sui.command1_kind", op: "eq", value: "transfer_objects" },
+          { field: "sui.recipient_count", op: "eq", value: "1" },
+          {
+            field: "sui.recipient0_address",
+            op: "eq",
+            value: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          },
+          { field: "sui.recipient0_amount_raw", op: "lte", value: "1000000" },
+          { field: "sui.coin_flow0_source_kind", op: "eq", value: "split_result" },
+          { field: "sui.coin_flow0_asset_state", op: "eq", value: "proven_sui" },
+          { field: "sui.coin_flow0_amount_known", op: "eq", value: "yes" },
+          { field: "sui.coin_flow0_sink_kind", op: "eq", value: "transfer_recipient" },
+        ],
+      },
+    ],
   };
 }
 
@@ -173,11 +215,11 @@ async function handleLocalApiRequest(
         return;
       case "/api/policy_preview":
         expectKeys(body, []);
-        sendJson(response, 200, { ok: true, result: { policy: buildRejectOnlySuiPolicy() } });
+        sendJson(response, 200, { ok: true, result: { policy: buildCurrentSuiTransferPolicyExample() } });
         return;
-      case "/api/policy_propose_reject": {
+      case "/api/policy_propose_example": {
         expectKeys(body, ["deviceId", "purpose"]);
-        const policy = buildRejectOnlySuiPolicy();
+        const policy = buildCurrentSuiTransferPolicyExample();
         sendSanitizedSuccess(
           response,
           hostSuccessOutputSchemas.policyPropose,
@@ -397,9 +439,14 @@ const ADMIN_HTML = `<!doctype html>
 
     <section class="band">
       <div class="sectionHeader">
-        <h2>Reject Policy Proposal</h2>
-        <button id="proposalButton" type="button">Submit Proposal</button>
+        <h2>Sui Transfer Policy Example</h2>
+        <button id="proposalButton" type="button">Submit Example</button>
       </div>
+      <p>
+        Submits the current automatic policy-signing example: one bounded Sui
+        sign rule for GasCoin-derived SplitCoins -> TransferObjects. Full Admin
+        policy editing is not implemented.
+      </p>
       <pre id="proposalOutput" class="output"></pre>
     </section>
 
@@ -697,7 +744,7 @@ async function submitProposal() {
   setBusy(true);
   show(el.resultOutput, "Waiting for device-local approval.");
   try {
-    const result = await api("/api/policy_propose_reject", {
+    const result = await api("/api/policy_propose_example", {
       ...selectedDeviceInput(),
     });
     show(el.resultOutput, result);

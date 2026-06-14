@@ -356,7 +356,7 @@ authorization. Sui `sign_transaction` policy mode returns a policy rejection for
 valid transactions outside the current automatic signing contract, and signs
 only current-contract GasCoin-derived proven-SUI split-result transfer transactions with a matching
 bounded `sign` rule. Full Admin policy editing beyond the
-current policy proposal template and USER_PROFILE secure provisioning are not
+current Sui transfer policy example and USER_PROFILE secure provisioning are not
 implemented.
 
 ## Completion Criteria

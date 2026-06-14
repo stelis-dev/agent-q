@@ -293,6 +293,10 @@ commands also work from `packages/core/`, `packages/agent-q/`, and
 Current root commands:
 
 - Build host process: `npm run build`
+- Regenerate Sui policy contract projections:
+  `npm run generate:sui-policy-contract`
+- Check generated Sui policy contract projections:
+  `npm run test:generated`
 - Test host process: `npm test`
 
 Current core package commands:

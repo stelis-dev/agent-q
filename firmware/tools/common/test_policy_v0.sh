@@ -25,6 +25,8 @@ COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
 CONTRACT_PATH="${REPO_ROOT}/specs/sui-sign-transaction-policy-contract.tsv"
 
+node "${REPO_ROOT}/tools/generate_sui_policy_contract.mjs" --check
+
 for required in \
   "${COMMON_ROOT}/agent_q_u64_decimal.h" \
   "${COMMON_POLICY_DIR}/agent_q_policy_v0.cpp" \

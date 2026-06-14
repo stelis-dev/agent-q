@@ -14,64 +14,113 @@ export interface SignRuleBound {
   value?: string;
 }
 
-// Projection of specs/sui-sign-transaction-policy-contract.tsv for the Core
-// protocol sanitizer. Firmware remains the signing authority; Core tests verify
-// this projection against the shared manifest.
+// Generated from specs/sui-sign-transaction-policy-contract.tsv.
+// Do not edit by hand. Run npm run generate:sui-policy-contract.
+// Firmware remains the signing authority; this is the Core sanitizer projection.
 export const COMMON_POLICY_FIELDS: Record<string, PolicyFieldDescriptor> = {
   "common.chain": { type: "string", allowEq: true, allowIn: true, allowLte: false },
   "common.method": { type: "string", allowEq: true, allowIn: true, allowLte: false },
   "common.intent": { type: "string", allowEq: true, allowIn: true, allowLte: false },
 };
 
-const SUI_POLICY_MAX_COMMANDS = 8;
-const SUI_POLICY_MAX_MOVE_CALL_TYPE_ARGS = 4;
-
-function makeSuiSignTransactionPolicyFields(): Record<string, PolicyFieldDescriptor> {
-  const fields: Record<string, PolicyFieldDescriptor> = {
-    "sui.transaction_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.sender_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.gas_owner_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.command_count": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
-    "sui.gas_budget": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
-    "sui.gas_price": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
-    "sui.expiration_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.sui_total_out_complete": { type: "string", allowEq: true, allowIn: false, allowLte: false },
-    "sui.sui_total_out_raw": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
-    "sui.transfer_total_out_raw": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
-    "sui.move_call_total_in_raw": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
-    "sui.recipient_count": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
-    "sui.recipient0_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.recipient0_amount_raw": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
-    "sui.move_call0_package": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.move_call0_module": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.move_call0_function": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.move_call0_sui_amount_raw": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
-    "sui.coin_flow0_source_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.coin_flow0_asset_state": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.coin_flow0_amount_known": { type: "string", allowEq: true, allowIn: false, allowLte: false },
-    "sui.coin_flow0_amount_raw": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
-    "sui.coin_flow0_sink_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-    "sui.coin_flow0_object_id": { type: "string", allowEq: true, allowIn: true, allowLte: false },
-  };
-  for (let commandIndex = 0; commandIndex < SUI_POLICY_MAX_COMMANDS; commandIndex += 1) {
-    fields[`sui.command${commandIndex}_kind`] = { type: "string", allowEq: true, allowIn: true, allowLte: false };
-    fields[`sui.command${commandIndex}_move_call_package`] = { type: "string", allowEq: true, allowIn: true, allowLte: false };
-    fields[`sui.command${commandIndex}_move_call_module`] = { type: "string", allowEq: true, allowIn: true, allowLte: false };
-    fields[`sui.command${commandIndex}_move_call_function`] = { type: "string", allowEq: true, allowIn: true, allowLte: false };
-    fields[`sui.command${commandIndex}_move_call_type_args`] = { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true };
-    for (let typeArgIndex = 0; typeArgIndex < SUI_POLICY_MAX_MOVE_CALL_TYPE_ARGS; typeArgIndex += 1) {
-      fields[`sui.command${commandIndex}_move_call_type_arg${typeArgIndex}`] = {
-        type: "string",
-        allowEq: true,
-        allowIn: true,
-        allowLte: false,
-      };
-    }
-  }
-  return fields;
-}
-
-export const SUI_SIGN_TRANSACTION_POLICY_FIELDS = makeSuiSignTransactionPolicyFields();
+export const SUI_SIGN_TRANSACTION_POLICY_FIELDS: Record<string, PolicyFieldDescriptor> = {
+  "sui.transaction_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.sender_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.gas_owner_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command_count": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.gas_budget": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.gas_price": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.expiration_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.sui_total_out_complete": { type: "string", allowEq: true, allowIn: false, allowLte: false },
+  "sui.sui_total_out_raw": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
+  "sui.transfer_total_out_raw": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
+  "sui.move_call_total_in_raw": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
+  "sui.recipient_count": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
+  "sui.recipient0_address": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.recipient0_amount_raw": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
+  "sui.move_call0_package": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.move_call0_module": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.move_call0_function": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.move_call0_sui_amount_raw": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
+  "sui.coin_flow0_source_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.coin_flow0_asset_state": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.coin_flow0_amount_known": { type: "string", allowEq: true, allowIn: false, allowLte: false },
+  "sui.coin_flow0_amount_raw": { type: "u64_decimal", allowEq: true, allowIn: true, allowLte: true },
+  "sui.coin_flow0_sink_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.coin_flow0_object_id": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command0_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command1_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command2_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command3_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command4_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command5_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command6_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command7_kind": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command0_move_call_package": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command1_move_call_package": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command2_move_call_package": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command3_move_call_package": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command4_move_call_package": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command5_move_call_package": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command6_move_call_package": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command7_move_call_package": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command0_move_call_module": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command1_move_call_module": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command2_move_call_module": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command3_move_call_module": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command4_move_call_module": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command5_move_call_module": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command6_move_call_module": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command7_move_call_module": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command0_move_call_function": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command1_move_call_function": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command2_move_call_function": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command3_move_call_function": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command4_move_call_function": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command5_move_call_function": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command6_move_call_function": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command7_move_call_function": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command0_move_call_type_args": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.command1_move_call_type_args": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.command2_move_call_type_args": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.command3_move_call_type_args": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.command4_move_call_type_args": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.command5_move_call_type_args": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.command6_move_call_type_args": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.command7_move_call_type_args": { type: "u64_decimal", allowEq: true, allowIn: false, allowLte: true },
+  "sui.command0_move_call_type_arg0": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command0_move_call_type_arg1": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command0_move_call_type_arg2": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command0_move_call_type_arg3": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command1_move_call_type_arg0": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command1_move_call_type_arg1": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command1_move_call_type_arg2": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command1_move_call_type_arg3": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command2_move_call_type_arg0": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command2_move_call_type_arg1": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command2_move_call_type_arg2": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command2_move_call_type_arg3": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command3_move_call_type_arg0": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command3_move_call_type_arg1": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command3_move_call_type_arg2": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command3_move_call_type_arg3": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command4_move_call_type_arg0": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command4_move_call_type_arg1": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command4_move_call_type_arg2": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command4_move_call_type_arg3": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command5_move_call_type_arg0": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command5_move_call_type_arg1": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command5_move_call_type_arg2": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command5_move_call_type_arg3": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command6_move_call_type_arg0": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command6_move_call_type_arg1": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command6_move_call_type_arg2": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command6_move_call_type_arg3": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command7_move_call_type_arg0": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command7_move_call_type_arg1": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command7_move_call_type_arg2": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+  "sui.command7_move_call_type_arg3": { type: "string", allowEq: true, allowIn: true, allowLte: false },
+};
 
 export const SUI_CURRENT_SIGN_RULE_BOUNDS: readonly SignRuleBound[] = [
   { kind: "eq", field: "common.chain", value: "sui" },

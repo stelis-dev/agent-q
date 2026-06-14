@@ -5,7 +5,7 @@ import { createServer } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-  buildRejectOnlySuiPolicy,
+  buildCurrentSuiTransferPolicyExample,
   createLocalApiHttpServer,
   startLocalApiServer,
 } from "../dist/local-api.js";
@@ -121,7 +121,7 @@ function defaultCore(overrides = {}) {
         policy: {
           policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
           ruleCount: 1,
-          highestAction: "reject",
+          highestAction: "sign",
         },
       };
     },
@@ -208,7 +208,7 @@ test("Local API rejects cross-origin or non-JSON POST before core dispatch", asy
     async (baseUrl) => {
       const textPlain = await postRaw(
         baseUrl,
-        "/api/policy_propose_reject",
+        "/api/policy_propose_example",
         { "Content-Type": "text/plain" },
         JSON.stringify({}),
       );
@@ -218,7 +218,7 @@ test("Local API rejects cross-origin or non-JSON POST before core dispatch", asy
 
       const crossOrigin = await postRaw(
         baseUrl,
-        "/api/policy_propose_reject",
+        "/api/policy_propose_example",
         {
           "Content-Type": "application/json",
           Origin: "https://example.invalid",
@@ -248,7 +248,7 @@ test("Local API accepts same-origin JSON requests", async () => {
     );
     assert.equal(response.status, 200);
     assert.equal(response.body.ok, true);
-    assert.deepEqual(response.body.result.policy, buildRejectOnlySuiPolicy());
+    assert.deepEqual(response.body.result.policy, buildCurrentSuiTransferPolicyExample());
   });
 });
 
@@ -291,12 +291,12 @@ test("Local API fails closed when a core success result is malformed", async () 
   );
 });
 
-test("Admin policy preview builds only the supported reject-only Sui proposal", async () => {
+test("Admin policy preview builds the current supported Sui transfer policy example", async () => {
   await withAdminServer(defaultCore(), async (baseUrl) => {
     const response = await postJson(baseUrl, "/api/policy_preview");
     assert.equal(response.status, 200);
     assert.equal(response.body.ok, true);
-    assert.deepEqual(response.body.result.policy, buildRejectOnlySuiPolicy());
+    assert.deepEqual(response.body.result.policy, buildCurrentSuiTransferPolicyExample());
   });
 });
 
@@ -314,18 +314,18 @@ test("Admin propose path forwards a server-built proposal through Agent-Q core",
           policy: {
             policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
             ruleCount: 1,
-            highestAction: "reject",
+            highestAction: "sign",
           },
         };
       },
     }),
     async (baseUrl) => {
-      const response = await postJson(baseUrl, "/api/policy_propose_reject", {
+      const response = await postJson(baseUrl, "/api/policy_propose_example", {
         deviceId,
       });
       assert.equal(response.status, 200);
       assert.equal(response.body.ok, true);
-      assert.deepEqual(submitted.policy, buildRejectOnlySuiPolicy());
+      assert.deepEqual(submitted.policy, buildCurrentSuiTransferPolicyExample());
       assert.equal(submitted.deviceId, deviceId);
       assert.equal(response.body.result.status, "applied");
     },
@@ -396,7 +396,7 @@ async function waitForExit(child) {
 
 test("Local API rejects unsupported fields instead of silently ignoring them", async () => {
   await withAdminServer(defaultCore(), async (baseUrl) => {
-    const response = await postJson(baseUrl, "/api/policy_propose_reject", {
+    const response = await postJson(baseUrl, "/api/policy_propose_example", {
       privateKey: "must-not-forward",
     });
     assert.equal(response.status, 400);
