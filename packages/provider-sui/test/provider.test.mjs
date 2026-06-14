@@ -33,6 +33,8 @@ import {
   SUI_DERIVATION_PATH,
 } from "@stelis/agent-q-core/protocol";
 import {
+  AGENT_Q_USB_PRODUCT_ID_NUMBER,
+  AGENT_Q_USB_VENDOR_ID_NUMBER,
   PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES,
   parseProviderProtocolResponse,
 } from "@stelis/agent-q-core/provider-protocol";
@@ -271,10 +273,19 @@ class FakeBrowserSerialPort {
   readable = null;
   writable = null;
   #controller = null;
+  #info;
   #responseForRequest;
 
-  constructor(responseForRequest) {
+  constructor(responseForRequest, info = {
+    usbVendorId: AGENT_Q_USB_VENDOR_ID_NUMBER,
+    usbProductId: AGENT_Q_USB_PRODUCT_ID_NUMBER,
+  }) {
     this.#responseForRequest = responseForRequest;
+    this.#info = info;
+  }
+
+  getInfo() {
+    return this.#info;
   }
 
   async open() {
@@ -621,6 +632,89 @@ test("browser provider runtime defers Web Serial port selection until connectDev
       "disconnect",
     ]);
     assert.equal(port.requests.some((request) => request.type === "policy_get" || request.type === "policy_propose"), false);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider reuses a single granted Agent-Q Web Serial port before prompting", async () => {
+  let getPortsCalls = 0;
+  let requestPortCalls = 0;
+  const otherPort = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse, {
+    usbVendorId: 0x1111,
+    usbProductId: 0x2222,
+  });
+  const grantedPort = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        serial: {
+          getPorts: async () => {
+            getPortsCalls += 1;
+            return [otherPort, grantedPort];
+          },
+          requestPort: async () => {
+            requestPortCalls += 1;
+            throw new Error("requestPort should not run when one granted Agent-Q port exists");
+          },
+        },
+      },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    const connected = await provider.connectDevice();
+    assert.equal(connected.source, "connected");
+    assert.equal(connected.deviceId, "device-1");
+    assert.equal(getPortsCalls, 1);
+    assert.equal(requestPortCalls, 0);
+    assert.deepEqual(grantedPort.requests.map((request) => request.type), ["connect"]);
+    assert.deepEqual(otherPort.requests, []);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider falls back to requestPort when granted Agent-Q ports are ambiguous", async () => {
+  let getPortsCalls = 0;
+  let requestPortCalls = 0;
+  const firstGrantedPort = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const secondGrantedPort = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const selectedPort = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        serial: {
+          getPorts: async () => {
+            getPortsCalls += 1;
+            return [firstGrantedPort, secondGrantedPort];
+          },
+          requestPort: async () => {
+            requestPortCalls += 1;
+            return selectedPort;
+          },
+        },
+      },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    const connected = await provider.connectDevice();
+    assert.equal(connected.source, "connected");
+    assert.equal(connected.deviceId, "device-1");
+    assert.equal(getPortsCalls, 1);
+    assert.equal(requestPortCalls, 1);
+    assert.deepEqual(firstGrantedPort.requests, []);
+    assert.deepEqual(secondGrantedPort.requests, []);
+    assert.deepEqual(selectedPort.requests.map((request) => request.type), ["connect"]);
   } finally {
     if (previousNavigator === undefined) {
       delete globalThis.navigator;

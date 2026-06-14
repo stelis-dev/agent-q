@@ -71,11 +71,13 @@ const CLEANUP_STEP_TIMEOUT_MS = 1500;
 type BrowserSerialPort = {
   open(options: { baudRate: number }): Promise<void>;
   close(): Promise<void>;
+  getInfo?(): { usbVendorId?: number; usbProductId?: number };
   readable: ReadableStream<Uint8Array> | null;
   writable: WritableStream<Uint8Array> | null;
 };
 
 type BrowserSerial = {
+  getPorts?(): Promise<BrowserSerialPort[]>;
   requestPort(options?: { filters?: Array<{ usbVendorId?: number; usbProductId?: number }> }): Promise<BrowserSerialPort>;
 };
 
@@ -1047,6 +1049,10 @@ function defaultRequestPort(): () => Promise<BrowserSerialPort> {
     if (serial === null) {
       throw new AgentQSuiBrowserProviderError("unsupported_transport", "Web Serial is not available in this browser.");
     }
+    const grantedPort = await findSingleGrantedAgentQPort(serial);
+    if (grantedPort !== null) {
+      return grantedPort;
+    }
     return serial.requestPort({
       filters: [{ usbVendorId: AGENT_Q_USB_VENDOR_ID_NUMBER, usbProductId: AGENT_Q_USB_PRODUCT_ID_NUMBER }],
     });
@@ -1054,6 +1060,29 @@ function defaultRequestPort(): () => Promise<BrowserSerialPort> {
 }
 
 function noop(): void {}
+
+async function findSingleGrantedAgentQPort(serial: BrowserSerial): Promise<BrowserSerialPort | null> {
+  if (typeof serial.getPorts !== "function") {
+    return null;
+  }
+  let grantedPorts: BrowserSerialPort[];
+  try {
+    grantedPorts = await serial.getPorts();
+  } catch {
+    return null;
+  }
+  const agentQPorts = grantedPorts.filter(isAgentQSerialPort);
+  return agentQPorts.length === 1 ? agentQPorts[0] : null;
+}
+
+function isAgentQSerialPort(port: BrowserSerialPort): boolean {
+  if (typeof port.getInfo !== "function") {
+    return false;
+  }
+  const info = port.getInfo();
+  return info.usbVendorId === AGENT_Q_USB_VENDOR_ID_NUMBER &&
+    info.usbProductId === AGENT_Q_USB_PRODUCT_ID_NUMBER;
+}
 
 function deadlineForProviderSigningTransaction(request: BrowserSignRequest): number {
   return deadlineForProviderRequest(request) + INTERNAL_USB_DEADLINE_MS * 2;

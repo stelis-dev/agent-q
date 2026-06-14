@@ -221,10 +221,12 @@ override that mode.
 The `./browser` runtime is Web Serial based and browser-only. It can be created
 before dapp-kit initializes so the Wallet Standard wallet can be registered
 early, but it does not select a USB device or request Web Serial permission at
-initialization time. Actual port selection happens inside `connectDevice()`,
-where the browser can require a user gesture. If Web Serial is unavailable,
-reads/signing fail closed as `unavailable`. If Web Serial exists but no device
-session is connected, they fail closed as `not_connected`.
+initialization time. Port acquisition happens inside `connectDevice()`: the
+runtime first reuses a single already-granted Agent-Q Web Serial port when the
+browser exposes one, and otherwise falls back to the browser's port picker where
+a user gesture may be required. If Web Serial is unavailable, reads/signing fail
+closed as `unavailable`. If Web Serial exists but no device session is
+connected, they fail closed as `not_connected`.
 
 Provider requests do not accept caller-controlled timing fields, custom serial
 ports, raw transport injection, or baud-rate configuration. Firmware-owned
