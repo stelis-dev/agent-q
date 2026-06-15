@@ -219,6 +219,9 @@ void finish_sui_zklogin_proposal_error_terminal(
     const char* error_code,
     const char* error_message,
     const char* display_message);
+void show_sui_settings_from_settings_menu();
+void show_settings_menu_from_sui_settings();
+void start_sui_zklogin_clear_from_sui_settings();
 
 void wipe_setup_scratch(const char* reason)
 {
@@ -836,6 +839,7 @@ agent_q::AgentQUsbSessionLossLocalPinPurpose local_pin_loss_purpose(
         case LocalPinAuthPurpose::settings_signing_mode:
         case LocalPinAuthPurpose::settings_policy_reset:
         case LocalPinAuthPurpose::settings_change_pin:
+        case LocalPinAuthPurpose::settings_sui_zklogin_clear:
             return agent_q::AgentQUsbSessionLossLocalPinPurpose::other;
     }
     return agent_q::AgentQUsbSessionLossLocalPinPurpose::other;
@@ -2110,6 +2114,48 @@ void local_pin_auth_record_material_failure(
         persistent_material_ops());
 }
 
+const char* sui_proof_status_label(agent_q::AgentQSuiZkLoginProofRecordStatus status)
+{
+    switch (status) {
+        case agent_q::AgentQSuiZkLoginProofRecordStatus::active:
+            return "active";
+        case agent_q::AgentQSuiZkLoginProofRecordStatus::missing:
+            return "none";
+        case agent_q::AgentQSuiZkLoginProofRecordStatus::invalid:
+        case agent_q::AgentQSuiZkLoginProofRecordStatus::storage_error:
+            return "error";
+    }
+    return "error";
+}
+
+const char* sui_active_identity_kind_label(agent_q::AgentQSuiActiveIdentityKind kind)
+{
+    switch (kind) {
+        case agent_q::AgentQSuiActiveIdentityKind::native:
+            return "native";
+        case agent_q::AgentQSuiActiveIdentityKind::zklogin:
+            return "zkLogin";
+        case agent_q::AgentQSuiActiveIdentityKind::error:
+            return "error";
+    }
+    return "error";
+}
+
+bool sui_zklogin_proof_clear_available()
+{
+    return agent_q::sui_zklogin_proof_record_status() !=
+           agent_q::AgentQSuiZkLoginProofRecordStatus::missing;
+}
+
+bool clear_sui_zklogin_proof_for_settings()
+{
+    const bool wiped = agent_q::wipe_sui_zklogin_proof_record();
+    clear_active_session();
+    return wiped &&
+           agent_q::sui_zklogin_proof_record_status() ==
+               agent_q::AgentQSuiZkLoginProofRecordStatus::missing;
+}
+
 bool begin_settings_pin_auth_handoff_for_local_pin_auth(const char* stale_log_message)
 {
     return agent_q::local_settings_reset_ui_begin_settings_pin_auth_handoff(
@@ -2177,6 +2223,8 @@ agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops()
         agent_q::read_human_approval_input_mode,
         agent_q::read_signing_authorization_mode,
         agent_q::store_default_policy,
+        sui_zklogin_proof_clear_available,
+        clear_sui_zklogin_proof_for_settings,
         begin_settings_pin_auth_handoff_for_local_pin_auth,
         restore_settings_menu_for_local_pin_auth,
         clear_agent_q_panel_if_kind,
@@ -2616,6 +2664,79 @@ void start_settings_change_pin_from_settings_menu()
         local_pin_auth_ui_flow_ops());
 }
 
+void show_sui_settings_from_settings_menu()
+{
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(xTaskGetTickCount());
+    if (reset.stage != agent_q::AgentQLocalResetStage::settings_menu) {
+        ESP_LOGW(kTag, "Stale Sui settings action ignored");
+        return;
+    }
+
+    const agent_q::AgentQSuiActiveIdentity identity =
+        agent_q::resolve_active_sui_identity();
+    const agent_q::AgentQSuiZkLoginProofRecordStatus proof_status =
+        agent_q::sui_zklogin_proof_record_status();
+    const char* address =
+        identity.address[0] != '\0' ? identity.address : "unavailable";
+    const char* max_epoch =
+        identity.kind == agent_q::AgentQSuiActiveIdentityKind::zklogin &&
+                identity.zklogin.max_epoch[0] != '\0'
+            ? identity.zklogin.max_epoch
+            : "none";
+    const char* proof_hash =
+        identity.kind == agent_q::AgentQSuiActiveIdentityKind::zklogin &&
+                identity.zklogin.proof_hash[0] != '\0'
+            ? identity.zklogin.proof_hash
+            : nullptr;
+
+    const agent_q::AgentQSuiSettingsViewModel model{
+        sui_active_identity_kind_label(identity.kind),
+        address,
+        sui_proof_status_label(proof_status),
+        max_epoch,
+        proof_hash,
+        proof_status != agent_q::AgentQSuiZkLoginProofRecordStatus::missing,
+    };
+    if (!agent_q::modal_draw_sui_settings_panel(model)) {
+        wipe_local_reset_scratch("Sui settings display allocation failed");
+        agent_q::avatar_overlay_show_message(
+            "Display error",
+            AgentQMessageKind::error,
+            AgentQUiMode::result,
+            kAgentQResultDisplayMs);
+    }
+}
+
+void show_settings_menu_from_sui_settings()
+{
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(xTaskGetTickCount());
+    if (reset.stage != agent_q::AgentQLocalResetStage::settings_menu ||
+        !agent_q_panel_active(AgentQUiPanelKind::sui_settings)) {
+        ESP_LOGW(kTag, "Stale Sui settings back ignored");
+        return;
+    }
+    if (!agent_q::modal_draw_settings_menu_panel()) {
+        wipe_local_reset_scratch("local settings display allocation failed after Sui back");
+        agent_q::avatar_overlay_show_message(
+            "Display error",
+            AgentQMessageKind::error,
+            AgentQUiMode::result,
+            kAgentQResultDisplayMs);
+    }
+}
+
+void start_sui_zklogin_clear_from_sui_settings()
+{
+    if (!agent_q_panel_active(AgentQUiPanelKind::sui_settings)) {
+        ESP_LOGW(kTag, "Stale Sui zkLogin clear ignored");
+        return;
+    }
+    agent_q::local_pin_auth_ui_start_settings_sui_zklogin_clear(
+        local_pin_auth_ui_flow_ops());
+}
+
 void cancel_local_pin_auth_from_ui(const char* message)
 {
     agent_q::local_pin_auth_ui_cancel(message, local_pin_auth_ui_flow_ops());
@@ -2958,6 +3079,11 @@ void drain_ui_events()
             continue;
         }
 
+        if (event.kind == AgentQUiEventKind::settings_sui_requested) {
+            show_sui_settings_from_settings_menu();
+            continue;
+        }
+
         if (event.kind == AgentQUiEventKind::settings_policy_reset_requested) {
             start_settings_policy_reset_from_settings_menu();
             continue;
@@ -2970,6 +3096,16 @@ void drain_ui_events()
 
         if (event.kind == AgentQUiEventKind::settings_reset_requested) {
             start_reset_pin_from_settings_menu();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::sui_settings_back_requested) {
+            show_settings_menu_from_sui_settings();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::sui_settings_clear_requested) {
+            start_sui_zklogin_clear_from_sui_settings();
             continue;
         }
 

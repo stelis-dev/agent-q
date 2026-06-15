@@ -82,6 +82,7 @@ constexpr int kSettingsMenuRowControlX = 208;
 constexpr int kSettingsMenuRowHeight = 34;
 constexpr int kSettingsMenuActionButtonWidth = 72;
 constexpr int kSettingsMenuActionButtonHeight = 26;
+constexpr int kSuiSettingsClearButtonY = 164;
 constexpr int kConnectReviewTextLeft = 24;
 constexpr int kConnectReviewClientNameValueY = 108;
 constexpr int kConnectReviewClientNameValueWidth = kInsetPanelWidth - 48;
@@ -1653,9 +1654,17 @@ bool modal_draw_settings_menu_panel()
             signing_mode_read_ok) ||
         !make_settings_menu_row(
             content,
+            "Sui",
+            "OPEN",
+            2,
+            SetupButtonKind::outlined_keypad,
+            lv_color_hex(theme::kPrimary),
+            g_callbacks.on_settings_sui_clicked) ||
+        !make_settings_menu_row(
+            content,
             "Change PIN",
             "CHANGE",
-            2,
+            3,
             SetupButtonKind::outlined_keypad,
             lv_color_hex(theme::kPrimary),
             g_callbacks.on_settings_change_pin_clicked) ||
@@ -1663,7 +1672,7 @@ bool modal_draw_settings_menu_panel()
             content,
             "Reset policy",
             "RESET",
-            3,
+            4,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
             g_callbacks.on_settings_policy_reset_clicked) ||
@@ -1671,7 +1680,7 @@ bool modal_draw_settings_menu_panel()
             content,
             "Reset device",
             "RESET",
-            4,
+            5,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
             g_callbacks.on_settings_reset_clicked) ||
@@ -1685,6 +1694,109 @@ bool modal_draw_settings_menu_panel()
             SetupButtonKind::outlined_keypad,
             lv_color_hex(theme::kPrimary),
             g_callbacks.on_settings_cancel_clicked)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    if (!make_screen_bottom_timeout_timer_bar(panel, reset.input_window, now)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    drawing_surface_move_panel_foreground_locked();
+    return true;
+}
+
+bool modal_draw_sui_settings_panel(const AgentQSuiSettingsViewModel& model)
+{
+    if (model.account_kind == nullptr || model.account_kind[0] == '\0' ||
+        model.proof_status == nullptr || model.proof_status[0] == '\0') {
+        return false;
+    }
+
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(now);
+    avatar_overlay_clear();
+
+    LvglLockGuard lock;
+    request_display_power_wake();
+    drawing_surface_clear_panel_locked();
+
+    lv_obj_t* panel = drawing_surface_create_panel_locked(AgentQUiPanelKind::sui_settings);
+    if (panel == nullptr) {
+        return false;
+    }
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_radius(panel, 8, 0);
+    lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(panel, 0, 0);
+
+    lv_obj_t* title = lv_label_create(panel);
+    if (title == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(title, "Sui");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
+
+    lv_obj_t* subtitle = lv_label_create(panel);
+    if (subtitle == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(subtitle, "Account state");
+    lv_obj_set_style_text_font(subtitle, &lv_font_unscii_8, 0);
+    lv_obj_set_style_text_color(subtitle, lv_color_hex(theme::kOnSurfaceVariant), 0);
+    lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
+
+    char address_preview[30] = {};
+    char proof_hash_preview[24] = {};
+    format_middle_elided(model.address, address_preview, sizeof(address_preview), 10, 6);
+    format_hash_prefix(model.proof_hash, proof_hash_preview, sizeof(proof_hash_preview));
+
+    int row_y = kPolicyUpdateReviewRowTop;
+    if (!make_policy_update_review_row(panel, "Account", model.account_kind, row_y) ||
+        !make_policy_update_review_row(panel, "Address", address_preview, row_y + kPolicyUpdateReviewRowHeight) ||
+        !make_policy_update_review_row(panel, "Proof", model.proof_status, row_y + 2 * kPolicyUpdateReviewRowHeight) ||
+        !make_policy_update_review_row(panel, "Max epoch", model.max_epoch, row_y + 3 * kPolicyUpdateReviewRowHeight) ||
+        !make_policy_update_review_row(panel, "Proof hash", proof_hash_preview, row_y + 4 * kPolicyUpdateReviewRowHeight)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    if (model.clear_available &&
+        !make_setup_button(
+            panel,
+            "Clear zkLogin",
+            kSettingsMenuButtonCenterX,
+            kSuiSettingsClearButtonY,
+            kBackupPhraseButtonWidth,
+            kBackupPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(theme::kError),
+            g_callbacks.on_sui_settings_clear_clicked)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    if (!make_setup_button(
+            panel,
+            "Back",
+            kSettingsMenuButtonCenterX,
+            kSetupActionButtonY,
+            kBackupPhraseButtonWidth,
+            kBackupPhraseButtonHeight,
+            SetupButtonKind::outlined_keypad,
+            lv_color_hex(theme::kPrimary),
+            g_callbacks.on_sui_settings_back_clicked)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
@@ -1954,6 +2066,9 @@ static const char* local_pin_auth_default_message(
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_policy_reset) {
         return "Enter PIN to reset policy.";
     }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_sui_zklogin_clear) {
+        return "Enter PIN to clear Sui zkLogin.";
+    }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {
             return "Enter new PIN.";
@@ -1985,6 +2100,9 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_policy_reset) {
         return "Reset Policy";
+    }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_sui_zklogin_clear) {
+        return "Clear Sui";
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
         if (snapshot.stage == AgentQLocalPinAuthStage::new_pin_entry) {

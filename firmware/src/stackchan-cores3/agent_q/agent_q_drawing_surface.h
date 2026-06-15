@@ -12,6 +12,7 @@ enum class AgentQUiPanelKind {
     import_word_entry,
     pin_entry,
     settings_menu,
+    sui_settings,
     reset_pin_entry,
     error_recovery,
     local_pin_auth,

@@ -43,6 +43,15 @@ bool provisioned_material_ready(const AgentQLocalPinAuthUiFlowOps& ops)
            ops.provisioned_material_ready();
 }
 
+bool settings_pin_purpose(AgentQLocalPinAuthPurpose purpose)
+{
+    return purpose == AgentQLocalPinAuthPurpose::settings_human_approval_input ||
+           purpose == AgentQLocalPinAuthPurpose::settings_signing_mode ||
+           purpose == AgentQLocalPinAuthPurpose::settings_policy_reset ||
+           purpose == AgentQLocalPinAuthPurpose::settings_change_pin ||
+           purpose == AgentQLocalPinAuthPurpose::settings_sui_zklogin_clear;
+}
+
 AgentQModalTransitionOps modal_transition_ops(const AgentQLocalPinAuthUiFlowOps& ops)
 {
     return AgentQModalTransitionOps{
@@ -248,10 +257,7 @@ AgentQTimeoutWindow local_pin_auth_next_input_window(
         timeout_window_from_deadline(
             now,
             now + pdMS_TO_TICKS(ops.local_pin_input_window_ms));
-    if (purpose == AgentQLocalPinAuthPurpose::settings_human_approval_input ||
-        purpose == AgentQLocalPinAuthPurpose::settings_signing_mode ||
-        purpose == AgentQLocalPinAuthPurpose::settings_policy_reset ||
-        purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
+    if (settings_pin_purpose(purpose)) {
         return next_input_window;
     }
     if (!request_backed_local_pin_purpose(purpose)) {
@@ -1142,6 +1148,38 @@ void local_pin_auth_ui_start_settings_change_pin(
     }
 }
 
+void local_pin_auth_ui_start_settings_sui_zklogin_clear(
+    const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    if (ops.sui_zklogin_proof_clear_available == nullptr ||
+        !ops.sui_zklogin_proof_clear_available()) {
+        show_message(ops, "No Sui proof", AgentQMessageKind::info);
+        return;
+    }
+    if (!start_settings_handoff(
+            "Stale Sui zkLogin clear action ignored",
+            ops)) {
+        return;
+    }
+
+    const TickType_t now = now_or_zero(ops);
+    if (!local_pin_auth_begin_sui_zklogin_clear_setting(
+            now,
+            timeout_window_from_deadline(
+                now,
+                now + pdMS_TO_TICKS(ops.local_reset_entry_ms)))) {
+        show_message(ops, "Sui clear unavailable", AgentQMessageKind::error);
+        return;
+    }
+
+    if (!draw_local_pin_panel(ops, "Clear Sui zkLogin")) {
+        wipe_local_pin_auth_scratch(
+            ops,
+            "Sui zkLogin clear display allocation failed");
+        show_message(ops, "Display error", AgentQMessageKind::error);
+    }
+}
+
 void local_pin_auth_ui_cancel(
     const char* message,
     const AgentQLocalPinAuthUiFlowOps& ops)
@@ -1281,10 +1319,7 @@ void local_pin_auth_ui_cancel(
         }
         return;
     }
-    if (purpose == AgentQLocalPinAuthPurpose::settings_human_approval_input ||
-        purpose == AgentQLocalPinAuthPurpose::settings_signing_mode ||
-        purpose == AgentQLocalPinAuthPurpose::settings_policy_reset ||
-        purpose == AgentQLocalPinAuthPurpose::settings_change_pin) {
+    if (settings_pin_purpose(purpose)) {
         wipe_local_pin_auth_scratch(ops, "local PIN authorization canceled");
         complete_local_pin_processing_to_settings(
             ops,
@@ -1671,6 +1706,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
          result == AgentQLocalPinAuthVerifyResult::wrong_pin ||
          result == AgentQLocalPinAuthVerifyResult::verified_connect ||
          result == AgentQLocalPinAuthVerifyResult::verified_settings_policy_reset ||
+         result == AgentQLocalPinAuthVerifyResult::verified_settings_sui_zklogin_clear ||
          result == AgentQLocalPinAuthVerifyResult::verified_policy_update ||
          result == AgentQLocalPinAuthVerifyResult::verified_sui_zklogin_proposal) &&
         request_backed_local_pin_input_deadline_reached(purpose, now)) {
@@ -1867,6 +1903,19 @@ void local_pin_auth_ui_handle_verify_worker_result(
                 "local settings display allocation failed after policy reset",
                 stored ? "Policy reset" : "Policy reset failed",
                 stored ? AgentQMessageKind::success : AgentQMessageKind::error);
+            return;
+        }
+        case AgentQLocalPinAuthVerifyResult::verified_settings_sui_zklogin_clear: {
+            const bool cleared = ops.clear_sui_zklogin_proof != nullptr &&
+                                 ops.clear_sui_zklogin_proof();
+            wipe_local_pin_auth_scratch(
+                ops,
+                cleared ? "Sui zkLogin proof cleared" : "Sui zkLogin proof clear failed");
+            complete_local_pin_processing_to_settings(
+                ops,
+                "local settings display allocation failed after Sui clear",
+                cleared ? "Sui proof cleared" : "Sui clear failed",
+                cleared ? AgentQMessageKind::success : AgentQMessageKind::error);
             return;
         }
         case AgentQLocalPinAuthVerifyResult::verified_policy_update: {

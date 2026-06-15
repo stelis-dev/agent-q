@@ -19,9 +19,12 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_settings_cancel_clicked = nullptr;
     lv_event_cb_t on_settings_human_approval_input_clicked = nullptr;
     lv_event_cb_t on_settings_signing_mode_clicked = nullptr;
+    lv_event_cb_t on_settings_sui_clicked = nullptr;
     lv_event_cb_t on_settings_policy_reset_clicked = nullptr;
     lv_event_cb_t on_settings_change_pin_clicked = nullptr;
     lv_event_cb_t on_settings_reset_clicked = nullptr;
+    lv_event_cb_t on_sui_settings_back_clicked = nullptr;
+    lv_event_cb_t on_sui_settings_clear_clicked = nullptr;
     lv_event_cb_t on_error_recovery_erase_clicked = nullptr;
     lv_event_cb_t on_error_recovery_cancel_clicked = nullptr;
     lv_event_cb_t on_reset_cancel_clicked = nullptr;
@@ -68,6 +71,15 @@ struct AgentQSuiZkLoginReviewViewModel {
     const char* effect_summary = nullptr;
 };
 
+struct AgentQSuiSettingsViewModel {
+    const char* account_kind = nullptr;
+    const char* address = nullptr;
+    const char* proof_status = nullptr;
+    const char* max_epoch = nullptr;
+    const char* proof_hash = nullptr;
+    bool clear_available = false;
+};
+
 void modal_drawing_set_callbacks(const AgentQModalDrawingCallbacks& callbacks);
 
 bool modal_draw_connect_review_panel(
@@ -79,6 +91,7 @@ bool modal_draw_import_word_entry_panel(const char* notice = nullptr);
 bool modal_draw_backup_phrase_display(const char* backup_phrase);
 bool modal_draw_pin_setup_panel(const char* notice = nullptr);
 bool modal_draw_settings_menu_panel();
+bool modal_draw_sui_settings_panel(const AgentQSuiSettingsViewModel& model);
 bool modal_draw_error_recovery_panel(bool confirm);
 bool modal_draw_reset_pin_panel(const char* notice = nullptr);
 bool modal_draw_local_pin_auth_panel(const char* notice = nullptr);

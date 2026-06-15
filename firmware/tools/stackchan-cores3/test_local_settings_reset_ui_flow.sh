@@ -86,7 +86,7 @@ bool g_settings_available = true;
 bool g_error_recovery_available = true;
 bool g_consistency_error_active = false;
 bool g_display_ready = true;
-bool g_panel_active[12] = {};
+bool g_panel_active[16] = {};
 bool g_local_reset_panel_active = false;
 bool g_draw_settings = true;
 bool g_draw_reset_pin = true;
@@ -388,6 +388,12 @@ int main()
     expect(agent_q::local_settings_reset_ui_begin_settings_pin_auth_handoff("stale", ops()),
            "settings PIN-auth handoff accepted from menu");
     expect(g_stage == agent_q::AgentQLocalResetStage::none, "settings handoff consumes reset/menu state");
+
+    reset_harness();
+    g_stage = agent_q::AgentQLocalResetStage::settings_menu;
+    expect(agent_q::local_settings_reset_ui_panel_matches_stage(
+               agent_q::AgentQUiPanelKind::sui_settings),
+           "Sui settings panel is owned by settings state");
 
     reset_harness();
     g_stage = agent_q::AgentQLocalResetStage::settings_menu;

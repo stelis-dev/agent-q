@@ -420,6 +420,10 @@ int main()
                "stale Sui zkLogin PIN window is rejected by state owner");
         expect(!agent_q::local_pin_auth_begin_sui_zklogin_proposal(200, pin_window(220, 260)),
                "future Sui zkLogin PIN window is rejected by state owner");
+        expect(!agent_q::local_pin_auth_begin_sui_zklogin_clear_setting(200, pin_window(100, 150)),
+               "stale Sui zkLogin clear PIN window is rejected by state owner");
+        expect(!agent_q::local_pin_auth_begin_sui_zklogin_clear_setting(200, pin_window(220, 260)),
+               "future Sui zkLogin clear PIN window is rejected by state owner");
     }
 
     {
@@ -576,6 +580,27 @@ int main()
             agent_q::AgentQLocalPinAuthPurpose::settings_change_pin,
             agent_q::AgentQLocalPinAuthStage::pin_entry,
             "change PIN current wrong PIN remains settings-owned");
+        agent_q::local_pin_auth_clear_flow();
+    }
+
+    {
+        agent_q::test_set_tick(350);
+        expect(agent_q::local_pin_auth_begin_sui_zklogin_clear_setting(
+                   350,
+                   pin_window(350, 380)),
+               "Sui zkLogin clear setting PIN auth begins");
+        enter_pin("123456");
+        expect(agent_q::local_pin_auth_submit(351, 0, test_input_window(380), 360) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "Sui zkLogin clear setting starts current-PIN verification");
+        agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
+        expect(agent_q::local_pin_auth_complete_verify_job(verify_result, pin_window(351, 380), 0, 0) ==
+                   agent_q::AgentQLocalPinAuthVerifyResult::verified_settings_sui_zklogin_clear,
+               "verified Sui zkLogin clear stays local-settings owned");
+        expect_stage(
+            agent_q::AgentQLocalPinAuthPurpose::settings_sui_zklogin_clear,
+            agent_q::AgentQLocalPinAuthStage::pin_verifying,
+            "Sui zkLogin clear waits for UI-owned clear handling");
         agent_q::local_pin_auth_clear_flow();
     }
 

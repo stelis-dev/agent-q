@@ -199,6 +199,37 @@ check_settings_policy_reset_keeps_panel_until_store() {
   fi
 }
 
+check_settings_sui_clear_keeps_panel_until_wipe() {
+  local snippet="${TMP_DIR}/settings_sui_clear_case.cpp"
+  local clear_line
+  local clear_before_wipe_line
+  local restore_line
+
+  awk '
+    /case AgentQLocalPinAuthVerifyResult::verified_settings_sui_zklogin_clear:/ { in_case = 1 }
+    in_case { print }
+    in_case && /return;/ { exit }
+  ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
+
+  clear_line="$(grep -En 'clear_sui_zklogin_proof' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  restore_line="$(grep -En 'complete_local_pin_processing_to_settings|restore_settings_menu_after_pin' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  clear_before_wipe_line="$(
+    grep -En 'clear_local_pin_panel' "${snippet}" |
+      awk -F: -v clear="${clear_line:-0}" '$1 < clear { print $1; exit }' || true
+  )"
+
+  if [[ -z "${clear_line}" || -z "${restore_line}" || "${clear_line}" -ge "${restore_line}" ]]; then
+    echo "FAILED: Sui zkLogin Settings clear must wipe proof before restoring Settings" >&2
+    echo "clear_line=${clear_line:-missing} restore_line=${restore_line:-missing}" >&2
+    exit 1
+  fi
+  if [[ -n "${clear_before_wipe_line}" ]]; then
+    echo "FAILED: Sui zkLogin Settings clear must keep the processing panel visible until proof clear completes" >&2
+    echo "clear_before_wipe_line=${clear_before_wipe_line} clear_line=${clear_line}" >&2
+    exit 1
+  fi
+}
+
 check_policy_update_keeps_panel_until_commit() {
   local snippet="${TMP_DIR}/verified_policy_update_case.cpp"
   local approved_line
@@ -591,6 +622,7 @@ check_local_pin_ui_handler_timeout_order \
   "request-backed PIN cancel handler must timeout before cancel/back action"
 check_local_pin_worker_timeout_order
 check_settings_policy_reset_keeps_panel_until_store
+check_settings_sui_clear_keeps_panel_until_wipe
 check_policy_update_keeps_panel_until_commit
 check_user_signing_keeps_panel_until_signing_work
 check_modal_transition_next_panel_order

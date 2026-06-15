@@ -251,7 +251,8 @@ void draw_reset_pin_error_or_wipe(
 bool local_settings_reset_ui_panel_matches_stage(AgentQUiPanelKind kind)
 {
     const ResetStage stage = local_reset_snapshot(xTaskGetTickCount()).stage;
-    return (kind == AgentQUiPanelKind::settings_menu &&
+    return ((kind == AgentQUiPanelKind::settings_menu ||
+             kind == AgentQUiPanelKind::sui_settings) &&
             stage == ResetStage::settings_menu) ||
            (kind == AgentQUiPanelKind::reset_pin_entry &&
             stage == ResetStage::pin_entry) ||
@@ -330,9 +331,16 @@ void local_settings_reset_ui_clear_if_needed(const AgentQLocalSettingsResetUiFlo
         } else if (reset.stage == ResetStage::error_recovery_confirm) {
             timeout_message = "Erase canceled";
         }
+        AgentQUiPanelKind timeout_panel =
+            active ? panel_kind_for_reset_stage(reset.stage) : AgentQUiPanelKind::none;
+        if (active &&
+            reset.stage == ResetStage::settings_menu &&
+            panel_active(ops, AgentQUiPanelKind::sui_settings)) {
+            timeout_panel = AgentQUiPanelKind::sui_settings;
+        }
         complete_panel_to_result(
             ops,
-            active ? panel_kind_for_reset_stage(reset.stage) : AgentQUiPanelKind::none,
+            timeout_panel,
             timeout_message,
             AgentQMessageKind::timeout);
     }
@@ -443,7 +451,11 @@ void local_settings_reset_ui_close_settings_from_ui(
         return;
     }
 
-    clear_panel_if_kind(ops, AgentQUiPanelKind::settings_menu);
+    if (panel_active(ops, AgentQUiPanelKind::settings_menu)) {
+        clear_panel_if_kind(ops, AgentQUiPanelKind::settings_menu);
+    } else if (panel_active(ops, AgentQUiPanelKind::sui_settings)) {
+        clear_panel_if_kind(ops, AgentQUiPanelKind::sui_settings);
+    }
     wipe_local_reset_scratch(ops, "local settings closed");
 }
 
