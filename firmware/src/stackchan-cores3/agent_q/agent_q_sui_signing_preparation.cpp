@@ -90,6 +90,22 @@ void prepare_policy_condition_facts(AgentQSuiPreparedSignTransaction* out)
     }
 }
 
+AgentQSuiSigningPreparationResult active_identity_network_result_to_preparation_result(
+    AgentQSuiSigningActiveIdentityNetworkResult result)
+{
+    switch (result) {
+        case AgentQSuiSigningActiveIdentityNetworkResult::ok:
+            return AgentQSuiSigningPreparationResult::ok;
+        case AgentQSuiSigningActiveIdentityNetworkResult::account_unavailable:
+            return AgentQSuiSigningPreparationResult::account_unavailable;
+        case AgentQSuiSigningActiveIdentityNetworkResult::active_identity_unavailable:
+            return AgentQSuiSigningPreparationResult::active_identity_unavailable;
+        case AgentQSuiSigningActiveIdentityNetworkResult::network_mismatch:
+        default:
+            return AgentQSuiSigningPreparationResult::invalid_network;
+    }
+}
+
 AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
     AgentQSupportedSignRoute route,
     const char* network,
@@ -176,6 +192,13 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
                 return AgentQSuiSigningPreparationResult::invalid_account;
         }
         return AgentQSuiSigningPreparationResult::invalid_account;
+    }
+    const AgentQSuiSigningPreparationResult network_result =
+        active_identity_network_result_to_preparation_result(
+            verify_sui_signing_active_identity_network(out->network));
+    if (network_result != AgentQSuiSigningPreparationResult::ok) {
+        clear_prepared_sui_sign_transaction(out);
+        return network_result;
     }
     prepare_policy_condition_facts(out);
     return AgentQSuiSigningPreparationResult::ok;
@@ -310,6 +333,13 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_personal_message(
         active_identity.kind != AgentQSuiActiveIdentityKind::zklogin) {
         clear_prepared_sui_sign_personal_message(out);
         return AgentQSuiSigningPreparationResult::invalid_account;
+    }
+    const AgentQSuiSigningPreparationResult network_result =
+        active_identity_network_result_to_preparation_result(
+            verify_sui_signing_active_identity_network(active_identity, out->network));
+    if (network_result != AgentQSuiSigningPreparationResult::ok) {
+        clear_prepared_sui_sign_personal_message(out);
+        return network_result;
     }
     memcpy(out->account_address, active_identity.address, sizeof(out->account_address));
     return AgentQSuiSigningPreparationResult::ok;

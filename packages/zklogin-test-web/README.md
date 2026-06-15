@@ -2,6 +2,8 @@
 
 This private app is a browser test tool for the Agent-Q Sui zkLogin setup path.
 It is not production onboarding, not an Admin Page, and not a signing authority.
+It is buildable test tooling only. `docs/IMPLEMENTATION_STATUS.md` is the status
+source for browser-to-device zkLogin setup, clear, reconnect, and signing.
 
 The app talks directly to Firmware over Web Serial and only uses the common
 protocol operations already exposed by Agent-Q:

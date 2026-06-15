@@ -51,6 +51,7 @@ agent_q::AgentQSuiActiveIdentityError g_active_identity_error =
     agent_q::AgentQSuiActiveIdentityError::none;
 char g_derived_address[agent_q::kSuiAddressBufferSize] =
     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+char g_zklogin_network[agent_q::kAgentQSuiNetworkBufferSize] = "devnet";
 
 int hex_value(char value)
 {
@@ -310,6 +311,9 @@ AgentQSuiActiveIdentity resolve_active_sui_identity()
     identity.public_key_size = identity.kind == AgentQSuiActiveIdentityKind::zklogin
                                    ? kAgentQSuiZkLoginPublicKeyMinBytes
                                    : kAgentQSuiSchemePrefixedEd25519PublicKeyBytes;
+    if (identity.kind == AgentQSuiActiveIdentityKind::zklogin) {
+        snprintf(identity.zklogin.network, sizeof(identity.zklogin.network), "%s", ::g_zklogin_network);
+    }
     return identity;
 }
 
@@ -326,6 +330,34 @@ AgentQSuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
                    strcmp(facts.gas_owner, active_identity.address) == 0
                ? AgentQSuiSigningAccountBindingResult::ok
                : AgentQSuiSigningAccountBindingResult::account_mismatch;
+}
+
+AgentQSuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(
+    const AgentQSuiActiveIdentity& active_identity,
+    const char* request_network)
+{
+    if (active_identity.kind == AgentQSuiActiveIdentityKind::error) {
+        return active_identity.error == AgentQSuiActiveIdentityError::native_account_unavailable
+                   ? AgentQSuiSigningActiveIdentityNetworkResult::account_unavailable
+                   : AgentQSuiSigningActiveIdentityNetworkResult::active_identity_unavailable;
+    }
+    if (active_identity.kind == AgentQSuiActiveIdentityKind::zklogin) {
+        if (request_network == nullptr || request_network[0] == '\0') {
+            return AgentQSuiSigningActiveIdentityNetworkResult::network_mismatch;
+        }
+        return strcmp(active_identity.zklogin.network, request_network) == 0
+                   ? AgentQSuiSigningActiveIdentityNetworkResult::ok
+                   : AgentQSuiSigningActiveIdentityNetworkResult::network_mismatch;
+    }
+    return active_identity.kind == AgentQSuiActiveIdentityKind::native
+               ? AgentQSuiSigningActiveIdentityNetworkResult::ok
+               : AgentQSuiSigningActiveIdentityNetworkResult::active_identity_unavailable;
+}
+
+AgentQSuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(
+    const char* request_network)
+{
+    return verify_sui_signing_active_identity_network(resolve_active_sui_identity(), request_network);
 }
 
 }  // namespace agent_q
@@ -483,6 +515,19 @@ int main(int argc, char** argv)
                &tx) == agent_q::AgentQSuiSigningPreparationResult::active_identity_unavailable);
     ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
     ::g_active_identity_error = agent_q::AgentQSuiActiveIdentityError::none;
+    assert(agent_q::verify_sui_signing_active_identity_network(
+               agent_q::resolve_active_sui_identity(),
+               nullptr) == agent_q::AgentQSuiSigningActiveIdentityNetworkResult::ok);
+
+    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
+    snprintf(::g_zklogin_network, sizeof(::g_zklogin_network), "%s", "testnet");
+    assert(agent_q::prepare_sui_sign_transaction(
+               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+               "devnet",
+               base64(valid).c_str(),
+               valid.size(),
+               &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_network);
+    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
 
     ::g_digest_ok = false;
     assert(agent_q::prepare_sui_sign_transaction(
@@ -507,6 +552,14 @@ int main(int argc, char** argv)
     agent_q::clear_prepared_sui_sign_personal_message(&message);
 
     ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
+    snprintf(::g_zklogin_network, sizeof(::g_zklogin_network), "%s", "testnet");
+    assert(agent_q::prepare_sui_sign_personal_message(
+               agent_q::AgentQSupportedSignRoute::sui_sign_personal_message,
+               "devnet",
+               personal.c_str(),
+               5,
+               &message) == agent_q::AgentQSuiSigningPreparationResult::invalid_network);
+    snprintf(::g_zklogin_network, sizeof(::g_zklogin_network), "%s", "devnet");
     assert(agent_q::prepare_sui_sign_personal_message(
                agent_q::AgentQSupportedSignRoute::sui_sign_personal_message,
                "devnet",

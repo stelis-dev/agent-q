@@ -19,6 +19,7 @@ enum class AgentQSuiSigningPreparationResult {
     ok,
     invalid_argument,
     invalid_params,
+    invalid_network,
     unsupported_payload_size,
     malformed_transaction,
     unsupported_transaction,

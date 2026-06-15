@@ -175,6 +175,8 @@ get_status
   -> connect
     -> get_capabilities
     -> get_accounts
+    -> credential_prepare?
+    -> credential_propose?
     -> policy_get
     -> get_approval_history
     -> sign_transaction*
@@ -817,6 +819,13 @@ Response:
       "methods": []
     }
   ],
+  "credentials": [
+    {
+      "chain": "sui",
+      "credential": "zklogin",
+      "operations": ["credential_prepare", "credential_propose"]
+    }
+  ],
   "signing": {
     "authorization": "user",
     "methods": [
@@ -848,11 +857,14 @@ Rules:
   `invalid_state`.
 - A missing, inactive, or mismatched session returns `invalid_session`.
 - The current StackChan CoreS3 target advertises Sui Ed25519 account identity
-  for account 0 at `m/44'/784'/0'/0'/0'`, no entries in
-  `chains[].methods`, and top-level Sui signing availability in
-  `signing.methods`. In user authorization mode this includes
-  `sign_transaction` and `sign_personal_message`; in policy authorization mode
-  this includes `sign_transaction` only.
+  for account 0 at `m/44'/784'/0'/0'/0'` when the native Sui identity is active,
+  or Sui zkLogin account identity when a locally stored zkLogin proof is active.
+  It reports exactly one active account identity, no entries in
+  `chains[].methods`, optional `credentials[]` availability for Sui zkLogin
+  proof setup only while native account identity is active, and top-level Sui
+  signing availability in `signing.methods`. In user authorization mode this
+  includes `sign_transaction` and `sign_personal_message`; in policy
+  authorization mode this includes `sign_transaction` only.
 - `signing.authorization` is the Firmware-authored read-only local signing
   authorization mode (`"user"` or `"policy"`) that will be used for supported
   signing methods. Protocol requests must not contain this field, and there is
@@ -874,6 +886,13 @@ Rules:
   history behavior, host parser/output support, MCP output support, and
   provider support for the same method boundary. Signing availability must use
   top-level `signing`.
+- A `credentials[]` entry advertises only credential-preparation availability.
+  The current supported entry is `{ "chain": "sui", "credential": "zklogin",
+  "operations": ["credential_prepare", "credential_propose"] }`. It is not a
+  signer selector, proof-clear API, or host-controlled state transition.
+  Firmware advertises it only when Sui native account identity is active. If a
+  zkLogin proof is already active, preparation and proposal fail closed until
+  the user clears the proof locally in device Settings.
 - the host process, MCP, provider-sui, and UI consumers may use
   `signing.authorization` only to describe expected behavior. The security
   decision is the Firmware-authored `sign_result` and its recorded
@@ -886,11 +905,15 @@ Rules:
 
 ## Accounts
 
-`get_accounts` is a session-scoped read-only request that returns the public
-account identity Firmware derives from its stored root material. It exposes only
-public material: address, public key, key scheme, and derivation path. It never
-returns a mnemonic, seed, entropy, private key, or any signing key, and it does
-not perform signing.
+`get_accounts` is a session-scoped read-only request that returns Firmware's
+single active Sui account identity. When no zkLogin proof is active, Firmware
+projects the native Ed25519 account derived from stored root material. When a
+zkLogin proof is active, Firmware projects the stored zkLogin address and public
+identifier instead. It exposes only public material: address, scheme-prefixed
+public key or public identifier, key scheme, and a derivation path only for the
+native Ed25519 account. It never returns a mnemonic, seed, entropy, private key,
+raw JWT, proof input secret, or any signing key, and it does not perform
+signing.
 
 Request:
 
@@ -924,33 +947,168 @@ Approved response:
 
 Rules:
 
-- `publicKey` is the raw 32-byte Ed25519 public key encoded as base64. The scheme
-  is reported separately as `keyScheme`; the address is
-  `0x` + lowercase hex of `blake2b256(0x00 || publicKey)`.
+- `publicKey` is base64 of the Sui scheme-prefixed public identity. For native
+  Ed25519 account identity it is `0x00 || raw 32-byte Ed25519 public key`. For
+  zkLogin account identity it is the Sui zkLogin public identifier, whose first
+  byte is the Sui zkLogin scheme flag `0x05`. The scheme is also reported in
+  `keyScheme`, and the address must match the Sui address derived from the
+  scheme-prefixed public identity.
 - Firmware returns accounts only when `provisioning.state` is `provisioned` and
   persistent material, including root material, active policy, local PIN
   verifier, and signing authorization mode, is consistent. Before that it
   returns `invalid_state`.
 - The request requires `sessionId`. A missing, inactive, or mismatched session
   returns `invalid_session`.
-- Account derivation runs in Firmware on demand and wipes all intermediate secret
-  material. A derivation failure returns `account_error` with no partial account.
-- The host process parses and re-validates the account shape, rejects any response that
-  carries a secret-like field, and recomputes the Sui Ed25519 address from
-  `publicKey` to reject mismatched public identities. Firmware still owns account
-  derivation; host-process validation is consistency checking, not signing authority.
-  The host process MCP `get_accounts` tool never exposes the session id.
-- The current StackChan CoreS3 target implements the Sui Ed25519 account at index
-  0 (`m/44'/784'/0'/0'/0'`) and returns exactly one `accounts[]` entry. The host process
-  rejects any other account count for this target. Additional chains and accounts
-  are added as more `accounts[]` entries only after the protocol, capability
-  response, and host process bounds are updated. StackChan CoreS3 hardware smoke
-  verifies the current single-account response over an approved session.
+- Native account derivation runs in Firmware on demand and wipes all
+  intermediate secret material. When a zkLogin proof is active, the account
+  identity is read from the persisted proof record. A native derivation failure,
+  invalid proof record, or proof storage read failure returns `account_error`
+  with no partial account.
+- The host process parses and re-validates the account shape, rejects any
+  response that carries a secret-like field, and recomputes the Sui address from
+  the scheme-prefixed `publicKey` or public identifier to reject mismatched
+  public identities. Firmware still owns account derivation and active identity
+  resolution; host-process validation is consistency checking, not signing
+  authority. The host process MCP `get_accounts` tool never exposes the session
+  id.
+- The current StackChan CoreS3 target returns exactly one `accounts[]` entry:
+  either the native Sui Ed25519 account at index 0 (`m/44'/784'/0'/0'/0'`) or
+  the active Sui zkLogin identity. The host process rejects any other account
+  count for this target. Additional chains and accounts are added as more
+  `accounts[]` entries only after the protocol, capability response, and host
+  process bounds are updated. StackChan CoreS3 hardware smoke verifies the
+  native single-account response over an approved session; zkLogin hardware
+  account projection is not verified.
   `get_accounts` reads identity only. Current delegated public method
   availability is reported by `get_capabilities.chains[].methods`.
   Signing availability is reported separately through top-level `signing`,
   including the Firmware-authored `authorization` mode and supported signing
   methods.
+
+## Credential Preparation
+
+Credential preparation uses shared top-level protocol operations. These
+operations are not chain-specific product APIs, not signing requests, and not
+state setters. The current supported credential is Sui zkLogin.
+
+`credential_prepare` returns the native device-held public material that an
+external browser flow can use to compute a Sui zkLogin nonce and obtain a JWT.
+It is read-like and does not store proof material.
+
+Request:
+
+```json
+{
+  "id": "req_credential_prepare",
+  "version": 1,
+  "type": "credential_prepare",
+  "sessionId": "session_001",
+  "params": {
+    "chain": "sui",
+    "credential": "zklogin"
+  }
+}
+```
+
+Prepared response:
+
+```json
+{
+  "id": "req_credential_prepare",
+  "version": 1,
+  "type": "credential_prepare_result",
+  "status": "prepared",
+  "chain": "sui",
+  "credential": "zklogin",
+  "preparation": {
+    "address": "0x...",
+    "publicKey": "base64...",
+    "keyScheme": "ed25519"
+  }
+}
+```
+
+`credential_propose` submits bounded zkLogin proof material produced outside the
+device. Firmware validates the bounded record shape, shows a device-local
+review, requires local PIN approval, and stores the proof only after the
+Firmware-owned approval and commit succeed. It does not accept raw JWTs and does
+not claim local OAuth, prover, or Sui validator verification.
+
+Request:
+
+```json
+{
+  "id": "req_credential_propose",
+  "version": 1,
+  "type": "credential_propose",
+  "sessionId": "session_001",
+  "params": {
+    "chain": "sui",
+    "credential": "zklogin",
+    "network": "devnet",
+    "address": "0x...",
+    "publicKey": "base64...",
+    "maxEpoch": "123",
+    "inputs": {
+      "proofPoints": {
+        "a": ["1", "2", "3"],
+        "b": [["1", "2"], ["3", "4"], ["5", "6"]],
+        "c": ["1", "2", "3"]
+      },
+      "issBase64Details": {
+        "value": "base64url",
+        "indexMod4": 1
+      },
+      "headerBase64": "base64url",
+      "addressSeed": "123"
+    }
+  }
+}
+```
+
+Terminal response:
+
+```json
+{
+  "id": "req_credential_propose",
+  "version": 1,
+  "type": "credential_propose_result",
+  "status": "activated",
+  "reasonCode": "activated",
+  "sessionEnded": true
+}
+```
+
+Rules:
+
+- Both operations are session-scoped and require material-backed `provisioned`
+  state, persistent material consistency, and a matching active session.
+- Only `{ "chain": "sui", "credential": "zklogin" }` is supported. Unsupported
+  credentials return `invalid_params`.
+- Firmware allows preparation and proposal only while the native Sui identity is
+  active. If any zkLogin proof record is active, invalid, or unavailable,
+  preparation/proposal fail closed; clearing is available only through the
+  device-local `Settings > Sui` flow.
+- `credential_prepare_result.preparation.publicKey` is base64 of
+  `0x00 || raw 32-byte Ed25519 public key`. The external flow may use this
+  public key to compute the Sui zkLogin nonce. The device does not need to
+  perform Poseidon hashing to support this boundary.
+- `credential_propose.params.publicKey` is the Sui zkLogin public identifier,
+  base64 encoded. Firmware requires the public identifier to carry the stored
+  issuer and `inputs.addressSeed`, and the public identifier must derive
+  `params.address`.
+- `credential_propose.params.maxEpoch` is stored and displayed as metadata. The
+  current Firmware boundary has no trusted Sui epoch source and does not locally
+  classify proof freshness; Sui validators remain the freshness authority.
+- Firmware stores the bounded proof record needed to build a zkLogin signature
+  envelope. It must not store raw JWTs, OAuth tokens, provider secrets, or
+  private key material.
+- A successful activation ends the current session so callers reconnect before
+  reading the new active account identity. Rejection, timeout, UI error, invalid
+  proof, storage error, and consistency error return terminal
+  `credential_propose_result` statuses without silently activating a proof.
+- `sessionEnded` reports whether Firmware ended the active session as part of
+  the terminal result.
 
 ## Policy Readback
 
@@ -1411,7 +1569,10 @@ Current implementation rules:
 - `params.network` is required and must be one of `mainnet`, `testnet`,
   `devnet`, or `localnet`. Current Sui transaction bytes do not carry network
   identity, so Firmware validates this as request context only. It is not
-  emitted as a policy authorization fact.
+  emitted as a policy authorization fact. When the active Sui identity is
+  zkLogin, Firmware also requires `params.network` to match the locally stored
+  zkLogin proof network before payload admission, staged payload resolution, Sui
+  adapter preparation, or any authorization gate can sign.
 - `params` must contain exactly one payload source: inline `txBytes` or staged
   `payloadRef`. `txBytes` must be canonical base64 and fit the shared
   transport/frame bound. A staged request must echo the immutable descriptor
@@ -1533,7 +1694,10 @@ Current implementation rules:
 - `params.network` is required and must be one of `mainnet`, `testnet`,
   `devnet`, or `localnet`. Current Sui personal-message bytes do not carry
   network identity, so Firmware validates this only as request context and does
-  not expose it as a policy fact or message-derived history proof.
+  not expose it as a policy fact or message-derived history proof. When the
+  active Sui identity is zkLogin, Firmware also requires `params.network` to
+  match the locally stored zkLogin proof network before entering user
+  authorization.
 - Firmware must derive the signing account from stored device material and show
   a bounded clear-signing review derived from the exact message bytes that will
   be signed. Full message display may be replaced by bounded preview plus digest

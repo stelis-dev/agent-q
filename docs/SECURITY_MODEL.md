@@ -131,6 +131,22 @@ Implemented today:
   this method are not implemented. Product-active status is not claimed unless
   `docs/IMPLEMENTATION_STATUS.md` says the matching source, docs, tests, build,
   hardware, and visual evidence are complete.
+- The Sui zkLogin path has `source-wired-not-product-active` status for proof
+  preparation, proof proposal, active account projection, and final zkLogin
+  signature-envelope construction after the existing signing authorization gate.
+  Firmware exposes common `credential_prepare` and `credential_propose`
+  operations only over an approved session. It stores a bounded proof record
+  only after device-local review and local PIN approval, projects exactly one
+  active Sui identity, requires a signing request's `network` to match the
+  stored proof network when zkLogin is active, and routes `sign_transaction`
+  plus user-mode `sign_personal_message` through the same authorization path
+  before choosing the native Ed25519 or zkLogin envelope at the final signature
+  construction step. Firmware does not store raw JWTs and does not claim to verify OAuth
+  login, prover honesty, or Sui validator freshness. `maxEpoch` is stored as
+  metadata; proof freshness is enforced by Sui validators, not by the current
+  device boundary. Product-active status is not claimed unless
+  `docs/IMPLEMENTATION_STATUS.md` says the matching source, docs, tests, build,
+  hardware, and visual evidence are complete.
 - Completed signing results are buffered in Firmware RAM for bounded recovery.
   A repeated signing request replays a result only when its session, public
   request id, selected route, and validated method parameters match the
@@ -152,7 +168,9 @@ Not implemented:
 - USER_PROFILE persistent signing keys and on-device key generation.
 - Host-assisted key import.
 - USER_PROFILE mnemonic generation or import.
-- zkLogin signing material.
+- Sui zkLogin is not product-active. The current zkLogin path is
+  `source-wired-not-product-active` and has no recorded hardware/Web Serial
+  verification for proof setup, activation, clear, or signing.
 - USER_PROFILE policy storage and policy update authorization.
 - Execution-effect-complete arbitrary Sui transaction review or policy
   simulation, policy-authorized Sui personal-message signing, and other chains.
@@ -356,13 +374,22 @@ Imported key (weaker):
 - No export after import.
 - Not exposed through a normal MCP path; not the default for real assets.
 
-zkLogin material (not implemented; a different trust model):
+zkLogin material (source-wired, not product-active; a different trust model):
 
 - It involves an external ceremony (OAuth JWT, ZK proof, salt, and an ephemeral
   key bounded by a `maxEpoch`) with off-device parties.
 - It must not be described as an ordinary device-generated private key.
-- Its lifecycle (expiry, refresh, replay) must be defined separately before it
-  ships.
+- The current device boundary stores the bounded proof inputs needed to build a
+  Sui zkLogin signature envelope, not the raw JWT. Firmware does not locally
+  prove OAuth login, prover correctness, or current Sui epoch freshness. The
+  stored proof network must match the signing request network before a zkLogin
+  signature can be produced.
+- The active Sui identity is exclusive. When zkLogin proof material is active,
+  native direct Ed25519 account projection is closed until the proof is cleared
+  locally in device Settings.
+- Refresh while any proof state exists is intentionally unavailable in the first
+  boundary; the user must clear the proof locally, reconnect, and run a fresh
+  setup flow.
 
 ## 8. Policy Protection
 

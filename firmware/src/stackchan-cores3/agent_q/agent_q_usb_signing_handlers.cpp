@@ -281,6 +281,7 @@ const char* sui_preparation_error_code(AgentQSuiSigningPreparationResult result)
     switch (result) {
         case AgentQSuiSigningPreparationResult::invalid_params:
         case AgentQSuiSigningPreparationResult::invalid_argument:
+        case AgentQSuiSigningPreparationResult::invalid_network:
             return "invalid_params";
         case AgentQSuiSigningPreparationResult::unsupported_payload_size:
             return "unsupported_payload_size";
@@ -317,6 +318,8 @@ const char* sui_preparation_error_message(AgentQSuiSigningPreparationResult resu
             return "Transaction sender does not match the device account.";
         case AgentQSuiSigningPreparationResult::digest_error:
             return "Could not digest signing request.";
+        case AgentQSuiSigningPreparationResult::invalid_network:
+            return "Signing network does not match the active Sui identity.";
         case AgentQSuiSigningPreparationResult::invalid_params:
         case AgentQSuiSigningPreparationResult::invalid_argument:
         case AgentQSuiSigningPreparationResult::ok:

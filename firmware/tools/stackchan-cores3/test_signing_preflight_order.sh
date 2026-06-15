@@ -138,6 +138,9 @@ int g_failures = 0;
 int g_session_calls = 0;
 int g_digest_calls = 0;
 int g_binding_calls = 0;
+agent_q::AgentQSuiActiveIdentityKind g_active_identity_kind =
+    agent_q::AgentQSuiActiveIdentityKind::native;
+char g_zklogin_network[agent_q::kAgentQSuiNetworkBufferSize] = "devnet";
 int g_upload_error_calls = 0;
 int g_handler_preflight_calls = 0;
 int g_handler_begin_transaction_calls = 0;
@@ -169,6 +172,8 @@ agent_q::AgentQSigningAuthorizationMode g_signing_mode =
     agent_q::AgentQSigningAuthorizationMode::user;
 agent_q::AgentQSigningRetryDeliveryStatus g_retry_status =
     agent_q::AgentQSigningRetryDeliveryStatus::not_found;
+agent_q::AgentQSuiSigningPreparationResult g_last_preparation_result =
+    agent_q::AgentQSuiSigningPreparationResult::ok;
 int g_retry_response_write_calls = 0;
 std::string g_retry_response_json;
 char g_handler_retry_stored_result[agent_q::kSigningResultMaxSize] = {};
@@ -185,6 +190,7 @@ enum class PreflightOutcome {
     identity_error,
     replay_match,
     replay_conflict,
+    network_mismatch,
     preparation_error,
     preparation_unsupported_payload_size,
 };
@@ -447,6 +453,10 @@ PreflightOutcome preflight_result_outcome(
             return PreflightOutcome::identity_error;
         case agent_q::AgentQSigningPreflightResult::transaction_preparation_error:
             if (output.preparation_result ==
+                agent_q::AgentQSuiSigningPreparationResult::invalid_network) {
+                return PreflightOutcome::network_mismatch;
+            }
+            if (output.preparation_result ==
                 agent_q::AgentQSuiSigningPreparationResult::unsupported_payload_size) {
                 return PreflightOutcome::preparation_unsupported_payload_size;
             }
@@ -522,6 +532,7 @@ PreflightOutcome run_transaction_preflight(
                 sizeof(retry_stored_result),
             },
             &output);
+    g_last_preparation_result = output.preparation_result;
     const PreflightOutcome outcome = preflight_result_outcome(result, output);
     agent_q::clear_prepared_sui_sign_transaction(&output.prepared);
     return outcome;
@@ -742,6 +753,8 @@ void reset_counters()
     g_session_calls = 0;
     g_digest_calls = 0;
     g_binding_calls = 0;
+    g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
+    snprintf(g_zklogin_network, sizeof(g_zklogin_network), "%s", "devnet");
     g_session_result = agent_q::AgentQSessionValidationResult::ok;
     g_binding_result = agent_q::AgentQSuiSigningAccountBindingResult::ok;
     g_signing_mode = agent_q::AgentQSigningAuthorizationMode::user;
@@ -797,6 +810,10 @@ void expect_case(
                 expected_session_calls,
                 expected_digest_calls,
                 expected_binding_calls);
+        fprintf(stderr,
+                "%s: last preparation result = %d\n",
+                label,
+                static_cast<int>(g_last_preparation_result));
         ++g_failures;
     }
 }
@@ -1074,6 +1091,34 @@ AgentQSuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
     return g_binding_result;
 }
 
+AgentQSuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(
+    const AgentQSuiActiveIdentity& active_identity,
+    const char* request_network)
+{
+    if (active_identity.kind == AgentQSuiActiveIdentityKind::error) {
+        return active_identity.error == AgentQSuiActiveIdentityError::native_account_unavailable
+                   ? AgentQSuiSigningActiveIdentityNetworkResult::account_unavailable
+                   : AgentQSuiSigningActiveIdentityNetworkResult::active_identity_unavailable;
+    }
+    if (active_identity.kind == AgentQSuiActiveIdentityKind::zklogin) {
+        if (request_network == nullptr || request_network[0] == '\0') {
+            return AgentQSuiSigningActiveIdentityNetworkResult::network_mismatch;
+        }
+        return strcmp(active_identity.zklogin.network, request_network) == 0
+                   ? AgentQSuiSigningActiveIdentityNetworkResult::ok
+                   : AgentQSuiSigningActiveIdentityNetworkResult::network_mismatch;
+    }
+    return active_identity.kind == AgentQSuiActiveIdentityKind::native
+               ? AgentQSuiSigningActiveIdentityNetworkResult::ok
+               : AgentQSuiSigningActiveIdentityNetworkResult::active_identity_unavailable;
+}
+
+AgentQSuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(
+    const char* request_network)
+{
+    return verify_sui_signing_active_identity_network(resolve_active_sui_identity(), request_network);
+}
+
 SuiAccountDerivationResult derive_sui_ed25519_account_from_stored_root(
     uint8_t* public_key,
     char* address,
@@ -1088,15 +1133,22 @@ SuiAccountDerivationResult derive_sui_ed25519_account_from_stored_root(
 AgentQSuiActiveIdentity resolve_active_sui_identity()
 {
     AgentQSuiActiveIdentity identity = {};
-    identity.kind = AgentQSuiActiveIdentityKind::native;
+    identity.kind = g_active_identity_kind;
     identity.error = AgentQSuiActiveIdentityError::none;
     snprintf(identity.address,
              sizeof(identity.address),
              "%s",
              "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    identity.public_key[0] = kAgentQSuiSignatureSchemeFlagEd25519;
+    identity.public_key[0] = identity.kind == AgentQSuiActiveIdentityKind::zklogin
+                                 ? kAgentQSuiSignatureSchemeFlagZkLogin
+                                 : kAgentQSuiSignatureSchemeFlagEd25519;
     memset(identity.public_key + 1, 0xA5, kSuiEd25519PublicKeyBytes);
-    identity.public_key_size = kSuiEd25519PublicKeyBytes + 1;
+    identity.public_key_size = identity.kind == AgentQSuiActiveIdentityKind::zklogin
+                                   ? kAgentQSuiZkLoginPublicKeyMinBytes
+                                   : kSuiEd25519PublicKeyBytes + 1;
+    if (identity.kind == AgentQSuiActiveIdentityKind::zklogin) {
+        snprintf(identity.zklogin.network, sizeof(identity.zklogin.network), "%s", g_zklogin_network);
+    }
     return identity;
 }
 
@@ -1273,6 +1325,17 @@ int main(int argc, char** argv)
     }
 
     reset_counters();
+    g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
+    snprintf(g_zklogin_network, sizeof(g_zklogin_network), "%s", "testnet");
+    expect_case(
+        "zkLogin network mismatch stops before transaction preparation",
+        run_transaction_preflight(valid_request, true, false),
+        PreflightOutcome::network_mismatch,
+        1,
+        0,
+        0);
+
+    reset_counters();
     expect_case(
         "fresh valid request reaches preparation",
         run_transaction_preflight(valid_request, true, false),
@@ -1323,19 +1386,51 @@ int main(int argc, char** argv)
         0);
 
     reset_counters();
+    g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
+    snprintf(g_zklogin_network, sizeof(g_zklogin_network), "%s", "testnet");
     expect_case(
-        "fresh staged request reaches preparation with descriptor identity",
+        "fresh staged zkLogin network mismatch fails before taking finalized payload",
+        run_transaction_preflight(staged_request, true, false),
+        PreflightOutcome::network_mismatch,
+        1,
+        0,
+        0);
+    reset_counters();
+    g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
+    snprintf(g_zklogin_network, sizeof(g_zklogin_network), "%s", "devnet");
+    expect_case(
+        "matching staged request still consumes after network mismatch rejection",
         run_transaction_preflight(staged_request, true, false),
         PreflightOutcome::ok_prepared,
         1,
         0,
         1);
 
+    const std::string staged_ref_for_retry = stage_payload(valid, staged_digest);
+    const std::string staged_request_for_retry =
+        staged_request_json(
+            "req_staged_1",
+            "session_aaaaaaaaaaaaaaaa",
+            "sui",
+            "sign_transaction",
+            "devnet",
+            staged_ref_for_retry.c_str(),
+            valid.size(),
+            staged_digest);
     reset_counters();
-    store_staged_identity_for(staged_request, "{\"type\":\"sign_result\",\"status\":\"signed\"}");
+    expect_case(
+        "fresh staged request reaches preparation with descriptor identity",
+        run_transaction_preflight(staged_request_for_retry, true, false),
+        PreflightOutcome::ok_prepared,
+        1,
+        0,
+        1);
+
+    reset_counters();
+    store_staged_identity_for(staged_request_for_retry, "{\"type\":\"sign_result\",\"status\":\"signed\"}");
     expect_case(
         "staged matching retry replays after live payload cleanup",
-        run_transaction_preflight(staged_request, true, false),
+        run_transaction_preflight(staged_request_for_retry, true, false),
         PreflightOutcome::replay_match,
         1,
         0,
@@ -1380,7 +1475,7 @@ int main(int argc, char** argv)
         "\"type\":\"sign_result\"");
 
     reset_counters();
-    store_staged_identity_for(staged_request, "{\"type\":\"sign_result\",\"status\":\"signed\"}");
+    store_staged_identity_for(staged_request_for_retry, "{\"type\":\"sign_result\",\"status\":\"signed\"}");
     expect_case(
         "staged descriptor conflict stops before live payload resolution",
         run_transaction_preflight(

@@ -105,11 +105,12 @@ hardware and must be documented in each target's `SPEC.md`.
 
 | Layer | Examples | Owner | May gate protocol APIs? |
 |---|---|---|---:|
-| Persistent device state | provisioning state, stored root material, policy, local PIN verifier, signing authorization mode, approval history, policy-update terminal marker, account availability | Firmware | Yes |
+| Persistent device state | provisioning state, stored root material, policy, local PIN verifier, signing authorization mode, approval history, policy-update terminal marker, Sui zkLogin proof record, active Sui identity, account availability | Firmware | Yes |
 | Volatile sensitive scratch | generated backup phrase, setup entropy, pending backup confirmation, typed PIN digits, signable payload upload bytes, finalized payload descriptors | Firmware | Yes |
 | Local PIN authorization state | connect/settings/policy-update/reset PIN entry purpose, verification stage, Firmware-owned input deadline, RAM-only lockout | Firmware | Yes |
 | Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or local PIN approval; Firmware-owned deadline; requested action | Firmware | Yes |
 | Pending policy update state | validated policy proposal summary, policy hash, review/PIN/commit stage, review deadline | Firmware | Yes |
+| Pending Sui zkLogin proposal state | validated bounded proof proposal summary, proof hash, review/PIN/commit stage, review deadline | Firmware | Yes |
 | Runtime session state | active protocol session id and link-bound cleanup state | Firmware; host process mirrors its own client session state in RAM and clears that mirror when Firmware rejects it or live USB scan no longer observes the device | Yes |
 | Target-local display state | screen on/off, brightness, screensaver replacement | Firmware target display module | No |
 | Target-local posture state | servo position, haptics, LEDs, temporary expression feedback | Firmware target UI/motion module | No |
@@ -219,6 +220,10 @@ Allowed:
 - `get_accounts` (read-only, session-scoped)
 - `policy_get` (read-only, session-scoped)
 - `get_approval_history` (read-only, session-scoped)
+- `credential_prepare` (session-scoped; Sui zkLogin only; read-like
+  preparation material; available only while native Sui identity is active)
+- `credential_propose` (session-scoped; Sui zkLogin only; bounded proof proposal
+  that requires device-local review and local PIN before persistence)
 - `payload_upload_begin`, `payload_upload_chunk`, `payload_upload_finish`, and
   `payload_upload_abort` for same-session volatile signable payload delivery
 - `sign_transaction` (session-scoped; unknown methods reject; Sui
@@ -243,6 +248,10 @@ Allowed:
 - device-local Settings action for resetting active policy to the current
   default reject policy; changing it requires stored PIN verification and is
   not exposed as a protocol, host, Admin, or MCP reset request
+- device-local `Settings > Sui` view for active identity/proof metadata and
+  local zkLogin proof clear; clearing requires stored PIN verification, wipes
+  only the Sui zkLogin proof record, ends the active session, and is not exposed
+  as a protocol, host, Admin, or MCP proof-clear request
 - policy update through the Firmware-owned `policy_propose` proposal
   flow, which requires an active session, Firmware validation, and device-local
   approval; the pending approval remains tied to the same session and cannot
@@ -250,8 +259,10 @@ Allowed:
 
 This state is not signing approval. In the current StackChan CoreS3
 implementation, `provisioned` enables `connect`, `disconnect`, read-only
-`get_capabilities` for Sui account identity with no delegated public methods
-and top-level `signing`, read-only `get_accounts` (Sui Ed25519 account 0),
+`get_capabilities` for one active Sui account identity with no delegated public
+methods and top-level `signing`, optional Sui zkLogin credential-preparation
+availability while native identity is active, read-only `get_accounts`
+(native Sui Ed25519 account 0 or active Sui zkLogin identity),
 read-only `policy_get` for the committed active policy document, read-only
 `get_approval_history` for Firmware-owned persistent decision metadata, and the
 session-scoped Sign API runtime. `sign_transaction` has
@@ -271,6 +282,22 @@ hardware, and visual evidence are complete.
 bounded Sui personal-message bytes in user authorization mode only; policy mode
 fails closed because policy facts and rules for personal-message signing are not
 implemented.
+Sui zkLogin credential setup has `source-wired-not-product-active` status for
+the current StackChan CoreS3 source. Firmware stores at most one Sui active
+identity: native Ed25519 when no zkLogin proof record is active, or zkLogin when
+a locally stored proof record is active. `get_accounts` and
+`get_capabilities.chains[].accounts` project only that active identity.
+`credential_prepare` returns native scheme-prefixed Ed25519 public material for
+an external zkLogin nonce/JWT/prover flow, but only while native identity is
+active. `credential_propose` accepts bounded zkLogin proof material, shows a
+device-local review, requires local PIN, and stores the proof only after commit.
+It does not store raw JWTs and does not claim local OAuth, prover, or Sui
+validator verification. The stored proof record includes its Sui network; when
+zkLogin is active, `sign_transaction` and `sign_personal_message` require the
+request `network` to match that stored proof network before signing can proceed.
+When zkLogin is active, preparation/proposal fail closed until the user clears
+the proof locally through `Settings > Sui`; clearing the proof ends the active
+session and returns the next account projection to the native identity.
 The host process must not evaluate policy. A corrupt, unreadable, missing,
 or invalid current active policy is a persistent-material consistency
 error, not a normal `provisioned` state. Provisioned DEV_PROFILE devices that
@@ -645,6 +672,8 @@ This state is reserved until an unlock model is implemented.
 | `get_accounts` | X | X | O | X | X | Firmware |
 | `policy_get` | X | X | O | X | X | Firmware |
 | `get_approval_history` | X | X | O | X | X | Firmware |
+| `credential_prepare` | X | X | O (source-wired-not-product-active; native Sui identity only) | X | X | Firmware |
+| `credential_propose` | X | X | O (source-wired-not-product-active; native Sui identity only; review + PIN before persistence) | X | X | Firmware |
 | `sign_transaction` | X | X | O (source-wired-not-product-active) | X | X | Firmware |
 | `sign_personal_message` | X | X | O (source-wired-not-product-active; user authorization mode only) | X | X | Firmware |
 | policy read | X | X | O | X | X | Firmware |

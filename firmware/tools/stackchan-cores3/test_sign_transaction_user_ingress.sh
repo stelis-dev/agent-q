@@ -251,10 +251,8 @@ void expect_ingress(
         const PayloadAdmissionCheck* check =
             static_cast<const PayloadAdmissionCheck*>(
                 input_state.payload_delivery_admission_context);
-        if (actual != agent_q::AgentQSignTransactionUserIngressResult::invalid_params_shape &&
-            actual != agent_q::AgentQSignTransactionUserIngressResult::invalid_payload_ref &&
-            check->calls == 0) {
-            fprintf(stderr, "%s: expected payload delivery admission to run\n", label);
+        if (check->calls != 0) {
+            fprintf(stderr, "%s: payload delivery admission should be owned by preflight\n", label);
             ++failures;
         }
     }
@@ -444,13 +442,14 @@ int main()
         };
         int calls = 1;
         expect_ingress(
-            "payload delivery admission blocks inline request after session",
+            "inline request leaves payload admission to preflight",
             valid_request(),
             state(true, false, &session, &payload),
-            IngressResult::busy,
-            &calls);
-        if (payload.calls != 1) {
-            fprintf(stderr, "inline payload admission expected one call, got %d\n",
+            IngressResult::ok,
+            &calls,
+            true);
+        if (payload.calls != 0) {
+            fprintf(stderr, "inline payload admission expected zero calls, got %d\n",
                     payload.calls);
             ++failures;
         }
@@ -466,15 +465,15 @@ int main()
         };
         int calls = 1;
         expect_ingress(
-            "payload delivery admission validates staged ref before full descriptor",
+            "staged request leaves payload admission to preflight",
             request_with_session_and_params(
                 "session_aaaaaaaaaaaaaaaa",
                 "{\"network\":\"devnet\",\"payloadRef\":\"payload_aaaaaaaa\"}"),
             state(true, false, &session, &payload),
-            IngressResult::invalid_payload_ref,
+            IngressResult::invalid_params_shape,
             &calls);
-        if (payload.calls != 1) {
-            fprintf(stderr, "staged payload admission expected one call, got %d\n",
+        if (payload.calls != 0) {
+            fprintf(stderr, "staged payload admission expected zero calls, got %d\n",
                     payload.calls);
             ++failures;
         }

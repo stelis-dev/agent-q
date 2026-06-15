@@ -184,6 +184,7 @@ See `packages/example-sui-dapp-kit/` for a minimal Sui dapp-kit integration.
 | `@stelis/agent-q` | run the local MCP server, Admin Page, and `agent-q-sui-signer`. |
 | `@stelis/agent-q-provider-sui` | connect a Sui app to an Agent-Q device through a provider / Wallet Standard adapter. |
 | `packages/example-sui-dapp-kit` | run a small dapp-kit example that signs through Agent-Q. |
+| `packages/zklogin-test-web` | run a private browser test tool for Sui zkLogin proof preparation/proposal and sign-only transaction checks over direct Web Serial. |
 
 ## How Signing Works
 
@@ -210,6 +211,17 @@ Current signing routes in source, with product-active evidence tracked in
 | --- | --- | --- |
 | `sui` | `sign_transaction` | Sui transaction signing over inline or same-session staged bytes. Firmware parses bounded offline `TransactionData::V1 -> ProgrammableTransaction` facts, then chooses policy authorization or user authorization from its device-local signing mode. Current policy authorization validates the active policy document, request network scope, account binding, and complete offline policy condition facts; a matching `sign` policy authorizes signing, and missing, incomplete, unmatched, or reject-matched policy coverage returns `policy_rejected`. User authorization shows covered offline facts when offline facts review coverage is complete, meaning Firmware can display the bounded offline facts it extracted rather than simulate execution effects. If Firmware can validate and bind the transaction but offline facts review coverage is incomplete, user authorization shows a device-local blind-signing warning. |
 | `sui` | `sign_personal_message` | Bounded Sui personal-message signing in user authorization mode. Policy authorization mode fails closed for this method. |
+
+Sui zkLogin active identity support is source-wired but not product-active.
+Firmware exposes common `credential_prepare` and `credential_propose`
+operations for proof setup, stores a bounded proof record only after
+device-local review and local PIN approval, projects exactly one active Sui
+account, requires signing requests to match the stored proof network when
+zkLogin is active, and chooses native Ed25519 or zkLogin signature envelope only
+at the final signing step after the existing authorization gate. The independent
+`packages/zklogin-test-web` app exercises this path over direct Web Serial and
+does not add a host-process route, provider management API, signer selector, or
+proof-clear API.
 
 Unsupported chains and unsupported methods fail explicitly. Chains are exposed
 through the shared protocol; Agent-Q does not create separate chain-specific
@@ -256,6 +268,8 @@ Current limitations:
 - Sui transaction execution / submit-to-network is not an Agent-Q signing
   responsibility.
 - Policy-authorized personal-message signing is not implemented.
+- Sui zkLogin browser-to-device setup, clear, reconnect, and signing are not
+  product-active.
 - Browser dapp signing requires the provider/browser runtime path, not the
   Node-local provider factory.
 

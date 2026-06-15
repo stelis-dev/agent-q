@@ -399,6 +399,14 @@ expect_order "${POST_IDENTITY_PREFLIGHT_SNIPPET}" 'retry_allows_preflight_to_con
   "common signing preflight replay must complete before reading signing mode"
 expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'evaluate_common_post_ingress_preflight' 'prepare_sui_sign_transaction' \
   "sign_transaction replay must complete before Sui adapter preparation"
+expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'evaluate_common_post_ingress_preflight' 'validate_active_identity_network_before_preparation' \
+  "sign_transaction replay must complete before active identity network matching"
+expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'validate_active_identity_network_before_preparation' 'admit_transaction_payload_after_network_guard' \
+  "sign_transaction active identity network matching must run before payload admission"
+expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'admit_transaction_payload_after_network_guard' 'prepare_sui_sign_transaction' \
+  "sign_transaction payload admission must run before Sui adapter preparation"
+expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'validate_active_identity_network_before_preparation' 'prepare_sui_sign_transaction' \
+  "sign_transaction active identity network matching must run before Sui adapter preparation"
 expect_order "${SIGN_TRANSACTION_INGRESS_SOURCE}" 'if \(!state\.material_ready\)' 'validate_sign_transaction_user_session_format' \
   "sign_transaction preflight must check state before session format"
 expect_order "${SIGN_TRANSACTION_INGRESS_SOURCE}" 'validate_sign_transaction_user_session_format' 'validate_sign_transaction_user_envelope' \
@@ -430,6 +438,10 @@ expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'evaluate_sign_persona
   "sign_personal_message preflight must complete before common request identity/retry work"
 expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'evaluate_common_post_ingress_preflight' 'prepare_sui_sign_personal_message' \
   "sign_personal_message replay must complete before Sui adapter preparation"
+expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'evaluate_common_post_ingress_preflight' 'validate_active_identity_network_before_preparation' \
+  "sign_personal_message replay must complete before active identity network matching"
+expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'validate_active_identity_network_before_preparation' 'prepare_sui_sign_personal_message' \
+  "sign_personal_message active identity network matching must run before Sui adapter preparation"
 expect_order "${SIGN_PERSONAL_MESSAGE_INGRESS_SOURCE}" 'if \(!state\.material_ready\)' 'validate_sign_personal_message_user_session_format' \
   "sign_personal_message preflight must check state before session format"
 expect_order "${SIGN_PERSONAL_MESSAGE_INGRESS_SOURCE}" 'validate_sign_personal_message_user_session_format' 'validate_sign_personal_message_user_envelope' \
