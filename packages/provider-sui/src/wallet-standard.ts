@@ -139,9 +139,11 @@ const DEVICE_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
 const UINT_DECIMAL_STRING_PATTERN = /^(0|[1-9][0-9]{0,19})$/;
 const WALLET_PAYLOAD_DELIVERY_MIN_CHUNK_BYTES = 2048;
 const SUI_ED25519_SIGNATURE_BYTES = 97;
-const SUI_DERIVATION_PATH = "m/44'/784'/0'/0'/0'" as const;
 const SUI_SIGNATURE_SCHEME_FLAG_ED25519 = 0x00;
 const SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN = 0x05;
+const SUI_ZKLOGIN_SIGNATURE_BCS_MAX_BYTES = 2048;
+const SUI_ZKLOGIN_SIGNATURE_MAX_BYTES = 1 + SUI_ZKLOGIN_SIGNATURE_BCS_MAX_BYTES;
+const SUI_DERIVATION_PATH = "m/44'/784'/0'/0'/0'" as const;
 const SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES = 33;
 const MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES = 34;
 const MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES = 288;
@@ -319,6 +321,25 @@ function decodeCanonicalBase64(value: unknown, expectedBytes?: number): Uint8Arr
     throw new Error("invalid_base64");
   }
   return bytes;
+}
+
+function isSuiSignatureEnvelope(value: unknown): boolean {
+  let bytes: Uint8Array;
+  try {
+    bytes = decodeCanonicalBase64(value);
+  } catch {
+    return false;
+  }
+  if (bytes.length === 0 || bytes.length > SUI_ZKLOGIN_SIGNATURE_MAX_BYTES) {
+    return false;
+  }
+  if (bytes[0] === SUI_SIGNATURE_SCHEME_FLAG_ED25519) {
+    return bytes.length === SUI_ED25519_SIGNATURE_BYTES;
+  }
+  return (
+    bytes[0] === SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN &&
+    bytes.length > SUI_ED25519_SIGNATURE_BYTES
+  );
 }
 
 function validateWalletCapabilityAccount(value: unknown): void {
@@ -518,9 +539,7 @@ function validateSignedTransactionResult(result: AgentQSuiWalletSignTransactionR
   ) {
     throw errorForSignResult("unknown");
   }
-  try {
-    decodeCanonicalBase64(result.signature, SUI_ED25519_SIGNATURE_BYTES);
-  } catch {
+  if (!isSuiSignatureEnvelope(result.signature)) {
     throw errorForSignResult("missing_signature");
   }
   return result.signature;
@@ -544,9 +563,7 @@ function validateSignedPersonalMessageResult(
   ) {
     throw errorForSignResult("unknown", message);
   }
-  try {
-    decodeCanonicalBase64(result.signature, SUI_ED25519_SIGNATURE_BYTES);
-  } catch {
+  if (!isSuiSignatureEnvelope(result.signature)) {
     throw errorForSignResult("missing_signature", message);
   }
   return result.signature;

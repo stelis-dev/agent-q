@@ -39,7 +39,9 @@ import {
   SUI_CHAIN_ID,
   SUI_DERIVATION_PATH,
   SUI_ZKLOGIN_CREDENTIAL,
+  SUI_ED25519_SIGNATURE_BYTES,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
+  SUI_SIGNATURE_ENVELOPE_MAX_BYTES,
   SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
   SUI_SIGNATURE_SCHEME_FLAG_ED25519,
   SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN,
@@ -53,6 +55,8 @@ import {
   hasOnlyObjectKeys,
   hasSecretPayloadKey,
   isRecord,
+  isSuiPersonalMessageSignatureBase64,
+  isSuiTransactionSignatureEnvelopeBase64,
   isSuiAddressForSchemePrefixedPublicKey,
   rejectSecretPayload,
   requireOnlyKeys,
@@ -92,7 +96,9 @@ export {
   SUI_ADDRESS_PATTERN,
   SUI_CHAIN_ID,
   SUI_DERIVATION_PATH,
+  SUI_ED25519_SIGNATURE_BYTES,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
+  SUI_SIGNATURE_ENVELOPE_MAX_BYTES,
   SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
   SUI_SIGNATURE_SCHEME_FLAG_ED25519,
   SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN,
@@ -103,7 +109,9 @@ export {
   MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
   consumeProtocolResponseChunk,
   createRequestId,
+  isSuiPersonalMessageSignatureBase64,
   isSuiAddressForSchemePrefixedPublicKey,
+  isSuiTransactionSignatureEnvelopeBase64,
 };
 export {
   AGENT_Q_USB_PRODUCT_ID_NUMBER,
@@ -1006,13 +1014,15 @@ function sanitizeSignResultResponse(value: Record<string, unknown>): SignResultR
     if (
       (value.authorization !== "user" && value.authorization !== "policy") ||
       value.chain !== SUI_CHAIN_ID ||
-      typeof value.signature !== "string" ||
-      !SUI_ED25519_SIGNATURE_BASE64_PATTERN.test(value.signature)
+      typeof value.signature !== "string"
     ) {
       throw new ProtocolError("protocol_error", "Sign result response is malformed.");
     }
     if (value.method === SUI_SIGN_TRANSACTION_METHOD) {
       if (value.messageBytes !== undefined) {
+        throw new ProtocolError("protocol_error", "Sign result response is malformed.");
+      }
+      if (!isSuiTransactionSignatureEnvelopeBase64(value.signature)) {
         throw new ProtocolError("protocol_error", "Sign result response is malformed.");
       }
       return {
@@ -1028,6 +1038,9 @@ function sanitizeSignResultResponse(value: Record<string, unknown>): SignResultR
     }
     if (value.method === SUI_SIGN_PERSONAL_MESSAGE_METHOD) {
       if (value.authorization !== "user") {
+        throw new ProtocolError("protocol_error", "Sign result response is malformed.");
+      }
+      if (!isSuiPersonalMessageSignatureBase64(value.signature)) {
         throw new ProtocolError("protocol_error", "Sign result response is malformed.");
       }
       const messageBytes = validateCanonicalBase64Syntax(

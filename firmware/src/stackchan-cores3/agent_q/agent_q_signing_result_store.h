@@ -20,16 +20,16 @@ namespace agent_q {
 // not a vanished signature). All entries clear on disconnect/session end and on wipe.
 
 constexpr size_t kSigningResultStoreCapacity = 4;
-// Bounds one serialized sign_result line (id, version, type, status, authorization,
-// chain, method, base64 signature ~132, optional base64 messageBytes ~344). A full
-// sign_personal_message result is ~734 bytes, so 1024 leaves headroom.
-constexpr size_t kSigningResultMaxSize = 1024;
+// Bounds one serialized sign_result line. Native Ed25519 results are small, while
+// zkLogin transaction envelopes can carry a base64 signature of up to ~2732 chars.
+constexpr size_t kSigningResultMaxSize = 4096;
 
 enum class SigningResultStoreOutcome {
     stored,     // newly stored
     duplicate,  // (session_id, request_id) already present — idempotent, left as-is
     conflict,   // (session_id, request_id) exists with a different request identity
     too_large,  // serialized result exceeds kSigningResultMaxSize
+    storage_error,  // result buffer allocation failed
     invalid,    // null/empty session_id or request_id, or null result
 };
 

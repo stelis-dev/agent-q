@@ -15,7 +15,12 @@ import {
 const SUI_ADDRESS = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
 const SUI_PUBLIC_KEY = "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp";
 const DEVICE_ID = "device-1";
-const SUI_SIGNATURE = Buffer.alloc(97, 1).toString("base64");
+const SUI_SIGNATURE_BYTES = Buffer.alloc(97, 1);
+SUI_SIGNATURE_BYTES[0] = 0;
+const SUI_SIGNATURE = SUI_SIGNATURE_BYTES.toString("base64");
+const ZKLOGIN_SIGNATURE_BYTES = Buffer.alloc(145, 6);
+ZKLOGIN_SIGNATURE_BYTES[0] = 5;
+const ZKLOGIN_SIGNATURE = ZKLOGIN_SIGNATURE_BYTES.toString("base64");
 const PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q personal message").toString("base64");
 
 function validLiveAccount() {
@@ -636,6 +641,13 @@ test("adapter output schema keeps signing method result shapes exact", () => {
       messageBytes: responseLineBoundMessageBytes,
     }).messageBytes,
     responseLineBoundMessageBytes,
+  );
+  assert.equal(
+    personalMessageSchema.parse({
+      ...validSignPersonalMessageSignedOutput(),
+      signature: ZKLOGIN_SIGNATURE,
+    }).signature,
+    ZKLOGIN_SIGNATURE,
   );
 
   assert.throws(() => transactionSchema.parse({

@@ -59,19 +59,25 @@ SuiTransactionSigningResult sign_payload_for_route(
     AgentQSigningRoute route,
     const uint8_t* payload,
     size_t payload_size,
-    uint8_t* signature)
+    uint8_t* signature,
+    size_t* signature_size)
 {
+    if (signature_size != nullptr) {
+        *signature_size = 0;
+    }
     switch (route) {
         case AgentQSigningRoute::sui_sign_transaction:
-            return sign_sui_ed25519_transaction_from_stored_root(
+            return sign_sui_transaction_from_active_identity(
                 payload,
                 payload_size,
-                signature);
+                signature,
+                signature_size);
         case AgentQSigningRoute::sui_sign_personal_message:
-            return sign_sui_ed25519_personal_message_from_stored_root(
+            return sign_sui_personal_message_from_active_identity(
                 payload,
                 payload_size,
-                signature);
+                signature,
+                signature_size);
         case AgentQSigningRoute::unsupported:
         default:
             return SuiTransactionSigningResult::invalid_input;
@@ -108,7 +114,8 @@ user_signing_execute_critical_section(
     const AgentQUserSigningFlowCoreSnapshot snapshot =
         user_signing_flow_core_snapshot();
     uint8_t* payload = nullptr;
-    uint8_t signature[kSuiEd25519SignatureBytes] = {};
+    uint8_t signature[kSuiSignatureEnvelopeMaxBytes] = {};
+    size_t signature_size = 0;
     size_t payload_size = 0;
 
     const AgentQUserSigningTransitionResult consume_result =
@@ -144,7 +151,7 @@ user_signing_execute_critical_section(
     }
 
     const SuiTransactionSigningResult signing_result =
-        sign_payload_for_route(route, payload, payload_size, signature);
+        sign_payload_for_route(route, payload, payload_size, signature, &signature_size);
 
     if (signing_result != SuiTransactionSigningResult::ok) {
         wipe_sensitive_buffer(payload, payload_size);
@@ -158,6 +165,18 @@ user_signing_execute_critical_section(
             signing_result);
     }
 
+    if (signature_size == 0 || signature_size > sizeof(output->signature)) {
+        wipe_sensitive_buffer(payload, payload_size);
+        free(payload);
+        wipe_sensitive_buffer(signature, sizeof(signature));
+        const AgentQUserSigningTransitionResult failed_terminal_result =
+            user_signing_flow_record_signing_failed();
+        return make_report(
+            AgentQUserSigningHandoffResult::signing_failed,
+            failed_terminal_result,
+            SuiTransactionSigningResult::signature_output_too_small);
+    }
+
     const AgentQUserSigningTransitionResult terminal_result =
         user_signing_flow_complete_signed();
     if (terminal_result != AgentQUserSigningTransitionResult::ok) {
@@ -169,8 +188,8 @@ user_signing_execute_critical_section(
             terminal_result,
             signing_result);
     }
-    memcpy(output->signature, signature, sizeof(output->signature));
-    output->signature_size = sizeof(output->signature);
+    memcpy(output->signature, signature, signature_size);
+    output->signature_size = signature_size;
     output->signing_route = route;
     if (route == AgentQSigningRoute::sui_sign_personal_message) {
         memcpy(output->message_bytes, payload, payload_size);

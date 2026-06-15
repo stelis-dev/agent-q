@@ -159,9 +159,9 @@ int main()
 
     // not found / invalid / too large
     assert(!signing_result_find("sess_a", "nope", out, sizeof(out), &out_len));
-    char big[1100];
+    char big[kSigningResultMaxSize];
     memset(big, 'x', sizeof(big));
-    assert(store_result("sess_a", "req_big", big, 1100) == SigningResultStoreOutcome::too_large);
+    assert(store_result("sess_a", "req_big", big, sizeof(big)) == SigningResultStoreOutcome::too_large);
     assert(store_result(nullptr, "req", "r", 1) == SigningResultStoreOutcome::invalid);
     assert(store_result("sess", "", "r", 1) == SigningResultStoreOutcome::invalid);
 

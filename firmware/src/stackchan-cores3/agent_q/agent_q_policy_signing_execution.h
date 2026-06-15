@@ -27,7 +27,7 @@ struct AgentQPolicySigningExecutionResult {
     const char* message;
     char policy_hash[kAgentQApprovalHistoryDigestSize];
     char rule_ref[kAgentQApprovalHistoryRuleRefSize];
-    uint8_t signature[kSuiEd25519SignatureBytes];
+    uint8_t signature[kSuiSignatureEnvelopeMaxBytes];
     size_t signature_size;
 };
 

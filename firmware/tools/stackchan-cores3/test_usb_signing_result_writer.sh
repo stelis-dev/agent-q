@@ -87,6 +87,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 
 #include "agent_q_usb_signing_result_writer.h"
 #include "agent_q_signing_result_store.h"
+#include "agent_q_sui_zklogin_proof_store.h"
 
 namespace {
 
@@ -124,10 +125,25 @@ JsonDocument stored_json(const char* session_id, const char* request_id)
     return document;
 }
 
-void fill_signature(uint8_t* signature, size_t signature_size)
+void fill_native_signature(uint8_t* signature, size_t signature_size)
 {
-    for (size_t index = 0; index < signature_size; ++index) {
+    assert(signature_size >= agent_q::kSuiEd25519SignatureBytes);
+    memset(signature, 0, signature_size);
+    signature[0] = agent_q::kAgentQSuiSignatureSchemeFlagEd25519;
+    for (size_t index = 1; index < agent_q::kSuiEd25519SignatureBytes; ++index) {
         signature[index] = static_cast<uint8_t>(index + 1);
+    }
+}
+
+void fill_zklogin_signature(uint8_t* signature, size_t signature_size)
+{
+    assert(signature_size > agent_q::kSuiEd25519SignatureBytes);
+    memset(signature, 0, signature_size);
+    signature[0] = agent_q::kAgentQSuiSignatureSchemeFlagZkLogin;
+    for (size_t index = 0; index < signature_size; ++index) {
+        if (index != 0) {
+            signature[index] = static_cast<uint8_t>(index + 1);
+        }
     }
 }
 
@@ -204,8 +220,8 @@ int main()
         agent_q::AgentQPolicySigningExecutionResult result = {};
         result.status = agent_q::AgentQPolicySigningExecutionStatus::signed_success;
         result.signing_route = agent_q::AgentQSigningRoute::sui_sign_transaction;
-        fill_signature(result.signature, sizeof(result.signature));
-        result.signature_size = sizeof(result.signature);
+        fill_native_signature(result.signature, sizeof(result.signature));
+        result.signature_size = agent_q::kSuiEd25519SignatureBytes;
         assert(agent_q::usb_signing_result_write_policy_execution(
             "req-policy-signed",
             "session-a",
@@ -225,13 +241,33 @@ int main()
 
     {
         reset_capture();
+        agent_q::AgentQPolicySigningExecutionResult result = {};
+        result.status = agent_q::AgentQPolicySigningExecutionStatus::signed_success;
+        result.signing_route = agent_q::AgentQSigningRoute::sui_sign_transaction;
+        fill_zklogin_signature(result.signature, sizeof(result.signature));
+        result.signature_size = agent_q::kSuiEd25519SignatureBytes + 48;
+        assert(agent_q::usb_signing_result_write_policy_execution(
+            "req-policy-zklogin-signed",
+            "session-a",
+            identity,
+            result));
+        JsonDocument response = parse_json(g_last_json);
+        assert(strcmp(response["authorization"], "policy") == 0);
+        assert(strcmp(response["status"], "signed") == 0);
+        assert(strcmp(response["method"], "sign_transaction") == 0);
+        JsonDocument stored = stored_json("session-a", "req-policy-zklogin-signed");
+        assert(strcmp(stored["status"], "signed") == 0);
+    }
+
+    {
+        reset_capture();
         agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
         snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
         memcpy(snapshot.request_identity, identity, sizeof(identity));
         agent_q::AgentQUserSigningOutput output = {};
         output.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
-        fill_signature(output.signature, sizeof(output.signature));
-        output.signature_size = sizeof(output.signature);
+        fill_native_signature(output.signature, sizeof(output.signature));
+        output.signature_size = agent_q::kSuiEd25519SignatureBytes;
         output.message_bytes[0] = 'h';
         output.message_bytes[1] = 'i';
         output.message_bytes_size = 2;
@@ -247,6 +283,33 @@ int main()
         assert(strcmp(response["method"], "sign_personal_message") == 0);
         assert(strcmp(response["messageBytes"], "aGk=") == 0);
         JsonDocument stored = stored_json("session-a", "req-user-signed");
+        assert(strcmp(stored["messageBytes"], "aGk=") == 0);
+    }
+
+    {
+        reset_capture();
+        agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
+        snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        memcpy(snapshot.request_identity, identity, sizeof(identity));
+        agent_q::AgentQUserSigningOutput output = {};
+        output.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        fill_zklogin_signature(output.signature, sizeof(output.signature));
+        output.signature_size = agent_q::kSuiEd25519SignatureBytes + 48;
+        output.message_bytes[0] = 'h';
+        output.message_bytes[1] = 'i';
+        output.message_bytes_size = 2;
+        assert(agent_q::usb_signing_result_write_user_signed(
+            "req-user-zklogin-personal-message",
+            "session-a",
+            "user",
+            snapshot,
+            output));
+        JsonDocument response = parse_json(g_last_json);
+        assert(strcmp(response["authorization"], "user") == 0);
+        assert(strcmp(response["status"], "signed") == 0);
+        assert(strcmp(response["method"], "sign_personal_message") == 0);
+        assert(strcmp(response["messageBytes"], "aGk=") == 0);
+        JsonDocument stored = stored_json("session-a", "req-user-zklogin-personal-message");
         assert(strcmp(stored["messageBytes"], "aGk=") == 0);
     }
 

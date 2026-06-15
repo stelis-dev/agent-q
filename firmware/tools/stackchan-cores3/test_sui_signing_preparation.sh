@@ -34,6 +34,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "agent_q_sui_signing_preparation.h"
 #include "agent_q_sui_account_store.h"
 #include "agent_q_sui_signing_authority.h"
+#include "agent_q_sui_zklogin_proof_store.h"
 
 extern "C" {
 #include "byte_conversions.h"
@@ -44,6 +45,10 @@ namespace {
 bool g_digest_ok = true;
 agent_q::SuiAccountDerivationResult g_derivation_result =
     agent_q::SuiAccountDerivationResult::ok;
+agent_q::AgentQSuiActiveIdentityKind g_active_identity_kind =
+    agent_q::AgentQSuiActiveIdentityKind::native;
+agent_q::AgentQSuiActiveIdentityError g_active_identity_error =
+    agent_q::AgentQSuiActiveIdentityError::none;
 char g_derived_address[agent_q::kSuiAddressBufferSize] =
     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -283,6 +288,46 @@ SuiAccountDerivationResult derive_sui_ed25519_account_from_stored_root(
     return SuiAccountDerivationResult::ok;
 }
 
+AgentQSuiActiveIdentity resolve_active_sui_identity()
+{
+    AgentQSuiActiveIdentity identity = {};
+    if (::g_active_identity_kind == AgentQSuiActiveIdentityKind::error) {
+        identity.kind = AgentQSuiActiveIdentityKind::error;
+        identity.error = ::g_active_identity_error;
+        return identity;
+    }
+    if (::g_derivation_result != SuiAccountDerivationResult::ok) {
+        identity.kind = AgentQSuiActiveIdentityKind::error;
+        identity.error = AgentQSuiActiveIdentityError::native_account_unavailable;
+        return identity;
+    }
+    identity.kind = ::g_active_identity_kind;
+    identity.error = AgentQSuiActiveIdentityError::none;
+    snprintf(identity.address, sizeof(identity.address), "%s", ::g_derived_address);
+    identity.public_key[0] = identity.kind == AgentQSuiActiveIdentityKind::zklogin
+                                 ? kAgentQSuiSignatureSchemeFlagZkLogin
+                                 : kAgentQSuiSignatureSchemeFlagEd25519;
+    identity.public_key_size = identity.kind == AgentQSuiActiveIdentityKind::zklogin
+                                   ? kAgentQSuiZkLoginPublicKeyMinBytes
+                                   : kAgentQSuiSchemePrefixedEd25519PublicKeyBytes;
+    return identity;
+}
+
+AgentQSuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
+    const SuiPolicySubjectFacts& facts)
+{
+    const AgentQSuiActiveIdentity active_identity = resolve_active_sui_identity();
+    if (active_identity.kind == AgentQSuiActiveIdentityKind::error) {
+        return active_identity.error == AgentQSuiActiveIdentityError::native_account_unavailable
+                   ? AgentQSuiSigningAccountBindingResult::account_unavailable
+                   : AgentQSuiSigningAccountBindingResult::active_identity_unavailable;
+    }
+    return strcmp(facts.sender, active_identity.address) == 0 &&
+                   strcmp(facts.gas_owner, active_identity.address) == 0
+               ? AgentQSuiSigningAccountBindingResult::ok
+               : AgentQSuiSigningAccountBindingResult::account_mismatch;
+}
+
 }  // namespace agent_q
 
 int main(int argc, char** argv)
@@ -428,6 +473,17 @@ int main(int argc, char** argv)
              "%s",
              "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
+    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::error;
+    ::g_active_identity_error = agent_q::AgentQSuiActiveIdentityError::proof_storage_error;
+    assert(agent_q::prepare_sui_sign_transaction(
+               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+               "devnet",
+               base64(valid).c_str(),
+               valid.size(),
+               &tx) == agent_q::AgentQSuiSigningPreparationResult::active_identity_unavailable);
+    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
+    ::g_active_identity_error = agent_q::AgentQSuiActiveIdentityError::none;
+
     ::g_digest_ok = false;
     assert(agent_q::prepare_sui_sign_transaction(
                agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
@@ -449,6 +505,19 @@ int main(int argc, char** argv)
     assert(strcmp(message.account_address,
                   "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0);
     agent_q::clear_prepared_sui_sign_personal_message(&message);
+
+    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
+    assert(agent_q::prepare_sui_sign_personal_message(
+               agent_q::AgentQSupportedSignRoute::sui_sign_personal_message,
+               "devnet",
+               personal.c_str(),
+               5,
+               &message) == agent_q::AgentQSuiSigningPreparationResult::ok);
+    assert(message.message_size == 5);
+    assert(strcmp(message.account_address,
+                  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0);
+    agent_q::clear_prepared_sui_sign_personal_message(&message);
+    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
 
     assert(agent_q::prepare_sui_sign_personal_message(
                agent_q::AgentQSupportedSignRoute::sui_sign_personal_message,
@@ -491,7 +560,6 @@ CPP
   -I"${SIGNING_CORE}" \
   "${TMP_DIR}/test.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_signing_preparation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sui_signing_authority.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_offline_policy_facts.cpp" \

@@ -6,6 +6,7 @@ import {
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
   SUI_SIGNATURE_SCHEME_FLAG_ED25519,
   SUI_SIGN_TRANSACTION_NETWORKS,
+  isSuiTransactionSignatureEnvelopeBase64,
   type Account,
   type SuiSignTransactionNetwork,
   validateSignTransactionParamsInput,
@@ -144,7 +145,7 @@ export async function runSuiSignCli(
         await dependencies.writeStderr(`device address: ${accounts.accounts[0].address}\n`);
       }
     } catch {
-      // The address hint is optional and cannot block signing.
+      // The address hint is optional and cannot block direct signing.
     }
 
     const result = await dependencies.core.signTransaction({
@@ -169,7 +170,7 @@ export async function runSuiSignCli(
       });
       return resultCode;
     }
-    if (!SUI_ED25519_SIGNATURE_BASE64_PATTERN.test(result.signature)) {
+    if (!isSuiTransactionSignatureEnvelopeBase64(result.signature)) {
       resultCode = await writeFailure(dependencies, {
         code: "protocol_error",
         message: "The device returned an unexpected signature shape.",
@@ -376,7 +377,9 @@ async function signWithDevice(
       throw new Error("Requested key is not available on the Agent-Q device.");
     }
     if (account.keyScheme !== "ed25519") {
-      throw new Error("Sui CLI external signer supports only the native Ed25519 account.");
+      throw new Error(
+        "Sui CLI external signer cannot use zkLogin active accounts because this Sui CLI external signer protocol parses sign responses as native single-key signatures.",
+      );
     }
 
     const result = await dependencies.core.signTransaction({
@@ -417,7 +420,9 @@ function accountToPublicKeyResponse(account: {
   derivationPath?: string;
 }): SuiExternalSignerPublicKeyResponse {
   if (account.keyScheme !== "ed25519" || account.derivationPath === undefined) {
-    throw new Error("Sui CLI external signer supports only the native Ed25519 account.");
+    throw new Error(
+      "Sui CLI external signer cannot advertise zkLogin active accounts because this Sui CLI external signer protocol parses sign responses as native single-key signatures.",
+    );
   }
   const schemePrefixedPublicKey = Buffer.from(account.publicKey, "base64");
   if (

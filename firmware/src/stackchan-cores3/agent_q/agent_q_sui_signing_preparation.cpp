@@ -5,8 +5,8 @@
 
 #include "agent_q_base64.h"
 #include "agent_q_bip39.h"
-#include "agent_q_sui_account_store.h"
 #include "agent_q_sui_signing_authority.h"
+#include "agent_q_sui_zklogin_proof_store.h"
 #include "agent_q_common/sui/agent_q_sui_sign_transaction_adapter.h"
 
 extern "C" {
@@ -163,12 +163,19 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
     out->user_authorization_outcome = authorization_coverage.user_outcome;
     out->policy_authorization_outcome = authorization_coverage.policy_outcome;
     const AgentQSuiSigningAccountBindingResult account_result =
-        verify_sui_signing_stored_account_binding(out->sui_policy_subject);
+        verify_sui_signing_active_account_binding(out->sui_policy_subject);
     if (account_result != AgentQSuiSigningAccountBindingResult::ok) {
         clear_prepared_sui_sign_transaction(out);
-        return account_result == AgentQSuiSigningAccountBindingResult::account_unavailable
-                   ? AgentQSuiSigningPreparationResult::account_unavailable
-                   : AgentQSuiSigningPreparationResult::invalid_account;
+        switch (account_result) {
+            case AgentQSuiSigningAccountBindingResult::account_unavailable:
+                return AgentQSuiSigningPreparationResult::account_unavailable;
+            case AgentQSuiSigningAccountBindingResult::active_identity_unavailable:
+                return AgentQSuiSigningPreparationResult::active_identity_unavailable;
+            case AgentQSuiSigningAccountBindingResult::account_mismatch:
+            case AgentQSuiSigningAccountBindingResult::ok:
+                return AgentQSuiSigningPreparationResult::invalid_account;
+        }
+        return AgentQSuiSigningPreparationResult::invalid_account;
     }
     prepare_policy_condition_facts(out);
     return AgentQSuiSigningPreparationResult::ok;
@@ -292,17 +299,19 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_personal_message(
         clear_prepared_sui_sign_personal_message(out);
         return AgentQSuiSigningPreparationResult::digest_error;
     }
-    uint8_t public_key[kSuiEd25519PublicKeyBytes] = {};
-    const SuiAccountDerivationResult account_result =
-        derive_sui_ed25519_account_from_stored_root(
-            public_key,
-            out->account_address,
-            sizeof(out->account_address));
-    wipe_sensitive_buffer(public_key, sizeof(public_key));
-    if (account_result != SuiAccountDerivationResult::ok) {
+    const AgentQSuiActiveIdentity active_identity = resolve_active_sui_identity();
+    if (active_identity.kind == AgentQSuiActiveIdentityKind::error) {
         clear_prepared_sui_sign_personal_message(out);
-        return AgentQSuiSigningPreparationResult::account_unavailable;
+        return active_identity.error == AgentQSuiActiveIdentityError::native_account_unavailable
+                   ? AgentQSuiSigningPreparationResult::account_unavailable
+                   : AgentQSuiSigningPreparationResult::active_identity_unavailable;
     }
+    if (active_identity.kind != AgentQSuiActiveIdentityKind::native &&
+        active_identity.kind != AgentQSuiActiveIdentityKind::zklogin) {
+        clear_prepared_sui_sign_personal_message(out);
+        return AgentQSuiSigningPreparationResult::invalid_account;
+    }
+    memcpy(out->account_address, active_identity.address, sizeof(out->account_address));
     return AgentQSuiSigningPreparationResult::ok;
 }
 

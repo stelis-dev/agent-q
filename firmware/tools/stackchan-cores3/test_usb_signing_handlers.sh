@@ -554,6 +554,20 @@ void test_preparation_account_failure_mapping()
     assert(g_notice_calls == 0);
 }
 
+void test_preparation_active_identity_failure_mapping()
+{
+    reset_state();
+    g_tx_preflight_result = agent_q::AgentQSigningPreflightResult::transaction_preparation_error;
+    g_preparation_result = agent_q::AgentQSuiSigningPreparationResult::active_identity_unavailable;
+    JsonDocument request;
+    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    assert(g_record_runtime_failure_calls == 0);
+    assert(g_write_error_calls == 1);
+    assert(strcmp(g_last_error_code, "account_error") == 0);
+    assert(strcmp(g_last_error_message, "Active Sui identity is unavailable.") == 0);
+    assert(g_notice_calls == 0);
+}
+
 void test_personal_message_preparation_account_failure_mapping()
 {
     reset_state();
@@ -770,6 +784,7 @@ int main()
     test_transaction_ingress_error_mapping();
     test_personal_message_ingress_error_mapping();
     test_preparation_account_failure_mapping();
+    test_preparation_active_identity_failure_mapping();
     test_personal_message_preparation_account_failure_mapping();
     test_transaction_preparation_unsupported_notifies();
     test_transaction_preparation_payload_too_large_notifies();

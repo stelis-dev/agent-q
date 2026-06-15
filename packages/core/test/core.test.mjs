@@ -45,6 +45,12 @@ const CANONICAL_TX_BYTES_BASE64 = "AQID";
 const signTransactionParams = { network: "devnet", txBytes: CANONICAL_TX_BYTES_BASE64 };
 const POLICY_HASH = "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3";
 
+function suiEd25519Signature(fill = 1) {
+  const bytes = Buffer.alloc(97, fill);
+  bytes[0] = 0;
+  return bytes.toString("base64");
+}
+
 function currentPolicyDocument(policies = []) {
   const conditionCount = policies.reduce((sum, policy) => sum + policy.conditions.length, 0);
   return {
@@ -257,7 +263,7 @@ function defaultDriver(overrides = {}) {
         status: "signed",
         chain: "sui",
         method: "sign_transaction",
-        signature: Buffer.alloc(97, 1).toString("base64"),
+        signature: suiEd25519Signature(1),
       };
     },
     async signPersonalMessage() {
@@ -269,7 +275,7 @@ function defaultDriver(overrides = {}) {
         status: "signed",
         chain: "sui",
         method: "sign_personal_message",
-        signature: Buffer.alloc(97, 2).toString("base64"),
+        signature: suiEd25519Signature(2),
         messageBytes: Buffer.from("hello").toString("base64"),
       };
     },
@@ -2001,7 +2007,7 @@ test("signTransaction clears the local session when get_result reports invalid_s
 
 test("signTransaction returns recovered result and clears the local session when ack_result reports invalid_session", async () => {
   await withStore(async (store) => {
-    const signature = Buffer.alloc(97, 3).toString("base64");
+    const signature = suiEd25519Signature(3);
     const core = new AgentQCore(
       store,
       defaultDriver({
@@ -2075,7 +2081,7 @@ test("signTransaction returns not_connected before validating signable payload",
 test("signTransaction forwards a bounded provider signing request with internal local-PIN interaction budget", async () => {
   await withStore(async (store) => {
     let observed = null;
-    const signature = Buffer.alloc(97, 7).toString("base64");
+    const signature = suiEd25519Signature(7);
     const core = new AgentQCore(
       store,
       defaultDriver({
@@ -2372,7 +2378,7 @@ test("signPersonalMessage returns not_connected before validating message payloa
 test("signPersonalMessage forwards a bounded user signing request with internal local-PIN interaction budget", async () => {
   await withStore(async (store) => {
     let observed = null;
-    const signature = Buffer.alloc(97, 9).toString("base64");
+    const signature = suiEd25519Signature(9);
     const messageBytes = Buffer.from("hello").toString("base64");
     const core = new AgentQCore(
       store,
@@ -2521,7 +2527,7 @@ test("signPersonalMessage clears the local session when Firmware reports invalid
 
 test("signPersonalMessage returns recovered result and clears the local session when ack_result reports invalid_session", async () => {
   await withStore(async (store) => {
-    const signature = Buffer.alloc(97, 4).toString("base64");
+    const signature = suiEd25519Signature(4);
     const messageBytes = Buffer.from("hello").toString("base64");
     const core = new AgentQCore(
       store,

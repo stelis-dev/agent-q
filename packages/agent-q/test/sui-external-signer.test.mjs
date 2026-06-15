@@ -8,6 +8,7 @@ import {
   ACCOUNT,
   SIGNATURE,
   TX_BYTES,
+  ZKLOGIN_ACCOUNT,
   makeSuiSignerHarness,
 } from "./sui-signer-test-support.mjs";
 
@@ -86,6 +87,67 @@ test("Sui CLI call sign returns JSON-RPC signature and signs once", async () => 
     ["sign", TX_BYTES],
     "disconnect",
   ]);
+});
+
+test("Sui CLI external signer does not advertise zkLogin active accounts", async () => {
+  const harness = makeSuiSignerHarness({
+    core: {
+      async getAccounts() {
+        harness.calls.push("accounts");
+        return { source: "live", accounts: [ZKLOGIN_ACCOUNT] };
+      },
+    },
+  });
+  assert.equal(
+    await runSuiSignCli(
+      ["call"],
+      {
+        ...harness.dependencies,
+        async readStdin() {
+          return '{"jsonrpc":"2.0","method":"keys","params":[null],"id":20}';
+        },
+      },
+    ),
+    1,
+  );
+  const response = JSON.parse(harness.stdout.join(""));
+  assert.equal(response.jsonrpc, "2.0");
+  assert.equal(response.id, 20);
+  assert.equal(response.error.code, 1);
+  assert.match(response.error.message, /native single-key signatures/);
+  assert.deepEqual(harness.calls, ["connect", "accounts", "disconnect"]);
+});
+
+test("Sui CLI external signer sign fails closed for zkLogin active accounts", async () => {
+  const harness = makeSuiSignerHarness({
+    core: {
+      async getAccounts() {
+        harness.calls.push("accounts");
+        return { source: "live", accounts: [ZKLOGIN_ACCOUNT] };
+      },
+      async signTransaction() {
+        harness.calls.push("sign");
+        throw new Error("signTransaction should not be called for zkLogin external signer.");
+      },
+    },
+  });
+  assert.equal(
+    await runSuiSignCli(
+      ["call"],
+      {
+        ...harness.dependencies,
+        async readStdin() {
+          return `{"jsonrpc":"2.0","method":"sign","params":{"key_id":"${ZKLOGIN_ACCOUNT.address}","msg":"${TX_BYTES}","intent":{"scope":"TransactionData","version":"V0","app_id":"Sui"}},"id":21}\n`;
+        },
+      },
+    ),
+    1,
+  );
+  const response = JSON.parse(harness.stdout.join(""));
+  assert.equal(response.id, 21);
+  assert.equal(response.error.code, 1);
+  assert.match(response.error.message, /native single-key signatures/);
+  assert.deepEqual(harness.calls, ["connect", "accounts", "disconnect"]);
 });
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));

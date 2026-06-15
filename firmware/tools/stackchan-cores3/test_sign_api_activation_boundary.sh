@@ -348,9 +348,9 @@ expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'execute_policy_transaction' \
   "extracted signing handler must delegate policy signing execution through injected dependencies"
 expect_present "${POLICY_SIGNING_EXECUTION_SOURCE}" 'write_policy_signing_confirmation_history' \
   "policy signing execution owner must own policy confirmation history writes"
-expect_present "${POLICY_SIGNING_EXECUTION_SOURCE}" 'sign_sui_ed25519_transaction_from_stored_root' \
+expect_present "${POLICY_SIGNING_EXECUTION_SOURCE}" 'sign_sui_transaction_from_active_identity' \
   "policy signing execution owner must own policy signing critical section"
-expect_absent "${USB_SERVER}" 'write_policy_signing_confirmation_history|write_policy_signing_terminal_history|sign_sui_ed25519_transaction_from_stored_root' \
+expect_absent "${USB_SERVER}" 'write_policy_signing_confirmation_history|write_policy_signing_terminal_history|sign_sui_ed25519_transaction_from_stored_root|sign_sui_transaction_from_active_identity' \
   "USB request server must not assemble policy signing history/signing directly"
 expect_present "${USB_SERVER}" 'read_signing_authorization_mode' \
   "USB request server must supply Firmware-local signing authorization mode"

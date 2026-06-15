@@ -18,7 +18,7 @@ enum class AgentQUserSigningHandoffResult {
 
 struct AgentQUserSigningOutput {
     AgentQSigningRoute signing_route;
-    uint8_t signature[kSuiEd25519SignatureBytes];
+    uint8_t signature[kSuiSignatureEnvelopeMaxBytes];
     size_t signature_size;
     uint8_t message_bytes[kAgentQSuiSignPersonalMessageMaxBytes];
     size_t message_bytes_size;

@@ -56,6 +56,8 @@ cat >"${TMP_DIR}/sui_signing_service_test.cpp" <<'CPP'
 #include "agent_q_bip39.h"
 #include "agent_q_root_material.h"
 #include "agent_q_sui_signing_service.h"
+#include "agent_q_sui_zklogin_proof_store.h"
+#include "agent_q_sui_zklogin_signature.h"
 
 extern "C" {
 #include "byte_conversions.h"
@@ -80,6 +82,10 @@ constexpr const uint8_t kExpectedPersonalMessageDigest[32] = {
 int failures = 0;
 bool g_root_available = true;
 bool g_mnemonic_available = true;
+agent_q::AgentQSuiActiveIdentityKind g_active_identity_kind =
+    agent_q::AgentQSuiActiveIdentityKind::native;
+int g_zklogin_envelope_build_calls = 0;
+uint8_t g_last_zklogin_user_signature[agent_q::kSuiEd25519SignatureBytes] = {};
 
 void expect(bool condition, const char* label)
 {
@@ -173,6 +179,48 @@ bool make_bip39_mnemonic_12_words(
     return true;
 }
 
+AgentQSuiActiveIdentity resolve_active_sui_identity()
+{
+    AgentQSuiActiveIdentity identity = {};
+    identity.kind = g_active_identity_kind;
+    identity.error = AgentQSuiActiveIdentityError::none;
+    strcpy(identity.address, "0x1111111111111111111111111111111111111111111111111111111111111111");
+    identity.public_key[0] = identity.kind == AgentQSuiActiveIdentityKind::zklogin
+                                 ? kAgentQSuiSignatureSchemeFlagZkLogin
+                                 : kAgentQSuiSignatureSchemeFlagEd25519;
+    memset(identity.public_key + 1, 0x42, 32);
+    identity.public_key_size = identity.kind == AgentQSuiActiveIdentityKind::zklogin
+                                   ? kAgentQSuiZkLoginPublicKeyMinBytes
+                                   : kAgentQSuiSchemePrefixedEd25519PublicKeyBytes;
+    strcpy(identity.zklogin.max_epoch, "12");
+    return identity;
+}
+
+AgentQSuiZkLoginSignatureBuildResult build_sui_zklogin_signature_envelope(
+    const AgentQSuiZkLoginSignatureInputs&,
+    const char*,
+    const uint8_t* user_signature,
+    size_t user_signature_size,
+    uint8_t* output,
+    size_t output_size,
+    size_t* output_size_out)
+{
+    if (user_signature == nullptr ||
+        user_signature_size != kSuiEd25519SignatureBytes ||
+        output == nullptr ||
+        output_size < kSuiEd25519SignatureBytes + 8 ||
+        output_size_out == nullptr) {
+        return AgentQSuiZkLoginSignatureBuildResult::invalid_input;
+    }
+    ++g_zklogin_envelope_build_calls;
+    memcpy(g_last_zklogin_user_signature, user_signature, kSuiEd25519SignatureBytes);
+    memset(output, 0, output_size);
+    output[0] = kAgentQSuiSignatureSchemeFlagZkLogin;
+    memcpy(output + 1, user_signature, kSuiEd25519SignatureBytes);
+    *output_size_out = kSuiEd25519SignatureBytes + 8;
+    return AgentQSuiZkLoginSignatureBuildResult::ok;
+}
+
 }  // namespace agent_q
 
 int main(int argc, char** argv)
@@ -218,6 +266,48 @@ int main(int argc, char** argv)
     expect(
         sui_signing_verify_signature_ed25519_from_digest(personal_signature, personal_digest) == 0,
         "personal-message signature verifies against Sui SDK digest vector");
+
+    uint8_t active_personal_signature[agent_q::kSuiSignatureEnvelopeMaxBytes] = {};
+    size_t active_personal_signature_size = 0;
+    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
+    expect(
+        agent_q::sign_sui_personal_message_from_active_identity(
+            kPersonalMessage,
+            sizeof(kPersonalMessage) - 1,
+            active_personal_signature,
+            &active_personal_signature_size) == agent_q::SuiTransactionSigningResult::ok,
+        "active native personal-message signing succeeds");
+    expect(active_personal_signature_size == agent_q::kSuiEd25519SignatureBytes,
+           "active native personal-message signature keeps Ed25519 size");
+    expect(active_personal_signature[0] == agent_q::kAgentQSuiSignatureSchemeFlagEd25519,
+           "active native personal-message signature uses Ed25519 scheme");
+
+    memset(active_personal_signature, 0, sizeof(active_personal_signature));
+    active_personal_signature_size = 0;
+    ::g_zklogin_envelope_build_calls = 0;
+    memset(::g_last_zklogin_user_signature, 0, sizeof(::g_last_zklogin_user_signature));
+    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
+    expect(
+        agent_q::sign_sui_personal_message_from_active_identity(
+            kPersonalMessage,
+            sizeof(kPersonalMessage) - 1,
+            active_personal_signature,
+            &active_personal_signature_size) == agent_q::SuiTransactionSigningResult::ok,
+        "active zkLogin personal-message signing succeeds");
+    expect(::g_zklogin_envelope_build_calls == 1,
+           "active zkLogin personal-message signing builds a zkLogin envelope");
+    expect(active_personal_signature_size > agent_q::kSuiEd25519SignatureBytes,
+           "active zkLogin personal-message signature is variable-size");
+    expect(active_personal_signature[0] == agent_q::kAgentQSuiSignatureSchemeFlagZkLogin,
+           "active zkLogin personal-message signature uses zkLogin scheme");
+    expect(::g_last_zklogin_user_signature[0] == agent_q::kAgentQSuiSignatureSchemeFlagEd25519,
+           "active zkLogin personal-message userSignature uses Ed25519 scheme");
+    expect(
+        sui_signing_verify_signature_ed25519_from_digest(
+            ::g_last_zklogin_user_signature,
+            personal_digest) == 0,
+        "active zkLogin personal-message userSignature signs the personal-message digest");
+    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
 
     char signature_base64[agent_q::kSuiEd25519SignatureBase64Chars + 1] = {};
     expect(

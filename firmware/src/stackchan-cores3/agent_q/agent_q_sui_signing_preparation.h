@@ -23,6 +23,7 @@ enum class AgentQSuiSigningPreparationResult {
     malformed_transaction,
     unsupported_transaction,
     account_unavailable,
+    active_identity_unavailable,
     invalid_account,
     digest_error,
 };

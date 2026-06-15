@@ -28,7 +28,9 @@ import {
 import { PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES } from "../dist/provider-protocol.js";
 import { AgentQError } from "../dist/errors.js";
 
-const SUI_SIGNATURE = Buffer.alloc(97, 1).toString("base64");
+const SUI_SIGNATURE_BYTES = Buffer.alloc(97, 1);
+SUI_SIGNATURE_BYTES[0] = 0;
+const SUI_SIGNATURE = SUI_SIGNATURE_BYTES.toString("base64");
 const status = {
   id: "req_1",
   version: 1,

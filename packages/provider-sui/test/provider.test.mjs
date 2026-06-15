@@ -44,7 +44,18 @@ const SUI_PUBLIC_KEY = "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp";
 const ZKLOGIN_ADDRESS = "0xd41c7cbc0cbccb9e7ab701373f3b5f082cc0024098f2ab561ff342107b91491f";
 const ZKLOGIN_PUBLIC_KEY =
   "BRtodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ==";
-const SUI_SIGNATURE = Buffer.alloc(97, 1).toString("base64");
+function makeEd25519Signature(fill = 1) {
+  const bytes = Buffer.alloc(97, fill);
+  bytes[0] = 0;
+  return bytes.toString("base64");
+}
+function makeZkLoginSignature(byteLength = 145) {
+  const bytes = Buffer.alloc(byteLength, 6);
+  bytes[0] = 5;
+  return bytes.toString("base64");
+}
+const SUI_SIGNATURE = makeEd25519Signature(1);
+const ZKLOGIN_SIGNATURE = makeZkLoginSignature();
 const PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q personal message").toString("base64");
 
 function assertNoSecretFields(value) {
@@ -3613,6 +3624,28 @@ test("Wallet Standard signTransaction builds bytes and delegates to signTransact
   assertNoSecretFields(signed);
 });
 
+test("Wallet Standard signTransaction accepts zkLogin transaction signatures", async () => {
+  const { core } = createSigningCore();
+  core.signTransaction = async () => ({
+    ...validSignedTransactionResult(),
+    signature: ZKLOGIN_SIGNATURE,
+  });
+  const wallet = createAgentQSuiWallet({
+    provider: createAgentQSuiProvider({ core }),
+    getClient: fakeClient,
+    chains: ["sui:devnet"],
+  });
+  const { accounts } = await wallet.features[StandardConnect].connect();
+  const transactionJson = await createResolvedTransactionJson();
+  const signed = await wallet.features[SuiSignTransaction].signTransaction({
+    account: accounts[0],
+    chain: "sui:devnet",
+    transaction: { toJSON: async () => transactionJson },
+  });
+  assert.equal(signed.signature, ZKLOGIN_SIGNATURE);
+  assertNoSecretFields(signed);
+});
+
 test("Wallet Standard signPersonalMessage delegates to signPersonalMessage only", async () => {
   const { core, calls } = createSigningCore();
   const wallet = createAgentQSuiWallet({
@@ -3642,6 +3675,29 @@ test("Wallet Standard signPersonalMessage delegates to signPersonalMessage only"
       message: signed.bytes,
     },
   ]);
+  assertNoSecretFields(signed);
+});
+
+test("Wallet Standard signPersonalMessage accepts zkLogin personal-message signatures", async () => {
+  const { core } = createSigningCore();
+  core.signPersonalMessage = async (input) => ({
+    ...validSignedPersonalMessageResult(input.message),
+    signature: ZKLOGIN_SIGNATURE,
+  });
+  const wallet = createAgentQSuiWallet({
+    provider: createAgentQSuiProvider({ core }),
+    getClient: fakeClient,
+    chains: ["sui:devnet"],
+  });
+  const { accounts } = await wallet.features[StandardConnect].connect();
+  const message = new TextEncoder().encode("hello Agent-Q");
+  const signed = await wallet.features[SuiSignPersonalMessage].signPersonalMessage({
+    account: accounts[0],
+    chain: "sui:devnet",
+    message,
+  });
+  assert.equal(signed.signature, ZKLOGIN_SIGNATURE);
+  assert.equal(signed.bytes, Buffer.from(message).toString("base64"));
   assertNoSecretFields(signed);
 });
 

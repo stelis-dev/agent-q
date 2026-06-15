@@ -34,7 +34,6 @@ import {
   SIGN_RESULT_ERROR_MESSAGES,
   SUI_ADDRESS_PATTERN,
   SUI_DERIVATION_PATH,
-  SUI_ED25519_SIGNATURE_BASE64_PATTERN,
   SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
   SUI_SIGNATURE_SCHEME_FLAG_ED25519,
   SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN,
@@ -44,7 +43,9 @@ import {
   MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
   UINT_DECIMAL_STRING_PATTERN,
   isUint64DecimalString,
+  isSuiPersonalMessageSignatureBase64,
   isSuiAddressForSchemePrefixedPublicKey,
+  isSuiTransactionSignatureEnvelopeBase64,
   sanitizeCurrentPolicyDocument,
 } from "./protocol.js";
 import {
@@ -592,7 +593,7 @@ const liveUserSignSignedOutputShape = z.object({
   authorization: z.literal("user"),
   chain: z.literal("sui"),
   method: z.literal(SUI_SIGN_TRANSACTION_METHOD),
-  signature: z.string().regex(SUI_ED25519_SIGNATURE_BASE64_PATTERN),
+  signature: z.string().refine(isSuiTransactionSignatureEnvelopeBase64),
 }).strict();
 const livePolicySignSignedOutputShape = liveUserSignSignedOutputShape.extend({
   authorization: z.literal("policy"),
@@ -604,7 +605,7 @@ const liveUserSignPersonalMessageSignedOutputShape = z.object({
   authorization: z.literal("user"),
   chain: z.literal("sui"),
   method: z.literal(SUI_SIGN_PERSONAL_MESSAGE_METHOD),
-  signature: z.string().regex(SUI_ED25519_SIGNATURE_BASE64_PATTERN),
+  signature: z.string().refine(isSuiPersonalMessageSignatureBase64),
   messageBytes: personalMessageBytesShape,
 }).strict();
 const liveUserSignTerminalOutputShape = z.discriminatedUnion("status", [

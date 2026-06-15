@@ -872,6 +872,8 @@ test("policy_propose dispatch returns Firmware-authored terminal metadata withou
 });
 
 test("sign_transaction dispatch accepts signed policy results without a session token", async () => {
+  const signature = Buffer.alloc(97, 1);
+  signature[0] = 0;
   const core = {
     ...noOpCore,
     async signTransaction() {
@@ -882,7 +884,7 @@ test("sign_transaction dispatch accepts signed policy results without a session 
         authorization: "policy",
         chain: "sui",
         method: "sign_transaction",
-        signature: Buffer.alloc(97, 1).toString("base64"),
+        signature: signature.toString("base64"),
       };
     },
   };
@@ -900,6 +902,8 @@ test("sign_transaction dispatch accepts signed policy results without a session 
 
 test("sign_personal_message dispatch accepts signed user results without a session token", async () => {
   const messageBytes = Buffer.from("Agent-Q personal message").toString("base64");
+  const signature = Buffer.alloc(97, 1);
+  signature[0] = 0;
   const core = {
     ...noOpCore,
     async signPersonalMessage() {
@@ -910,7 +914,7 @@ test("sign_personal_message dispatch accepts signed user results without a sessi
         authorization: "user",
         chain: "sui",
         method: "sign_personal_message",
-        signature: Buffer.alloc(97, 1).toString("base64"),
+        signature: signature.toString("base64"),
         messageBytes,
       };
     },

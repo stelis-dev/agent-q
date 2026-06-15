@@ -23,6 +23,7 @@ import {
   isSuiAddressForSchemePrefixedPublicKey,
   SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
   SUI_SIGNATURE_SCHEME_FLAG_ED25519,
+  SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN,
   identifySignRoute,
   makeConnectRequest,
   makeDisconnectRequest,
@@ -77,6 +78,18 @@ const POLICY_OPERATOR_ORDER = [
   "all_in",
   "none_in",
 ];
+
+function suiEd25519Signature(fill = 1) {
+  const bytes = Buffer.alloc(97, fill);
+  bytes[0] = SUI_SIGNATURE_SCHEME_FLAG_ED25519;
+  return bytes.toString("base64");
+}
+
+function suiZkLoginSignature(byteLength = 145) {
+  const bytes = Buffer.alloc(byteLength, 6);
+  bytes[0] = SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN;
+  return bytes.toString("base64");
+}
 
 function parseFirmwarePolicyFieldDescriptors() {
   const source = readFileSync(
@@ -2430,7 +2443,7 @@ const signResultLine = (overrides = {}, errorOverrides = {}) =>
 
 test("parseProtocolResponse accepts signed sign_result responses for user and policy authorization", () => {
   for (const authorization of ["user", "policy"]) {
-    const signature = Buffer.alloc(97, authorization === "user" ? 1 : 2).toString("base64");
+    const signature = suiEd25519Signature(authorization === "user" ? 1 : 2);
     const signed = assertSignResultResponse(
       parseProtocolResponse(
         signResultLine({
@@ -2450,8 +2463,25 @@ test("parseProtocolResponse accepts signed sign_result responses for user and po
     assert.equal(signed.signature, signature);
   }
 
+  const zkLoginSignature = suiZkLoginSignature();
+  const zkLoginSigned = assertSignResultResponse(
+    parseProtocolResponse(
+      signResultLine({
+        authorization: "user",
+        status: "signed",
+        chain: "sui",
+        method: "sign_transaction",
+        signature: zkLoginSignature,
+        error: undefined,
+      }),
+      "req_sign",
+    ),
+  );
+  assert.equal(zkLoginSigned.status, "signed");
+  assert.equal(zkLoginSigned.signature, zkLoginSignature);
+
   const messageBytes = Buffer.from("hello Agent-Q").toString("base64");
-  const personalMessageSignature = Buffer.alloc(97, 3).toString("base64");
+  const personalMessageSignature = suiEd25519Signature(3);
   const personalMessageSigned = assertSignResultResponse(
     parseProtocolResponse(
       signResultLine({
@@ -2471,6 +2501,25 @@ test("parseProtocolResponse accepts signed sign_result responses for user and po
   assert.equal(personalMessageSigned.method, "sign_personal_message");
   assert.equal(personalMessageSigned.signature, personalMessageSignature);
   assert.equal(personalMessageSigned.messageBytes, messageBytes);
+
+  const zkLoginPersonalMessageSignature = suiZkLoginSignature();
+  const zkLoginPersonalMessageSigned = assertSignResultResponse(
+    parseProtocolResponse(
+      signResultLine({
+        authorization: "user",
+        status: "signed",
+        chain: "sui",
+        method: "sign_personal_message",
+        signature: zkLoginPersonalMessageSignature,
+        messageBytes,
+        error: undefined,
+      }),
+      "req_sign",
+    ),
+  );
+  assert.equal(zkLoginPersonalMessageSigned.method, "sign_personal_message");
+  assert.equal(zkLoginPersonalMessageSigned.signature, zkLoginPersonalMessageSignature);
+  assert.equal(zkLoginPersonalMessageSigned.messageBytes, messageBytes);
 
   const largerThanCurrentAdapterCapacity = Buffer.alloc(300, 7).toString("base64");
   const largerPersonalMessageSigned = assertSignResultResponse(
@@ -2607,7 +2656,7 @@ test("parseProtocolResponse rejects sign_result leaks and inconsistent terminal 
           status: "signed",
           chain: "sui",
           method: "sign_transaction",
-          signature: Buffer.alloc(97, 1).toString("base64"),
+          signature: suiEd25519Signature(1),
           messageBytes: Buffer.from("hello").toString("base64"),
           error: undefined,
         }),
@@ -2623,7 +2672,7 @@ test("parseProtocolResponse rejects sign_result leaks and inconsistent terminal 
           status: "signed",
           chain: "sui",
           method: "sign_personal_message",
-          signature: Buffer.alloc(97, 1).toString("base64"),
+          signature: suiEd25519Signature(1),
           messageBytes: Buffer.from("hello").toString("base64"),
           error: undefined,
         }),
@@ -2638,7 +2687,7 @@ test("parseProtocolResponse rejects sign_result leaks and inconsistent terminal 
           status: "signed",
           chain: "sui",
           method: "sign_personal_message",
-          signature: Buffer.alloc(97, 1).toString("base64"),
+          signature: suiEd25519Signature(1),
           error: undefined,
         }),
         "req_sign",
@@ -2652,7 +2701,7 @@ test("parseProtocolResponse rejects sign_result leaks and inconsistent terminal 
           status: "signed",
           chain: "sui",
           method: "sign_transaction",
-          signature: Buffer.alloc(97, 1).toString("base64"),
+          signature: suiEd25519Signature(1),
           txBytes: CANONICAL_TX_BYTES_BASE64,
           error: undefined,
         }),

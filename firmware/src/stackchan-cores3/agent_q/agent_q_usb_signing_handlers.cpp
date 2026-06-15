@@ -289,6 +289,7 @@ const char* sui_preparation_error_code(AgentQSuiSigningPreparationResult result)
         case AgentQSuiSigningPreparationResult::unsupported_transaction:
             return "unsupported_transaction";
         case AgentQSuiSigningPreparationResult::account_unavailable:
+        case AgentQSuiSigningPreparationResult::active_identity_unavailable:
         case AgentQSuiSigningPreparationResult::invalid_account:
             return "account_error";
         case AgentQSuiSigningPreparationResult::digest_error:
@@ -310,6 +311,8 @@ const char* sui_preparation_error_message(AgentQSuiSigningPreparationResult resu
             return "Transaction shape is not supported.";
         case AgentQSuiSigningPreparationResult::account_unavailable:
             return "Signing account is unavailable.";
+        case AgentQSuiSigningPreparationResult::active_identity_unavailable:
+            return "Active Sui identity is unavailable.";
         case AgentQSuiSigningPreparationResult::invalid_account:
             return "Transaction sender does not match the device account.";
         case AgentQSuiSigningPreparationResult::digest_error:

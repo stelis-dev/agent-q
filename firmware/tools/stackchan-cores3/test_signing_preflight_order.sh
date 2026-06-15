@@ -124,6 +124,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "agent_q_sui_account_store.h"
 #include "agent_q_sui_signing_authority.h"
 #include "agent_q_sui_signing_preparation.h"
+#include "agent_q_sui_zklogin_proof_store.h"
 #include "agent_q_usb_payload_upload_handlers.h"
 #include "agent_q_usb_signing_handlers.h"
 
@@ -578,10 +579,11 @@ agent_q::AgentQPolicySigningExecutionResult handler_execute_policy(
     result.signing_route = agent_q::AgentQSigningRoute::sui_sign_transaction;
     result.code = "policy_signed";
     result.message = "Policy authorized signing.";
-    for (size_t index = 0; index < sizeof(result.signature); ++index) {
+    result.signature[0] = agent_q::kAgentQSuiSignatureSchemeFlagEd25519;
+    for (size_t index = 1; index < agent_q::kSuiEd25519SignatureBytes; ++index) {
         result.signature[index] = static_cast<uint8_t>(index + 1U);
     }
-    result.signature_size = sizeof(result.signature);
+    result.signature_size = agent_q::kSuiEd25519SignatureBytes;
     return result;
 }
 
@@ -1065,7 +1067,7 @@ bool usb_response_write_error(const char* id, const char* code, const char* mess
     return true;
 }
 
-AgentQSuiSigningAccountBindingResult verify_sui_signing_stored_account_binding(
+AgentQSuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
     const SuiPolicySubjectFacts&)
 {
     ++g_binding_calls;
@@ -1081,6 +1083,21 @@ SuiAccountDerivationResult derive_sui_ed25519_account_from_stored_root(
     snprintf(address, address_size,
              "%s", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     return SuiAccountDerivationResult::ok;
+}
+
+AgentQSuiActiveIdentity resolve_active_sui_identity()
+{
+    AgentQSuiActiveIdentity identity = {};
+    identity.kind = AgentQSuiActiveIdentityKind::native;
+    identity.error = AgentQSuiActiveIdentityError::none;
+    snprintf(identity.address,
+             sizeof(identity.address),
+             "%s",
+             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    identity.public_key[0] = kAgentQSuiSignatureSchemeFlagEd25519;
+    memset(identity.public_key + 1, 0xA5, kSuiEd25519PublicKeyBytes);
+    identity.public_key_size = kSuiEd25519PublicKeyBytes + 1;
+    return identity;
 }
 
 }  // namespace agent_q

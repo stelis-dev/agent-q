@@ -33,9 +33,13 @@ export const SUI_ADDRESS_PATTERN = /^0x[0-9a-f]{64}$/;
 // Raw 32-byte Ed25519 public key as base64 is exactly 43 payload chars + one "=".
 export const ED25519_PUBLIC_KEY_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
 // Sui Ed25519 signatures are scheme flag + 64-byte signature + 32-byte public key.
+export const SUI_ED25519_SIGNATURE_BYTES = 97;
 export const SUI_ED25519_SIGNATURE_BASE64_PATTERN = /^[A-Za-z0-9+/]{130}==$/;
 export const SUI_SIGNATURE_SCHEME_FLAG_ED25519 = 0x00;
 export const SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN = 0x05;
+export const SUI_ZKLOGIN_SIGNATURE_BCS_MAX_BYTES = 2048;
+export const SUI_ZKLOGIN_SIGNATURE_MAX_BYTES = 1 + SUI_ZKLOGIN_SIGNATURE_BCS_MAX_BYTES;
+export const SUI_SIGNATURE_ENVELOPE_MAX_BYTES = SUI_ZKLOGIN_SIGNATURE_MAX_BYTES;
 export const SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES = 33;
 export const MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES = 34;
 export const MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES = 288;
@@ -280,6 +284,31 @@ export function decodeCanonicalBase64(value: string): Uint8Array | null {
   }
 
   return output;
+}
+
+function isSuiSignatureEnvelopeBase64(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const decoded = decodeCanonicalBase64(value);
+  if (decoded === null || decoded.length === 0 || decoded.length > SUI_SIGNATURE_ENVELOPE_MAX_BYTES) {
+    return false;
+  }
+  if (decoded[0] === SUI_SIGNATURE_SCHEME_FLAG_ED25519) {
+    return decoded.length === SUI_ED25519_SIGNATURE_BYTES;
+  }
+  return (
+    decoded[0] === SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN &&
+    decoded.length > SUI_ED25519_SIGNATURE_BYTES
+  );
+}
+
+export function isSuiTransactionSignatureEnvelopeBase64(value: unknown): value is string {
+  return isSuiSignatureEnvelopeBase64(value);
+}
+
+export function isSuiPersonalMessageSignatureBase64(value: unknown): value is string {
+  return isSuiSignatureEnvelopeBase64(value);
 }
 
 export function isSuiAddressForPublicKey(address: string, publicKeyBase64: string): boolean {

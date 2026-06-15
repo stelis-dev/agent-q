@@ -216,10 +216,11 @@ AgentQPolicySigningExecutionResult execute_policy_sign_transaction(
     }
 
     const SuiTransactionSigningResult signing_result =
-        sign_sui_ed25519_transaction_from_stored_root(
+        sign_sui_transaction_from_active_identity(
             policy_result.tx_bytes,
             policy_result.tx_bytes_size,
-            result.signature);
+            result.signature,
+            &result.signature_size);
     if (signing_result != SuiTransactionSigningResult::ok) {
         wipe_sensitive_buffer(result.signature, sizeof(result.signature));
         result.signature_size = 0;
@@ -259,7 +260,6 @@ AgentQPolicySigningExecutionResult execute_policy_sign_transaction(
             "The device could not produce a signature.");
     }
 
-    result.signature_size = kSuiEd25519SignatureBytes;
     if (!write_policy_signing_terminal_history(
             policy_result,
             AgentQSigningHistoryTerminalResult::signed_success,

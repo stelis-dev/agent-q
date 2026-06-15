@@ -1,5 +1,6 @@
 #include "agent_q_signing_result_store.h"
 
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -13,8 +14,9 @@ struct SigningResultEntry {
     char session_id[kAgentQSessionIdSize] = {};
     char request_id[kAgentQRequestIdSize] = {};
     uint8_t request_identity[kAgentQSignRequestIdentitySize] = {};
-    char result[kSigningResultMaxSize] = {};
+    char* result = nullptr;
     size_t result_len = 0;
+    size_t result_capacity = 0;
     uint32_t stored_seq = 0;
 };
 
@@ -35,8 +37,13 @@ void clear_entry(SigningResultEntry& entry)
     clear_buffer(entry.session_id, sizeof(entry.session_id));
     clear_buffer(entry.request_id, sizeof(entry.request_id));
     clear_buffer(entry.request_identity, sizeof(entry.request_identity));
-    clear_buffer(entry.result, sizeof(entry.result));
+    if (entry.result != nullptr) {
+        clear_buffer(entry.result, entry.result_capacity);
+        free(entry.result);
+        entry.result = nullptr;
+    }
     entry.result_len = 0;
+    entry.result_capacity = 0;
     entry.stored_seq = 0;
     entry.active = false;
 }
@@ -80,6 +87,13 @@ SigningResultStoreOutcome signing_result_store(
         }
     }
 
+    char* result_copy = static_cast<char*>(malloc(serialized_size + 1));
+    if (result_copy == nullptr) {
+        return SigningResultStoreOutcome::storage_error;
+    }
+    memcpy(result_copy, serialized_result, serialized_size);
+    result_copy[serialized_size] = '\0';
+
     SigningResultEntry* slot = nullptr;
     for (SigningResultEntry& entry : g_entries) {
         if (!entry.active) {
@@ -99,20 +113,26 @@ SigningResultStoreOutcome signing_result_store(
 
     if (slot != nullptr) {
         clear_entry(*slot);
+    } else {
+        clear_buffer(result_copy, serialized_size + 1);
+        free(result_copy);
+        return SigningResultStoreOutcome::storage_error;
     }
 
     SigningResultEntry next = {};
     if (!copy_nonempty_c_string(session_id, next.session_id, sizeof(next.session_id)) ||
         !copy_nonempty_c_string(request_id, next.request_id, sizeof(next.request_id))) {
+        clear_buffer(result_copy, serialized_size + 1);
+        free(result_copy);
         return SigningResultStoreOutcome::invalid;
     }
-    memcpy(next.result, serialized_result, serialized_size);
     memcpy(
         next.request_identity,
         request_identity,
         kAgentQSignRequestIdentitySize);
-    next.result[serialized_size] = '\0';
+    next.result = result_copy;
     next.result_len = serialized_size;
+    next.result_capacity = serialized_size + 1;
     next.active = true;
     next.stored_seq = ++g_store_seq;
     *slot = next;
@@ -146,7 +166,7 @@ SigningResultRetryLookup signing_result_find_for_retry(
                 kAgentQSignRequestIdentitySize) != 0) {
             return SigningResultRetryLookup::conflict;
         }
-        if (entry.result_len >= out_size) {
+        if (entry.result == nullptr || entry.result_len >= out_size) {
             return SigningResultRetryLookup::invalid;
         }
         memcpy(out, entry.result, entry.result_len);
@@ -171,7 +191,7 @@ bool signing_result_find(
     }
     for (const SigningResultEntry& entry : g_entries) {
         if (entry_matches(entry, session_id, request_id)) {
-            if (entry.result_len >= out_size) {
+            if (entry.result == nullptr || entry.result_len >= out_size) {
                 return false;
             }
             memcpy(out, entry.result, entry.result_len);

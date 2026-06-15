@@ -5,6 +5,8 @@ import { runSuiSignCli } from "../dist/sui-sign-cli.js";
 import {
   SIGNATURE,
   TX_BYTES,
+  ZKLOGIN_ACCOUNT,
+  ZKLOGIN_SIGNATURE,
   makeSuiSignerHarness,
 } from "./sui-signer-test-support.mjs";
 
@@ -75,6 +77,39 @@ test("stdin input is forwarded and success prints only the signature to stdout",
   assert.equal(harness.stdout.join(""), `${SIGNATURE}\n`);
   assert.match(harness.stderr.join(""), /device address:/);
   assert.deepEqual(harness.calls.at(-1), "disconnect");
+});
+
+test("direct signing accepts zkLogin transaction signature envelopes", async () => {
+  const harness = makeSuiSignerHarness({
+    core: {
+      async getAccounts() {
+        harness.calls.push("accounts");
+        return {
+          source: "live",
+          accounts: [
+            {
+              ...ZKLOGIN_ACCOUNT,
+            },
+          ],
+        };
+      },
+      async signTransaction() {
+        harness.calls.push(["sign", TX_BYTES]);
+        return {
+          source: "live",
+          status: "signed",
+          signature: ZKLOGIN_SIGNATURE,
+        };
+      },
+    },
+  });
+  assert.equal(
+    await runSuiSignCli(["--network", "testnet", "--tx-bytes", TX_BYTES], harness.dependencies),
+    0,
+  );
+  assert.equal(harness.stdout.join(""), `${ZKLOGIN_SIGNATURE}\n`);
+  assert.match(harness.stderr.join(""), /device address:/);
+  assert.deepEqual(harness.calls, ["connect", "accounts", ["sign", TX_BYTES], "disconnect"]);
 });
 
 test("equals-form flags are accepted", async () => {

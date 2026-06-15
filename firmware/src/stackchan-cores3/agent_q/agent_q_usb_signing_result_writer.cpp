@@ -1,5 +1,6 @@
 #include "agent_q_usb_signing_result_writer.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include <ArduinoJson.h>
@@ -9,6 +10,7 @@
 #include "agent_q_signing_mode.h"
 #include "agent_q_signing_result_store.h"
 #include "agent_q_sui_signing_service.h"
+#include "agent_q_sui_zklogin_proof_store.h"
 #include "agent_q_usb_response_writer.h"
 
 extern "C" {
@@ -17,6 +19,15 @@ extern "C" {
 
 namespace agent_q {
 namespace {
+
+void clear_heap_buffer(char* buffer, size_t size)
+{
+    volatile char* cursor = buffer;
+    while (cursor != nullptr && size > 0) {
+        *cursor++ = 0;
+        --size;
+    }
+}
 
 const char* sign_result_user_error_message(
     AgentQUserSigningTerminalResult result)
@@ -46,19 +57,28 @@ bool buffer_sign_result_for_retry(
     if (session_id == nullptr || session_id[0] == '\0') {
         return false;
     }
-    static char serialized_result[kSigningResultMaxSize];
-    const size_t serialized_len = serializeJson(response, serialized_result, sizeof(serialized_result));
-    if (serialized_len == 0 || serialized_len >= sizeof(serialized_result)) {
+    char* serialized_result = static_cast<char*>(malloc(kSigningResultMaxSize));
+    if (serialized_result == nullptr) {
         return false;
     }
-    return signing_result_store(
-               session_id,
-               request_id,
-               request_identity,
-               kAgentQSignRequestIdentitySize,
-               serialized_result,
-               serialized_len) !=
-           SigningResultStoreOutcome::invalid;
+    const size_t serialized_len =
+        serializeJson(response, serialized_result, kSigningResultMaxSize);
+    bool stored = false;
+    if (serialized_len != 0 && serialized_len < kSigningResultMaxSize) {
+        const SigningResultStoreOutcome outcome = signing_result_store(
+            session_id,
+            request_id,
+            request_identity,
+            kAgentQSignRequestIdentitySize,
+            serialized_result,
+            serialized_len);
+        stored = outcome == SigningResultStoreOutcome::stored ||
+                 outcome == SigningResultStoreOutcome::duplicate ||
+                 outcome == SigningResultStoreOutcome::conflict;
+    }
+    clear_heap_buffer(serialized_result, kSigningResultMaxSize);
+    free(serialized_result);
+    return stored;
 }
 
 bool write_sign_result_signed_fields(
@@ -75,10 +95,20 @@ bool write_sign_result_signed_fields(
     if (authorization == nullptr ||
         (strcmp(authorization, "user") != 0 && strcmp(authorization, "policy") != 0) ||
         signature == nullptr ||
-        signature_size != kSuiEd25519SignatureBytes) {
+        signature_size == 0 ||
+        signature_size > kSuiSignatureEnvelopeMaxBytes) {
         return false;
     }
     if (signing_route == AgentQSigningRoute::unsupported) {
+        return false;
+    }
+    const bool ed25519_signature =
+        signature[0] == kAgentQSuiSignatureSchemeFlagEd25519 &&
+        signature_size == kSuiEd25519SignatureBytes;
+    const bool zklogin_signature =
+        signature[0] == kAgentQSuiSignatureSchemeFlagZkLogin &&
+        signature_size > kSuiEd25519SignatureBytes;
+    if (!ed25519_signature && !zklogin_signature) {
         return false;
     }
     const char* chain = signing_route_wire_chain(signing_route);
@@ -96,7 +126,7 @@ bool write_sign_result_signed_fields(
             authorization_mode)) {
         return false;
     }
-    char signature_base64[kSuiEd25519SignatureBase64Chars + 1] = {};
+    char signature_base64[kSuiSignatureEnvelopeBase64MaxChars + 1] = {};
     if (bytes_to_base64(
             signature,
             signature_size,

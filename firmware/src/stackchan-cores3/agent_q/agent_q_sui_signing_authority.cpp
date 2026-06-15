@@ -2,30 +2,22 @@
 
 #include <string.h>
 
-#include "agent_q_bip39.h"
-#include "agent_q_sui_account_store.h"
+#include "agent_q_sui_zklogin_proof_store.h"
 
 namespace agent_q {
 
-AgentQSuiSigningAccountBindingResult verify_sui_signing_stored_account_binding(
+AgentQSuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
     const SuiPolicySubjectFacts& facts)
 {
-    uint8_t public_key[kSuiEd25519PublicKeyBytes] = {};
-    char stored_address[kSuiAddressBufferSize] = {};
-    const SuiAccountDerivationResult result =
-        derive_sui_ed25519_account_from_stored_root(
-            public_key,
-            stored_address,
-            sizeof(stored_address));
-    wipe_sensitive_buffer(public_key, sizeof(public_key));
-    if (result != SuiAccountDerivationResult::ok) {
-        memset(stored_address, 0, sizeof(stored_address));
-        return AgentQSuiSigningAccountBindingResult::account_unavailable;
+    const AgentQSuiActiveIdentity active_identity = resolve_active_sui_identity();
+    if (active_identity.kind == AgentQSuiActiveIdentityKind::error) {
+        return active_identity.error == AgentQSuiActiveIdentityError::native_account_unavailable
+                   ? AgentQSuiSigningAccountBindingResult::account_unavailable
+                   : AgentQSuiSigningAccountBindingResult::active_identity_unavailable;
     }
     const bool matches =
-        strcmp(facts.sender, stored_address) == 0 &&
-        strcmp(facts.gas_owner, stored_address) == 0;
-    memset(stored_address, 0, sizeof(stored_address));
+        strcmp(facts.sender, active_identity.address) == 0 &&
+        strcmp(facts.gas_owner, active_identity.address) == 0;
     return matches ? AgentQSuiSigningAccountBindingResult::ok
                    : AgentQSuiSigningAccountBindingResult::account_mismatch;
 }
