@@ -64,9 +64,12 @@ Implemented today:
   They are device-local UX only: Change PIN verifies the stored PIN and replaces
   only the local PIN verifier after repeated new PIN entry, and Reset verifies
   the stored PIN before root material wipe, active policy wipe, PIN verifier
-  wipe, signing authorization mode wipe, approval history wipe,
-  policy-update terminal marker wipe, human approval input mode setting wipe, session
-  cleanup, and return to `unprovisioned`.
+  wipe, signing authorization mode wipe, Sui zkLogin proof material wipe,
+  approval history wipe, policy-update terminal marker wipe, human approval
+  input mode setting wipe, session cleanup, and return to `unprovisioned`.
+  The same device-local Settings state owns a separate chain account menu whose
+  current Sui account view can clear the local zkLogin proof after stored PIN
+  verification; there is no host-triggered proof-clear API.
   Firmware records an internal reset-pending marker so boot can resume an
   interrupted reset wipe. Host-triggered reset/debug protocol paths are not
   implemented. StackChan CoreS3 source also uses this
@@ -76,9 +79,11 @@ Implemented today:
   is not exposed as a host-triggered recovery API. Hardware coverage level is
   tracked in `docs/IMPLEMENTATION_STATUS.md`.
 - Read-only Sui account and public-key discovery over an approved runtime
-  session. Firmware derives public identity from the DEV_PROFILE root entropy
-  on demand and does not return mnemonic, seed, entropy, or private key
-  material. Hardware coverage level is tracked in
+  session. Firmware returns exactly one active Sui identity: native Ed25519
+  derived from DEV_PROFILE root entropy while no zkLogin proof is active, or
+  the locally stored zkLogin identity while proof material is active. It does
+  not return mnemonic, seed, entropy, private key material, raw JWTs, or proof
+  secrets. Hardware coverage level is tracked in
   `docs/IMPLEMENTATION_STATUS.md`.
 - A current policy document parser, active policy store/readback boundary, and
   Sui offline policy condition-facts extractor. The current product flow

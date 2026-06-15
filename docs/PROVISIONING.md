@@ -319,9 +319,9 @@ PIN, accepts and repeats a new 6-digit PIN, stores only the replacement
 salt/verifier, and returns to Settings; no root material is changed and no PIN is
 sent over USB. Reset uses the same Settings entry point: a Reset menu action,
 stored PIN verification, root material wipe, active policy wipe, PIN verifier
-wipe, signing authorization mode wipe, approval history wipe, policy-update
-terminal marker wipe, session cleanup, human approval input mode setting wipe, and
-`unprovisioned` persistence.
+wipe, signing authorization mode wipe, Sui zkLogin proof material wipe,
+approval history wipe, policy-update terminal marker wipe, session cleanup,
+human approval input mode setting wipe, and `unprovisioned` persistence.
 Firmware writes an internal reset-pending marker before destructive wipe starts,
 so boot can resume an interrupted reset wipe. PIN failure, timeout, or cancel
 leaves existing material and settings intact. Wrong reset PIN attempts use a

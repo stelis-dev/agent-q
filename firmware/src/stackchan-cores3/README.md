@@ -82,10 +82,17 @@ The current implementation includes:
   stored PIN verification. Firmware sessions are RAM-only and do not authorize
   signing.
 - a USB JSONL `get_capabilities` request that returns Firmware-authored Sui
-  Ed25519 account identity capability over an approved session while
-  `provisioned`, with no delegated public methods and top-level `signing`
-  availability. `signing.authorization` is read-only Firmware state for the
-  current device-local signing mode.
+  account identity capability over an approved session while `provisioned`:
+  native Ed25519 when no zkLogin proof is active, or the active zkLogin identity
+  when proof material is active. It reports no delegated public methods and
+  top-level `signing` availability. `signing.authorization` is read-only
+  Firmware state for the current device-local signing mode. While native
+  identity is active, `credentials[]` may advertise common Sui zkLogin
+  `credential_prepare`/`credential_propose` availability.
+- a USB JSONL `get_accounts` request that returns exactly one active Sui
+  account identity over an approved session while `provisioned`: the native
+  Sui Ed25519 account or the locally stored Sui zkLogin identity. It exposes no
+  private material, raw JWT, OAuth token, or proof secret.
 - a USB JSONL `get_approval_history` request that returns bounded persistent
   Firmware-authored signing and policy-update terminal metadata over an
   approved session. It is read-only, stores no raw requests or secrets, and
@@ -141,16 +148,20 @@ The current implementation includes:
   These setup transitions are not exposed as USB JSONL requests.
 - device-local settings flows for `provisioned` devices: human approval input
   mode toggle, signing authorization mode toggle, policy reset to the default
-  reject policy, Change PIN, and Reset. Policy reset, signing-mode changes, and
-  Change PIN require local PIN verification. Change PIN verifies the current
-  stored 6-digit PIN, accepts and repeats a new PIN, and replaces only the
-  salt/PIN verifier. Reset requires the local Settings Reset action plus the
-  stored PIN, wipes root material, active policy, PIN verifier, signing
-  authorization mode, approval history, policy-update terminal marker, human
-  approval input mode setting, runtime session, and provisioning state, and is
-  not exposed as a USB JSONL request. Hardware smoke coverage exists for local
-  reset. Targeted hardware verification remains required after settings or
-  reset UI/state changes.
+  reject policy, Change PIN, and Reset, plus a chain account menu whose current
+  Sui account view displays active identity/proof state and can clear the local
+  zkLogin proof. Policy reset, signing-mode changes, zkLogin proof clear, and
+  Change PIN require local PIN verification. Proof clear wipes only Sui
+  zkLogin proof material, ends the active session, and restores the Sui account
+  view from current device state. Change PIN verifies the current stored
+  6-digit PIN, accepts and repeats a new PIN, and replaces only the salt/PIN
+  verifier. Reset requires the local Settings Reset action plus the stored PIN,
+  wipes root material, active policy, Sui zkLogin proof material, PIN verifier,
+  signing authorization mode, approval history, policy-update terminal marker,
+  human approval input mode setting, runtime session, and provisioning state,
+  and is not exposed as a USB JSONL request. Hardware smoke coverage exists for
+  local reset. Targeted hardware verification remains required after settings
+  or reset UI/state changes.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP
@@ -478,8 +489,9 @@ In the hardware firmware tree:
 
 This target stores the protocol `deviceId`, provisioning state, DEV_PROFILE root
 entropy, committed active policy records, local PIN verifier, human approval
-input mode setting, signing authorization mode, and approval-history ring
-buffer in NVS namespace `agent_q`. The StackChan build preparation step patches the generated firmware
+input mode setting, signing authorization mode, one optional bounded Sui
+zkLogin proof record, and approval-history ring buffer in NVS namespace
+`agent_q`. The StackChan build preparation step patches the generated firmware
 partition table to use a 64 KiB NVS partition; the upstream 16 KiB default is
 not sufficient for the current Agent-Q material set.
 If NVS has `prov_state = provisioned` and valid root entropy but no active
@@ -502,6 +514,7 @@ mode fail closed until reprovisioned.
 | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
 | `sign_auth_mode` | Device-local signing authorization mode; setup initializes it to user and Settings can change it after local PIN verification |
 | `human_approval` | Human approval input mode setting; setup initializes it to `pin`, missing or invalid read fails closed to `pin`, and local reset erases it back to the missing-key default |
+| `sui_zkl_proof` | Bounded Sui zkLogin proof record used only for active account projection and final zkLogin signature-envelope construction; local proof clear, reset, and error-state erase wipe it |
 | `approval_hist` | Fixed-size 32-record binary approval-history ring buffer; local reset and error-state erase wipe it |
 
 Device-local backup phrase setup stores generated phrase text and imported mnemonic

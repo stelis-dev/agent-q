@@ -153,7 +153,7 @@ async function enokiFetchData(
   });
   const body = await response.text();
   if (!response.ok) {
-    throw new Error(enokiErrorMessage(response.status, body));
+    throw new Error(enokiErrorMessage(response.status));
   }
 
   let parsed: unknown;
@@ -207,18 +207,7 @@ function isSupportedProvider(value: unknown): value is EnokiAuthProvider {
   return value === "google" || value === "facebook" || value === "twitch";
 }
 
-function enokiErrorMessage(status: number, body: string): string {
-  try {
-    const parsed = JSON.parse(body);
-    if (isRecord(parsed) && Array.isArray(parsed.errors)) {
-      const first = parsed.errors.find(isRecord);
-      if (first !== undefined && typeof first.message === "string") {
-        return `Enoki API failed (${status}): ${first.message}`;
-      }
-    }
-  } catch {
-    // Fall through to the generic response.
-  }
+function enokiErrorMessage(status: number): string {
   return `Enoki API failed (${status}).`;
 }
 

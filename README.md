@@ -221,9 +221,12 @@ zkLogin is active, and chooses native Ed25519 or zkLogin signature envelope only
 at the final signing step after the existing authorization gate. The independent
 `packages/sample-zklogin-test-web` app exercises this path through
 `@stelis/agent-q-provider-sui/browser` over Web Serial. It keeps Enoki, OAuth,
-and prover work in the browser test layer, submits only bounded proof proposals
-to Agent-Q, and does not add a host-process route, provider management API,
-signer selector, or proof-clear API.
+and prover work in the browser test layer, uses Google OAuth on Sui testnet for
+the current sample flow, submits only bounded proof proposals to Agent-Q, and
+does not add a host-process route, provider management API, signer selector, or
+proof-clear API. The sample does not display JWTs or proof JSON and does not
+write them to browser storage; local `VITE_*` Enoki/OAuth identifiers are public
+browser configuration and are embedded in ignored local Vite build output.
 
 Unsupported chains and unsupported methods fail explicitly. Chains are exposed
 through the shared protocol; Agent-Q does not create separate chain-specific

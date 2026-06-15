@@ -19,7 +19,7 @@ already exposed through that provider:
 
 It does not add host-process routes, provider management APIs, signer selection,
 or a proof-clear API. If zkLogin proof material already exists, clear it locally
-on the device through `Settings > Sui`.
+on the device through `Settings > Accounts > Sui`.
 
 ## Run
 
@@ -31,9 +31,14 @@ For Enoki-backed testing, copy `.env.example` to `.env.local` and set an Enoki
 public API key. Vite exposes `VITE_*` values to browser code, so do not put
 private API keys, OAuth client secrets, JWTs, salts, or signing material in the
 environment file.
+Local `.env*` files are ignored except tracked examples. Vite build output under
+`dist/` is also ignored and contains the public `VITE_*` identifiers embedded in
+client assets, so do not share local build artifacts as evidence that no local
+configuration values exist.
 
-Google login requires an OAuth callback URL registered with the Google OAuth
-client and the Enoki app metadata for that client. The sample includes
+This sample uses Google OAuth only. Google login requires a callback URL
+registered with the Google OAuth client and the Enoki app metadata for that
+client. The sample includes
 `callback.html` for this purpose. Set `VITE_ZKLOGIN_REDIRECT_URI` to that
 callback URL, or leave it unset to use the bundled callback page on the browser
 origin printed by Vite, such as `http://127.0.0.1:5173/callback.html`.
@@ -41,22 +46,22 @@ origin printed by Vite, such as `http://127.0.0.1:5173/callback.html`.
 The default test flow is:
 
 ```text
-connect Agent-Q provider
--> load Enoki app metadata
--> prepare an Enoki nonce with the device preparation public key
--> complete OAuth login
--> create an Enoki proof in the browser
--> submit only the bounded proof proposal through the Agent-Q provider
--> reconnect and read the active account
+connect device
+-> set Enoki configuration for Google OAuth
+-> set up zkLogin with Google
 -> request a sign-only test transaction through sign_transaction
 ```
 
-The Enoki path supports `mainnet`, `testnet`, and `devnet`. It rejects
-`localnet` before calling Enoki. The manual path remains available for a custom
-salt server or prover and ends at the same `credential_propose` provider call.
+The page uses Sui `testnet` for Enoki nonce creation, proof proposal, and the
+transaction signing test. The browser stores pending public Enoki configuration
+and nonce preparation material in `sessionStorage` only until the OAuth callback
+is handled. JWTs and proof JSON still pass through the browser process and
+network requests during the test flow, but the page does not display them, keep
+them in React state, or write them to browser storage.
 
 Address continuity for the Enoki path depends on the Enoki app, OAuth client
-ID, issuer, and subject continuity. Agent-Q does not receive Enoki API keys,
+ID, issuer, and subject continuity. The Agent-Q provider and device proof
+proposal receive only the bounded zkLogin proof fields, not Enoki API keys,
 JWTs, OAuth tokens, salts, or Enoki session state.
 
 ## Build

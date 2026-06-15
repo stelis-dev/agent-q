@@ -31,6 +31,10 @@ struct AgentQLocalPinAuthUiFlowOps {
         const char* display_failure_wipe_reason,
         const char* display_failure_message,
         AgentQMessageKind display_failure_kind);
+    void (*restore_sui_settings)(
+        const char* display_failure_wipe_reason,
+        const char* display_failure_message,
+        AgentQMessageKind display_failure_kind);
     bool (*clear_panel_if_kind)(AgentQUiPanelKind kind, SensitiveUiClearPolicy policy);
     bool (*local_pin_panel_visible)();
     bool (*draw_local_pin_auth_panel)(const char* notice);

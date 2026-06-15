@@ -533,6 +533,19 @@ bool restore_settings_menu_after_pin(
     return true;
 }
 
+bool restore_sui_settings_after_pin(
+    const char* wipe_reason,
+    const char* message,
+    AgentQMessageKind kind,
+    const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    if (ops.restore_sui_settings == nullptr) {
+        return false;
+    }
+    ops.restore_sui_settings(wipe_reason, message, kind);
+    return true;
+}
+
 struct RestoreSettingsContext {
     const AgentQLocalPinAuthUiFlowOps* ops = nullptr;
     const char* wipe_reason = nullptr;
@@ -553,6 +566,19 @@ bool restore_settings_menu_for_transition(void* context)
         *restore_context->ops);
 }
 
+bool restore_sui_settings_for_transition(void* context)
+{
+    const auto* restore_context = static_cast<const RestoreSettingsContext*>(context);
+    if (restore_context == nullptr || restore_context->ops == nullptr) {
+        return false;
+    }
+    return restore_sui_settings_after_pin(
+        restore_context->wipe_reason,
+        restore_context->message,
+        restore_context->kind,
+        *restore_context->ops);
+}
+
 void complete_local_pin_processing_to_settings(
     const AgentQLocalPinAuthUiFlowOps& ops,
     const char* wipe_reason,
@@ -564,6 +590,20 @@ void complete_local_pin_processing_to_settings(
         modal_transition_ops(ops),
         AgentQUiPanelKind::local_pin_auth,
         restore_settings_menu_for_transition,
+        &context);
+}
+
+void complete_local_pin_processing_to_sui_settings(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    const char* wipe_reason,
+    const char* message,
+    AgentQMessageKind kind)
+{
+    RestoreSettingsContext context{&ops, wipe_reason, message, kind};
+    modal_transition_complete_to_next_panel(
+        modal_transition_ops(ops),
+        AgentQUiPanelKind::local_pin_auth,
+        restore_sui_settings_for_transition,
         &context);
 }
 
@@ -1911,7 +1951,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
             wipe_local_pin_auth_scratch(
                 ops,
                 cleared ? "Sui zkLogin proof cleared" : "Sui zkLogin proof clear failed");
-            complete_local_pin_processing_to_settings(
+            complete_local_pin_processing_to_sui_settings(
                 ops,
                 "local settings display allocation failed after Sui clear",
                 cleared ? "Sui proof cleared" : "Sui clear failed",

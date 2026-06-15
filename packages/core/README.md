@@ -49,13 +49,17 @@ scanDevices
   -> connectDevice
   -> getCapabilities
   -> getAccounts
+  -> credentialPrepare? / credentialPropose? for Sui zkLogin setup
   -> signTransaction or signPersonalMessage
   -> disconnectDevice
 ```
 
 Use `getCapabilities` before signing. It reports the device's current signing
 mode and supported signing methods for display and request selection. The
-client cannot choose the device signing mode.
+client cannot choose the device signing mode. Sui zkLogin credential
+preparation/proposal is available only when Firmware reports the credential
+capability for the active native Sui identity; it is not a signer selector or a
+proof-clear path.
 
 ## Entrypoints
 
@@ -104,6 +108,10 @@ client cannot choose the device signing mode.
   personal-message outcomes. It accepts `messageBytes` only for signed
   personal-message results and rejects raw transaction bytes in results, decoded
   internals, session ids, request ids, and secret-like fields.
+- The limited device API facade also exposes `credentialPrepare` and
+  `credentialPropose` for the common Sui zkLogin setup boundary. Firmware
+  accepts those operations only while the native Sui identity is active and
+  stores no raw JWT, OAuth token, provider secret, or signing key material.
 - External inputs do not accept caller-controlled timing fields. The host process
   uses fixed internal transport budgets. Firmware-owned device-local approval
   windows remain 30 seconds; the host process waits with a non-configurable transport

@@ -251,8 +251,8 @@ Allowed:
 - device-local chain account menu with a current Sui account view for active
   identity/proof metadata and local zkLogin proof clear; clearing requires
   stored PIN verification, wipes only the Sui zkLogin proof record, ends the
-  active session, and is not exposed as a protocol, host, Admin, or MCP
-  proof-clear request
+  active session, restores the Sui account view from current device state, and
+  is not exposed as a protocol, host, Admin, or MCP proof-clear request
 - policy update through the Firmware-owned `policy_propose` proposal
   flow, which requires an active session, Firmware validation, and device-local
   approval; the pending approval remains tied to the same session and cannot
@@ -619,8 +619,9 @@ Allowed:
   cleared, Firmware returns `invalid_session`
 - device-local erase-only recovery after destructive on-device confirmation;
   this wipes root material, active policy, PIN verifier, signing authorization
-  mode, human approval input mode setting, approval history, policy-update terminal marker, runtime session, and
-  provisioning state before returning to `unprovisioned`
+  mode, Sui zkLogin proof material, human approval input mode setting, approval
+  history, policy-update terminal marker, runtime session, and provisioning
+  state before returning to `unprovisioned`
 
 Rejected:
 

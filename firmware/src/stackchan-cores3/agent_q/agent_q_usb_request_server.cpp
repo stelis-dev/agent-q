@@ -221,6 +221,7 @@ void finish_sui_zklogin_proposal_error_terminal(
     const char* display_message);
 void start_local_chain_settings_from_touch();
 void show_chain_settings_menu_from_active_settings();
+bool draw_sui_settings_panel_from_current_state();
 void show_sui_settings_from_chain_settings();
 void show_chain_settings_menu_from_sui_settings();
 void start_sui_zklogin_clear_from_sui_settings();
@@ -2177,6 +2178,32 @@ void restore_settings_menu_for_local_pin_auth(
         local_settings_reset_ui_ops());
 }
 
+void restore_sui_settings_for_local_pin_auth(
+    const char* display_failure_wipe_reason,
+    const char* display_failure_message,
+    AgentQMessageKind display_failure_kind)
+{
+    const TickType_t now = xTaskGetTickCount();
+    agent_q::local_reset_begin_settings(
+        agent_q::timeout_window_from_deadline(
+            now,
+            now + pdMS_TO_TICKS(agent_q::kAgentQLocalResetEntryMs)));
+    if (draw_sui_settings_panel_from_current_state()) {
+        return;
+    }
+    wipe_local_reset_scratch(
+        display_failure_wipe_reason != nullptr && display_failure_wipe_reason[0] != '\0'
+            ? display_failure_wipe_reason
+            : "local Sui settings display allocation failed");
+    agent_q::avatar_overlay_show_message(
+        display_failure_message != nullptr && display_failure_message[0] != '\0'
+            ? display_failure_message
+            : "Display error",
+        display_failure_kind,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+}
+
 void log_connect_session_creation_failed_for_local_pin_auth(const char* id)
 {
     ESP_LOGE(kTag, "connect PIN could not create session id: id=%s", id != nullptr ? id : "");
@@ -2229,6 +2256,7 @@ agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops()
         clear_sui_zklogin_proof_for_settings,
         begin_settings_pin_auth_handoff_for_local_pin_auth,
         restore_settings_menu_for_local_pin_auth,
+        restore_sui_settings_for_local_pin_auth,
         clear_agent_q_panel_if_kind,
         local_pin_auth_panel_visible,
         draw_local_pin_auth_panel_for_flow,
@@ -2699,16 +2727,8 @@ void show_chain_settings_menu_from_active_settings()
     }
 }
 
-void show_sui_settings_from_chain_settings()
+bool draw_sui_settings_panel_from_current_state()
 {
-    const agent_q::AgentQLocalResetSnapshot reset =
-        agent_q::local_reset_snapshot(xTaskGetTickCount());
-    if (reset.stage != agent_q::AgentQLocalResetStage::settings_menu ||
-        !agent_q_panel_active(AgentQUiPanelKind::chain_settings_menu)) {
-        ESP_LOGW(kTag, "Stale Sui settings action ignored");
-        return;
-    }
-
     const agent_q::AgentQSuiActiveIdentity identity =
         agent_q::resolve_active_sui_identity();
     const agent_q::AgentQSuiZkLoginProofRecordStatus proof_status =
@@ -2734,7 +2754,20 @@ void show_sui_settings_from_chain_settings()
         proof_hash,
         proof_status != agent_q::AgentQSuiZkLoginProofRecordStatus::missing,
     };
-    if (!agent_q::modal_draw_sui_settings_panel(model)) {
+    return agent_q::modal_draw_sui_settings_panel(model);
+}
+
+void show_sui_settings_from_chain_settings()
+{
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(xTaskGetTickCount());
+    if (reset.stage != agent_q::AgentQLocalResetStage::settings_menu ||
+        !agent_q_panel_active(AgentQUiPanelKind::chain_settings_menu)) {
+        ESP_LOGW(kTag, "Stale Sui settings action ignored");
+        return;
+    }
+
+    if (!draw_sui_settings_panel_from_current_state()) {
         wipe_local_reset_scratch("Sui settings display allocation failed");
         agent_q::avatar_overlay_show_message(
             "Display error",
