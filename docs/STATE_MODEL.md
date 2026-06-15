@@ -79,7 +79,11 @@ or if the stored local PIN verifier is missing or invalid while `provisioned`,
 Firmware reports device `error` and fails closed for normal setup and session
 requests. Detecting the consistency error also clears any active RAM session
 immediately, so a session created before the error is not retained as a stale
-local capability. The current StackChan CoreS3 source does not expose a USB
+local capability. On the current StackChan CoreS3 target, `get_status` performs
+this consistency refresh before reporting status. It is read-like because it
+does not accept host-supplied state changes, but it can fail closed by exposing
+material inconsistency and clearing stale session state. The current StackChan
+CoreS3 source does not expose a USB
 reset or debug recovery request. Its local settings paths are device-local UX
 only: provisioned devices can enter local settings, verify the stored local PIN
 to change the local PIN verifier, or choose Reset, verify the stored local PIN,
@@ -645,6 +649,10 @@ This state is reserved until an unlock model is implemented.
 | `sign_personal_message` | X | X | O (source-wired-not-product-active; user authorization mode only) | X | X | Firmware |
 | policy read | X | X | O | X | X | Firmware |
 | policy update | X | X | O (validated proposal + device-local approval) | X | X | Firmware |
+
+`get_status` is read-like, not a pure cache read: the current target refreshes
+persistent-material consistency before emitting status, and a detected
+inconsistency can fail closed into `error` and clear stale runtime session state.
 
 `O*`: allowed only when the request does not disrupt local setup UI. `S` means
 session cleanup only: Firmware does not require material readiness, but a

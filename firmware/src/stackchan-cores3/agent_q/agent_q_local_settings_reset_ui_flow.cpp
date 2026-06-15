@@ -85,14 +85,6 @@ bool clear_panel_if_kind(
            ops.clear_panel_if_kind(kind, policy);
 }
 
-bool clear_panel_if_local_reset_stage(
-    const AgentQLocalSettingsResetUiFlowOps& ops,
-    SensitiveUiClearPolicy policy = SensitiveUiClearPolicy::wipe)
-{
-    return ops.clear_panel_if_local_reset_stage != nullptr &&
-           ops.clear_panel_if_local_reset_stage(policy);
-}
-
 bool panel_active(
     const AgentQLocalSettingsResetUiFlowOps& ops,
     AgentQUiPanelKind kind)
@@ -152,6 +144,10 @@ struct ResetPinPanelDrawContext {
     const char* notice = nullptr;
 };
 
+struct SettingsPanelDrawContext {
+    const AgentQLocalSettingsResetUiFlowOps* ops = nullptr;
+};
+
 struct ResetCommitResultContext {
     const AgentQLocalSettingsResetUiFlowOps* ops = nullptr;
     const char* message = nullptr;
@@ -174,6 +170,14 @@ bool draw_reset_pin_panel_for_transition(void* context)
            draw_reset_pin_panel(*draw_context->ops, draw_context->notice);
 }
 
+bool draw_settings_menu_panel_for_transition(void* context)
+{
+    const auto* draw_context = static_cast<const SettingsPanelDrawContext*>(context);
+    return draw_context != nullptr &&
+           draw_context->ops != nullptr &&
+           draw_settings_menu_panel(*draw_context->ops);
+}
+
 void show_reset_commit_result_for_transition(void* context)
 {
     const auto* result_context = static_cast<const ResetCommitResultContext*>(context);
@@ -184,6 +188,41 @@ void show_reset_commit_result_for_transition(void* context)
         *result_context->ops,
         result_context->message,
         result_context->kind);
+}
+
+AgentQUiPanelKind panel_kind_for_reset_stage(ResetStage stage)
+{
+    switch (stage) {
+        case ResetStage::settings_menu:
+            return AgentQUiPanelKind::settings_menu;
+        case ResetStage::pin_entry:
+        case ResetStage::pin_verifying:
+        case ResetStage::wiping:
+            return AgentQUiPanelKind::reset_pin_entry;
+        case ResetStage::error_recovery_confirm:
+            return AgentQUiPanelKind::error_recovery;
+        case ResetStage::none:
+        default:
+            return AgentQUiPanelKind::none;
+    }
+}
+
+void complete_panel_to_result(
+    const AgentQLocalSettingsResetUiFlowOps& ops,
+    AgentQUiPanelKind panel,
+    const char* message,
+    AgentQMessageKind kind)
+{
+    ResetCommitResultContext context{&ops, message, kind};
+    if (panel == AgentQUiPanelKind::none) {
+        show_reset_commit_result_for_transition(&context);
+        return;
+    }
+    modal_transition_complete_to_result(
+        modal_transition_ops(ops),
+        panel,
+        show_reset_commit_result_for_transition,
+        &context);
 }
 
 void record_material_failure(
@@ -237,11 +276,11 @@ void local_settings_reset_ui_clear_if_needed(const AgentQLocalSettingsResetUiFlo
             record_material_failure(
                 ops,
                 AgentQPersistentMaterialRuntimeFailure::local_reset_auth_unavailable);
-            clear_panel_if_kind(
+            complete_panel_to_result(
                 ops,
                 AgentQUiPanelKind::reset_pin_entry,
-                SensitiveUiClearPolicy::preserve);
-            show_result(ops, "Auth error", AgentQMessageKind::error);
+                "Auth error",
+                AgentQMessageKind::error);
             return;
         }
         if (!panel_active(ops, AgentQUiPanelKind::reset_pin_entry) &&
@@ -280,9 +319,7 @@ void local_settings_reset_ui_clear_if_needed(const AgentQLocalSettingsResetUiFlo
         return;
     }
 
-    if (active) {
-        clear_panel_if_local_reset_stage(ops);
-    } else {
+    if (!active) {
         wipe_local_reset_scratch(ops, "local reset panel lost");
     }
 
@@ -293,7 +330,11 @@ void local_settings_reset_ui_clear_if_needed(const AgentQLocalSettingsResetUiFlo
         } else if (reset.stage == ResetStage::error_recovery_confirm) {
             timeout_message = "Erase canceled";
         }
-        show_result(ops, timeout_message, AgentQMessageKind::timeout);
+        complete_panel_to_result(
+            ops,
+            active ? panel_kind_for_reset_stage(reset.stage) : AgentQUiPanelKind::none,
+            timeout_message,
+            AgentQMessageKind::timeout);
     }
 }
 
@@ -375,14 +416,19 @@ void local_settings_reset_ui_cancel_reset_from_ui(
         return;
     }
 
-    clear_panel_if_kind(ops, AgentQUiPanelKind::reset_pin_entry);
     local_reset_begin_settings(window_from_now_ms(ops, ops.local_reset_entry_ms));
-    if (!draw_settings_menu_panel(ops)) {
+    SettingsPanelDrawContext draw_context{&ops};
+    if (!modal_transition_complete_to_next_panel(
+            modal_transition_ops(ops),
+            AgentQUiPanelKind::reset_pin_entry,
+            draw_settings_menu_panel_for_transition,
+            &draw_context)) {
         wipe_local_reset_scratch(
             ops,
             "local settings display allocation failed after reset cancel");
-        show_result(
+        complete_panel_to_result(
             ops,
+            AgentQUiPanelKind::reset_pin_entry,
             message != nullptr && message[0] != '\0' ? message : "Reset canceled",
             AgentQMessageKind::error);
     }
@@ -453,9 +499,12 @@ void local_settings_reset_ui_cancel_error_recovery_from_ui(
         return;
     }
 
-    clear_panel_if_kind(ops, AgentQUiPanelKind::error_recovery);
     wipe_local_reset_scratch(ops, "error recovery canceled");
-    show_result(ops, "Erase canceled", AgentQMessageKind::info);
+    complete_panel_to_result(
+        ops,
+        AgentQUiPanelKind::error_recovery,
+        "Erase canceled",
+        AgentQMessageKind::info);
 }
 
 void local_settings_reset_ui_confirm_error_recovery_from_ui(
@@ -591,11 +640,11 @@ void local_settings_reset_ui_handle_reset_pin_submit(
     const TickType_t now = now_or_zero(ops);
     if (!material_ready(ops)) {
         wipe_local_reset_scratch(ops, "local reset material state unavailable");
-        clear_panel_if_kind(
+        complete_panel_to_result(
             ops,
             AgentQUiPanelKind::reset_pin_entry,
-            SensitiveUiClearPolicy::preserve);
-        show_result(ops, "Reset unavailable", AgentQMessageKind::error);
+            "Reset unavailable",
+            AgentQMessageKind::error);
         return;
     }
 
@@ -634,11 +683,11 @@ void local_settings_reset_ui_handle_reset_pin_submit(
         wipe_local_reset_scratch(
             ops,
             "local reset PIN verification display allocation failed");
-        clear_panel_if_kind(
+        complete_panel_to_result(
             ops,
             AgentQUiPanelKind::reset_pin_entry,
-            SensitiveUiClearPolicy::preserve);
-        show_result(ops, "Display error", AgentQMessageKind::error);
+            "Display error",
+            AgentQMessageKind::error);
     }
 }
 
@@ -655,11 +704,11 @@ void local_settings_reset_ui_handle_auth_worker_result(
         wipe_local_reset_scratch(
             ops,
             "local reset material state unavailable during PIN verification");
-        clear_panel_if_kind(
+        complete_panel_to_result(
             ops,
             AgentQUiPanelKind::reset_pin_entry,
-            SensitiveUiClearPolicy::preserve);
-        show_result(ops, "Reset unavailable", AgentQMessageKind::error);
+            "Reset unavailable",
+            AgentQMessageKind::error);
         return;
     }
 
@@ -676,11 +725,11 @@ void local_settings_reset_ui_handle_auth_worker_result(
                 ops,
                 AgentQPersistentMaterialRuntimeFailure::local_reset_auth_unavailable);
             wipe_local_reset_scratch(ops, "local reset PIN verifier unavailable");
-            clear_panel_if_kind(
+            complete_panel_to_result(
                 ops,
                 AgentQUiPanelKind::reset_pin_entry,
-                SensitiveUiClearPolicy::preserve);
-            show_result(ops, "Auth error", AgentQMessageKind::error);
+                "Auth error",
+                AgentQMessageKind::error);
             return;
         case ResetVerifyResult::locked:
             draw_reset_pin_error_or_wipe(

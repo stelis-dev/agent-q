@@ -43,10 +43,11 @@ bool session_read_busy(const AgentQUsbSessionReadHandlerOps& ops, const char* id
 
 bool session_read_payload_delivery_admission_error(
     const AgentQUsbSessionReadHandlerOps& ops,
-    const char* id)
+    const char* id,
+    AgentQUsbOperationType operation)
 {
     return ops.write_payload_delivery_safe_read_admission_error != nullptr &&
-           ops.write_payload_delivery_safe_read_admission_error(id);
+           ops.write_payload_delivery_safe_read_admission_error(id, operation);
 }
 
 bool session_read_session_valid(
@@ -85,6 +86,7 @@ bool guard_session_read_request(
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer,
     const AgentQUsbSessionReadHandlerOps& ops,
+    AgentQUsbOperationType operation,
     const char* invalid_state_message,
     const char* unsupported_fields_message,
     const char** session_id)
@@ -96,7 +98,7 @@ bool guard_session_read_request(
     if (session_read_busy(ops, id)) {
         return false;
     }
-    if (session_read_payload_delivery_admission_error(ops, id)) {
+    if (session_read_payload_delivery_admission_error(ops, id, operation)) {
         return false;
     }
     if (!parse_session_id_or_write_error(id, request, writer, session_id)) {
@@ -321,6 +323,7 @@ void handle_usb_get_capabilities_request(
             request,
             writer,
             ops,
+            AgentQUsbOperationType::get_capabilities,
             "Capabilities are available only after provisioning is complete.",
             "get_capabilities request contains unsupported fields.",
             &session_id)) {
@@ -351,6 +354,7 @@ void handle_usb_get_accounts_request(
             request,
             writer,
             ops,
+            AgentQUsbOperationType::get_accounts,
             "Accounts are available only after provisioning is complete.",
             "get_accounts request contains unsupported fields.",
             &session_id)) {
@@ -380,6 +384,7 @@ void handle_usb_policy_get_request(
             request,
             writer,
             ops,
+            AgentQUsbOperationType::policy_get,
             "Policy is available only after provisioning is complete.",
             "policy_get request contains unsupported fields.",
             &session_id)) {

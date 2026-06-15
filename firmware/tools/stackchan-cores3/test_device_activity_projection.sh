@@ -28,6 +28,8 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${AGENT_Q_DIR}/agent_q_device_activity_projection.cpp" \
   "${AGENT_Q_DIR}/agent_q_device_activity_projection.h" \
+  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_type.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required file: ${required}" >&2
@@ -267,6 +269,7 @@ CPP
   -I"${ARDUINOJSON_ROOT}" \
   "${TMP_DIR}/device_activity_projection_test.cpp" \
   "${AGENT_Q_DIR}/agent_q_device_activity_projection.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
   -o "${TMP_DIR}/device_activity_projection_test"
 
 "${TMP_DIR}/device_activity_projection_test"

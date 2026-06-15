@@ -82,7 +82,7 @@ function parseFirmwarePolicyFieldDescriptors() {
   );
   const descriptors = new Map();
   const rowPattern =
-    /\{"([^"]+)", AgentQCurrentPolicyValueKind::([a-z0-9_]+), (true|false), (true|false), (true|false), (true|false), (true|false), (true|false), (true|false), (true|false)\}/g;
+    /\{"([^"]+)", AgentQCurrentPolicyValueKind::([a-z0-9_]+), AgentQCurrentPolicyWhereTypeRequirement::[a-z0-9_]+, AgentQCurrentPolicyEvaluationKind::[a-z0-9_]+, (true|false), (true|false), (true|false), (true|false), (true|false), (true|false), (true|false), (true|false)\}/g;
   for (const match of source.matchAll(rowPattern)) {
     const [, field, type, ...allowed] = match;
     descriptors.set(field, {

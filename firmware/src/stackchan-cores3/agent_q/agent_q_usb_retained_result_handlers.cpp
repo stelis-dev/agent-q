@@ -63,7 +63,9 @@ void handle_usb_get_result_request(
         return;
     }
     if (ops.write_payload_delivery_retained_result_admission_error != nullptr &&
-        ops.write_payload_delivery_retained_result_admission_error(id)) {
+        ops.write_payload_delivery_retained_result_admission_error(
+            id,
+            AgentQUsbOperationType::get_result)) {
         return;
     }
     const char* session_id = nullptr;
@@ -95,7 +97,9 @@ void handle_usb_ack_result_request(
         return;
     }
     if (ops.write_payload_delivery_retained_result_admission_error != nullptr &&
-        ops.write_payload_delivery_retained_result_admission_error(id)) {
+        ops.write_payload_delivery_retained_result_admission_error(
+            id,
+            AgentQUsbOperationType::ack_result)) {
         return;
     }
     const char* session_id = nullptr;

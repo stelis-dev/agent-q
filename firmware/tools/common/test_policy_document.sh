@@ -60,6 +60,26 @@ void expect(bool condition, const char* label)
 int main()
 {
     expect(strcmp(agent_q::kAgentQCurrentPolicySchema, "agentq.policy") == 0, "current schema name");
+    expect(agent_q::kAgentQCurrentPolicyFieldDescriptorCount == 18, "current field descriptor count");
+    bool saw_token_total_amount = false;
+    for (size_t index = 0; index < agent_q::kAgentQCurrentPolicyFieldDescriptorCount; ++index) {
+        const agent_q::AgentQCurrentPolicyFieldDescriptor& descriptor =
+            agent_q::kAgentQCurrentPolicyFieldDescriptors[index];
+        if (strcmp(descriptor.field, "sui.token_totals_by_type.amount_raw") == 0) {
+            saw_token_total_amount = true;
+            expect(descriptor.where_type_requirement ==
+                       agent_q::AgentQCurrentPolicyWhereTypeRequirement::required,
+                   "token total amount descriptor requires where.type");
+            expect(descriptor.evaluation_kind ==
+                       agent_q::AgentQCurrentPolicyEvaluationKind::sui_token_totals_by_type_amount_raw,
+                   "token total amount descriptor owns evaluator semantic");
+        } else {
+            expect(descriptor.where_type_requirement ==
+                       agent_q::AgentQCurrentPolicyWhereTypeRequirement::forbidden,
+                   "non-selector descriptor forbids where.type");
+        }
+    }
+    expect(saw_token_total_amount, "token total amount descriptor exists");
 
     static const agent_q::AgentQCurrentPolicyNetworkScope networks[] = {
         {

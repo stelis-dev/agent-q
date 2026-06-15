@@ -51,14 +51,6 @@ void log_warn(const AgentQUserSigningReviewUiFlowOps& ops, const char* message)
     }
 }
 
-bool clear_review_panel(const AgentQUserSigningReviewUiFlowOps& ops)
-{
-    return ops.clear_panel_if_kind != nullptr &&
-           ops.clear_panel_if_kind(
-               AgentQUiPanelKind::user_signing_review,
-               SensitiveUiClearPolicy::preserve);
-}
-
 AgentQModalTransitionOps modal_transition_ops(const AgentQUserSigningReviewUiFlowOps& ops)
 {
     return AgentQModalTransitionOps{
@@ -131,6 +123,45 @@ void run_user_signing_then_clear_review_panel(
         modal_transition_ops(ops),
         AgentQUiPanelKind::user_signing_review,
         execute_user_signing_for_transition,
+        &context);
+}
+
+struct DrawLocalPinContext {
+    const AgentQUserSigningReviewUiFlowOps* ops = nullptr;
+};
+
+struct UserSigningTerminalContext {
+    const AgentQUserSigningReviewUiFlowOps* ops = nullptr;
+    const char* request_id = nullptr;
+};
+
+bool draw_local_pin_for_transition(void* context)
+{
+    const auto* draw_context = static_cast<const DrawLocalPinContext*>(context);
+    return draw_context != nullptr &&
+           draw_context->ops != nullptr &&
+           draw_context->ops->draw_local_pin_auth_panel != nullptr &&
+           draw_context->ops->draw_local_pin_auth_panel();
+}
+
+void finish_user_signing_terminal_for_transition(void* context)
+{
+    const auto* terminal_context = static_cast<const UserSigningTerminalContext*>(context);
+    if (terminal_context == nullptr || terminal_context->ops == nullptr) {
+        return;
+    }
+    finish_terminal(*terminal_context->ops, terminal_context->request_id);
+}
+
+void complete_review_to_terminal(
+    const AgentQUserSigningReviewUiFlowOps& ops,
+    const char* request_id)
+{
+    UserSigningTerminalContext context{&ops, request_id};
+    modal_transition_complete_to_result(
+        modal_transition_ops(ops),
+        AgentQUiPanelKind::user_signing_review,
+        finish_user_signing_terminal_for_transition,
         &context);
 }
 
@@ -214,9 +245,12 @@ void user_signing_review_ui_accept(const AgentQUserSigningReviewUiFlowOps& ops)
         return;
     }
 
-    clear_review_panel(ops);
-    if (ops.draw_local_pin_auth_panel == nullptr ||
-        !ops.draw_local_pin_auth_panel()) {
+    DrawLocalPinContext draw_context{&ops};
+    if (!modal_transition_complete_to_next_panel(
+            modal_transition_ops(ops),
+            AgentQUiPanelKind::user_signing_review,
+            draw_local_pin_for_transition,
+            &draw_context)) {
         if (ops.cancel_for_pin_loss != nullptr) {
             ops.cancel_for_pin_loss();
         }
@@ -242,7 +276,6 @@ void user_signing_review_ui_reject(const AgentQUserSigningReviewUiFlowOps& ops)
         return;
     }
 
-    clear_review_panel(ops);
     const AgentQUserSigningConfirmationResult result =
         ops.record_device_rejected != nullptr
             ? ops.record_device_rejected()
@@ -256,7 +289,7 @@ void user_signing_review_ui_reject(const AgentQUserSigningReviewUiFlowOps& ops)
             "Signing unavailable");
         return;
     }
-    finish_terminal(ops, current.request_id);
+    complete_review_to_terminal(ops, current.request_id);
 }
 
 void user_signing_review_ui_clear_if_needed(const AgentQUserSigningReviewUiFlowOps& ops)
@@ -295,8 +328,7 @@ void user_signing_review_ui_clear_if_needed(const AgentQUserSigningReviewUiFlowO
     }
     if (timeout_result == AgentQUserSigningTransitionResult::ok ||
         terminal_pending(ops)) {
-        clear_review_panel(ops);
-        finish_terminal(ops, current.request_id);
+        complete_review_to_terminal(ops, current.request_id);
         return;
     }
 

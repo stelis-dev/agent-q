@@ -86,31 +86,23 @@ bool operator_uses_single_value(AgentQCurrentPolicyOperator op)
            op == AgentQCurrentPolicyOperator::not_contains;
 }
 
-bool condition_field_requires_where_type(const char* field)
-{
-    return string_eq(field, "sui.token_totals_by_type.amount_raw");
-}
-
-bool condition_field_allows_where_type(const char* field)
-{
-    return condition_field_requires_where_type(field);
-}
-
 bool policy_type_tag_selector_valid(const char* value)
 {
     return agent_q_current_policy_value_valid(AgentQCurrentPolicyValueKind::string, value) &&
            string_contains(value, "::");
 }
 
-bool validate_condition_where_type(const char* field, const char* where_type)
+bool validate_condition_where_type(
+    const AgentQCurrentPolicyFieldDescriptor& descriptor,
+    const char* where_type)
 {
-    if (condition_field_requires_where_type(field)) {
-        return policy_type_tag_selector_valid(where_type);
+    switch (descriptor.where_type_requirement) {
+        case AgentQCurrentPolicyWhereTypeRequirement::required:
+            return policy_type_tag_selector_valid(where_type);
+        case AgentQCurrentPolicyWhereTypeRequirement::forbidden:
+            return !string_present(where_type);
     }
-    if (string_present(where_type)) {
-        return false;
-    }
-    return !condition_field_allows_where_type(field);
+    return false;
 }
 
 uint8_t encode_action(AgentQCurrentPolicyAction action)
@@ -368,7 +360,7 @@ bool validate_condition_shape(const AgentQCurrentPolicyCondition& condition)
     if (operator_uses_single_value(condition.op) && condition.value_count != 1) {
         return false;
     }
-    if (!validate_condition_where_type(condition.field, condition.where_type)) {
+    if (!validate_condition_where_type(*descriptor, condition.where_type)) {
         return false;
     }
     for (size_t index = 0; index < condition.value_count; ++index) {
@@ -537,7 +529,7 @@ bool validate_canonical_condition_shape(
         }
     }
     const char* where_type = condition.has_where_type ? get_string(policy, condition.where_type) : nullptr;
-    if (!validate_condition_where_type(field, where_type)) {
+    if (!validate_condition_where_type(*descriptor, where_type)) {
         return false;
     }
     return true;
@@ -616,24 +608,24 @@ bool validate_canonical_shape(const AgentQCurrentPolicyCanonicalDocument& policy
 }  // namespace
 
 const AgentQCurrentPolicyFieldDescriptor kAgentQCurrentPolicyFieldDescriptors[] = {
-    {"sui.gas_budget_raw", AgentQCurrentPolicyValueKind::u64_decimal, true, false, false, true, false, false, false, false},
-    {"sui.gas_price_raw", AgentQCurrentPolicyValueKind::u64_decimal, true, false, false, true, false, false, false, false},
-    {"sui.gas_owner", AgentQCurrentPolicyValueKind::string, true, true, true, false, false, false, false, false},
-    {"sui.sponsored", AgentQCurrentPolicyValueKind::bool_string, true, false, false, false, false, false, false, false},
-    {"sui.command_count", AgentQCurrentPolicyValueKind::u64_decimal, true, false, false, true, false, false, false, false},
-    {"sui.command_kinds", AgentQCurrentPolicyValueKind::string, false, false, false, false, true, true, true, true},
-    {"sui.move_call_packages", AgentQCurrentPolicyValueKind::string, false, false, false, false, true, true, true, true},
-    {"sui.move_call_modules", AgentQCurrentPolicyValueKind::string, false, false, false, false, true, true, true, true},
-    {"sui.move_call_functions", AgentQCurrentPolicyValueKind::string, false, false, false, false, true, true, true, true},
-    {"sui.publish_present", AgentQCurrentPolicyValueKind::bool_string, true, false, false, false, false, false, false, false},
-    {"sui.upgrade_present", AgentQCurrentPolicyValueKind::bool_string, true, false, false, false, false, false, false, false},
-    {"sui.recipient_addresses", AgentQCurrentPolicyValueKind::string, false, false, false, false, true, true, true, true},
-    {"sui.pure_address_arguments", AgentQCurrentPolicyValueKind::string, false, false, false, false, true, true, false, true},
-    {"sui.token_sources.type", AgentQCurrentPolicyValueKind::string, true, true, true, false, false, false, false, false},
-    {"sui.token_sources.source", AgentQCurrentPolicyValueKind::string, true, true, false, false, false, false, false, false},
-    {"sui.token_sources.amount_raw", AgentQCurrentPolicyValueKind::u64_decimal, true, false, false, true, false, false, false, false},
-    {"sui.token_totals_by_type.amount_raw", AgentQCurrentPolicyValueKind::u64_decimal, true, false, false, true, false, false, false, false},
-    {"sui.token_unknown_amount_present", AgentQCurrentPolicyValueKind::bool_string, true, false, false, false, false, false, false, false},
+    {"sui.gas_budget_raw", AgentQCurrentPolicyValueKind::u64_decimal, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_gas_budget_raw, true, false, false, true, false, false, false, false},
+    {"sui.gas_price_raw", AgentQCurrentPolicyValueKind::u64_decimal, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_gas_price_raw, true, false, false, true, false, false, false, false},
+    {"sui.gas_owner", AgentQCurrentPolicyValueKind::string, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_gas_owner, true, true, true, false, false, false, false, false},
+    {"sui.sponsored", AgentQCurrentPolicyValueKind::bool_string, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_sponsored, true, false, false, false, false, false, false, false},
+    {"sui.command_count", AgentQCurrentPolicyValueKind::u64_decimal, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_command_count, true, false, false, true, false, false, false, false},
+    {"sui.command_kinds", AgentQCurrentPolicyValueKind::string, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_command_kinds, false, false, false, false, true, true, true, true},
+    {"sui.move_call_packages", AgentQCurrentPolicyValueKind::string, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_move_call_packages, false, false, false, false, true, true, true, true},
+    {"sui.move_call_modules", AgentQCurrentPolicyValueKind::string, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_move_call_modules, false, false, false, false, true, true, true, true},
+    {"sui.move_call_functions", AgentQCurrentPolicyValueKind::string, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_move_call_functions, false, false, false, false, true, true, true, true},
+    {"sui.publish_present", AgentQCurrentPolicyValueKind::bool_string, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_publish_present, true, false, false, false, false, false, false, false},
+    {"sui.upgrade_present", AgentQCurrentPolicyValueKind::bool_string, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_upgrade_present, true, false, false, false, false, false, false, false},
+    {"sui.recipient_addresses", AgentQCurrentPolicyValueKind::string, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_recipient_addresses, false, false, false, false, true, true, true, true},
+    {"sui.pure_address_arguments", AgentQCurrentPolicyValueKind::string, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_pure_address_arguments, false, false, false, false, true, true, false, true},
+    {"sui.token_sources.type", AgentQCurrentPolicyValueKind::string, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_token_sources_type, true, true, true, false, false, false, false, false},
+    {"sui.token_sources.source", AgentQCurrentPolicyValueKind::string, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_token_sources_source, true, true, false, false, false, false, false, false},
+    {"sui.token_sources.amount_raw", AgentQCurrentPolicyValueKind::u64_decimal, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_token_sources_amount_raw, true, false, false, true, false, false, false, false},
+    {"sui.token_totals_by_type.amount_raw", AgentQCurrentPolicyValueKind::u64_decimal, AgentQCurrentPolicyWhereTypeRequirement::required, AgentQCurrentPolicyEvaluationKind::sui_token_totals_by_type_amount_raw, true, false, false, true, false, false, false, false},
+    {"sui.token_unknown_amount_present", AgentQCurrentPolicyValueKind::bool_string, AgentQCurrentPolicyWhereTypeRequirement::forbidden, AgentQCurrentPolicyEvaluationKind::sui_token_unknown_amount_present, true, false, false, false, false, false, false, false},
 };
 
 const size_t kAgentQCurrentPolicyFieldDescriptorCount =

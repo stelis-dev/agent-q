@@ -261,8 +261,13 @@ bool write_busy(const char* id)
     return g_busy;
 }
 
-bool write_payload_admission_error(const char* id)
+bool write_payload_admission_error(
+    const char* id,
+    agent_q::AgentQUsbOperationType operation)
 {
+    assert(operation == agent_q::AgentQUsbOperationType::get_capabilities ||
+           operation == agent_q::AgentQUsbOperationType::get_accounts ||
+           operation == agent_q::AgentQUsbOperationType::policy_get);
     g_payload_admission_calls += 1;
     g_last_id = id;
     if (g_payload_admission_error) {

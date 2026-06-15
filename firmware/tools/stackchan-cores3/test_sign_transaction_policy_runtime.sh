@@ -36,6 +36,12 @@ for required in \
   fi
 done
 
+if grep -Eq 'string_eq\(condition\.field, "sui\.' \
+  "${COMMON_ROOT}/policy/agent_q_policy_evaluator.cpp"; then
+  echo "Policy evaluator must dispatch through current policy field descriptors" >&2
+  exit 1
+fi
+
 CXX_BIN="${CXX:-c++}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sign-transaction-policy-runtime.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT

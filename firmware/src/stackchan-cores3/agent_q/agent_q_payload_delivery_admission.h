@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent_q_payload_delivery_operation_kind.h"
 #include "agent_q_payload_delivery_store.h"
 
 namespace agent_q {
@@ -35,21 +36,6 @@ enum class AgentQPayloadDeliveryAdmissionReason {
     invalid_consumer_session,
     invalid_consumer_payload_ref,
     missing_active_payload,
-};
-
-enum class AgentQPayloadDeliveryOperationKind {
-    safe_read,
-    retained_result_read_cleanup,
-    payload_upload_begin,
-    payload_upload_chunk,
-    payload_upload_finish,
-    payload_upload_abort,
-    sign_transaction,
-    sign_personal_message,
-    policy_propose,
-    connect,
-    identify_device,
-    disconnect,
 };
 
 struct AgentQPayloadDeliveryOperationAdmissionInput {

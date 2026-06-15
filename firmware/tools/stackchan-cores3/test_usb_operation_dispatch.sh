@@ -25,6 +25,8 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_dispatch.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_dispatch.h" \
+  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_type.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -37,6 +39,14 @@ done
 CXX_BIN="${CXX:-c++}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-operation-dispatch.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
+
+mkdir -p "${TMP_DIR}/freertos"
+cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
+#pragma once
+#include <stdint.h>
+using TickType_t = uint32_t;
+#define pdMS_TO_TICKS(ms) (ms)
+H
 
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <ArduinoJson.h>
@@ -255,10 +265,12 @@ int main()
 CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
+  -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${AGENT_Q_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_dispatch.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

@@ -190,6 +190,10 @@ Flow rules:
 
 - `get_status` can be called before a session exists.
 - `get_status` is the transport handshake used to identify Firmware candidates.
+- `get_status` is read-like but not a pure cache read on Firmware. The current
+  StackChan CoreS3 target refreshes persistent-material consistency before
+  reporting status, and that refresh can fail closed by reporting `error` and
+  clearing stale runtime session state when stored material is inconsistent.
 - If multiple Firmware devices are connected, the host process must not silently choose
   one. the host process should request Firmware devices to display short identification
   codes, then use the user's selection to choose one active device.
@@ -727,8 +731,9 @@ Connect rules:
   material display, or sensitive local PIN/reset/settings subflow is already
   open. Idle target Settings menus are local UI and do not by themselves end the
   active session; existing session-scoped requests may still proceed when they
-  do not mutate the Settings flow. `get_status` remains read-only and must not
-  trigger or change approval UI.
+  do not mutate the Settings flow. `get_status` remains read-like: it may
+  refresh persistent-material consistency as described above, but it must not
+  trigger, change, or clear approval or Settings UI.
 
 ## Disconnect
 
@@ -1952,6 +1957,13 @@ Response outcomes:
 update flow because another sensitive local flow or policy update is active. It
 is not a `policy_propose_result` status and is not stored as policy-update
 history.
+
+`policy_propose_result` is not a buffered signing result. `get_result` and
+`ack_result` remain scoped to retained `sign_result` recovery for
+`sign_transaction` and `sign_personal_message`. Policy-update outcomes are
+delivered as the `policy_propose` response and, where recordable, through the
+policy-update approval-history and persistent-material consistency contracts
+defined below.
 
 Policy update history:
 

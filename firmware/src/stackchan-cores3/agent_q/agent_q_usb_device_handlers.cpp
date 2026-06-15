@@ -51,7 +51,9 @@ void handle_usb_get_status_request(
         return;
     }
     if (ops.write_payload_delivery_safe_read_admission_error != nullptr &&
-        ops.write_payload_delivery_safe_read_admission_error(id)) {
+        ops.write_payload_delivery_safe_read_admission_error(
+            id,
+            AgentQUsbOperationType::get_status)) {
         return;
     }
     if (ops.refresh_persistent_material_consistency != nullptr) {

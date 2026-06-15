@@ -4,6 +4,7 @@
 
 #include <ArduinoJson.h>
 
+#include "agent_q_usb_operation_type.h"
 #include "agent_q_usb_operation_response_writer.h"
 #include "agent_q_usb_response_writer.h"
 
@@ -11,7 +12,9 @@ namespace agent_q {
 
 struct AgentQUsbGetStatusHandlerOps {
     bool (*refresh_persistent_material_consistency)();
-    bool (*write_payload_delivery_safe_read_admission_error)(const char* id);
+    bool (*write_payload_delivery_safe_read_admission_error)(
+        const char* id,
+        AgentQUsbOperationType operation);
     AgentQUsbDeviceResponseInfo (*device_response_info)();
 };
 

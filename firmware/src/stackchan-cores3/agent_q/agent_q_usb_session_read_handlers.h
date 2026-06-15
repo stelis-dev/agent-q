@@ -5,6 +5,7 @@
 #include "policy/agent_q_policy_document.h"
 #include "agent_q_signing_mode.h"
 #include "agent_q_sui_account_store.h"
+#include "agent_q_usb_operation_type.h"
 #include "agent_q_usb_operation_response_writer.h"
 
 namespace agent_q {
@@ -12,7 +13,9 @@ namespace agent_q {
 struct AgentQUsbSessionReadHandlerOps {
     bool (*material_ready)();
     bool (*write_busy_if_pending_or_local_flow_active)(const char* id);
-    bool (*write_payload_delivery_safe_read_admission_error)(const char* id);
+    bool (*write_payload_delivery_safe_read_admission_error)(
+        const char* id,
+        AgentQUsbOperationType operation);
     bool (*require_active_matching_session)(const char* id, const char* session_id);
     bool (*read_signing_mode)(AgentQSigningAuthorizationMode* mode);
     SuiAccountDerivationResult (*derive_sui_account)(

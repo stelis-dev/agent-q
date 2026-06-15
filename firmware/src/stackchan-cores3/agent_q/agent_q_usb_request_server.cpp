@@ -64,6 +64,7 @@
 #include "agent_q_usb_device_handlers.h"
 #include "agent_q_usb_disconnect_handler.h"
 #include "agent_q_usb_operation_dispatch.h"
+#include "agent_q_usb_operation_manifest.h"
 #include "agent_q_usb_operation_response_writer.h"
 #include "agent_q_usb_policy_propose_handler.h"
 #include "agent_q_usb_payload_upload_handlers.h"
@@ -173,7 +174,7 @@ bool provisioned_material_ready();
 bool agent_q_ui_idle_for_local_settings();
 bool write_busy_if_pending_or_local_flow_active_for_operation(
     const char* id,
-    agent_q::AgentQPayloadDeliveryOperationKind operation);
+    agent_q::AgentQUsbOperationType operation);
 agent_q::AgentQPersistentMaterialOps persistent_material_ops();
 agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops();
 agent_q::AgentQLocalSettingsResetUiFlowOps local_settings_reset_ui_ops();
@@ -182,8 +183,6 @@ const agent_q::AgentQPolicyUpdateReviewUiFlowOps& policy_update_review_ui_flow_o
 const agent_q::AgentQUserSigningReviewUiFlowOps& user_signing_review_ui_flow_ops();
 bool clear_agent_q_panel_if_kind(
     AgentQUiPanelKind expected_kind,
-    SensitiveUiClearPolicy policy = SensitiveUiClearPolicy::wipe);
-bool clear_agent_q_panel_if_local_reset_stage(
     SensitiveUiClearPolicy policy = SensitiveUiClearPolicy::wipe);
 void clear_connect_review_state();
 void cancel_policy_update_after_session_loss(const char* log_reason);
@@ -1069,11 +1068,17 @@ bool user_signing_ingress_busy()
 
 bool unrelated_user_signing_ingress_busy()
 {
+    const agent_q::AgentQUsbOperationManifestEntry* entry =
+        agent_q::usb_operation_manifest_entry(
+            agent_q::AgentQUsbOperationType::sign_personal_message);
+    if (entry == nullptr) {
+        return true;
+    }
     const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
         agent_q::payload_delivery_admit_operation(
             agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
                 current_timeout_tick(),
-                agent_q::AgentQPayloadDeliveryOperationKind::sign_personal_message,
+                entry->payload_delivery_operation,
                 nullptr,
                 false,
                 nullptr,
@@ -1084,13 +1089,22 @@ bool unrelated_user_signing_ingress_busy()
 
 bool write_payload_delivery_operation_busy(
     const char* id,
-    agent_q::AgentQPayloadDeliveryOperationKind operation)
+    agent_q::AgentQUsbOperationType operation)
 {
+    const agent_q::AgentQUsbOperationManifestEntry* entry =
+        agent_q::usb_operation_manifest_entry(operation);
+    if (entry == nullptr) {
+        agent_q::usb_response_write_error(
+            id,
+            "unsupported_type",
+            "Unsupported request type.");
+        return true;
+    }
     const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
         agent_q::payload_delivery_admit_operation(
             agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
                 current_timeout_tick(),
-                operation,
+                entry->payload_delivery_operation,
                 nullptr,
                 false,
                 nullptr,
@@ -1109,30 +1123,41 @@ bool write_payload_delivery_identify_device_busy(const char* id)
 {
     return write_busy_if_pending_or_local_flow_active_for_operation(
         id,
-        agent_q::AgentQPayloadDeliveryOperationKind::identify_device);
+        agent_q::AgentQUsbOperationType::identify_device);
 }
 
 bool write_payload_delivery_connect_busy(const char* id)
 {
     return write_busy_if_pending_or_local_flow_active_for_operation(
         id,
-        agent_q::AgentQPayloadDeliveryOperationKind::connect);
+        agent_q::AgentQUsbOperationType::connect);
 }
 
 bool write_payload_delivery_policy_propose_busy(const char* id)
 {
     return write_busy_if_pending_or_local_flow_active_for_operation(
         id,
-        agent_q::AgentQPayloadDeliveryOperationKind::policy_propose);
+        agent_q::AgentQUsbOperationType::policy_propose);
 }
 
-bool write_payload_delivery_disconnect_admission_error(const char* id)
+bool write_payload_delivery_disconnect_admission_error(
+    const char* id,
+    agent_q::AgentQUsbOperationType operation)
 {
+    const agent_q::AgentQUsbOperationManifestEntry* entry =
+        agent_q::usb_operation_manifest_entry(operation);
+    if (entry == nullptr) {
+        agent_q::usb_response_write_error(
+            id,
+            "unsupported_type",
+            "Unsupported request type.");
+        return true;
+    }
     const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
         agent_q::payload_delivery_admit_operation(
             agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
                 current_timeout_tick(),
-                agent_q::AgentQPayloadDeliveryOperationKind::disconnect,
+                entry->payload_delivery_operation,
                 nullptr,
                 false,
                 nullptr,
@@ -1147,13 +1172,24 @@ bool write_payload_delivery_disconnect_admission_error(const char* id)
     return true;
 }
 
-bool write_payload_delivery_safe_read_admission_error(const char* id)
+bool write_payload_delivery_safe_read_admission_error(
+    const char* id,
+    agent_q::AgentQUsbOperationType operation)
 {
+    const agent_q::AgentQUsbOperationManifestEntry* entry =
+        agent_q::usb_operation_manifest_entry(operation);
+    if (entry == nullptr) {
+        agent_q::usb_response_write_error(
+            id,
+            "unsupported_type",
+            "Unsupported request type.");
+        return true;
+    }
     const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
         agent_q::payload_delivery_admit_operation(
             agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
                 current_timeout_tick(),
-                agent_q::AgentQPayloadDeliveryOperationKind::safe_read,
+                entry->payload_delivery_operation,
                 nullptr,
                 false,
                 nullptr,
@@ -1168,13 +1204,24 @@ bool write_payload_delivery_safe_read_admission_error(const char* id)
     return true;
 }
 
-bool write_payload_delivery_retained_result_admission_error(const char* id)
+bool write_payload_delivery_retained_result_admission_error(
+    const char* id,
+    agent_q::AgentQUsbOperationType operation)
 {
+    const agent_q::AgentQUsbOperationManifestEntry* entry =
+        agent_q::usb_operation_manifest_entry(operation);
+    if (entry == nullptr) {
+        agent_q::usb_response_write_error(
+            id,
+            "unsupported_type",
+            "Unsupported request type.");
+        return true;
+    }
     const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
         agent_q::payload_delivery_admit_operation(
             agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
                 current_timeout_tick(),
-                agent_q::AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup,
+                entry->payload_delivery_operation,
                 nullptr,
                 false,
                 nullptr,
@@ -1230,7 +1277,7 @@ bool write_busy_if_pending_or_local_flow_active(
 
 bool write_busy_if_pending_or_local_flow_active_for_operation(
     const char* id,
-    agent_q::AgentQPayloadDeliveryOperationKind operation)
+    agent_q::AgentQUsbOperationType operation)
 {
     return write_busy_if_pending_or_local_flow_active(id, false, true) ||
            write_payload_delivery_operation_busy(id, operation);
@@ -1571,18 +1618,6 @@ bool clear_agent_q_panel_if_kind(AgentQUiPanelKind expected_kind, SensitiveUiCle
     return true;
 }
 
-bool clear_agent_q_panel_if_local_reset_stage(SensitiveUiClearPolicy policy)
-{
-    LvglLockGuard lock;
-    const AgentQUiPanelKind panel_kind = agent_q::drawing_surface_panel_kind_locked();
-    if (agent_q::drawing_surface_panel_locked() == nullptr ||
-        !local_reset_panel_matches_stage(panel_kind)) {
-        return false;
-    }
-    clear_panel_locked(policy);
-    return true;
-}
-
 void clear_request_ui_for_identification()
 {
     agent_q::avatar_overlay_clear();
@@ -1809,7 +1844,6 @@ agent_q::AgentQLocalSettingsResetUiFlowOps local_settings_reset_ui_ops()
         agent_q_panel_active,
         local_settings_reset_ui_panel_active,
         clear_agent_q_panel_if_kind,
-        clear_agent_q_panel_if_local_reset_stage,
         agent_q::modal_draw_settings_menu_panel,
         agent_q::modal_draw_error_recovery_panel,
         agent_q::modal_draw_reset_pin_panel,
@@ -2843,14 +2877,6 @@ void handle_connect_request(
 
 const agent_q::AgentQUsbRetainedResultHandlerOps& retained_result_handler_ops()
 {
-    static_assert(
-        agent_q::usb_operation_is_retained_result_read_cleanup(
-            agent_q::AgentQUsbOperationType::get_result),
-        "get_result must remain a retained-result read route.");
-    static_assert(
-        agent_q::usb_operation_is_retained_result_read_cleanup(
-            agent_q::AgentQUsbOperationType::ack_result),
-        "ack_result must remain a retained-result cleanup route.");
     static const agent_q::AgentQUsbRetainedResultHandlerOps ops = {
         provisioned_material_ready,
         write_payload_delivery_retained_result_admission_error,

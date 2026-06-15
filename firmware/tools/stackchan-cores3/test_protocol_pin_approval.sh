@@ -29,12 +29,76 @@ check_modal_transition_owner_present() {
     exit 1
   fi
   if ! grep -q 'modal_transition_complete_processing_to_result' "${MODAL_TRANSITION_SOURCE}" ||
+     ! grep -q 'modal_transition_complete_to_next_panel' "${MODAL_TRANSITION_SOURCE}" ||
      ! grep -q 'modal_transition_run_work_then_clear_panel' "${MODAL_TRANSITION_SOURCE}"; then
-    echo "FAILED: ModalTransitionOwner must own processing-to-result and work-then-clear transitions" >&2
+    echo "FAILED: ModalTransitionOwner must own next-panel, processing-to-result, and work-then-clear transitions" >&2
     exit 1
   fi
   if ! grep -q 'agent_q_modal_transition.h' "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
     echo "FAILED: local PIN UI flow must use ModalTransitionOwner" >&2
+    exit 1
+  fi
+}
+
+check_modal_transition_next_panel_order() {
+  local snippet="${TMP_DIR}/modal_transition_complete_to_next_panel.cpp"
+  local draw_line
+  local clear_line
+
+  awk '
+    /bool modal_transition_complete_to_next_panel\(/ { in_fn = 1 }
+    in_fn { print }
+    in_fn && /^}/ { exit }
+  ' "${MODAL_TRANSITION_SOURCE}" >"${snippet}"
+
+  draw_line="$(grep -En 'draw_next\(context\)' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  clear_line="$(grep -En 'modal_transition_clear_panel_after_work' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+
+  if [[ -z "${draw_line}" || -z "${clear_line}" || "${draw_line}" -ge "${clear_line}" ]]; then
+    echo "FAILED: next-panel transition must prepare the next panel before clearing the current panel" >&2
+    echo "draw_line=${draw_line:-missing} clear_line=${clear_line:-missing}" >&2
+    exit 1
+  fi
+}
+
+check_settings_completion_uses_transition_owner() {
+  local settings_snippet="${TMP_DIR}/complete_local_pin_processing_to_settings.cpp"
+  local commit_snippet="${TMP_DIR}/local_pin_auth_ui_commit_setting_if_ready.cpp"
+  local prepare_snippet="${TMP_DIR}/local_pin_auth_ui_handle_prepare_worker_result.cpp"
+
+  awk '
+    /void complete_local_pin_processing_to_settings\(/ { in_fn = 1 }
+    in_fn { print }
+    in_fn && /^}/ { exit }
+  ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${settings_snippet}"
+
+  if ! grep -q 'modal_transition_complete_to_next_panel' "${settings_snippet}"; then
+    echo "FAILED: Settings return must route through ModalTransitionOwner next-panel transition" >&2
+    exit 1
+  fi
+
+  awk '
+    /void local_pin_auth_ui_commit_setting_if_ready\(/ { in_fn = 1 }
+    in_fn { print }
+    in_fn && /^}/ { exit }
+  ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${commit_snippet}"
+
+  awk '
+    /void local_pin_auth_ui_handle_prepare_worker_result\(/ { in_fn = 1 }
+    in_fn { print }
+    in_fn && /^}/ { exit }
+  ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${prepare_snippet}"
+
+  if grep -q 'modal_transition_clear_panel_after_work' "${commit_snippet}" ||
+     grep -q 'modal_transition_clear_panel_after_work' "${prepare_snippet}"; then
+    echo "FAILED: Settings commit completion must not clear the PIN panel before preparing Settings/result UI" >&2
+    exit 1
+  fi
+}
+
+check_no_flow_local_pin_clear_helper() {
+  if grep -Eq '(^|[[:space:]])clear_local_pin_panel\(' "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
+    echo "FAILED: local PIN UI flow must not reintroduce flow-local panel clearing" >&2
     exit 1
   fi
 }
@@ -481,3 +545,6 @@ check_local_pin_worker_timeout_order
 check_settings_policy_reset_keeps_panel_until_store
 check_policy_update_keeps_panel_until_commit
 check_user_signing_keeps_panel_until_signing_work
+check_modal_transition_next_panel_order
+check_settings_completion_uses_transition_owner
+check_no_flow_local_pin_clear_helper

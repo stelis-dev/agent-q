@@ -142,7 +142,7 @@ const char* token_source_kind_name(SuiOfflinePolicyTokenSourceKind value)
 
 bool evaluate_all_token_source_strings(
     const SuiOfflinePolicyConditionFacts& facts,
-    const char* field,
+    AgentQCurrentPolicyEvaluationKind evaluation_kind,
     AgentQCurrentPolicyOperator op,
     const char* const* values,
     size_t value_count)
@@ -153,12 +153,15 @@ bool evaluate_all_token_source_strings(
     for (uint16_t index = 0; index < facts.token_source_count; ++index) {
         const SuiOfflinePolicyTokenSourceFact& source = facts.token_sources[index];
         const char* actual = nullptr;
-        if (string_eq(field, "sui.token_sources.type")) {
-            actual = source.type_tag;
-        } else if (string_eq(field, "sui.token_sources.source")) {
-            actual = token_source_kind_name(source.source);
-        } else {
-            return false;
+        switch (evaluation_kind) {
+            case AgentQCurrentPolicyEvaluationKind::sui_token_sources_type:
+                actual = source.type_tag;
+                break;
+            case AgentQCurrentPolicyEvaluationKind::sui_token_sources_source:
+                actual = token_source_kind_name(source.source);
+                break;
+            default:
+                return false;
         }
         if (!evaluate_scalar(actual, op, values, value_count)) {
             return false;
@@ -221,71 +224,61 @@ bool evaluate_condition(
         condition.value_count == 0) {
         return false;
     }
-    if (string_eq(condition.field, "sui.gas_budget_raw")) {
-        return evaluate_scalar(facts.gas_budget_raw, condition.op, condition.values, condition.value_count);
+    const AgentQCurrentPolicyFieldDescriptor* descriptor =
+        agent_q_current_policy_find_field_descriptor(condition.field);
+    if (descriptor == nullptr) {
+        return false;
     }
-    if (string_eq(condition.field, "sui.gas_price_raw")) {
-        return evaluate_scalar(facts.gas_price_raw, condition.op, condition.values, condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.gas_owner")) {
-        return evaluate_scalar(facts.gas_owner, condition.op, condition.values, condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.sponsored")) {
-        return evaluate_scalar(bool_string(facts.sponsored), condition.op, condition.values, condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.command_count")) {
-        return evaluate_scalar(facts.command_count, condition.op, condition.values, condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.command_kinds")) {
-        return evaluate_string_set(facts.command_kinds, condition.op, condition.values, condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.move_call_packages")) {
-        return evaluate_string_set(facts.move_call_packages, condition.op, condition.values, condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.move_call_modules")) {
-        return evaluate_string_set(facts.move_call_modules, condition.op, condition.values, condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.move_call_functions")) {
-        return evaluate_string_set(facts.move_call_functions, condition.op, condition.values, condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.publish_present")) {
-        return evaluate_scalar(bool_string(facts.publish_present), condition.op, condition.values, condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.upgrade_present")) {
-        return evaluate_scalar(bool_string(facts.upgrade_present), condition.op, condition.values, condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.recipient_addresses")) {
-        return evaluate_string_set(facts.recipient_addresses, condition.op, condition.values, condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.pure_address_arguments")) {
-        return evaluate_string_set(facts.pure_address_arguments, condition.op, condition.values, condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.token_sources.type") ||
-        string_eq(condition.field, "sui.token_sources.source")) {
-        return evaluate_all_token_source_strings(
-            facts,
-            condition.field,
-            condition.op,
-            condition.values,
-            condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.token_sources.amount_raw")) {
-        return evaluate_all_token_source_amounts(facts, condition.op, condition.values, condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.token_totals_by_type.amount_raw")) {
-        return evaluate_selected_token_total_amount(
-            facts,
-            condition.where_type,
-            condition.op,
-            condition.values,
-            condition.value_count);
-    }
-    if (string_eq(condition.field, "sui.token_unknown_amount_present")) {
-        return evaluate_scalar(
-            bool_string(facts.token_unknown_amount_present),
-            condition.op,
-            condition.values,
-            condition.value_count);
+    switch (descriptor->evaluation_kind) {
+        case AgentQCurrentPolicyEvaluationKind::sui_gas_budget_raw:
+            return evaluate_scalar(facts.gas_budget_raw, condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_gas_price_raw:
+            return evaluate_scalar(facts.gas_price_raw, condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_gas_owner:
+            return evaluate_scalar(facts.gas_owner, condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_sponsored:
+            return evaluate_scalar(bool_string(facts.sponsored), condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_command_count:
+            return evaluate_scalar(facts.command_count, condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_command_kinds:
+            return evaluate_string_set(facts.command_kinds, condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_move_call_packages:
+            return evaluate_string_set(facts.move_call_packages, condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_move_call_modules:
+            return evaluate_string_set(facts.move_call_modules, condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_move_call_functions:
+            return evaluate_string_set(facts.move_call_functions, condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_publish_present:
+            return evaluate_scalar(bool_string(facts.publish_present), condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_upgrade_present:
+            return evaluate_scalar(bool_string(facts.upgrade_present), condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_recipient_addresses:
+            return evaluate_string_set(facts.recipient_addresses, condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_pure_address_arguments:
+            return evaluate_string_set(facts.pure_address_arguments, condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_token_sources_type:
+        case AgentQCurrentPolicyEvaluationKind::sui_token_sources_source:
+            return evaluate_all_token_source_strings(
+                facts,
+                descriptor->evaluation_kind,
+                condition.op,
+                condition.values,
+                condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_token_sources_amount_raw:
+            return evaluate_all_token_source_amounts(facts, condition.op, condition.values, condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_token_totals_by_type_amount_raw:
+            return evaluate_selected_token_total_amount(
+                facts,
+                condition.where_type,
+                condition.op,
+                condition.values,
+                condition.value_count);
+        case AgentQCurrentPolicyEvaluationKind::sui_token_unknown_amount_present:
+            return evaluate_scalar(
+                bool_string(facts.token_unknown_amount_present),
+                condition.op,
+                condition.values,
+                condition.value_count);
     }
     return false;
 }

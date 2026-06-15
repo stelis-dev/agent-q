@@ -25,6 +25,7 @@ USB_SERVER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_reque
 USB_APPROVAL_HISTORY_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_approval_history_handler.cpp"
 USB_CONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_connect_handler.cpp"
 USB_OPERATION_TYPE_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_operation_type.h"
+USB_OPERATION_MANIFEST_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_operation_manifest.cpp"
 USB_OPERATION_RESPONSE_WRITER_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_operation_response_writer.h"
 USB_OPERATION_DISPATCH_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_operation_dispatch.cpp"
 USB_ENVELOPE_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_envelope.cpp"
@@ -173,9 +174,9 @@ expect_absent "${USER_SIGNING_CONFIRMATION_SOURCE}" 'AgentQUserSigningFlowSnapsh
 expect_absent "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'AgentQUserSigningFlowSnapshot' \
   "request-backed local PIN context must not copy large review snapshots"
 
-expect_present "${USB_OPERATION_TYPE_HEADER}" '"sign_transaction"' \
-  "USB operation classifier must accept public sign_transaction messages"
-expect_absent "${USB_OPERATION_TYPE_HEADER}" '"sign_transaction_user"|"sign_transaction_policy"' \
+expect_present "${USB_OPERATION_MANIFEST_SOURCE}" '"sign_transaction"' \
+  "USB operation manifest must accept public sign_transaction messages"
+expect_absent "${USB_OPERATION_MANIFEST_SOURCE}" '"sign_transaction_user"|"sign_transaction_policy"' \
   "USB operation classifier must not accept host-selected authorization request types"
 expect_present "${USB_SIGNING_RESULT_WRITER_SOURCE}" '"sign_result"|usb_signing_result_write' \
   "USB signing result writer must own public sign_result responses"

@@ -25,17 +25,16 @@ bool modal_transition_show_processing_or_redraw_panel(
     return redraw_panel != nullptr && redraw_panel(context);
 }
 
-void modal_transition_complete_processing_to_next_panel(
+bool modal_transition_complete_to_next_panel(
     const AgentQModalTransitionOps& ops,
-    AgentQUiPanelKind processing_panel,
-    AgentQModalTransitionAction draw_next,
+    AgentQUiPanelKind current_panel,
+    AgentQModalTransitionDraw draw_next,
     void* context)
 {
-    (void)ops;
-    (void)processing_panel;
-    if (draw_next != nullptr) {
-        draw_next(context);
+    if (draw_next == nullptr || !draw_next(context)) {
+        return false;
     }
+    return modal_transition_clear_panel_after_work(ops, current_panel);
 }
 
 bool modal_transition_clear_panel_after_work(
@@ -49,16 +48,29 @@ bool modal_transition_clear_panel_after_work(
     return ops.clear_panel_if_kind(panel, SensitiveUiClearPolicy::preserve);
 }
 
-void modal_transition_complete_processing_to_result(
+void modal_transition_complete_to_result(
     const AgentQModalTransitionOps& ops,
-    AgentQUiPanelKind processing_panel,
+    AgentQUiPanelKind current_panel,
     AgentQModalTransitionAction finish_result,
     void* context)
 {
     if (finish_result != nullptr) {
         finish_result(context);
     }
-    modal_transition_clear_panel_after_work(ops, processing_panel);
+    modal_transition_clear_panel_after_work(ops, current_panel);
+}
+
+void modal_transition_complete_processing_to_result(
+    const AgentQModalTransitionOps& ops,
+    AgentQUiPanelKind processing_panel,
+    AgentQModalTransitionAction finish_result,
+    void* context)
+{
+    modal_transition_complete_to_result(
+        ops,
+        processing_panel,
+        finish_result,
+        context);
 }
 
 void modal_transition_run_work_then_clear_panel(

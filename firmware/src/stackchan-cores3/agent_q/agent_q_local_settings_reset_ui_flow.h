@@ -21,7 +21,6 @@ struct AgentQLocalSettingsResetUiFlowOps {
     bool (*panel_active)(AgentQUiPanelKind kind);
     bool (*local_reset_panel_active)();
     bool (*clear_panel_if_kind)(AgentQUiPanelKind kind, SensitiveUiClearPolicy policy);
-    bool (*clear_panel_if_local_reset_stage)(SensitiveUiClearPolicy policy);
     bool (*draw_settings_menu_panel)();
     bool (*draw_error_recovery_panel)(bool confirm);
     bool (*draw_reset_pin_panel)(const char* notice);

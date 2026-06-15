@@ -133,8 +133,12 @@ bool material_ready()
     return g_material_ready;
 }
 
-bool write_payload_admission_error(const char* id)
+bool write_payload_admission_error(
+    const char* id,
+    agent_q::AgentQUsbOperationType operation)
 {
+    assert(operation == agent_q::AgentQUsbOperationType::get_result ||
+           operation == agent_q::AgentQUsbOperationType::ack_result);
     g_payload_admission_calls += 1;
     g_last_id = id;
     if (!g_payload_admission_error) {

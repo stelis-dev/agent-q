@@ -114,6 +114,7 @@ int g_order_counter = 0;
 int g_commit_order = 0;
 int g_clear_panel_order = 0;
 int g_show_message_order = 0;
+int g_draw_settings_order = 0;
 const char* g_last_message = nullptr;
 const char* g_last_reset_notice = nullptr;
 agent_q::AgentQMessageKind g_last_kind = agent_q::AgentQMessageKind::info;
@@ -159,6 +160,7 @@ void reset_harness()
     g_commit_order = 0;
     g_clear_panel_order = 0;
     g_show_message_order = 0;
+    g_draw_settings_order = 0;
     g_last_message = nullptr;
     g_last_reset_notice = nullptr;
     g_last_kind = agent_q::AgentQMessageKind::info;
@@ -187,16 +189,10 @@ bool clear_panel(agent_q::AgentQUiPanelKind, agent_q::SensitiveUiClearPolicy)
     return true;
 }
 
-bool clear_local_reset_panel(agent_q::SensitiveUiClearPolicy)
-{
-    ++g_clear_panel_calls;
-    g_clear_panel_order = ++g_order_counter;
-    return true;
-}
-
 bool draw_settings()
 {
     ++g_draw_settings_calls;
+    g_draw_settings_order = ++g_order_counter;
     return g_draw_settings;
 }
 
@@ -250,7 +246,6 @@ agent_q::AgentQLocalSettingsResetUiFlowOps ops()
         panel_active,
         local_reset_panel_active,
         clear_panel,
-        clear_local_reset_panel,
         draw_settings,
         draw_error_recovery,
         draw_reset_pin,
@@ -433,6 +428,25 @@ int main()
            "reset commit reports result only after persistence boundary");
     expect(g_show_message_order < g_clear_panel_order,
            "reset commit keeps processing panel until result overlay is prepared");
+
+    reset_harness();
+    g_stage = agent_q::AgentQLocalResetStage::pin_entry;
+    g_panel_active[static_cast<int>(agent_q::AgentQUiPanelKind::reset_pin_entry)] = true;
+    agent_q::local_settings_reset_ui_cancel_reset_from_ui("Reset canceled", ops());
+    expect(g_begin_settings_calls == 1, "reset cancel returns to settings state");
+    expect(g_draw_settings_calls == 1, "reset cancel draws settings menu");
+    expect(g_clear_panel_calls == 1, "reset cancel clears old PIN panel");
+    expect(g_draw_settings_order < g_clear_panel_order,
+           "reset cancel prepares settings menu before clearing PIN panel");
+
+    reset_harness();
+    g_stage = agent_q::AgentQLocalResetStage::error_recovery_confirm;
+    g_panel_active[static_cast<int>(agent_q::AgentQUiPanelKind::error_recovery)] = true;
+    agent_q::local_settings_reset_ui_cancel_error_recovery_from_ui(ops());
+    expect(g_show_message_calls == 1, "error recovery cancel shows result");
+    expect(g_clear_panel_calls == 1, "error recovery cancel clears old panel");
+    expect(g_show_message_order < g_clear_panel_order,
+           "error recovery cancel prepares result before clearing old panel");
 
     if (failures != 0) {
         return 1;

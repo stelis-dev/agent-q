@@ -46,6 +46,32 @@ enum class AgentQCurrentPolicyValueKind {
     bool_string,
 };
 
+enum class AgentQCurrentPolicyWhereTypeRequirement {
+    forbidden,
+    required,
+};
+
+enum class AgentQCurrentPolicyEvaluationKind {
+    sui_gas_budget_raw,
+    sui_gas_price_raw,
+    sui_gas_owner,
+    sui_sponsored,
+    sui_command_count,
+    sui_command_kinds,
+    sui_move_call_packages,
+    sui_move_call_modules,
+    sui_move_call_functions,
+    sui_publish_present,
+    sui_upgrade_present,
+    sui_recipient_addresses,
+    sui_pure_address_arguments,
+    sui_token_sources_type,
+    sui_token_sources_source,
+    sui_token_sources_amount_raw,
+    sui_token_totals_by_type_amount_raw,
+    sui_token_unknown_amount_present,
+};
+
 enum class AgentQCurrentPolicyDocumentStatus {
     ok,
     invalid_argument,
@@ -57,6 +83,8 @@ enum class AgentQCurrentPolicyDocumentStatus {
 struct AgentQCurrentPolicyFieldDescriptor {
     const char* field;
     AgentQCurrentPolicyValueKind value_kind;
+    AgentQCurrentPolicyWhereTypeRequirement where_type_requirement;
+    AgentQCurrentPolicyEvaluationKind evaluation_kind;
     bool allow_eq;
     bool allow_in;
     bool allow_not_in;

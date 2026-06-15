@@ -18,10 +18,15 @@ bool modal_transition_show_processing_or_redraw_panel(
     AgentQUiPanelKind current_panel,
     AgentQModalTransitionDraw redraw_panel,
     void* context);
-void modal_transition_complete_processing_to_next_panel(
+bool modal_transition_complete_to_next_panel(
     const AgentQModalTransitionOps& ops,
-    AgentQUiPanelKind processing_panel,
-    AgentQModalTransitionAction draw_next,
+    AgentQUiPanelKind current_panel,
+    AgentQModalTransitionDraw draw_next,
+    void* context);
+void modal_transition_complete_to_result(
+    const AgentQModalTransitionOps& ops,
+    AgentQUiPanelKind current_panel,
+    AgentQModalTransitionAction finish_result,
     void* context);
 void modal_transition_complete_processing_to_result(
     const AgentQModalTransitionOps& ops,

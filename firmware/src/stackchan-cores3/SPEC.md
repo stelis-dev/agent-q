@@ -60,7 +60,7 @@ Legend:
 |---|---:|---|
 | USB JSONL transport | O | Uses ESP32-S3 USB Serial/JTAG. |
 | Persistent protocol `deviceId` | O | Stored in NVS namespace `agent_q`, key `device_id`. |
-| `get_status` | O | Returns device id, current state, and provisioning status without approval UI. |
+| `get_status` | O | Returns device id, current state, and provisioning status without approval UI. Before reporting status, the target refreshes persistent-material consistency and can fail closed into `error` while clearing stale runtime session state. |
 | Provisioning status reporting | △ | Reports `unprovisioned`, material-backed `provisioned`, or `error` for persistent material inconsistency. Hardware smoke coverage exists for local setup and import setup reaching `provisioned`; failure and consistency-error states still need targeted hardware checks. This is not signing approval. Sign API requests still require a matching active session, the selected authorization gate, required history, signing critical section, response writer, and current-tree hardware/LVGL evidence before product-active status. |
 | Mnemonic UI flow | △ | The local setup speech bubble opens a Generate/Import choice. Generate creates DEV_PROFILE BIP-39 root entropy in RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and advances to local 6-digit PIN entry after local backup confirmation. Import accepts 12 BIP-39 words through a device-local 3-word-per-page prefix/candidate UI, verifies checksum, then enters the same PIN setup path. The target stores root entropy plus an active default-reject policy plus a salt/PIN verifier plus signing authorization mode only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. The target keeps setup/import volatile state and cleanup decisions in a provisioning-flow state module; USB/UI code routes events and renders the current state. Local controls own the setup transitions; there are no USB setup transition requests. Hardware smoke coverage exists for Generate setup, PIN entry, and Import entry. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
@@ -159,7 +159,7 @@ Current UI behavior:
 | Request or state | UI behavior | Firmware state |
 |---|---|---|
 | `unprovisioned` idle | Touchable setup speech bubble | `idle` |
-| `get_status` | No UI | `idle` unless approval UI, setup material, sensitive local subflow, or material/state error is active |
+| `get_status` | No UI; may refresh persistent-material consistency before reporting status | `idle` unless approval UI, setup material, sensitive local subflow, or material/state error is active |
 | `identify_device` | Temporary speech bubble with short code | `idle` |
 | Local setup choice | Temporary Generate/Import setup panel | `busy` |
 | Backup phrase displayed | Temporary setup panel with 12 numbered up-to-4-letter prefixes in 3 columns by 4 rows and bottom Cancel/Confirm buttons | `busy` |

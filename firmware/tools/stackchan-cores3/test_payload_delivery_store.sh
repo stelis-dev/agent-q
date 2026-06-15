@@ -22,6 +22,12 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
 USB_REQUEST_SERVER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_request_server.cpp"
+USB_OPERATION_MANIFEST_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_operation_manifest.cpp"
+USB_DEVICE_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_device_handlers.cpp"
+USB_SESSION_READ_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_session_read_handlers.cpp"
+USB_APPROVAL_HISTORY_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_approval_history_handler.cpp"
+USB_RETAINED_RESULT_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_retained_result_handlers.cpp"
+USB_DISCONNECT_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_disconnect_handler.cpp"
 USB_CONNECT_HANDLER_HEADER="${TARGET_ROOT}/agent_q/agent_q_usb_connect_handler.h"
 USB_DEVICE_HANDLER_HEADER="${TARGET_ROOT}/agent_q/agent_q_usb_device_handlers.h"
 USB_POLICY_PROPOSE_HANDLER_HEADER="${TARGET_ROOT}/agent_q/agent_q_usb_policy_propose_handler.h"
@@ -46,6 +52,13 @@ for required in \
   "${TARGET_ROOT}/agent_q/agent_q_payload_delivery_store.h" \
   "${TARGET_ROOT}/agent_q/agent_q_payload_delivery_admission.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_payload_delivery_admission.h" \
+  "${TARGET_ROOT}/agent_q/agent_q_usb_operation_manifest.cpp" \
+  "${TARGET_ROOT}/agent_q/agent_q_usb_operation_manifest.h" \
+  "${USB_DEVICE_HANDLER_SOURCE}" \
+  "${USB_SESSION_READ_HANDLER_SOURCE}" \
+  "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" \
+  "${USB_RETAINED_RESULT_HANDLER_SOURCE}" \
+  "${USB_DISCONNECT_HANDLER_SOURCE}" \
   "${USB_REQUEST_SERVER_SOURCE}" \
   "${TARGET_ROOT}/agent_q/agent_q_session.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_approval_history.h" \
@@ -66,6 +79,17 @@ expect_request_server_wiring() {
   fi
 }
 
+expect_source_wiring() {
+  local source_path="$1"
+  local pattern="$2"
+  local label="$3"
+
+  if ! grep -Eq "${pattern}" "${source_path}"; then
+    echo "FAILED: ${label}" >&2
+    exit 1
+  fi
+}
+
 expect_request_server_block_wiring() {
   local start_pattern="$1"
   local pattern="$2"
@@ -77,6 +101,27 @@ expect_request_server_block_wiring() {
     inside && /^}/ { exit(found ? 0 : 1) }
     END { if (!inside || !found) exit 1 }
   ' "${USB_REQUEST_SERVER_SOURCE}"; then
+    echo "FAILED: ${label}" >&2
+    exit 1
+  fi
+}
+
+expect_manifest_operation_wiring() {
+  local start_pattern="$1"
+  local handler_pattern="$2"
+  local payload_pattern="$3"
+  local label="$4"
+
+  if ! awk \
+      -v start_pattern="${start_pattern}" \
+      -v handler_pattern="${handler_pattern}" \
+      -v payload_pattern="${payload_pattern}" '
+    $0 ~ start_pattern { inside = 1 }
+    inside && $0 ~ handler_pattern { found_handler = 1 }
+    inside && $0 ~ payload_pattern { found_payload = 1 }
+    inside && /^    },/ { exit((found_handler && found_payload) ? 0 : 1) }
+    END { if (!inside || !found_handler || !found_payload) exit 1 }
+  ' "${USB_OPERATION_MANIFEST_SOURCE}"; then
     echo "FAILED: ${label}" >&2
     exit 1
   fi
@@ -104,20 +149,38 @@ expect_request_server_wiring \
   'write_payload_delivery_identify_device_busy' \
   "identify_device production ops must use payload delivery admission"
 expect_request_server_wiring \
+  'AgentQUsbOperationType::identify_device' \
+  "identify_device admission must use its named USB operation"
+expect_request_server_wiring \
+  'usb_operation_manifest_entry\(operation\)' \
+  "operation-aware busy gate must consume the USB operation manifest"
+expect_manifest_operation_wiring \
+  'AgentQUsbOperationType::identify_device' \
+  'AgentQUsbOperationHandlerSlot::identify_device' \
   'AgentQPayloadDeliveryOperationKind::identify_device' \
-  "identify_device admission must use its named operation kind"
+  "identify_device manifest entry must bind USB operation to payload admission kind"
 expect_request_server_wiring \
   'write_payload_delivery_connect_busy' \
   "connect production ops must use payload delivery admission"
 expect_request_server_wiring \
+  'AgentQUsbOperationType::connect' \
+  "connect admission must use its named USB operation"
+expect_manifest_operation_wiring \
+  'AgentQUsbOperationType::connect' \
+  'AgentQUsbOperationHandlerSlot::connect' \
   'AgentQPayloadDeliveryOperationKind::connect' \
-  "connect admission must use its named operation kind"
+  "connect manifest entry must bind USB operation to payload admission kind"
 expect_request_server_wiring \
   'write_payload_delivery_policy_propose_busy' \
   "policy_propose production ops must use payload delivery admission"
 expect_request_server_wiring \
+  'AgentQUsbOperationType::policy_propose' \
+  "policy_propose admission must use its named USB operation"
+expect_manifest_operation_wiring \
+  'AgentQUsbOperationType::policy_propose' \
+  'AgentQUsbOperationHandlerSlot::policy_propose' \
   'AgentQPayloadDeliveryOperationKind::policy_propose' \
-  "policy_propose admission must use its named operation kind"
+  "policy_propose manifest entry must bind USB operation to payload admission kind"
 expect_request_server_wiring \
   'write_payload_delivery_safe_read_admission_error' \
   "session read production ops must use payload delivery safe-read admission"
@@ -132,24 +195,90 @@ expect_request_server_block_wiring \
   'approval_history_handler_ops' \
   'write_payload_delivery_safe_read_admission_error' \
   "approval history production ops must use payload delivery safe-read admission"
-expect_request_server_wiring \
+expect_source_wiring \
+  "${USB_DEVICE_HANDLER_SOURCE}" \
+  'AgentQUsbOperationType::get_status' \
+  "get_status handler must pass its own USB operation to safe-read admission"
+expect_source_wiring \
+  "${USB_SESSION_READ_HANDLER_SOURCE}" \
+  'AgentQUsbOperationType::get_capabilities' \
+  "get_capabilities handler must pass its own USB operation to safe-read admission"
+expect_source_wiring \
+  "${USB_SESSION_READ_HANDLER_SOURCE}" \
+  'AgentQUsbOperationType::get_accounts' \
+  "get_accounts handler must pass its own USB operation to safe-read admission"
+expect_source_wiring \
+  "${USB_SESSION_READ_HANDLER_SOURCE}" \
+  'AgentQUsbOperationType::policy_get' \
+  "policy_get handler must pass its own USB operation to safe-read admission"
+expect_source_wiring \
+  "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" \
+  'AgentQUsbOperationType::get_approval_history' \
+  "get_approval_history handler must pass its own USB operation to safe-read admission"
+expect_manifest_operation_wiring \
+  'AgentQUsbOperationType::get_status' \
+  'AgentQUsbOperationHandlerSlot::get_status' \
   'AgentQPayloadDeliveryOperationKind::safe_read' \
-  "session read admission must use the safe_read operation kind"
+  "get_status manifest entry must bind USB operation to safe-read payload admission"
+expect_manifest_operation_wiring \
+  'AgentQUsbOperationType::get_capabilities' \
+  'AgentQUsbOperationHandlerSlot::get_capabilities' \
+  'AgentQPayloadDeliveryOperationKind::safe_read' \
+  "get_capabilities manifest entry must bind USB operation to safe-read payload admission"
+expect_manifest_operation_wiring \
+  'AgentQUsbOperationType::get_accounts' \
+  'AgentQUsbOperationHandlerSlot::get_accounts' \
+  'AgentQPayloadDeliveryOperationKind::safe_read' \
+  "get_accounts manifest entry must bind USB operation to safe-read payload admission"
+expect_manifest_operation_wiring \
+  'AgentQUsbOperationType::policy_get' \
+  'AgentQUsbOperationHandlerSlot::policy_get' \
+  'AgentQPayloadDeliveryOperationKind::safe_read' \
+  "policy_get manifest entry must bind USB operation to safe-read payload admission"
+expect_manifest_operation_wiring \
+  'AgentQUsbOperationType::get_approval_history' \
+  'AgentQUsbOperationHandlerSlot::get_approval_history' \
+  'AgentQPayloadDeliveryOperationKind::safe_read' \
+  "get_approval_history manifest entry must bind USB operation to safe-read payload admission"
 expect_request_server_wiring \
   'write_payload_delivery_retained_result_admission_error' \
   "retained result production ops must use payload delivery retained-result admission"
 expect_request_server_wiring \
   'payload_delivery_admission_allows_retained_result_cleanup' \
   "retained result production ops must consume the payload delivery retained-result predicate"
-expect_request_server_wiring \
+expect_source_wiring \
+  "${USB_RETAINED_RESULT_HANDLER_SOURCE}" \
+  'AgentQUsbOperationType::get_result' \
+  "get_result handler must pass its own USB operation to retained-result admission"
+expect_source_wiring \
+  "${USB_RETAINED_RESULT_HANDLER_SOURCE}" \
+  'AgentQUsbOperationType::ack_result' \
+  "ack_result handler must pass its own USB operation to retained-result admission"
+expect_manifest_operation_wiring \
+  'AgentQUsbOperationType::get_result' \
+  'AgentQUsbOperationHandlerSlot::get_result' \
   'AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup' \
-  "retained result admission must use the retained_result_read_cleanup operation kind"
+  "get_result manifest entry must bind USB operation to retained-result payload admission"
+expect_manifest_operation_wiring \
+  'AgentQUsbOperationType::ack_result' \
+  'AgentQUsbOperationHandlerSlot::ack_result' \
+  'AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup' \
+  "ack_result manifest entry must bind USB operation to retained-result payload admission"
 expect_request_server_wiring \
   'payload_delivery_admission_allows_disconnect_cleanup' \
   "disconnect production ops must consume the payload delivery disconnect predicate"
+expect_source_wiring \
+  "${USB_DISCONNECT_HANDLER_SOURCE}" \
+  'AgentQUsbOperationType::disconnect' \
+  "disconnect handler must pass its own USB operation to disconnect admission"
 expect_request_server_wiring \
+  'AgentQUsbOperationType::sign_personal_message' \
+  "sign_personal_message admission must use its named USB operation"
+expect_manifest_operation_wiring \
+  'AgentQUsbOperationType::sign_personal_message' \
+  'AgentQUsbOperationHandlerSlot::sign_personal_message' \
   'AgentQPayloadDeliveryOperationKind::sign_personal_message' \
-  "sign_personal_message admission must use its named operation kind"
+  "sign_personal_message manifest entry must bind USB operation to payload admission kind"
 
 if grep -Eq 'write_busy_if_pending_or_local_flow_active' \
     "${USB_CONNECT_HANDLER_HEADER}" \

@@ -94,17 +94,20 @@ bool g_local_pin_begin_result = true;
 bool g_local_pin_draw_result = true;
 int g_policy_draw_calls = 0;
 int g_policy_clear_review_calls = 0;
+int g_policy_clear_review_order = 0;
 int g_policy_identification_clear_calls = 0;
 int g_policy_continue_calls = 0;
 int g_protocol_pin_begin_calls = 0;
 int g_protocol_pin_clear_calls = 0;
 int g_local_pin_begin_calls = 0;
 int g_local_pin_draw_calls = 0;
+int g_policy_local_pin_draw_order = 0;
 int g_wipe_pin_calls = 0;
 int g_policy_record_timeout_calls = 0;
 int g_policy_record_rejected_calls = 0;
 int g_policy_record_ui_error_calls = 0;
 int g_policy_finish_terminal_calls = 0;
+int g_policy_finish_terminal_order = 0;
 int g_policy_finish_error_calls = 0;
 agent_q::AgentQPolicyUpdateFlowTerminalResult g_policy_last_terminal =
     agent_q::AgentQPolicyUpdateFlowTerminalResult::invalid_state;
@@ -135,10 +138,12 @@ int g_user_timeout_calls = 0;
 int g_user_clear_flow_calls = 0;
 int g_user_cancel_pin_loss_calls = 0;
 int g_user_local_pin_draw_calls = 0;
+int g_user_local_pin_draw_order = 0;
 int g_user_write_error_calls = 0;
 int g_user_display_error_calls = 0;
 int g_user_execute_calls = 0;
 int g_user_finish_terminal_calls = 0;
+int g_user_finish_terminal_order = 0;
 int g_user_finish_error_calls = 0;
 int g_user_order_counter = 0;
 int g_user_execute_order = 0;
@@ -181,18 +186,22 @@ void reset_policy()
     g_local_pin_draw_result = true;
     g_policy_draw_calls = 0;
     g_policy_clear_review_calls = 0;
+    g_policy_clear_review_order = 0;
     g_policy_identification_clear_calls = 0;
     g_policy_continue_calls = 0;
     g_protocol_pin_begin_calls = 0;
     g_protocol_pin_clear_calls = 0;
     g_local_pin_begin_calls = 0;
     g_local_pin_draw_calls = 0;
+    g_policy_local_pin_draw_order = 0;
     g_wipe_pin_calls = 0;
     g_policy_record_timeout_calls = 0;
     g_policy_record_rejected_calls = 0;
     g_policy_record_ui_error_calls = 0;
     g_policy_finish_terminal_calls = 0;
+    g_policy_finish_terminal_order = 0;
     g_policy_finish_error_calls = 0;
+    g_user_order_counter = 0;
     g_policy_last_terminal = agent_q::AgentQPolicyUpdateFlowTerminalResult::invalid_state;
     g_policy_last_error_code[0] = '\0';
 }
@@ -226,10 +235,12 @@ void reset_user()
     g_user_clear_flow_calls = 0;
     g_user_cancel_pin_loss_calls = 0;
     g_user_local_pin_draw_calls = 0;
+    g_user_local_pin_draw_order = 0;
     g_user_write_error_calls = 0;
     g_user_display_error_calls = 0;
     g_user_execute_calls = 0;
     g_user_finish_terminal_calls = 0;
+    g_user_finish_terminal_order = 0;
     g_user_finish_error_calls = 0;
     g_user_order_counter = 0;
     g_user_execute_order = 0;
@@ -265,6 +276,7 @@ bool clear_panel(agent_q::AgentQUiPanelKind kind, agent_q::SensitiveUiClearPolic
     expect(policy == agent_q::SensitiveUiClearPolicy::preserve, "review clear preserves scratch");
     if (kind == agent_q::AgentQUiPanelKind::policy_update_review) {
         ++g_policy_clear_review_calls;
+        g_policy_clear_review_order = ++g_user_order_counter;
     }
     if (kind == agent_q::AgentQUiPanelKind::user_signing_review) {
         ++g_user_clear_review_calls;
@@ -307,7 +319,9 @@ bool local_pin_begin(TickType_t now, agent_q::AgentQTimeoutWindow)
 bool draw_local_pin()
 {
     ++g_local_pin_draw_calls;
+    g_policy_local_pin_draw_order = ++g_user_order_counter;
     ++g_user_local_pin_draw_calls;
+    g_user_local_pin_draw_order = g_policy_local_pin_draw_order;
     return g_local_pin_draw_result && g_user_local_pin_draw_result;
 }
 void wipe_pin(const char*) { ++g_wipe_pin_calls; }
@@ -339,6 +353,7 @@ void policy_finish_terminal(
 {
     expect(strcmp(request_id, "policy-1") == 0, "policy terminal uses request id");
     ++g_policy_finish_terminal_calls;
+    g_policy_finish_terminal_order = ++g_user_order_counter;
     g_policy_last_terminal = result;
 }
 void policy_finish_error(
@@ -443,6 +458,7 @@ void finish_user_terminal(const char* request_id)
 {
     expect(strcmp(request_id, "sign-1") == 0, "user terminal uses request id");
     ++g_user_finish_terminal_calls;
+    g_user_finish_terminal_order = ++g_user_order_counter;
 }
 void finish_user_error(const char*, const char* code, const char*, const char*)
 {
@@ -517,6 +533,9 @@ void test_policy_continue_to_pin()
     expect(g_protocol_pin_begin_calls == 1, "policy continue begins protocol PIN");
     expect(g_local_pin_begin_calls == 1, "policy continue begins local PIN");
     expect(g_local_pin_draw_calls == 1, "policy continue draws local PIN");
+    expect(g_policy_clear_review_calls == 1, "policy continue clears review");
+    expect(g_policy_local_pin_draw_order < g_policy_clear_review_order,
+           "policy continue prepares PIN panel before clearing review");
     expect(g_policy_finish_error_calls == 0, "policy continue has no error");
 }
 
@@ -527,12 +546,16 @@ void test_policy_reject_and_timeout()
     expect(g_policy_clear_review_calls == 1, "policy reject clears review panel");
     expect(g_policy_record_rejected_calls == 1, "policy reject records rejection");
     expect(g_policy_finish_terminal_calls == 1, "policy reject finishes terminal");
+    expect(g_policy_finish_terminal_order < g_policy_clear_review_order,
+           "policy reject prepares terminal result before clearing review");
 
     reset_policy();
     g_policy_deadline_reached = true;
     agent_q::policy_update_review_ui_reject(policy_ops());
     expect(g_policy_record_timeout_calls == 1, "policy reject after deadline records timeout");
     expect(g_policy_record_rejected_calls == 0, "policy reject after deadline skips rejection");
+    expect(g_policy_finish_terminal_order < g_policy_clear_review_order,
+           "policy reject timeout prepares terminal result before clearing review");
 }
 
 void test_policy_recovery_and_display_failure()
@@ -571,11 +594,15 @@ void test_user_accept_reject_and_pin()
     expect(g_user_begin_pin_calls == 1, "user PIN accept begins PIN");
     expect(g_user_clear_review_calls == 1, "user PIN accept clears review");
     expect(g_user_local_pin_draw_calls == 1, "user PIN accept draws local PIN");
+    expect(g_user_local_pin_draw_order < g_user_clear_review_order,
+           "user PIN accept prepares PIN panel before clearing review");
 
     reset_user();
     agent_q::user_signing_review_ui_reject(user_ops());
     expect(g_user_reject_calls == 1, "user reject records rejection");
     expect(g_user_finish_terminal_calls == 1, "user reject finishes terminal");
+    expect(g_user_finish_terminal_order < g_user_clear_review_order,
+           "user reject prepares terminal result before clearing review");
 }
 
 void test_user_recovery_timeout_and_pin_display_failure()
@@ -602,6 +629,8 @@ void test_user_recovery_timeout_and_pin_display_failure()
     g_user_timeout_result = agent_q::AgentQUserSigningTransitionResult::ok;
     agent_q::user_signing_review_ui_clear_if_needed(user_ops());
     expect(g_user_finish_terminal_calls == 1, "user timeout finishes terminal");
+    expect(g_user_finish_terminal_order < g_user_clear_review_order,
+           "user timeout prepares terminal result before clearing review");
 
     reset_user();
     g_user_requires_pin = true;

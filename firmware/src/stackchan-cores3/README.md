@@ -69,7 +69,9 @@ The current implementation includes:
   showing boot UI.
 - a USB JSONL `get_status` request that follows the shared protocol envelope and
   returns a persistent device id plus the current device state without showing a
-  physical approval UI.
+  physical approval UI. Before reporting status, the target refreshes
+  persistent-material consistency and may fail closed by reporting `error` and
+  clearing stale runtime session state.
 - a USB JSONL `identify_device` request that shows a short temporary code over
   the current screen and then returns to the previous device state.
 - protocol handling for `connect` and `disconnect`. The current target accepts

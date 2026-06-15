@@ -2,13 +2,16 @@
 
 #include <ArduinoJson.h>
 
+#include "agent_q_usb_operation_type.h"
 #include "agent_q_usb_operation_response_writer.h"
 
 namespace agent_q {
 
 struct AgentQUsbRetainedResultHandlerOps {
     bool (*material_ready)();
-    bool (*write_payload_delivery_retained_result_admission_error)(const char* id);
+    bool (*write_payload_delivery_retained_result_admission_error)(
+        const char* id,
+        AgentQUsbOperationType operation);
     bool (*require_active_matching_session)(const char* id, const char* session_id);
 };
 
