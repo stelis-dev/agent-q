@@ -5,8 +5,8 @@ It is not production onboarding, not an Admin Page, and not a signing authority.
 It is buildable test tooling only. `docs/IMPLEMENTATION_STATUS.md` is the status
 source for browser-to-device zkLogin setup, clear, reconnect, and signing.
 
-The app talks directly to Firmware over Web Serial and only uses the common
-protocol operations already exposed by Agent-Q:
+The app uses the Agent-Q Sui browser provider over Web Serial and only exercises
+the common operations already exposed through that provider:
 
 - `connect`
 - `get_capabilities`

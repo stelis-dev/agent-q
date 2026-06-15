@@ -11,19 +11,19 @@ import {
   type ZkLoginSignatureInputs,
 } from "@mysten/sui/zklogin";
 import type {
-  Account,
-  CapabilitiesResponse,
-  CredentialPrepareResultResponse,
-  CredentialProposeParams,
-  SignResultResponse,
-  SuiSignTransactionNetwork,
-  ZkLoginSignatureInputsDto,
-} from "@stelis/agent-q-core/protocol";
+  ConnectDeviceResult,
+  CredentialPrepareResult,
+  CredentialProposeInput,
+} from "@stelis/agent-q-provider-sui/provider-sui";
 import {
-  AgentQSerialClient,
-  type AgentQConnectedSession,
-  isWebSerialAvailable,
-} from "./agent-q-serial";
+  createAgentQSuiBrowserProvider,
+  isAgentQSuiBrowserProviderAvailable,
+} from "@stelis/agent-q-provider-sui/browser";
+import type {
+  AgentQSuiWalletGetCapabilitiesResult,
+  AgentQSuiWalletSignTransactionResult,
+  AgentQSuiWalletSuiAccount,
+} from "@stelis/agent-q-provider-sui/wallet-standard";
 
 type NoticeTone = "neutral" | "success" | "error";
 type Notice = {
@@ -31,21 +31,32 @@ type Notice = {
   title: string;
   lines: string[];
 };
+type SuiSignTransactionNetwork = CredentialProposeInput["network"];
+type CredentialPreparation = Extract<CredentialPrepareResult, { source: "live" }>["preparation"];
+type CredentialProposalInput = Omit<CredentialProposeInput, "deviceId" | "purpose">;
+type ZkLoginSignatureInputsDto = CredentialProposalInput["inputs"];
+type CredentialCapabilityView = {
+  chain: "sui";
+  credential: "zklogin";
+  operations: string[];
+};
 
 const NETWORKS: SuiSignTransactionNetwork[] = ["testnet", "devnet", "mainnet", "localnet"];
 const DEFAULT_GAS_BUDGET_MIST = "10000000";
 const DEFAULT_TRANSFER_AMOUNT_MIST = "1";
+const CLIENT_NAME = "Agent-Q zkLogin test web";
+const PROVIDER_PURPOSE = "zklogin-test-web";
 
 function App() {
-  const [client] = useState(() => new AgentQSerialClient());
+  const [provider] = useState(() => createAgentQSuiBrowserProvider({ clientName: CLIENT_NAME }));
   const [busy, setBusy] = useState<string | null>(null);
-  const [session, setSession] = useState<AgentQConnectedSession | null>(null);
-  const [capabilities, setCapabilities] = useState<CapabilitiesResponse | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [session, setSession] = useState<ConnectDeviceResult | null>(null);
+  const [capabilities, setCapabilities] = useState<AgentQSuiWalletGetCapabilitiesResult | null>(null);
+  const [accounts, setAccounts] = useState<AgentQSuiWalletSuiAccount[]>([]);
   const [network, setNetwork] = useState<SuiSignTransactionNetwork>("testnet");
   const [maxEpoch, setMaxEpoch] = useState("10");
   const [randomness, setRandomness] = useState(() => generateRandomness());
-  const [preparation, setPreparation] = useState<CredentialPrepareResultResponse["preparation"] | null>(null);
+  const [preparation, setPreparation] = useState<CredentialPreparation | null>(null);
   const [nonce, setNonce] = useState("");
   const [oauthAuthorizeUrl, setOauthAuthorizeUrl] = useState("");
   const [oauthClientId, setOauthClientId] = useState("");
@@ -60,29 +71,29 @@ function App() {
   const [amountMist, setAmountMist] = useState(DEFAULT_TRANSFER_AMOUNT_MIST);
   const [gasBudgetMist, setGasBudgetMist] = useState(DEFAULT_GAS_BUDGET_MIST);
   const [lastTxBytes, setLastTxBytes] = useState("");
-  const [lastSignature, setLastSignature] = useState<SignResultResponse | null>(null);
+  const [lastSignature, setLastSignature] = useState<AgentQSuiWalletSignTransactionResult | null>(null);
   const [notice, setNotice] = useState<Notice>({
     tone: "neutral",
     title: "Idle",
     lines: ["No device session."],
   });
 
-  const webSerialAvailable = isWebSerialAvailable();
+  const providerAvailable = isAgentQSuiBrowserProviderAvailable();
   const activeAccount = accounts.find((account) => account.chain === "sui") ?? null;
-  const setupBlockedReason = getSetupBlockedReason(session, activeAccount);
-  const setupBlocked = setupBlockedReason !== null;
-  const canUseConnectedDevice = webSerialAvailable && session !== null && busy === null;
 
   const credentialCapability = useMemo(() => {
-    return capabilities?.credentials?.find((entry) => entry.chain === "sui" && entry.credential === "zklogin") ?? null;
+    return findCredentialCapability(capabilities);
   }, [capabilities]);
+  const setupBlockedReason = getSetupBlockedReason(session, activeAccount, credentialCapability);
+  const setupBlocked = setupBlockedReason !== null;
+  const canUseConnectedDevice = providerAvailable && session !== null && busy === null;
 
   useEffect(() => {
     captureJwtFromRedirect(setJwt, setNotice);
     return () => {
-      void client.dispose();
+      provider.dispose();
     };
-  }, [client]);
+  }, [provider]);
 
   async function run(title: string, action: () => Promise<void>): Promise<void> {
     setBusy(title);
@@ -101,24 +112,35 @@ function App() {
 
   async function refresh(): Promise<void> {
     const [nextCapabilities, nextAccounts] = await Promise.all([
-      client.getCapabilities(),
-      client.getAccounts(),
+      provider.getCapabilities({ purpose: PROVIDER_PURPOSE }),
+      provider.getAccounts({ purpose: PROVIDER_PURPOSE }),
     ]);
+    if (nextCapabilities.source !== "live" || nextAccounts.source !== "live" || !Array.isArray(nextAccounts.accounts)) {
+      clearDeviceMirror();
+      throw new Error(`Device session is not live: ${resultSummary(nextCapabilities)} / ${resultSummary(nextAccounts)}.`);
+    }
+    const nextCredentialCapability = findCredentialCapability(nextCapabilities);
+    const nextAccountsList = nextAccounts.accounts.filter((account): account is AgentQSuiWalletSuiAccount => {
+      return account.chain === "sui" && (account.keyScheme === "ed25519" || account.keyScheme === "zklogin");
+    });
     setCapabilities(nextCapabilities);
-    setAccounts(nextAccounts.accounts);
+    setAccounts(nextAccountsList);
     setNotice({
       tone: "success",
       title: "Device refreshed",
       lines: [
-        `${nextAccounts.accounts.length} active account record(s).`,
-        `Credential setup: ${nextCapabilities.credentials === undefined ? "not advertised" : "advertised"}.`,
+        `${nextAccountsList.length} active account record(s).`,
+        `Credential setup: ${nextCredentialCapability === null ? "not advertised" : "advertised"}.`,
       ],
     });
   }
 
   async function connect(): Promise<void> {
     await run("Connect", async () => {
-      const nextSession = await client.connect();
+      const nextSession = parseConnectedDevice(await provider.connectDevice({
+        clientName: CLIENT_NAME,
+        purpose: PROVIDER_PURPOSE,
+      }));
       setSession(nextSession);
       await refresh();
     });
@@ -126,12 +148,8 @@ function App() {
 
   async function disconnect(): Promise<void> {
     await run("Disconnect", async () => {
-      await client.disconnect();
-      setSession(null);
-      setCapabilities(null);
-      setAccounts([]);
-      setPreparation(null);
-      setNonce("");
+      await provider.disconnectDevice({ purpose: PROVIDER_PURPOSE });
+      clearDeviceMirror();
       setNotice({
         tone: "neutral",
         title: "Disconnected",
@@ -145,7 +163,15 @@ function App() {
       if (setupBlockedReason !== null) {
         throw new Error(setupBlockedReason);
       }
-      const response = await client.credentialPrepare();
+      const response = await provider.credentialPrepare({
+        chain: "sui",
+        credential: "zklogin",
+        purpose: PROVIDER_PURPOSE,
+      });
+      if (response.source !== "live") {
+        clearDeviceMirror();
+        throw new Error(`Credential preparation did not return live data: ${resultSummary(response)}.`);
+      }
       const nextNonce = computeNonce(response.preparation.publicKey, maxEpoch, randomness);
       setPreparation(response.preparation);
       setNonce(nextNonce);
@@ -227,12 +253,16 @@ function App() {
         proofJson,
       });
       setProofPublicKey(params.publicKey);
-      const response = await client.credentialPropose(params);
+      const response = await provider.credentialPropose({
+        ...params,
+        purpose: PROVIDER_PURPOSE,
+      });
+      if (response.source !== "live") {
+        clearDeviceMirror();
+        throw new Error(`Credential proposal did not return a live result: ${resultSummary(response)}.`);
+      }
       if (response.sessionEnded) {
-        client.clearSession();
-        setSession(null);
-        setCapabilities(null);
-        setAccounts([]);
+        clearDeviceMirror();
       } else {
         await refresh();
       }
@@ -260,14 +290,31 @@ function App() {
         gasBudgetMist,
       });
       setLastTxBytes(txBytes);
-      const response = await client.signTransaction({ network, txBytes });
+      const response = await provider.signTransaction({
+        chain: "sui",
+        method: "sign_transaction",
+        network,
+        txBytes,
+        purpose: PROVIDER_PURPOSE,
+      });
       setLastSignature(response);
+      if (response.source !== "live") {
+        clearDeviceMirror();
+      }
       setNotice({
-        tone: response.status === "signed" ? "success" : "error",
+        tone: response.source === "live" && response.status === "signed" ? "success" : "error",
         title: "Sign result",
         lines: signResultLines(response, txBytes),
       });
     });
+  }
+
+  function clearDeviceMirror(): void {
+    setSession(null);
+    setCapabilities(null);
+    setAccounts([]);
+    setPreparation(null);
+    setNonce("");
   }
 
   return (
@@ -275,10 +322,10 @@ function App() {
       <header className="app-header">
         <div>
           <h1>Agent-Q zkLogin Test</h1>
-          <p>{webSerialAvailable ? "Web Serial ready" : "Web Serial unavailable"}</p>
+          <p>{providerAvailable ? "Agent-Q browser provider ready" : "Agent-Q browser provider unavailable"}</p>
         </div>
         <div className="header-actions">
-          <button type="button" onClick={connect} disabled={!webSerialAvailable || busy !== null}>
+          <button type="button" onClick={connect} disabled={!providerAvailable || busy !== null}>
             Connect
           </button>
           <button type="button" onClick={() => void run("Refresh", refresh)} disabled={!canUseConnectedDevice}>
@@ -456,11 +503,11 @@ function App() {
           <dl className="facts compact">
             <div>
               <dt>Status</dt>
-              <dd>{lastSignature === null ? "none" : lastSignature.status}</dd>
+              <dd>{lastSignature === null ? "none" : signStatusLabel(lastSignature)}</dd>
             </div>
             <div>
               <dt>Signature</dt>
-              <dd>{lastSignature?.status === "signed" ? short(lastSignature.signature) : "none"}</dd>
+              <dd>{lastSignature?.source === "live" && lastSignature.status === "signed" ? short(lastSignature.signature) : "none"}</dd>
             </div>
           </dl>
         </section>
@@ -469,7 +516,7 @@ function App() {
   );
 }
 
-function AccountView({ account }: { account: Account | null }) {
+function AccountView({ account }: { account: AgentQSuiWalletSuiAccount | null }) {
   if (account === null) {
     return (
       <div className="account-box empty">
@@ -491,8 +538,9 @@ function AccountView({ account }: { account: Account | null }) {
 }
 
 function getSetupBlockedReason(
-  session: AgentQConnectedSession | null,
-  account: Account | null,
+  session: ConnectDeviceResult | null,
+  account: AgentQSuiWalletSuiAccount | null,
+  credentialCapability: CredentialCapabilityView | null,
 ): string | null {
   if (session === null) {
     return "Connect and read the active account first.";
@@ -506,7 +554,53 @@ function getSetupBlockedReason(
   if (account.keyScheme !== "ed25519") {
     return "Active account metadata is not a native Ed25519 account.";
   }
+  if (credentialCapability === null) {
+    return "Connected device does not advertise zkLogin credential setup.";
+  }
   return null;
+}
+
+function parseConnectedDevice(value: unknown): ConnectDeviceResult {
+  if (!isRecord(value) || value.source !== "connected" || typeof value.deviceId !== "string") {
+    throw new Error("Agent-Q browser provider did not return a connected device.");
+  }
+  if (typeof value.sessionTtlMs !== "number" || typeof value.connectedAt !== "string") {
+    throw new Error("Agent-Q browser provider returned malformed connection metadata.");
+  }
+  if (!isRecord(value.device) ||
+    typeof value.device.state !== "string" ||
+    typeof value.device.firmwareName !== "string" ||
+    typeof value.device.firmwareVersion !== "string") {
+    throw new Error("Agent-Q browser provider returned malformed device metadata.");
+  }
+  return value as ConnectDeviceResult;
+}
+
+function findCredentialCapability(
+  capabilities: AgentQSuiWalletGetCapabilitiesResult | null,
+): CredentialCapabilityView | null {
+  if (capabilities === null || capabilities.source !== "live" || !Array.isArray(capabilities.credentials)) {
+    return null;
+  }
+  for (const entry of capabilities.credentials) {
+    if (!isRecord(entry) || entry.chain !== "sui" || entry.credential !== "zklogin") {
+      continue;
+    }
+    const operations = Array.isArray(entry.operations)
+      ? entry.operations.filter((operation): operation is string => typeof operation === "string")
+      : [];
+    return { chain: "sui", credential: "zklogin", operations };
+  }
+  return null;
+}
+
+function resultSummary(value: unknown): string {
+  if (!isRecord(value)) {
+    return "invalid result";
+  }
+  const source = typeof value.source === "string" ? value.source : "unknown";
+  const reason = typeof value.reason === "string" ? `/${value.reason}` : "";
+  return `${source}${reason}`;
 }
 
 function computeNonce(publicKey: string, maxEpoch: string, randomness: string): string {
@@ -528,7 +622,7 @@ function buildCredentialProposeParams(input: {
   proofAddress: string;
   proofPublicKey: string;
   proofJson: string;
-}): CredentialProposeParams {
+}): CredentialProposalInput {
   const root = parseObjectJson(input.proofJson, "Proof JSON");
   const inputs = selectProofInputs(root);
   const address = stringValue(root.address) ?? input.proofAddress.trim();
@@ -676,7 +770,13 @@ function stripUrlParamPrefix(value: string): string {
   return value.startsWith("#") || value.startsWith("?") ? value.slice(1) : value;
 }
 
-function signResultLines(response: SignResultResponse, txBytes: string): string[] {
+function signResultLines(response: AgentQSuiWalletSignTransactionResult, txBytes: string): string[] {
+  if (response.source !== "live") {
+    return [
+      `Source: ${response.source}`,
+      `Reason: ${response.reason ?? "unknown"}`,
+    ];
+  }
   if (response.status === "signed") {
     return [
       `Authorization: ${response.authorization}`,
@@ -688,10 +788,14 @@ function signResultLines(response: SignResultResponse, txBytes: string): string[
     return [
       `Status: ${response.status}`,
       `Authorization: ${response.authorization}`,
-      `${response.error.code}: ${response.error.message}`,
+      response.error.message ?? "No error message returned.",
     ];
   }
   return [`Status: ${response.status}`];
+}
+
+function signStatusLabel(response: AgentQSuiWalletSignTransactionResult): string {
+  return response.source === "live" ? response.status ?? "unknown" : response.source;
 }
 
 function stringValue(value: unknown): string | null {
