@@ -169,6 +169,9 @@ int main()
 	               !p.recover_user_signing_review_panel,
 	           "idle settings panel delete has no state cleanup");
 
+	    p = plan(Panel::chain_settings_menu, Event::external_delete, true);
+	    expect(p.wipe_local_reset, "matching chain settings panel delete wipes local settings owner");
+
 	    p = plan(Panel::sui_settings, Event::external_delete, true);
 	    expect(p.wipe_local_reset, "matching Sui settings panel delete wipes local settings owner");
 

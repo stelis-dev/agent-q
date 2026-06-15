@@ -17,6 +17,7 @@ enum class AgentQUiEventKind {
     ui_surface_ready,
     settings_requested,
     chain_settings_requested,
+    chain_settings_sui_requested,
     settings_cancel_requested,
     settings_human_approval_input_requested,
     settings_signing_mode_requested,

@@ -220,8 +220,9 @@ void finish_sui_zklogin_proposal_error_terminal(
     const char* error_message,
     const char* display_message);
 void start_local_chain_settings_from_touch();
-void show_sui_settings_from_active_settings();
-void show_settings_menu_from_sui_settings();
+void show_chain_settings_menu_from_active_settings();
+void show_sui_settings_from_chain_settings();
+void show_chain_settings_menu_from_sui_settings();
 void start_sui_zklogin_clear_from_sui_settings();
 
 void wipe_setup_scratch(const char* reason)
@@ -2335,7 +2336,7 @@ void start_local_chain_settings_from_touch()
     const TickType_t now = xTaskGetTickCount();
     agent_q::local_reset_begin_settings(
         timeout_window_from_now_ms(now, agent_q::kAgentQLocalResetEntryMs));
-    show_sui_settings_from_active_settings();
+    show_chain_settings_menu_from_active_settings();
 }
 
 void cancel_local_reset_from_ui(const char* message)
@@ -2679,11 +2680,31 @@ void start_settings_change_pin_from_settings_menu()
         local_pin_auth_ui_flow_ops());
 }
 
-void show_sui_settings_from_active_settings()
+void show_chain_settings_menu_from_active_settings()
 {
     const agent_q::AgentQLocalResetSnapshot reset =
         agent_q::local_reset_snapshot(xTaskGetTickCount());
     if (reset.stage != agent_q::AgentQLocalResetStage::settings_menu) {
+        ESP_LOGW(kTag, "Stale chain settings action ignored");
+        return;
+    }
+
+    if (!agent_q::modal_draw_chain_settings_menu_panel()) {
+        wipe_local_reset_scratch("Chain settings display allocation failed");
+        agent_q::avatar_overlay_show_message(
+            "Display error",
+            AgentQMessageKind::error,
+            AgentQUiMode::result,
+            kAgentQResultDisplayMs);
+    }
+}
+
+void show_sui_settings_from_chain_settings()
+{
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(xTaskGetTickCount());
+    if (reset.stage != agent_q::AgentQLocalResetStage::settings_menu ||
+        !agent_q_panel_active(AgentQUiPanelKind::chain_settings_menu)) {
         ESP_LOGW(kTag, "Stale Sui settings action ignored");
         return;
     }
@@ -2723,7 +2744,7 @@ void show_sui_settings_from_active_settings()
     }
 }
 
-void show_settings_menu_from_sui_settings()
+void show_chain_settings_menu_from_sui_settings()
 {
     const agent_q::AgentQLocalResetSnapshot reset =
         agent_q::local_reset_snapshot(xTaskGetTickCount());
@@ -2732,8 +2753,8 @@ void show_settings_menu_from_sui_settings()
         ESP_LOGW(kTag, "Stale Sui settings back ignored");
         return;
     }
-    if (!agent_q::modal_draw_settings_menu_panel()) {
-        wipe_local_reset_scratch("local settings display allocation failed after Sui back");
+    if (!agent_q::modal_draw_chain_settings_menu_panel()) {
+        wipe_local_reset_scratch("chain settings display allocation failed after Sui back");
         agent_q::avatar_overlay_show_message(
             "Display error",
             AgentQMessageKind::error,
@@ -3093,6 +3114,11 @@ void drain_ui_events()
             continue;
         }
 
+        if (event.kind == AgentQUiEventKind::chain_settings_sui_requested) {
+            show_sui_settings_from_chain_settings();
+            continue;
+        }
+
         if (event.kind == AgentQUiEventKind::settings_cancel_requested) {
             close_local_settings_from_ui();
             continue;
@@ -3124,7 +3150,7 @@ void drain_ui_events()
         }
 
         if (event.kind == AgentQUiEventKind::sui_settings_back_requested) {
-            show_settings_menu_from_sui_settings();
+            show_chain_settings_menu_from_sui_settings();
             continue;
         }
 

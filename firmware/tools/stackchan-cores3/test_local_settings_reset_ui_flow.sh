@@ -118,6 +118,7 @@ int g_draw_settings_order = 0;
 const char* g_last_message = nullptr;
 const char* g_last_reset_notice = nullptr;
 agent_q::AgentQMessageKind g_last_kind = agent_q::AgentQMessageKind::info;
+agent_q::AgentQUiPanelKind g_last_clear_panel_kind = agent_q::AgentQUiPanelKind::none;
 
 void expect(bool condition, const char* label)
 {
@@ -164,6 +165,7 @@ void reset_harness()
     g_last_message = nullptr;
     g_last_reset_notice = nullptr;
     g_last_kind = agent_q::AgentQMessageKind::info;
+    g_last_clear_panel_kind = agent_q::AgentQUiPanelKind::none;
 }
 
 bool material_ready() { return g_material_ready; }
@@ -182,10 +184,11 @@ bool local_reset_panel_active()
     return g_local_reset_panel_active;
 }
 
-bool clear_panel(agent_q::AgentQUiPanelKind, agent_q::SensitiveUiClearPolicy)
+bool clear_panel(agent_q::AgentQUiPanelKind kind, agent_q::SensitiveUiClearPolicy)
 {
     ++g_clear_panel_calls;
     g_clear_panel_order = ++g_order_counter;
+    g_last_clear_panel_kind = kind;
     return true;
 }
 
@@ -394,6 +397,21 @@ int main()
     expect(agent_q::local_settings_reset_ui_panel_matches_stage(
                agent_q::AgentQUiPanelKind::sui_settings),
            "Sui settings panel is owned by settings state");
+
+    reset_harness();
+    g_stage = agent_q::AgentQLocalResetStage::settings_menu;
+    expect(agent_q::local_settings_reset_ui_panel_matches_stage(
+               agent_q::AgentQUiPanelKind::chain_settings_menu),
+           "chain settings menu panel is owned by settings state");
+
+    reset_harness();
+    g_stage = agent_q::AgentQLocalResetStage::settings_menu;
+    g_panel_active[static_cast<int>(agent_q::AgentQUiPanelKind::chain_settings_menu)] = true;
+    agent_q::local_settings_reset_ui_close_settings_from_ui(ops());
+    expect(g_clear_panel_calls == 1, "chain settings close clears active chain panel");
+    expect(g_last_clear_panel_kind == agent_q::AgentQUiPanelKind::chain_settings_menu,
+           "chain settings close targets chain panel");
+    expect(g_wipe_calls == 1, "chain settings close wipes local settings owner");
 
     reset_harness();
     g_stage = agent_q::AgentQLocalResetStage::settings_menu;

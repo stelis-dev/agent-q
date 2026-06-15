@@ -1699,6 +1699,87 @@ bool modal_draw_settings_menu_panel()
     return true;
 }
 
+bool modal_draw_chain_settings_menu_panel()
+{
+    const TickType_t now = xTaskGetTickCount();
+    const agent_q::AgentQLocalResetSnapshot reset =
+        agent_q::local_reset_snapshot(now);
+    avatar_overlay_clear();
+
+    LvglLockGuard lock;
+    request_display_power_wake();
+    drawing_surface_clear_panel_locked();
+
+    lv_obj_t* panel = drawing_surface_create_panel_locked(AgentQUiPanelKind::chain_settings_menu);
+    if (panel == nullptr) {
+        return false;
+    }
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_radius(panel, 8, 0);
+    lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(panel, 0, 0);
+
+    lv_obj_t* title = lv_label_create(panel);
+    if (title == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(title, "Accounts");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
+
+    lv_obj_t* content = lv_obj_create(panel);
+    if (content == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_obj_set_size(content, kPanelContentWidth, kSettingsMenuContentHeight);
+    lv_obj_align(content, LV_ALIGN_TOP_LEFT, 0, kSettingsMenuContentY);
+    lv_obj_set_style_radius(content, 0, 0);
+    lv_obj_set_style_border_width(content, 0, 0);
+    lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(content, 0, 0);
+    lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(content, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
+
+    if (!make_settings_menu_row(
+            content,
+            "Sui",
+            "OPEN",
+            0,
+            SetupButtonKind::outlined_keypad,
+            lv_color_hex(theme::kPrimary),
+            g_callbacks.on_chain_settings_sui_clicked) ||
+        !make_setup_button(
+            panel,
+            "Close",
+            kSettingsMenuButtonCenterX,
+            kSetupActionButtonY,
+            kBackupPhraseButtonWidth,
+            kBackupPhraseButtonHeight,
+            SetupButtonKind::outlined_keypad,
+            lv_color_hex(theme::kPrimary),
+            g_callbacks.on_settings_cancel_clicked)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    if (!make_screen_bottom_timeout_timer_bar(panel, reset.input_window, now)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    drawing_surface_move_panel_foreground_locked();
+    return true;
+}
+
 bool modal_draw_sui_settings_panel(const AgentQSuiSettingsViewModel& model)
 {
     if (model.account_kind == nullptr || model.account_kind[0] == '\0' ||

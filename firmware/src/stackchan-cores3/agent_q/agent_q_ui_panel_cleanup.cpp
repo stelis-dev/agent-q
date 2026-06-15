@@ -27,6 +27,7 @@ bool provisioning_panel_for_kind(
         case AgentQUiPanelKind::none:
         case AgentQUiPanelKind::connect_review:
         case AgentQUiPanelKind::settings_menu:
+        case AgentQUiPanelKind::chain_settings_menu:
         case AgentQUiPanelKind::sui_settings:
         case AgentQUiPanelKind::reset_pin_entry:
         case AgentQUiPanelKind::error_recovery:

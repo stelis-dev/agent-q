@@ -103,6 +103,17 @@ bool local_reset_panel_active(const AgentQLocalSettingsResetUiFlowOps& ops)
            ops.local_reset_panel_active();
 }
 
+AgentQUiPanelKind active_settings_panel(const AgentQLocalSettingsResetUiFlowOps& ops)
+{
+    if (panel_active(ops, AgentQUiPanelKind::sui_settings)) {
+        return AgentQUiPanelKind::sui_settings;
+    }
+    if (panel_active(ops, AgentQUiPanelKind::chain_settings_menu)) {
+        return AgentQUiPanelKind::chain_settings_menu;
+    }
+    return AgentQUiPanelKind::settings_menu;
+}
+
 bool draw_settings_menu_panel(const AgentQLocalSettingsResetUiFlowOps& ops)
 {
     return ops.draw_settings_menu_panel != nullptr &&
@@ -252,6 +263,7 @@ bool local_settings_reset_ui_panel_matches_stage(AgentQUiPanelKind kind)
 {
     const ResetStage stage = local_reset_snapshot(xTaskGetTickCount()).stage;
     return ((kind == AgentQUiPanelKind::settings_menu ||
+             kind == AgentQUiPanelKind::chain_settings_menu ||
              kind == AgentQUiPanelKind::sui_settings) &&
             stage == ResetStage::settings_menu) ||
            (kind == AgentQUiPanelKind::reset_pin_entry &&
@@ -333,10 +345,8 @@ void local_settings_reset_ui_clear_if_needed(const AgentQLocalSettingsResetUiFlo
         }
         AgentQUiPanelKind timeout_panel =
             active ? panel_kind_for_reset_stage(reset.stage) : AgentQUiPanelKind::none;
-        if (active &&
-            reset.stage == ResetStage::settings_menu &&
-            panel_active(ops, AgentQUiPanelKind::sui_settings)) {
-            timeout_panel = AgentQUiPanelKind::sui_settings;
+        if (active && reset.stage == ResetStage::settings_menu) {
+            timeout_panel = active_settings_panel(ops);
         }
         complete_panel_to_result(
             ops,
@@ -453,6 +463,8 @@ void local_settings_reset_ui_close_settings_from_ui(
 
     if (panel_active(ops, AgentQUiPanelKind::settings_menu)) {
         clear_panel_if_kind(ops, AgentQUiPanelKind::settings_menu);
+    } else if (panel_active(ops, AgentQUiPanelKind::chain_settings_menu)) {
+        clear_panel_if_kind(ops, AgentQUiPanelKind::chain_settings_menu);
     } else if (panel_active(ops, AgentQUiPanelKind::sui_settings)) {
         clear_panel_if_kind(ops, AgentQUiPanelKind::sui_settings);
     }

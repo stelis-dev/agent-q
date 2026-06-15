@@ -132,6 +132,11 @@ void on_settings_change_pin_clicked(lv_event_t*)
     enqueue_ui_event(AgentQUiEventKind::settings_change_pin_requested);
 }
 
+void on_chain_settings_sui_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::chain_settings_sui_requested);
+}
+
 void on_sui_settings_back_clicked(lv_event_t*)
 {
     enqueue_ui_event(AgentQUiEventKind::sui_settings_back_requested);
@@ -322,6 +327,7 @@ void ui_event_bridge_register_callbacks()
     modal_callbacks.on_settings_policy_reset_clicked = on_settings_policy_reset_clicked;
     modal_callbacks.on_settings_change_pin_clicked = on_settings_change_pin_clicked;
     modal_callbacks.on_settings_reset_clicked = on_settings_reset_clicked;
+    modal_callbacks.on_chain_settings_sui_clicked = on_chain_settings_sui_clicked;
     modal_callbacks.on_sui_settings_back_clicked = on_sui_settings_back_clicked;
     modal_callbacks.on_sui_settings_clear_clicked = on_sui_settings_clear_clicked;
     modal_callbacks.on_error_recovery_erase_clicked = on_error_recovery_erase_clicked;
