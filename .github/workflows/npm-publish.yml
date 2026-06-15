@@ -36,7 +36,8 @@ jobs:
             'packages/provider-sui/package.json',
           ];
           const privatePackages = [
-            'packages/example-sui-dapp-kit/package.json',
+            'packages/sample-sui-dapp-kit/package.json',
+            'packages/sample-zklogin-test-web/package.json',
           ];
 
           const readPackage = (path) => JSON.parse(fs.readFileSync(path, 'utf8'));

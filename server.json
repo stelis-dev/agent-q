@@ -7,12 +7,12 @@
     "url": "https://github.com/stelis-dev/agent-q",
     "source": "github"
   },
-  "version": "0.0.7",
+  "version": "0.1.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@stelis/agent-q",
-      "version": "0.0.7",
+      "version": "0.1.0",
       "transport": {
         "type": "stdio"
       }
