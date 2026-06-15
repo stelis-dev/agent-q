@@ -87,7 +87,6 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_settings_cancel_clicked = nullptr;
     lv_event_cb_t on_settings_human_approval_input_clicked = nullptr;
     lv_event_cb_t on_settings_signing_mode_clicked = nullptr;
-    lv_event_cb_t on_settings_sui_clicked = nullptr;
     lv_event_cb_t on_settings_policy_reset_clicked = nullptr;
     lv_event_cb_t on_settings_change_pin_clicked = nullptr;
     lv_event_cb_t on_settings_reset_clicked = nullptr;
@@ -233,7 +232,6 @@ int main()
     assert(g_callbacks.on_pin_digit_clicked != nullptr);
     assert(g_callbacks.on_import_slot_clicked != nullptr);
     assert(g_callbacks.on_connect_review_accept_clicked != nullptr);
-    assert(g_callbacks.on_settings_sui_clicked != nullptr);
     assert(g_callbacks.on_settings_policy_reset_clicked != nullptr);
     assert(g_callbacks.on_sui_settings_back_clicked != nullptr);
     assert(g_callbacks.on_sui_settings_clear_clicked != nullptr);
@@ -302,11 +300,11 @@ int main()
     agent_q::ui_event_bridge_enqueue_settings_requested();
     assert(receive_event().kind == agent_q::AgentQUiEventKind::settings_requested);
 
+    agent_q::ui_event_bridge_enqueue_chain_settings_requested();
+    assert(receive_event().kind == agent_q::AgentQUiEventKind::chain_settings_requested);
+
     g_callbacks.on_settings_policy_reset_clicked(nullptr);
     assert(receive_event().kind == agent_q::AgentQUiEventKind::settings_policy_reset_requested);
-
-    g_callbacks.on_settings_sui_clicked(nullptr);
-    assert(receive_event().kind == agent_q::AgentQUiEventKind::settings_sui_requested);
 
     g_callbacks.on_sui_settings_back_clicked(nullptr);
     assert(receive_event().kind == agent_q::AgentQUiEventKind::sui_settings_back_requested);

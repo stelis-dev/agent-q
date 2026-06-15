@@ -1654,17 +1654,9 @@ bool modal_draw_settings_menu_panel()
             signing_mode_read_ok) ||
         !make_settings_menu_row(
             content,
-            "Sui",
-            "OPEN",
-            2,
-            SetupButtonKind::outlined_keypad,
-            lv_color_hex(theme::kPrimary),
-            g_callbacks.on_settings_sui_clicked) ||
-        !make_settings_menu_row(
-            content,
             "Change PIN",
             "CHANGE",
-            3,
+            2,
             SetupButtonKind::outlined_keypad,
             lv_color_hex(theme::kPrimary),
             g_callbacks.on_settings_change_pin_clicked) ||
@@ -1672,7 +1664,7 @@ bool modal_draw_settings_menu_panel()
             content,
             "Reset policy",
             "RESET",
-            4,
+            3,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
             g_callbacks.on_settings_policy_reset_clicked) ||
@@ -1680,7 +1672,7 @@ bool modal_draw_settings_menu_panel()
             content,
             "Reset device",
             "RESET",
-            5,
+            4,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
             g_callbacks.on_settings_reset_clicked) ||

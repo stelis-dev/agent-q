@@ -122,11 +122,6 @@ void on_settings_signing_mode_clicked(lv_event_t*)
     enqueue_ui_event(AgentQUiEventKind::settings_signing_mode_requested);
 }
 
-void on_settings_sui_clicked(lv_event_t*)
-{
-    enqueue_ui_event(AgentQUiEventKind::settings_sui_requested);
-}
-
 void on_settings_policy_reset_clicked(lv_event_t*)
 {
     enqueue_ui_event(AgentQUiEventKind::settings_policy_reset_requested);
@@ -324,7 +319,6 @@ void ui_event_bridge_register_callbacks()
     modal_callbacks.on_settings_cancel_clicked = on_settings_cancel_clicked;
     modal_callbacks.on_settings_human_approval_input_clicked = on_settings_human_approval_input_clicked;
     modal_callbacks.on_settings_signing_mode_clicked = on_settings_signing_mode_clicked;
-    modal_callbacks.on_settings_sui_clicked = on_settings_sui_clicked;
     modal_callbacks.on_settings_policy_reset_clicked = on_settings_policy_reset_clicked;
     modal_callbacks.on_settings_change_pin_clicked = on_settings_change_pin_clicked;
     modal_callbacks.on_settings_reset_clicked = on_settings_reset_clicked;
@@ -364,6 +358,11 @@ void ui_event_bridge_enqueue_surface_ready()
 void ui_event_bridge_enqueue_settings_requested()
 {
     enqueue_ui_event(AgentQUiEventKind::settings_requested);
+}
+
+void ui_event_bridge_enqueue_chain_settings_requested()
+{
+    enqueue_ui_event(AgentQUiEventKind::chain_settings_requested);
 }
 
 lv_event_cb_t ui_event_bridge_setup_clicked_callback()

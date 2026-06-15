@@ -4,8 +4,15 @@
 
 namespace agent_q {
 
+enum class AgentQLocalSettingsTouchEntryTarget {
+    none,
+    device_settings,
+    chain_settings,
+};
+
 struct AgentQLocalSettingsTouchEntrySnapshot {
     bool active;
+    AgentQLocalSettingsTouchEntryTarget target;
     TickType_t started_at;
 };
 
@@ -14,7 +21,7 @@ bool local_settings_touch_entry_active();
 AgentQLocalSettingsTouchEntrySnapshot local_settings_touch_entry_snapshot();
 
 bool local_settings_touch_entry_update(
-    bool inside_entry_area,
+    AgentQLocalSettingsTouchEntryTarget target,
     TickType_t now,
     TickType_t hold_ticks);
 

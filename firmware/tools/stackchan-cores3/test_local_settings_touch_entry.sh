@@ -52,51 +52,61 @@ void expect(bool condition, const char* label)
 
 int main()
 {
+    using Target = agent_q::AgentQLocalSettingsTouchEntryTarget;
+
     agent_q::local_settings_touch_entry_clear();
     expect(!agent_q::local_settings_touch_entry_active(),
            "clear leaves touch entry inactive");
-    expect(!agent_q::local_settings_touch_entry_update(false, 100, 10),
-           "outside touch does not trigger entry");
+    expect(!agent_q::local_settings_touch_entry_update(Target::none, 100, 10),
+           "no target does not trigger entry");
     expect(!agent_q::local_settings_touch_entry_active(),
-           "outside touch leaves entry inactive");
+           "no target leaves entry inactive");
 
-    expect(!agent_q::local_settings_touch_entry_update(true, 100, 10),
-           "first inside touch arms entry");
+    expect(!agent_q::local_settings_touch_entry_update(Target::device_settings, 100, 10),
+           "first device settings touch arms entry");
     agent_q::AgentQLocalSettingsTouchEntrySnapshot snapshot =
         agent_q::local_settings_touch_entry_snapshot();
-    expect(snapshot.active && snapshot.started_at == 100,
-           "inside touch stores start tick");
-    expect(!agent_q::local_settings_touch_entry_update(true, 109, 10),
+    expect(snapshot.active && snapshot.target == Target::device_settings &&
+               snapshot.started_at == 100,
+           "device settings touch stores target and start tick");
+    expect(!agent_q::local_settings_touch_entry_update(Target::device_settings, 109, 10),
            "hold below threshold does not trigger entry");
     expect(agent_q::local_settings_touch_entry_active(),
            "below-threshold hold remains active");
 
-    expect(!agent_q::local_settings_touch_entry_update(false, 110, 10),
+    expect(!agent_q::local_settings_touch_entry_update(Target::chain_settings, 110, 10),
+           "switching corners starts a new hold");
+    snapshot = agent_q::local_settings_touch_entry_snapshot();
+    expect(snapshot.active && snapshot.target == Target::chain_settings &&
+               snapshot.started_at == 110,
+           "switched target replaces previous hold");
+
+    expect(!agent_q::local_settings_touch_entry_update(Target::none, 111, 10),
            "leaving corner cancels entry");
     expect(!agent_q::local_settings_touch_entry_active(),
            "leaving corner clears state");
 
-    expect(!agent_q::local_settings_touch_entry_update(true, 200, 10),
-           "second inside touch arms entry");
-    expect(agent_q::local_settings_touch_entry_update(true, 210, 10),
+    expect(!agent_q::local_settings_touch_entry_update(Target::chain_settings, 200, 10),
+           "second chain settings touch arms entry");
+    expect(agent_q::local_settings_touch_entry_update(Target::chain_settings, 210, 10),
            "hold threshold triggers entry");
     expect(!agent_q::local_settings_touch_entry_active(),
            "trigger clears entry state");
-    expect(!agent_q::local_settings_touch_entry_update(true, 210, 10),
+    expect(!agent_q::local_settings_touch_entry_update(Target::chain_settings, 210, 10),
            "post-trigger same tick starts a new hold instead of retriggering");
     expect(agent_q::local_settings_touch_entry_active(),
            "post-trigger touch is a new active hold");
 
     agent_q::local_settings_touch_entry_clear();
-    expect(!agent_q::local_settings_touch_entry_update(true, 0xfffffff0u, 5),
+    expect(!agent_q::local_settings_touch_entry_update(Target::device_settings, 0xfffffff0u, 5),
            "wrapped-tick scenario arms entry");
-    expect(agent_q::local_settings_touch_entry_update(true, 0xfffffff5u, 5),
+    expect(agent_q::local_settings_touch_entry_update(Target::device_settings, 0xfffffff5u, 5),
            "elapsed calculation handles unsigned tick values");
 
     agent_q::local_settings_touch_entry_clear();
-    expect(!agent_q::local_settings_touch_entry_update(true, 300, 0),
+    expect(!agent_q::local_settings_touch_entry_update(Target::chain_settings, 300, 0),
            "zero hold first touch arms entry");
-    expect(agent_q::local_settings_touch_entry_update(true, 300, 0),
+    expect(agent_q::local_settings_touch_entry_update(Target::chain_settings, 300, 0),
            "zero hold triggers on the next observed inside touch");
 
     if (failures != 0) {

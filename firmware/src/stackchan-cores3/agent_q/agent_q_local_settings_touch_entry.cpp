@@ -7,11 +7,13 @@ namespace {
 
 struct LocalSettingsTouchEntryState {
     bool active = false;
+    AgentQLocalSettingsTouchEntryTarget target = AgentQLocalSettingsTouchEntryTarget::none;
     TickType_t started_at = 0;
 
     void clear()
     {
         active = false;
+        target = AgentQLocalSettingsTouchEntryTarget::none;
         started_at = 0;
     }
 };
@@ -40,22 +42,24 @@ AgentQLocalSettingsTouchEntrySnapshot local_settings_touch_entry_snapshot()
 {
     return AgentQLocalSettingsTouchEntrySnapshot{
         g_state.active,
+        g_state.target,
         g_state.started_at,
     };
 }
 
 bool local_settings_touch_entry_update(
-    bool inside_entry_area,
+    AgentQLocalSettingsTouchEntryTarget target,
     TickType_t now,
     TickType_t hold_ticks)
 {
-    if (!inside_entry_area) {
+    if (target == AgentQLocalSettingsTouchEntryTarget::none) {
         g_state.clear();
         return false;
     }
 
-    if (!g_state.active) {
+    if (!g_state.active || g_state.target != target) {
         g_state.active = true;
+        g_state.target = target;
         g_state.started_at = now;
         return false;
     }

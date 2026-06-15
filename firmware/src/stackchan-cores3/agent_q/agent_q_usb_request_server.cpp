@@ -219,7 +219,8 @@ void finish_sui_zklogin_proposal_error_terminal(
     const char* error_code,
     const char* error_message,
     const char* display_message);
-void show_sui_settings_from_settings_menu();
+void start_local_chain_settings_from_touch();
+void show_sui_settings_from_active_settings();
 void show_settings_menu_from_sui_settings();
 void start_sui_zklogin_clear_from_sui_settings();
 
@@ -2323,6 +2324,20 @@ void start_local_settings_from_touch()
     agent_q::local_settings_reset_ui_start_from_touch(local_settings_reset_ui_ops());
 }
 
+void start_local_chain_settings_from_touch()
+{
+    if (!local_settings_start_available()) {
+        ESP_LOGW(kTag, "Local chain settings touch ignored because settings are unavailable");
+        agent_q::local_settings_touch_entry_clear();
+        return;
+    }
+
+    const TickType_t now = xTaskGetTickCount();
+    agent_q::local_reset_begin_settings(
+        timeout_window_from_now_ms(now, agent_q::kAgentQLocalResetEntryMs));
+    show_sui_settings_from_active_settings();
+}
+
 void cancel_local_reset_from_ui(const char* message)
 {
     agent_q::local_settings_reset_ui_cancel_reset_from_ui(
@@ -2664,7 +2679,7 @@ void start_settings_change_pin_from_settings_menu()
         local_pin_auth_ui_flow_ops());
 }
 
-void show_sui_settings_from_settings_menu()
+void show_sui_settings_from_active_settings()
 {
     const agent_q::AgentQLocalResetSnapshot reset =
         agent_q::local_reset_snapshot(xTaskGetTickCount());
@@ -2876,16 +2891,25 @@ void poll_local_settings_touch_entry()
     }
 
     const auto touch = hal_bridge::get_touch_point();
-    const bool inside_entry_corner = touch.num > 0 &&
-                                     touch.x >= kScreenWidth - kSettingsTouchEntryWidth &&
-                                     touch.y >= 0 &&
-                                     touch.y < kSettingsTouchEntryHeight;
+    agent_q::AgentQLocalSettingsTouchEntryTarget target =
+        agent_q::AgentQLocalSettingsTouchEntryTarget::none;
+    if (touch.num > 0 && touch.y >= 0 && touch.y < kSettingsTouchEntryHeight) {
+        if (touch.x < kSettingsTouchEntryWidth) {
+            target = agent_q::AgentQLocalSettingsTouchEntryTarget::chain_settings;
+        } else if (touch.x >= kScreenWidth - kSettingsTouchEntryWidth) {
+            target = agent_q::AgentQLocalSettingsTouchEntryTarget::device_settings;
+        }
+    }
     const TickType_t now = xTaskGetTickCount();
     if (agent_q::local_settings_touch_entry_update(
-            inside_entry_corner,
+            target,
             now,
             pdMS_TO_TICKS(kSettingsTouchEntryMs))) {
-        agent_q::ui_event_bridge_enqueue_settings_requested();
+        if (target == agent_q::AgentQLocalSettingsTouchEntryTarget::chain_settings) {
+            agent_q::ui_event_bridge_enqueue_chain_settings_requested();
+        } else {
+            agent_q::ui_event_bridge_enqueue_settings_requested();
+        }
     }
 }
 
@@ -3064,6 +3088,11 @@ void drain_ui_events()
             continue;
         }
 
+        if (event.kind == AgentQUiEventKind::chain_settings_requested) {
+            start_local_chain_settings_from_touch();
+            continue;
+        }
+
         if (event.kind == AgentQUiEventKind::settings_cancel_requested) {
             close_local_settings_from_ui();
             continue;
@@ -3076,11 +3105,6 @@ void drain_ui_events()
 
         if (event.kind == AgentQUiEventKind::settings_signing_mode_requested) {
             start_settings_signing_mode_from_settings_menu();
-            continue;
-        }
-
-        if (event.kind == AgentQUiEventKind::settings_sui_requested) {
-            show_sui_settings_from_settings_menu();
             continue;
         }
 

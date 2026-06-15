@@ -1088,7 +1088,7 @@ Rules:
 - Firmware allows preparation and proposal only while the native Sui identity is
   active. If any zkLogin proof record is active, invalid, or unavailable,
   preparation/proposal fail closed; clearing is available only through the
-  device-local `Settings > Sui` flow.
+  device-local Sui chain view.
 - `credential_prepare_result.preparation.publicKey` is base64 of
   `0x00 || raw 32-byte Ed25519 public key`. The external flow may use this
   public key to compute the Sui zkLogin nonce. The device does not need to

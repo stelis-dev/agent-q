@@ -19,7 +19,6 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_settings_cancel_clicked = nullptr;
     lv_event_cb_t on_settings_human_approval_input_clicked = nullptr;
     lv_event_cb_t on_settings_signing_mode_clicked = nullptr;
-    lv_event_cb_t on_settings_sui_clicked = nullptr;
     lv_event_cb_t on_settings_policy_reset_clicked = nullptr;
     lv_event_cb_t on_settings_change_pin_clicked = nullptr;
     lv_event_cb_t on_settings_reset_clicked = nullptr;

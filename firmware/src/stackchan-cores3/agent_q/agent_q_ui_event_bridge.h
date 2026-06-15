@@ -16,10 +16,10 @@ enum class AgentQUiEventKind {
     setup_cancel_requested,
     ui_surface_ready,
     settings_requested,
+    chain_settings_requested,
     settings_cancel_requested,
     settings_human_approval_input_requested,
     settings_signing_mode_requested,
-    settings_sui_requested,
     settings_policy_reset_requested,
     settings_change_pin_requested,
     settings_reset_requested,
@@ -65,6 +65,7 @@ void ui_event_bridge_register_callbacks();
 
 void ui_event_bridge_enqueue_surface_ready();
 void ui_event_bridge_enqueue_settings_requested();
+void ui_event_bridge_enqueue_chain_settings_requested();
 lv_event_cb_t ui_event_bridge_setup_clicked_callback();
 
 bool ui_event_bridge_receive(AgentQUiEvent* event);

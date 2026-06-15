@@ -248,7 +248,7 @@ Allowed:
 - device-local Settings action for resetting active policy to the current
   default reject policy; changing it requires stored PIN verification and is
   not exposed as a protocol, host, Admin, or MCP reset request
-- device-local `Settings > Sui` view for active identity/proof metadata and
+- device-local Sui chain view for active identity/proof metadata and
   local zkLogin proof clear; clearing requires stored PIN verification, wipes
   only the Sui zkLogin proof record, ends the active session, and is not exposed
   as a protocol, host, Admin, or MCP proof-clear request
@@ -296,7 +296,7 @@ validator verification. The stored proof record includes its Sui network; when
 zkLogin is active, `sign_transaction` and `sign_personal_message` require the
 request `network` to match that stored proof network before signing can proceed.
 When zkLogin is active, preparation/proposal fail closed until the user clears
-the proof locally through `Settings > Sui`; clearing the proof ends the active
+the proof locally through the Sui chain view; clearing the proof ends the active
 session and returns the next account projection to the native identity.
 The host process must not evaluate policy. A corrupt, unreadable, missing,
 or invalid current active policy is a persistent-material consistency
