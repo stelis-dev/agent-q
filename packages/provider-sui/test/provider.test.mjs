@@ -483,6 +483,7 @@ function createFakeBrowserProtocolResponse(request) {
             { chain: "sui", method: "sign_personal_message" },
           ],
         },
+        credentials: [validCredentialCapability()],
       };
     case "get_accounts":
       return {
@@ -521,6 +522,29 @@ function createFakeBrowserProtocolResponse(request) {
         method: "sign_personal_message",
         signature: SUI_SIGNATURE,
         messageBytes: request.params.message,
+      };
+    case "credential_prepare":
+      return {
+        id: request.id,
+        version: 1,
+        type: "credential_prepare_result",
+        status: "prepared",
+        chain: "sui",
+        credential: "zklogin",
+        preparation: {
+          address: SUI_ADDRESS,
+          publicKey: SUI_PUBLIC_KEY,
+          keyScheme: "ed25519",
+        },
+      };
+    case "credential_propose":
+      return {
+        id: request.id,
+        version: 1,
+        type: "credential_propose_result",
+        status: "activated",
+        reasonCode: "activated",
+        sessionEnded: true,
       };
     default:
       return {
@@ -675,6 +699,8 @@ test("browser provider runtime defers Web Serial port selection until connectDev
     });
     const provider = createAgentQSuiBrowserProvider({ clientName: "Agent-Q Sui dapp-kit Example" });
     assert.equal(provider instanceof AgentQSuiBrowserProvider, true);
+    assert.equal(typeof provider.credentialPrepare, "function");
+    assert.equal(typeof provider.credentialPropose, "function");
     assert.equal(isAgentQSuiBrowserProviderAvailable(), true);
     assert.equal(requestPortCalls, 0);
 
@@ -700,6 +726,7 @@ test("browser provider runtime defers Web Serial port selection until connectDev
       { chain: "sui", method: "sign_transaction" },
       { chain: "sui", method: "sign_personal_message" },
     ]);
+    assert.deepEqual(capabilities.credentials, [validCredentialCapability()]);
 
     const accounts = await provider.getAccounts();
     assert.equal(accounts.source, "live");
@@ -745,6 +772,255 @@ test("browser provider runtime defers Web Serial port selection until connectDev
       Object.defineProperty(globalThis, "navigator", previousNavigator);
     }
   }
+});
+
+test("browser provider sends credential setup over the active Web Serial session", async () => {
+  const port = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+
+    const prepare = await provider.credentialPrepare({
+      chain: "sui",
+      credential: "zklogin",
+      purpose: "test-web",
+      signerKind: "native",
+    });
+    const proposeInput = {
+      ...validCredentialProposeInput({ purpose: "test-web" }),
+      signerKind: "zklogin",
+    };
+    const propose = await provider.credentialPropose(proposeInput);
+
+    assert.deepEqual(prepare, {
+      source: "live",
+      deviceId: "device-1",
+      chain: "sui",
+      credential: "zklogin",
+      preparation: {
+        address: SUI_ADDRESS,
+        publicKey: SUI_PUBLIC_KEY,
+        keyScheme: "ed25519",
+      },
+    });
+    assert.deepEqual(propose, {
+      source: "live",
+      deviceId: "device-1",
+      status: "activated",
+      reasonCode: "activated",
+      sessionEnded: true,
+    });
+    assert.deepEqual(await provider.getAccounts(), {
+      source: "not_connected",
+      deviceId: "browser",
+      reason: "not_connected",
+    });
+    assert.deepEqual(port.requests.map((request) => request.type), [
+      "connect",
+      "credential_prepare",
+      "credential_propose",
+    ]);
+    assert.deepEqual(port.requests[1].params, {
+      chain: "sui",
+      credential: "zklogin",
+    });
+    assert.equal(Object.hasOwn(port.requests[1].params, "purpose"), false);
+    assert.equal(Object.hasOwn(port.requests[1].params, "signerKind"), false);
+    assert.deepEqual(port.requests[2].params, {
+      chain: "sui",
+      credential: "zklogin",
+      network: "testnet",
+      address: ZKLOGIN_ADDRESS,
+      publicKey: ZKLOGIN_PUBLIC_KEY,
+      maxEpoch: "42",
+      inputs: validZkLoginInputs(),
+    });
+    assert.equal(Object.hasOwn(port.requests[2].params, "deviceId"), false);
+    assert.equal(Object.hasOwn(port.requests[2].params, "purpose"), false);
+    assert.equal(Object.hasOwn(port.requests[2].params, "signerKind"), false);
+    assertNoSecretFields(prepare);
+    assertNoSecretFields(propose);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider credential setup returns not_connected before connect", async () => {
+  let requestPortCalls = 0;
+  const port = new FakeBrowserSerialPort(createFakeBrowserProtocolResponse);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        serial: {
+          requestPort: async () => {
+            requestPortCalls += 1;
+            return port;
+          },
+        },
+      },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.deepEqual(await provider.credentialPrepare({ chain: "sui", credential: "zklogin" }), {
+      source: "not_connected",
+      deviceId: "browser",
+      reason: "not_connected",
+    });
+    assert.deepEqual(await provider.credentialPropose(validCredentialProposeInput({ deviceId: undefined })), {
+      source: "not_connected",
+      deviceId: "browser",
+      reason: "not_connected",
+    });
+    assert.equal(requestPortCalls, 0);
+    assert.deepEqual(port.requests, []);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider credential setup clears stale sessions on invalid_session", async () => {
+  const port = new FakeBrowserSerialPort((request) => {
+    if (request.type === "credential_prepare") {
+      return {
+        id: request.id,
+        version: 1,
+        type: "error",
+        error: { code: "invalid_session", message: "Session is unknown or already ended." },
+      };
+    }
+    return createFakeBrowserProtocolResponse(request);
+  });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+    assert.deepEqual(await provider.credentialPrepare({ chain: "sui", credential: "zklogin" }), {
+      source: "session_ended",
+      deviceId: "device-1",
+      reason: "invalid_session",
+    });
+    assert.deepEqual(await provider.getCapabilities(), {
+      source: "not_connected",
+      deviceId: "browser",
+      reason: "not_connected",
+    });
+    assert.deepEqual(port.requests.map((request) => request.type), ["connect", "credential_prepare"]);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider credential setup rejects malformed and secret-bearing responses", async () => {
+  {
+    const port = new FakeBrowserSerialPort((request) => {
+      if (request.type === "credential_prepare") {
+        return {
+          ...createFakeBrowserProtocolResponse(request),
+          preparation: {
+            address: ZKLOGIN_ADDRESS,
+            publicKey: SUI_PUBLIC_KEY,
+            keyScheme: "ed25519",
+          },
+        };
+      }
+      return createFakeBrowserProtocolResponse(request);
+    });
+    const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    try {
+      Object.defineProperty(globalThis, "navigator", {
+        configurable: true,
+        value: { serial: { requestPort: async () => port } },
+      });
+      const provider = createAgentQSuiBrowserProvider();
+      assert.equal((await provider.connectDevice()).source, "connected");
+      await assert.rejects(
+        () => provider.credentialPrepare({ chain: "sui", credential: "zklogin" }),
+        { code: "protocol_error" },
+      );
+    } finally {
+      if (previousNavigator === undefined) {
+        delete globalThis.navigator;
+      } else {
+        Object.defineProperty(globalThis, "navigator", previousNavigator);
+      }
+    }
+  }
+
+  {
+    const port = new FakeBrowserSerialPort((request) => {
+      if (request.type === "credential_propose") {
+        return {
+          ...createFakeBrowserProtocolResponse(request),
+          jwt: "must_not_leak",
+        };
+      }
+      return createFakeBrowserProtocolResponse(request);
+    });
+    const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    try {
+      Object.defineProperty(globalThis, "navigator", {
+        configurable: true,
+        value: { serial: { requestPort: async () => port } },
+      });
+      const provider = createAgentQSuiBrowserProvider();
+      assert.equal((await provider.connectDevice()).source, "connected");
+      await assert.rejects(
+        () => provider.credentialPropose(validCredentialProposeInput()),
+        { code: "protocol_error" },
+      );
+    } finally {
+      if (previousNavigator === undefined) {
+        delete globalThis.navigator;
+      } else {
+        Object.defineProperty(globalThis, "navigator", previousNavigator);
+      }
+    }
+  }
+});
+
+test("Wallet Standard does not project browser provider credential setup methods", () => {
+  const provider = createAgentQSuiBrowserProvider();
+  assert.equal(typeof provider.credentialPrepare, "function");
+  assert.equal(typeof provider.credentialPropose, "function");
+  const wallet = createAgentQSuiWallet({
+    provider,
+    getClient: fakeClient,
+    chains: ["sui:devnet"],
+  });
+  assert.deepEqual(Object.keys(wallet.features).sort(), [
+    "standard:connect",
+    "standard:disconnect",
+    "standard:events",
+    "sui:signPersonalMessage",
+    "sui:signTransaction",
+  ]);
+  assert.equal(wallet.features["agentq:credentialPrepare"], undefined);
+  assert.equal(wallet.features["agentq:credentialPropose"], undefined);
+  assert.equal(wallet.credentialPrepare, undefined);
+  assert.equal(wallet.credentialPropose, undefined);
+  assert.equal(wallet.signerKind, undefined);
 });
 
 test("browser provider reuses a single granted Agent-Q Web Serial port before prompting", async () => {

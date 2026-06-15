@@ -34,7 +34,11 @@ import {
 } from "@stelis/agent-q-core/provider-protocol";
 import {
   assertAckResultResponse,
+  assertCredentialPrepareResultResponse,
+  assertCredentialProposeResultResponse,
   makeAckResultRequest,
+  makeCredentialPrepareRequest,
+  makeCredentialProposeRequest,
   makeGetResultRequest,
   makePayloadUploadAbortRequest,
   makePayloadUploadBeginRequest,
@@ -59,6 +63,12 @@ import type {
   AgentQSuiWalletProvider,
   AgentQSuiWalletSignTransactionResult,
 } from "./wallet-standard.js";
+import type {
+  CredentialPrepareInput,
+  CredentialPrepareResult,
+  CredentialProposeInput,
+  CredentialProposeResult,
+} from "./provider-sui.js";
 
 const DEFAULT_CLIENT_NAME = "Agent-Q Sui dapp";
 
@@ -214,7 +224,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     try {
       response = await this.#exchange(
         makeConnectRequest(input.clientName ?? this.#clientName),
-        assertConnectResponse,
+        (response) => assertConnectResponse(response as ProviderProtocolResponse),
         INTERNAL_CONNECT_DEADLINE_MS,
       );
     } catch (error) {
@@ -230,7 +240,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       try {
         await this.#exchange(
           makeDisconnectRequest(response.sessionId),
-          assertDisconnectResponse,
+          (response) => assertDisconnectResponse(response as ProviderProtocolResponse),
           INTERNAL_DISCONNECT_DEADLINE_MS,
         );
       } catch {
@@ -291,6 +301,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
         deviceId: session.deviceId,
         capabilities: response.chains,
         ...(response.signing === undefined ? {} : { signing: response.signing }),
+        ...(response.credentials === undefined ? {} : { credentials: response.credentials }),
       };
     } catch (error) {
       const ended = this.#clearIfSessionEnded(error, snapshot);
@@ -317,6 +328,79 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       const ended = this.#clearIfSessionEnded(error, snapshot);
       if (ended !== null) {
         return ended;
+      }
+      throw error;
+    }
+  }
+
+  async credentialPrepare(input: CredentialPrepareInput): Promise<CredentialPrepareResult> {
+    const session = this.#matchingSession(input.deviceId);
+    if (session === null) {
+      return this.#inactiveCredentialResult(input.deviceId);
+    }
+    const snapshot = this.#sessionSnapshot(session);
+    const request = makeCredentialPrepareRequest(session.sessionId, {
+      chain: input.chain,
+      credential: input.credential,
+    });
+    try {
+      const response = await this.#exchange(
+        request,
+        assertCredentialPrepareResultResponse,
+        deadlineForProviderRequest(request),
+      );
+      return {
+        source: "live",
+        deviceId: session.deviceId,
+        chain: response.chain,
+        credential: response.credential,
+        preparation: response.preparation,
+      };
+    } catch (error) {
+      const ended = this.#clearIfSessionEnded(error, snapshot);
+      if (ended !== null) {
+        return toCredentialSessionEndedResult(ended);
+      }
+      throw error;
+    }
+  }
+
+  async credentialPropose(input: CredentialProposeInput): Promise<CredentialProposeResult> {
+    const session = this.#matchingSession(input.deviceId);
+    if (session === null) {
+      return this.#inactiveCredentialResult(input.deviceId);
+    }
+    const snapshot = this.#sessionSnapshot(session);
+    const request = makeCredentialProposeRequest(session.sessionId, {
+      chain: input.chain,
+      credential: input.credential,
+      network: input.network,
+      address: input.address,
+      publicKey: input.publicKey,
+      maxEpoch: input.maxEpoch,
+      inputs: input.inputs,
+    });
+    try {
+      const response = await this.#exchange(
+        request,
+        assertCredentialProposeResultResponse,
+        deadlineForProviderRequest(request),
+      );
+      const result: CredentialProposeResult = {
+        source: "live",
+        deviceId: session.deviceId,
+        status: response.status,
+        reasonCode: response.reasonCode,
+        sessionEnded: response.sessionEnded,
+      };
+      if (response.sessionEnded) {
+        this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
+      }
+      return result;
+    } catch (error) {
+      const ended = this.#clearIfSessionEnded(error, snapshot);
+      if (ended !== null) {
+        return toCredentialSessionEndedResult(ended);
       }
       throw error;
     }
@@ -562,7 +646,11 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     request: ProviderProtocolRequest,
     assertResponse: (response: ProviderProtocolResponse) => TResponse,
   ): Promise<TResponse> {
-    return this.#exchange(request, assertResponse, deadlineForProviderRequest(request));
+    return this.#exchange(
+      request,
+      (response) => assertResponse(response as ProviderProtocolResponse),
+      deadlineForProviderRequest(request),
+    );
   }
 
   #signTransactionWithDelivery(
@@ -909,9 +997,9 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
   // callers queue behind each other instead of racing on the same port. A teardown
   // observed while this request was queued or while #getPort() was re-prompting
   // rejects it here rather than running over a torn-down transport.
-  #exchange<TResponse extends ProviderProtocolResponse>(
-    request: ProviderProtocolRequest,
-    assertResponse: (response: ProviderProtocolResponse) => TResponse,
+  #exchange<TResponse>(
+    request: ProtocolRequest,
+    assertResponse: (response: ProtocolResponse) => TResponse,
     deadlineMs: number,
   ): Promise<TResponse> {
     const generation = this.#transportGeneration;
@@ -926,7 +1014,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       return requestOverBrowserSerial(
         port,
         request,
-        (response) => assertResponse(response as ProviderProtocolResponse),
+        assertResponse,
         remainingProviderDeadline(absoluteDeadlineMs, deadlineMs),
         () => this.#abandonPort(),
       );
@@ -979,6 +1067,10 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     if (!isAgentQSuiBrowserProviderAvailable()) {
       return { source: "unavailable", deviceId: deviceId ?? "browser", reason: "unsupported_transport" };
     }
+    return { source: "not_connected", deviceId: deviceId ?? this.#session?.deviceId ?? "browser", reason: "not_connected" };
+  }
+
+  #inactiveCredentialResult(deviceId: string | undefined): Extract<CredentialPrepareResult, { source: "not_connected" }> {
     return { source: "not_connected", deviceId: deviceId ?? this.#session?.deviceId ?? "browser", reason: "not_connected" };
   }
 
@@ -1587,6 +1679,10 @@ function deadlineForProviderRequest(request: Pick<ProtocolRequest, "type">): num
       return INTERNAL_SIGN_TRANSACTION_DEADLINE_MS;
     case "sign_personal_message":
       return INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS;
+    case "credential_prepare":
+      return INTERNAL_USB_DEADLINE_MS;
+    case "credential_propose":
+      return INTERNAL_SIGN_TRANSACTION_DEADLINE_MS;
     case "get_capabilities":
     case "get_accounts":
       return INTERNAL_USB_DEADLINE_MS;
@@ -1629,6 +1725,16 @@ function tryParseMatchingResponseLine<TResponse>(
 
 function targetMatches(requestedDeviceId: string | undefined, sessionDeviceId: string): boolean {
   return requestedDeviceId === undefined || requestedDeviceId === sessionDeviceId;
+}
+
+function toCredentialSessionEndedResult(
+  value: { source: "session_ended"; deviceId: string; reason: string },
+): Extract<CredentialPrepareResult, { source: "session_ended" }> {
+  const reason = value.reason === "transport_closed" ? "transport_unavailable" : value.reason;
+  if (reason === "invalid_session" || reason === "timeout" || reason === "transport_unavailable") {
+    return { source: "session_ended", deviceId: value.deviceId, reason };
+  }
+  return { source: "session_ended", deviceId: value.deviceId, reason: "transport_unavailable" };
 }
 
 function isSessionEndedError(error: unknown): boolean {
