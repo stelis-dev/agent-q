@@ -206,12 +206,12 @@ evaluation in policy mode, device-local user confirmation in user mode, history,
 signing, and cleanup. Personal-message signing is user-mode only in the current
 implementation.
 
-See `packages/example-sui-dapp-kit/` for a minimal dapp-kit integration
-example with transfer-signing and personal-message signing buttons. The example
+See `packages/sample-sui-dapp-kit/` for a minimal dapp-kit integration
+sample with transfer-signing and personal-message signing buttons. The sample
 does not create or accept a fake provider; it creates the Web Serial-based
 browser runtime so the Agent-Q wallet can stay visible before a
 USB device is selected. If Web Serial is unavailable, the runtime fails closed
-on connect/read/signing instead of hiding the wallet. The example does not
+on connect/read/signing instead of hiding the wallet. The sample does not
 expose policy reads, policy update proposals, approval history, Admin, MCP, or
 a host-selected authorization API.
 

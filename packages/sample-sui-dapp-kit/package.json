@@ -1,7 +1,7 @@
 {
-  "name": "@stelis/agent-q-example-sui-dapp-kit",
+  "name": "@stelis/agent-q-sample-sui-dapp-kit",
   "version": "0.0.7",
-  "description": "Example Sui dapp-kit app that registers the Agent-Q Wallet Standard wallet for signing through an Agent-Q device.",
+  "description": "Sample Sui dapp-kit app that registers the Agent-Q Wallet Standard wallet for signing through an Agent-Q device.",
   "private": true,
   "type": "module",
   "scripts": {

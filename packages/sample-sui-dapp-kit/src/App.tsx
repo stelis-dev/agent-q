@@ -231,7 +231,7 @@ function WalletStatus() {
       </dl>
       {!agentQWalletSelected && (
         <p className="inline-warning">
-          This example only signs through {AGENT_Q_SUI_WALLET_NAME}. Select that wallet before signing.
+          This sample only signs through {AGENT_Q_SUI_WALLET_NAME}. Select that wallet before signing.
         </p>
       )}
       <section className="signing-grid" aria-label="Agent-Q signing actions">
@@ -295,7 +295,7 @@ export function App() {
     <DAppKitProvider dAppKit={dAppKit}>
       <main>
         <header>
-          <h1>Agent-Q Sui dapp-kit Example</h1>
+          <h1>Agent-Q Sui dapp-kit Sample</h1>
           <ConnectButton modalOptions={{ filterFn: isAgentQWallet }} />
         </header>
         <WalletStatus />

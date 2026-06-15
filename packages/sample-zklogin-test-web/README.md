@@ -24,13 +24,19 @@ on the device through `Settings > Sui`.
 ## Run
 
 ```sh
-npm --workspace @stelis/agent-q-zklogin-test-web run dev
+npm --workspace @stelis/agent-q-sample-zklogin-test-web run dev
 ```
 
 For Enoki-backed testing, copy `.env.example` to `.env.local` and set an Enoki
 public API key. Vite exposes `VITE_*` values to browser code, so do not put
 private API keys, OAuth client secrets, JWTs, salts, or signing material in the
 environment file.
+
+Google login requires an OAuth callback URL registered with the Google OAuth
+client and the Enoki app metadata for that client. The sample includes
+`callback.html` for this purpose. Set `VITE_ZKLOGIN_REDIRECT_URI` to that
+callback URL, or leave it unset to use the bundled callback page on the browser
+origin printed by Vite, such as `http://127.0.0.1:5173/callback.html`.
 
 The default test flow is:
 
@@ -56,7 +62,7 @@ JWTs, OAuth tokens, salts, or Enoki session state.
 ## Build
 
 ```sh
-npm run build:zklogin-test-web
+npm run build:sample-zklogin-test-web
 ```
 
 The transaction test builds transaction bytes for the active account, sends them

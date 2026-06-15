@@ -57,9 +57,10 @@ const DEFAULT_TRANSFER_AMOUNT_MIST = "1";
 const DEFAULT_ENOKI_API_URL = envString("VITE_ENOKI_API_URL", "https://api.enoki.mystenlabs.com");
 const DEFAULT_ENOKI_API_KEY = envString("VITE_ENOKI_PUBLIC_API_KEY", "");
 const DEFAULT_GOOGLE_CLIENT_ID = envString("VITE_ZKLOGIN_GOOGLE_CLIENT_ID", "");
+const DEFAULT_REDIRECT_URI = envString("VITE_ZKLOGIN_REDIRECT_URI", defaultCallbackUrl());
 const ENOKI_PROVIDERS: EnokiAuthProvider[] = ["google", "facebook", "twitch"];
 const CLIENT_NAME = "Agent-Q zkLogin test web";
-const PROVIDER_PURPOSE = "zklogin-test-web";
+const PROVIDER_PURPOSE = "sample-zklogin-test-web";
 
 function App() {
   const [provider] = useState(() => createAgentQSuiBrowserProvider({ clientName: CLIENT_NAME }));
@@ -79,7 +80,7 @@ function App() {
   const [nonce, setNonce] = useState("");
   const [oauthAuthorizeUrl, setOauthAuthorizeUrl] = useState(() => defaultOAuthAuthorizeUrl("google"));
   const [oauthClientId, setOauthClientId] = useState(DEFAULT_GOOGLE_CLIENT_ID);
-  const [oauthRedirectUri, setOauthRedirectUri] = useState(() => globalThis.location?.origin ?? "");
+  const [oauthRedirectUri, setOauthRedirectUri] = useState(DEFAULT_REDIRECT_URI);
   const [oauthScope, setOauthScope] = useState("openid email profile");
   const [jwt, setJwt] = useState("");
   const [userSalt, setUserSalt] = useState("");
@@ -298,6 +299,9 @@ function App() {
       }
       if (oauthAuthorizeUrl.trim().length === 0 || oauthClientId.trim().length === 0) {
         throw new Error("Authorization URL and client ID are required.");
+      }
+      if (oauthRedirectUri.trim().length === 0) {
+        throw new Error("Callback URL is required.");
       }
       const url = new URL(oauthAuthorizeUrl.trim());
       url.searchParams.set("response_type", "id_token");
@@ -616,7 +620,7 @@ function App() {
             <input value={oauthScope} onChange={(event) => setOauthScope(event.target.value)} />
           </label>
           <label>
-            Redirect URI
+            Callback URL
             <input value={oauthRedirectUri} onChange={(event) => setOauthRedirectUri(event.target.value)} />
           </label>
           <button type="button" onClick={openOAuth} disabled={busy !== null || nonce.length === 0}>
@@ -958,7 +962,7 @@ function scrubRedirectTokenUrl(): string {
   searchParams.delete("id_token");
   searchParams.delete("jwt");
 
-  let nextUrl = globalThis.location.pathname;
+  let nextUrl = callbackReturnPath(globalThis.location.pathname);
   const search = searchParams.toString();
   if (search.length > 0) {
     nextUrl += `?${search}`;
@@ -980,6 +984,24 @@ function scrubRedirectTokenUrl(): string {
 
 function stripUrlParamPrefix(value: string): string {
   return value.startsWith("#") || value.startsWith("?") ? value.slice(1) : value;
+}
+
+function defaultCallbackUrl(): string {
+  const origin = globalThis.location?.origin ?? "";
+  return origin.length === 0 ? "" : `${origin}/callback.html`;
+}
+
+function callbackReturnPath(pathname: string): string {
+  if (pathname === "/callback.html" || pathname === "/callback") {
+    return "/";
+  }
+  if (pathname.endsWith("/callback.html")) {
+    return pathname.slice(0, -"/callback.html".length) || "/";
+  }
+  if (pathname.endsWith("/callback")) {
+    return pathname.slice(0, -"/callback".length) || "/";
+  }
+  return pathname;
 }
 
 function signResultLines(response: AgentQSuiWalletSignTransactionResult, txBytes: string): string[] {

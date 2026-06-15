@@ -477,7 +477,8 @@ packages/
   core/
   agent-q/
   provider-sui/
-  example-sui-dapp-kit/
+  sample-sui-dapp-kit/
+  sample-zklogin-test-web/
 
 firmware/
   README.md

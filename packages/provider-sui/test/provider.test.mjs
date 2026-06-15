@@ -697,7 +697,7 @@ test("browser provider runtime defers Web Serial port selection until connectDev
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider({ clientName: "Agent-Q Sui dapp-kit Example" });
+    const provider = createAgentQSuiBrowserProvider({ clientName: "Agent-Q Sui dapp-kit Sample" });
     assert.equal(provider instanceof AgentQSuiBrowserProvider, true);
     assert.equal(typeof provider.credentialPrepare, "function");
     assert.equal(typeof provider.credentialPropose, "function");
