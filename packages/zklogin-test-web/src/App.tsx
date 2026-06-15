@@ -10,6 +10,16 @@ import {
   jwtToAddress,
   type ZkLoginSignatureInputs,
 } from "@mysten/sui/zklogin";
+import {
+  createEnokiNonce,
+  createEnokiZkp,
+  defaultOAuthAuthorizeUrl,
+  getEnokiApp,
+  getEnokiZkLogin,
+  toEnokiNetwork,
+  type EnokiAppProvider,
+  type EnokiAuthProvider,
+} from "./enoki";
 import type {
   ConnectDeviceResult,
   CredentialPrepareResult,
@@ -44,6 +54,10 @@ type CredentialCapabilityView = {
 const NETWORKS: SuiSignTransactionNetwork[] = ["testnet", "devnet", "mainnet", "localnet"];
 const DEFAULT_GAS_BUDGET_MIST = "10000000";
 const DEFAULT_TRANSFER_AMOUNT_MIST = "1";
+const DEFAULT_ENOKI_API_URL = envString("VITE_ENOKI_API_URL", "https://api.enoki.mystenlabs.com");
+const DEFAULT_ENOKI_API_KEY = envString("VITE_ENOKI_PUBLIC_API_KEY", "");
+const DEFAULT_GOOGLE_CLIENT_ID = envString("VITE_ZKLOGIN_GOOGLE_CLIENT_ID", "");
+const ENOKI_PROVIDERS: EnokiAuthProvider[] = ["google", "facebook", "twitch"];
 const CLIENT_NAME = "Agent-Q zkLogin test web";
 const PROVIDER_PURPOSE = "zklogin-test-web";
 
@@ -54,12 +68,17 @@ function App() {
   const [capabilities, setCapabilities] = useState<AgentQSuiWalletGetCapabilitiesResult | null>(null);
   const [accounts, setAccounts] = useState<AgentQSuiWalletSuiAccount[]>([]);
   const [network, setNetwork] = useState<SuiSignTransactionNetwork>("testnet");
+  const [enokiApiUrl, setEnokiApiUrl] = useState(DEFAULT_ENOKI_API_URL);
+  const [enokiApiKey, setEnokiApiKey] = useState(DEFAULT_ENOKI_API_KEY);
+  const [enokiAdditionalEpochs, setEnokiAdditionalEpochs] = useState("2");
+  const [enokiProvider, setEnokiProvider] = useState<EnokiAuthProvider>("google");
+  const [enokiAppProviders, setEnokiAppProviders] = useState<EnokiAppProvider[]>([]);
   const [maxEpoch, setMaxEpoch] = useState("10");
   const [randomness, setRandomness] = useState(() => generateRandomness());
   const [preparation, setPreparation] = useState<CredentialPreparation | null>(null);
   const [nonce, setNonce] = useState("");
-  const [oauthAuthorizeUrl, setOauthAuthorizeUrl] = useState("");
-  const [oauthClientId, setOauthClientId] = useState("");
+  const [oauthAuthorizeUrl, setOauthAuthorizeUrl] = useState(() => defaultOAuthAuthorizeUrl("google"));
+  const [oauthClientId, setOauthClientId] = useState(DEFAULT_GOOGLE_CLIENT_ID);
   const [oauthRedirectUri, setOauthRedirectUri] = useState(() => globalThis.location?.origin ?? "");
   const [oauthScope, setOauthScope] = useState("openid email profile");
   const [jwt, setJwt] = useState("");
@@ -159,7 +178,7 @@ function App() {
   }
 
   async function prepare(): Promise<void> {
-    await run("Prepare zkLogin", async () => {
+    await run("Prepare local nonce", async () => {
       if (setupBlockedReason !== null) {
         throw new Error(setupBlockedReason);
       }
@@ -190,6 +209,88 @@ function App() {
     setRandomness(generateRandomness());
   }
 
+  function currentEnokiConfig() {
+    return { apiUrl: enokiApiUrl, apiKey: enokiApiKey };
+  }
+
+  function requireEnokiConfig() {
+    const config = currentEnokiConfig();
+    if (config.apiUrl.trim().length === 0) {
+      throw new Error("Enoki API URL is required.");
+    }
+    if (config.apiKey.trim().length === 0) {
+      throw new Error("Enoki public API key is required.");
+    }
+    return config;
+  }
+
+  async function loadEnokiApp(): Promise<void> {
+    await run("Load Enoki app", async () => {
+      const providers = await getEnokiApp(requireEnokiConfig());
+      setEnokiAppProviders(providers);
+      const selected = providers.find((entry) => entry.providerType === enokiProvider) ?? providers[0] ?? null;
+      if (selected !== null) {
+        setEnokiProvider(selected.providerType);
+        setOauthAuthorizeUrl(defaultOAuthAuthorizeUrl(selected.providerType));
+        setOauthClientId(selected.clientId);
+      }
+      setNotice({
+        tone: "success",
+        title: "Enoki app loaded",
+        lines: [
+          providers.length === 0 ? "No supported OAuth providers returned." : `Providers: ${providers.map((entry) => entry.providerType).join(", ")}`,
+          selected === null ? "Client ID not changed." : `Selected client ID for ${selected.providerType}.`,
+        ],
+      });
+    });
+  }
+
+  async function prepareWithEnoki(): Promise<void> {
+    await run("Prepare Enoki nonce", async () => {
+      if (setupBlockedReason !== null) {
+        throw new Error(setupBlockedReason);
+      }
+      const enokiNetwork = toEnokiNetwork(network);
+      const enokiConfig = requireEnokiConfig();
+      const response = await provider.credentialPrepare({
+        chain: "sui",
+        credential: "zklogin",
+        purpose: PROVIDER_PURPOSE,
+      });
+      if (response.source !== "live") {
+        clearDeviceMirror();
+        throw new Error(`Credential preparation did not return live data: ${resultSummary(response)}.`);
+      }
+      const nextNonce = await createEnokiNonce(enokiConfig, {
+        network: enokiNetwork,
+        ephemeralPublicKey: response.preparation.publicKey,
+        additionalEpochs: parseOptionalEpochs(enokiAdditionalEpochs),
+      });
+      setPreparation(response.preparation);
+      setNonce(nextNonce.nonce);
+      setMaxEpoch(String(nextNonce.maxEpoch));
+      setRandomness(nextNonce.randomness);
+      setNotice({
+        tone: "success",
+        title: "Enoki nonce received",
+        lines: [
+          `Preparation address: ${short(response.preparation.address)}`,
+          `Max epoch: ${nextNonce.maxEpoch}`,
+          `Expires: ${formatTimestamp(nextNonce.estimatedExpiration)}`,
+        ],
+      });
+    });
+  }
+
+  function selectEnokiProvider(providerName: EnokiAuthProvider): void {
+    setEnokiProvider(providerName);
+    setOauthAuthorizeUrl(defaultOAuthAuthorizeUrl(providerName));
+    const providerMetadata = enokiAppProviders.find((entry) => entry.providerType === providerName);
+    if (providerMetadata !== undefined) {
+      setOauthClientId(providerMetadata.clientId);
+    }
+  }
+
   function openOAuth(): void {
     try {
       if (nonce.length === 0) {
@@ -204,6 +305,9 @@ function App() {
       url.searchParams.set("redirect_uri", oauthRedirectUri.trim());
       url.searchParams.set("scope", oauthScope.trim());
       url.searchParams.set("nonce", nonce);
+      if (enokiProvider === "twitch") {
+        url.searchParams.set("force_verify", "true");
+      }
       globalThis.open(url.toString(), "_blank", "noopener,noreferrer");
       setNotice({
         tone: "neutral",
@@ -217,6 +321,57 @@ function App() {
         lines: [errorMessage(error)],
       });
     }
+  }
+
+  async function createProofWithEnoki(): Promise<void> {
+    await run("Create Enoki proof", async () => {
+      if (setupBlockedReason !== null) {
+        throw new Error(setupBlockedReason);
+      }
+      if (preparation === null) {
+        throw new Error("Prepare Enoki nonce first.");
+      }
+      const trimmedJwt = jwt.trim();
+      if (trimmedJwt.length === 0) {
+        throw new Error("JWT is required.");
+      }
+      const enokiNetwork = toEnokiNetwork(network);
+      const enokiConfig = requireEnokiConfig();
+      const maxEpochNumber = parseSafeInteger(maxEpoch, "maxEpoch");
+      const nextRandomness = parseDecimalString(randomness, "randomness");
+      const [login, proof] = await Promise.all([
+        getEnokiZkLogin(enokiConfig, trimmedJwt),
+        createEnokiZkp(enokiConfig, {
+          network: enokiNetwork,
+          jwt: trimmedJwt,
+          ephemeralPublicKey: preparation.publicKey,
+          maxEpoch: maxEpochNumber,
+          randomness: nextRandomness,
+        }),
+      ]);
+      const derivedPublicKey = deriveZkLoginPublicKey(login.address, proof as unknown as ZkLoginSignatureInputsDto);
+      if (derivedPublicKey !== login.publicKey) {
+        throw new Error("Enoki address/public key did not match the returned proof inputs.");
+      }
+      const proposal = {
+        address: login.address,
+        publicKey: login.publicKey,
+        maxEpoch: String(maxEpochNumber),
+        inputs: proof,
+      };
+      setProofAddress(login.address);
+      setProofPublicKey(login.publicKey);
+      setProofJson(JSON.stringify(proposal, null, 2));
+      setJwt("");
+      setNotice({
+        tone: "success",
+        title: "Enoki proof ready",
+        lines: [
+          `zkLogin address: ${short(login.address)}`,
+          "JWT cleared from this page after proof creation.",
+        ],
+      });
+    });
   }
 
   function computeAddress(): void {
@@ -385,20 +540,31 @@ function App() {
               </select>
             </label>
             <label>
+              Enoki additional epochs
+              <input value={enokiAdditionalEpochs} onChange={(event) => setEnokiAdditionalEpochs(event.target.value)} inputMode="numeric" />
+            </label>
+          </div>
+          <div className="form-grid two">
+            <label>
               Max epoch
               <input value={maxEpoch} onChange={(event) => setMaxEpoch(event.target.value)} inputMode="numeric" />
             </label>
+            <label>
+              Randomness
+              <div className="inline-control">
+                <input value={randomness} onChange={(event) => setRandomness(event.target.value)} inputMode="numeric" />
+                <button type="button" onClick={randomize} disabled={busy !== null}>Random</button>
+              </div>
+            </label>
           </div>
-          <label>
-            Randomness
-            <div className="inline-control">
-              <input value={randomness} onChange={(event) => setRandomness(event.target.value)} inputMode="numeric" />
-              <button type="button" onClick={randomize} disabled={busy !== null}>Random</button>
-            </div>
-          </label>
-          <button type="button" className="primary" onClick={prepare} disabled={!canUseConnectedDevice || setupBlocked}>
-            Prepare nonce
-          </button>
+          <div className="button-row">
+            <button type="button" className="primary" onClick={prepareWithEnoki} disabled={!canUseConnectedDevice || setupBlocked}>
+              Prepare Enoki nonce
+            </button>
+            <button type="button" onClick={prepare} disabled={!canUseConnectedDevice || setupBlocked}>
+              Prepare local nonce
+            </button>
+          </div>
           <dl className="facts compact">
             <div>
               <dt>Native prep address</dt>
@@ -417,19 +583,38 @@ function App() {
             <span>{jwt.trim().length === 0 ? "no jwt" : "jwt captured"}</span>
           </div>
           <label>
-            Authorization URL
-            <input value={oauthAuthorizeUrl} onChange={(event) => setOauthAuthorizeUrl(event.target.value)} placeholder="https://..." />
+            Enoki API URL
+            <input value={enokiApiUrl} onChange={(event) => setEnokiApiUrl(event.target.value)} spellCheck={false} />
+          </label>
+          <label>
+            Enoki public API key
+            <input value={enokiApiKey} onChange={(event) => setEnokiApiKey(event.target.value)} spellCheck={false} />
           </label>
           <div className="form-grid two">
+            <label>
+              Provider
+              <select value={enokiProvider} onChange={(event) => selectEnokiProvider(event.target.value as EnokiAuthProvider)}>
+                {ENOKI_PROVIDERS.map((entry) => (
+                  <option key={entry} value={entry}>{entry}</option>
+                ))}
+              </select>
+            </label>
             <label>
               Client ID
               <input value={oauthClientId} onChange={(event) => setOauthClientId(event.target.value)} />
             </label>
-            <label>
-              Scope
-              <input value={oauthScope} onChange={(event) => setOauthScope(event.target.value)} />
-            </label>
           </div>
+          <button type="button" onClick={loadEnokiApp} disabled={busy !== null}>
+            Load Enoki app
+          </button>
+          <label>
+            Authorization URL
+            <input value={oauthAuthorizeUrl} onChange={(event) => setOauthAuthorizeUrl(event.target.value)} placeholder="https://..." />
+          </label>
+          <label>
+            Scope
+            <input value={oauthScope} onChange={(event) => setOauthScope(event.target.value)} />
+          </label>
           <label>
             Redirect URI
             <input value={oauthRedirectUri} onChange={(event) => setOauthRedirectUri(event.target.value)} />
@@ -454,6 +639,16 @@ function App() {
           <button type="button" onClick={computeAddress} disabled={busy !== null}>
             Compute address
           </button>
+          <dl className="facts compact">
+            <div>
+              <dt>Loaded providers</dt>
+              <dd>{enokiAppProviders.length === 0 ? "none" : enokiAppProviders.map((entry) => entry.providerType).join(", ")}</dd>
+            </div>
+            <div>
+              <dt>Continuity</dt>
+              <dd>Enoki app, OAuth client ID, issuer, and subject</dd>
+            </div>
+          </dl>
         </section>
 
         <section className="panel">
@@ -473,6 +668,9 @@ function App() {
             Proof JSON
             <textarea value={proofJson} onChange={(event) => setProofJson(event.target.value)} rows={9} spellCheck={false} />
           </label>
+          <button type="button" onClick={createProofWithEnoki} disabled={!canUseConnectedDevice || setupBlocked || preparation === null || jwt.trim().length === 0}>
+            Create Enoki proof
+          </button>
           <button type="button" className="primary" onClick={propose} disabled={!canUseConnectedDevice || setupBlocked}>
             Propose proof
           </button>
@@ -682,22 +880,36 @@ async function buildSelfTransferTxBytes(input: {
 }
 
 function parseSafeInteger(value: string, label: string): number {
-  const trimmed = value.trim();
-  if (!/^\d+$/.test(trimmed)) {
-    throw new Error(`${label} must be a decimal integer.`);
-  }
+  const trimmed = parseDecimalString(value, label);
   const parsed = Number(trimmed);
   if (!Number.isSafeInteger(parsed)) {
-    throw new Error(`${label} must fit in a JavaScript safe integer for Sui SDK nonce generation.`);
+    throw new Error(`${label} must fit in a JavaScript safe integer.`);
   }
   return parsed;
 }
 
-function parsePositiveBigInt(value: string, label: string): bigint {
+function parseOptionalEpochs(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  const parsed = parseSafeInteger(trimmed, "Enoki additional epochs");
+  if (parsed > 30) {
+    throw new Error("Enoki additional epochs must be between 0 and 30.");
+  }
+  return parsed;
+}
+
+function parseDecimalString(value: string, label: string): string {
   const trimmed = value.trim();
   if (!/^\d+$/.test(trimmed)) {
     throw new Error(`${label} must be a decimal integer.`);
   }
+  return trimmed;
+}
+
+function parsePositiveBigInt(value: string, label: string): bigint {
+  const trimmed = parseDecimalString(value, label);
   const parsed = BigInt(trimmed);
   if (parsed <= 0n) {
     throw new Error(`${label} must be greater than zero.`);
@@ -827,6 +1039,18 @@ function short(value: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function envString(name: string, fallback: string): string {
+  const value = import.meta.env[name];
+  return typeof value === "string" && value.length > 0 ? value : fallback;
+}
+
+function formatTimestamp(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "unknown";
+  }
+  return new Date(value).toISOString();
 }
 
 export default App;
