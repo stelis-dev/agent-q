@@ -172,6 +172,13 @@ function defaultDriver(overrides = {}) {
             { chain: "sui", method: "sign_personal_message" },
           ],
         },
+        credentials: [
+          {
+            chain: "sui",
+            credential: "zklogin",
+            operations: ["credential_prepare", "credential_propose"],
+          },
+        ],
       };
     },
     async getAccounts() {
@@ -1289,6 +1296,13 @@ test("getCapabilities returns Firmware-authored account identity and keeps the s
     assert.deepEqual(result.signing.methods, [
       { chain: "sui", method: "sign_transaction" },
       { chain: "sui", method: "sign_personal_message" },
+    ]);
+    assert.deepEqual(result.credentials, [
+      {
+        chain: "sui",
+        credential: "zklogin",
+        operations: ["credential_prepare", "credential_propose"],
+      },
     ]);
 
     // Read-only: the session is retained after get_capabilities.

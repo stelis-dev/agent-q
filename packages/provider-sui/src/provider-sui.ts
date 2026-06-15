@@ -4,6 +4,8 @@ import {
 } from "@stelis/agent-q-core/device";
 import {
   connectDeviceSuccessOutputShape,
+  credentialPrepareSuccessOutputShape,
+  credentialProposeSuccessOutputShape,
   disconnectDeviceSuccessOutputShape,
   getAccountsSuccessOutputShape,
   identifyDevicesSuccessOutputShape,
@@ -14,9 +16,15 @@ import {
   signPersonalMessageSuccessOutputShape,
   signTransactionSuccessOutputShape,
 } from "@stelis/agent-q-core/adapter-internal";
-import { FORBIDDEN_SECRET_FIELD_NAMES } from "@stelis/agent-q-core/protocol";
+import {
+  FORBIDDEN_SECRET_FIELD_NAMES,
+  type CredentialPrepareRequest,
+  type CredentialProposeParams,
+} from "@stelis/agent-q-core/protocol";
 import type {
   ConnectDeviceResult,
+  CredentialPrepareResult,
+  CredentialProposeResult,
   DeviceListResult,
   DisconnectDeviceResult,
   GetAccountsResult,
@@ -34,6 +42,16 @@ export type GetCapabilitiesResult =
   | Extract<CoreGetCapabilitiesResult, { source: "live" }>
   | Exclude<CoreGetCapabilitiesResult, { source: "live" }>;
 
+export type CredentialPrepareInput = {
+  deviceId?: string;
+  purpose?: string;
+} & CredentialPrepareRequest["params"];
+
+export type CredentialProposeInput = {
+  deviceId?: string;
+  purpose?: string;
+} & CredentialProposeParams;
+
 export type AgentQSuiProviderCore = Pick<
   AgentQDeviceClient,
   | "scanDevices"
@@ -44,6 +62,8 @@ export type AgentQSuiProviderCore = Pick<
   | "disconnectDevice"
   | "getCapabilities"
   | "getAccounts"
+  | "credentialPrepare"
+  | "credentialPropose"
   | "signTransaction"
   | "signPersonalMessage"
 >;
@@ -84,6 +104,8 @@ export type {
   DeviceListResult,
   DisconnectDeviceResult,
   GetAccountsResult,
+  CredentialPrepareResult,
+  CredentialProposeResult,
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
@@ -144,6 +166,14 @@ export class AgentQSuiProvider {
     purpose?: string;
   } = {}): Promise<GetAccountsResult> {
     return parseProviderOutput(getAccountsSuccessOutputShape, await this.core.getAccounts(input)) as GetAccountsResult;
+  }
+
+  async credentialPrepare(input: CredentialPrepareInput): Promise<CredentialPrepareResult> {
+    return parseProviderOutput(credentialPrepareSuccessOutputShape, await this.core.credentialPrepare(input)) as CredentialPrepareResult;
+  }
+
+  async credentialPropose(input: CredentialProposeInput): Promise<CredentialProposeResult> {
+    return parseProviderOutput(credentialProposeSuccessOutputShape, await this.core.credentialPropose(input)) as CredentialProposeResult;
   }
 
   async signTransaction(input: {

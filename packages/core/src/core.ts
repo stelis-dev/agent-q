@@ -29,6 +29,7 @@ import {
   type ApprovalHistoryRecord,
   type CapabilityChain,
   type ConnectResponse,
+  type CredentialCapability,
   type CredentialPrepareResultResponse,
   type CredentialProposeResultResponse,
   type DeviceStatusSnapshot,
@@ -225,6 +226,7 @@ export type GetCapabilitiesResult =
       deviceId: string;
       capabilities: CapabilityChain[];
       signing?: SigningCapabilities;
+      credentials?: CredentialCapability[];
     }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: GetCapabilitiesSessionEndedReason };
@@ -677,6 +679,7 @@ export class AgentQCore {
         deviceId: target.deviceId,
         capabilities: response.chains,
         ...(response.signing === undefined ? {} : { signing: response.signing }),
+        ...(response.credentials === undefined ? {} : { credentials: response.credentials }),
       };
     } catch (error) {
       const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);

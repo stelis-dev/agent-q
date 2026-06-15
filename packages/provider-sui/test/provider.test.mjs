@@ -78,6 +78,64 @@ function validCredentialCapability() {
   };
 }
 
+function validZkLoginInputs(overrides = {}) {
+  return {
+    proofPoints: {
+      a: [
+        "17318089125952421736342263717932719437717844282410187957984751939942898251250",
+        "11373966645469122582074082295985388258840681618268593976697325892280915681207",
+        "1",
+      ],
+      b: [
+        [
+          "5939871147348834997361720122238980177152303274311047249905942384915768690895",
+          "4533568271134785278731234570361482651996740791888285864966884032717049811708",
+        ],
+        [
+          "10564387285071555469753990661410840118635925466597037018058770041347518461368",
+          "12597323547277579144698496372242615368085801313343155735511330003884767957854",
+        ],
+        ["1", "0"],
+      ],
+      c: [
+        "15791589472556826263231644728873337629015269984699404073623603352537678813171",
+        "4547866499248881449676161158024748060485373250029423904113017422539037162527",
+        "1",
+      ],
+    },
+    issBase64Details: {
+      value: "ImlzcyI6Imh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbSIs",
+      indexMod4: 0,
+    },
+    headerBase64: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjEifQ",
+    addressSeed: "1",
+    ...overrides,
+  };
+}
+
+function validCredentialPrepareInput(overrides = {}) {
+  return {
+    deviceId: "device-1",
+    chain: "sui",
+    credential: "zklogin",
+    ...overrides,
+  };
+}
+
+function validCredentialProposeInput(overrides = {}) {
+  return {
+    deviceId: "device-1",
+    chain: "sui",
+    credential: "zklogin",
+    network: "testnet",
+    address: ZKLOGIN_ADDRESS,
+    publicKey: ZKLOGIN_PUBLIC_KEY,
+    maxEpoch: "42",
+    inputs: validZkLoginInputs(),
+    ...overrides,
+  };
+}
+
 function createFakeCore() {
   return {
     async scanDevices() {
@@ -154,6 +212,28 @@ function createFakeCore() {
             derivationPath: SUI_DERIVATION_PATH,
           },
         ],
+      };
+    },
+    async credentialPrepare() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        chain: "sui",
+        credential: "zklogin",
+        preparation: {
+          address: SUI_ADDRESS,
+          publicKey: SUI_PUBLIC_KEY,
+          keyScheme: "ed25519",
+        },
+      };
+    },
+    async credentialPropose() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        status: "activated",
+        reasonCode: "activated",
+        sessionEnded: true,
       };
     },
     async signTransaction() {
@@ -2811,6 +2891,8 @@ test("provider object presents the Sui dapp-facing adapter API including signing
   assert.equal(provider instanceof AgentQSuiProvider, true);
   assert.deepEqual(methodNames, [
     "connectDevice",
+    "credentialPrepare",
+    "credentialPropose",
     "disconnectDevice",
     "getAccounts",
     "getCapabilities",
@@ -2821,6 +2903,8 @@ test("provider object presents the Sui dapp-facing adapter API including signing
     "signPersonalMessage",
     "signTransaction",
   ]);
+  assert.equal(typeof provider.credentialPrepare, "function");
+  assert.equal(typeof provider.credentialPropose, "function");
   assert.equal(typeof provider.signTransaction, "function");
   assert.equal(typeof provider.signPersonalMessage, "function");
   assert.equal(provider.signByUser, undefined);
@@ -2828,6 +2912,8 @@ test("provider object presents the Sui dapp-facing adapter API including signing
   assert.equal(provider.policyPropose, undefined);
   assert.equal(provider.policyGet, undefined);
   assert.equal(provider.getApprovalHistory, undefined);
+  assert.equal(provider.clearZkLoginProof, undefined);
+  assert.equal(provider.signZkLoginTransaction, undefined);
 });
 
 test("provider delegates current methods and signing methods without exposing session ids or secrets", async () => {
@@ -2841,6 +2927,8 @@ test("provider delegates current methods and signing methods without exposing se
     await provider.disconnectDevice({ deviceId: "device-1" }),
     await provider.getCapabilities({ deviceId: "device-1" }),
     await provider.getAccounts({ deviceId: "device-1" }),
+    await provider.credentialPrepare(validCredentialPrepareInput()),
+    await provider.credentialPropose(validCredentialProposeInput()),
     await provider.signTransaction({
       deviceId: "device-1",
       chain: "sui",
@@ -2868,6 +2956,60 @@ test("provider delegates current methods and signing methods without exposing se
     ],
   });
   assert.equal(JSON.stringify(capabilities).includes('"signByPolicy"'), false);
+});
+
+test("provider credential methods delegate through Core and expose no signer selection", async () => {
+  const calls = [];
+  const core = {
+    ...createFakeCore(),
+    async credentialPrepare(input) {
+      calls.push(["credentialPrepare", input]);
+      return {
+        source: "live",
+        deviceId: "device-1",
+        chain: "sui",
+        credential: "zklogin",
+        preparation: {
+          address: SUI_ADDRESS,
+          publicKey: SUI_PUBLIC_KEY,
+          keyScheme: "ed25519",
+        },
+      };
+    },
+    async credentialPropose(input) {
+      calls.push(["credentialPropose", input]);
+      return {
+        source: "live",
+        deviceId: "device-1",
+        status: "activated",
+        reasonCode: "activated",
+        sessionEnded: true,
+      };
+    },
+  };
+  const provider = createAgentQSuiProvider({ core });
+
+  const prepareInput = validCredentialPrepareInput({ purpose: "test-web" });
+  const proposeInput = validCredentialProposeInput({ purpose: "test-web" });
+  const prepare = await provider.credentialPrepare(prepareInput);
+  const propose = await provider.credentialPropose(proposeInput);
+
+  assert.equal(prepare.source, "live");
+  assert.equal(prepare.chain, "sui");
+  assert.equal(prepare.credential, "zklogin");
+  assert.equal(prepare.preparation.keyScheme, "ed25519");
+  assert.equal(propose.source, "live");
+  assert.equal(propose.status, "activated");
+  assert.equal(propose.sessionEnded, true);
+  assert.deepEqual(calls, [
+    ["credentialPrepare", prepareInput],
+    ["credentialPropose", proposeInput],
+  ]);
+  assert.equal(Object.hasOwn(prepareInput, "deadlineMs"), false);
+  assert.equal(Object.hasOwn(proposeInput, "deadlineMs"), false);
+  assert.equal(Object.hasOwn(proposeInput, "signerKind"), false);
+  assertNoSecretFields(prepare);
+  assertNoSecretFields(propose);
 });
 
 test("provider getCapabilities applies the provider capability schema", async () => {
@@ -3001,6 +3143,8 @@ test("provider applies output boundary to every custom core method", async () =>
     ["disconnectDevice", (provider) => provider.disconnectDevice({ deviceId: "device-1" })],
     ["getCapabilities", (provider) => provider.getCapabilities({ deviceId: "device-1" })],
     ["getAccounts", (provider) => provider.getAccounts({ deviceId: "device-1" })],
+    ["credentialPrepare", (provider) => provider.credentialPrepare(validCredentialPrepareInput())],
+    ["credentialPropose", (provider) => provider.credentialPropose(validCredentialProposeInput())],
     ["signTransaction", (provider) => provider.signTransaction({
       deviceId: "device-1",
       chain: "sui",
@@ -3138,6 +3282,11 @@ test("provider object omits policy signing and Admin management entrypoints", ()
   assert.equal(provider.policyPropose, undefined);
   assert.equal(provider.policyGet, undefined);
   assert.equal(provider.getApprovalHistory, undefined);
+  assert.equal(provider.clearZkLoginProof, undefined);
+  assert.equal(provider.signZkLoginTransaction, undefined);
+  assert.equal(provider.signerKind, undefined);
+  assert.equal(typeof provider.credentialPrepare, "function");
+  assert.equal(typeof provider.credentialPropose, "function");
   assert.equal(typeof provider.signTransaction, "function");
   assert.equal(typeof provider.signPersonalMessage, "function");
 });
