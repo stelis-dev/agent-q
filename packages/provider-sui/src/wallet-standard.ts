@@ -72,6 +72,7 @@ export type AgentQSuiWalletGetCapabilitiesResult = {
   deviceId?: unknown;
   capabilities?: unknown;
   signing?: unknown;
+  credentials?: unknown;
 };
 
 export type AgentQSuiWalletSignTransactionResult = {
@@ -202,7 +203,12 @@ function walletAccountFeaturesFromCapabilities(
   capabilities: AgentQSuiWalletGetCapabilitiesResult,
 ): Array<typeof SuiSignTransaction | typeof SuiSignPersonalMessage> {
   const message = "Agent-Q Sui wallet could not read supported signing methods.";
-  requireExactKeys(capabilities, ["source", "deviceId", "capabilities", "signing"], message);
+  requireExactKeysWithOptional(
+    capabilities,
+    ["source", "deviceId", "capabilities", "signing"],
+    ["credentials"],
+    message,
+  );
   if (
     capabilities.source !== "live" ||
     typeof capabilities.deviceId !== "string" ||

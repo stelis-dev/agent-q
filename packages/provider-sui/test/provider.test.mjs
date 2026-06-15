@@ -3309,6 +3309,13 @@ test("Wallet Standard adapter advertises only current Agent-Q Sui signing featur
     "sui:signTransaction",
   ]);
   assert.equal(typeof wallet.features["sui:signPersonalMessage"].signPersonalMessage, "function");
+  assert.equal(wallet.features["agentq:credentialPrepare"], undefined);
+  assert.equal(wallet.features["agentq:credentialPropose"], undefined);
+  assert.equal(wallet.features["agentq:clearZkLoginProof"], undefined);
+  assert.equal(wallet.credentialPrepare, undefined);
+  assert.equal(wallet.credentialPropose, undefined);
+  assert.equal(wallet.clearZkLoginProof, undefined);
+  assert.equal(wallet.signerKind, undefined);
   assert.equal(wallet.features["sui:signMessage"], undefined);
   assert.equal(wallet.features["sui:signAndExecuteTransaction"], undefined);
   assert.equal(wallet.features["sui:signTransactionBlock"], undefined);
@@ -3499,6 +3506,14 @@ test("Wallet Standard direct capabilities exact validator maps current signing m
       expectedFeatures: [SuiSignTransaction, SuiSignPersonalMessage],
       label: "user mode with payload delivery metadata",
     },
+    {
+      output: {
+        ...validCapabilitiesResult(),
+        credentials: [validCredentialCapability()],
+      },
+      expectedFeatures: [SuiSignTransaction, SuiSignPersonalMessage],
+      label: "credential metadata stays outside Wallet Standard features",
+    },
   ];
   for (const { output, expectedFeatures, label } of cases) {
     const wallet = createAgentQSuiWallet({
@@ -3512,7 +3527,17 @@ test("Wallet Standard direct capabilities exact validator maps current signing m
       chains: ["sui:devnet"],
     });
     const connected = await wallet.features[StandardConnect].connect();
+    assert.deepEqual(Object.keys(wallet.features).sort(), [
+      "standard:connect",
+      "standard:disconnect",
+      "standard:events",
+      "sui:signPersonalMessage",
+      "sui:signTransaction",
+    ], label);
     assert.deepEqual(connected.accounts[0].features, expectedFeatures, label);
+    assert.equal(connected.accounts[0].features.includes("credential_prepare"), false, label);
+    assert.equal(connected.accounts[0].features.includes("credential_propose"), false, label);
+    assert.equal(connected.accounts[0].features.includes("clear_zklogin_proof"), false, label);
   }
 });
 
