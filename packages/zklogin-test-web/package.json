@@ -1,0 +1,26 @@
+{
+  "name": "@stelis/agent-q-zklogin-test-web",
+  "version": "0.0.7",
+  "description": "Private Agent-Q zkLogin test app for Web Serial proof proposal and sign-only transaction checks.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prebuild": "npm --workspace @stelis/agent-q-core run build",
+    "build": "vite build",
+    "predev": "npm --workspace @stelis/agent-q-core run build",
+    "dev": "vite --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@mysten/sui": "2.17.0",
+    "@stelis/agent-q-core": "0.0.7",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.16",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "typescript": "6.0.3",
+    "vite": "8.0.16"
+  }
+}
