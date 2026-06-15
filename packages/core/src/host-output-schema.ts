@@ -17,10 +17,14 @@ import {
   APPROVAL_HISTORY_POLICY_UPDATE_RESULTS,
   APPROVAL_HISTORY_REASON_CODE_PATTERN,
   APPROVAL_HISTORY_RULE_REF_PATTERN,
+  CREDENTIAL_PREPARE_OPERATION,
+  CREDENTIAL_PROPOSE_OPERATION,
+  CREDENTIAL_PROPOSE_RESULT_STATUSES,
   MAX_ACCOUNTS_PER_RESPONSE,
   MAX_APPROVAL_HISTORY_RECORDS,
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
+  MAX_CREDENTIAL_CAPABILITIES,
   MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
   MAX_POLICY_BLOCKCHAINS,
   MAX_POLICY_TOTAL_CONDITIONS,
@@ -32,6 +36,7 @@ import {
   SIGN_METHOD_PATTERN,
   SIGNING_HISTORY_TERMINAL_RESULTS,
   SIGN_RESULT_ERROR_MESSAGES,
+  SUI_CHAIN_ID,
   SUI_ADDRESS_PATTERN,
   SUI_DERIVATION_PATH,
   SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
@@ -39,6 +44,7 @@ import {
   SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN,
   SUI_SIGN_PERSONAL_MESSAGE_METHOD,
   SUI_SIGN_TRANSACTION_METHOD,
+  SUI_ZKLOGIN_CREDENTIAL,
   MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
   MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
   UINT_DECIMAL_STRING_PATTERN,
@@ -316,23 +322,35 @@ const signingCapabilitiesShape = z
       methods.has(SUI_SIGN_PERSONAL_MESSAGE_METHOD)
     );
   }, { message: "signing methods must match authorization mode" });
+const credentialCapabilityShape = z.object({
+  chain: z.literal(SUI_CHAIN_ID),
+  credential: z.literal(SUI_ZKLOGIN_CREDENTIAL),
+  operations: z.tuple([
+    z.literal(CREDENTIAL_PREPARE_OPERATION),
+    z.literal(CREDENTIAL_PROPOSE_OPERATION),
+  ]),
+}).strict();
+const credentialCapabilitiesShape = z.array(credentialCapabilityShape).length(MAX_CREDENTIAL_CAPABILITIES);
 const liveCapabilitiesOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
   capabilities: z.array(capabilityChainShape).length(MAX_CAPABILITY_CHAINS),
   signing: signingCapabilitiesShape.optional(),
+  credentials: credentialCapabilitiesShape.optional(),
 }).strict();
 const liveProviderCapabilitiesOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
   capabilities: z.array(capabilityChainShape).length(MAX_CAPABILITY_CHAINS),
   signing: signingCapabilitiesShape.optional(),
+  credentials: credentialCapabilitiesShape.optional(),
 }).strict();
 const liveMcpCapabilitiesOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
   capabilities: z.array(capabilityChainShape).length(MAX_CAPABILITY_CHAINS),
   signing: signingCapabilitiesShape.optional(),
+  credentials: credentialCapabilitiesShape.optional(),
 }).strict();
 const notConnectedCapabilitiesOutputShape = z.object({
   source: z.literal("not_connected"),
@@ -747,6 +765,66 @@ export const policyProposeToolOutputShape = z.discriminatedUnion("source", [
   errorToolResultShape,
 ]);
 
+const credentialPreparationShape = z.object({
+  address: z.string().regex(SUI_ADDRESS_PATTERN),
+  publicKey: z.string(),
+  keyScheme: z.literal("ed25519"),
+}).strict().refine((preparation) => isSuiAddressForSchemePrefixedPublicKey(
+  preparation.address,
+  preparation.publicKey,
+  SUI_SIGNATURE_SCHEME_FLAG_ED25519,
+  SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+  SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+), {
+  message: "Sui preparation address must match publicKey",
+});
+const liveCredentialPrepareOutputShape = z.object({
+  source: z.literal("live"),
+  deviceId: safeDeviceIdShape,
+  chain: z.literal(SUI_CHAIN_ID),
+  credential: z.literal(SUI_ZKLOGIN_CREDENTIAL),
+  preparation: credentialPreparationShape,
+}).strict();
+const liveCredentialProposeOutputShape = z.object({
+  source: z.literal("live"),
+  deviceId: safeDeviceIdShape,
+  status: z.enum(CREDENTIAL_PROPOSE_RESULT_STATUSES),
+  reasonCode: z.string().regex(APPROVAL_HISTORY_REASON_CODE_PATTERN),
+  sessionEnded: z.boolean(),
+}).strict();
+const notConnectedCredentialOutputShape = z.object({
+  source: z.literal("not_connected"),
+  deviceId: safeDeviceIdShape,
+  reason: z.literal("not_connected"),
+}).strict();
+const sessionEndedCredentialOutputShape = z.object({
+  source: z.literal("session_ended"),
+  deviceId: safeDeviceIdShape,
+  reason: z.enum(GET_ACCOUNTS_SESSION_ENDED_REASONS),
+}).strict();
+export const credentialPrepareSuccessOutputShape = z.discriminatedUnion("source", [
+  liveCredentialPrepareOutputShape,
+  notConnectedCredentialOutputShape,
+  sessionEndedCredentialOutputShape,
+]);
+export const credentialPrepareToolOutputShape = z.discriminatedUnion("source", [
+  liveCredentialPrepareOutputShape,
+  notConnectedCredentialOutputShape,
+  sessionEndedCredentialOutputShape,
+  errorToolResultShape,
+]);
+export const credentialProposeSuccessOutputShape = z.discriminatedUnion("source", [
+  liveCredentialProposeOutputShape,
+  notConnectedCredentialOutputShape,
+  sessionEndedCredentialOutputShape,
+]);
+export const credentialProposeToolOutputShape = z.discriminatedUnion("source", [
+  liveCredentialProposeOutputShape,
+  notConnectedCredentialOutputShape,
+  sessionEndedCredentialOutputShape,
+  errorToolResultShape,
+]);
+
 const cachedDeviceStatusOutputShape = z.object({
   source: z.literal("cached"),
   connected: z.literal(false),
@@ -784,4 +862,6 @@ export const hostSuccessOutputSchemas = {
   signTransaction: signTransactionSuccessOutputShape,
   signPersonalMessage: signPersonalMessageSuccessOutputShape,
   policyPropose: policyProposeSuccessOutputShape,
+  credentialPrepare: credentialPrepareSuccessOutputShape,
+  credentialPropose: credentialProposeSuccessOutputShape,
 } as const;

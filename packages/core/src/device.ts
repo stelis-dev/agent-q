@@ -9,6 +9,8 @@ import type {
   GetApprovalHistoryResult,
   GetCapabilitiesResult,
   PolicyGetResult,
+  CredentialPrepareResult,
+  CredentialProposeResult,
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
@@ -26,6 +28,8 @@ export type {
   GetApprovalHistoryResult,
   GetCapabilitiesResult,
   PolicyGetResult,
+  CredentialPrepareResult,
+  CredentialProposeResult,
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
@@ -67,6 +71,23 @@ export interface AgentQDeviceClient {
     limit?: number;
     beforeSeq?: string;
   }): Promise<GetApprovalHistoryResult>;
+  credentialPrepare(input: {
+    deviceId?: string;
+    purpose?: string;
+    chain: string;
+    credential: string;
+  }): Promise<CredentialPrepareResult>;
+  credentialPropose(input: {
+    deviceId?: string;
+    purpose?: string;
+    chain: string;
+    credential: string;
+    network: unknown;
+    address: string;
+    publicKey: string;
+    maxEpoch: string;
+    inputs: unknown;
+  }): Promise<CredentialProposeResult>;
   signTransaction(input: {
     deviceId?: string;
     purpose?: string;
@@ -97,6 +118,8 @@ function deviceApiFromCore(core: AgentQCore): AgentQDeviceClient {
     getAccounts: (input = {}) => core.getAccounts(input),
     policyGet: (input = {}) => core.policyGet(input),
     getApprovalHistory: (input = {}) => core.getApprovalHistory(input),
+    credentialPrepare: (input) => core.credentialPrepare(input),
+    credentialPropose: (input) => core.credentialPropose(input),
     signTransaction: (input) => core.signTransaction(input),
     signPersonalMessage: (input) => core.signPersonalMessage(input),
   };

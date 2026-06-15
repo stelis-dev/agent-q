@@ -33,6 +33,14 @@ function validLiveAccount() {
   };
 }
 
+function validCredentialCapability() {
+  return {
+    chain: "sui",
+    credential: "zklogin",
+    operations: ["credential_prepare", "credential_propose"],
+  };
+}
+
 function validDevice() {
   return {
     deviceId: DEVICE_ID,
@@ -212,6 +220,7 @@ function validAgentQSuccessOutputSamples() {
           { chain: "sui", method: "sign_personal_message" },
         ],
       },
+      credentials: [validCredentialCapability()],
     },
     getAccounts: { source: "live", deviceId: DEVICE_ID, accounts: [validLiveAccount()] },
     policyGet: { source: "live", deviceId: DEVICE_ID, policy: validPolicyDocument() },
@@ -231,6 +240,24 @@ function validAgentQSuccessOutputSamples() {
         conditionCount: 0,
         highestAction: "reject",
       },
+    },
+    credentialPrepare: {
+      source: "live",
+      deviceId: DEVICE_ID,
+      chain: "sui",
+      credential: "zklogin",
+      preparation: {
+        address: SUI_ADDRESS,
+        publicKey: SUI_PUBLIC_KEY,
+        keyScheme: "ed25519",
+      },
+    },
+    credentialPropose: {
+      source: "live",
+      deviceId: DEVICE_ID,
+      status: "activated",
+      reasonCode: "activated",
+      sessionEnded: true,
     },
   };
 }
@@ -302,6 +329,19 @@ test("agent-q success output schemas reject unknown nested fields", () => {
     ...samples.policyPropose,
     policy: { ...samples.policyPropose.policy, sessionId: "session_should_not_leak" },
   }));
+  assert.throws(() => hostSuccessOutputSchemas.getCapabilities.parse({
+    ...samples.getCapabilities,
+    credentials: [
+      {
+        ...validCredentialCapability(),
+        sessionId: "session_should_not_leak",
+      },
+    ],
+  }));
+  assert.throws(() => hostSuccessOutputSchemas.credentialPrepare.parse({
+    ...samples.credentialPrepare,
+    preparation: { ...samples.credentialPrepare.preparation, jwt: "must_not_leak" },
+  }));
 });
 
 test("agent-q success output schemas reject semantically invalid policy documents", () => {
@@ -320,6 +360,8 @@ test("device entrypoint constructs a limited device API facade", () => {
   const core = createDefaultAgentQDeviceClient();
   assert.equal(typeof core.scanDevices, "function");
   assert.equal(typeof core.signTransaction, "function");
+  assert.equal(typeof core.credentialPrepare, "function");
+  assert.equal(typeof core.credentialPropose, "function");
   assert.equal(core.signByUser, undefined);
   assert.equal(core.signByPolicy, undefined);
   assert.equal(core.policyPropose, undefined);

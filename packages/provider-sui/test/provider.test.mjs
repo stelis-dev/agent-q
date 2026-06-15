@@ -38,6 +38,10 @@ import {
   PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES,
   parseProviderProtocolResponse,
 } from "@stelis/agent-q-core/provider-protocol";
+import {
+  credentialPrepareSuccessOutputShape,
+  credentialProposeSuccessOutputShape,
+} from "@stelis/agent-q-core/adapter-internal";
 
 const SUI_ADDRESS = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
 const SUI_PUBLIC_KEY = "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp";
@@ -64,6 +68,14 @@ function assertNoSecretFields(value) {
     assert.equal(text.includes(fieldName.toLowerCase()), false, `${fieldName} must not appear in provider output`);
   }
   assert.equal(text.includes("sessionid"), false, "sessionId must not appear in provider output");
+}
+
+function validCredentialCapability() {
+  return {
+    chain: "sui",
+    credential: "zklogin",
+    operations: ["credential_prepare", "credential_propose"],
+  };
 }
 
 function createFakeCore() {
@@ -2883,6 +2895,100 @@ test("provider getCapabilities applies the provider capability schema", async ()
   await assert.rejects(
     () => provider.getCapabilities({ deviceId: "device-1" }),
   );
+});
+
+test("provider getCapabilities preserves credential capability metadata and rejects malformed entries", async () => {
+  {
+    const core = {
+      ...createFakeCore(),
+      async getCapabilities() {
+        return {
+          ...(await createFakeCore().getCapabilities()),
+          credentials: [validCredentialCapability()],
+        };
+      },
+    };
+    const provider = createAgentQSuiProvider({ core });
+    const capabilities = await provider.getCapabilities({ deviceId: "device-1" });
+    assert.deepEqual(capabilities.credentials, [validCredentialCapability()]);
+    assertNoSecretFields(capabilities);
+  }
+
+  {
+    const core = {
+      ...createFakeCore(),
+      async getCapabilities() {
+        return {
+          ...(await createFakeCore().getCapabilities()),
+          credentials: [
+            {
+              ...validCredentialCapability(),
+              operations: ["credential_propose", "credential_prepare"],
+            },
+          ],
+        };
+      },
+    };
+    const provider = createAgentQSuiProvider({ core });
+    await assert.rejects(() => provider.getCapabilities({ deviceId: "device-1" }));
+  }
+
+  {
+    const core = {
+      ...createFakeCore(),
+      async getCapabilities() {
+        return {
+          ...(await createFakeCore().getCapabilities()),
+          credentials: [{ ...validCredentialCapability(), jwt: "must_not_leak" }],
+        };
+      },
+    };
+    const provider = createAgentQSuiProvider({ core });
+    await assert.rejects(
+      () => provider.getCapabilities({ deviceId: "device-1" }),
+      /forbidden output field/,
+    );
+  }
+});
+
+test("provider-facing credential result schemas accept bounded outputs and reject secrets", () => {
+  const prepare = {
+    source: "live",
+    deviceId: "device-1",
+    chain: "sui",
+    credential: "zklogin",
+    preparation: {
+      address: SUI_ADDRESS,
+      publicKey: SUI_PUBLIC_KEY,
+      keyScheme: "ed25519",
+    },
+  };
+  const propose = {
+    source: "live",
+    deviceId: "device-1",
+    status: "activated",
+    reasonCode: "activated",
+    sessionEnded: true,
+  };
+
+  assert.deepEqual(credentialPrepareSuccessOutputShape.parse(prepare), prepare);
+  assert.deepEqual(credentialProposeSuccessOutputShape.parse(propose), propose);
+  assert.throws(() => credentialPrepareSuccessOutputShape.parse({
+    ...prepare,
+    preparation: { ...prepare.preparation, jwt: "must_not_leak" },
+  }));
+  assert.throws(() => credentialPrepareSuccessOutputShape.parse({
+    ...prepare,
+    preparation: { ...prepare.preparation, address: ZKLOGIN_ADDRESS },
+  }));
+  assert.throws(() => credentialProposeSuccessOutputShape.parse({
+    ...propose,
+    salt: "must_not_leak",
+  }));
+  assert.throws(() => credentialProposeSuccessOutputShape.parse({
+    ...propose,
+    status: "pending",
+  }));
 });
 
 test("provider applies output boundary to every custom core method", async () => {
