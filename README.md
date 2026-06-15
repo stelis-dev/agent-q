@@ -184,7 +184,7 @@ See `packages/example-sui-dapp-kit/` for a minimal Sui dapp-kit integration.
 | `@stelis/agent-q` | run the local MCP server, Admin Page, and `agent-q-sui-signer`. |
 | `@stelis/agent-q-provider-sui` | connect a Sui app to an Agent-Q device through a provider / Wallet Standard adapter. |
 | `packages/example-sui-dapp-kit` | run a small dapp-kit example that signs through Agent-Q. |
-| `packages/zklogin-test-web` | run a private browser test tool for Sui zkLogin proof preparation/proposal and sign-only transaction checks over direct Web Serial. |
+| `packages/zklogin-test-web` | run a private browser test tool for Sui zkLogin proof preparation/proposal and sign-only transaction checks through the Agent-Q browser provider over Web Serial. |
 
 ## How Signing Works
 
@@ -219,9 +219,11 @@ device-local review and local PIN approval, projects exactly one active Sui
 account, requires signing requests to match the stored proof network when
 zkLogin is active, and chooses native Ed25519 or zkLogin signature envelope only
 at the final signing step after the existing authorization gate. The independent
-`packages/zklogin-test-web` app exercises this path over direct Web Serial and
-does not add a host-process route, provider management API, signer selector, or
-proof-clear API.
+`packages/zklogin-test-web` app exercises this path through
+`@stelis/agent-q-provider-sui/browser` over Web Serial. It keeps Enoki, OAuth,
+and prover work in the browser test layer, submits only bounded proof proposals
+to Agent-Q, and does not add a host-process route, provider management API,
+signer selector, or proof-clear API.
 
 Unsupported chains and unsupported methods fail explicitly. Chains are exposed
 through the shared protocol; Agent-Q does not create separate chain-specific

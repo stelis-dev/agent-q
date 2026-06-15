@@ -5,9 +5,10 @@ package.
 
 It exposes current device discovery, device selection, connection, read-only
 Sui account/capability data, and Sui `sign_transaction` /
-`sign_personal_message` transport through a small provider object. It also
-exposes an app-imported Sui Wallet Standard registration adapter for the
-currently supported Sui signing features.
+`sign_personal_message` transport through a small provider object. Direct
+provider methods also expose common Sui zkLogin credential preparation and
+proposal. It also exposes an app-imported Sui Wallet Standard registration
+adapter for the currently supported Sui signing features.
 
 The Sui provider does not store signing keys and does not make policy
 decisions. Agent-Q Firmware remains the authority for keys, policy evaluation,
@@ -79,7 +80,8 @@ policy evaluation, signing, persistence, and cleanup.
 - `@stelis/agent-q-provider-sui/wallet-standard` exposes the Wallet Standard
   wallet object, registration function, and dapp-kit initializer.
 - `@stelis/agent-q-provider-sui/browser` exposes the browser-only Web
-  Serial runtime that implements `AgentQSuiWalletProvider`.
+  Serial runtime used by direct provider methods and the Wallet Standard
+  adapter.
 
 ## Current API
 
@@ -91,12 +93,19 @@ policy evaluation, signing, persistence, and cleanup.
 - `disconnectDevice`
 - `getCapabilities`
 - `getAccounts`
+- `credentialPrepare`
+- `credentialPropose`
 - `signTransaction`
 - `signPersonalMessage`
 
+`getCapabilities` may include Firmware-authored `credentials[]` metadata.
+For Sui zkLogin, that metadata advertises only common credential preparation
+and proposal availability. It is not a Wallet Standard feature, proof-clear
+route, signer selector, or signing authorization selector.
+
 The dapp-facing provider object does not include policy update proposals,
-active policy readback, approval history, or any host-selected signing
-authorization API.
+active policy readback, approval history, proof-clear APIs, signer selectors,
+or any host-selected signing authorization API.
 Those APIs remain on broader core, MCP, or Admin surfaces. This is API
 projection for the provider audience, not a security claim that the same
 application cannot import broader core or local-server APIs directly. Provider-facing
@@ -109,6 +118,12 @@ authorization gate for transaction signing, and personal-message signing is
 user-mode only. Firmware records required history and signs or rejects. The
 provider does not decide whether signing is allowed and cannot select the
 authorization mode.
+
+`credentialPrepare` and `credentialPropose` send common `credential_prepare`
+and `credential_propose` requests. Enoki, OAuth, JWT handling, prover calls,
+salt services, and zkLogin address continuity are application or test-web
+responsibilities; Agent-Q receives only the bounded credential proposal fields
+accepted by Firmware.
 
 The current signing methods are Sui `sign_transaction` and user-confirmed Sui
 `sign_personal_message`. Transaction execution and policy-authorized personal
@@ -136,7 +151,13 @@ reports user-mode support for `sign_personal_message`.
 
 It does not expose `sui:signAndExecuteTransaction`, deprecated
 `sui:signMessage`, Admin, policy update, policy reads, approval-history reads,
-or a host-selected authorization API.
+Agent-Q credential setup features, proof-clear APIs, signer selectors, or a
+host-selected authorization API.
+
+Credential setup is available through direct provider methods, not through
+Wallet Standard. The Wallet Standard wallet object does not expose
+`agentq:credentialPrepare`, `agentq:credentialPropose`, `credential_prepare`,
+`credential_propose`, or proof-clear features.
 
 Apps can register the wallet directly:
 
@@ -217,6 +238,11 @@ policy editor surface. It does not mean policy authorization is impossible:
 `sign_transaction` may still use Firmware's policy gate when the device-local
 signing mode is `policy`. The provider and browser runtime cannot read, set, or
 override that mode.
+
+The `./browser` runtime also exposes direct provider `credentialPrepare` and
+`credentialPropose` methods for test or application code that imports the
+provider runtime directly. Those methods are not projected as Wallet Standard
+features.
 
 The `./browser` runtime is Web Serial based and browser-only. It can be created
 before dapp-kit initializes so the Wallet Standard wallet can be registered
