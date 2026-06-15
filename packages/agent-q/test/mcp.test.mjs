@@ -187,7 +187,7 @@ const noOpCore = {
         {
           chain: "sui",
           address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
-          publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=",
+          publicKey: "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp",
           keyScheme: "ed25519",
           derivationPath: "m/44'/784'/0'/0'/0'",
         },
@@ -1145,7 +1145,7 @@ const leakyCore = {
         {
           chain: "sui",
           address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
-          publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=",
+          publicKey: "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp",
           keyScheme: "ed25519",
           derivationPath: "m/44'/784'/0'/0'/0'",
         },

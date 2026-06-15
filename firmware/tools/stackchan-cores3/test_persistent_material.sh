@@ -55,6 +55,7 @@ bool g_auth_present = false;
 bool g_human_approval_setting_present = false;
 bool g_approval_history_present = false;
 bool g_policy_update_marker_present = false;
+bool g_zklogin_proof_present = false;
 bool g_signing_mode_present = false;
 bool g_root_store_fails = false;
 bool g_policy_store_fails = false;
@@ -65,6 +66,7 @@ bool g_root_wipe_fails = false;
 bool g_signing_mode_wipe_fails = false;
 bool g_approval_history_wipe_fails = false;
 bool g_policy_update_marker_wipe_fails = false;
+bool g_zklogin_proof_wipe_fails = false;
 bool g_persist_state_fails = false;
 agent_q::AgentQPolicyStoreStatus g_policy_status = agent_q::AgentQPolicyStoreStatus::missing;
 agent_q::AgentQLocalAuthStatus g_auth_status = agent_q::AgentQLocalAuthStatus::missing;
@@ -76,6 +78,8 @@ agent_q::AgentQHumanApprovalInputMode g_human_approval_input_mode =
     agent_q::AgentQHumanApprovalInputMode::pin;
 agent_q::AgentQPolicyUpdateMarkerStatus g_policy_update_marker_status =
     agent_q::AgentQPolicyUpdateMarkerStatus::clear;
+agent_q::AgentQSuiZkLoginProofRecordStatus g_zklogin_proof_status =
+    agent_q::AgentQSuiZkLoginProofRecordStatus::missing;
 agent_q::AgentQProvisioningPersistedState g_persisted_state =
     agent_q::AgentQProvisioningPersistedState::unprovisioned;
 int g_consistency_error_count = 0;
@@ -97,6 +101,7 @@ void reset_stubs()
     g_human_approval_setting_present = false;
     g_approval_history_present = false;
     g_policy_update_marker_present = false;
+    g_zklogin_proof_present = false;
     g_signing_mode_present = false;
     g_root_store_fails = false;
     g_policy_store_fails = false;
@@ -107,6 +112,7 @@ void reset_stubs()
     g_signing_mode_wipe_fails = false;
     g_approval_history_wipe_fails = false;
     g_policy_update_marker_wipe_fails = false;
+    g_zklogin_proof_wipe_fails = false;
     g_persist_state_fails = false;
     g_policy_status = agent_q::AgentQPolicyStoreStatus::missing;
     g_auth_status = agent_q::AgentQLocalAuthStatus::missing;
@@ -114,6 +120,7 @@ void reset_stubs()
     g_signing_mode = agent_q::AgentQSigningAuthorizationMode::user;
     g_human_approval_input_mode = agent_q::AgentQHumanApprovalInputMode::pin;
     g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::clear;
+    g_zklogin_proof_status = agent_q::AgentQSuiZkLoginProofRecordStatus::missing;
     g_persisted_state = agent_q::AgentQProvisioningPersistedState::unprovisioned;
     g_consistency_error_count = 0;
     agent_q::persistent_material_begin_load();
@@ -384,6 +391,21 @@ bool policy_update_marker_clear()
     return true;
 }
 
+agent_q::AgentQSuiZkLoginProofRecordStatus sui_zklogin_proof_record_status()
+{
+    return g_zklogin_proof_status;
+}
+
+bool wipe_sui_zklogin_proof_record()
+{
+    if (g_zklogin_proof_wipe_fails) {
+        return false;
+    }
+    g_zklogin_proof_present = false;
+    g_zklogin_proof_status = AgentQSuiZkLoginProofRecordStatus::missing;
+    return true;
+}
+
 }  // namespace agent_q
 
 int main()
@@ -489,6 +511,8 @@ int main()
     g_approval_history_present = true;
     g_policy_update_marker_present = true;
     g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::pending;
+    g_zklogin_proof_present = true;
+    g_zklogin_proof_status = agent_q::AgentQSuiZkLoginProofRecordStatus::active;
     expect(agent_q::persistent_material_record_runtime_failure(
                agent_q::AgentQPersistentMaterialRuntimeFailure::local_reset_root_wipe_failed, ops()) ==
                Consistency::consistency_error,
@@ -497,8 +521,8 @@ int main()
            "wipe all succeeds");
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
                !g_signing_mode_present && !g_human_approval_setting_present && !g_approval_history_present &&
-               !g_policy_update_marker_present,
-           "wipe all removes required, signing-mode, reset-scoped settings, approval-history, and policy-update marker material");
+               !g_policy_update_marker_present && !g_zklogin_proof_present,
+           "wipe all removes required, signing-mode, reset-scoped settings, approval-history, policy-update marker, and zkLogin proof material");
     expect(!agent_q::persistent_material_consistency_error_active(),
            "wipe all success clears consistency error latch");
 
@@ -509,6 +533,15 @@ int main()
            "missing state with policy-update marker fails closed");
     expect(g_consistency_error_count == 1,
            "missing state with policy-update marker reports consistency error");
+
+    reset_stubs();
+    g_zklogin_proof_present = true;
+    g_zklogin_proof_status = agent_q::AgentQSuiZkLoginProofRecordStatus::active;
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
+               Consistency::consistency_error,
+           "missing state with zkLogin proof material fails closed");
+    expect(g_consistency_error_count == 1,
+           "missing state with zkLogin proof material reports consistency error");
 
     reset_stubs();
     g_root_present = true;
@@ -534,6 +567,15 @@ int main()
            "policy-update marker wipe failure is reported");
     expect(g_policy_update_marker_present,
            "failed policy-update marker wipe leaves marker for caller-owned fail-closed handling");
+
+    reset_stubs();
+    g_zklogin_proof_present = true;
+    g_zklogin_proof_status = agent_q::AgentQSuiZkLoginProofRecordStatus::active;
+    g_zklogin_proof_wipe_fails = true;
+    expect(agent_q::persistent_material_wipe_all() == Wipe::zklogin_proof_wipe_error,
+           "zkLogin proof wipe failure is reported");
+    expect(g_zklogin_proof_present,
+           "failed zkLogin proof wipe leaves proof for caller-owned fail-closed handling");
 
     reset_stubs();
     g_signing_mode_present = true;
@@ -608,11 +650,42 @@ int main()
     g_auth_status = agent_q::AgentQLocalAuthStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
+    g_zklogin_proof_status = agent_q::AgentQSuiZkLoginProofRecordStatus::invalid;
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+               Consistency::consistency_error,
+           "complete provisioned material with invalid zkLogin proof fails closed");
+    expect(g_consistency_error_count == 1,
+           "invalid zkLogin proof under provisioned state reports consistency error");
+
+    reset_stubs();
+    g_root_present = true;
+    g_policy_present = true;
+    g_policy_status = agent_q::AgentQPolicyStoreStatus::active;
+    g_auth_present = true;
+    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    g_signing_mode_present = true;
+    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
     expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::ok,
-           "complete provisioned material is valid");
+           "complete native provisioned material is valid");
     expect(effective == State::provisioned,
-           "complete provisioned material loads provisioned state");
+           "complete native provisioned material loads provisioned state");
+
+    reset_stubs();
+    g_root_present = true;
+    g_policy_present = true;
+    g_policy_status = agent_q::AgentQPolicyStoreStatus::active;
+    g_auth_present = true;
+    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    g_signing_mode_present = true;
+    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
+    g_zklogin_proof_present = true;
+    g_zklogin_proof_status = agent_q::AgentQSuiZkLoginProofRecordStatus::active;
+    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+               Consistency::ok,
+           "complete zkLogin provisioned material is valid");
+    expect(effective == State::provisioned,
+           "complete zkLogin provisioned material loads provisioned state");
 
     reset_stubs();
     g_root_present = true;

@@ -16,6 +16,7 @@ enum class AgentQProtocolPinApprovalPurpose {
     none,
     connect,
     policy_update,
+    sui_zklogin_proposal,
 };
 
 struct AgentQProtocolPinApprovalSnapshot {
@@ -40,6 +41,11 @@ bool protocol_pin_approval_begin_policy_update(
     const char* session_id,
     TickType_t now,
     AgentQTimeoutWindow request_window);
+bool protocol_pin_approval_begin_sui_zklogin_proposal(
+    const char* request_id,
+    const char* session_id,
+    TickType_t now,
+    AgentQTimeoutWindow request_window);
 
 bool protocol_pin_approval_request_id_for_local_pin_purpose(
     AgentQLocalPinAuthPurpose purpose,
@@ -58,5 +64,8 @@ bool protocol_pin_approval_deadline_reached_for_local_pin_purpose(
 bool protocol_pin_approval_policy_update_session_matches(const char* session_id);
 bool protocol_pin_approval_policy_update_request_id(char* output, size_t output_size);
 AgentQSessionValidationResult protocol_pin_approval_validate_policy_update_session();
+bool protocol_pin_approval_sui_zklogin_proposal_session_matches(const char* session_id);
+bool protocol_pin_approval_sui_zklogin_proposal_request_id(char* output, size_t output_size);
+AgentQSessionValidationResult protocol_pin_approval_validate_sui_zklogin_proposal_session();
 
 }  // namespace agent_q

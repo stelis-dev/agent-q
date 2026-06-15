@@ -80,6 +80,7 @@ AgentQPayloadDeliveryAdmissionDecision payload_delivery_admit_operation(
             case AgentQPayloadDeliveryOperationKind::payload_upload_begin:
             case AgentQPayloadDeliveryOperationKind::sign_personal_message:
             case AgentQPayloadDeliveryOperationKind::policy_propose:
+            case AgentQPayloadDeliveryOperationKind::credential_propose:
             case AgentQPayloadDeliveryOperationKind::connect:
             case AgentQPayloadDeliveryOperationKind::identify_device:
             case AgentQPayloadDeliveryOperationKind::disconnect:
@@ -136,6 +137,7 @@ AgentQPayloadDeliveryAdmissionDecision payload_delivery_admit_operation(
             return admit_sign_transaction_from_snapshot(snapshot, input);
         case AgentQPayloadDeliveryOperationKind::sign_personal_message:
         case AgentQPayloadDeliveryOperationKind::policy_propose:
+        case AgentQPayloadDeliveryOperationKind::credential_propose:
         case AgentQPayloadDeliveryOperationKind::connect:
         case AgentQPayloadDeliveryOperationKind::identify_device:
             return decision(

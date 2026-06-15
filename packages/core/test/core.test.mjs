@@ -81,6 +81,14 @@ function currentPolicyProposeSummary(overrides = {}) {
   };
 }
 
+function nativePreparation() {
+  return {
+    address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+    publicKey: "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp",
+    keyScheme: "ed25519",
+  };
+}
+
 function identifyResponse(code, identifiedDevice = device) {
   return {
     id: "req_identify",
@@ -169,7 +177,7 @@ function defaultDriver(overrides = {}) {
           {
             chain: "sui",
             address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
-            publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=",
+            publicKey: "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp",
             keyScheme: "ed25519",
             derivationPath: "m/44'/784'/0'/0'/0'",
           },
@@ -217,6 +225,27 @@ function defaultDriver(overrides = {}) {
         status: "applied",
         reasonCode: "device_confirmed",
         policy: currentPolicyProposeSummary(),
+      };
+    },
+    async credentialPrepare() {
+      return {
+        id: "req_credential_prepare",
+        version: 1,
+        type: "credential_prepare_result",
+        status: "prepared",
+        chain: "sui",
+        credential: "zklogin",
+        preparation: nativePreparation(),
+      };
+    },
+    async credentialPropose() {
+      return {
+        id: "req_credential_propose",
+        version: 1,
+        type: "credential_propose_result",
+        status: "activated",
+        reasonCode: "device_confirmed",
+        sessionEnded: true,
       };
     },
     async signTransaction() {

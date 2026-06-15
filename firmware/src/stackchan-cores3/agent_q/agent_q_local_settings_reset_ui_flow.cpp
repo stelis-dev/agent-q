@@ -374,6 +374,7 @@ void local_settings_reset_ui_commit_if_ready(const AgentQLocalSettingsResetUiFlo
         case ResetCommitResult::signing_mode_wipe_error:
         case ResetCommitResult::approval_history_wipe_error:
         case ResetCommitResult::policy_update_marker_wipe_error:
+        case ResetCommitResult::zklogin_proof_wipe_error:
         case ResetCommitResult::material_remaining_error:
         case ResetCommitResult::state_storage_error:
             log_error(ops, "Local reset failed and device entered consistency error");

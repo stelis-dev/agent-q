@@ -11,6 +11,8 @@ import {
   makeSuiSignerHarness,
 } from "./sui-signer-test-support.mjs";
 
+const RAW_ED25519_PUBLIC_KEY = "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=";
+
 test("Sui CLI call keys returns external signer key records", async () => {
   const harness = makeSuiSignerHarness();
   assert.equal(
@@ -31,7 +33,7 @@ test("Sui CLI call keys returns external signer key records", async () => {
   assert.deepEqual(response.result.keys, [
     {
       key_id: ACCOUNT.derivationPath,
-      public_key: { Ed25519: ACCOUNT.publicKey },
+      public_key: { Ed25519: RAW_ED25519_PUBLIC_KEY },
       sui_address: ACCOUNT.address,
     },
   ]);
@@ -55,7 +57,7 @@ test("Sui CLI call public_key returns one key", async () => {
   const response = JSON.parse(harness.stdout.join(""));
   assert.deepEqual(response.result, {
     key_id: ACCOUNT.derivationPath,
-    public_key: { Ed25519: ACCOUNT.publicKey },
+    public_key: { Ed25519: RAW_ED25519_PUBLIC_KEY },
     sui_address: ACCOUNT.address,
   });
   assert.deepEqual(harness.calls, ["connect", "accounts", "disconnect"]);

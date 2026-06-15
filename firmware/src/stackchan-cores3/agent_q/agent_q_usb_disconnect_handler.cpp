@@ -33,6 +33,10 @@ void handle_usb_disconnect_request(
         ops.disconnect_pending_policy_update_for_session(id, session_id)) {
         return;
     }
+    if (ops.disconnect_pending_sui_zklogin_proposal_for_session != nullptr &&
+        ops.disconnect_pending_sui_zklogin_proposal_for_session(id, session_id)) {
+        return;
+    }
     if (ops.disconnect_pending_user_signing_for_session != nullptr &&
         ops.disconnect_pending_user_signing_for_session(id, session_id)) {
         return;

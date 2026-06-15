@@ -18,6 +18,8 @@ namespace agent_q {
 namespace {
 
 constexpr size_t kPolicyIdBufferSize = 80;
+constexpr size_t kSuiActivePublicKeyBase64BufferSize =
+    ((kAgentQSuiZkLoginPublicKeyMaxBytes + 2) / 3) * 4 + 1;
 
 struct SessionReadPolicyDocument {
     const char* schema = nullptr;
@@ -114,9 +116,37 @@ bool guard_session_read_request(
     return true;
 }
 
+const char* active_identity_key_scheme(AgentQSuiActiveIdentityKind kind)
+{
+    switch (kind) {
+        case AgentQSuiActiveIdentityKind::native:
+            return "ed25519";
+        case AgentQSuiActiveIdentityKind::zklogin:
+            return "zklogin";
+        case AgentQSuiActiveIdentityKind::error:
+        default:
+            return nullptr;
+    }
+}
+
+bool write_capability_account(JsonObject account, AgentQSuiActiveIdentityKind kind)
+{
+    const char* key_scheme = active_identity_key_scheme(kind);
+    if (key_scheme == nullptr) {
+        return false;
+    }
+    account["keyScheme"] = key_scheme;
+    if (kind == AgentQSuiActiveIdentityKind::native) {
+        account["derivationPath"] = "m/44'/784'/0'/0'/0'";
+    }
+    return true;
+}
+
 bool write_capabilities_response(
     const char* id,
-    AgentQSigningAuthorizationMode signing_mode)
+    AgentQSigningAuthorizationMode signing_mode,
+    const AgentQSuiActiveIdentity& active_identity,
+    bool sui_zklogin_credential_available)
 {
     JsonDocument response;
     response["id"] = id;
@@ -127,8 +157,9 @@ bool write_capabilities_response(
     sui["id"] = "sui";
     JsonArray accounts = sui["accounts"].to<JsonArray>();
     JsonObject account = accounts.add<JsonObject>();
-    account["keyScheme"] = "ed25519";
-    account["derivationPath"] = "m/44'/784'/0'/0'/0'";
+    if (!write_capability_account(account, active_identity.kind)) {
+        return false;
+    }
     sui["methods"].to<JsonArray>();
     JsonObject signing = response["signing"].to<JsonObject>();
     signing["authorization"] = signing_authorization_mode_name(signing_mode);
@@ -172,37 +203,51 @@ bool write_capabilities_response(
         personal_message_entry["method"] = signing_route_wire_method(
             AgentQSigningRoute::sui_sign_personal_message);
     }
+    if (sui_zklogin_credential_available) {
+        JsonArray credentials = response["credentials"].to<JsonArray>();
+        JsonObject credential = credentials.add<JsonObject>();
+        credential["chain"] = "sui";
+        credential["credential"] = "zklogin";
+        JsonArray operations = credential["operations"].to<JsonArray>();
+        operations.add("credential_prepare");
+        operations.add("credential_propose");
+    }
     return usb_response_write_json(response);
 }
 
 bool write_accounts_response(
     const char* id,
     const AgentQUsbSessionReadHandlerOps& ops,
-    bool* root_material_unavailable)
+    AgentQSuiActiveIdentityError* active_identity_error)
 {
-    if (root_material_unavailable != nullptr) {
-        *root_material_unavailable = false;
+    if (active_identity_error != nullptr) {
+        *active_identity_error = AgentQSuiActiveIdentityError::none;
     }
-    if (ops.derive_sui_account == nullptr) {
+    if (ops.resolve_active_sui_identity == nullptr) {
         return false;
     }
 
-    uint8_t public_key[kSuiEd25519PublicKeyBytes] = {};
-    char address[kSuiAddressBufferSize] = {};
-    const SuiAccountDerivationResult account_result =
-        ops.derive_sui_account(public_key, address, sizeof(address));
-    if (account_result == SuiAccountDerivationResult::root_material_unavailable) {
-        if (root_material_unavailable != nullptr) {
-            *root_material_unavailable = true;
+    const AgentQSuiActiveIdentity active_identity = ops.resolve_active_sui_identity();
+    if (active_identity.kind == AgentQSuiActiveIdentityKind::error) {
+        if (active_identity_error != nullptr) {
+            *active_identity_error = active_identity.error;
         }
         return false;
     }
-    if (account_result != SuiAccountDerivationResult::ok) {
+    const char* key_scheme = active_identity_key_scheme(active_identity.kind);
+    if (key_scheme == nullptr ||
+        active_identity.public_key_size == 0 ||
+        active_identity.public_key_size > kAgentQSuiZkLoginPublicKeyMaxBytes ||
+        active_identity.address[0] == '\0') {
         return false;
     }
 
-    char public_key_base64[48] = {};
-    if (bytes_to_base64(public_key, sizeof(public_key), public_key_base64, sizeof(public_key_base64)) != 0) {
+    char public_key_base64[kSuiActivePublicKeyBase64BufferSize] = {};
+    if (bytes_to_base64(
+            active_identity.public_key,
+            active_identity.public_key_size,
+            public_key_base64,
+            sizeof(public_key_base64)) != 0) {
         return false;
     }
 
@@ -213,10 +258,12 @@ bool write_accounts_response(
     JsonArray accounts = response["accounts"].to<JsonArray>();
     JsonObject account = accounts.add<JsonObject>();
     account["chain"] = "sui";
-    account["address"] = address;
+    account["address"] = active_identity.address;
     account["publicKey"] = public_key_base64;
-    account["keyScheme"] = "ed25519";
-    account["derivationPath"] = "m/44'/784'/0'/0'/0'";
+    account["keyScheme"] = key_scheme;
+    if (active_identity.kind == AgentQSuiActiveIdentityKind::native) {
+        account["derivationPath"] = "m/44'/784'/0'/0'/0'";
+    }
     return usb_response_write_json(response);
 }
 
@@ -336,7 +383,27 @@ void handle_usb_get_capabilities_request(
         writer.write_error(id, "invalid_state", "Signing authorization mode is unavailable.");
         return;
     }
-    if (write_capabilities_response(id, signing_mode)) {
+    if (ops.resolve_active_sui_identity == nullptr) {
+        writer.write_error(id, "account_error", "Could not derive accounts.");
+        return;
+    }
+    const AgentQSuiActiveIdentity active_identity = ops.resolve_active_sui_identity();
+    if (active_identity.kind == AgentQSuiActiveIdentityKind::error) {
+        if (active_identity.error == AgentQSuiActiveIdentityError::native_account_unavailable &&
+            ops.record_root_material_unreadable != nullptr) {
+            ops.record_root_material_unreadable();
+        }
+        writer.write_error(id, "account_error", "Could not derive accounts.");
+        return;
+    }
+    const bool sui_zklogin_credential_available =
+        ops.sui_zklogin_credential_available != nullptr &&
+        ops.sui_zklogin_credential_available();
+    if (write_capabilities_response(
+            id,
+            signing_mode,
+            active_identity,
+            sui_zklogin_credential_available)) {
         return;
     }
     writer.log_write_failure("capabilities", id);
@@ -362,11 +429,12 @@ void handle_usb_get_accounts_request(
     }
     (void)session_id;
 
-    bool root_material_unavailable = false;
-    if (write_accounts_response(id, ops, &root_material_unavailable)) {
+    AgentQSuiActiveIdentityError active_identity_error = AgentQSuiActiveIdentityError::none;
+    if (write_accounts_response(id, ops, &active_identity_error)) {
         return;
     }
-    if (root_material_unavailable && ops.record_root_material_unreadable != nullptr) {
+    if (active_identity_error == AgentQSuiActiveIdentityError::native_account_unavailable &&
+        ops.record_root_material_unreadable != nullptr) {
         ops.record_root_material_unreadable();
     }
     writer.write_error(id, "account_error", "Could not derive accounts.");

@@ -74,6 +74,8 @@ enum class HandlerSlot {
     policy_get,
     get_approval_history,
     policy_propose,
+    credential_prepare,
+    credential_propose,
     payload_upload_begin,
     payload_upload_chunk,
     payload_upload_finish,
@@ -140,6 +142,8 @@ DEFINE_HANDLER(handle_get_accounts, HandlerSlot::get_accounts)
 DEFINE_HANDLER(handle_policy_get, HandlerSlot::policy_get)
 DEFINE_HANDLER(handle_get_approval_history, HandlerSlot::get_approval_history)
 DEFINE_HANDLER(handle_policy_propose, HandlerSlot::policy_propose)
+DEFINE_HANDLER(handle_credential_prepare, HandlerSlot::credential_prepare)
+DEFINE_HANDLER(handle_credential_propose, HandlerSlot::credential_propose)
 DEFINE_HANDLER(handle_payload_upload_begin, HandlerSlot::payload_upload_begin)
 DEFINE_HANDLER(handle_payload_upload_chunk, HandlerSlot::payload_upload_chunk)
 DEFINE_HANDLER(handle_payload_upload_finish, HandlerSlot::payload_upload_finish)
@@ -163,6 +167,8 @@ agent_q::AgentQUsbOperationHandlers make_handlers()
         handle_policy_get,
         handle_get_approval_history,
         handle_policy_propose,
+        handle_credential_prepare,
+        handle_credential_propose,
         handle_payload_upload_begin,
         handle_payload_upload_chunk,
         handle_payload_upload_finish,
@@ -218,6 +224,8 @@ int main()
     expect_dispatch(Type::policy_get, HandlerSlot::policy_get);
     expect_dispatch(Type::get_approval_history, HandlerSlot::get_approval_history);
     expect_dispatch(Type::policy_propose, HandlerSlot::policy_propose);
+    expect_dispatch(Type::credential_prepare, HandlerSlot::credential_prepare);
+    expect_dispatch(Type::credential_propose, HandlerSlot::credential_propose);
     expect_dispatch(Type::payload_upload_begin, HandlerSlot::payload_upload_begin);
     expect_dispatch(Type::payload_upload_chunk, HandlerSlot::payload_upload_chunk);
     expect_dispatch(Type::payload_upload_finish, HandlerSlot::payload_upload_finish);

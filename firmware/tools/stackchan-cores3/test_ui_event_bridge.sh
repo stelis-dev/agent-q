@@ -109,6 +109,8 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_import_cancel_clicked = nullptr;
     lv_event_cb_t on_policy_update_review_continue_clicked = nullptr;
     lv_event_cb_t on_policy_update_review_reject_clicked = nullptr;
+    lv_event_cb_t on_sui_zklogin_review_continue_clicked = nullptr;
+    lv_event_cb_t on_sui_zklogin_review_reject_clicked = nullptr;
     lv_event_cb_t on_user_signing_review_accept_clicked = nullptr;
     lv_event_cb_t on_user_signing_review_reject_clicked = nullptr;
 };
@@ -229,6 +231,8 @@ int main()
     assert(g_callbacks.on_import_slot_clicked != nullptr);
     assert(g_callbacks.on_connect_review_accept_clicked != nullptr);
     assert(g_callbacks.on_settings_policy_reset_clicked != nullptr);
+    assert(g_callbacks.on_sui_zklogin_review_continue_clicked != nullptr);
+    assert(g_callbacks.on_sui_zklogin_review_reject_clicked != nullptr);
     assert(g_panel_deleted_callback != nullptr);
 
     g_callbacks.on_setup_generate_clicked(nullptr);
@@ -297,6 +301,12 @@ int main()
 
     g_callbacks.on_settings_reset_clicked(nullptr);
     assert(receive_event().kind == agent_q::AgentQUiEventKind::settings_reset_requested);
+
+    g_callbacks.on_sui_zklogin_review_continue_clicked(nullptr);
+    assert(receive_event().kind == agent_q::AgentQUiEventKind::sui_zklogin_review_continue_requested);
+
+    g_callbacks.on_sui_zklogin_review_reject_clicked(nullptr);
+    assert(receive_event().kind == agent_q::AgentQUiEventKind::sui_zklogin_review_reject_requested);
 
     printf("UI event bridge tests passed\n");
     return 0;

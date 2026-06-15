@@ -6,6 +6,8 @@ import {
   assertAccountsResponse,
   assertApprovalHistoryResponse,
   assertCapabilitiesResponse,
+  assertCredentialPrepareResultResponse,
+  assertCredentialProposeResultResponse,
   assertPolicyProposeResultResponse,
   assertPolicyResponse,
   assertSignResultResponse,
@@ -18,6 +20,8 @@ import {
   makeGetCapabilitiesRequest,
   makeGetAccountsRequest,
   makeGetApprovalHistoryRequest,
+  makeCredentialPrepareRequest,
+  makeCredentialProposeRequest,
   makePolicyProposeRequest,
   makeIdentifyDeviceRequest,
   makePayloadUploadAbortRequest,
@@ -38,6 +42,9 @@ import {
   type ApprovalHistoryResponse,
   type CapabilitiesResponse,
   type ConnectResponse,
+  type CredentialPrepareResultResponse,
+  type CredentialProposeParams,
+  type CredentialProposeResultResponse,
   type DisconnectResponse,
   type IdentifyDeviceResponse,
   type PayloadUploadAbortResultResponse,
@@ -237,6 +244,17 @@ export interface UsbSerialDriver {
     policy: Record<string, unknown>,
     deadlineMs: number,
   ): Promise<PolicyProposeResultResponse>;
+  credentialPrepare(
+    portPath: string,
+    sessionId: string,
+    deadlineMs: number,
+  ): Promise<CredentialPrepareResultResponse>;
+  credentialPropose(
+    portPath: string,
+    sessionId: string,
+    params: CredentialProposeParams,
+    deadlineMs: number,
+  ): Promise<CredentialProposeResultResponse>;
   signTransaction(
     portPath: string,
     sessionId: string,
@@ -329,6 +347,23 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     deadlineMs: number,
   ): Promise<PolicyProposeResultResponse> {
     return policyProposeOverSerial(portPath, sessionId, policy, deadlineMs);
+  }
+
+  async credentialPrepare(
+    portPath: string,
+    sessionId: string,
+    deadlineMs: number,
+  ): Promise<CredentialPrepareResultResponse> {
+    return credentialPrepareOverSerial(portPath, sessionId, deadlineMs);
+  }
+
+  async credentialPropose(
+    portPath: string,
+    sessionId: string,
+    params: CredentialProposeParams,
+    deadlineMs: number,
+  ): Promise<CredentialProposeResultResponse> {
+    return credentialProposeOverSerial(portPath, sessionId, params, deadlineMs);
   }
 
   async signTransaction(
@@ -493,6 +528,18 @@ export function deadlineEnforcingDriver(driver: UsbSerialDriver): UsbSerialDrive
         driver.policyPropose(portPath, sessionId, policy, deadlineMs),
         deadlineMs,
         "USB policy_propose exceeded its timeout.",
+      ),
+    credentialPrepare: (portPath, sessionId, deadlineMs) =>
+      raceDeadline(
+        driver.credentialPrepare(portPath, sessionId, deadlineMs),
+        deadlineMs,
+        "USB credential_prepare exceeded its timeout.",
+      ),
+    credentialPropose: (portPath, sessionId, params, deadlineMs) =>
+      raceDeadline(
+        driver.credentialPropose(portPath, sessionId, params, deadlineMs),
+        deadlineMs,
+        "USB credential_propose exceeded its timeout.",
       ),
     signTransaction: (portPath, sessionId, route, params, deadlineMs) => {
       const normalizedParams = validateSignTransactionInput(route.chain, route.method, params);
@@ -875,6 +922,28 @@ async function policyProposeOverSerial(
 ): Promise<PolicyProposeResultResponse> {
   const request = makePolicyProposeRequest(sessionId, policy);
   return requestOverSerial(portPath, request, deadlineMs, (response) => assertPolicyProposeResultResponse(response));
+}
+
+async function credentialPrepareOverSerial(
+  portPath: string,
+  sessionId: string,
+  deadlineMs: number,
+): Promise<CredentialPrepareResultResponse> {
+  const request = makeCredentialPrepareRequest(sessionId, {
+    chain: "sui",
+    credential: "zklogin",
+  });
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertCredentialPrepareResultResponse(response));
+}
+
+async function credentialProposeOverSerial(
+  portPath: string,
+  sessionId: string,
+  params: CredentialProposeParams,
+  deadlineMs: number,
+): Promise<CredentialProposeResultResponse> {
+  const request = makeCredentialProposeRequest(sessionId, params);
+  return requestOverSerial(portPath, request, deadlineMs, (response) => assertCredentialProposeResultResponse(response));
 }
 
 async function signTransactionOverSerial(

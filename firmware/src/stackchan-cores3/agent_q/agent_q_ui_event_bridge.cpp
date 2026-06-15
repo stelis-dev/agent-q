@@ -72,6 +72,16 @@ void on_policy_update_review_reject_clicked(lv_event_t*)
     enqueue_ui_event(AgentQUiEventKind::policy_update_review_reject_requested);
 }
 
+void on_sui_zklogin_review_continue_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::sui_zklogin_review_continue_requested);
+}
+
+void on_sui_zklogin_review_reject_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::sui_zklogin_review_reject_requested);
+}
+
 void on_setup_generate_clicked(lv_event_t*)
 {
     enqueue_ui_event(AgentQUiEventKind::setup_generate_requested);
@@ -321,6 +331,8 @@ void ui_event_bridge_register_callbacks()
     modal_callbacks.on_import_cancel_clicked = on_import_cancel_clicked;
     modal_callbacks.on_policy_update_review_continue_clicked = on_policy_update_review_continue_clicked;
     modal_callbacks.on_policy_update_review_reject_clicked = on_policy_update_review_reject_clicked;
+    modal_callbacks.on_sui_zklogin_review_continue_clicked = on_sui_zklogin_review_continue_clicked;
+    modal_callbacks.on_sui_zklogin_review_reject_clicked = on_sui_zklogin_review_reject_clicked;
     modal_callbacks.on_user_signing_review_accept_clicked = on_user_signing_review_accept_clicked;
     modal_callbacks.on_user_signing_review_reject_clicked = on_user_signing_review_reject_clicked;
     modal_drawing_set_callbacks(modal_callbacks);

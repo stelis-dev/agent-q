@@ -24,6 +24,8 @@ struct AgentQUsbOperationHandlers {
     AgentQUsbOperationHandler policy_get = nullptr;
     AgentQUsbOperationHandler get_approval_history = nullptr;
     AgentQUsbOperationHandler policy_propose = nullptr;
+    AgentQUsbOperationHandler credential_prepare = nullptr;
+    AgentQUsbOperationHandler credential_propose = nullptr;
     AgentQUsbOperationHandler payload_upload_begin = nullptr;
     AgentQUsbOperationHandler payload_upload_chunk = nullptr;
     AgentQUsbOperationHandler payload_upload_finish = nullptr;

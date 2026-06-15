@@ -10,6 +10,7 @@
 #include "agent_q_persistent_material.h"
 #include "agent_q_policy_update_flow.h"
 #include "agent_q_signing_mode.h"
+#include "agent_q_sui_zklogin_proposal_flow.h"
 #include "agent_q_user_signing_confirmation.h"
 #include "freertos/FreeRTOS.h"
 
@@ -58,6 +59,16 @@ struct AgentQLocalPinAuthUiFlowOps {
         const char* error_code,
         const char* error_message,
         const char* display_message);
+    bool (*require_pending_sui_zklogin_proposal_session)(const char* request_id);
+    void (*finish_sui_zklogin_proposal_terminal)(
+        const char* request_id,
+        AgentQSuiZkLoginProposalTerminalResult result);
+    void (*finish_sui_zklogin_proposal_error_terminal)(
+        const char* request_id,
+        const char* error_code,
+        const char* error_message,
+        const char* display_message);
+    bool (*show_sui_zklogin_review)();
     bool (*show_user_signing_review)();
     AgentQUserSigningHistoryWriteFn write_user_signing_confirmation_history;
     void (*execute_user_signing_critical_section_and_finish)(const char* request_id);
@@ -80,6 +91,9 @@ struct AgentQLocalPinAuthUiFlowOps {
 bool local_pin_auth_ui_panel_matches_stage(AgentQUiPanelKind kind);
 bool local_pin_auth_ui_accepts_keypad_input();
 bool local_pin_auth_ui_begin_connect(
+    const char* request_id,
+    const AgentQLocalPinAuthUiFlowOps& ops);
+bool local_pin_auth_ui_begin_sui_zklogin_proposal(
     const char* request_id,
     const AgentQLocalPinAuthUiFlowOps& ops);
 void local_pin_auth_ui_start_settings_human_approval_input(

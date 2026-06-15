@@ -112,6 +112,22 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
+        AgentQUsbOperationType::credential_prepare,
+        "credential_prepare",
+        AgentQUsbOperationHandlerSlot::credential_prepare,
+        AgentQPayloadDeliveryOperationKind::safe_read,
+        AgentQUsbOperationTerminalResultPolicy::immediate_response,
+        AgentQUsbOperationReadSideEffectPolicy::none,
+    },
+    {
+        AgentQUsbOperationType::credential_propose,
+        "credential_propose",
+        AgentQUsbOperationHandlerSlot::credential_propose,
+        AgentQPayloadDeliveryOperationKind::credential_propose,
+        AgentQUsbOperationTerminalResultPolicy::credential_propose_result,
+        AgentQUsbOperationReadSideEffectPolicy::none,
+    },
+    {
         AgentQUsbOperationType::payload_upload_begin,
         "payload_upload_begin",
         AgentQUsbOperationHandlerSlot::payload_upload_begin,

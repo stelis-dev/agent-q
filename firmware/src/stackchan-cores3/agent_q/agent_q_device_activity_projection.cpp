@@ -15,11 +15,18 @@ bool user_signing_stage_awaiting_approval(AgentQUserSigningStage stage)
            stage == AgentQUserSigningStage::pin_entry;
 }
 
+bool sui_zklogin_proposal_stage_awaiting_approval(AgentQSuiZkLoginProposalStage stage)
+{
+    return stage == AgentQSuiZkLoginProposalStage::reviewing ||
+           stage == AgentQSuiZkLoginProposalStage::pin_entry;
+}
+
 bool local_settings_common_blocked(const AgentQDeviceActivityProjection& activity)
 {
     return activity.connect_approval_active ||
            activity.protocol_pin_approval_active ||
            activity.policy_update_active ||
+           activity.sui_zklogin_proposal_active ||
            activity.identification_display_active ||
            activity.provisioning_flow_active ||
            activity.local_pin_auth_flow_active ||
@@ -39,6 +46,12 @@ AgentQDeviceActivityProjection project_device_activity(
     const bool policy_update_busy =
         facts.policy_update.active &&
         !policy_update_awaiting;
+    const bool sui_zklogin_proposal_awaiting =
+        facts.sui_zklogin_proposal.active &&
+        sui_zklogin_proposal_stage_awaiting_approval(facts.sui_zklogin_proposal.stage);
+    const bool sui_zklogin_proposal_busy =
+        facts.sui_zklogin_proposal.active &&
+        !sui_zklogin_proposal_awaiting;
     const bool user_signing_awaiting =
         facts.user_signing.active &&
         user_signing_stage_awaiting_approval(facts.user_signing.stage);
@@ -55,12 +68,14 @@ AgentQDeviceActivityProjection project_device_activity(
         facts.connect_approval_active ||
         facts.protocol_pin_approval_active ||
         policy_update_awaiting ||
+        sui_zklogin_proposal_awaiting ||
         user_signing_awaiting) {
         state = AgentQProjectedDeviceState::awaiting_approval;
     } else if (
         facts.provisioning_flow_active ||
         payload_delivery_active ||
         policy_update_busy ||
+        sui_zklogin_proposal_busy ||
         (facts.local_reset.flow_active && !local_reset_settings_menu) ||
         facts.local_pin_auth_flow_active ||
         facts.user_signing.active) {
@@ -78,6 +93,9 @@ AgentQDeviceActivityProjection project_device_activity(
         facts.policy_update.active,
         policy_update_awaiting,
         policy_update_busy,
+        facts.sui_zklogin_proposal.active,
+        sui_zklogin_proposal_awaiting,
+        sui_zklogin_proposal_busy,
         facts.provisioning_flow_active,
         payload_delivery_active,
         facts.payload_delivery_receiving,
@@ -111,6 +129,7 @@ bool device_activity_blocks_user_signing_ingress(
     return activity.connect_approval_active ||
            activity.protocol_pin_approval_active ||
            activity.policy_update_active ||
+           activity.sui_zklogin_proposal_active ||
            activity.provisioning_flow_active ||
            activity.payload_delivery_receiving ||
            activity.local_reset_active ||
@@ -151,6 +170,9 @@ AgentQDeviceActivityUsbRequestBlock device_activity_usb_request_block(
     }
     if (activity.policy_update_active) {
         return { true, "busy", "Device has a pending policy update." };
+    }
+    if (activity.sui_zklogin_proposal_active) {
+        return { true, "busy", "Device has a pending Sui zkLogin proposal." };
     }
     if (activity.provisioning_flow_active) {
         return { true, "busy", "Device is showing setup material." };

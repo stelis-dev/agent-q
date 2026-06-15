@@ -17,6 +17,8 @@ enum class AgentQUsbOperationType {
     policy_get,
     get_approval_history,
     policy_propose,
+    credential_prepare,
+    credential_propose,
     payload_upload_begin,
     payload_upload_chunk,
     payload_upload_finish,

@@ -52,6 +52,7 @@ cat >"${TMP_DIR}/request_backed_local_pin_context_test.cpp" <<'CPP'
 #include "agent_q_policy_update_flow.h"
 #include "agent_q_protocol_pin_approval.h"
 #include "agent_q_request_backed_local_pin_context.h"
+#include "agent_q_sui_zklogin_proposal_flow.h"
 #include "agent_q_user_signing_confirmation.h"
 #include "agent_q_user_signing_flow.h"
 
@@ -72,6 +73,8 @@ agent_q::AgentQUserSigningConfirmationResult g_user_pause_result =
 bool g_user_deadline_reached = false;
 agent_q::AgentQPolicyUpdateFlowTransitionResult g_policy_mark_result =
     agent_q::AgentQPolicyUpdateFlowTransitionResult::ok;
+agent_q::AgentQSuiZkLoginProposalTransitionResult g_sui_zklogin_mark_result =
+    agent_q::AgentQSuiZkLoginProposalTransitionResult::ok;
 agent_q::AgentQLocalPinAuthPurpose g_last_protocol_request_id_purpose =
     agent_q::AgentQLocalPinAuthPurpose::none;
 agent_q::AgentQLocalPinAuthPurpose g_last_protocol_refresh_purpose =
@@ -183,6 +186,11 @@ AgentQPolicyUpdateFlowTransitionResult policy_update_flow_mark_pin_verifying()
     return g_policy_mark_result;
 }
 
+AgentQSuiZkLoginProposalTransitionResult sui_zklogin_proposal_flow_mark_pin_verifying()
+{
+    return g_sui_zklogin_mark_result;
+}
+
 }  // namespace agent_q
 
 int main()
@@ -196,6 +204,9 @@ int main()
     expect(agent_q::request_backed_local_pin_owner_for_purpose(Purpose::policy_update) ==
                Owner::protocol_pin_approval,
            "policy update is owned by protocol PIN approval");
+    expect(agent_q::request_backed_local_pin_owner_for_purpose(Purpose::sui_zklogin_proposal) ==
+               Owner::protocol_pin_approval,
+           "Sui zkLogin proposal is owned by protocol PIN approval");
     expect(agent_q::request_backed_local_pin_owner_for_purpose(Purpose::user_signing) ==
                Owner::user_signing,
            "user signing is owned by user signing flow");
@@ -204,6 +215,8 @@ int main()
            "settings PIN action is not request backed");
     expect(agent_q::request_backed_local_pin_purpose(Purpose::user_signing),
            "user signing is request backed");
+    expect(agent_q::request_backed_local_pin_purpose(Purpose::sui_zklogin_proposal),
+           "Sui zkLogin proposal is request backed");
     expect(!agent_q::request_backed_local_pin_purpose(Purpose::settings_change_pin),
            "settings change PIN is not request backed");
 
@@ -302,11 +315,21 @@ int main()
     expect(g_last_protocol_pause_purpose == Purpose::policy_update &&
                g_last_protocol_pause_now == 61,
            "policy update pause delegates protocol purpose and tick");
+    g_sui_zklogin_mark_result = agent_q::AgentQSuiZkLoginProposalTransitionResult::wrong_stage;
+    expect(!agent_q::request_backed_local_pin_pause_input_window(Purpose::sui_zklogin_proposal, 62),
+           "Sui zkLogin pause fails before protocol pause when proposal stage transition fails");
+    g_sui_zklogin_mark_result = agent_q::AgentQSuiZkLoginProposalTransitionResult::ok;
+    g_protocol_pause_result = true;
+    expect(agent_q::request_backed_local_pin_pause_input_window(Purpose::sui_zklogin_proposal, 63),
+           "Sui zkLogin pause marks proposal stage then pauses protocol owner");
+    expect(g_last_protocol_pause_purpose == Purpose::sui_zklogin_proposal &&
+               g_last_protocol_pause_now == 63,
+           "Sui zkLogin pause delegates protocol purpose and tick");
     g_user_pause_result = agent_q::AgentQUserSigningConfirmationResult::ok;
-    expect(agent_q::request_backed_local_pin_pause_input_window(Purpose::user_signing, 62),
+    expect(agent_q::request_backed_local_pin_pause_input_window(Purpose::user_signing, 64),
            "user-signing pause delegates to confirmation flow");
-    expect(g_last_user_pause_now == 62, "user pause receives tick");
-    expect(agent_q::request_backed_local_pin_pause_input_window(Purpose::settings_change_pin, 63),
+    expect(g_last_user_pause_now == 64, "user pause receives tick");
+    expect(agent_q::request_backed_local_pin_pause_input_window(Purpose::settings_change_pin, 65),
            "non-request-backed pause is a no-op success");
 
     g_protocol_deadline_reached = true;

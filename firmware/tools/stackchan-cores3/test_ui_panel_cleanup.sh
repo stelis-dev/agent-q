@@ -74,7 +74,8 @@ agent_q::AgentQUiPanelCleanupPlan plan(
 	    bool reset_matches = false,
 	    bool pin_matches = false,
 	    bool policy_update_review_matches = false,
-	    bool user_signing_review_matches = false)
+	    bool user_signing_review_matches = false,
+	    bool sui_zklogin_review_matches = false)
 {
     return agent_q::ui_panel_cleanup_plan(agent_q::AgentQUiPanelCleanupInput{
         kind,
@@ -82,6 +83,7 @@ agent_q::AgentQUiPanelCleanupPlan plan(
 	        reset_matches,
 	        pin_matches,
 	        policy_update_review_matches,
+	        sui_zklogin_review_matches,
 	        user_signing_review_matches,
 	    });
 }
@@ -144,6 +146,12 @@ int main()
 	    expect(!p.wipe_local_pin_auth && !p.wipe_user_signing,
 	           "external policy update review delete does not wipe unrelated owners");
 
+	    p = plan(Panel::sui_zklogin_review, Event::external_delete);
+	    expect(p.recover_sui_zklogin_review_panel, "external Sui zkLogin review delete requests state-loop recovery");
+	    expect(!p.wipe_local_pin_auth && !p.wipe_user_signing &&
+	               !p.recover_policy_update_review_panel,
+	           "external Sui zkLogin review delete does not wipe unrelated owners");
+
 	    p = plan(Panel::user_signing_review, Event::explicit_clear, false, false, false, true);
 	    expect(p.wipe_user_signing, "explicit user_signing review clear wipes matching signing owner");
 	    expect(!p.recover_user_signing_review_panel, "explicit user_signing review clear does not request recovery");
@@ -156,7 +164,8 @@ int main()
 	    expect(!p.route_provisioning_panel_deleted && !p.wipe_setup_if_unhandled &&
 	               !p.wipe_local_reset && !p.wipe_local_pin_auth &&
 	               !p.recover_local_pin_auth_panel &&
-	               !p.recover_policy_update_review_panel && !p.wipe_user_signing &&
+	               !p.recover_policy_update_review_panel &&
+	               !p.recover_sui_zklogin_review_panel && !p.wipe_user_signing &&
 	               !p.recover_user_signing_review_panel,
 	           "idle settings panel delete has no state cleanup");
 
@@ -164,6 +173,7 @@ int main()
 	    expect(!p.route_provisioning_panel_deleted && !p.wipe_local_reset &&
 	               !p.wipe_local_pin_auth && !p.recover_local_pin_auth_panel &&
 	               !p.recover_policy_update_review_panel &&
+	               !p.recover_sui_zklogin_review_panel &&
 	               !p.wipe_user_signing && !p.recover_user_signing_review_panel,
 	           "connect review delete does not decide or cancel");
 

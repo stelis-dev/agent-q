@@ -456,6 +456,18 @@ int main()
                10,
                timeout_window(20, 40)),
            "policy protocol PIN rejects future request window");
+    expect(!agent_q::protocol_pin_approval_begin_sui_zklogin_proposal(
+               "zklogin-stale",
+               session_id,
+               30,
+               timeout_window(10, 20)),
+           "Sui zkLogin protocol PIN rejects stale request window");
+    expect(!agent_q::protocol_pin_approval_begin_sui_zklogin_proposal(
+               "zklogin-future",
+               session_id,
+               10,
+               timeout_window(20, 40)),
+           "Sui zkLogin protocol PIN rejects future request window");
     expect(agent_q::protocol_pin_approval_begin_policy_update(
                "policy-1",
                session_id,
@@ -486,16 +498,52 @@ int main()
     expect(agent_q::protocol_pin_approval_validate_policy_update_session() ==
                SessionValidation::ok,
            "active matching session validates");
+
+    agent_q::protocol_pin_approval_clear();
+    expect(agent_q::protocol_pin_approval_begin_sui_zklogin_proposal(
+               "zklogin-1",
+               session_id,
+               40,
+               timeout_window(40, 260)),
+           "Sui zkLogin protocol PIN approval begins");
+    snapshot = agent_q::protocol_pin_approval_snapshot();
+    expect(snapshot.active, "Sui zkLogin snapshot is active");
+    expect(snapshot.purpose == Purpose::sui_zklogin_proposal, "Sui zkLogin snapshot purpose");
+    expect(strcmp(snapshot.request_id, "zklogin-1") == 0, "Sui zkLogin request id stored");
+    expect(strcmp(snapshot.session_id, session_id) == 0, "Sui zkLogin session id stored");
+    expect(agent_q::protocol_pin_approval_request_id_for_local_pin_purpose(
+               LocalPurpose::sui_zklogin_proposal,
+               request_id,
+               sizeof(request_id)) &&
+               strcmp(request_id, "zklogin-1") == 0,
+           "Sui zkLogin request id maps from local PIN purpose");
+    expect(agent_q::protocol_pin_approval_sui_zklogin_proposal_session_matches(session_id),
+           "matching Sui zkLogin session recognized");
+    expect(!agent_q::protocol_pin_approval_sui_zklogin_proposal_session_matches(
+               "session_aaaaaaaaaaaaaaaa"),
+           "mismatched Sui zkLogin session rejected");
+    expect(agent_q::protocol_pin_approval_sui_zklogin_proposal_request_id(
+               request_id,
+               sizeof(request_id)) &&
+               strcmp(request_id, "zklogin-1") == 0,
+           "Sui zkLogin request id is available");
+    expect(agent_q::protocol_pin_approval_validate_sui_zklogin_proposal_session() ==
+               SessionValidation::ok,
+           "active matching Sui zkLogin session validates");
     agent_q::session_clear();
-    expect(agent_q::protocol_pin_approval_validate_policy_update_session() ==
+    expect(agent_q::protocol_pin_approval_validate_sui_zklogin_proposal_session() ==
                SessionValidation::missing,
-           "cleared session invalidates pending policy update");
+           "cleared session invalidates pending Sui zkLogin proposal");
 
     agent_q::protocol_pin_approval_clear();
     expect(!agent_q::protocol_pin_approval_policy_update_request_id(
                request_id,
                sizeof(request_id)),
            "cleared state has no policy update request id");
+    expect(!agent_q::protocol_pin_approval_sui_zklogin_proposal_request_id(
+               request_id,
+               sizeof(request_id)),
+           "cleared state has no Sui zkLogin request id");
     expect(!agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
                LocalPurpose::connect,
                1000),

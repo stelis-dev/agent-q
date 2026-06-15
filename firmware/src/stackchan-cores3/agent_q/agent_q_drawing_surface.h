@@ -16,6 +16,7 @@ enum class AgentQUiPanelKind {
     error_recovery,
     local_pin_auth,
     policy_update_review,
+    sui_zklogin_review,
     user_signing_review,
 };
 

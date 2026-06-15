@@ -15,9 +15,13 @@ import {
 import { ProtocolError } from "./protocol-error.js";
 import {
   ED25519_PUBLIC_KEY_BASE64_PATTERN,
+  CREDENTIAL_PREPARE_OPERATION,
+  CREDENTIAL_PROPOSE_OPERATION,
+  MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
   MAX_ACCOUNTS_PER_RESPONSE,
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
+  MAX_CREDENTIAL_CAPABILITIES,
   INVALID_ID_ERROR_CODE,
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
@@ -34,17 +38,22 @@ import {
   SUI_ADDRESS_PATTERN,
   SUI_CHAIN_ID,
   SUI_DERIVATION_PATH,
+  SUI_ZKLOGIN_CREDENTIAL,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
+  SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+  SUI_SIGNATURE_SCHEME_FLAG_ED25519,
+  SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN,
   SUI_SIGN_PERSONAL_MESSAGE_METHOD,
   SUI_SIGN_TRANSACTION_METHOD,
   SUI_SIGN_TRANSACTION_NETWORKS,
+  MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
   consumeProtocolResponseChunk,
   createRequestId,
   asRecord,
   hasOnlyObjectKeys,
   hasSecretPayloadKey,
   isRecord,
-  isSuiAddressForPublicKey,
+  isSuiAddressForSchemePrefixedPublicKey,
   rejectSecretPayload,
   requireOnlyKeys,
   utf8ByteLength,
@@ -84,12 +93,17 @@ export {
   SUI_CHAIN_ID,
   SUI_DERIVATION_PATH,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
+  SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+  SUI_SIGNATURE_SCHEME_FLAG_ED25519,
+  SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN,
   SUI_SIGN_PERSONAL_MESSAGE_METHOD,
   SUI_SIGN_TRANSACTION_METHOD,
   SUI_SIGN_TRANSACTION_NETWORKS,
+  MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
+  MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
   consumeProtocolResponseChunk,
   createRequestId,
-  isSuiAddressForPublicKey,
+  isSuiAddressForSchemePrefixedPublicKey,
 };
 export {
   AGENT_Q_USB_PRODUCT_ID_NUMBER,
@@ -212,10 +226,14 @@ export interface DisconnectResponse {
   status: "disconnected";
 }
 
-export interface CapabilityAccount {
-  keyScheme: string;
-  derivationPath: string;
-}
+export type CapabilityAccount =
+  | {
+      keyScheme: "ed25519";
+      derivationPath: typeof SUI_DERIVATION_PATH;
+    }
+  | {
+      keyScheme: "zklogin";
+    };
 
 export interface CapabilityChain {
   id: string;
@@ -243,21 +261,35 @@ export interface SigningCapabilities {
   methods: SigningCapabilityEntry[];
 }
 
+export interface CredentialCapability {
+  chain: typeof SUI_CHAIN_ID;
+  credential: typeof SUI_ZKLOGIN_CREDENTIAL;
+  operations: [typeof CREDENTIAL_PREPARE_OPERATION, typeof CREDENTIAL_PROPOSE_OPERATION];
+}
+
 export interface CapabilitiesResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
   type: "capabilities";
   chains: CapabilityChain[];
   signing?: SigningCapabilities;
+  credentials?: CredentialCapability[];
 }
 
-export interface Account {
-  chain: string;
-  address: string;
-  publicKey: string;
-  keyScheme: string;
-  derivationPath: string;
-}
+export type Account =
+  | {
+      chain: typeof SUI_CHAIN_ID;
+      address: string;
+      publicKey: string;
+      keyScheme: "ed25519";
+      derivationPath: typeof SUI_DERIVATION_PATH;
+    }
+  | {
+      chain: typeof SUI_CHAIN_ID;
+      address: string;
+      publicKey: string;
+      keyScheme: "zklogin";
+    };
 
 export interface AccountsResponse {
   id: string;
@@ -743,17 +775,19 @@ function sanitizeCapabilitiesResponse(value: Record<string, unknown>): Capabilit
     throw new ProtocolError("protocol_error", "Capabilities response id is malformed.");
   }
   rejectSecretPayload(value, "Capabilities response");
-  requireOnlyKeys(value, ["id", "version", "type", "chains", "signing"], "Capabilities response");
+  requireOnlyKeys(value, ["id", "version", "type", "chains", "signing", "credentials"], "Capabilities response");
   if (!Array.isArray(value.chains) || value.chains.length !== MAX_CAPABILITY_CHAINS) {
     throw new ProtocolError("protocol_error", "Capabilities response chains are malformed.");
   }
   const signing = sanitizeSigningCapabilities(value.signing);
+  const credentials = sanitizeCredentialCapabilities(value.credentials);
   return {
     id: value.id,
     version: PROTOCOL_VERSION,
     type: "capabilities",
     chains: value.chains.map((entry) => sanitizeCapabilityChain(entry)),
     ...(signing === undefined ? {} : { signing }),
+    ...(credentials === undefined ? {} : { credentials }),
   };
 }
 
@@ -797,11 +831,52 @@ function sanitizeCapabilityChain(value: unknown): CapabilityChain {
 function sanitizeCapabilityAccount(value: unknown): CapabilityAccount {
   const account = asRecord(value, "Capability account entry");
   rejectSecretPayload(account, "Capability account entry");
-  requireOnlyKeys(account, ["keyScheme", "derivationPath"], "Capability account entry");
-  if (account.keyScheme !== "ed25519" || account.derivationPath !== SUI_DERIVATION_PATH) {
-    throw new ProtocolError("protocol_error", "Capability account entry is unsupported.");
+  if (account.keyScheme === "ed25519") {
+    requireOnlyKeys(account, ["keyScheme", "derivationPath"], "Capability account entry");
+    if (account.derivationPath !== SUI_DERIVATION_PATH) {
+      throw new ProtocolError("protocol_error", "Capability account entry is unsupported.");
+    }
+    return { keyScheme: "ed25519", derivationPath: SUI_DERIVATION_PATH };
   }
-  return { keyScheme: "ed25519", derivationPath: SUI_DERIVATION_PATH };
+  if (account.keyScheme === "zklogin") {
+    requireOnlyKeys(account, ["keyScheme"], "Capability account entry");
+    return { keyScheme: "zklogin" };
+  }
+  throw new ProtocolError("protocol_error", "Capability account entry is unsupported.");
+}
+
+function validateAccountPublicKey(
+  address: string,
+  publicKey: unknown,
+  keyScheme: "ed25519" | "zklogin",
+): string {
+  if (typeof publicKey !== "string") {
+    throw new ProtocolError("protocol_error", "Account entry is unsupported.");
+  }
+  const expectedSchemeFlag =
+    keyScheme === "ed25519"
+      ? SUI_SIGNATURE_SCHEME_FLAG_ED25519
+      : SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN;
+  const minDecodedBytes =
+    keyScheme === "ed25519"
+      ? SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES
+      : MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES;
+  const maxDecodedBytes =
+    keyScheme === "ed25519"
+      ? SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES
+      : MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES;
+  if (
+    !isSuiAddressForSchemePrefixedPublicKey(
+      address,
+      publicKey,
+      expectedSchemeFlag,
+      minDecodedBytes,
+      maxDecodedBytes,
+    )
+  ) {
+    throw new ProtocolError("protocol_error", "Account entry is unsupported.");
+  }
+  return publicKey;
 }
 
 function sanitizeSigningCapabilities(value: unknown): SigningCapabilities | undefined {
@@ -835,6 +910,37 @@ function sanitizeSigningCapabilities(value: unknown): SigningCapabilities | unde
   return { authorization: signing.authorization, methods };
 }
 
+function sanitizeCredentialCapabilities(value: unknown): CredentialCapability[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || value.length !== MAX_CREDENTIAL_CAPABILITIES) {
+    throw new ProtocolError("protocol_error", "Credential capabilities are malformed.");
+  }
+  return value.map((entry) => sanitizeCredentialCapability(entry));
+}
+
+function sanitizeCredentialCapability(value: unknown): CredentialCapability {
+  const entry = asRecord(value, "Credential capability entry");
+  rejectSecretPayload(entry, "Credential capability entry");
+  requireOnlyKeys(entry, ["chain", "credential", "operations"], "Credential capability entry");
+  if (
+    entry.chain !== SUI_CHAIN_ID ||
+    entry.credential !== SUI_ZKLOGIN_CREDENTIAL ||
+    !Array.isArray(entry.operations) ||
+    entry.operations.length !== 2 ||
+    entry.operations[0] !== CREDENTIAL_PREPARE_OPERATION ||
+    entry.operations[1] !== CREDENTIAL_PROPOSE_OPERATION
+  ) {
+    throw new ProtocolError("protocol_error", "Credential capability is unsupported.");
+  }
+  return {
+    chain: SUI_CHAIN_ID,
+    credential: SUI_ZKLOGIN_CREDENTIAL,
+    operations: [CREDENTIAL_PREPARE_OPERATION, CREDENTIAL_PROPOSE_OPERATION],
+  };
+}
+
 function sanitizeSigningCapabilityEntry(value: unknown): SigningCapabilityEntry {
   const entry = asRecord(value, "Signing capability entry");
   rejectSecretPayload(entry, "Signing capability entry");
@@ -858,26 +964,36 @@ function sanitizeSigningCapabilityEntry(value: unknown): SigningCapabilityEntry 
 function sanitizeAccount(value: unknown): Account {
   const account = asRecord(value, "Account entry");
   rejectSecretPayload(account, "Account entry");
-  requireOnlyKeys(account, ["chain", "address", "publicKey", "keyScheme", "derivationPath"], "Account entry");
   if (
     account.chain !== SUI_CHAIN_ID ||
     typeof account.address !== "string" ||
-    !SUI_ADDRESS_PATTERN.test(account.address) ||
-    typeof account.publicKey !== "string" ||
-    !ED25519_PUBLIC_KEY_BASE64_PATTERN.test(account.publicKey) ||
-    !isSuiAddressForPublicKey(account.address, account.publicKey) ||
-    account.keyScheme !== "ed25519" ||
-    account.derivationPath !== SUI_DERIVATION_PATH
+    !SUI_ADDRESS_PATTERN.test(account.address)
   ) {
     throw new ProtocolError("protocol_error", "Account entry is unsupported.");
   }
-  return {
-    chain: SUI_CHAIN_ID,
-    address: account.address,
-    publicKey: account.publicKey,
-    keyScheme: "ed25519",
-    derivationPath: SUI_DERIVATION_PATH,
-  };
+  if (account.keyScheme === "ed25519") {
+    requireOnlyKeys(account, ["chain", "address", "publicKey", "keyScheme", "derivationPath"], "Account entry");
+    if (account.derivationPath !== SUI_DERIVATION_PATH) {
+      throw new ProtocolError("protocol_error", "Account entry is unsupported.");
+    }
+    return {
+      chain: SUI_CHAIN_ID,
+      address: account.address,
+      publicKey: validateAccountPublicKey(account.address, account.publicKey, "ed25519"),
+      keyScheme: "ed25519",
+      derivationPath: SUI_DERIVATION_PATH,
+    };
+  }
+  if (account.keyScheme === "zklogin") {
+    requireOnlyKeys(account, ["chain", "address", "publicKey", "keyScheme"], "Account entry");
+    return {
+      chain: SUI_CHAIN_ID,
+      address: account.address,
+      publicKey: validateAccountPublicKey(account.address, account.publicKey, "zklogin"),
+      keyScheme: "zklogin",
+    };
+  }
+  throw new ProtocolError("protocol_error", "Account entry is unsupported.");
 }
 
 function sanitizeSignResultResponse(value: Record<string, unknown>): SignResultResponse {

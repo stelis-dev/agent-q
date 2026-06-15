@@ -117,9 +117,11 @@ bool g_auth_present = true;
 bool g_human_approval_setting_present = true;
 bool g_approval_history_present = true;
 bool g_policy_update_marker_present = true;
+bool g_zklogin_proof_present = true;
 bool g_root_wipe_fails = false;
 bool g_approval_history_wipe_fails = false;
 bool g_policy_update_marker_wipe_fails = false;
+bool g_zklogin_proof_wipe_fails = false;
 agent_q::AgentQHumanApprovalInputMode g_human_approval_input_mode =
     agent_q::AgentQHumanApprovalInputMode::pin;
 uint32_t g_last_worker_job_id = 0;
@@ -154,9 +156,11 @@ void reset_stubs()
     g_human_approval_setting_present = true;
     g_approval_history_present = true;
     g_policy_update_marker_present = true;
+    g_zklogin_proof_present = true;
     g_root_wipe_fails = false;
     g_approval_history_wipe_fails = false;
     g_policy_update_marker_wipe_fails = false;
+    g_zklogin_proof_wipe_fails = false;
     g_human_approval_input_mode = agent_q::AgentQHumanApprovalInputMode::pin;
     g_last_worker_job_id = 0;
     g_last_cancelled_worker_job_id = 0;
@@ -376,6 +380,22 @@ bool policy_update_marker_clear()
     return true;
 }
 
+AgentQSuiZkLoginProofRecordStatus sui_zklogin_proof_record_status()
+{
+    return g_zklogin_proof_present
+               ? AgentQSuiZkLoginProofRecordStatus::active
+               : AgentQSuiZkLoginProofRecordStatus::missing;
+}
+
+bool wipe_sui_zklogin_proof_record()
+{
+    if (g_zklogin_proof_wipe_fails) {
+        return false;
+    }
+    g_zklogin_proof_present = false;
+    return true;
+}
+
 bool read_human_approval_input_mode(AgentQHumanApprovalInputMode* mode)
 {
     if (mode == nullptr) {
@@ -448,8 +468,8 @@ int main()
     expect(agent_q::local_reset_commit_material(ops()) == Commit::ok, "error recovery commit succeeds");
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
                !g_human_approval_setting_present && !g_approval_history_present &&
-               !g_policy_update_marker_present,
-           "error recovery wipes all persistent material, approval history, and policy update marker");
+               !g_policy_update_marker_present && !g_zklogin_proof_present,
+           "error recovery wipes all persistent material, approval history, policy update marker, and zkLogin proof");
     expect(!g_marker_present, "error recovery clears reset marker");
     expect(g_clear_session_count == 1, "error recovery clears active session");
     expect(g_persist_unprovisioned_count == 1, "error recovery persists unprovisioned");
@@ -462,7 +482,7 @@ int main()
            "marker failure aborts before wiping");
     expect(g_root_present && g_policy_present && g_auth_present &&
                g_human_approval_setting_present && g_approval_history_present &&
-               g_policy_update_marker_present,
+               g_policy_update_marker_present && g_zklogin_proof_present,
            "marker failure leaves material untouched");
 
     reset_stubs();
@@ -483,6 +503,15 @@ int main()
     expect(g_policy_update_marker_present, "failed policy update marker wipe leaves marker present");
 
     reset_stubs();
+    g_zklogin_proof_wipe_fails = true;
+    agent_q::local_reset_begin_error_recovery_confirm(pin_window(1, 100));
+    expect(agent_q::local_reset_begin_error_recovery_wipe(100), "zkLogin proof failure path enters wiping");
+    expect(agent_q::local_reset_commit_material(ops()) == Commit::zklogin_proof_wipe_error,
+           "zkLogin proof wipe failure reports error");
+    expect(g_consistency_error_count == 1, "zkLogin proof wipe failure enters consistency error");
+    expect(g_zklogin_proof_present, "failed zkLogin proof wipe leaves proof present");
+
+    reset_stubs();
     g_marker_present = true;
     bool marker_seen = false;
     expect(agent_q::local_reset_resume_pending_if_needed(ops(), &marker_seen) == Commit::ok,
@@ -490,8 +519,8 @@ int main()
     expect(marker_seen, "pending marker reported");
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
                !g_human_approval_setting_present && !g_approval_history_present &&
-               !g_policy_update_marker_present,
-           "pending marker resume wipes all material, approval history, and policy update marker");
+               !g_policy_update_marker_present && !g_zklogin_proof_present,
+           "pending marker resume wipes all material, approval history, policy update marker, and zkLogin proof");
 
     reset_stubs();
     expect(!agent_q::local_reset_begin_error_recovery_wipe(100),

@@ -31,6 +31,7 @@ USB_DISCONNECT_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_disconnect_han
 USB_CONNECT_HANDLER_HEADER="${TARGET_ROOT}/agent_q/agent_q_usb_connect_handler.h"
 USB_DEVICE_HANDLER_HEADER="${TARGET_ROOT}/agent_q/agent_q_usb_device_handlers.h"
 USB_POLICY_PROPOSE_HANDLER_HEADER="${TARGET_ROOT}/agent_q/agent_q_usb_policy_propose_handler.h"
+USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER="${TARGET_ROOT}/agent_q/agent_q_usb_sui_zklogin_credential_handlers.h"
 
 if [[ -z "${IDF_PATH:-}" ]]; then
   echo "IDF_PATH is not set. Source ESP-IDF v5.5.4 export.sh before running this test." >&2
@@ -62,6 +63,7 @@ for required in \
   "${USB_REQUEST_SERVER_SOURCE}" \
   "${TARGET_ROOT}/agent_q/agent_q_session.cpp" \
   "${TARGET_ROOT}/agent_q/agent_q_approval_history.h" \
+  "${USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER}" \
   "${COMMON_ROOT}/agent_q_sign_route.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -182,6 +184,22 @@ expect_manifest_operation_wiring \
   'AgentQPayloadDeliveryOperationKind::policy_propose' \
   "policy_propose manifest entry must bind USB operation to payload admission kind"
 expect_request_server_wiring \
+  'write_payload_delivery_credential_propose_busy' \
+  "credential_propose production ops must use payload delivery admission"
+expect_request_server_wiring \
+  'AgentQUsbOperationType::credential_propose' \
+  "credential_propose admission must use its named USB operation"
+expect_manifest_operation_wiring \
+  'AgentQUsbOperationType::credential_prepare' \
+  'AgentQUsbOperationHandlerSlot::credential_prepare' \
+  'AgentQPayloadDeliveryOperationKind::safe_read' \
+  "credential_prepare manifest entry must bind USB operation to safe-read payload admission"
+expect_manifest_operation_wiring \
+  'AgentQUsbOperationType::credential_propose' \
+  'AgentQUsbOperationHandlerSlot::credential_propose' \
+  'AgentQPayloadDeliveryOperationKind::credential_propose' \
+  "credential_propose manifest entry must bind USB operation to payload admission kind"
+expect_request_server_wiring \
   'write_payload_delivery_safe_read_admission_error' \
   "session read production ops must use payload delivery safe-read admission"
 expect_request_server_wiring \
@@ -283,7 +301,8 @@ expect_manifest_operation_wiring \
 if grep -Eq 'write_busy_if_pending_or_local_flow_active' \
     "${USB_CONNECT_HANDLER_HEADER}" \
     "${USB_DEVICE_HANDLER_HEADER}" \
-    "${USB_POLICY_PROPOSE_HANDLER_HEADER}"; then
+    "${USB_POLICY_PROPOSE_HANDLER_HEADER}" \
+    "${USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER}"; then
   echo "FAILED: sensitive USB handlers must expose operation-specific admission callbacks" >&2
   exit 1
 fi
@@ -298,6 +317,10 @@ grep -q 'write_identify_device_admission_error' "${USB_DEVICE_HANDLER_HEADER}" |
 }
 grep -q 'write_policy_propose_admission_error' "${USB_POLICY_PROPOSE_HANDLER_HEADER}" || {
   echo "FAILED: policy_propose handler must expose policy admission callback" >&2
+  exit 1
+}
+grep -q 'write_credential_propose_admission_error' "${USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER}" || {
+  echo "FAILED: credential_propose handler must expose credential admission callback" >&2
   exit 1
 }
 
@@ -442,6 +465,10 @@ void expect_sensitive_operations_blocked(const char* state_name)
     expect_operation_blocked(
         agent_q::AgentQPayloadDeliveryOperationKind::policy_propose,
         "policy_propose",
+        state_name);
+    expect_operation_blocked(
+        agent_q::AgentQPayloadDeliveryOperationKind::credential_propose,
+        "credential_propose",
         state_name);
     expect_operation_blocked(
         agent_q::AgentQPayloadDeliveryOperationKind::connect,

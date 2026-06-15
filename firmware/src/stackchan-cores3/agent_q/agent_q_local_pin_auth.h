@@ -19,6 +19,7 @@ enum class AgentQLocalPinAuthPurpose {
     settings_policy_reset,
     settings_change_pin,
     policy_update,
+    sui_zklogin_proposal,
     user_signing,
 };
 
@@ -56,6 +57,7 @@ enum class AgentQLocalPinAuthVerifyResult {
     verified_connect,
     verified_settings_policy_reset,
     verified_policy_update,
+    verified_sui_zklogin_proposal,
     started_setting_commit,
     advanced_to_change_pin,
     wrong_pin,
@@ -112,6 +114,7 @@ bool local_pin_auth_begin_signing_mode_setting(
 bool local_pin_auth_begin_policy_reset_setting(TickType_t now, AgentQTimeoutWindow input_window);
 bool local_pin_auth_begin_change_pin(TickType_t now, AgentQTimeoutWindow input_window);
 bool local_pin_auth_begin_policy_update(TickType_t now, AgentQTimeoutWindow input_window);
+bool local_pin_auth_begin_sui_zklogin_proposal(TickType_t now, AgentQTimeoutWindow input_window);
 
 AgentQLocalPinAuthInputResult local_pin_auth_add_digit(char digit);
 bool local_pin_auth_clear_pin();

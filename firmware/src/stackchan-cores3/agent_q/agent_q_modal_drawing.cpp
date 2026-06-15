@@ -547,21 +547,51 @@ static bool make_policy_update_review_row(
     return true;
 }
 
-static void format_policy_hash_prefix(const char* policy_hash, char* output, size_t output_size)
+static void format_hash_prefix(const char* hash, char* output, size_t output_size)
 {
     if (output_size == 0) {
         return;
     }
     output[0] = '\0';
-    if (policy_hash == nullptr || policy_hash[0] == '\0') {
+    if (hash == nullptr || hash[0] == '\0') {
         snprintf(output, output_size, "none");
         return;
     }
-    if (strncmp(policy_hash, "sha256:", 7) == 0 && strlen(policy_hash) >= 15) {
-        snprintf(output, output_size, "sha256:%.8s", policy_hash + 7);
+    if (strncmp(hash, "sha256:", 7) == 0 && strlen(hash) >= 15) {
+        snprintf(output, output_size, "sha256:%.8s", hash + 7);
         return;
     }
-    snprintf(output, output_size, "%.15s", policy_hash);
+    snprintf(output, output_size, "%.15s", hash);
+}
+
+static void format_middle_elided(
+    const char* value,
+    char* output,
+    size_t output_size,
+    size_t prefix_chars,
+    size_t suffix_chars)
+{
+    if (output_size == 0) {
+        return;
+    }
+    output[0] = '\0';
+    if (value == nullptr || value[0] == '\0') {
+        snprintf(output, output_size, "none");
+        return;
+    }
+    const size_t length = strlen(value);
+    if (length + 1 <= output_size ||
+        length <= prefix_chars + suffix_chars + 3) {
+        snprintf(output, output_size, "%s", value);
+        return;
+    }
+    snprintf(
+        output,
+        output_size,
+        "%.*s...%s",
+        static_cast<int>(prefix_chars),
+        value,
+        value + length - suffix_chars);
 }
 
 static void rotate_processing_arc(void* obj, int32_t rotation)
@@ -2043,7 +2073,7 @@ bool modal_draw_policy_update_review_panel(
         "%u/%u",
         static_cast<unsigned>(model.policy_count),
         static_cast<unsigned>(model.condition_count));
-    format_policy_hash_prefix(model.policy_hash, policy_hash_prefix, sizeof(policy_hash_prefix));
+    format_hash_prefix(model.policy_hash, policy_hash_prefix, sizeof(policy_hash_prefix));
     snprintf(
         action_summary,
         sizeof(action_summary),
@@ -2112,6 +2142,142 @@ bool modal_draw_policy_update_review_panel(
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kPrimary),
             g_callbacks.on_policy_update_review_continue_clicked)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    drawing_surface_move_panel_foreground_locked();
+    return true;
+}
+
+bool modal_draw_sui_zklogin_review_panel(
+    const AgentQSuiZkLoginReviewViewModel& model,
+    AgentQTimeoutWindow timeout_window)
+{
+    if (model.network == nullptr || model.network[0] == '\0' ||
+        model.address == nullptr || model.address[0] == '\0' ||
+        model.issuer == nullptr || model.issuer[0] == '\0' ||
+        model.max_epoch == nullptr || model.max_epoch[0] == '\0' ||
+        model.proof_hash == nullptr || model.proof_hash[0] == '\0' ||
+        model.effect_summary == nullptr || model.effect_summary[0] == '\0') {
+        return false;
+    }
+
+    avatar_overlay_clear();
+
+    LvglLockGuard lock;
+    request_display_power_wake();
+    drawing_surface_clear_panel_locked();
+
+    lv_obj_t* panel = drawing_surface_create_panel_locked(AgentQUiPanelKind::sui_zklogin_review);
+    if (panel == nullptr) {
+        return false;
+    }
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_radius(panel, 8, 0);
+    lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(panel, 0, 0);
+
+    lv_obj_t* title = lv_label_create(panel);
+    if (title == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(title, "Review zkLogin");
+    lv_label_set_long_mode(title, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(title, kScreenWidth - 44);
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
+
+    lv_obj_t* subtitle = lv_label_create(panel);
+    if (subtitle == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(subtitle, "Confirm account change before PIN.");
+    lv_label_set_long_mode(subtitle, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(subtitle, kScreenWidth - 44);
+    lv_obj_set_style_text_align(subtitle, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(subtitle, &lv_font_unscii_8, 0);
+    lv_obj_set_style_text_color(subtitle, lv_color_hex(theme::kOnSurfaceVariant), 0);
+    lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
+
+    char address_preview[28] = {};
+    char proof_hash_prefix[24] = {};
+    format_middle_elided(model.address, address_preview, sizeof(address_preview), 10, 6);
+    format_hash_prefix(model.proof_hash, proof_hash_prefix, sizeof(proof_hash_prefix));
+
+    int row_y = kPolicyUpdateReviewRowTop;
+    if (!make_policy_update_review_row(panel, "Network", model.network, row_y) ||
+        !make_policy_update_review_row(panel, "Issuer", model.issuer, row_y + kPolicyUpdateReviewRowHeight) ||
+        !make_policy_update_review_row(panel, "Address", address_preview, row_y + 2 * kPolicyUpdateReviewRowHeight) ||
+        !make_policy_update_review_row(panel, "Max epoch", model.max_epoch, row_y + 3 * kPolicyUpdateReviewRowHeight) ||
+        !make_policy_update_review_row(panel, "Proof", proof_hash_prefix, row_y + 4 * kPolicyUpdateReviewRowHeight)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    lv_obj_t* summary_area = lv_obj_create(panel);
+    if (summary_area == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_obj_set_size(summary_area, kPolicyUpdateReviewRowWidth, kPolicyUpdateReviewSummaryHeight);
+    lv_obj_align(summary_area, LV_ALIGN_TOP_LEFT, 18, kPolicyUpdateReviewSummaryTop);
+    lv_obj_set_style_bg_opa(summary_area, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(summary_area, 0, 0);
+    lv_obj_set_style_pad_all(summary_area, 0, 0);
+    lv_obj_set_scrollbar_mode(summary_area, LV_SCROLLBAR_MODE_AUTO);
+
+    lv_obj_t* summary = lv_label_create(summary_area);
+    if (summary == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(summary, model.effect_summary);
+    lv_label_set_long_mode(summary, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(summary, kPolicyUpdateReviewRowWidth);
+    lv_obj_set_style_text_align(summary, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_font(summary, &lv_font_unscii_8, 0);
+    lv_obj_set_style_text_color(summary, lv_color_hex(theme::kWarning), 0);
+    lv_obj_align(summary, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    if (!make_screen_bottom_timeout_timer_bar(
+            panel,
+            timeout_window,
+            xTaskGetTickCount())) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    if (!make_setup_button(
+            panel,
+            "Reject",
+            kPanelActionButtonLeftX,
+            kSetupActionButtonY,
+            kPanelActionButtonWidth,
+            kBackupPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(theme::kError),
+            g_callbacks.on_sui_zklogin_review_reject_clicked) ||
+        !make_setup_button(
+            panel,
+            "Continue",
+            kPanelActionButtonRightX,
+            kSetupActionButtonY,
+            kPanelActionButtonWidth,
+            kBackupPhraseButtonHeight,
+            SetupButtonKind::solid_action,
+            lv_color_hex(theme::kPrimary),
+            g_callbacks.on_sui_zklogin_review_continue_clicked)) {
         drawing_surface_clear_panel_locked();
         return false;
     }

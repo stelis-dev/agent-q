@@ -13,7 +13,7 @@ import {
 } from "../dist/protocol.js";
 
 const SUI_ADDRESS = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
-const SUI_PUBLIC_KEY = "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=";
+const SUI_PUBLIC_KEY = "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp";
 const DEVICE_ID = "device-1";
 const SUI_SIGNATURE = Buffer.alloc(97, 1).toString("base64");
 const PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q personal message").toString("base64");
@@ -397,6 +397,8 @@ test("package self-reference resolves only core entrypoints", async () => {
   assert.equal(providerProtocol.makeGetStatusRequest, undefined);
   assert.equal(providerProtocol.makePolicyGetRequest, undefined);
   assert.equal(providerProtocol.makePolicyProposeRequest, undefined);
+  assert.equal(providerProtocol.makeCredentialPrepareRequest, undefined);
+  assert.equal(providerProtocol.makeCredentialProposeRequest, undefined);
   assert.equal(providerProtocol.makeGetApprovalHistoryRequest, undefined);
   assert.equal(providerProtocol.AGENT_Q_POLICY_SCHEMA, undefined);
   assert.equal(providerProtocol.MAX_POLICY_TOTAL_POLICIES, undefined);
@@ -434,6 +436,8 @@ test("provider-protocol declaration stays type-bounded to provider requests", as
   assert.doesNotMatch(types, /\bProtocolRequest\b/);
   assert.doesNotMatch(types, /PolicyGetRequest/);
   assert.doesNotMatch(types, /PolicyProposeRequest/);
+  assert.doesNotMatch(types, /CredentialPrepareRequest/);
+  assert.doesNotMatch(types, /CredentialProposeRequest/);
   assert.doesNotMatch(types, /GetApprovalHistoryRequest/);
   assert.doesNotMatch(types, /AGENT_Q_POLICY_SCHEMA/);
   assert.doesNotMatch(types, /MAX_POLICY_TOTAL_POLICIES/);

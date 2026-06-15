@@ -41,6 +41,8 @@ enum class AgentQUiEventKind {
     import_cancel_requested,
     policy_update_review_continue_requested,
     policy_update_review_reject_requested,
+    sui_zklogin_review_continue_requested,
+    sui_zklogin_review_reject_requested,
     user_signing_review_accept_requested,
     user_signing_review_reject_requested,
 };

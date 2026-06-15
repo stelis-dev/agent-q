@@ -79,6 +79,16 @@ agent_q::AgentQPolicyUpdateFlowSnapshot policy_update(
     return snapshot;
 }
 
+agent_q::AgentQSuiZkLoginProposalSnapshot sui_zklogin_proposal(
+    bool active,
+    agent_q::AgentQSuiZkLoginProposalStage stage)
+{
+    agent_q::AgentQSuiZkLoginProposalSnapshot snapshot{};
+    snapshot.active = active;
+    snapshot.stage = stage;
+    return snapshot;
+}
+
 agent_q::AgentQLocalResetSnapshot local_reset(
     bool active,
     agent_q::AgentQLocalResetStage stage)
@@ -113,6 +123,7 @@ agent_q::AgentQDeviceActivityFacts idle_facts()
         false,
         false,
         policy_update(false, agent_q::AgentQPolicyUpdateFlowStage::idle),
+        sui_zklogin_proposal(false, agent_q::AgentQSuiZkLoginProposalStage::idle),
         local_reset(false, agent_q::AgentQLocalResetStage::none),
         user_signing(false, agent_q::AgentQUserSigningStage::none),
     };
@@ -168,6 +179,9 @@ int main()
     expect(!agent_q::usb_operation_is_retained_result_read_cleanup(
                agent_q::AgentQUsbOperationType::policy_propose),
            "policy_propose is not a retained-result route");
+    expect(!agent_q::usb_operation_is_retained_result_read_cleanup(
+               agent_q::AgentQUsbOperationType::credential_propose),
+           "credential_propose is not a retained-result route");
 
     for (agent_q::AgentQPolicyUpdateFlowStage stage : {
              agent_q::AgentQPolicyUpdateFlowStage::reviewing,
@@ -200,6 +214,39 @@ int main()
         expect(agent_q::device_activity_blocks_user_signing_ingress(activity),
                "busy policy update blocks signing ingress");
         expect_usb_block(activity, false, false, true, "Device has a pending policy update.");
+    }
+
+    for (agent_q::AgentQSuiZkLoginProposalStage stage : {
+             agent_q::AgentQSuiZkLoginProposalStage::reviewing,
+             agent_q::AgentQSuiZkLoginProposalStage::pin_entry,
+         }) {
+        facts = idle_facts();
+        facts.sui_zklogin_proposal = sui_zklogin_proposal(true, stage);
+        activity = project(facts);
+        expect(activity.device_state == agent_q::AgentQProjectedDeviceState::awaiting_approval,
+               "Sui zkLogin review/PIN stages project to awaiting_approval");
+        expect(!agent_q::device_activity_allows_local_settings_start(activity),
+               "Sui zkLogin proposal blocks local settings start");
+        expect(agent_q::device_activity_blocks_user_signing_ingress(activity),
+               "Sui zkLogin proposal blocks signing ingress");
+        expect_usb_block(activity, false, false, true, "Device has a pending Sui zkLogin proposal.");
+    }
+
+    for (agent_q::AgentQSuiZkLoginProposalStage stage : {
+             agent_q::AgentQSuiZkLoginProposalStage::pin_verifying,
+             agent_q::AgentQSuiZkLoginProposalStage::committing,
+             agent_q::AgentQSuiZkLoginProposalStage::idle,
+         }) {
+        facts = idle_facts();
+        facts.sui_zklogin_proposal = sui_zklogin_proposal(true, stage);
+        activity = project(facts);
+        expect(activity.device_state == agent_q::AgentQProjectedDeviceState::busy,
+               "Sui zkLogin non-PIN active stages project to busy");
+        expect(!agent_q::device_activity_allows_local_settings_start(activity),
+               "busy Sui zkLogin proposal blocks local settings start");
+        expect(agent_q::device_activity_blocks_user_signing_ingress(activity),
+               "busy Sui zkLogin proposal blocks signing ingress");
+        expect_usb_block(activity, false, false, true, "Device has a pending Sui zkLogin proposal.");
     }
 
     facts = idle_facts();

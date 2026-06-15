@@ -41,6 +41,8 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_import_cancel_clicked = nullptr;
     lv_event_cb_t on_policy_update_review_continue_clicked = nullptr;
     lv_event_cb_t on_policy_update_review_reject_clicked = nullptr;
+    lv_event_cb_t on_sui_zklogin_review_continue_clicked = nullptr;
+    lv_event_cb_t on_sui_zklogin_review_reject_clicked = nullptr;
     lv_event_cb_t on_user_signing_review_accept_clicked = nullptr;
     lv_event_cb_t on_user_signing_review_reject_clicked = nullptr;
 };
@@ -55,6 +57,15 @@ struct AgentQPolicyUpdateReviewViewModel {
     const char* highest_action = nullptr;
     const char* scope_summary = nullptr;
     const char* review_summary = nullptr;
+};
+
+struct AgentQSuiZkLoginReviewViewModel {
+    const char* network = nullptr;
+    const char* address = nullptr;
+    const char* issuer = nullptr;
+    const char* max_epoch = nullptr;
+    const char* proof_hash = nullptr;
+    const char* effect_summary = nullptr;
 };
 
 void modal_drawing_set_callbacks(const AgentQModalDrawingCallbacks& callbacks);
@@ -73,6 +84,9 @@ bool modal_draw_reset_pin_panel(const char* notice = nullptr);
 bool modal_draw_local_pin_auth_panel(const char* notice = nullptr);
 bool modal_draw_policy_update_review_panel(
     const AgentQPolicyUpdateReviewViewModel& model,
+    AgentQTimeoutWindow timeout_window);
+bool modal_draw_sui_zklogin_review_panel(
+    const AgentQSuiZkLoginReviewViewModel& model,
     AgentQTimeoutWindow timeout_window);
 bool modal_draw_user_signing_review_panel(
     const AgentQUserSigningReviewViewModel& model,

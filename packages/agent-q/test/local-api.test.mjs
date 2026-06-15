@@ -14,7 +14,7 @@ import { MAX_SUI_SIGN_TRANSACTION_TX_BYTES } from "@stelis/agent-q-core/protocol
 
 const deviceId = "a508d833-5c83-4680-88bb-18aee976881e";
 const suiAddress = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
-const suiPublicKey = "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=";
+const suiPublicKey = "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp";
 const policyHash = "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3";
 
 function currentPolicyDocument(policies = []) {

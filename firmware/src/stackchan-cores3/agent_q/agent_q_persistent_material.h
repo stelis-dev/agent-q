@@ -8,6 +8,7 @@
 #include "agent_q_policy_update_marker.h"
 #include "agent_q_root_material.h"
 #include "agent_q_signing_mode.h"
+#include "agent_q_sui_zklogin_proof_store.h"
 
 namespace agent_q {
 
@@ -39,6 +40,7 @@ enum class AgentQPersistentMaterialRuntimeFailure {
     local_reset_signing_mode_wipe_failed,
     local_reset_approval_history_wipe_failed,
     local_reset_policy_update_marker_wipe_failed,
+    local_reset_zklogin_proof_wipe_failed,
     local_reset_material_remaining,
     local_reset_state_storage_failed,
     local_reset_marker_clear_failed,
@@ -67,6 +69,7 @@ enum class AgentQPersistentMaterialWipeResult {
     signing_mode_wipe_error,
     approval_history_wipe_error,
     policy_update_marker_wipe_error,
+    zklogin_proof_wipe_error,
     material_remaining_error,
 };
 
@@ -76,6 +79,7 @@ struct AgentQPersistentMaterialStatus {
     AgentQLocalAuthStatus local_auth_status;
     AgentQSigningAuthorizationModeStatus signing_mode_status;
     AgentQPolicyUpdateMarkerStatus policy_update_marker_status;
+    AgentQSuiZkLoginProofRecordStatus zklogin_proof_status;
 
     bool complete() const;
     bool any_material() const;

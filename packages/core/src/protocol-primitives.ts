@@ -15,6 +15,9 @@ export { MAX_PROTOCOL_RESPONSE_LINE_BYTES };
 export const SUI_CHAIN_ID = "sui";
 export const SUI_SIGN_TRANSACTION_METHOD = "sign_transaction";
 export const SUI_SIGN_PERSONAL_MESSAGE_METHOD = "sign_personal_message";
+export const CREDENTIAL_PREPARE_OPERATION = "credential_prepare";
+export const CREDENTIAL_PROPOSE_OPERATION = "credential_propose";
+export const SUI_ZKLOGIN_CREDENTIAL = "zklogin";
 export type SuiSignMethod =
   | typeof SUI_SIGN_TRANSACTION_METHOD
   | typeof SUI_SIGN_PERSONAL_MESSAGE_METHOD;
@@ -31,16 +34,30 @@ export const SUI_ADDRESS_PATTERN = /^0x[0-9a-f]{64}$/;
 export const ED25519_PUBLIC_KEY_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
 // Sui Ed25519 signatures are scheme flag + 64-byte signature + 32-byte public key.
 export const SUI_ED25519_SIGNATURE_BASE64_PATTERN = /^[A-Za-z0-9+/]{130}==$/;
+export const SUI_SIGNATURE_SCHEME_FLAG_ED25519 = 0x00;
+export const SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN = 0x05;
+export const SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES = 33;
+export const MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES = 34;
+export const MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES = 288;
+export const MAX_SUI_ZKLOGIN_HEADER_BASE64_CHARS = 248;
+export const MAX_SUI_ZKLOGIN_ISS_BASE64_CHARS = 512;
+export const MAX_SUI_ZKLOGIN_PROOF_POINT_DECIMAL_DIGITS = 78;
+export const SUI_ZKLOGIN_BASE64URL_NO_PADDING_PATTERN = /^[A-Za-z0-9_-]+$/;
+export const SUI_ZKLOGIN_PROOF_POINT_DECIMAL_PATTERN = /^(0|[1-9][0-9]{0,77})$/;
 export const SUI_DERIVATION_PATH = "m/44'/784'/0'/0'/0'";
 export const MAX_CAPABILITY_CHAINS = 1;
 export const MAX_CAPABILITY_ACCOUNTS_PER_CHAIN = 1;
 export const MAX_SIGNING_CAPABILITIES = 2;
+export const MAX_CREDENTIAL_CAPABILITIES = 1;
 export const MAX_ACCOUNTS_PER_RESPONSE = 1;
 
 export const HASH_ID_PATTERN = /^sha256:[0-9a-f]{64}$/;
 export const RULE_REF_PATTERN = /^[a-z][a-z0-9_.:/-]{0,31}$/;
 export const UINT_DECIMAL_STRING_PATTERN = /^(0|[1-9][0-9]{0,19})$/;
 export const UINT64_MAX_DECIMAL = "18446744073709551615";
+export const UINT256_DECIMAL_STRING_PATTERN = /^(0|[1-9][0-9]{0,77})$/;
+export const UINT256_MAX_DECIMAL =
+  "115792089237316195423570985008687907853269984665640564039457584007913129639935";
 
 export function isUint64DecimalString(value: unknown): value is string {
   if (typeof value !== "string" || !UINT_DECIMAL_STRING_PATTERN.test(value)) {
@@ -48,6 +65,14 @@ export function isUint64DecimalString(value: unknown): value is string {
   }
   return value.length < UINT64_MAX_DECIMAL.length ||
     (value.length === UINT64_MAX_DECIMAL.length && value <= UINT64_MAX_DECIMAL);
+}
+
+export function isUint256DecimalString(value: unknown): value is string {
+  if (typeof value !== "string" || !UINT256_DECIMAL_STRING_PATTERN.test(value)) {
+    return false;
+  }
+  return value.length < UINT256_MAX_DECIMAL.length ||
+    (value.length === UINT256_MAX_DECIMAL.length && value <= UINT256_MAX_DECIMAL);
 }
 
 export const UNSUPPORTED_METHOD_MESSAGE = "Method is not supported.";
@@ -265,6 +290,28 @@ export function isSuiAddressForPublicKey(address: string, publicKeyBase64: strin
   return expectedAddress !== null && address === expectedAddress;
 }
 
+export function isSuiAddressForSchemePrefixedPublicKey(
+  address: string,
+  publicKeyBase64: string,
+  expectedSchemeFlag: number,
+  minDecodedBytes: number,
+  maxDecodedBytes: number,
+): boolean {
+  if (!SUI_ADDRESS_PATTERN.test(address)) {
+    return false;
+  }
+  const publicKey = decodeCanonicalBase64(publicKeyBase64);
+  if (
+    publicKey === null ||
+    publicKey.length < minDecodedBytes ||
+    publicKey.length > maxDecodedBytes ||
+    publicKey[0] !== expectedSchemeFlag
+  ) {
+    return false;
+  }
+  return address === `0x${hexLower(blake2b256(publicKey))}`;
+}
+
 export function randomBytesPortable(length: number): Uint8Array {
   const bytes = new Uint8Array(length);
   const cryptoLike = (globalThis as { crypto?: { getRandomValues?: (array: Uint8Array) => Uint8Array } }).crypto;
@@ -319,7 +366,7 @@ function deriveSuiAddressFromPublicKey(publicKeyBase64: string): string | null {
   }
 
   const addressInput = new Uint8Array(33);
-  addressInput[0] = 0x00; // Sui Ed25519 scheme flag.
+  addressInput[0] = SUI_SIGNATURE_SCHEME_FLAG_ED25519;
   addressInput.set(publicKey, 1);
   return `0x${hexLower(blake2b256(addressInput))}`;
 }

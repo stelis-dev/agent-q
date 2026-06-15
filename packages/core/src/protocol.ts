@@ -28,6 +28,7 @@ import {
   type CapabilitiesResponse,
   type CapabilityAccount,
   type CapabilityChain,
+  type CredentialCapability,
   type ConnectApprovedResponse,
   type ConnectRejectedResponse,
   type ConnectRequest,
@@ -113,11 +114,14 @@ import {
   UINT_DECIMAL_STRING_PATTERN,
 } from "./protocol-management-primitives.js";
 import {
+  CREDENTIAL_PREPARE_OPERATION,
+  CREDENTIAL_PROPOSE_OPERATION,
   ED25519_PUBLIC_KEY_BASE64_PATTERN,
   FORBIDDEN_SECRET_FIELD_NAMES,
   MAX_ACCOUNTS_PER_RESPONSE,
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
+  MAX_CREDENTIAL_CAPABILITIES,
   MAX_PROTOCOL_RESPONSE_LINE_BYTES,
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
@@ -127,23 +131,36 @@ import {
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS,
+  MAX_SUI_ZKLOGIN_HEADER_BASE64_CHARS,
+  MAX_SUI_ZKLOGIN_ISS_BASE64_CHARS,
+  MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
+  MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
   PROTOCOL_VERSION,
   SIGN_RESULT_ERROR_MESSAGES,
   SUI_ADDRESS_PATTERN,
   SUI_CHAIN_ID,
   SUI_DERIVATION_PATH,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
+  SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+  SUI_SIGNATURE_SCHEME_FLAG_ED25519,
+  SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN,
   SUI_SIGN_PERSONAL_MESSAGE_METHOD,
   SUI_SIGN_TRANSACTION_METHOD,
   SUI_SIGN_TRANSACTION_NETWORKS,
+  SUI_ZKLOGIN_BASE64URL_NO_PADDING_PATTERN,
+  SUI_ZKLOGIN_CREDENTIAL,
+  SUI_ZKLOGIN_PROOF_POINT_DECIMAL_PATTERN,
   UNSUPPORTED_METHOD_MESSAGE,
   consumeProtocolResponseChunk,
   createRequestId,
+  decodeCanonicalBase64,
   hasOnlyObjectKeys,
   hasSecretPayloadKey,
   isUint64DecimalString,
+  isUint256DecimalString,
   isRecord,
   isSuiAddressForPublicKey,
+  isSuiAddressForSchemePrefixedPublicKey,
   randomBytesPortable,
   utf8ByteLength,
   type SignResultErrorCode,
@@ -161,12 +178,15 @@ export {
   APPROVAL_HISTORY_POLICY_UPDATE_RESULTS,
   APPROVAL_HISTORY_REASON_CODE_PATTERN,
   APPROVAL_HISTORY_RULE_REF_PATTERN,
+  CREDENTIAL_PREPARE_OPERATION,
+  CREDENTIAL_PROPOSE_OPERATION,
   ED25519_PUBLIC_KEY_BASE64_PATTERN,
   FORBIDDEN_SECRET_FIELD_NAMES,
   MAX_ACCOUNTS_PER_RESPONSE,
   MAX_APPROVAL_HISTORY_RECORDS,
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
+  MAX_CREDENTIAL_CAPABILITIES,
   MAX_POLICY_BLOCKCHAIN_LENGTH,
   MAX_POLICY_BLOCKCHAINS,
   MAX_POLICY_CONDITION_VALUES,
@@ -190,6 +210,10 @@ export {
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS,
+  MAX_SUI_ZKLOGIN_HEADER_BASE64_CHARS,
+  MAX_SUI_ZKLOGIN_ISS_BASE64_CHARS,
+  MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
+  MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
   POLICY_ACTIONS,
   POLICY_ENTRY_ID_PATTERN,
   POLICY_FIELD_ID_PATTERN,
@@ -206,15 +230,23 @@ export {
   SUI_CHAIN_ID,
   SUI_DERIVATION_PATH,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
+  SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+  SUI_SIGNATURE_SCHEME_FLAG_ED25519,
+  SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN,
   SUI_SIGN_PERSONAL_MESSAGE_METHOD,
   SUI_SIGN_TRANSACTION_METHOD,
   SUI_SIGN_TRANSACTION_NETWORKS,
+  SUI_ZKLOGIN_BASE64URL_NO_PADDING_PATTERN,
+  SUI_ZKLOGIN_CREDENTIAL,
+  SUI_ZKLOGIN_PROOF_POINT_DECIMAL_PATTERN,
   UINT_DECIMAL_STRING_PATTERN,
   UNSUPPORTED_METHOD_MESSAGE,
   consumeProtocolResponseChunk,
   createRequestId,
   isUint64DecimalString,
+  isUint256DecimalString,
   isSuiAddressForPublicKey,
+  isSuiAddressForSchemePrefixedPublicKey,
 };
 export { ProtocolError };
 export type { DeviceState, ProvisioningState, SignResultErrorCode, SuiSignMethod, SuiSignTransactionNetwork };
@@ -224,6 +256,7 @@ export type {
   CapabilitiesResponse,
   CapabilityAccount,
   CapabilityChain,
+  CredentialCapability,
   ConnectApprovedResponse,
   ConnectRejectedResponse,
   ConnectRequest,
@@ -362,6 +395,49 @@ export interface PolicyProposeRequest {
   };
 }
 
+export interface CredentialPrepareRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: typeof CREDENTIAL_PREPARE_OPERATION;
+  sessionId: string;
+  params: {
+    chain: typeof SUI_CHAIN_ID;
+    credential: typeof SUI_ZKLOGIN_CREDENTIAL;
+  };
+}
+
+export interface ZkLoginSignatureInputsDto {
+  proofPoints: {
+    a: [string, string, string];
+    b: [[string, string], [string, string], [string, string]];
+    c: [string, string, string];
+  };
+  issBase64Details: {
+    value: string;
+    indexMod4: 0 | 1 | 2;
+  };
+  headerBase64: string;
+  addressSeed: string;
+}
+
+export interface CredentialProposeParams {
+  chain: typeof SUI_CHAIN_ID;
+  credential: typeof SUI_ZKLOGIN_CREDENTIAL;
+  network: SuiSignTransactionNetwork;
+  address: string;
+  publicKey: string;
+  maxEpoch: string;
+  inputs: ZkLoginSignatureInputsDto;
+}
+
+export interface CredentialProposeRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: typeof CREDENTIAL_PROPOSE_OPERATION;
+  sessionId: string;
+  params: CredentialProposeParams;
+}
+
 export type ProtocolRequest =
   | GetStatusRequest
   | IdentifyDeviceRequest
@@ -375,6 +451,8 @@ export type ProtocolRequest =
   | PolicyGetRequest
   | GetApprovalHistoryRequest
   | PolicyProposeRequest
+  | CredentialPrepareRequest
+  | CredentialProposeRequest
   | StagedSignTransactionRequest
   | SignTransactionRequest
   | SignPersonalMessageRequest;
@@ -536,6 +614,48 @@ export interface PolicyProposeResultResponse {
   policy?: PolicyProposeResultPolicySummary;
 }
 
+export interface CredentialPrepareResultResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "credential_prepare_result";
+  status: "prepared";
+  chain: typeof SUI_CHAIN_ID;
+  credential: typeof SUI_ZKLOGIN_CREDENTIAL;
+  preparation: {
+    publicKey: string;
+    keyScheme: "ed25519";
+    address: string;
+  };
+}
+
+export type CredentialProposeResultStatus =
+  | "activated"
+  | "rejected"
+  | "timed_out"
+  | "invalid_proof"
+  | "ui_error"
+  | "storage_error"
+  | "consistency_error";
+
+export const CREDENTIAL_PROPOSE_RESULT_STATUSES = [
+  "activated",
+  "rejected",
+  "timed_out",
+  "invalid_proof",
+  "ui_error",
+  "storage_error",
+  "consistency_error",
+] as const;
+
+export interface CredentialProposeResultResponse {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "credential_propose_result";
+  status: CredentialProposeResultStatus;
+  reasonCode: string;
+  sessionEnded: boolean;
+}
+
 export type ProtocolResponse =
   | StatusResponse
   | IdentifyDeviceResponse
@@ -548,6 +668,8 @@ export type ProtocolResponse =
   | PolicyResponse
   | ApprovalHistoryResponse
   | PolicyProposeResultResponse
+  | CredentialPrepareResultResponse
+  | CredentialProposeResultResponse
   | SignResultResponse
   | ProtocolErrorResponse;
 
@@ -642,11 +764,71 @@ export function makePolicyProposeRequest(
   return request;
 }
 
+export function makeCredentialPrepareRequest(
+  sessionId: string,
+  params: unknown,
+  id = createRequestId(),
+): CredentialPrepareRequest {
+  validateRequestId(id);
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  const normalizedParams = validateCredentialPrepareInput(params);
+  const request: CredentialPrepareRequest = {
+    id,
+    version: PROTOCOL_VERSION,
+    type: CREDENTIAL_PREPARE_OPERATION,
+    sessionId,
+    params: normalizedParams,
+  };
+  if (utf8ByteLength(JSON.stringify(request)) > MAX_RAW_PROTOCOL_JSON_BYTES) {
+    throw new ProtocolError("invalid_params", "credential_prepare request is too large for the runtime.");
+  }
+  return request;
+}
+
+export function makeCredentialProposeRequest(
+  sessionId: string,
+  params: unknown,
+  id = createRequestId(),
+): CredentialProposeRequest {
+  validateRequestId(id);
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  const normalizedParams = validateCredentialProposeInput(params);
+  const request: CredentialProposeRequest = {
+    id,
+    version: PROTOCOL_VERSION,
+    type: CREDENTIAL_PROPOSE_OPERATION,
+    sessionId,
+    params: normalizedParams,
+  };
+  if (utf8ByteLength(JSON.stringify(request)) > MAX_POLICY_UPDATE_REQUEST_JSON_BYTES) {
+    throw new ProtocolError("invalid_params", "credential_propose request is too large for the runtime.");
+  }
+  return request;
+}
+
 export function validatePolicyProposeRequestInput(
   sessionId: string,
   policy: Record<string, unknown>,
 ): void {
   makePolicyProposeRequest(sessionId, policy, "req_000000000000000000000000");
+}
+
+export function validateCredentialPrepareRequestInput(
+  sessionId: string,
+  params: unknown,
+): void {
+  makeCredentialPrepareRequest(sessionId, params, "req_000000000000000000000000");
+}
+
+export function validateCredentialProposeRequestInput(
+  sessionId: string,
+  params: unknown,
+): void {
+  makeCredentialProposeRequest(sessionId, params, "req_000000000000000000000000");
 }
 
 export function validateSignRequestInput(
@@ -697,6 +879,201 @@ export function validatePolicyProposeInput(policy: unknown): asserts policy is R
   if (serialized === undefined) {
     throw new ProtocolError("invalid_params", "policy_propose policy must be JSON serializable.");
   }
+}
+
+export function validateCredentialPrepareInput(params: unknown): CredentialPrepareRequest["params"] {
+  const value = credentialParamsObject(params, "credential_prepare params");
+  requireCredentialInputKeys(value, ["chain", "credential"], "credential_prepare params");
+  if (value.chain !== SUI_CHAIN_ID || value.credential !== SUI_ZKLOGIN_CREDENTIAL) {
+    throw new ProtocolError("invalid_params", "credential_prepare credential is unsupported.");
+  }
+  return { chain: SUI_CHAIN_ID, credential: SUI_ZKLOGIN_CREDENTIAL };
+}
+
+export function validateCredentialProposeInput(params: unknown): CredentialProposeParams {
+  const value = credentialParamsObject(params, "credential_propose params");
+  requireCredentialInputKeys(
+    value,
+    ["chain", "credential", "network", "address", "publicKey", "maxEpoch", "inputs"],
+    "credential_propose params",
+  );
+  if (value.chain !== SUI_CHAIN_ID || value.credential !== SUI_ZKLOGIN_CREDENTIAL) {
+    throw new ProtocolError("invalid_params", "credential_propose credential is unsupported.");
+  }
+  if (!SUI_SIGN_TRANSACTION_NETWORKS.includes(value.network as SuiSignTransactionNetwork)) {
+    throw new ProtocolError("invalid_params", "credential_propose network is unsupported.");
+  }
+  if (typeof value.address !== "string" || !SUI_ADDRESS_PATTERN.test(value.address)) {
+    throw new ProtocolError("invalid_params", "credential_propose address is invalid.");
+  }
+  const publicKey = validateCredentialPublicKey(
+    value.publicKey,
+    SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN,
+    MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
+    MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
+    "credential_propose publicKey",
+  );
+  if (
+    !isSuiAddressForSchemePrefixedPublicKey(
+      value.address,
+      publicKey,
+      SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN,
+      MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
+      MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
+    )
+  ) {
+    throw new ProtocolError("invalid_params", "credential_propose publicKey does not match address.");
+  }
+  if (!isUint64DecimalString(value.maxEpoch)) {
+    throw new ProtocolError("invalid_params", "credential_propose maxEpoch is invalid.");
+  }
+  const inputs = validateZkLoginSignatureInputs(value.inputs);
+  return {
+    chain: SUI_CHAIN_ID,
+    credential: SUI_ZKLOGIN_CREDENTIAL,
+    network: value.network as SuiSignTransactionNetwork,
+    address: value.address,
+    publicKey,
+    maxEpoch: value.maxEpoch,
+    inputs,
+  };
+}
+
+function credentialParamsObject(value: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new ProtocolError("invalid_params", `${label} must be an object.`);
+  }
+  return value;
+}
+
+function requireCredentialInputKeys(
+  value: Record<string, unknown>,
+  allowedKeys: readonly string[],
+  label: string,
+): void {
+  if (!hasOnlyObjectKeys(value, allowedKeys)) {
+    throw new ProtocolError("invalid_params", `${label} contains unsupported fields.`);
+  }
+}
+
+function validateCredentialPublicKey(
+  value: unknown,
+  expectedSchemeFlag: number,
+  minDecodedBytes: number,
+  maxDecodedBytes: number,
+  label: string,
+): string {
+  if (typeof value !== "string") {
+    throw new ProtocolError("invalid_params", `${label} must be base64.`);
+  }
+  if (value.length === 0 || value.length > Math.ceil(maxDecodedBytes / 3) * 4) {
+    throw new ProtocolError("invalid_params", `${label} is invalid.`);
+  }
+  const decoded = decodeCanonicalBase64(value);
+  if (
+    decoded === null ||
+    decoded.length < minDecodedBytes ||
+    decoded.length > maxDecodedBytes ||
+    decoded[0] !== expectedSchemeFlag
+  ) {
+    throw new ProtocolError("invalid_params", `${label} is invalid.`);
+  }
+  if (expectedSchemeFlag === SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN && !zkLoginPublicIdentifierShapeValid(decoded)) {
+    throw new ProtocolError("invalid_params", `${label} is invalid.`);
+  }
+  return value;
+}
+
+function zkLoginPublicIdentifierShapeValid(decoded: Uint8Array): boolean {
+  if (decoded.length < MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES || decoded[0] !== SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN) {
+    return false;
+  }
+  const issuerLength = decoded[1] ?? 0;
+  return decoded.length === 2 + issuerLength + 32;
+}
+
+function validateZkLoginSignatureInputs(value: unknown): ZkLoginSignatureInputsDto {
+  const inputs = credentialParamsObject(value, "credential_propose inputs");
+  requireCredentialInputKeys(
+    inputs,
+    ["proofPoints", "issBase64Details", "headerBase64", "addressSeed"],
+    "credential_propose inputs",
+  );
+  const proofPoints = validateZkLoginProofPoints(inputs.proofPoints);
+  const issBase64Details = validateIssBase64Details(inputs.issBase64Details);
+  const headerBase64 = validateBase64UrlNoPadding(
+    inputs.headerBase64,
+    MAX_SUI_ZKLOGIN_HEADER_BASE64_CHARS,
+    "credential_propose headerBase64",
+  );
+  if (!isUint256DecimalString(inputs.addressSeed)) {
+    throw new ProtocolError("invalid_params", "credential_propose addressSeed is invalid.");
+  }
+  return {
+    proofPoints,
+    issBase64Details,
+    headerBase64,
+    addressSeed: inputs.addressSeed,
+  };
+}
+
+function validateZkLoginProofPoints(value: unknown): ZkLoginSignatureInputsDto["proofPoints"] {
+  const proofPoints = credentialParamsObject(value, "credential_propose proofPoints");
+  requireCredentialInputKeys(proofPoints, ["a", "b", "c"], "credential_propose proofPoints");
+  return {
+    a: validateProofPointVector(proofPoints.a, 3, "credential_propose proofPoints.a") as [string, string, string],
+    b: validateProofPointMatrix(proofPoints.b),
+    c: validateProofPointVector(proofPoints.c, 3, "credential_propose proofPoints.c") as [string, string, string],
+  };
+}
+
+function validateProofPointMatrix(value: unknown): [[string, string], [string, string], [string, string]] {
+  if (!Array.isArray(value) || value.length !== 3) {
+    throw new ProtocolError("invalid_params", "credential_propose proofPoints.b is invalid.");
+  }
+  return value.map((row, index) =>
+    validateProofPointVector(row, 2, `credential_propose proofPoints.b[${index}]`) as [string, string],
+  ) as [[string, string], [string, string], [string, string]];
+}
+
+function validateProofPointVector(value: unknown, expectedLength: number, label: string): string[] {
+  if (!Array.isArray(value) || value.length !== expectedLength) {
+    throw new ProtocolError("invalid_params", `${label} is invalid.`);
+  }
+  return value.map((entry) => validateProofPointDecimal(entry, label));
+}
+
+function validateProofPointDecimal(value: unknown, label: string): string {
+  if (typeof value !== "string" || !SUI_ZKLOGIN_PROOF_POINT_DECIMAL_PATTERN.test(value)) {
+    throw new ProtocolError("invalid_params", `${label} contains an invalid proof point.`);
+  }
+  return value;
+}
+
+function validateIssBase64Details(value: unknown): ZkLoginSignatureInputsDto["issBase64Details"] {
+  const details = credentialParamsObject(value, "credential_propose issBase64Details");
+  requireCredentialInputKeys(details, ["value", "indexMod4"], "credential_propose issBase64Details");
+  const base64Value = validateBase64UrlNoPadding(
+    details.value,
+    MAX_SUI_ZKLOGIN_ISS_BASE64_CHARS,
+    "credential_propose issBase64Details.value",
+  );
+  if (details.indexMod4 !== 0 && details.indexMod4 !== 1 && details.indexMod4 !== 2) {
+    throw new ProtocolError("invalid_params", "credential_propose issBase64Details.indexMod4 is invalid.");
+  }
+  return { value: base64Value, indexMod4: details.indexMod4 };
+}
+
+function validateBase64UrlNoPadding(value: unknown, maxChars: number, label: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > maxChars ||
+    !SUI_ZKLOGIN_BASE64URL_NO_PADDING_PATTERN.test(value)
+  ) {
+    throw new ProtocolError("invalid_params", `${label} is invalid.`);
+  }
+  return value;
 }
 
 export function validateApprovalHistoryInput(
@@ -882,6 +1259,64 @@ export function parseProtocolResponse(line: string, expectedId?: string): Protoc
     };
   }
 
+  if (value.type === "credential_prepare_result") {
+    if (typeof value.id !== "string") {
+      throw new ProtocolError("protocol_error", "credential_prepare_result id is malformed.");
+    }
+    if (hasSecretPayloadKey(value)) {
+      throw new ProtocolError("protocol_error", "credential_prepare_result must not include secret material.");
+    }
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "chain", "credential", "preparation"])) {
+      throw new ProtocolError("protocol_error", "credential_prepare_result contains unsupported fields.");
+    }
+    const preparation = sanitizeCredentialPreparation(value.preparation);
+    if (
+      value.status !== "prepared" ||
+      value.chain !== SUI_CHAIN_ID ||
+      value.credential !== SUI_ZKLOGIN_CREDENTIAL ||
+      preparation === null
+    ) {
+      throw new ProtocolError("protocol_error", "credential_prepare_result is malformed.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "credential_prepare_result",
+      status: "prepared",
+      chain: SUI_CHAIN_ID,
+      credential: SUI_ZKLOGIN_CREDENTIAL,
+      preparation,
+    };
+  }
+
+  if (value.type === "credential_propose_result") {
+    if (typeof value.id !== "string") {
+      throw new ProtocolError("protocol_error", "credential_propose_result id is malformed.");
+    }
+    if (hasSecretPayloadKey(value)) {
+      throw new ProtocolError("protocol_error", "credential_propose_result must not include secret material.");
+    }
+    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "reasonCode", "sessionEnded"])) {
+      throw new ProtocolError("protocol_error", "credential_propose_result contains unsupported fields.");
+    }
+    if (
+      !CREDENTIAL_PROPOSE_RESULT_STATUSES.includes(value.status as CredentialProposeResultStatus) ||
+      typeof value.reasonCode !== "string" ||
+      !APPROVAL_HISTORY_REASON_CODE_PATTERN.test(value.reasonCode) ||
+      typeof value.sessionEnded !== "boolean"
+    ) {
+      throw new ProtocolError("protocol_error", "credential_propose_result is malformed.");
+    }
+    return {
+      id: value.id,
+      version: PROTOCOL_VERSION,
+      type: "credential_propose_result",
+      status: value.status as CredentialProposeResultStatus,
+      reasonCode: value.reasonCode,
+      sessionEnded: value.sessionEnded,
+    };
+  }
+
   throw new ProtocolError("protocol_error", "Protocol response type is unsupported.");
 }
 
@@ -990,6 +1425,26 @@ export function assertPolicyProposeResultResponse(response: ProtocolResponse): P
   return response;
 }
 
+export function assertCredentialPrepareResultResponse(response: ProtocolResponse): CredentialPrepareResultResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "credential_prepare_result") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not credential_prepare_result.");
+  }
+  return response;
+}
+
+export function assertCredentialProposeResultResponse(response: ProtocolResponse): CredentialProposeResultResponse {
+  if (response.type === "error") {
+    throw new ProtocolError(response.error.code, response.error.message);
+  }
+  if (response.type !== "credential_propose_result") {
+    throw new ProtocolError("protocol_error", "Protocol response type is not credential_propose_result.");
+  }
+  return response;
+}
+
 export function assertSignResultResponse(response: ProtocolResponse): SignResultResponse {
   if (response.type === "error") {
     throw new ProtocolError(response.error.code, response.error.message);
@@ -998,6 +1453,43 @@ export function assertSignResultResponse(response: ProtocolResponse): SignResult
     throw new ProtocolError("protocol_error", "Protocol response type is not sign_result.");
   }
   return response;
+}
+
+function sanitizeCredentialPreparation(value: unknown): CredentialPrepareResultResponse["preparation"] | null {
+  if (!isRecord(value) || hasSecretPayloadKey(value)) {
+    return null;
+  }
+  if (!hasOnlyObjectKeys(value, ["publicKey", "keyScheme", "address"])) {
+    return null;
+  }
+  if (
+    value.keyScheme !== "ed25519" ||
+    typeof value.address !== "string" ||
+    !SUI_ADDRESS_PATTERN.test(value.address) ||
+    typeof value.publicKey !== "string"
+  ) {
+    return null;
+  }
+  const decoded = decodeCanonicalBase64(value.publicKey);
+  if (
+    decoded === null ||
+    decoded.length !== SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES ||
+    decoded[0] !== SUI_SIGNATURE_SCHEME_FLAG_ED25519 ||
+    !isSuiAddressForSchemePrefixedPublicKey(
+      value.address,
+      value.publicKey,
+      SUI_SIGNATURE_SCHEME_FLAG_ED25519,
+      SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+      SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+    )
+  ) {
+    return null;
+  }
+  return {
+    publicKey: value.publicKey,
+    keyScheme: "ed25519",
+    address: value.address,
+  };
 }
 
 // Reduce an untrusted wire or stored device object to a safe DeviceStatus, or

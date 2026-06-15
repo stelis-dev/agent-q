@@ -5,6 +5,8 @@ import {
   assertAccountsResponse,
   assertApprovalHistoryResponse,
   assertCapabilitiesResponse,
+  assertCredentialPrepareResultResponse,
+  assertCredentialProposeResultResponse,
   assertPolicyResponse,
   assertPolicyProposeResultResponse,
   assertAckResultResponse,
@@ -18,7 +20,9 @@ import {
   isSafeDeviceId,
   isSafeRequestId,
   isSessionId,
-  isSuiAddressForPublicKey,
+  isSuiAddressForSchemePrefixedPublicKey,
+  SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+  SUI_SIGNATURE_SCHEME_FLAG_ED25519,
   identifySignRoute,
   makeConnectRequest,
   makeDisconnectRequest,
@@ -34,6 +38,8 @@ import {
   makePolicyGetRequest,
   makeIdentifyDeviceRequest,
   makeGetStatusRequest,
+  makeCredentialPrepareRequest,
+  makeCredentialProposeRequest,
   makePolicyProposeRequest,
   makeStagedSignTransactionRequest,
   makeSignPersonalMessageRequest,
@@ -132,6 +138,12 @@ const CANONICAL_TX_BYTES_BASE64 = "AQID";
 const VALID_PAYLOAD_DIGEST = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const VALID_PAYLOAD_REF = "payload_0123456789abcdef01234567";
 const VALID_UPLOAD_ID = "upload_0123456789abcdef01234567";
+const VALID_SCHEME_PREFIXED_PUBLIC_KEY =
+  "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp";
+const VALID_ZKLOGIN_PUBLIC_KEY =
+  "BRtodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ==";
+const VALID_ZKLOGIN_ADDRESS =
+  "0xd41c7cbc0cbccb9e7ab701373f3b5f082cc0024098f2ab561ff342107b91491f";
 const VALID_DEVICE_STATUS = {
   deviceId: "a508d833-5c83-4680-88bb-18aee976881e",
   state: "idle",
@@ -139,6 +151,54 @@ const VALID_DEVICE_STATUS = {
   hardware: "hardware-id",
   firmwareVersion: "0.0.0",
 };
+
+function validZkLoginInputs(overrides = {}) {
+  return {
+    proofPoints: {
+      a: [
+        "17318089125952421736342263717932719437717844282410187957984751939942898251250",
+        "11373966645469122582074082295985388258840681618268593976697325892280915681207",
+        "1",
+      ],
+      b: [
+        [
+          "5939871147348834997361720122238980177152303274311047249905942384915768690895",
+          "4533568271134785278731234570361482651996740791888285864966884032717049811708",
+        ],
+        [
+          "10564387285071555469753990661410840118635925466597037018058770041347518461368",
+          "12597323547277579144698496372242615368085801313343155735511330003884767957854",
+        ],
+        ["1", "0"],
+      ],
+      c: [
+        "15791589472556826263231644728873337629015269984699404073623603352537678813171",
+        "4547866499248881449676161158024748060485373250029423904113017422539037162527",
+        "1",
+      ],
+    },
+    issBase64Details: {
+      value: "ImlzcyI6Imh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbSIs",
+      indexMod4: 0,
+    },
+    headerBase64: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjEifQ",
+    addressSeed: "1",
+    ...overrides,
+  };
+}
+
+function validCredentialProposeParams(overrides = {}) {
+  return {
+    chain: "sui",
+    credential: "zklogin",
+    network: "testnet",
+    address: VALID_ZKLOGIN_ADDRESS,
+    publicKey: VALID_ZKLOGIN_PUBLIC_KEY,
+    maxEpoch: "42",
+    inputs: validZkLoginInputs(),
+    ...overrides,
+  };
+}
 
 test("creates safe request ids and get_status requests", () => {
   const id = createRequestId();
@@ -1159,6 +1219,71 @@ test("makePolicyProposeRequest builds admin proposal requests without chain auth
   );
 });
 
+test("credential request builders use common operations and bounded zkLogin DTOs", () => {
+  const prepare = makeCredentialPrepareRequest(
+    "session_abcdef0123456789",
+    { chain: "sui", credential: "zklogin" },
+    "req_credential_prepare_1",
+  );
+  assert.deepEqual(prepare, {
+    id: "req_credential_prepare_1",
+    version: 1,
+    type: "credential_prepare",
+    sessionId: "session_abcdef0123456789",
+    params: { chain: "sui", credential: "zklogin" },
+  });
+  assert.equal("sui" in prepare, false);
+
+  const params = validCredentialProposeParams();
+  const propose = makeCredentialProposeRequest(
+    "session_abcdef0123456789",
+    params,
+    "req_credential_propose_1",
+  );
+  assert.deepEqual(propose, {
+    id: "req_credential_propose_1",
+    version: 1,
+    type: "credential_propose",
+    sessionId: "session_abcdef0123456789",
+    params,
+  });
+  assert.ok(Buffer.byteLength(serializeRequest(propose), "utf8") <= MAX_POLICY_UPDATE_REQUEST_JSON_BYTES + 1);
+  assert.equal(
+    isSuiAddressForSchemePrefixedPublicKey(params.address, params.publicKey, 0x05, 34, 288),
+    true,
+  );
+
+  assert.throws(
+    () => makeCredentialPrepareRequest("not_a_session", { chain: "sui", credential: "zklogin" }),
+    { code: "invalid_session" },
+  );
+  assert.throws(
+    () => makeCredentialPrepareRequest("session_abcdef0123456789", { chain: "sui", credential: "passkey" }),
+    { code: "invalid_params" },
+  );
+  assert.throws(
+    () => makeCredentialProposeRequest(
+      "session_abcdef0123456789",
+      validCredentialProposeParams({ publicKey: VALID_SCHEME_PREFIXED_PUBLIC_KEY }),
+    ),
+    { code: "invalid_params" },
+  );
+  assert.throws(
+    () => makeCredentialProposeRequest(
+      "session_abcdef0123456789",
+      validCredentialProposeParams({ inputs: validZkLoginInputs({ addressSeed: "01" }) }),
+    ),
+    { code: "invalid_params" },
+  );
+  assert.throws(
+    () => makeCredentialProposeRequest(
+      "session_abcdef0123456789",
+      validCredentialProposeParams({ inputs: validZkLoginInputs({ issBase64Details: { value: "abc=", indexMod4: 0 } }) }),
+    ),
+    { code: "invalid_params" },
+  );
+});
+
 test("makeGetCapabilitiesRequest validates sessionId", () => {
   const request = makeGetCapabilitiesRequest("session_abcdef0123456789", "req_get_capabilities_1");
   assert.deepEqual(request, {
@@ -1223,6 +1348,36 @@ test("parseProtocolResponse accepts a valid capabilities response with signing m
     assert.deepEqual(response.chains[0].methods, []);
     assert.deepEqual(response.signing, signing);
   }
+});
+
+test("parseProtocolResponse accepts zkLogin active account capabilities", () => {
+  const signing = {
+    authorization: "policy",
+    methods: [{ chain: "sui", method: "sign_transaction" }],
+  };
+  const response = assertCapabilitiesResponse(
+    parseProtocolResponse(
+      capabilitiesLine({}, { keyScheme: "zklogin", derivationPath: undefined }, { signing }),
+      "req_capabilities",
+    ),
+  );
+  assert.equal(response.type, "capabilities");
+  assert.equal(response.chains[0].accounts[0].keyScheme, "zklogin");
+  assert.equal("derivationPath" in response.chains[0].accounts[0], false);
+});
+
+test("parseProtocolResponse accepts advisory credential capabilities", () => {
+  const credentials = [
+    {
+      chain: "sui",
+      credential: "zklogin",
+      operations: ["credential_prepare", "credential_propose"],
+    },
+  ];
+  const response = assertCapabilitiesResponse(
+    parseProtocolResponse(capabilitiesLine({}, {}, { credentials }), "req_capabilities"),
+  );
+  assert.deepEqual(response.credentials, credentials);
 });
 
 test("parseProtocolResponse preserves sign_transaction payload capability metadata", () => {
@@ -1336,6 +1491,38 @@ test("parseProtocolResponse rejects unsupported capabilities", () => {
       ),
     { code: "protocol_error" },
   );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        capabilitiesLine({}, {}, {
+          credentials: [
+            {
+              chain: "sui",
+              credential: "zklogin",
+              operations: ["credential_propose", "credential_prepare"],
+            },
+          ],
+        }),
+        "req_capabilities",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        capabilitiesLine({}, {}, {
+          credentials: [
+            {
+              chain: "sui",
+              credential: "passkey",
+              operations: ["credential_prepare", "credential_propose"],
+            },
+          ],
+        }),
+        "req_capabilities",
+      ),
+    { code: "protocol_error" },
+  );
 });
 
 test("parseProtocolResponse rejects capabilities carrying secret material", () => {
@@ -1361,7 +1548,7 @@ const accountsLine = (accountOverrides = {}) =>
       {
         chain: "sui",
         address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
-        publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=",
+        publicKey: VALID_SCHEME_PREFIXED_PUBLIC_KEY,
         keyScheme: "ed25519",
         derivationPath: "m/44'/784'/0'/0'/0'",
         ...accountOverrides,
@@ -1381,9 +1568,36 @@ test("parseProtocolResponse accepts a valid Sui accounts response", () => {
   assert.equal(response.accounts[0].keyScheme, "ed25519");
   assert.equal(response.accounts[0].derivationPath, "m/44'/784'/0'/0'/0'");
   assert.equal(
-    isSuiAddressForPublicKey(response.accounts[0].address, response.accounts[0].publicKey),
+    isSuiAddressForSchemePrefixedPublicKey(
+      response.accounts[0].address,
+      response.accounts[0].publicKey,
+      SUI_SIGNATURE_SCHEME_FLAG_ED25519,
+      SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+      SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+    ),
     true,
   );
+});
+
+test("parseProtocolResponse accepts a valid zkLogin Sui accounts response", () => {
+  const response = assertAccountsResponse(
+    parseProtocolResponse(
+      accountsLine({
+        address: VALID_ZKLOGIN_ADDRESS,
+        publicKey: VALID_ZKLOGIN_PUBLIC_KEY,
+        keyScheme: "zklogin",
+        derivationPath: undefined,
+      }),
+      "req_accounts",
+    ),
+  );
+  assert.equal(response.type, "accounts");
+  assert.equal(response.accounts.length, 1);
+  assert.equal(response.accounts[0].chain, "sui");
+  assert.equal(response.accounts[0].address, VALID_ZKLOGIN_ADDRESS);
+  assert.equal(response.accounts[0].publicKey, VALID_ZKLOGIN_PUBLIC_KEY);
+  assert.equal(response.accounts[0].keyScheme, "zklogin");
+  assert.equal("derivationPath" in response.accounts[0], false);
 });
 
 test("parseProtocolResponse rejects an accounts response carrying secret material", () => {
@@ -1443,7 +1657,7 @@ test("parseProtocolResponse rejects an accounts response exceeding the supported
   const account = {
     chain: "sui",
     address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
-    publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=",
+    publicKey: VALID_SCHEME_PREFIXED_PUBLIC_KEY,
     keyScheme: "ed25519",
     derivationPath: "m/44'/784'/0'/0'/0'",
   };
@@ -2108,6 +2322,93 @@ test("parseProtocolResponse rejects malformed policy_propose_result responses", 
       () => parseProtocolResponse(policyProposeResultLine({}, policyOverride), "req_policy_propose"),
       { code: "protocol_error" },
       `policy_propose_result policy override should be rejected: ${JSON.stringify(policyOverride)}`,
+    );
+  }
+});
+
+const credentialPrepareResultLine = (overrides = {}, preparationOverrides = {}) =>
+  JSON.stringify({
+    id: "req_credential_prepare",
+    version: 1,
+    type: "credential_prepare_result",
+    status: "prepared",
+    chain: "sui",
+    credential: "zklogin",
+    preparation: {
+      address: "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
+      publicKey: VALID_SCHEME_PREFIXED_PUBLIC_KEY,
+      keyScheme: "ed25519",
+      ...preparationOverrides,
+    },
+    ...overrides,
+  });
+
+test("parseProtocolResponse accepts credential_prepare_result", () => {
+  const response = assertCredentialPrepareResultResponse(
+    parseProtocolResponse(credentialPrepareResultLine(), "req_credential_prepare"),
+  );
+  assert.equal(response.type, "credential_prepare_result");
+  assert.equal(response.chain, "sui");
+  assert.equal(response.credential, "zklogin");
+  assert.equal(response.preparation.keyScheme, "ed25519");
+  assert.equal(response.preparation.publicKey, VALID_SCHEME_PREFIXED_PUBLIC_KEY);
+});
+
+test("parseProtocolResponse rejects malformed credential_prepare_result", () => {
+  for (const [override, preparationOverride] of [
+    [{ status: "ready" }, {}],
+    [{ chain: "sui:zklogin:testnet" }, {}],
+    [{ credential: "passkey" }, {}],
+    [{ sessionId: "session_abcdef0123456789" }, {}],
+    [{}, { publicKey: "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=" }],
+    [{}, { address: "0x0000000000000000000000000000000000000000000000000000000000000000" }],
+    [{}, { keyScheme: "zklogin" }],
+    [{}, { privateKey: "must-not-forward" }],
+  ]) {
+    assert.throws(
+      () => parseProtocolResponse(credentialPrepareResultLine(override, preparationOverride), "req_credential_prepare"),
+      { code: "protocol_error" },
+      `credential_prepare_result override should be rejected: ${JSON.stringify({ override, preparationOverride })}`,
+    );
+  }
+});
+
+const credentialProposeResultLine = (overrides = {}) =>
+  JSON.stringify({
+    id: "req_credential_propose",
+    version: 1,
+    type: "credential_propose_result",
+    status: "activated",
+    reasonCode: "device_confirmed",
+    sessionEnded: true,
+    ...overrides,
+  });
+
+test("parseProtocolResponse accepts credential_propose_result terminal outcomes", () => {
+  for (const status of ["activated", "rejected", "timed_out", "invalid_proof", "ui_error", "storage_error", "consistency_error"]) {
+    const response = assertCredentialProposeResultResponse(
+      parseProtocolResponse(credentialProposeResultLine({ status }), "req_credential_propose"),
+    );
+    assert.equal(response.type, "credential_propose_result");
+    assert.equal(response.status, status);
+    assert.equal(response.reasonCode, "device_confirmed");
+    assert.equal(response.sessionEnded, true);
+  }
+});
+
+test("parseProtocolResponse rejects malformed credential_propose_result responses", () => {
+  for (const override of [
+    { status: "applied" },
+    { status: "history_error" },
+    { reasonCode: "DeviceConfirmed" },
+    { sessionEnded: "true" },
+    { policy: { policyHash: APPROVAL_DIGEST } },
+    { sessionId: "session_abcdef0123456789" },
+  ]) {
+    assert.throws(
+      () => parseProtocolResponse(credentialProposeResultLine(override), "req_credential_propose"),
+      { code: "protocol_error" },
+      `credential_propose_result override should be rejected: ${JSON.stringify(override)}`,
     );
   }
 });

@@ -13,7 +13,6 @@ import {
 } from "./core.js";
 import { PUBLIC_ERROR_MESSAGES } from "./public-error.js";
 import {
-  ED25519_PUBLIC_KEY_BASE64_PATTERN,
   APPROVAL_HISTORY_HIGHEST_ACTIONS,
   APPROVAL_HISTORY_POLICY_UPDATE_RESULTS,
   APPROVAL_HISTORY_REASON_CODE_PATTERN,
@@ -36,11 +35,16 @@ import {
   SUI_ADDRESS_PATTERN,
   SUI_DERIVATION_PATH,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
+  SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+  SUI_SIGNATURE_SCHEME_FLAG_ED25519,
+  SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN,
   SUI_SIGN_PERSONAL_MESSAGE_METHOD,
   SUI_SIGN_TRANSACTION_METHOD,
+  MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
+  MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
   UINT_DECIMAL_STRING_PATTERN,
   isUint64DecimalString,
-  isSuiAddressForPublicKey,
+  isSuiAddressForSchemePrefixedPublicKey,
   sanitizeCurrentPolicyDocument,
 } from "./protocol.js";
 import {
@@ -271,10 +275,17 @@ export const disconnectDeviceToolOutputShape = z.discriminatedUnion("source", [
   errorToolResultShape,
 ]);
 
-const capabilityAccountShape = z.object({
+const nativeCapabilityAccountShape = z.object({
   keyScheme: z.literal("ed25519"),
   derivationPath: z.literal(SUI_DERIVATION_PATH),
 }).strict();
+const zkLoginCapabilityAccountShape = z.object({
+  keyScheme: z.literal("zklogin"),
+}).strict();
+const capabilityAccountShape = z.discriminatedUnion("keyScheme", [
+  nativeCapabilityAccountShape,
+  zkLoginCapabilityAccountShape,
+]);
 const capabilityChainShape = z.object({
   id: z.literal("sui"),
   accounts: z.array(capabilityAccountShape).length(MAX_CAPABILITY_ACCOUNTS_PER_CHAIN),
@@ -366,15 +377,39 @@ export const mcpGetCapabilitiesToolOutputShape = z.discriminatedUnion("source", 
   errorToolResultShape,
 ]);
 
-const accountShape = z.object({
+const nativeAccountShape = z.object({
   chain: z.literal("sui"),
   address: z.string().regex(SUI_ADDRESS_PATTERN),
-  publicKey: z.string().regex(ED25519_PUBLIC_KEY_BASE64_PATTERN),
+  publicKey: z.string(),
   keyScheme: z.literal("ed25519"),
   derivationPath: z.literal(SUI_DERIVATION_PATH),
-}).strict().refine((account) => isSuiAddressForPublicKey(account.address, account.publicKey), {
+}).strict().refine((account) => isSuiAddressForSchemePrefixedPublicKey(
+  account.address,
+  account.publicKey,
+  SUI_SIGNATURE_SCHEME_FLAG_ED25519,
+  SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+  SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
+), {
   message: "Sui address must match publicKey",
 });
+const zkLoginAccountShape = z.object({
+  chain: z.literal("sui"),
+  address: z.string().regex(SUI_ADDRESS_PATTERN),
+  publicKey: z.string(),
+  keyScheme: z.literal("zklogin"),
+}).strict().refine((account) => isSuiAddressForSchemePrefixedPublicKey(
+  account.address,
+  account.publicKey,
+  SUI_SIGNATURE_SCHEME_FLAG_ZKLOGIN,
+  MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
+  MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
+), {
+  message: "Sui address must match publicKey",
+});
+const accountShape = z.discriminatedUnion("keyScheme", [
+  nativeAccountShape,
+  zkLoginAccountShape,
+]);
 const liveAccountsOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,

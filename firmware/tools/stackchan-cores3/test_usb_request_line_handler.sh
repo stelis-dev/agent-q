@@ -69,6 +69,8 @@ enum class HandlerSlot {
     get_status,
     sign_transaction,
     policy_propose,
+    credential_prepare,
+    credential_propose,
 };
 
 HandlerSlot g_last_handler = HandlerSlot::none;
@@ -150,6 +152,36 @@ void handle_policy_propose(
     snprintf(g_last_id, sizeof(g_last_id), "%s", id == nullptr ? "" : id);
 }
 
+void handle_credential_prepare(
+    const char* id,
+    JsonDocument& request,
+    const agent_q::AgentQUsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    const char* type = request["type"] | "";
+    const char* credential = request["params"]["credential"] | "";
+    assert(strcmp(type, "credential_prepare") == 0);
+    assert(strcmp(credential, "zklogin") == 0);
+    g_last_handler = HandlerSlot::credential_prepare;
+    g_handler_calls += 1;
+    snprintf(g_last_id, sizeof(g_last_id), "%s", id == nullptr ? "" : id);
+}
+
+void handle_credential_propose(
+    const char* id,
+    JsonDocument& request,
+    const agent_q::AgentQUsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    const char* type = request["type"] | "";
+    const char* credential = request["params"]["credential"] | "";
+    assert(strcmp(type, "credential_propose") == 0);
+    assert(strcmp(credential, "zklogin") == 0);
+    g_last_handler = HandlerSlot::credential_propose;
+    g_handler_calls += 1;
+    snprintf(g_last_id, sizeof(g_last_id), "%s", id == nullptr ? "" : id);
+}
+
 agent_q::AgentQUsbOperationResponseWriter make_writer()
 {
     return agent_q::AgentQUsbOperationResponseWriter{
@@ -164,6 +196,8 @@ agent_q::AgentQUsbOperationHandlers make_handlers()
     handlers.get_status = handle_get_status;
     handlers.sign_transaction = handle_sign_transaction;
     handlers.policy_propose = handle_policy_propose;
+    handlers.credential_prepare = handle_credential_prepare;
+    handlers.credential_propose = handle_credential_propose;
     return handlers;
 }
 
@@ -215,6 +249,14 @@ int main()
         "{\"id\":\"req_policy\",\"version\":1,\"type\":\"policy_propose\",\"sessionId\":\"session_abc\",\"params\":{\"policy\":{\"schema\":\"agentq.policy\",\"defaultAction\":\"reject\",\"blockchains\":[{\"blockchain\":\"sui\",\"networks\":[{\"network\":\"testnet\",\"policies\":[{\"id\":\"reject-source\",\"action\":\"reject\",\"conditions\":[{\"field\":\"sui.token_sources.source\",\"op\":\"eq\",\"value\":\"gas_coin\"}]}]}]}]}}}",
         HandlerSlot::policy_propose,
         "req_policy");
+    expect_handler(
+        "{\"id\":\"req_credential_prepare\",\"version\":1,\"type\":\"credential_prepare\",\"sessionId\":\"session_abc\",\"params\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}",
+        HandlerSlot::credential_prepare,
+        "req_credential_prepare");
+    expect_handler(
+        "{\"id\":\"req_credential_propose\",\"version\":1,\"type\":\"credential_propose\",\"sessionId\":\"session_abc\",\"params\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}",
+        HandlerSlot::credential_propose,
+        "req_credential_propose");
 
     expect_error("{not-json", nullptr, "invalid_json", "Invalid JSON.");
     expect_error(

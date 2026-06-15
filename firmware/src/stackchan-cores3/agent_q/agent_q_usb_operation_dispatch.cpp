@@ -70,6 +70,10 @@ bool dispatch_usb_operation(
             return call_handler(handlers.get_approval_history, id, request, response_writer);
         case AgentQUsbOperationHandlerSlot::policy_propose:
             return call_handler(handlers.policy_propose, id, request, response_writer);
+        case AgentQUsbOperationHandlerSlot::credential_prepare:
+            return call_handler(handlers.credential_prepare, id, request, response_writer);
+        case AgentQUsbOperationHandlerSlot::credential_propose:
+            return call_handler(handlers.credential_propose, id, request, response_writer);
         case AgentQUsbOperationHandlerSlot::payload_upload_begin:
             return call_handler(handlers.payload_upload_begin, id, request, response_writer);
         case AgentQUsbOperationHandlerSlot::payload_upload_chunk:

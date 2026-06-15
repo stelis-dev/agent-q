@@ -38,7 +38,9 @@ bool local_pin_purpose_matches(
     return (protocol_purpose == AgentQProtocolPinApprovalPurpose::connect &&
             local_purpose == AgentQLocalPinAuthPurpose::connect) ||
            (protocol_purpose == AgentQProtocolPinApprovalPurpose::policy_update &&
-            local_purpose == AgentQLocalPinAuthPurpose::policy_update);
+            local_purpose == AgentQLocalPinAuthPurpose::policy_update) ||
+           (protocol_purpose == AgentQProtocolPinApprovalPurpose::sui_zklogin_proposal &&
+            local_purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal);
 }
 
 }  // namespace
@@ -101,6 +103,28 @@ bool protocol_pin_approval_begin_policy_update(
     }
     next.active = true;
     next.purpose = AgentQProtocolPinApprovalPurpose::policy_update;
+    next.request_window = request_window;
+    next.pin_input_window = request_window;
+    g_state = next;
+    return true;
+}
+
+bool protocol_pin_approval_begin_sui_zklogin_proposal(
+    const char* request_id,
+    const char* session_id,
+    TickType_t now,
+    AgentQTimeoutWindow request_window)
+{
+    if (g_state.active || !timeout_window_valid_and_open_at(request_window, now)) {
+        return false;
+    }
+    ProtocolPinApprovalState next = {};
+    if (!copy_nonempty_c_string(request_id, next.request_id, sizeof(next.request_id)) ||
+        !copy_nonempty_c_string(session_id, next.session_id, sizeof(next.session_id))) {
+        return false;
+    }
+    next.active = true;
+    next.purpose = AgentQProtocolPinApprovalPurpose::sui_zklogin_proposal;
     next.request_window = request_window;
     next.pin_input_window = request_window;
     g_state = next;
@@ -197,6 +221,38 @@ AgentQSessionValidationResult protocol_pin_approval_validate_policy_update_sessi
 {
     if (!g_state.active ||
         g_state.purpose != AgentQProtocolPinApprovalPurpose::policy_update ||
+        g_state.session_id[0] == '\0') {
+        return AgentQSessionValidationResult::missing;
+    }
+    return session_validate(g_state.session_id);
+}
+
+bool protocol_pin_approval_sui_zklogin_proposal_session_matches(const char* session_id)
+{
+    return g_state.active &&
+           g_state.purpose == AgentQProtocolPinApprovalPurpose::sui_zklogin_proposal &&
+           g_state.session_id[0] != '\0' &&
+           session_id != nullptr &&
+           strcmp(g_state.session_id, session_id) == 0;
+}
+
+bool protocol_pin_approval_sui_zklogin_proposal_request_id(char* output, size_t output_size)
+{
+    if (output == nullptr || output_size == 0) {
+        return false;
+    }
+    output[0] = '\0';
+    if (!g_state.active ||
+        g_state.purpose != AgentQProtocolPinApprovalPurpose::sui_zklogin_proposal) {
+        return false;
+    }
+    return copy_nonempty_c_string(g_state.request_id, output, output_size);
+}
+
+AgentQSessionValidationResult protocol_pin_approval_validate_sui_zklogin_proposal_session()
+{
+    if (!g_state.active ||
+        g_state.purpose != AgentQProtocolPinApprovalPurpose::sui_zklogin_proposal ||
         g_state.session_id[0] == '\0') {
         return AgentQSessionValidationResult::missing;
     }

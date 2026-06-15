@@ -40,7 +40,10 @@ import {
 } from "@stelis/agent-q-core/provider-protocol";
 
 const SUI_ADDRESS = "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133";
-const SUI_PUBLIC_KEY = "ImR/7u82MGC9QgWhZxoV8QoSNnZZGLG19jjYLzPPxGk=";
+const SUI_PUBLIC_KEY = "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp";
+const ZKLOGIN_ADDRESS = "0xd41c7cbc0cbccb9e7ab701373f3b5f082cc0024098f2ab561ff342107b91491f";
+const ZKLOGIN_PUBLIC_KEY =
+  "BRtodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ==";
 const SUI_SIGNATURE = Buffer.alloc(97, 1).toString("base64");
 const PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q personal message").toString("base64");
 
@@ -3108,6 +3111,55 @@ test("Wallet Standard connect and disconnect delegate through provider-sui witho
   assert.equal(wallet.accounts.length, 0);
   assert.equal(changes.length, 2);
   assert.deepEqual(changes.map((change) => change.accounts.length), [1, 0]);
+});
+
+test("Wallet Standard connect projects a zkLogin active account", async () => {
+  const core = {
+    ...createFakeCore(),
+    async getCapabilities() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        capabilities: [
+          {
+            id: "sui",
+            accounts: [{ keyScheme: "zklogin" }],
+            methods: [],
+          },
+        ],
+        signing: {
+          authorization: "policy",
+          methods: [
+            { chain: "sui", method: "sign_transaction" },
+          ],
+        },
+      };
+    },
+    async getAccounts() {
+      return {
+        source: "live",
+        deviceId: "device-1",
+        accounts: [
+          {
+            chain: "sui",
+            address: ZKLOGIN_ADDRESS,
+            publicKey: ZKLOGIN_PUBLIC_KEY,
+            keyScheme: "zklogin",
+          },
+        ],
+      };
+    },
+  };
+  const wallet = createAgentQSuiWallet({
+    provider: createAgentQSuiProvider({ core }),
+    getClient: fakeClient,
+    chains: ["sui:devnet"],
+  });
+  const connected = await wallet.features[StandardConnect].connect();
+  assert.equal(connected.accounts.length, 1);
+  assert.equal(connected.accounts[0].address, ZKLOGIN_ADDRESS);
+  assert.equal(Buffer.from(connected.accounts[0].publicKey).toString("base64"), ZKLOGIN_PUBLIC_KEY);
+  assert.deepEqual(connected.accounts[0].features, [SuiSignTransaction]);
 });
 
 test("Wallet Standard account features follow Firmware signing capability", async () => {

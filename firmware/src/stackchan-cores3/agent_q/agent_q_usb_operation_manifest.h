@@ -20,6 +20,8 @@ enum class AgentQUsbOperationHandlerSlot {
     policy_get,
     get_approval_history,
     policy_propose,
+    credential_prepare,
+    credential_propose,
     payload_upload_begin,
     payload_upload_chunk,
     payload_upload_finish,
@@ -33,6 +35,7 @@ enum class AgentQUsbOperationTerminalResultPolicy {
     signing_retained_result_read,
     signing_retained_result_ack,
     policy_update_result_history_marker,
+    credential_propose_result,
 };
 
 enum class AgentQUsbOperationReadSideEffectPolicy {

@@ -166,6 +166,9 @@ AgentQLocalResetCommitResult wipe_persistent_material_for_local_reset(
         case AgentQPersistentMaterialWipeResult::policy_update_marker_wipe_error:
             record_material_failure(ops, AgentQPersistentMaterialRuntimeFailure::local_reset_policy_update_marker_wipe_failed);
             return AgentQLocalResetCommitResult::policy_update_marker_wipe_error;
+        case AgentQPersistentMaterialWipeResult::zklogin_proof_wipe_error:
+            record_material_failure(ops, AgentQPersistentMaterialRuntimeFailure::local_reset_zklogin_proof_wipe_failed);
+            return AgentQLocalResetCommitResult::zklogin_proof_wipe_error;
         case AgentQPersistentMaterialWipeResult::material_remaining_error:
         default:
             record_material_failure(ops, AgentQPersistentMaterialRuntimeFailure::local_reset_material_remaining);

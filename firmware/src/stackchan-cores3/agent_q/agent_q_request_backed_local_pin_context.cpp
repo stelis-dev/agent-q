@@ -5,6 +5,7 @@
 
 #include "agent_q_policy_update_flow.h"
 #include "agent_q_protocol_pin_approval.h"
+#include "agent_q_sui_zklogin_proposal_flow.h"
 #include "agent_q_user_signing_confirmation.h"
 #include "agent_q_user_signing_flow.h"
 
@@ -16,6 +17,7 @@ AgentQRequestBackedLocalPinOwner request_backed_local_pin_owner_for_purpose(
     switch (purpose) {
         case AgentQLocalPinAuthPurpose::connect:
         case AgentQLocalPinAuthPurpose::policy_update:
+        case AgentQLocalPinAuthPurpose::sui_zklogin_proposal:
             return AgentQRequestBackedLocalPinOwner::protocol_pin_approval;
         case AgentQLocalPinAuthPurpose::user_signing:
             return AgentQRequestBackedLocalPinOwner::user_signing;
@@ -140,6 +142,11 @@ bool request_backed_local_pin_pause_input_window(
             if (purpose == AgentQLocalPinAuthPurpose::policy_update &&
                 policy_update_flow_mark_pin_verifying() !=
                     AgentQPolicyUpdateFlowTransitionResult::ok) {
+                return false;
+            }
+            if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
+                sui_zklogin_proposal_flow_mark_pin_verifying() !=
+                    AgentQSuiZkLoginProposalTransitionResult::ok) {
                 return false;
             }
             return protocol_pin_approval_pause_deadline_for_local_pin_purpose(

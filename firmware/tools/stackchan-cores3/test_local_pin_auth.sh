@@ -416,6 +416,10 @@ int main()
                "stale policy update PIN window is rejected by state owner");
         expect(!agent_q::local_pin_auth_begin_policy_update(200, pin_window(220, 260)),
                "future policy update PIN window is rejected by state owner");
+        expect(!agent_q::local_pin_auth_begin_sui_zklogin_proposal(200, pin_window(100, 150)),
+               "stale Sui zkLogin PIN window is rejected by state owner");
+        expect(!agent_q::local_pin_auth_begin_sui_zklogin_proposal(200, pin_window(220, 260)),
+               "future Sui zkLogin PIN window is rejected by state owner");
     }
 
     {
@@ -635,6 +639,25 @@ int main()
             agent_q::AgentQLocalPinAuthPurpose::policy_update,
             agent_q::AgentQLocalPinAuthStage::pin_verifying,
             "policy update waits for caller-owned terminal handling");
+        agent_q::local_pin_auth_clear_flow();
+    }
+
+    {
+        agent_q::test_set_tick(410);
+        expect(agent_q::local_pin_auth_begin_sui_zklogin_proposal(410, pin_window(410, 470)),
+               "Sui zkLogin proposal PIN auth begins");
+        enter_pin("123456");
+        expect(agent_q::local_pin_auth_submit(411, 0, test_input_window(470), 440) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "Sui zkLogin proposal starts current-PIN verification");
+        agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
+        expect(agent_q::local_pin_auth_complete_verify_job(verify_result, pin_window(411, 470), 0, 0) ==
+                   agent_q::AgentQLocalPinAuthVerifyResult::verified_sui_zklogin_proposal,
+               "verified Sui zkLogin proposal returns proposal result");
+        expect_stage(
+            agent_q::AgentQLocalPinAuthPurpose::sui_zklogin_proposal,
+            agent_q::AgentQLocalPinAuthStage::pin_verifying,
+            "Sui zkLogin proposal waits for caller-owned terminal handling");
         agent_q::local_pin_auth_clear_flow();
     }
 

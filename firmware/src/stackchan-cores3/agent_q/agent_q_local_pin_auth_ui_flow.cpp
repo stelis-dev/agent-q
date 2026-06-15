@@ -10,6 +10,7 @@
 #include "agent_q_local_reset.h"
 #include "agent_q_modal_transition.h"
 #include "agent_q_request_backed_local_pin_context.h"
+#include "agent_q_sui_zklogin_proposal_flow.h"
 #include "agent_q_user_signing_confirmation.h"
 #include "agent_q_user_signing_flow.h"
 
@@ -170,6 +171,32 @@ void finish_user_signing_error_terminal(
     }
 }
 
+void finish_sui_zklogin_proposal_terminal(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    const char* request_id,
+    AgentQSuiZkLoginProposalTerminalResult result)
+{
+    if (ops.finish_sui_zklogin_proposal_terminal != nullptr) {
+        ops.finish_sui_zklogin_proposal_terminal(request_id, result);
+    }
+}
+
+void finish_sui_zklogin_proposal_error_terminal(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    const char* request_id,
+    const char* error_code,
+    const char* error_message,
+    const char* display_message)
+{
+    if (ops.finish_sui_zklogin_proposal_error_terminal != nullptr) {
+        ops.finish_sui_zklogin_proposal_error_terminal(
+            request_id,
+            error_code,
+            error_message,
+            display_message);
+    }
+}
+
 void complete_local_pin_processing_to_message(
     const AgentQLocalPinAuthUiFlowOps& ops,
     const char* message,
@@ -193,6 +220,16 @@ void complete_local_pin_to_user_error_terminal(
 void complete_local_pin_to_user_terminal(
     const AgentQLocalPinAuthUiFlowOps& ops,
     const char* request_id);
+void complete_local_pin_processing_to_sui_zklogin_terminal(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    const char* request_id,
+    AgentQSuiZkLoginProposalTerminalResult result);
+void complete_local_pin_to_sui_zklogin_error_terminal(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    const char* request_id,
+    const char* error_code,
+    const char* error_message,
+    const char* display_message);
 
 bool pending_request_id_for_local_pin_purpose(
     AgentQLocalPinAuthPurpose purpose,
@@ -322,6 +359,25 @@ void handle_local_pin_auth_display_failure(
             "Display error");
         return;
     }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
+        protocol_pin_approval_request_id_for_local_pin_purpose(
+            AgentQLocalPinAuthPurpose::sui_zklogin_proposal,
+            request_id,
+            sizeof(request_id))) {
+        wipe_local_pin_auth_scratch(ops, reason);
+        if (clear_panel) {
+            complete_local_pin_processing_to_sui_zklogin_terminal(
+                ops,
+                request_id,
+                sui_zklogin_proposal_flow_record_ui_error());
+            return;
+        }
+        finish_sui_zklogin_proposal_terminal(
+            ops,
+            request_id,
+            sui_zklogin_proposal_flow_record_ui_error());
+        return;
+    }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::connect &&
         protocol_pin_approval_request_id_for_local_pin_purpose(
             AgentQLocalPinAuthPurpose::connect,
@@ -380,6 +436,14 @@ bool finish_request_backed_local_pin_input_timeout_if_reached(
                     ops,
                     request_id,
                     policy_update_flow_record_timed_out(wall_clock_ms_or_zero(ops)));
+                return true;
+            }
+            if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
+                request_id[0] != '\0') {
+                complete_local_pin_processing_to_sui_zklogin_terminal(
+                    ops,
+                    request_id,
+                    sui_zklogin_proposal_flow_record_timed_out());
                 return true;
             }
             if (purpose == AgentQLocalPinAuthPurpose::connect &&
@@ -669,6 +733,82 @@ void complete_local_pin_to_user_terminal(
         &context);
 }
 
+struct SuiZkLoginProposalErrorTerminalContext {
+    const AgentQLocalPinAuthUiFlowOps* ops = nullptr;
+    const char* request_id = nullptr;
+    const char* error_code = nullptr;
+    const char* error_message = nullptr;
+    const char* display_message = nullptr;
+};
+
+void finish_sui_zklogin_proposal_error_terminal_for_transition(void* context)
+{
+    const auto* terminal_context =
+        static_cast<const SuiZkLoginProposalErrorTerminalContext*>(context);
+    if (terminal_context == nullptr || terminal_context->ops == nullptr) {
+        return;
+    }
+    finish_sui_zklogin_proposal_error_terminal(
+        *terminal_context->ops,
+        terminal_context->request_id,
+        terminal_context->error_code,
+        terminal_context->error_message,
+        terminal_context->display_message);
+}
+
+void complete_local_pin_to_sui_zklogin_error_terminal(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    const char* request_id,
+    const char* error_code,
+    const char* error_message,
+    const char* display_message)
+{
+    SuiZkLoginProposalErrorTerminalContext context{
+        &ops,
+        request_id,
+        error_code,
+        error_message,
+        display_message};
+    modal_transition_complete_to_result(
+        modal_transition_ops(ops),
+        AgentQUiPanelKind::local_pin_auth,
+        finish_sui_zklogin_proposal_error_terminal_for_transition,
+        &context);
+}
+
+struct SuiZkLoginProposalTerminalContext {
+    const AgentQLocalPinAuthUiFlowOps* ops = nullptr;
+    const char* request_id = nullptr;
+    AgentQSuiZkLoginProposalTerminalResult result =
+        AgentQSuiZkLoginProposalTerminalResult::invalid_state;
+};
+
+void finish_sui_zklogin_proposal_terminal_for_transition(void* context)
+{
+    const auto* terminal_context =
+        static_cast<const SuiZkLoginProposalTerminalContext*>(context);
+    if (terminal_context == nullptr || terminal_context->ops == nullptr) {
+        return;
+    }
+    finish_sui_zklogin_proposal_terminal(
+        *terminal_context->ops,
+        terminal_context->request_id,
+        terminal_context->result);
+}
+
+void complete_local_pin_processing_to_sui_zklogin_terminal(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    const char* request_id,
+    AgentQSuiZkLoginProposalTerminalResult result)
+{
+    SuiZkLoginProposalTerminalContext context{&ops, request_id, result};
+    modal_transition_complete_processing_to_result(
+        modal_transition_ops(ops),
+        AgentQUiPanelKind::local_pin_auth,
+        finish_sui_zklogin_proposal_terminal_for_transition,
+        &context);
+}
+
 struct DrawReviewPanelContext {
     const AgentQLocalPinAuthUiFlowOps* ops = nullptr;
     AgentQLocalPinAuthPurpose purpose = AgentQLocalPinAuthPurpose::none;
@@ -693,6 +833,9 @@ bool draw_review_panel_for_transition(void* context)
         case AgentQLocalPinAuthPurpose::user_signing:
             return draw_context->ops->show_user_signing_review != nullptr &&
                    draw_context->ops->show_user_signing_review();
+        case AgentQLocalPinAuthPurpose::sui_zklogin_proposal:
+            return draw_context->ops->show_sui_zklogin_review != nullptr &&
+                   draw_context->ops->show_sui_zklogin_review();
         default:
             return false;
     }
@@ -803,6 +946,65 @@ bool local_pin_auth_ui_begin_connect(
         }
         protocol_pin_approval_clear();
         show_message(ops, "Display error", AgentQMessageKind::error);
+        return false;
+    }
+    return true;
+}
+
+bool local_pin_auth_ui_begin_sui_zklogin_proposal(
+    const char* request_id,
+    const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    identification_display_clear();
+    const TickType_t now = now_or_zero(ops);
+    const AgentQSuiZkLoginProposalSnapshot snapshot =
+        sui_zklogin_proposal_flow_snapshot();
+    if (!snapshot.active ||
+        snapshot.stage != AgentQSuiZkLoginProposalStage::pin_entry ||
+        snapshot.request_id == nullptr ||
+        strcmp(snapshot.request_id, request_id) != 0) {
+        finish_sui_zklogin_proposal_error_terminal(
+            ops,
+            request_id,
+            "invalid_state",
+            "Sui zkLogin proposal is unavailable.",
+            "zkLogin unavailable");
+        return false;
+    }
+    if (!protocol_pin_approval_begin_sui_zklogin_proposal(
+            request_id,
+            snapshot.session_id,
+            now,
+            snapshot.request_window)) {
+        finish_sui_zklogin_proposal_error_terminal(
+            ops,
+            request_id,
+            "invalid_state",
+            "Sui zkLogin proposal PIN is unavailable.",
+            "zkLogin unavailable");
+        return false;
+    }
+    if (!local_pin_auth_begin_sui_zklogin_proposal(
+            now,
+            snapshot.request_window)) {
+        protocol_pin_approval_clear();
+        finish_sui_zklogin_proposal_error_terminal(
+            ops,
+            request_id,
+            "invalid_state",
+            "Sui zkLogin proposal PIN is unavailable.",
+            "zkLogin unavailable");
+        return false;
+    }
+
+    if (!draw_local_pin_panel(ops, "Approve Sui zkLogin")) {
+        wipe_local_pin_auth_scratch(
+            ops,
+            "Sui zkLogin proposal PIN display allocation failed");
+        finish_sui_zklogin_proposal_terminal(
+            ops,
+            request_id,
+            sui_zklogin_proposal_flow_record_ui_error());
         return false;
     }
     return true;
@@ -987,6 +1189,36 @@ void local_pin_auth_ui_cancel(
                 ops,
                 request_id,
                 policy_update_flow_record_ui_error());
+        }
+        return;
+    }
+    if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
+        request_id[0] != '\0') {
+        wipe_local_pin_auth_scratch(ops, "local PIN authorization canceled");
+        protocol_pin_approval_clear();
+        const AgentQSuiZkLoginProposalTransitionResult transition =
+            sui_zklogin_proposal_flow_return_to_review(now);
+        if (transition == AgentQSuiZkLoginProposalTransitionResult::timed_out) {
+            complete_local_pin_processing_to_sui_zklogin_terminal(
+                ops,
+                request_id,
+                sui_zklogin_proposal_flow_record_timed_out());
+            return;
+        }
+        if (transition != AgentQSuiZkLoginProposalTransitionResult::ok) {
+            complete_local_pin_to_sui_zklogin_error_terminal(
+                ops,
+                request_id,
+                "invalid_state",
+                "Sui zkLogin proposal is unavailable.",
+                "zkLogin unavailable");
+            return;
+        }
+        if (!complete_local_pin_to_review_panel(ops, purpose)) {
+            complete_local_pin_processing_to_sui_zklogin_terminal(
+                ops,
+                request_id,
+                sui_zklogin_proposal_flow_record_ui_error());
         }
         return;
     }
@@ -1394,6 +1626,13 @@ void local_pin_auth_ui_handle_verify_worker_result(
                     AgentQMessageKind::error);
                 return;
             }
+            if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal) {
+                complete_local_pin_processing_to_sui_zklogin_terminal(
+                    ops,
+                    request_id,
+                    AgentQSuiZkLoginProposalTerminalResult::consistency_error);
+                return;
+            }
             if (ops.write_connect_rejected != nullptr) {
                 ops.write_connect_rejected(
                     request_id,
@@ -1432,7 +1671,8 @@ void local_pin_auth_ui_handle_verify_worker_result(
          result == AgentQLocalPinAuthVerifyResult::wrong_pin ||
          result == AgentQLocalPinAuthVerifyResult::verified_connect ||
          result == AgentQLocalPinAuthVerifyResult::verified_settings_policy_reset ||
-         result == AgentQLocalPinAuthVerifyResult::verified_policy_update) &&
+         result == AgentQLocalPinAuthVerifyResult::verified_policy_update ||
+         result == AgentQLocalPinAuthVerifyResult::verified_sui_zklogin_proposal) &&
         request_backed_local_pin_input_deadline_reached(purpose, now)) {
         if (finish_request_backed_local_pin_input_timeout_if_reached(
                 purpose,
@@ -1468,6 +1708,14 @@ void local_pin_auth_ui_handle_verify_worker_result(
                     AgentQMessageKind::error);
                 return;
             }
+            if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
+                request_id[0] != '\0') {
+                complete_local_pin_processing_to_sui_zklogin_terminal(
+                    ops,
+                    request_id,
+                    AgentQSuiZkLoginProposalTerminalResult::consistency_error);
+                return;
+            }
             if (request_id[0] != '\0') {
                 if (ops.write_connect_rejected != nullptr) {
                     ops.write_connect_rejected(
@@ -1496,6 +1744,15 @@ void local_pin_auth_ui_handle_verify_worker_result(
                     ops);
                 return;
             }
+            if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
+                sui_zklogin_proposal_flow_return_to_pin_entry() !=
+                    AgentQSuiZkLoginProposalTransitionResult::ok) {
+                handle_local_pin_auth_display_failure(
+                    "Sui zkLogin proposal lockout stage transition failed",
+                    true,
+                    ops);
+                return;
+            }
             if (!draw_local_pin_panel(ops, "Too many wrong PINs. Wait 30s.")) {
                 handle_local_pin_auth_display_failure(
                     "local PIN authorization display allocation failed after wrong PIN",
@@ -1509,6 +1766,15 @@ void local_pin_auth_ui_handle_verify_worker_result(
                     AgentQPolicyUpdateFlowTransitionResult::ok) {
                 handle_local_pin_auth_display_failure(
                     "policy update wrong-PIN stage transition failed",
+                    true,
+                    ops);
+                return;
+            }
+            if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
+                sui_zklogin_proposal_flow_return_to_pin_entry() !=
+                    AgentQSuiZkLoginProposalTransitionResult::ok) {
+                handle_local_pin_auth_display_failure(
+                    "Sui zkLogin proposal wrong-PIN stage transition failed",
                     true,
                     ops);
                 return;
@@ -1626,6 +1892,34 @@ void local_pin_auth_ui_handle_verify_worker_result(
             const AgentQPolicyUpdateFlowTerminalResult commit_result =
                 policy_update_flow_commit(wall_clock_ms_or_zero(ops));
             complete_local_pin_processing_to_policy_terminal(
+                ops,
+                request_id,
+                commit_result);
+            return;
+        }
+        case AgentQLocalPinAuthVerifyResult::verified_sui_zklogin_proposal: {
+            char request_id[kMaxRequestIdSize] = {};
+            pending_request_id_for_local_pin_purpose(
+                AgentQLocalPinAuthPurpose::sui_zklogin_proposal,
+                request_id,
+                sizeof(request_id));
+            if (ops.require_pending_sui_zklogin_proposal_session == nullptr ||
+                !ops.require_pending_sui_zklogin_proposal_session(request_id)) {
+                wipe_local_pin_auth_scratch(
+                    ops,
+                    "Sui zkLogin proposal PIN approved but session was unavailable");
+                complete_local_pin_to_sui_zklogin_error_terminal(
+                    ops,
+                    request_id,
+                    "invalid_state",
+                    "Sui zkLogin proposal is unavailable.",
+                    "zkLogin unavailable");
+                return;
+            }
+            wipe_local_pin_auth_scratch(ops, "Sui zkLogin proposal PIN approved");
+            const AgentQSuiZkLoginProposalTerminalResult commit_result =
+                sui_zklogin_proposal_flow_commit();
+            complete_local_pin_processing_to_sui_zklogin_terminal(
                 ops,
                 request_id,
                 commit_result);
@@ -1766,6 +2060,14 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
                     AgentQMessageKind::error);
                 return;
             }
+            if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
+                request_id[0] != '\0') {
+                complete_local_pin_processing_to_sui_zklogin_terminal(
+                    ops,
+                    request_id,
+                    AgentQSuiZkLoginProposalTerminalResult::consistency_error);
+                return;
+            }
             if (request_id[0] != '\0') {
                 if (ops.write_connect_rejected != nullptr) {
                     ops.write_connect_rejected(
@@ -1790,6 +2092,14 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
                 ops,
                 request_id,
                 policy_update_flow_record_timed_out(wall_clock_ms_or_zero(ops)));
+            return;
+        }
+        if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
+            request_id[0] != '\0') {
+            complete_local_pin_processing_to_sui_zklogin_terminal(
+                ops,
+                request_id,
+                sui_zklogin_proposal_flow_record_timed_out());
             return;
         }
         if (request_id[0] != '\0') {
@@ -1955,6 +2265,15 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
                     policy_update_flow_record_ui_error());
                 return;
             }
+            if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
+                request_id[0] != '\0') {
+                wipe_local_pin_auth_scratch(ops, "Sui zkLogin proposal PIN UI recovery failed");
+                finish_sui_zklogin_proposal_terminal(
+                    ops,
+                    request_id,
+                    sui_zklogin_proposal_flow_record_ui_error());
+                return;
+            }
             if (purpose == AgentQLocalPinAuthPurpose::connect &&
                 request_id[0] != '\0') {
                 if (ops.write_connect_rejected != nullptr) {
@@ -1989,6 +2308,21 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
                     result);
             } else {
                 finish_policy_update_terminal(ops, request_id, result);
+            }
+            return;
+        }
+        if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal) {
+            const AgentQSuiZkLoginProposalTerminalResult result =
+                expired
+                    ? sui_zklogin_proposal_flow_record_timed_out()
+                    : sui_zklogin_proposal_flow_record_rejected();
+            if (panel_active) {
+                complete_local_pin_processing_to_sui_zklogin_terminal(
+                    ops,
+                    request_id,
+                    result);
+            } else {
+                finish_sui_zklogin_proposal_terminal(ops, request_id, result);
             }
             return;
         }

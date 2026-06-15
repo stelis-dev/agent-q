@@ -99,6 +99,8 @@ int main()
     expect_type("policy_get", Type::policy_get);
     expect_type("get_approval_history", Type::get_approval_history);
     expect_type("policy_propose", Type::policy_propose);
+    expect_type("credential_prepare", Type::credential_prepare);
+    expect_type("credential_propose", Type::credential_propose);
     expect_type("payload_upload_begin", Type::payload_upload_begin);
     expect_type("payload_upload_chunk", Type::payload_upload_chunk);
     expect_type("payload_upload_finish", Type::payload_upload_finish);
@@ -116,6 +118,8 @@ int main()
     expect_payload_kind(Type::ack_result, agent_q::AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup);
     expect_payload_kind(Type::connect, agent_q::AgentQPayloadDeliveryOperationKind::connect);
     expect_payload_kind(Type::policy_propose, agent_q::AgentQPayloadDeliveryOperationKind::policy_propose);
+    expect_payload_kind(Type::credential_prepare, agent_q::AgentQPayloadDeliveryOperationKind::safe_read);
+    expect_payload_kind(Type::credential_propose, agent_q::AgentQPayloadDeliveryOperationKind::credential_propose);
 
     expect_terminal_policy(
         Type::get_result,
@@ -126,6 +130,12 @@ int main()
     expect_terminal_policy(
         Type::policy_propose,
         agent_q::AgentQUsbOperationTerminalResultPolicy::policy_update_result_history_marker);
+    expect_terminal_policy(
+        Type::credential_prepare,
+        agent_q::AgentQUsbOperationTerminalResultPolicy::immediate_response);
+    expect_terminal_policy(
+        Type::credential_propose,
+        agent_q::AgentQUsbOperationTerminalResultPolicy::credential_propose_result);
     expect_terminal_policy(
         Type::sign_transaction,
         agent_q::AgentQUsbOperationTerminalResultPolicy::signing_retained_result);
@@ -139,6 +149,7 @@ int main()
     assert(agent_q::usb_operation_is_retained_result_read_cleanup(Type::get_result));
     assert(agent_q::usb_operation_is_retained_result_read_cleanup(Type::ack_result));
     assert(!agent_q::usb_operation_is_retained_result_read_cleanup(Type::policy_propose));
+    assert(!agent_q::usb_operation_is_retained_result_read_cleanup(Type::credential_propose));
 
     printf("USB operation type tests passed\n");
     return 0;

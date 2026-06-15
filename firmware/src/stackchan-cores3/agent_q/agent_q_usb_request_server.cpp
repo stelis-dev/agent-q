@@ -56,6 +56,9 @@
 #include "agent_q_sui_account_store.h"
 #include "agent_q_sui_signing_preparation.h"
 #include "agent_q_sui_signing_service.h"
+#include "agent_q_sui_zklogin_proof_store.h"
+#include "agent_q_sui_zklogin_proposal_flow.h"
+#include "agent_q_sui_zklogin_review_ui_flow.h"
 #include "agent_q_timeout_window.h"
 #include "agent_q_transient_ui_flow.h"
 #include "agent_q_usb_link_state.h"
@@ -78,6 +81,8 @@
 #include "agent_q_usb_session_read_handlers.h"
 #include "agent_q_usb_signing_handlers.h"
 #include "agent_q_usb_signing_result_writer.h"
+#include "agent_q_usb_sui_zklogin_credential_handlers.h"
+#include "agent_q_usb_sui_zklogin_credential_result_writer.h"
 #include "agent_q_usb_response_writer.h"
 #include "agent_q_ui_event_bridge.h"
 #include "agent_q_signing_retry_delivery.h"
@@ -180,12 +185,14 @@ agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops();
 agent_q::AgentQLocalSettingsResetUiFlowOps local_settings_reset_ui_ops();
 agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops();
 const agent_q::AgentQPolicyUpdateReviewUiFlowOps& policy_update_review_ui_flow_ops();
+const agent_q::AgentQSuiZkLoginReviewUiFlowOps& sui_zklogin_review_ui_flow_ops();
 const agent_q::AgentQUserSigningReviewUiFlowOps& user_signing_review_ui_flow_ops();
 bool clear_agent_q_panel_if_kind(
     AgentQUiPanelKind expected_kind,
     SensitiveUiClearPolicy policy = SensitiveUiClearPolicy::wipe);
 void clear_connect_review_state();
 void cancel_policy_update_after_session_loss(const char* log_reason);
+void cancel_sui_zklogin_proposal_after_session_loss(const char* log_reason);
 void cancel_user_signing_after_session_loss(const char* log_reason);
 void show_persistent_error_recovery_if_needed();
 void finish_user_signing_terminal(
@@ -200,6 +207,14 @@ void finish_policy_update_terminal(
     const char* request_id,
     agent_q::AgentQPolicyUpdateFlowTerminalResult result);
 void finish_policy_update_error_terminal(
+    const char* request_id,
+    const char* error_code,
+    const char* error_message,
+    const char* display_message);
+void finish_sui_zklogin_proposal_terminal(
+    const char* request_id,
+    agent_q::AgentQSuiZkLoginProposalTerminalResult result);
+void finish_sui_zklogin_proposal_error_terminal(
     const char* request_id,
     const char* error_code,
     const char* error_message,
@@ -262,6 +277,15 @@ bool policy_update_review_panel_matches_stage(AgentQUiPanelKind kind)
            snapshot.stage == agent_q::AgentQPolicyUpdateFlowStage::reviewing;
 }
 
+bool sui_zklogin_review_panel_matches_stage(AgentQUiPanelKind kind)
+{
+    const agent_q::AgentQSuiZkLoginProposalSnapshot snapshot =
+        agent_q::sui_zklogin_proposal_flow_snapshot();
+    return kind == AgentQUiPanelKind::sui_zklogin_review &&
+           snapshot.active &&
+           snapshot.stage == agent_q::AgentQSuiZkLoginProposalStage::reviewing;
+}
+
 bool local_pin_auth_accepts_keypad_input()
 {
     return agent_q::local_pin_auth_ui_accepts_keypad_input();
@@ -291,6 +315,7 @@ agent_q::AgentQUiPanelCleanupPlan panel_cleanup_plan(
         local_reset_panel_matches_stage(panel_kind),
         local_pin_auth_panel_matches_stage(panel_kind),
         policy_update_review_panel_matches_stage(panel_kind),
+        sui_zklogin_review_panel_matches_stage(panel_kind),
         user_signing_review_panel_matches_stage(panel_kind),
     });
 }
@@ -322,6 +347,9 @@ void apply_panel_cleanup_plan(
     if (plan.recover_policy_update_review_panel) {
         ESP_LOGW(kTag, "Policy update review panel deleted; state loop will recover if active");
     }
+    if (plan.recover_sui_zklogin_review_panel) {
+        ESP_LOGW(kTag, "Sui zkLogin review panel deleted; state loop will recover if active");
+    }
     if (plan.wipe_user_signing) {
         agent_q::user_signing_confirmation_cancel_for_pin_loss();
     }
@@ -352,6 +380,7 @@ agent_q::AgentQDeviceActivityProjection current_device_activity()
         payload_delivery.state == agent_q::AgentQPayloadDeliveryState::receiving,
         payload_delivery.state == agent_q::AgentQPayloadDeliveryState::finalized,
         agent_q::policy_update_flow_snapshot(),
+        agent_q::sui_zklogin_proposal_flow_snapshot(),
         agent_q::local_reset_snapshot(now),
         agent_q::user_signing_flow_core_snapshot(),
     };
@@ -779,6 +808,8 @@ agent_q::AgentQUsbSessionLossProtocolPinPurpose protocol_pin_loss_purpose(
             return agent_q::AgentQUsbSessionLossProtocolPinPurpose::connect;
         case agent_q::AgentQProtocolPinApprovalPurpose::policy_update:
             return agent_q::AgentQUsbSessionLossProtocolPinPurpose::policy_update;
+        case agent_q::AgentQProtocolPinApprovalPurpose::sui_zklogin_proposal:
+            return agent_q::AgentQUsbSessionLossProtocolPinPurpose::sui_zklogin_proposal;
         case agent_q::AgentQProtocolPinApprovalPurpose::none:
             return agent_q::AgentQUsbSessionLossProtocolPinPurpose::other;
     }
@@ -796,6 +827,8 @@ agent_q::AgentQUsbSessionLossLocalPinPurpose local_pin_loss_purpose(
             return agent_q::AgentQUsbSessionLossLocalPinPurpose::connect;
         case LocalPinAuthPurpose::policy_update:
             return agent_q::AgentQUsbSessionLossLocalPinPurpose::policy_update;
+        case LocalPinAuthPurpose::sui_zklogin_proposal:
+            return agent_q::AgentQUsbSessionLossLocalPinPurpose::sui_zklogin_proposal;
         case LocalPinAuthPurpose::user_signing:
             return agent_q::AgentQUsbSessionLossLocalPinPurpose::user_signing;
         case LocalPinAuthPurpose::none:
@@ -822,6 +855,7 @@ agent_q::AgentQUsbSessionLossPlan current_usb_session_loss_plan(TickType_t now)
 	        protocol_pin_loss_purpose(protocol_pin),
 	        local_pin_loss_purpose(pin_auth),
 	        agent_q::policy_update_flow_active(),
+	        agent_q::sui_zklogin_proposal_flow_active(),
 	        user_signing.active,
 	        user_signing.stage == agent_q::AgentQUserSigningStage::signing_critical_section,
 	    });
@@ -882,6 +916,9 @@ void clear_usb_session_state_for_host_loss()
     if (plan.clear_policy_update_flow) {
         agent_q::policy_update_flow_clear();
     }
+    if (plan.clear_sui_zklogin_proposal_flow) {
+        agent_q::sui_zklogin_proposal_flow_clear();
+    }
     if (plan.cancel_user_signing) {
         cancel_user_signing_after_session_loss("USB host link lost during user_signing");
     }
@@ -893,6 +930,9 @@ void clear_usb_session_state_for_host_loss()
     }
     if (plan.clear_policy_update_review_panel) {
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::policy_update_review, SensitiveUiClearPolicy::preserve);
+    }
+    if (plan.clear_sui_zklogin_review_panel) {
+        clear_agent_q_panel_if_kind(AgentQUiPanelKind::sui_zklogin_review, SensitiveUiClearPolicy::preserve);
     }
     if (plan.clear_user_signing_review_panel) {
         clear_agent_q_panel_if_kind(AgentQUiPanelKind::user_signing_review, SensitiveUiClearPolicy::preserve);
@@ -1140,6 +1180,13 @@ bool write_payload_delivery_policy_propose_busy(const char* id)
         agent_q::AgentQUsbOperationType::policy_propose);
 }
 
+bool write_payload_delivery_credential_propose_busy(const char* id)
+{
+    return write_busy_if_pending_or_local_flow_active_for_operation(
+        id,
+        agent_q::AgentQUsbOperationType::credential_propose);
+}
+
 bool write_payload_delivery_disconnect_admission_error(
     const char* id,
     agent_q::AgentQUsbOperationType operation)
@@ -1246,6 +1293,11 @@ bool show_policy_update_review()
     return agent_q::policy_update_review_ui_show(policy_update_review_ui_flow_ops());
 }
 
+bool show_sui_zklogin_review()
+{
+    return agent_q::sui_zklogin_review_ui_show(sui_zklogin_review_ui_flow_ops());
+}
+
 bool agent_q_ui_idle_for_local_settings()
 {
     LvglLockGuard lock;
@@ -1303,6 +1355,7 @@ bool require_active_matching_session(const char* id, const char* session_id)
             return false;
         case agent_q::AgentQSessionValidationResult::missing:
             cancel_policy_update_after_session_loss("active session missing during request validation");
+            cancel_sui_zklogin_proposal_after_session_loss("active session missing during request validation");
             cancel_user_signing_after_session_loss("active session missing during request validation");
             agent_q::usb_response_write_error(id, "invalid_session", "Session is unknown or already ended.");
             return false;
@@ -1356,6 +1409,57 @@ void cancel_policy_update_after_session_loss(const char* log_reason)
     }
 }
 
+void write_sui_zklogin_proposal_invalid_session_and_clear(
+    const char* request_id,
+    const char* log_reason)
+{
+    if (request_id != nullptr && request_id[0] != '\0') {
+        agent_q::usb_response_write_error(
+            request_id,
+            "invalid_session",
+            "Sui zkLogin proposal session is unknown or already ended.");
+    }
+    agent_q::sui_zklogin_proposal_flow_clear();
+    agent_q::protocol_pin_approval_clear();
+    ESP_LOGW(kTag, "Sui zkLogin proposal canceled: %s",
+             log_reason != nullptr ? log_reason : "invalid session");
+    agent_q::avatar_overlay_show_message(
+        "Session ended",
+        AgentQMessageKind::error,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+}
+
+void cancel_sui_zklogin_proposal_after_session_loss(const char* log_reason)
+{
+    char request_id[kMaxRequestIdSize] = {};
+    if (agent_q::protocol_pin_approval_sui_zklogin_proposal_request_id(
+            request_id,
+            sizeof(request_id))) {
+        const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
+            agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
+        if (pin_auth.flow_active &&
+            pin_auth.purpose == LocalPinAuthPurpose::sui_zklogin_proposal) {
+            wipe_local_pin_auth_scratch("session loss canceled pending Sui zkLogin proposal");
+            clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+        }
+        write_sui_zklogin_proposal_invalid_session_and_clear(request_id, log_reason);
+        return;
+    }
+
+    if (agent_q::sui_zklogin_proposal_flow_active()) {
+        const agent_q::AgentQSuiZkLoginProposalSnapshot snapshot =
+            agent_q::sui_zklogin_proposal_flow_snapshot();
+        clear_agent_q_panel_if_kind(
+            AgentQUiPanelKind::sui_zklogin_review,
+            SensitiveUiClearPolicy::preserve);
+        clear_agent_q_panel_if_kind(
+            AgentQUiPanelKind::local_pin_auth,
+            SensitiveUiClearPolicy::preserve);
+        write_sui_zklogin_proposal_invalid_session_and_clear(snapshot.request_id, log_reason);
+    }
+}
+
 void cancel_user_signing_after_session_loss(const char* log_reason)
 {
     const agent_q::AgentQUserSigningFlowCoreSnapshot snapshot =
@@ -1396,6 +1500,22 @@ bool require_pending_policy_update_session(const char* request_id)
     }
 }
 
+bool require_pending_sui_zklogin_proposal_session(const char* request_id)
+{
+    switch (agent_q::protocol_pin_approval_validate_sui_zklogin_proposal_session()) {
+        case agent_q::AgentQSessionValidationResult::ok:
+            return true;
+        case agent_q::AgentQSessionValidationResult::invalid_format:
+        case agent_q::AgentQSessionValidationResult::missing:
+        case agent_q::AgentQSessionValidationResult::mismatch:
+        default:
+            write_sui_zklogin_proposal_invalid_session_and_clear(
+                request_id,
+                "pending Sui zkLogin proposal session invalid");
+            return false;
+    }
+}
+
 agent_q::AgentQTimeoutWindow timeout_window_from_now_ms(
     TickType_t started_at,
     uint32_t duration_ms)
@@ -1403,6 +1523,23 @@ agent_q::AgentQTimeoutWindow timeout_window_from_now_ms(
     return agent_q::timeout_window_from_deadline(
         started_at,
         started_at + pdMS_TO_TICKS(duration_ms));
+}
+
+agent_q::AgentQTimeoutWindow make_sui_zklogin_proposal_window(
+    agent_q::AgentQTimeoutTick now)
+{
+    return timeout_window_from_now_ms(now, kProvisioningApprovalMaxMs);
+}
+
+bool show_sui_zklogin_proposal_review(const char* id)
+{
+    if (show_sui_zklogin_review()) {
+        return true;
+    }
+    finish_sui_zklogin_proposal_terminal(
+        id,
+        agent_q::sui_zklogin_proposal_flow_record_ui_error());
+    return false;
 }
 
 bool disconnect_pending_policy_update_for_session(const char* id, const char* session_id)
@@ -1462,6 +1599,79 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
     clear_active_session();
     if (agent_q::usb_response_write_disconnect_result(id)) {
         ESP_LOGI(kTag, "disconnect canceled pending policy update: id=%s", id);
+    } else {
+        agent_q::usb_response_log_write_failure("disconnect_result", id);
+    }
+    return true;
+}
+
+bool disconnect_pending_sui_zklogin_proposal_for_session(const char* id, const char* session_id)
+{
+    const agent_q::AgentQSuiZkLoginProposalSnapshot proposal_snapshot =
+        agent_q::sui_zklogin_proposal_flow_snapshot();
+    if (proposal_snapshot.active &&
+        session_id != nullptr &&
+        proposal_snapshot.session_id != nullptr &&
+        strcmp(proposal_snapshot.session_id, session_id) == 0) {
+        const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
+            agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
+        if (pin_auth.flow_active &&
+            pin_auth.purpose == LocalPinAuthPurpose::sui_zklogin_proposal) {
+            wipe_local_pin_auth_scratch("disconnect canceled pending Sui zkLogin proposal");
+            clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+        }
+        clear_agent_q_panel_if_kind(
+            AgentQUiPanelKind::sui_zklogin_review,
+            SensitiveUiClearPolicy::preserve);
+        if (proposal_snapshot.request_id != nullptr &&
+            proposal_snapshot.request_id[0] != '\0' &&
+            (id == nullptr || strcmp(proposal_snapshot.request_id, id) != 0)) {
+            agent_q::usb_response_write_error(
+                proposal_snapshot.request_id,
+                "invalid_session",
+                "Sui zkLogin proposal session is unknown or already ended.");
+        }
+        agent_q::sui_zklogin_proposal_flow_clear();
+        agent_q::protocol_pin_approval_clear();
+        clear_active_session();
+        if (agent_q::usb_response_write_disconnect_result(id)) {
+            ESP_LOGI(kTag, "disconnect canceled pending Sui zkLogin proposal: id=%s", id);
+        } else {
+            agent_q::usb_response_log_write_failure("disconnect_result", id);
+        }
+        return true;
+    }
+
+    if (!agent_q::protocol_pin_approval_sui_zklogin_proposal_session_matches(session_id)) {
+        return false;
+    }
+
+    char proposal_request_id[kMaxRequestIdSize] = {};
+    agent_q::protocol_pin_approval_sui_zklogin_proposal_request_id(
+        proposal_request_id,
+        sizeof(proposal_request_id));
+    const agent_q::AgentQLocalPinAuthSnapshot pin_auth =
+        agent_q::local_pin_auth_snapshot(xTaskGetTickCount());
+    if (pin_auth.flow_active &&
+        pin_auth.purpose == LocalPinAuthPurpose::sui_zklogin_proposal) {
+        wipe_local_pin_auth_scratch("disconnect canceled pending Sui zkLogin proposal");
+        clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+    }
+    clear_agent_q_panel_if_kind(
+        AgentQUiPanelKind::sui_zklogin_review,
+        SensitiveUiClearPolicy::preserve);
+    if (proposal_request_id[0] != '\0' &&
+        (id == nullptr || strcmp(proposal_request_id, id) != 0)) {
+        agent_q::usb_response_write_error(
+            proposal_request_id,
+            "invalid_session",
+            "Sui zkLogin proposal session is unknown or already ended.");
+    }
+    agent_q::sui_zklogin_proposal_flow_clear();
+    agent_q::protocol_pin_approval_clear();
+    clear_active_session();
+    if (agent_q::usb_response_write_disconnect_result(id)) {
+        ESP_LOGI(kTag, "disconnect canceled pending Sui zkLogin proposal: id=%s", id);
     } else {
         agent_q::usb_response_log_write_failure("disconnect_result", id);
     }
@@ -1612,7 +1822,7 @@ bool clear_agent_q_panel_if_kind(AgentQUiPanelKind expected_kind, SensitiveUiCle
 {
     LvglLockGuard lock;
     if (!agent_q::drawing_surface_panel_active(expected_kind)) {
-        return false;
+        return true;
     }
     clear_panel_locked(policy);
     return true;
@@ -1990,6 +2200,10 @@ agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops()
         write_policy_propose_result_with_current_policy,
         finish_policy_update_terminal,
         finish_policy_update_error_terminal,
+        require_pending_sui_zklogin_proposal_session,
+        finish_sui_zklogin_proposal_terminal,
+        finish_sui_zklogin_proposal_error_terminal,
+        show_sui_zklogin_review,
         show_user_signing_review,
         write_user_signing_confirmation_history,
         execute_user_signing_for_local_pin_auth,
@@ -2221,6 +2435,128 @@ void finish_policy_update_terminal(
     }
 }
 
+void clear_sui_zklogin_proposal_terminal_state()
+{
+    agent_q::sui_zklogin_proposal_flow_clear();
+    agent_q::protocol_pin_approval_clear();
+}
+
+bool sui_zklogin_proposal_terminal_ends_session(
+    agent_q::AgentQSuiZkLoginProposalTerminalResult result)
+{
+    return result == agent_q::AgentQSuiZkLoginProposalTerminalResult::activated ||
+           result == agent_q::AgentQSuiZkLoginProposalTerminalResult::consistency_error;
+}
+
+void finish_sui_zklogin_proposal_result_terminal(
+    const char* request_id,
+    agent_q::AgentQSuiZkLoginProposalTerminalResult result,
+    const char* display_message,
+    AgentQMessageKind display_kind)
+{
+    const bool session_ended = sui_zklogin_proposal_terminal_ends_session(result);
+    if (!agent_q::usb_sui_zklogin_credential_propose_result_write(
+            request_id,
+            result,
+            session_ended)) {
+        agent_q::usb_response_log_write_failure("credential_propose_result", request_id);
+    }
+    clear_sui_zklogin_proposal_terminal_state();
+    if (session_ended) {
+        clear_active_session();
+    }
+    agent_q::avatar_overlay_show_message(
+        display_message,
+        display_kind,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+}
+
+void finish_sui_zklogin_proposal_error_terminal(
+    const char* request_id,
+    const char* error_code,
+    const char* error_message,
+    const char* display_message)
+{
+    agent_q::usb_response_write_error(request_id, error_code, error_message);
+    clear_sui_zklogin_proposal_terminal_state();
+    agent_q::avatar_overlay_show_message(
+        display_message,
+        AgentQMessageKind::error,
+        AgentQUiMode::result,
+        kAgentQResultDisplayMs);
+}
+
+void finish_sui_zklogin_proposal_terminal(
+    const char* request_id,
+    agent_q::AgentQSuiZkLoginProposalTerminalResult result)
+{
+    if (request_id == nullptr || request_id[0] == '\0') {
+        clear_sui_zklogin_proposal_terminal_state();
+        return;
+    }
+
+    switch (result) {
+        case agent_q::AgentQSuiZkLoginProposalTerminalResult::activated:
+            finish_sui_zklogin_proposal_result_terminal(
+                request_id,
+                result,
+                "zkLogin activated",
+                AgentQMessageKind::success);
+            return;
+        case agent_q::AgentQSuiZkLoginProposalTerminalResult::rejected:
+            finish_sui_zklogin_proposal_result_terminal(
+                request_id,
+                result,
+                "zkLogin rejected",
+                AgentQMessageKind::rejected);
+            return;
+        case agent_q::AgentQSuiZkLoginProposalTerminalResult::timed_out:
+            finish_sui_zklogin_proposal_result_terminal(
+                request_id,
+                result,
+                "zkLogin timed out",
+                AgentQMessageKind::timeout);
+            return;
+        case agent_q::AgentQSuiZkLoginProposalTerminalResult::invalid_proof:
+            finish_sui_zklogin_proposal_result_terminal(
+                request_id,
+                result,
+                "zkLogin invalid",
+                AgentQMessageKind::error);
+            return;
+        case agent_q::AgentQSuiZkLoginProposalTerminalResult::ui_error:
+            finish_sui_zklogin_proposal_result_terminal(
+                request_id,
+                result,
+                "Display error",
+                AgentQMessageKind::error);
+            return;
+        case agent_q::AgentQSuiZkLoginProposalTerminalResult::storage_error:
+            finish_sui_zklogin_proposal_result_terminal(
+                request_id,
+                result,
+                "zkLogin failed",
+                AgentQMessageKind::error);
+            return;
+        case agent_q::AgentQSuiZkLoginProposalTerminalResult::consistency_error:
+            finish_sui_zklogin_proposal_result_terminal(
+                request_id,
+                result,
+                "zkLogin error",
+                AgentQMessageKind::error);
+            return;
+        case agent_q::AgentQSuiZkLoginProposalTerminalResult::invalid_state:
+        default:
+            finish_sui_zklogin_proposal_error_terminal(
+                request_id,
+                "invalid_state",
+                "Sui zkLogin proposal is unavailable.",
+                "zkLogin unavailable");
+            return;
+    }
+}
+
 void begin_policy_update_pin_auth_from_review()
 {
     agent_q::policy_update_review_ui_continue(policy_update_review_ui_flow_ops());
@@ -2234,6 +2570,16 @@ void handle_policy_update_review_continue_from_ui()
 void handle_policy_update_review_reject_from_ui()
 {
     agent_q::policy_update_review_ui_reject(policy_update_review_ui_flow_ops());
+}
+
+void handle_sui_zklogin_review_continue_from_ui()
+{
+    agent_q::sui_zklogin_review_ui_continue(sui_zklogin_review_ui_flow_ops());
+}
+
+void handle_sui_zklogin_review_reject_from_ui()
+{
+    agent_q::sui_zklogin_review_ui_reject(sui_zklogin_review_ui_flow_ops());
 }
 
 void handle_user_signing_review_accept_from_ui()
@@ -2394,6 +2740,11 @@ void clear_user_signing_review_if_needed()
 void clear_policy_update_review_if_needed()
 {
     agent_q::policy_update_review_ui_clear_if_needed(policy_update_review_ui_flow_ops());
+}
+
+void clear_sui_zklogin_review_if_needed()
+{
+    agent_q::sui_zklogin_review_ui_clear_if_needed(sui_zklogin_review_ui_flow_ops());
 }
 
 void poll_local_settings_touch_entry()
@@ -2692,6 +3043,16 @@ void drain_ui_events()
             continue;
         }
 
+        if (event.kind == AgentQUiEventKind::sui_zklogin_review_continue_requested) {
+            handle_sui_zklogin_review_continue_from_ui();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::sui_zklogin_review_reject_requested) {
+            handle_sui_zklogin_review_reject_from_ui();
+            continue;
+        }
+
         if (event.kind == AgentQUiEventKind::user_signing_review_accept_requested) {
             handle_user_signing_review_accept_from_ui();
             continue;
@@ -2901,17 +3262,6 @@ void handle_ack_result_request(
     agent_q::handle_usb_ack_result_request(id, request, writer, retained_result_handler_ops());
 }
 
-agent_q::SuiAccountDerivationResult derive_sui_account_for_session_read(
-    uint8_t public_key_out[agent_q::kSuiEd25519PublicKeyBytes],
-    char* address_out,
-    size_t address_out_size)
-{
-    return agent_q::derive_sui_ed25519_account_from_stored_root(
-        public_key_out,
-        address_out,
-        address_out_size);
-}
-
 void record_root_material_unreadable_for_session_read()
 {
     // A provisioned device whose stored root material is unreadable is inconsistent.
@@ -2968,6 +3318,12 @@ void record_active_policy_unavailable_for_session_read()
         persistent_material_ops());
 }
 
+bool sui_zklogin_credential_available_for_session_read()
+{
+    return agent_q::resolve_active_sui_identity().kind ==
+           agent_q::AgentQSuiActiveIdentityKind::native;
+}
+
 const agent_q::AgentQUsbSessionReadHandlerOps& session_read_handler_ops()
 {
     static const agent_q::AgentQUsbSessionReadHandlerOps ops = {
@@ -2976,7 +3332,8 @@ const agent_q::AgentQUsbSessionReadHandlerOps& session_read_handler_ops()
         write_payload_delivery_safe_read_admission_error,
         require_active_matching_session,
         agent_q::read_signing_authorization_mode,
-        derive_sui_account_for_session_read,
+        sui_zklogin_credential_available_for_session_read,
+        agent_q::resolve_active_sui_identity,
         record_root_material_unreadable_for_session_read,
         read_active_policy_for_session_read,
         record_active_policy_unavailable_for_session_read,
@@ -3090,6 +3447,7 @@ const agent_q::AgentQUsbDisconnectHandlerOps& disconnect_handler_ops()
     static const agent_q::AgentQUsbDisconnectHandlerOps ops = {
         require_active_matching_session,
         disconnect_pending_policy_update_for_session,
+        disconnect_pending_sui_zklogin_proposal_for_session,
         disconnect_pending_user_signing_for_session,
         write_busy_if_pending_or_local_flow_active_allow_settings,
         write_payload_delivery_disconnect_admission_error,
@@ -3166,6 +3524,48 @@ void handle_policy_propose_request(
     agent_q::handle_usb_policy_propose_request(id, request, writer, policy_propose_handler_ops());
 }
 
+const agent_q::AgentQUsbSuiZkLoginCredentialHandlerOps& sui_zklogin_credential_handler_ops()
+{
+    static const agent_q::AgentQUsbSuiZkLoginCredentialHandlerOps ops = {
+        provisioned_material_ready,
+        write_busy_if_pending_or_local_flow_active_allow_settings,
+        write_payload_delivery_credential_propose_busy,
+        write_payload_delivery_safe_read_admission_error,
+        require_active_matching_session,
+        agent_q::resolve_active_sui_identity,
+        current_timeout_tick,
+        make_sui_zklogin_proposal_window,
+        agent_q::sui_zklogin_proposal_flow_begin,
+        agent_q::sui_zklogin_proposal_begin_result_reason,
+        show_sui_zklogin_proposal_review,
+    };
+    return ops;
+}
+
+void handle_credential_prepare_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_credential_prepare_request(
+        id,
+        request,
+        writer,
+        sui_zklogin_credential_handler_ops());
+}
+
+void handle_credential_propose_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    agent_q::handle_usb_credential_propose_request(
+        id,
+        request,
+        writer,
+        sui_zklogin_credential_handler_ops());
+}
+
 void record_signing_account_unavailable_runtime_failure()
 {
     agent_q::persistent_material_record_runtime_failure(
@@ -3223,6 +3623,11 @@ bool policy_update_review_panel_active()
     return agent_q_panel_active(AgentQUiPanelKind::policy_update_review);
 }
 
+bool sui_zklogin_review_panel_active()
+{
+    return agent_q_panel_active(AgentQUiPanelKind::sui_zklogin_review);
+}
+
 bool user_signing_review_panel_active()
 {
     return agent_q_panel_active(AgentQUiPanelKind::user_signing_review);
@@ -3272,6 +3677,32 @@ const agent_q::AgentQPolicyUpdateReviewUiFlowOps& policy_update_review_ui_flow_o
         finish_policy_update_error_terminal,
         review_flow_log_warn,
         kProvisioningApprovalMaxMs,
+    };
+    return ops;
+}
+
+const agent_q::AgentQSuiZkLoginReviewUiFlowOps& sui_zklogin_review_ui_flow_ops()
+{
+    static const agent_q::AgentQSuiZkLoginReviewUiFlowOps ops = {
+        xTaskGetTickCount,
+        agent_q::sui_zklogin_proposal_flow_snapshot,
+        agent_q::modal_draw_sui_zklogin_review_panel,
+        clear_agent_q_panel_if_kind,
+        sui_zklogin_review_panel_active,
+        agent_q::identification_display_clear,
+        agent_q::sui_zklogin_proposal_flow_continue_to_pin,
+        agent_q::protocol_pin_approval_begin_sui_zklogin_proposal,
+        agent_q::protocol_pin_approval_clear,
+        agent_q::local_pin_auth_begin_sui_zklogin_proposal,
+        draw_local_pin_auth_panel_for_flow,
+        wipe_local_pin_auth_scratch,
+        agent_q::sui_zklogin_proposal_flow_deadline_reached,
+        agent_q::sui_zklogin_proposal_flow_record_timed_out,
+        agent_q::sui_zklogin_proposal_flow_record_rejected,
+        agent_q::sui_zklogin_proposal_flow_record_ui_error,
+        finish_sui_zklogin_proposal_terminal,
+        finish_sui_zklogin_proposal_error_terminal,
+        review_flow_log_warn,
     };
     return ops;
 }
@@ -3441,6 +3872,8 @@ const agent_q::AgentQUsbOperationHandlers& usb_operation_handlers()
         handle_policy_get_request,
         handle_get_approval_history_request,
         handle_policy_propose_request,
+        handle_credential_prepare_request,
+        handle_credential_propose_request,
         handle_payload_upload_begin_request,
         handle_payload_upload_chunk_request,
         handle_payload_upload_finish_request,
@@ -3480,6 +3913,7 @@ void run_usb_request_server_maintenance_phase()
     clear_local_reset_if_needed();
     clear_local_pin_auth_if_needed();
     clear_policy_update_review_if_needed();
+    clear_sui_zklogin_review_if_needed();
     clear_user_signing_review_if_needed();
 }
 

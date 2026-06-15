@@ -34,6 +34,7 @@ enum class AgentQLocalResetCommitResult {
     signing_mode_wipe_error,
     approval_history_wipe_error,
     policy_update_marker_wipe_error,
+    zklogin_proof_wipe_error,
     material_remaining_error,
     reset_marker_storage_error,
     state_storage_error,

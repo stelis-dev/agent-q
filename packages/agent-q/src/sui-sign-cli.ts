@@ -2,7 +2,9 @@ import type { AgentQCore } from "@stelis/agent-q-core";
 import { toAgentQError, toPublicError } from "@stelis/agent-q-core/adapter-internal";
 import {
   SIGN_RESULT_ERROR_MESSAGES,
+  SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
+  SUI_SIGNATURE_SCHEME_FLAG_ED25519,
   SUI_SIGN_TRANSACTION_NETWORKS,
   type Account,
   type SuiSignTransactionNetwork,
@@ -336,7 +338,7 @@ async function findDeviceAccount(
 ): Promise<Account> {
   const accounts = await readDeviceAccounts(dependencies);
   const account = accounts.find(
-    (entry) => entry.derivationPath === keyId || entry.address === keyId,
+    (entry) => entry.address === keyId || (entry.keyScheme === "ed25519" && entry.derivationPath === keyId),
   );
   if (account === undefined) {
     throw new Error("Requested key is not available on the Agent-Q device.");
@@ -366,10 +368,15 @@ async function signWithDevice(
       throw new Error(`The device is ${accounts.source} (${accounts.reason}).`);
     }
     const account = accounts.accounts.find(
-      (entry) => entry.derivationPath === input.expectedKeyId || entry.address === input.expectedKeyId,
+      (entry) =>
+        entry.address === input.expectedKeyId ||
+        (entry.keyScheme === "ed25519" && entry.derivationPath === input.expectedKeyId),
     );
     if (account === undefined) {
       throw new Error("Requested key is not available on the Agent-Q device.");
+    }
+    if (account.keyScheme !== "ed25519") {
+      throw new Error("Sui CLI external signer supports only the native Ed25519 account.");
     }
 
     const result = await dependencies.core.signTransaction({
@@ -406,11 +413,24 @@ async function loadSignerConfig(
 function accountToPublicKeyResponse(account: {
   address: string;
   publicKey: string;
-  derivationPath: string;
+  keyScheme: string;
+  derivationPath?: string;
 }): SuiExternalSignerPublicKeyResponse {
+  if (account.keyScheme !== "ed25519" || account.derivationPath === undefined) {
+    throw new Error("Sui CLI external signer supports only the native Ed25519 account.");
+  }
+  const schemePrefixedPublicKey = Buffer.from(account.publicKey, "base64");
+  if (
+    schemePrefixedPublicKey.length !== SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES ||
+    schemePrefixedPublicKey[0] !== SUI_SIGNATURE_SCHEME_FLAG_ED25519 ||
+    schemePrefixedPublicKey.toString("base64") !== account.publicKey
+  ) {
+    throw new Error("The device returned an unexpected public key shape.");
+  }
+  const rawPublicKey = Buffer.from(schemePrefixedPublicKey.subarray(1)).toString("base64");
   return {
     key_id: account.derivationPath,
-    public_key: { Ed25519: account.publicKey },
+    public_key: { Ed25519: rawPublicKey },
     sui_address: account.address,
   };
 }

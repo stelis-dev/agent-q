@@ -29,6 +29,8 @@ import {
   type ApprovalHistoryRecord,
   type CapabilityChain,
   type ConnectResponse,
+  type CredentialPrepareResultResponse,
+  type CredentialProposeResultResponse,
   type DeviceStatusSnapshot,
   type IdentifyDeviceResponse,
   type PolicyDocument,
@@ -41,6 +43,10 @@ import {
   type SigningCapabilities,
   type StatusResponse,
   validateApprovalHistoryInput,
+  validateCredentialPrepareInput,
+  validateCredentialPrepareRequestInput,
+  validateCredentialProposeInput,
+  validateCredentialProposeRequestInput,
   validatePolicyProposeInput,
   validatePolicyProposeRequestInput,
 } from "./protocol.js";
@@ -256,6 +262,28 @@ export type PolicyProposeResult =
     }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: PolicyProposeSessionEndedReason };
+
+export type CredentialPrepareResult =
+  | {
+      source: "live";
+      deviceId: string;
+      chain: CredentialPrepareResultResponse["chain"];
+      credential: CredentialPrepareResultResponse["credential"];
+      preparation: CredentialPrepareResultResponse["preparation"];
+    }
+  | { source: "not_connected"; deviceId: string; reason: "not_connected" }
+  | { source: "session_ended"; deviceId: string; reason: GetAccountsSessionEndedReason };
+
+export type CredentialProposeResult =
+  | {
+      source: "live";
+      deviceId: string;
+      status: CredentialProposeResultResponse["status"];
+      reasonCode: CredentialProposeResultResponse["reasonCode"];
+      sessionEnded: CredentialProposeResultResponse["sessionEnded"];
+    }
+  | { source: "not_connected"; deviceId: string; reason: "not_connected" }
+  | { source: "session_ended"; deviceId: string; reason: GetAccountsSessionEndedReason };
 
 type SignTerminalResponse = Extract<
   SignResultResponse,
@@ -851,6 +879,129 @@ export class AgentQCore {
     }
   }
 
+  async credentialPrepare(input: {
+    deviceId?: string;
+    purpose?: string;
+    chain: string;
+    credential: string;
+  }): Promise<CredentialPrepareResult> {
+    const target = await this.resolveTargetDevice(input);
+    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
+
+    const session = this.peekRuntimeSession(target.deviceId);
+    if (session === null) {
+      return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
+    }
+
+    rejectUnsupportedInputFields(input, CREDENTIAL_PREPARE_INPUT_KEYS, "credentialPrepare");
+    const params = validateCredentialPrepareInput({
+      chain: input.chain,
+      credential: input.credential,
+    });
+    validateCredentialPrepareRequestInput(session.sessionId, params);
+
+    let matchingPort: UsbStatusResult | undefined;
+    try {
+      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
+    } catch (error) {
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
+      if (reason !== null) {
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+
+    try {
+      const response = await this.usbDriver.credentialPrepare(
+        matchingPort.portPath,
+        session.sessionId,
+        scanDeadlineMs,
+      );
+      return {
+        source: "live",
+        deviceId: target.deviceId,
+        chain: response.chain,
+        credential: response.credential,
+        preparation: response.preparation,
+      };
+    } catch (error) {
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
+      if (reason !== null) {
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+  }
+
+  async credentialPropose(input: {
+    deviceId?: string;
+    purpose?: string;
+    chain: string;
+    credential: string;
+    network: unknown;
+    address: string;
+    publicKey: string;
+    maxEpoch: string;
+    inputs: unknown;
+  }): Promise<CredentialProposeResult> {
+    const target = await this.resolveTargetDevice(input);
+    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
+    const deadlineMs = INTERNAL_POLICY_UPDATE_DEADLINE_MS;
+
+    const session = this.peekRuntimeSession(target.deviceId);
+    if (session === null) {
+      return { source: "not_connected", deviceId: target.deviceId, reason: "not_connected" };
+    }
+
+    rejectUnsupportedInputFields(input, CREDENTIAL_PROPOSE_INPUT_KEYS, "credentialPropose");
+    const params = validateCredentialProposeInput({
+      chain: input.chain,
+      credential: input.credential,
+      network: input.network,
+      address: input.address,
+      publicKey: input.publicKey,
+      maxEpoch: input.maxEpoch,
+      inputs: input.inputs,
+    });
+    validateCredentialProposeRequestInput(session.sessionId, params);
+
+    let matchingPort: UsbStatusResult | undefined;
+    try {
+      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
+    } catch (error) {
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
+      if (reason !== null) {
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+
+    try {
+      const response = await this.usbDriver.credentialPropose(
+        matchingPort.portPath,
+        session.sessionId,
+        params,
+        deadlineMs,
+      );
+      if (response.sessionEnded) {
+        this.clearRuntimeSessionMirror(target.deviceId);
+      }
+      return {
+        source: "live",
+        deviceId: target.deviceId,
+        status: response.status,
+        reasonCode: response.reasonCode,
+        sessionEnded: response.sessionEnded,
+      };
+    } catch (error) {
+      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
+      if (reason !== null) {
+        return { source: "session_ended", deviceId: target.deviceId, reason };
+      }
+      throw error;
+    }
+  }
+
   async signTransaction(input: {
     deviceId?: string;
     purpose?: string;
@@ -1312,6 +1463,18 @@ const CONNECT_DEVICE_INPUT_KEYS = new Set(["deviceId", "purpose", "clientName"])
 const SET_DEVICE_METADATA_INPUT_KEYS = new Set(["deviceId", "label"]);
 const GET_APPROVAL_HISTORY_INPUT_KEYS = new Set(["deviceId", "purpose", "limit", "beforeSeq"]);
 const POLICY_PROPOSE_INPUT_KEYS = new Set(["deviceId", "purpose", "policy"]);
+const CREDENTIAL_PREPARE_INPUT_KEYS = new Set(["deviceId", "purpose", "chain", "credential"]);
+const CREDENTIAL_PROPOSE_INPUT_KEYS = new Set([
+  "deviceId",
+  "purpose",
+  "chain",
+  "credential",
+  "network",
+  "address",
+  "publicKey",
+  "maxEpoch",
+  "inputs",
+]);
 const SIGN_TRANSACTION_INPUT_KEYS = new Set(["deviceId", "purpose", "chain", "method", "network", "txBytes"]);
 const SIGN_PERSONAL_MESSAGE_INPUT_KEYS = new Set(["deviceId", "purpose", "chain", "method", "network", "message"]);
 

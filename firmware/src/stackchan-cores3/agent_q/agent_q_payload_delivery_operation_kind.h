@@ -12,6 +12,7 @@ enum class AgentQPayloadDeliveryOperationKind {
     sign_transaction,
     sign_personal_message,
     policy_propose,
+    credential_propose,
     connect,
     identify_device,
     disconnect,

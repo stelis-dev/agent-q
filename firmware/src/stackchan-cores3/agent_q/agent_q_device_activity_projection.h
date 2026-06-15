@@ -2,6 +2,7 @@
 
 #include "agent_q_local_reset.h"
 #include "agent_q_policy_update_flow.h"
+#include "agent_q_sui_zklogin_proposal_flow.h"
 #include "agent_q_user_signing_flow.h"
 
 namespace agent_q {
@@ -25,6 +26,7 @@ struct AgentQDeviceActivityFacts {
     bool payload_delivery_receiving;
     bool payload_delivery_finalized;
     AgentQPolicyUpdateFlowSnapshot policy_update;
+    AgentQSuiZkLoginProposalSnapshot sui_zklogin_proposal;
     AgentQLocalResetSnapshot local_reset;
     AgentQUserSigningFlowCoreSnapshot user_signing;
 };
@@ -40,6 +42,9 @@ struct AgentQDeviceActivityProjection {
     bool policy_update_active;
     bool policy_update_awaiting_approval;
     bool policy_update_busy;
+    bool sui_zklogin_proposal_active;
+    bool sui_zklogin_proposal_awaiting_approval;
+    bool sui_zklogin_proposal_busy;
     bool provisioning_flow_active;
     bool payload_delivery_active;
     bool payload_delivery_receiving;

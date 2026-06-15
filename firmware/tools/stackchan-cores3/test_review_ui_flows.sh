@@ -5,9 +5,10 @@ usage() {
   cat >&2 <<'EOF'
 Usage: firmware/tools/stackchan-cores3/test_review_ui_flows.sh
 
-Compiles the StackChan CoreS3 policy-update and user-signing review UI flow
-owners against host stubs and verifies display, accept/reject, PIN handoff,
-timeout, and panel-recovery behavior without linking the USB request server.
+Compiles the StackChan CoreS3 policy-update, Sui zkLogin, and user-signing
+review UI flow owners against host stubs and verifies display, accept/reject,
+PIN handoff, timeout, and panel-recovery behavior without linking the USB
+request server.
 EOF
 }
 
@@ -25,6 +26,8 @@ CXX_BIN="${CXX:-c++}"
 for required in \
   "${AGENT_Q_DIR}/agent_q_policy_update_review_ui_flow.cpp" \
   "${AGENT_Q_DIR}/agent_q_policy_update_review_ui_flow.h" \
+  "${AGENT_Q_DIR}/agent_q_sui_zklogin_review_ui_flow.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sui_zklogin_review_ui_flow.h" \
   "${AGENT_Q_DIR}/agent_q_modal_transition.cpp" \
   "${AGENT_Q_DIR}/agent_q_modal_transition.h" \
   "${AGENT_Q_DIR}/agent_q_user_signing_review_ui_flow.cpp" \
@@ -75,6 +78,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string.h>
 
 #include "agent_q_policy_update_review_ui_flow.h"
+#include "agent_q_sui_zklogin_review_ui_flow.h"
 #include "agent_q_user_signing_review_ui_flow.h"
 
 namespace {
@@ -112,6 +116,36 @@ int g_policy_finish_error_calls = 0;
 agent_q::AgentQPolicyUpdateFlowTerminalResult g_policy_last_terminal =
     agent_q::AgentQPolicyUpdateFlowTerminalResult::invalid_state;
 char g_policy_last_error_code[48] = {};
+
+agent_q::AgentQSuiZkLoginProposalSnapshot g_sui_snapshot = {};
+agent_q::AgentQSuiZkLoginProposalTransitionResult g_sui_continue_result =
+    agent_q::AgentQSuiZkLoginProposalTransitionResult::ok;
+bool g_sui_draw_result = true;
+bool g_sui_deadline_reached = false;
+bool g_sui_panel_active = true;
+bool g_sui_protocol_pin_begin_result = true;
+bool g_sui_local_pin_begin_result = true;
+bool g_sui_local_pin_draw_result = true;
+int g_sui_draw_calls = 0;
+int g_sui_clear_review_calls = 0;
+int g_sui_clear_review_order = 0;
+int g_sui_identification_clear_calls = 0;
+int g_sui_continue_calls = 0;
+int g_sui_protocol_pin_begin_calls = 0;
+int g_sui_protocol_pin_clear_calls = 0;
+int g_sui_local_pin_begin_calls = 0;
+int g_sui_local_pin_draw_calls = 0;
+int g_sui_local_pin_draw_order = 0;
+int g_sui_wipe_pin_calls = 0;
+int g_sui_record_timeout_calls = 0;
+int g_sui_record_rejected_calls = 0;
+int g_sui_record_ui_error_calls = 0;
+int g_sui_finish_terminal_calls = 0;
+int g_sui_finish_terminal_order = 0;
+int g_sui_finish_error_calls = 0;
+agent_q::AgentQSuiZkLoginProposalTerminalResult g_sui_last_terminal =
+    agent_q::AgentQSuiZkLoginProposalTerminalResult::invalid_state;
+char g_sui_last_error_code[48] = {};
 
 agent_q::AgentQUserSigningFlowSnapshot g_user_snapshot = {};
 bool g_user_requires_pin = false;
@@ -206,6 +240,49 @@ void reset_policy()
     g_policy_last_error_code[0] = '\0';
 }
 
+void reset_sui()
+{
+    g_now = 100;
+    g_sui_snapshot = {};
+    g_sui_snapshot.active = true;
+    g_sui_snapshot.stage = agent_q::AgentQSuiZkLoginProposalStage::reviewing;
+    g_sui_snapshot.request_id = "sui-zklogin-1";
+    g_sui_snapshot.session_id = "session-1";
+    g_sui_snapshot.request_window = {10, 200};
+    g_sui_snapshot.address = "0x2222222222222222222222222222222222222222222222222222222222222222";
+    g_sui_snapshot.network = "testnet";
+    g_sui_snapshot.issuer = "https://accounts.google.com";
+    g_sui_snapshot.max_epoch = "123";
+    g_sui_snapshot.proof_hash = "sha256:abcdef";
+    g_sui_continue_result = agent_q::AgentQSuiZkLoginProposalTransitionResult::ok;
+    g_sui_draw_result = true;
+    g_sui_deadline_reached = false;
+    g_sui_panel_active = true;
+    g_sui_protocol_pin_begin_result = true;
+    g_sui_local_pin_begin_result = true;
+    g_sui_local_pin_draw_result = true;
+    g_sui_draw_calls = 0;
+    g_sui_clear_review_calls = 0;
+    g_sui_clear_review_order = 0;
+    g_sui_identification_clear_calls = 0;
+    g_sui_continue_calls = 0;
+    g_sui_protocol_pin_begin_calls = 0;
+    g_sui_protocol_pin_clear_calls = 0;
+    g_sui_local_pin_begin_calls = 0;
+    g_sui_local_pin_draw_calls = 0;
+    g_sui_local_pin_draw_order = 0;
+    g_sui_wipe_pin_calls = 0;
+    g_sui_record_timeout_calls = 0;
+    g_sui_record_rejected_calls = 0;
+    g_sui_record_ui_error_calls = 0;
+    g_sui_finish_terminal_calls = 0;
+    g_sui_finish_terminal_order = 0;
+    g_sui_finish_error_calls = 0;
+    g_user_order_counter = 0;
+    g_sui_last_terminal = agent_q::AgentQSuiZkLoginProposalTerminalResult::invalid_state;
+    g_sui_last_error_code[0] = '\0';
+}
+
 void reset_user()
 {
     g_now = 100;
@@ -277,6 +354,10 @@ bool clear_panel(agent_q::AgentQUiPanelKind kind, agent_q::SensitiveUiClearPolic
     if (kind == agent_q::AgentQUiPanelKind::policy_update_review) {
         ++g_policy_clear_review_calls;
         g_policy_clear_review_order = ++g_user_order_counter;
+    }
+    if (kind == agent_q::AgentQUiPanelKind::sui_zklogin_review) {
+        ++g_sui_clear_review_calls;
+        g_sui_clear_review_order = ++g_user_order_counter;
     }
     if (kind == agent_q::AgentQUiPanelKind::user_signing_review) {
         ++g_user_clear_review_calls;
@@ -364,6 +445,103 @@ void policy_finish_error(
 {
     ++g_policy_finish_error_calls;
     snprintf(g_policy_last_error_code, sizeof(g_policy_last_error_code), "%s", error_code);
+}
+
+agent_q::AgentQSuiZkLoginProposalSnapshot sui_snapshot()
+{
+    return g_sui_snapshot;
+}
+
+bool draw_sui_review(
+    const agent_q::AgentQSuiZkLoginReviewViewModel& model,
+    agent_q::AgentQTimeoutWindow window)
+{
+    ++g_sui_draw_calls;
+    expect(strcmp(model.network, "testnet") == 0, "Sui zkLogin show passes network");
+    expect(strcmp(model.address, g_sui_snapshot.address) == 0, "Sui zkLogin show passes address");
+    expect(strcmp(model.issuer, "https://accounts.google.com") == 0, "Sui zkLogin show passes issuer");
+    expect(strcmp(model.max_epoch, "123") == 0, "Sui zkLogin show passes max epoch");
+    expect(strcmp(model.proof_hash, "sha256:abcdef") == 0, "Sui zkLogin show passes proof hash");
+    expect(model.effect_summary != nullptr && model.effect_summary[0] != '\0',
+           "Sui zkLogin show passes effect summary");
+    expect(window.deadline == 200, "Sui zkLogin show passes review window");
+    return g_sui_draw_result;
+}
+
+bool sui_panel_active() { return g_sui_panel_active; }
+void sui_identification_clear() { ++g_sui_identification_clear_calls; }
+agent_q::AgentQSuiZkLoginProposalTransitionResult sui_continue_to_pin(TickType_t tick)
+{
+    expect(tick == g_now, "Sui zkLogin continue receives current tick");
+    ++g_sui_continue_calls;
+    return g_sui_continue_result;
+}
+bool sui_protocol_pin_begin(
+    const char* request_id,
+    const char* session_id,
+    TickType_t now,
+    agent_q::AgentQTimeoutWindow window)
+{
+    expect(now == g_now, "Sui zkLogin protocol PIN begin receives current tick");
+    expect(strcmp(request_id, "sui-zklogin-1") == 0, "Sui zkLogin PIN begin uses request id");
+    expect(strcmp(session_id, "session-1") == 0, "Sui zkLogin PIN begin uses session id");
+    expect(window.deadline == 200, "Sui zkLogin PIN uses proposal window");
+    ++g_sui_protocol_pin_begin_calls;
+    return g_sui_protocol_pin_begin_result;
+}
+void sui_protocol_pin_clear() { ++g_sui_protocol_pin_clear_calls; }
+bool sui_local_pin_begin(TickType_t now, agent_q::AgentQTimeoutWindow window)
+{
+    expect(now == g_now, "Sui zkLogin local PIN begin receives current tick");
+    expect(window.deadline == 200, "Sui zkLogin local PIN uses proposal window");
+    ++g_sui_local_pin_begin_calls;
+    return g_sui_local_pin_begin_result;
+}
+bool draw_sui_local_pin(const char* notice)
+{
+    expect(strcmp(notice, "Approve Sui zkLogin") == 0, "Sui zkLogin PIN notice is explicit");
+    ++g_sui_local_pin_draw_calls;
+    g_sui_local_pin_draw_order = ++g_user_order_counter;
+    return g_sui_local_pin_draw_result;
+}
+void sui_wipe_pin(const char*) { ++g_sui_wipe_pin_calls; }
+bool sui_deadline(TickType_t tick)
+{
+    expect(tick == g_now, "Sui zkLogin deadline receives current tick");
+    return g_sui_deadline_reached;
+}
+agent_q::AgentQSuiZkLoginProposalTerminalResult sui_timeout()
+{
+    ++g_sui_record_timeout_calls;
+    return agent_q::AgentQSuiZkLoginProposalTerminalResult::timed_out;
+}
+agent_q::AgentQSuiZkLoginProposalTerminalResult sui_rejected()
+{
+    ++g_sui_record_rejected_calls;
+    return agent_q::AgentQSuiZkLoginProposalTerminalResult::rejected;
+}
+agent_q::AgentQSuiZkLoginProposalTerminalResult sui_ui_error()
+{
+    ++g_sui_record_ui_error_calls;
+    return agent_q::AgentQSuiZkLoginProposalTerminalResult::ui_error;
+}
+void sui_finish_terminal(
+    const char* request_id,
+    agent_q::AgentQSuiZkLoginProposalTerminalResult result)
+{
+    expect(strcmp(request_id, "sui-zklogin-1") == 0, "Sui zkLogin terminal uses request id");
+    ++g_sui_finish_terminal_calls;
+    g_sui_finish_terminal_order = ++g_user_order_counter;
+    g_sui_last_terminal = result;
+}
+void sui_finish_error(
+    const char*,
+    const char* error_code,
+    const char*,
+    const char*)
+{
+    ++g_sui_finish_error_calls;
+    snprintf(g_sui_last_error_code, sizeof(g_sui_last_error_code), "%s", error_code);
 }
 
 bool user_snapshot(agent_q::AgentQUserSigningFlowSnapshot* output)
@@ -494,6 +672,31 @@ agent_q::AgentQPolicyUpdateReviewUiFlowOps policy_ops()
     };
 }
 
+agent_q::AgentQSuiZkLoginReviewUiFlowOps sui_ops()
+{
+    return {
+        now,
+        sui_snapshot,
+        draw_sui_review,
+        clear_panel,
+        sui_panel_active,
+        sui_identification_clear,
+        sui_continue_to_pin,
+        sui_protocol_pin_begin,
+        sui_protocol_pin_clear,
+        sui_local_pin_begin,
+        draw_sui_local_pin,
+        sui_wipe_pin,
+        sui_deadline,
+        sui_timeout,
+        sui_rejected,
+        sui_ui_error,
+        sui_finish_terminal,
+        sui_finish_error,
+        log_warn,
+    };
+}
+
 agent_q::AgentQUserSigningReviewUiFlowOps user_ops()
 {
     return {
@@ -578,6 +781,50 @@ void test_policy_recovery_and_display_failure()
            "policy redraw failure finishes ui_error");
 }
 
+void test_sui_review_continue_reject_and_recovery()
+{
+    reset_sui();
+    expect(agent_q::sui_zklogin_review_ui_show(sui_ops()), "Sui zkLogin show succeeds");
+    expect(g_sui_draw_calls == 1, "Sui zkLogin show draws review");
+
+    reset_sui();
+    agent_q::sui_zklogin_review_ui_continue(sui_ops());
+    expect(g_sui_identification_clear_calls == 1, "Sui zkLogin continue clears identification");
+    expect(g_sui_continue_calls == 1, "Sui zkLogin continue advances flow");
+    expect(g_sui_protocol_pin_begin_calls == 1, "Sui zkLogin continue begins protocol PIN");
+    expect(g_sui_local_pin_begin_calls == 1, "Sui zkLogin continue begins local PIN");
+    expect(g_sui_local_pin_draw_calls == 1, "Sui zkLogin continue draws local PIN");
+    expect(g_sui_clear_review_calls == 1, "Sui zkLogin continue clears review");
+    expect(g_sui_local_pin_draw_order < g_sui_clear_review_order,
+           "Sui zkLogin continue prepares PIN panel before clearing review");
+
+    reset_sui();
+    agent_q::sui_zklogin_review_ui_reject(sui_ops());
+    expect(g_sui_record_rejected_calls == 1, "Sui zkLogin reject records rejection");
+    expect(g_sui_finish_terminal_calls == 1, "Sui zkLogin reject finishes terminal");
+    expect(g_sui_finish_terminal_order < g_sui_clear_review_order,
+           "Sui zkLogin reject prepares terminal result before clearing review");
+
+    reset_sui();
+    g_sui_deadline_reached = true;
+    agent_q::sui_zklogin_review_ui_reject(sui_ops());
+    expect(g_sui_record_timeout_calls == 1, "Sui zkLogin reject after deadline records timeout");
+    expect(g_sui_record_rejected_calls == 0, "Sui zkLogin reject after deadline skips rejection");
+
+    reset_sui();
+    g_sui_panel_active = false;
+    agent_q::sui_zklogin_review_ui_clear_if_needed(sui_ops());
+    expect(g_sui_draw_calls == 1, "Sui zkLogin maintenance redraws missing panel");
+
+    reset_sui();
+    g_sui_panel_active = false;
+    g_sui_draw_result = false;
+    agent_q::sui_zklogin_review_ui_clear_if_needed(sui_ops());
+    expect(g_sui_record_ui_error_calls == 1, "Sui zkLogin redraw failure records ui_error");
+    expect(g_sui_last_terminal == agent_q::AgentQSuiZkLoginProposalTerminalResult::ui_error,
+           "Sui zkLogin redraw failure finishes ui_error");
+}
+
 void test_user_accept_reject_and_pin()
 {
     reset_user();
@@ -650,6 +897,7 @@ int main()
     test_policy_continue_to_pin();
     test_policy_reject_and_timeout();
     test_policy_recovery_and_display_failure();
+    test_sui_review_continue_reject_and_recovery();
     test_user_accept_reject_and_pin();
     test_user_recovery_timeout_and_pin_display_failure();
     return failures == 0 ? 0 : 1;
@@ -666,6 +914,7 @@ CPP
   "${TMP_DIR}/test.cpp" \
   "${AGENT_Q_DIR}/agent_q_modal_transition.cpp" \
   "${AGENT_Q_DIR}/agent_q_policy_update_review_ui_flow.cpp" \
+  "${AGENT_Q_DIR}/agent_q_sui_zklogin_review_ui_flow.cpp" \
   "${AGENT_Q_DIR}/agent_q_user_signing_review_ui_flow.cpp" \
   -o "${TMP_DIR}/review_ui_flows_test"
 
