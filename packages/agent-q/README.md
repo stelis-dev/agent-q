@@ -65,6 +65,19 @@ MCP client config example:
 }
 ```
 
+If your MCP client can install servers from the MCP Registry, you can also use
+the Agent-Q registry search page:
+
+<https://registry.modelcontextprotocol.io/v0/servers?search=agent-q>
+
+Use the registry page to find the Agent-Q server entry and copy the client
+configuration or install command for your MCP client. The resulting server
+command should be equivalent to running:
+
+```sh
+npx -y @stelis/agent-q@latest serve --request-connect
+```
+
 Typical agent flow:
 
 ```text
