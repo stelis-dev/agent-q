@@ -457,7 +457,7 @@ function App() {
       <header className="app-header">
         <div>
           <h1>Agent-Q zkLogin Test</h1>
-          <p>{providerAvailable ? "Agent-Q ready" : "Agent-Q unavailable"}</p>
+          <p>{providerAvailable ? "Agent-Q ready" : "Agent-Q unavailable"} · Network: {TEST_NETWORK}</p>
         </div>
       </header>
 

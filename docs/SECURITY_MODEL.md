@@ -174,8 +174,10 @@ Not implemented:
 - Host-assisted key import.
 - USER_PROFILE mnemonic generation or import.
 - Sui zkLogin is not product-active. The current zkLogin path is
-  `source-wired-not-product-active` and has no recorded hardware/Web Serial
-  verification for proof setup, activation, clear, or signing.
+  `source-wired-not-product-active`. Hardware/Web Serial smoke coverage exists
+  for browser proof setup, activation, reconnect, sign-only transaction
+  signing, local proof clear, and native account return, but the tracked status
+  still does not claim product-active coverage.
 - USER_PROFILE policy storage and policy update authorization.
 - Execution-effect-complete arbitrary Sui transaction review or policy
   simulation, policy-authorized Sui personal-message signing, and other chains.
