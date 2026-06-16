@@ -24,10 +24,6 @@ import {
   makeCredentialProposeRequest,
   makePolicyProposeRequest,
   makeIdentifyDeviceRequest,
-  makePayloadUploadAbortRequest,
-  makePayloadUploadBeginRequest,
-  makePayloadUploadChunkRequest,
-  makePayloadUploadFinishRequest,
   makePolicyGetRequest,
   makeGetStatusRequest,
   makeStagedSignTransactionRequest,
@@ -47,10 +43,6 @@ import {
   type CredentialProposeResultResponse,
   type DisconnectResponse,
   type IdentifyDeviceResponse,
-  type PayloadUploadAbortResultResponse,
-  type PayloadUploadBeginResultResponse,
-  type PayloadUploadChunkResultResponse,
-  type PayloadUploadFinishResultResponse,
   type PolicyProposeResultResponse,
   type PolicyResponse,
   type ProtocolRequest,
@@ -82,6 +74,7 @@ import {
   INTERNAL_USB_DEADLINE_MS,
   PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES,
 } from "./transport-invariants.js";
+import { withUploadedSignablePayload } from "./payload-delivery-internal.js";
 
 export { AGENT_Q_USB_PRODUCT_ID, AGENT_Q_USB_VENDOR_ID, INTERNAL_USB_DEADLINE_MS };
 
@@ -171,7 +164,6 @@ type SignRecoveryOutcome =
   | { status: "not_recovered" }
   | { status: "recovered"; result: SignResultResponse };
 type AckRecoveryOutcome = "acked" | "failed" | "invalid_session";
-type PayloadAbortOutcome = "none" | "aborted" | "failed" | "invalid_session";
 
 const REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("agent-q.requestMayHaveReachedFirmware");
 const FIRMWARE_SESSION_INVALIDATED = Symbol("agent-q.firmwareSessionInvalidated");
@@ -1006,75 +998,31 @@ async function signStagedTransactionOverSerial(
   deadlineMs: number,
   executor: UsbProtocolRequestExecutor,
 ): Promise<SignResultResponse> {
-  const limits = parsePayloadCapabilityLimits(capability);
-  if (payloadBytes.length > limits.payloadMaxBytes) {
-    throw new AgentQError(
-      "unsupported_payload_size",
-      "Transaction payload exceeds the device payload capability.",
-      false,
-    );
-  }
-
-  const payloadDigest = sha256PayloadDigest(payloadBytes);
-  let uploadId: string | null = null;
-  let payloadRef: string | null = null;
-  try {
-    const begin = await executor(
-      makePayloadUploadBeginRequest(sessionId, route.chain, route.method, {
-        payloadKind: SIGNABLE_PAYLOAD_KIND_TRANSACTION,
-        sizeBytes: String(payloadBytes.length),
-        payloadDigest,
-      }),
-      INTERNAL_USB_DEADLINE_MS,
-      assertPayloadUploadBeginResultResponse,
-    );
-    uploadId = begin.uploadId;
-    const beginChunkMaxBytes = Number(begin.chunkMaxBytes);
-    const chunkMaxBytes = Math.min(limits.chunkMaxBytes, beginChunkMaxBytes);
-    let offset = 0;
-    while (offset < payloadBytes.length) {
-      const nextOffset = Math.min(offset + chunkMaxBytes, payloadBytes.length);
-      const chunk = payloadBytes.subarray(offset, nextOffset).toString("base64");
-      const response = await executor(
-        makePayloadUploadChunkRequest(sessionId, uploadId, String(offset), chunk),
-        INTERNAL_USB_DEADLINE_MS,
-        assertPayloadUploadChunkResultResponse,
-      );
-      if (response.receivedBytes !== String(nextOffset)) {
-        throw new AgentQError("protocol_error", "Firmware payload upload progress is inconsistent.", false);
-      }
-      offset = nextOffset;
-    }
-    const finish = await executor(
-      makePayloadUploadFinishRequest(sessionId, uploadId),
-      INTERNAL_USB_DEADLINE_MS,
-      assertPayloadUploadFinishResultResponse,
-    );
-    payloadRef = finish.payloadRef;
-    if (
-      finish.chain !== route.chain ||
-      finish.method !== route.method ||
-      finish.payloadKind !== SIGNABLE_PAYLOAD_KIND_TRANSACTION ||
-      finish.sizeBytes !== String(payloadBytes.length) ||
-      finish.payloadDigest !== payloadDigest
-    ) {
-      throw new AgentQError("protocol_error", "Firmware payload descriptor does not match the uploaded payload.", false);
-    }
-    const request = makeStagedSignTransactionRequest(sessionId, route.chain, route.method, {
-      network: params.network,
-      payloadRef,
-      payloadKind: finish.payloadKind,
-      sizeBytes: finish.sizeBytes,
-      payloadDigest: finish.payloadDigest,
-    });
-    return await requestSignResultWithRecovery(request, deadlineMs, executor);
-  } catch (error) {
-    const abort = await abortPayloadDeliveryBestEffort(sessionId, { uploadId, payloadRef }, executor);
-    if (abort === "invalid_session") {
-      markFirmwareSessionInvalidated(error);
-    }
-    throw error;
-  }
+  return withUploadedSignablePayload({
+    sessionId,
+    chain: route.chain,
+    method: route.method,
+    payloadKind: SIGNABLE_PAYLOAD_KIND_TRANSACTION,
+    payloadBytes,
+    capability,
+    executeUploadRequest: (request, assertResponse) =>
+      executor(request, INTERNAL_USB_DEADLINE_MS, (response) => assertResponse(response)),
+    digestPayload: (bytes) => sha256PayloadDigest(bytes),
+    encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
+    makeError: (code, message) => new AgentQError(code, message, false),
+    errorCode,
+    onAbortInvalidSession: markFirmwareSessionInvalidated,
+    consumeFinalizedPayload: (descriptor) => {
+      const request = makeStagedSignTransactionRequest(sessionId, route.chain, route.method, {
+        network: params.network,
+        payloadRef: descriptor.payloadRef,
+        payloadKind: descriptor.payloadKind,
+        sizeBytes: descriptor.sizeBytes,
+        payloadDigest: descriptor.payloadDigest,
+      });
+      return requestSignResultWithRecovery(request, deadlineMs, executor);
+    },
+  });
 }
 
 /** @internal Shared signing-result delivery invariant for the Node USB path. */
@@ -1219,76 +1167,6 @@ function estimateBase64DecodedBytes(value: string): number {
     padding = 1;
   }
   return Math.max(0, Math.floor(value.length / 4) * 3 - padding);
-}
-
-function assertPayloadUploadBeginResultResponse(
-  response: ProtocolResponse,
-): PayloadUploadBeginResultResponse {
-  return assertPayloadUploadResponseType(response, "payload_upload_begin_result");
-}
-
-function assertPayloadUploadChunkResultResponse(
-  response: ProtocolResponse,
-): PayloadUploadChunkResultResponse {
-  return assertPayloadUploadResponseType(response, "payload_upload_chunk_result");
-}
-
-function assertPayloadUploadFinishResultResponse(
-  response: ProtocolResponse,
-): PayloadUploadFinishResultResponse {
-  return assertPayloadUploadResponseType(response, "payload_upload_finish_result");
-}
-
-function assertPayloadUploadAbortResultResponse(
-  response: ProtocolResponse,
-): PayloadUploadAbortResultResponse {
-  return assertPayloadUploadResponseType(response, "payload_upload_abort_result");
-}
-
-function assertPayloadUploadResponseType<TType extends ProtocolResponse["type"]>(
-  response: ProtocolResponse,
-  type: TType,
-): Extract<ProtocolResponse, { type: TType }> {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== type) {
-    throw new ProtocolError("protocol_error", `Protocol response type is not ${type}.`);
-  }
-  return response as Extract<ProtocolResponse, { type: TType }>;
-}
-
-async function abortPayloadDeliveryBestEffort(
-  sessionId: string,
-  target: { uploadId: string | null; payloadRef: string | null },
-  executor: UsbProtocolRequestExecutor,
-): Promise<PayloadAbortOutcome> {
-  if (target.payloadRef === null && target.uploadId === null) {
-    return "none";
-  }
-  try {
-    if (target.payloadRef !== null) {
-      await executor(
-        makePayloadUploadAbortRequest(sessionId, { payloadRef: target.payloadRef }),
-        INTERNAL_USB_DEADLINE_MS,
-        assertPayloadUploadAbortResultResponse,
-      );
-    } else if (target.uploadId !== null) {
-      await executor(
-        makePayloadUploadAbortRequest(sessionId, { uploadId: target.uploadId }),
-        INTERNAL_USB_DEADLINE_MS,
-        assertPayloadUploadAbortResultResponse,
-      );
-    }
-    return "aborted";
-  } catch (error) {
-    if (errorCode(error) === "invalid_session") {
-      return "invalid_session";
-    }
-    // Best-effort cleanup must not replace the signing/upload failure that
-    // caused this path.
-    return "failed";
-  }
 }
 
 function shouldAttemptSignResultRecovery(error: unknown): boolean {

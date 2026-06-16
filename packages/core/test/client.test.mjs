@@ -390,6 +390,7 @@ test("package metadata exposes the current core entrypoints", async () => {
     "./adapter-internal",
     "./device",
     "./package.json",
+    "./payload-delivery-internal",
     "./protocol",
     "./provider-protocol",
   ]);
@@ -401,6 +402,10 @@ test("package metadata exposes the current core entrypoints", async () => {
     types: "./dist/device.d.ts",
     import: "./dist/device.js",
   });
+  assert.deepEqual(packageJson.exports["./payload-delivery-internal"], {
+    types: "./dist/payload-delivery-internal.d.ts",
+    import: "./dist/payload-delivery-internal.js",
+  });
   assert.equal(packageJson.exports["./usb"], undefined);
   assert.equal(packageJson.bin, undefined);
   assert.equal(packageJson.exports["./mcp"], undefined);
@@ -411,12 +416,14 @@ test("package self-reference resolves only core entrypoints", async () => {
   const root = await import("@stelis/agent-q-core");
   const adapterInternal = await import("@stelis/agent-q-core/adapter-internal");
   const device = await import("@stelis/agent-q-core/device");
+  const payloadDeliveryInternal = await import("@stelis/agent-q-core/payload-delivery-internal");
   const protocol = await import("@stelis/agent-q-core/protocol");
   const providerProtocol = await import("@stelis/agent-q-core/provider-protocol");
   assert.equal(typeof root.createDefaultAgentQCore, "function");
   assert.equal(root.createDefaultAgentQDeviceClient, undefined);
   assert.equal(typeof adapterInternal.hostSuccessOutputSchemas, "object");
   assert.equal(typeof device.createDefaultAgentQDeviceClient, "function");
+  assert.equal(typeof payloadDeliveryInternal.withUploadedSignablePayload, "function");
   assert.equal(typeof protocol.makeGetStatusRequest, "function");
   assert.equal(typeof protocol.makeSignTransactionRequest, "function");
   assert.equal(typeof protocol.makeGetResultRequest, "function");

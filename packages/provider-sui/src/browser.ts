@@ -33,6 +33,9 @@ import {
   type SigningPayloadCapability,
 } from "@stelis/agent-q-core/provider-protocol";
 import {
+  withUploadedSignablePayload,
+} from "@stelis/agent-q-core/payload-delivery-internal";
+import {
   assertAckResultResponse,
   assertCredentialPrepareResultResponse,
   assertCredentialProposeResultResponse,
@@ -40,20 +43,12 @@ import {
   makeCredentialPrepareRequest,
   makeCredentialProposeRequest,
   makeGetResultRequest,
-  makePayloadUploadAbortRequest,
-  makePayloadUploadBeginRequest,
-  makePayloadUploadChunkRequest,
-  makePayloadUploadFinishRequest,
   makeStagedSignTransactionRequest,
   payloadDeliveryCapabilityLimits,
   parseJsonLine,
   parseProtocolResponse,
   serializeRequest,
   SIGNABLE_PAYLOAD_KIND_TRANSACTION,
-  type PayloadUploadAbortResultResponse,
-  type PayloadUploadBeginResultResponse,
-  type PayloadUploadChunkResultResponse,
-  type PayloadUploadFinishResultResponse,
   type ProtocolRequest,
   type ProtocolResponse,
 } from "@stelis/agent-q-core/protocol";
@@ -153,7 +148,6 @@ type BrowserBufferedRecoveryOutcome =
 type BrowserSignRecoveryOutcome =
   | { status: "result"; response: SignResultResponse; sessionInvalidatedByAck: boolean }
   | { status: "session_invalidated" };
-type BrowserPayloadAbortOutcome = "none" | "aborted" | "failed" | "invalid_session";
 
 const PROVIDER_REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("agent-q.providerRequestMayHaveReachedFirmware");
 const BROWSER_FIRMWARE_SESSION_INVALIDATED = Symbol("agent-q.browserFirmwareSessionInvalidated");
@@ -717,85 +711,40 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     generation: number,
     absoluteDeadlineMs: number,
   ): Promise<BrowserSignRecoveryOutcome> {
-    const limits = parsePayloadCapabilityLimits(capability);
-    if (payloadBytes.length > limits.payloadMaxBytes) {
-      throw new AgentQSuiBrowserProviderError(
-        "unsupported_payload_size",
-        "Transaction payload exceeds the device payload capability.",
-      );
-    }
-    const payloadDigest = await sha256PayloadDigest(payloadBytes);
-    let uploadId: string | null = null;
-    let payloadRef: string | null = null;
-    try {
-      let port = await this.#getPort(absoluteDeadlineMs);
-      this.#assertTransportLive(generation);
-      const begin = await requestOverBrowserSerial(
-        port,
-        makePayloadUploadBeginRequest(session.sessionId, chain, method, {
-          payloadKind: SIGNABLE_PAYLOAD_KIND_TRANSACTION,
-          sizeBytes: String(payloadBytes.length),
-          payloadDigest,
-        }),
-        assertPayloadUploadBeginResultResponse,
-        remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
-        () => this.#abandonPort(),
-      );
-      uploadId = begin.uploadId;
-      const beginChunkMaxBytes = Number(begin.chunkMaxBytes);
-      const chunkMaxBytes = Math.min(limits.chunkMaxBytes, beginChunkMaxBytes);
-      let offset = 0;
-      while (offset < payloadBytes.length) {
-        const nextOffset = Math.min(offset + chunkMaxBytes, payloadBytes.length);
-        const chunk = encodeBase64(payloadBytes.subarray(offset, nextOffset));
-        port = await this.#getPort(absoluteDeadlineMs);
+    return withUploadedSignablePayload({
+      sessionId: session.sessionId,
+      chain,
+      method,
+      payloadKind: SIGNABLE_PAYLOAD_KIND_TRANSACTION,
+      payloadBytes,
+      capability,
+      executeUploadRequest: async (request, assertResponse) => {
+        const port = await this.#getPort(absoluteDeadlineMs);
         this.#assertTransportLive(generation);
-        const response = await requestOverBrowserSerial(
+        return requestOverBrowserSerial(
           port,
-          makePayloadUploadChunkRequest(session.sessionId, uploadId, String(offset), chunk),
-          assertPayloadUploadChunkResultResponse,
+          request,
+          (response) => assertResponse(response),
           remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
           () => this.#abandonPort(),
         );
-        if (response.receivedBytes !== String(nextOffset)) {
-          throw new AgentQSuiBrowserProviderError("protocol_error", "Firmware payload upload progress is inconsistent.");
-        }
-        offset = nextOffset;
-      }
-      port = await this.#getPort(absoluteDeadlineMs);
-      this.#assertTransportLive(generation);
-      const finish = await requestOverBrowserSerial(
-        port,
-        makePayloadUploadFinishRequest(session.sessionId, uploadId),
-        assertPayloadUploadFinishResultResponse,
-        remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
-        () => this.#abandonPort(),
-      );
-      payloadRef = finish.payloadRef;
-      if (
-        finish.chain !== chain ||
-        finish.method !== method ||
-        finish.payloadKind !== SIGNABLE_PAYLOAD_KIND_TRANSACTION ||
-        finish.sizeBytes !== String(payloadBytes.length) ||
-        finish.payloadDigest !== payloadDigest
-      ) {
-        throw new AgentQSuiBrowserProviderError("protocol_error", "Firmware payload descriptor does not match the uploaded payload.");
-      }
-      const request = makeStagedSignTransactionRequest(session.sessionId, chain, method, {
-        network: params.network,
-        payloadRef,
-        payloadKind: finish.payloadKind,
-        sizeBytes: finish.sizeBytes,
-        payloadDigest: finish.payloadDigest,
-      }, requestId);
-      return await this.#signWithRecoveryQueued(request, session, generation, absoluteDeadlineMs);
-    } catch (error) {
-      const abort = await this.#abortPayloadDeliveryBestEffort(session.sessionId, { uploadId, payloadRef }, absoluteDeadlineMs);
-      if (abort === "invalid_session") {
-        markBrowserFirmwareSessionInvalidated(error);
-      }
-      throw error;
-    }
+      },
+      digestPayload: (bytes) => sha256PayloadDigest(bytes),
+      encodeChunkBase64: (bytes) => encodeBase64(bytes),
+      makeError: (code, message) => new AgentQSuiBrowserProviderError(code, message),
+      errorCode,
+      onAbortInvalidSession: markBrowserFirmwareSessionInvalidated,
+      consumeFinalizedPayload: (descriptor) => {
+        const request = makeStagedSignTransactionRequest(session.sessionId, chain, method, {
+          network: params.network,
+          payloadRef: descriptor.payloadRef,
+          payloadKind: descriptor.payloadKind,
+          sizeBytes: descriptor.sizeBytes,
+          payloadDigest: descriptor.payloadDigest,
+        }, requestId);
+        return this.#signWithRecoveryQueued(request, session, generation, absoluteDeadlineMs);
+      },
+    });
   }
 
   #signWithRecovery(request: BrowserSignRequest, session: BrowserSession): Promise<BrowserSignRecoveryOutcome> {
@@ -857,44 +806,6 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
         // original sign response error.
       }
       throw error;
-    }
-  }
-
-  async #abortPayloadDeliveryBestEffort(
-    sessionId: string,
-    target: { uploadId: string | null; payloadRef: string | null },
-    absoluteDeadlineMs: number,
-  ): Promise<BrowserPayloadAbortOutcome> {
-    if (target.uploadId === null && target.payloadRef === null) {
-      return "none";
-    }
-    try {
-      if (target.payloadRef !== null) {
-        const port = await this.#getPort(absoluteDeadlineMs);
-        await requestOverBrowserSerial(
-          port,
-          makePayloadUploadAbortRequest(sessionId, { payloadRef: target.payloadRef }),
-          assertPayloadUploadAbortResultResponse,
-          remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
-          () => this.#abandonPort(),
-        );
-      } else if (target.uploadId !== null) {
-        const port = await this.#getPort(absoluteDeadlineMs);
-        await requestOverBrowserSerial(
-          port,
-          makePayloadUploadAbortRequest(sessionId, { uploadId: target.uploadId }),
-          assertPayloadUploadAbortResultResponse,
-          remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
-          () => this.#abandonPort(),
-        );
-      }
-      return "aborted";
-    } catch (error) {
-      if (errorCode(error) === "invalid_session") {
-        return "invalid_session";
-      }
-      // Best-effort cleanup must not replace the upload/signing failure.
-      return "failed";
     }
   }
 
@@ -1371,43 +1282,6 @@ function estimateBase64DecodedBytes(value: string): number {
     padding = 1;
   }
   return Math.max(0, Math.floor(value.length / 4) * 3 - padding);
-}
-
-function assertPayloadUploadBeginResultResponse(
-  response: ProtocolResponse,
-): PayloadUploadBeginResultResponse {
-  return assertPayloadUploadResponseType(response, "payload_upload_begin_result");
-}
-
-function assertPayloadUploadChunkResultResponse(
-  response: ProtocolResponse,
-): PayloadUploadChunkResultResponse {
-  return assertPayloadUploadResponseType(response, "payload_upload_chunk_result");
-}
-
-function assertPayloadUploadFinishResultResponse(
-  response: ProtocolResponse,
-): PayloadUploadFinishResultResponse {
-  return assertPayloadUploadResponseType(response, "payload_upload_finish_result");
-}
-
-function assertPayloadUploadAbortResultResponse(
-  response: ProtocolResponse,
-): PayloadUploadAbortResultResponse {
-  return assertPayloadUploadResponseType(response, "payload_upload_abort_result");
-}
-
-function assertPayloadUploadResponseType<TType extends ProtocolResponse["type"]>(
-  response: ProtocolResponse,
-  type: TType,
-): Extract<ProtocolResponse, { type: TType }> {
-  if (response.type === "error") {
-    throw new AgentQSuiBrowserProviderError(response.error.code, response.error.message);
-  }
-  if (response.type !== type) {
-    throw new AgentQSuiBrowserProviderError("protocol_error", `Protocol response type is not ${type}.`);
-  }
-  return response as Extract<ProtocolResponse, { type: TType }>;
 }
 
 // Await a best-effort transport-cleanup step, but never block longer than

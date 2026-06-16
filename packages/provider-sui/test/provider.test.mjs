@@ -650,6 +650,7 @@ test("browser provider runtime stays separated from Admin, MCP, and Node serial 
   const source = await readFile(browserPath, "utf8");
   assert.match(source, /@stelis\/agent-q-core\/provider-protocol/);
   assert.match(source, /@stelis\/agent-q-core\/protocol["']/);
+  assert.match(source, /@stelis\/agent-q-core\/payload-delivery-internal/);
   assert.doesNotMatch(source, /@stelis\/agent-q-core\/protocol-recovery/);
   assert.doesNotMatch(source, /@stelis\/agent-q-core\/admin/);
   assert.doesNotMatch(source, /@stelis\/agent-q(?!-core)/);
@@ -671,6 +672,7 @@ test("browser provider runtime stays separated from Admin, MCP, and Node serial 
   assert.doesNotMatch(types, /serial\?/);
   assert.doesNotMatch(types, /baudRate/);
   assert.doesNotMatch(types, /adapter-internal/);
+  assert.doesNotMatch(types, /payload-delivery-internal/);
   assert.doesNotMatch(types, /serialport/);
   assert.doesNotMatch(types, /node:/);
 });
