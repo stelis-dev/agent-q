@@ -1,12 +1,19 @@
 # Agent-Q Firmware
 
+> Development status: Agent-Q is an active development project with
+> hardware-tested Sui signing paths for CLI, MCP, and supported provider flows.
+> The current StackChan CoreS3 Firmware path uses DEV_PROFILE material intended
+> for development and demos, not real-asset custody. See the root README
+> Current Status section for storage and profile limitations.
+
 Agent-Q Firmware is the program installed on a hardware device.
 
-Firmware is the signing authority. It stores keys and policies, evaluates
-requests, and handles device-local approval according to target policy. Current
-public methods expose account, session, policy, approval-history, and policy
-proposal behavior plus the bounded Sign API source paths documented in
-`specs/PROTOCOL.md`. Current source includes `sign_transaction` for bounded
+Firmware is the signing authority. It holds signing material and policy for the
+implemented material profile, evaluates requests, and handles device-local
+approval according to target policy. Current public methods expose account,
+session, policy, approval-history, and policy proposal behavior plus the
+bounded Sign API implementation paths documented in
+`specs/PROTOCOL.md`. Current implementation includes `sign_transaction` for bounded
 Sui `TransactionData::V1 -> ProgrammableTransaction` bytes and user-mode-only
 `sign_personal_message` for bounded Sui personal-message bytes. Firmware chooses policy or user
 authorization for transaction signing from its device-local signing mode.

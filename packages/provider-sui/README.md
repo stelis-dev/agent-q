@@ -1,5 +1,11 @@
 # Agent-Q Sui Provider
 
+> Development status: Agent-Q is an active development project with
+> hardware-tested Sui signing paths for CLI, MCP, and supported provider flows.
+> The current StackChan CoreS3 Firmware path uses DEV_PROFILE material intended
+> for development and demos, not real-asset custody. See the root README
+> Current Status section for storage and profile limitations.
+
 `@stelis/agent-q-provider-sui` is the Sui application-facing Agent-Q adapter
 package.
 
@@ -10,9 +16,9 @@ provider methods also expose common Sui zkLogin credential preparation and
 proposal. It also exposes an app-imported Sui Wallet Standard registration
 adapter for the currently supported Sui signing features.
 
-The Sui provider does not store signing keys and does not make policy
-decisions. Agent-Q Firmware remains the authority for keys, policy evaluation,
-device-local approval, signing, and active policy commits.
+The Sui provider does not store signing material and does not make policy
+decisions. Agent-Q Firmware remains the authority for signing material, policy
+evaluation, device-local approval, signing, and active policy commits.
 
 ## Quick Start
 

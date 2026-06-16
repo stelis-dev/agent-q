@@ -1,9 +1,16 @@
 # Agent-Q zkLogin Test Web App
 
-This private app is a browser test tool for the Agent-Q Sui zkLogin setup path.
-It is not production onboarding, not an Admin Page, and not a signing authority.
-It is buildable test tooling only. `docs/IMPLEMENTATION_STATUS.md` is the status
-source for provider/browser zkLogin setup, clear, reconnect, and signing.
+> Development status: Agent-Q is an active development project with
+> hardware-tested Sui signing paths for CLI, MCP, and supported provider flows.
+> The current StackChan CoreS3 Firmware path uses DEV_PROFILE material intended
+> for development and demos, not real-asset custody. See the root README
+> Current Status section for storage and profile limitations.
+
+This non-production app is a browser test tool for the Agent-Q Sui zkLogin setup
+path. It is not production onboarding, not an Admin Page, and not a signing
+authority. It is buildable test tooling only. `docs/IMPLEMENTATION_STATUS.md` is
+the status source for provider/browser zkLogin setup, clear, reconnect, and
+signing.
 
 The app imports `@stelis/agent-q-provider-sui/browser`, uses the Agent-Q Sui
 browser provider over Web Serial, and only exercises the common operations
@@ -49,7 +56,7 @@ The default test flow is:
 connect device
 -> set Enoki configuration for Google OAuth
 -> set up zkLogin with Google
--> request a sign-only test transaction through sign_transaction
+-> request a sign-only zkLogin test transaction through sign_transaction
 ```
 
 The page uses Sui `testnet` for Enoki nonce creation, proof proposal, and the
@@ -70,6 +77,7 @@ JWTs, OAuth tokens, salts, or Enoki session state.
 npm run build:sample-zklogin-test-web
 ```
 
-The transaction test builds transaction bytes for the active account, sends them
+The transaction test is enabled only after the device returns the activated
+zkLogin account. It builds transaction bytes for that account, sends them
 through `sign_transaction`, and does not submit or execute the transaction on a
 Sui network.

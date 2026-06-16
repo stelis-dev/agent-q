@@ -15,7 +15,7 @@ create, import, export, display, or reset signing material.
 
 ## Security Rules
 
-- Firmware owns signing material.
+- Firmware holds signing material and owns provisioning and signing decisions.
 - The host process must not store mnemonics, seeds, private keys, or imported signing
   material.
 - MCP clients must not receive mnemonics, seeds, private keys, or imported
@@ -99,22 +99,21 @@ Provisioning UX depends on hardware:
 - Button-only or LED-only: cannot safely show or enter mnemonics; setup needs a
   weaker assisted flow or external secure setup tooling.
 
-StackChan CoreS3 has display and touch hardware. Source-level DEV_PROFILE
-backup phrase generation, backup confirmation, persistent root storage, and
-read-only `get_accounts` Sui account derivation are implemented. The current
-setup source also records a DEV_PROFILE local PIN verifier before reporting
+StackChan CoreS3 has display and touch hardware. DEV_PROFILE backup phrase
+generation, backup confirmation, persistent root storage, and read-only
+`get_accounts` Sui account derivation are implemented. The current setup
+implementation also records a DEV_PROFILE local PIN verifier before reporting
 `provisioned`, and initializes device-local signing authorization mode to
 `user`. Source/build tests cover the provisioned host process and MCP session path
 through `get_accounts`, policy-decision rejection, inline and same-session
 staged Sui `sign_transaction` request validation for bounded
 `TransactionData::V1 -> ProgrammableTransaction` bytes, the current
 `sign_transaction` policy/user gate split, and the user-mode
-`sign_personal_message` source path.
+`sign_personal_message` implementation path.
 Hardware smoke coverage exists for StackChan CoreS3 local setup and PIN entry.
 Targeted hardware verification remains required after setup UI or state changes.
-Source-level local settings
-reset/material wipe now exists for provisioned StackChan CoreS3 devices, with
-hardware smoke coverage for local reset.
+Local settings reset/material wipe is implemented for provisioned StackChan
+CoreS3 devices, with hardware smoke coverage for local reset.
 Device-local Import is implemented for DEV_PROFILE. USB, host process, and MCP mnemonic
 import and host-assisted import are not implemented. Execution-effect-complete
 arbitrary Sui transaction review or policy simulation is not implemented.
@@ -134,7 +133,7 @@ Rules:
 
 - The host process must not derive private keys.
 - Firmware returns public key/address data through `get_accounts`.
-- The current Sign API source paths have `source-wired-not-product-active`
+- The current Sign API implementation paths have `source-wired-not-product-active`
   status for Sui `sign_transaction` with inline or same-session staged
   transaction bytes decoded by the Firmware Sui `TransactionData::V1 ->
   ProgrammableTransaction` facts extractor, and for user-mode Sui
@@ -186,7 +185,7 @@ not keep reporting `provisioned` while rejecting all session APIs.
 
 The current DEV_PROFILE runtime does not import or export root signing material.
 Read-only public Sui account derivation is available via `get_accounts`.
-The current Sign API source paths exist for Sui `sign_transaction` transaction
+The current Sign API implementation paths exist for Sui `sign_transaction` transaction
 bytes delivered inline or through same-session staging and for user-mode
 `sign_personal_message` personal-message bytes. Sui transaction bytes are
 decoded by the Firmware Sui `TransactionData::V1 -> ProgrammableTransaction`

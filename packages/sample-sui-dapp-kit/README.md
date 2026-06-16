@@ -1,5 +1,11 @@
 # Agent-Q Sui dapp-kit Sample
 
+> Development status: Agent-Q is an active development project with
+> hardware-tested Sui signing paths for CLI, MCP, and supported provider flows.
+> The current StackChan CoreS3 Firmware path uses DEV_PROFILE material intended
+> for development and demos, not real-asset custody. See the root README
+> Current Status section for storage and profile limitations.
+
 This sample shows the current Sui dapp-kit registration path for
 `@stelis/agent-q-provider-sui`. It includes browser signing actions for
 self-transfer transaction signing and personal-message signing.

@@ -1,5 +1,11 @@
 # Agent-Q Local Server
 
+> Development status: Agent-Q is an active development project with
+> hardware-tested Sui signing paths for CLI, MCP, and supported provider flows.
+> The current StackChan CoreS3 Firmware path uses DEV_PROFILE material intended
+> for development and demos, not real-asset custody. See the root README
+> Current Status section for storage and profile limitations.
+
 `@stelis/agent-q` provides the local Agent-Q server package.
 
 It exposes MCP tools for AI agents, a local HTTP API for the Admin Page, and the
@@ -10,8 +16,8 @@ Agent-Q device, or when a Sui CLI workflow needs an Agent-Q device as its
 external signer.
 
 Firmware remains the signing authority. MCP tools and CLI commands submit
-requests; they do not store keys, apply policy, approve signing, or select the
-device signing mode.
+requests; they do not store signing material, apply policy, approve signing, or
+select the device signing mode.
 
 ## Terms Used Here
 
@@ -117,7 +123,8 @@ sui client switch --address <SUI_ADDRESS>
 ```
 
 After registration, keep `agent-q` running and use the registered address as the
-Sui CLI sender. For example, pick a SUI coin and send SUI:
+Sui CLI sender in a test environment. For example, pick a test SUI coin and
+send test SUI:
 
 ```sh
 sui client gas <SUI_ADDRESS> --json
@@ -135,8 +142,8 @@ stdin/stdout protocol. It finds the external signer from its keystore
 registration for the sender address, then runs `agent-q-sui-signer` by command
 name. The signer must therefore be installed, linked, or otherwise available on
 `PATH` whenever Sui CLI invokes it. The signer calls the local Agent-Q server,
-and the server sends transaction signing requests to Firmware. The private key
-stays on the device.
+and the server sends transaction signing requests to Firmware. The signing
+material stays under Firmware control on the device.
 
 If you do not install the package globally, run both setup and Sui CLI commands
 through `npm exec` so `agent-q-sui-signer` is on `PATH` for that command:

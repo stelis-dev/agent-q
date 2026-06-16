@@ -60,7 +60,7 @@ Implemented today:
   verification is required for each change. Hardware smoke coverage exists for
   StackChan CoreS3 Generate setup, PIN entry, and Import entry.
   This is not USER_PROFILE key provisioning.
-- Source-level local settings paths for provisioned StackChan CoreS3 devices.
+- Local settings paths are implemented for provisioned StackChan CoreS3 devices.
   They are device-local UX only: Change PIN verifies the stored PIN and replaces
   only the local PIN verifier after repeated new PIN entry, and Reset verifies
   the stored PIN before root material wipe, active policy wipe, PIN verifier
@@ -170,7 +170,7 @@ Implemented today:
 
 Not implemented:
 
-- USER_PROFILE persistent signing keys and on-device key generation.
+- USER_PROFILE persistent signing material and on-device key generation.
 - Host-assisted key import.
 - USER_PROFILE mnemonic generation or import.
 - Sui zkLogin is not product-active. The current zkLogin path is
@@ -254,13 +254,13 @@ host process (host):
 - Local agent-q process with stdio MCP tools and a local Admin Page sharing one
   host runtime session owner.
 - Transport and local coordination surface.
-- Holds no signing keys.
+- Holds no signing material.
 - Makes no signing or policy decision.
 
 Firmware (separate device):
 
 - The signing authority.
-- Stores signing material and policy locally.
+- Holds signing material and policy locally for the implemented material profile.
 - Evaluates each request.
 - Rejects unavailable or policy-disallowed requests, and performs implemented
   sensitive actions only after the required Firmware-owned device-local
@@ -298,7 +298,7 @@ requests, adapters, and host callers cannot choose it.
   human approval and does not let the request choose the input mode.
 
 `sign_personal_message` is a separate Sign API method for bounded Sui
-personal-message bytes. Current source accepts it only in user authorization
+personal-message bytes. Current implementation supports it only in user authorization
 mode, where Firmware performs clear-signing review and the current human
 approval input mode. Policy authorization mode fails closed for this method because policy facts and
 rules for personal-message signing are not implemented.

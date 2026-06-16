@@ -1,5 +1,11 @@
 # Agent-Q Core
 
+> Development status: Agent-Q is an active development project with
+> hardware-tested Sui signing paths for CLI, MCP, and supported provider flows.
+> The current StackChan CoreS3 Firmware path uses DEV_PROFILE material intended
+> for development and demos, not real-asset custody. See the root README
+> Current Status section for storage and profile limitations.
+
 `@stelis/agent-q-core` is the shared Agent-Q core package.
 
 It provides transport, protocol builders and parsers, runtime session mirroring,
@@ -8,9 +14,10 @@ parsing. The `agent-q` local server, Sui provider, and Sui CLI signer use this
 package instead of reimplementing the device/protocol boundary.
 
 The core package is not a signing authority and is not a policy authority.
-It does not store signing keys, does not make signing decisions, and does not
-apply policy. Agent-Q Firmware owns keys, policy evaluation, sensitive approval,
-and active policy commits.
+It does not store signing material, does not make signing decisions, and does
+not apply policy. Agent-Q Firmware owns policy evaluation, sensitive approval,
+and active policy commits, and holds signing material for the implemented
+material profile.
 
 ## Quick Start
 

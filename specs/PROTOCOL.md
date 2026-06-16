@@ -28,12 +28,12 @@ Agent-Q:
 - exposes MCP tools
 - sends protocol messages to Firmware
 - relays Firmware responses
-- does not store keys
+- does not store signing material
 - does not make signing or policy decisions
 
 Agent-Q Firmware:
 
-- stores keys and policies
+- holds signing material and policy for the implemented material profile
 - evaluates requests
 - requests device-local approval when required
 - signs, rejects, or times out only request types implemented by the current
@@ -406,7 +406,7 @@ material blob, a committed active policy record, the local PIN verifier, and
 the signing authorization mode all exist. The current product flow installs the
 default-reject policy. It does not
 use `locked` because no unlock model is
-implemented. Source-level DEV_PROFILE backup phrase display, device-local
+implemented. DEV_PROFILE backup phrase display, device-local
 mnemonic import entry, persistent root material, active policy storage, local
 PIN verifier storage, signing authorization mode storage, local reset, and
 read-only `get_accounts` Sui account derivation are implemented.
@@ -977,8 +977,9 @@ Rules:
   count for this target. Additional chains and accounts are added as more
   `accounts[]` entries only after the protocol, capability response, and host
   process bounds are updated. StackChan CoreS3 hardware smoke verifies the
-  native single-account response over an approved session; zkLogin hardware
-  account projection is not verified.
+  native single-account response over an approved session and zkLogin account
+  projection after browser/Web Serial activation; product-active status remains
+  tracked in `docs/IMPLEMENTATION_STATUS.md`.
   `get_accounts` reads identity only. Current delegated public method
   availability is reported by `get_capabilities.chains[].methods`.
   Signing availability is reported separately through top-level `signing`,

@@ -1,5 +1,11 @@
 # StackChan CoreS3 Firmware Source
 
+> Development status: Agent-Q is an active development project with
+> hardware-tested Sui signing paths for CLI, MCP, and supported provider flows.
+> The current StackChan CoreS3 Firmware path uses DEV_PROFILE material intended
+> for development and demos, not real-asset custody. See the root README
+> Current Status section for storage and profile limitations.
+
 This directory contains the StackChan CoreS3 hardware-specific Agent-Q firmware
 source overlay.
 

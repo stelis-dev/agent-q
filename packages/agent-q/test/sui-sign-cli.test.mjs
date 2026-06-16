@@ -17,7 +17,7 @@ test("help describes the Sui CLI external signer", async () => {
   assert.match(harness.stdout.join(""), /npm install -g @stelis\/agent-q/);
   assert.match(harness.stdout.join(""), /agent-q serve --request-connect/);
   assert.match(harness.stdout.join(""), /must be on PATH/);
-  assert.match(harness.stdout.join(""), /private key stays on/);
+  assert.match(harness.stdout.join(""), /Signing material stays under Firmware control/);
   assert.deepEqual(harness.calls, []);
 });
 

@@ -52,7 +52,7 @@ CLI uses the signer. agent-q-sui-signer must be on PATH when Sui CLI invokes it.
 If @stelis/agent-q is not globally installed, run setup and Sui CLI commands
 through: npm exec --yes --package @stelis/agent-q -- ...
 The signer calls the local Agent-Q server, and the server sends signing requests
-to Firmware. The private key stays on the device.`;
+to Firmware. Signing material stays under Firmware control on the device.`;
 
 export type SuiSignCliCore = Pick<
   AgentQCore,

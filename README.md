@@ -1,180 +1,76 @@
 # Agent-Q
 
-Agent-Q lets Sui CLI, MCP clients, and local apps request signatures from an
-Agent-Q hardware device. The private key stays on the device. Firmware reviews
-the request and produces the signature.
+> Development status: Agent-Q is an active development project with
+> hardware-tested Sui signing paths for CLI, MCP, and supported provider flows.
+> The current StackChan CoreS3 Firmware path uses DEV_PROFILE material intended
+> for development and demos, not real-asset custody. See Current Status for
+> storage and profile limitations.
 
-The agent, app, CLI, or the host process can request. The device decides.
+## Concept
 
-## Terms Used Here
+Agent-Q separates execution surfaces from signing authority.
 
-- **host process**: the local `agent-q` process. It exposes MCP stdio tools,
-  the local HTTP API, and the Admin Page, and relays requests to Firmware.
-- **Firmware**: the software running on the Agent-Q hardware device. Firmware is
-  the signing and policy authority.
-- **Admin Page**: the local web UI served by the host process. It is not a
-  separate authority.
-- **Sui CLI external signer**: an executable that Sui CLI starts from its
-  keystore configuration when a registered address needs a signature. In
-  Agent-Q this executable is `agent-q-sui-signer`.
+Execution capability is not signing authority. Agent-Q keeps that boundary
+explicit for agent-driven and local Sui signing flows.
 
-## Who This Is For
+This README describes the Agent-Q authority-boundary architecture for local Sui
+signing flows. Current implementation status and profile limitations are tracked
+in `docs/IMPLEMENTATION_STATUS.md`.
 
-- Sui users who want the Sui CLI to sign through an external Agent-Q device.
-- Agent developers who want MCP tools for hardware-backed signing requests.
-- Sui app developers who want a local Wallet Standard provider backed by an
-  Agent-Q device.
+MCP clients, Sui CLI, and supported Sui app adapters submit bounded requests
+through the local `agent-q` host process. AI agent runtimes usually reach
+Agent-Q through MCP clients. The host relays requests; it does not store
+signing material, decide policy, or approve signing.
+
+Agent-Q Firmware runs on a separate signing device. It holds signing material
+and policy for the implemented material profile, checks device state and request
+contents, applies the implemented policy or device-local approval gate, and
+returns signed results or explicit failures.
+
+Signing request transport stays local. Signing authority stays on the device.
+Requesters can ask for signatures, but they cannot hold signing material,
+choose the authorization mode, or approve their own requests.
+
+## Structure
+
+Agent-Q has three roles:
+
+- **requesters** create signing, account, policy read, policy proposal
+  submission, or status requests. MCP clients, Sui CLI, Sui app adapters, and
+  the Admin Page are request surfaces, not signing authorities.
+- the **host process** is the local `agent-q` process. It exposes MCP stdio
+  tools, the local HTTP API, the Admin Page, and adapter-facing request
+  surfaces, then relays bounded requests to Firmware.
+- **Agent-Q Firmware** is the software running on the signing device. Firmware
+  owns policy checks, device-local approval gates, signing, persistence, and
+  cleanup, and holds signing material for the implemented material profile.
+
+Agent-Q uses a simple authority model:
+
+- requesters create requests;
+- the host process relays requests;
+- Firmware handles each implemented request type according to device-local
+  state.
+
+For signing requests, Firmware decides whether the implemented policy or
+device-local approval gate permits signing.
+
+Unsupported chains and methods fail explicitly.
+
+## Use Agent-Q
+
+- Sui users can register `agent-q-sui-signer` as a Sui CLI external signer.
+  See `packages/agent-q/README.md`.
+- MCP clients can run the local server and call Agent-Q MCP tools. See
+  `packages/agent-q/README.md`.
+- Sui app developers can use the Sui provider package for supported Wallet
+  Standard adapter flows. See `packages/provider-sui/README.md` and
+  `packages/sample-sui-dapp-kit/README.md`.
+- Sui zkLogin browser setup and sign-only transaction checks live in the
+  non-production test web sample. See
+  `packages/sample-zklogin-test-web/README.md`.
 - Firmware and hardware developers working on device-owned signing policy,
-  local approval, and bounded signing flows.
-
-## Quick Start
-
-### Use With Sui CLI
-
-Use `agent-q-sui-signer` as a Sui CLI external signer. Sui CLI needs a
-one-time external key registration before normal `sui client ...` commands can
-use Agent-Q. Running the Agent-Q server only opens the local server and requests
-a device connection; it does not register the key in Sui CLI.
-
-Start the local Agent-Q server and confirm the connection request on the
-device. With a global install:
-
-```sh
-npm install -g @stelis/agent-q@latest
-agent-q serve --request-connect
-```
-
-Without a global install:
-
-```sh
-npm exec --yes --package @stelis/agent-q@latest -- agent-q serve --request-connect
-```
-
-After approval, the server writes an operator-facing summary to stderr. The
-summary includes the connected device id, public Sui address when available,
-Firmware-reported signing mode when available, and supported signing methods
-when available. Account information and capability information are read after
-the device approves the connection; if either read fails, the server prints a
-separate `Agent-Q accounts unavailable: ...` or
-`Agent-Q capabilities unavailable: ...` line. Use the public Sui address from
-this summary as `<SUI_ADDRESS>` in the Sui CLI commands below.
-
-In another terminal, register the Agent-Q key with Sui CLI once. This writes an
-external signer entry to the Sui CLI keystore; it is not an environment
-variable. Copy `<KEY_ID_FROM_LIST_KEYS>` from the `list-keys` output:
-
-```sh
-sui external-keys list-keys agent-q-sui-signer
-sui external-keys add-existing "<KEY_ID_FROM_LIST_KEYS>" agent-q-sui-signer
-sui client switch --address <SUI_ADDRESS>
-```
-
-After registration, keep `agent-q` running and use the registered address as the
-Sui CLI sender:
-
-```sh
-sui client gas <SUI_ADDRESS> --json
-sui client pay-sui \
-  --input-coins <SUI_COIN_OBJECT_ID> \
-  --recipients <TO_ADDRESS> \
-  --amounts <MIST_AMOUNT> \
-  --gas-budget <GAS_BUDGET> \
-  --sender <SUI_ADDRESS> \
-  --json
-```
-
-The server can request a connection, but only Firmware can approve it on the
-device. Sui CLI finds the external signer from its keystore registration for the
-sender address, then runs `agent-q-sui-signer` by command name. The signer must
-therefore be installed, linked, or otherwise available on `PATH` whenever Sui
-CLI invokes it.
-
-If you do not install the package globally, run both setup and Sui CLI commands
-through `npm exec` so `agent-q-sui-signer` is on `PATH` for that command:
-
-```sh
-npm exec --yes --package @stelis/agent-q@latest -- \
-  sui external-keys list-keys agent-q-sui-signer
-npm exec --yes --package @stelis/agent-q@latest -- \
-  sui external-keys add-existing "<KEY_ID_FROM_LIST_KEYS>" agent-q-sui-signer
-```
-
-Use the same `npm exec --yes --package @stelis/agent-q@latest -- ...` wrapper for
-subsequent `sui client ...` commands when the package is not globally installed.
-
-Keep `agent-q` running while Sui CLI uses the signer. Sui CLI calls
-`agent-q-sui-signer` when a transaction needs a signature. The signer calls the
-local Agent-Q server, and the server sends signing requests to Firmware. The
-private key stays on the device.
-
-`agent-q-sui-signer` uses the active Sui CLI environment when it is `mainnet`,
-`testnet`, `devnet`, or `localnet`. To set it explicitly:
-
-```sh
-agent-q-sui-signer configure --network testnet
-```
-
-### Use With MCP
-
-Run the Agent-Q local server and let an MCP client call the signing tools:
-
-```sh
-npx -y @stelis/agent-q@latest serve --request-connect
-```
-
-Confirm the connection request on the device. After approval, `agent-q` writes
-an operator-facing summary to stderr. The summary includes the connected device
-id, public Sui address when available, Firmware-reported signing mode when
-available, and supported signing methods when available. Account information
-and capability information are read after the device approves the connection;
-if either read fails, the server prints a separate
-`Agent-Q accounts unavailable: ...` or
-`Agent-Q capabilities unavailable: ...` line. This is diagnostic output only;
-it does not register the key with Sui CLI and does not authorize signing.
-
-After approval, MCP tools can use the active session. Signing requests still
-require the Firmware-owned signing gate for the selected method and device mode.
-
-Typical agent flow:
-
-```text
-scan_devices
-  -> identify_devices
-  -> select_device
-  -> connect_device
-  -> get_capabilities
-  -> get_accounts
-  -> sign_transaction or sign_personal_message
-  -> disconnect_device
-```
-
-Agents submit requests only. They must not claim that they approved signing or
-that they know the user's upstream intent. Firmware enforces state, policy,
-device confirmation, signing, and cleanup.
-
-MCP client config example:
-
-```json
-{
-  "mcpServers": {
-    "agent-q": {
-      "command": "npx",
-      "args": ["-y", "@stelis/agent-q@latest", "serve", "--request-connect"]
-    }
-  }
-}
-```
-
-### Use In A Sui App
-
-Use `@stelis/agent-q-provider-sui` to register an Agent-Q Wallet Standard wallet
-from your app:
-
-```ts
-import { createAgentQSuiWalletInitializer } from "@stelis/agent-q-provider-sui/wallet-standard";
-```
-
-See `packages/sample-sui-dapp-kit/` for a minimal Sui dapp-kit integration.
+  local approval, and bounded signing flows should start with `firmware/README.md`.
 
 ## Packages
 
@@ -184,9 +80,9 @@ See `packages/sample-sui-dapp-kit/` for a minimal Sui dapp-kit integration.
 | `@stelis/agent-q` | run the local MCP server, Admin Page, and `agent-q-sui-signer`. |
 | `@stelis/agent-q-provider-sui` | connect a Sui app to an Agent-Q device through a provider / Wallet Standard adapter. |
 | `packages/sample-sui-dapp-kit` | run a small dapp-kit sample that signs through Agent-Q. |
-| `packages/sample-zklogin-test-web` | run a private browser test tool for Sui zkLogin proof preparation/proposal and sign-only transaction checks through the Agent-Q browser provider over Web Serial. |
+| `packages/sample-zklogin-test-web` | run a non-production browser test tool for Sui zkLogin proof preparation/proposal and sign-only transaction checks through the Agent-Q browser provider over Web Serial. |
 
-## How Signing Works
+## Request Flow
 
 ```mermaid
 flowchart LR
@@ -204,41 +100,40 @@ flowchart LR
   Core --> Firmware[Firmware]
 ```
 
-Current signing routes in source, with product-active evidence tracked in
-`docs/IMPLEMENTATION_STATUS.md`:
+Current signing routes are summarized below. In this README, `product-active`
+means the matching source, docs, tests, build, current-tree target hardware
+evidence, and visual evidence are complete in `docs/IMPLEMENTATION_STATUS.md`.
+A route can be implemented and hardware-tested while product-active evidence is
+still being completed.
 
 | Chain | Method | Current behavior |
 | --- | --- | --- |
-| `sui` | `sign_transaction` | Sui transaction signing over inline or same-session staged bytes. Firmware parses bounded offline `TransactionData::V1 -> ProgrammableTransaction` facts, then chooses policy authorization or user authorization from its device-local signing mode. Current policy authorization validates the active policy document, request network scope, account binding, and complete offline policy condition facts; a matching `sign` policy authorizes signing, and missing, incomplete, unmatched, or reject-matched policy coverage returns `policy_rejected`. User authorization shows covered offline facts when offline facts review coverage is complete, meaning Firmware can display the bounded offline facts it extracted rather than simulate execution effects. If Firmware can validate and bind the transaction but offline facts review coverage is incomplete, user authorization shows a device-local blind-signing warning. |
-| `sui` | `sign_personal_message` | Bounded Sui personal-message signing in user authorization mode. Policy authorization mode fails closed for this method. |
+| `sui` | `sign_transaction` | Current implementation supports inline or same-session staged Sui transaction bytes. It validates the request, parses bounded offline transaction facts when available, applies the device-local policy or user authorization gate, and produces a signature response only after that gate authorizes signing. Policy mode fails closed when required policy coverage is missing, incomplete, unmatched, or reject-matched. User mode shows covered offline facts when available; otherwise it shows a device-local blind-signing warning for a valid transaction bound to the active account. Blind signing means confirming signable bytes whose transaction details are not fully reviewable from offline facts. |
+| `sui` | `sign_personal_message` | Current implementation supports bounded Sui personal-message signing in user authorization mode. Policy authorization mode fails closed for this method. |
 
-Sui zkLogin active identity support is source-wired but not product-active.
-Firmware exposes common `credential_prepare` and `credential_propose`
-operations for proof setup, stores a bounded proof record only after
-device-local review and local PIN approval, projects exactly one active Sui
-account, requires signing requests to match the stored proof network when
-zkLogin is active, and chooses native Ed25519 or zkLogin signature envelope only
-at the final signing step after the existing authorization gate. The independent
-`packages/sample-zklogin-test-web` app exercises this path through
-`@stelis/agent-q-provider-sui/browser` over Web Serial. It keeps Enoki, OAuth,
-and prover work in the browser test layer, uses Google OAuth on Sui testnet for
-the current sample flow, submits only bounded proof proposals to Agent-Q, and
-does not add a host-process route, provider management API, signer selector, or
-proof-clear API. The sample does not display JWTs or proof JSON and does not
-write them to browser storage; local `VITE_*` Enoki/OAuth identifiers are public
-browser configuration and are embedded in ignored local Vite build output.
+The current implementation contains Sui zkLogin active identity paths, but
+`docs/IMPLEMENTATION_STATUS.md` does not mark them product-active. The sample
+test web exercises browser-to-device proof setup and sign-only transaction
+checks over Web Serial. Enoki, OAuth, prover work, and Google OAuth testnet
+setup stay in the browser test layer; Agent-Q receives only bounded proof
+proposals. The sample does not display JWTs or proof JSON and does not write
+them to browser storage.
 
 Unsupported chains and unsupported methods fail explicitly. Chains are exposed
 through the shared protocol; Agent-Q does not create separate chain-specific
 product APIs.
 
-## Security Basics
+## Authority Boundary Basics
 
-- The host process, MCP, Sui CLI tools, providers, apps, and agents are requesters, not
-  signing authority.
-- The host process does not store signing keys and does not make signing or policy
-  decisions.
-- Firmware stores keys and policies locally and owns signing decisions.
+This section explains who may request work and who may decide. DEV_PROFILE
+storage and product-active status are covered in Current Status.
+
+- The host process, MCP, Sui CLI tools, providers, apps, and agents are
+  requesters, not signing authority.
+- The host process does not store signing material and does not make signing or
+  policy decisions.
+- Firmware holds signing material and policy for the implemented material profile
+  and owns signing decisions.
 - Firmware chooses the signing authorization gate from device-local state.
   Requests cannot choose policy authorization mode or user authorization mode.
 - Agent-Q cannot verify what happened inside an agent, app, wallet UI, or host
@@ -250,31 +145,27 @@ product APIs.
 
 Detailed status lives in `docs/IMPLEMENTATION_STATUS.md`.
 
-Current source includes the Sui signing routes listed above, MCP tools,
-provider-sui, and StackChan CoreS3 Firmware paths. Product-active signing
-support is not claimed unless `docs/IMPLEMENTATION_STATUS.md` says the matching
-source, docs, tests, build, hardware, and visual evidence are complete.
+Current implementation includes the Sui signing routes listed above, MCP tools,
+provider-sui, and StackChan CoreS3 Firmware paths. Hardware smoke coverage is
+recorded in `docs/IMPLEMENTATION_STATUS.md`; product-active signing support is
+claimed only when the matching status row says the source, docs, tests, build,
+hardware, and visual evidence are complete.
 
 Current limitations:
 
+- The current StackChan CoreS3 Firmware path uses DEV_PROFILE material intended
+  for development and demos, not real-asset custody.
+- In DEV_PROFILE, root entropy, the active policy record, and the local PIN
+  verifier are stored in ordinary NVS. Secure Boot, Flash Encryption, and NVS
+  Encryption are not configured.
+- DEV_PROFILE is the only implemented material profile.
 - Sui is the only executable chain.
-- Sui transaction parsing is bounded and offline. Parser facts may be available
-  for broader programmable transactions, but parser success is not signing
-  authorization. Firmware user mode shows a covered offline facts review when
-  offline facts review coverage is complete and otherwise shows a blind-signing
-  warning for valid, account-bound transactions whose offline facts review
-  coverage is incomplete. Firmware policy mode validates active policy
-  availability, request network scope, account binding, and Firmware-derived
-  offline policy condition facts, then signs only when the active current policy
-  has a matching `sign` policy; missing, incomplete, unmatched, or reject-matched
-  policy coverage returns `policy_rejected`.
-  Agent-Q does not simulate Sui execution or fetch chain state.
-- Sponsored Sui transactions are not implemented.
-- Sui transaction execution / submit-to-network is not an Agent-Q signing
-  responsibility.
-- Policy-authorized personal-message signing is not implemented.
-- Sui zkLogin browser-to-device setup, clear, reconnect, and signing are not
-  product-active.
+- Sui transaction parsing is bounded and offline. Agent-Q does not simulate Sui
+  execution or fetch chain state.
+- Sponsored Sui transactions, Sui transaction execution/submission, and
+  policy-authorized personal-message signing are not implemented.
+- Sui zkLogin browser-to-device setup, clear, reconnect, and signing paths are
+  not product-active.
 - Browser dapp signing requires the provider/browser runtime path, not the
   Node-local provider factory.
 
