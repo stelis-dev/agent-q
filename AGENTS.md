@@ -366,7 +366,8 @@ rewrite it.
 
 Repository-visible documentation, code comments, user-facing strings, package
 metadata, protocols, tests, and release-facing copy should be written in
-English. Ignored planning notes under `.WORK/` may use Korean when useful.
+English. Ignored planning notes under `.WORK/` may use a non-English language
+when useful.
 
 Use ordinary industry terms when available. Define unavoidable project terms at
 first use and state what they do and do not mean.
