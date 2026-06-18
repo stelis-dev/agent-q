@@ -82,6 +82,32 @@ Unsupported chains and methods fail explicitly.
 | `packages/sample-sui-dapp-kit` | run a small dapp-kit sample that signs through Agent-Q. |
 | `packages/sample-zklogin-test-web` | run a non-production browser test tool for Sui zkLogin proof preparation/proposal and sign-only transaction checks through the Agent-Q browser provider over Web Serial. |
 
+## Current Implementation Highlights
+
+The current implementation includes these device-owned paths. They are
+development/demo capabilities; Current Status below defines the DEV_PROFILE and
+product-active limits.
+
+- **Device-local BIP-39 setup**: Firmware can generate a new 12-word BIP-39
+  backup phrase on the device, display it for backup, and store DEV_PROFILE root
+  entropy only after local backup confirmation and repeated local PIN entry.
+- **Device-local mnemonic restore**: Firmware can accept a 12-word BIP-39
+  import through the device UI, verify the checksum, and enter the same local
+  PIN setup path. USB, host process, and MCP mnemonic import are not
+  implemented.
+- **Sui zkLogin active identity**: the browser test flow can prepare and propose
+  bounded zkLogin proof material through the provider/Web Serial path. Firmware
+  reviews the proposal on device, requires local PIN approval, stores one
+  bounded proof record, and projects the active zkLogin Sui account. When
+  zkLogin is active, the same signing request path produces a zkLogin signature
+  envelope after the normal Firmware authorization gate. Firmware stores no raw
+  JWT.
+- **Large Sui transaction payloads**: `sign_transaction` supports inline
+  `txBytes` and same-session staged payload delivery for larger Sui transaction
+  bytes, up to the Sui serialized transaction maximum. This is a payload and
+  adapter input capacity, not a claim that every Sui transaction shape is
+  semantically signable; unsupported or unbindable shapes fail before signing.
+
 ## Request Flow
 
 ```mermaid
