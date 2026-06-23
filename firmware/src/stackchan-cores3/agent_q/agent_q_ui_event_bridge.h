@@ -25,6 +25,7 @@ enum class AgentQUiEventKind {
     settings_change_pin_requested,
     settings_reset_requested,
     sui_settings_back_requested,
+    sui_settings_gas_sponsor_requested,
     sui_settings_clear_requested,
     error_recovery_erase_requested,
     error_recovery_cancel_requested,

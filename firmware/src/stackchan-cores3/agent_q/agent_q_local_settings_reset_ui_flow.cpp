@@ -390,6 +390,7 @@ void local_settings_reset_ui_commit_if_ready(const AgentQLocalSettingsResetUiFlo
         case ResetCommitResult::local_auth_wipe_error:
         case ResetCommitResult::human_approval_setting_wipe_error:
         case ResetCommitResult::signing_mode_wipe_error:
+        case ResetCommitResult::sui_account_settings_wipe_error:
         case ResetCommitResult::approval_history_wipe_error:
         case ResetCommitResult::policy_update_marker_wipe_error:
         case ResetCommitResult::zklogin_proof_wipe_error:

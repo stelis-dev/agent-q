@@ -8,6 +8,7 @@
 #include "agent_q_local_pin_auth_signature_internal.h"
 #include "agent_q_pin_attempt.h"
 #include "agent_q_signing_mode.h"
+#include "agent_q_sui_account_settings.h"
 #include "freertos/task.h"
 
 namespace agent_q {
@@ -21,6 +22,7 @@ struct AgentQLocalPinAuthState {
     AgentQLocalPinAuthStage stage = AgentQLocalPinAuthStage::none;
     AgentQHumanApprovalInputMode target_human_approval_input_mode = AgentQHumanApprovalInputMode::pin;
     AgentQSigningAuthorizationMode target_signing_authorization_mode = AgentQSigningAuthorizationMode::user;
+    AgentQSuiAccountSettings target_sui_account_settings = kDefaultSuiAccountSettings;
     uint32_t auth_job_id = 0;
     AgentQTimeoutWindow input_window = kAgentQTimeoutWindowNone;
     AgentQPausedTimeoutWindow paused_input_window = kAgentQPausedTimeoutWindowNone;
@@ -66,6 +68,7 @@ struct AgentQLocalPinAuthState {
         stage = AgentQLocalPinAuthStage::none;
         target_human_approval_input_mode = AgentQHumanApprovalInputMode::pin;
         target_signing_authorization_mode = AgentQSigningAuthorizationMode::user;
+        target_sui_account_settings = kDefaultSuiAccountSettings;
         auth_job_id = 0;
         input_window = kAgentQTimeoutWindowNone;
         paused_input_window = kAgentQPausedTimeoutWindowNone;
@@ -166,6 +169,7 @@ AgentQLocalPinAuthSnapshot local_pin_auth_snapshot(TickType_t now)
         g_state.input_window,
         g_state.target_human_approval_input_mode,
         g_state.target_signing_authorization_mode,
+        g_state.target_sui_account_settings,
         g_state.flow_active(),
         accepts,
         processing_stage(g_state.stage),
@@ -257,6 +261,22 @@ bool local_pin_auth_begin_signing_mode_setting(
     g_state.purpose = AgentQLocalPinAuthPurpose::settings_signing_mode;
     g_state.stage = AgentQLocalPinAuthStage::pin_entry;
     g_state.target_signing_authorization_mode = target_mode;
+    g_state.set_input_window(input_window);
+    return true;
+}
+
+bool local_pin_auth_begin_sui_accept_gas_sponsor_setting(
+    const AgentQSuiAccountSettings& target_settings,
+    TickType_t now,
+    AgentQTimeoutWindow input_window)
+{
+    g_state.clear_flow();
+    if (!timeout_window_valid_and_open_at(input_window, now)) {
+        return false;
+    }
+    g_state.purpose = AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor;
+    g_state.stage = AgentQLocalPinAuthStage::pin_entry;
+    g_state.target_sui_account_settings = target_settings;
     g_state.set_input_window(input_window);
     return true;
 }
@@ -566,7 +586,8 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
     }
 
     if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_human_approval_input ||
-        g_state.purpose == AgentQLocalPinAuthPurpose::settings_signing_mode) {
+        g_state.purpose == AgentQLocalPinAuthPurpose::settings_signing_mode ||
+        g_state.purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor) {
         g_state.stage = AgentQLocalPinAuthStage::committing_setting;
         g_state.commit_ready_at = setting_commit_ready_at;
         g_state.set_input_window(kAgentQTimeoutWindowNone);
@@ -679,6 +700,8 @@ AgentQLocalPinAuthCommitResult local_pin_auth_commit_if_ready(TickType_t now)
         stored = store_human_approval_input_mode(g_state.target_human_approval_input_mode);
     } else if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_signing_mode) {
         stored = store_signing_authorization_mode(g_state.target_signing_authorization_mode);
+    } else if (g_state.purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor) {
+        stored = store_sui_account_settings(g_state.target_sui_account_settings);
     } else {
         return AgentQLocalPinAuthCommitResult::not_ready;
     }

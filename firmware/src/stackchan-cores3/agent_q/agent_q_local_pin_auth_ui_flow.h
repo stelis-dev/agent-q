@@ -10,6 +10,7 @@
 #include "agent_q_persistent_material.h"
 #include "agent_q_policy_update_flow.h"
 #include "agent_q_signing_mode.h"
+#include "agent_q_sui_account_settings.h"
 #include "agent_q_sui_zklogin_proposal_flow.h"
 #include "agent_q_user_signing_confirmation.h"
 #include "freertos/FreeRTOS.h"
@@ -23,6 +24,7 @@ struct AgentQLocalPinAuthUiFlowOps {
     bool (*human_approval_requires_pin)();
     bool (*read_human_approval_input_mode)(AgentQHumanApprovalInputMode* output);
     bool (*read_signing_authorization_mode)(AgentQSigningAuthorizationMode* output);
+    bool (*read_sui_account_settings)(AgentQSuiAccountSettings* output);
     bool (*store_default_policy)();
     bool (*sui_zklogin_proof_clear_available)();
     bool (*clear_sui_zklogin_proof)();
@@ -109,6 +111,8 @@ void local_pin_auth_ui_start_settings_signing_mode(
 void local_pin_auth_ui_start_settings_policy_reset(
     const AgentQLocalPinAuthUiFlowOps& ops);
 void local_pin_auth_ui_start_settings_change_pin(
+    const AgentQLocalPinAuthUiFlowOps& ops);
+void local_pin_auth_ui_start_settings_sui_accept_gas_sponsor(
     const AgentQLocalPinAuthUiFlowOps& ops);
 void local_pin_auth_ui_start_settings_sui_zklogin_clear(
     const AgentQLocalPinAuthUiFlowOps& ops);

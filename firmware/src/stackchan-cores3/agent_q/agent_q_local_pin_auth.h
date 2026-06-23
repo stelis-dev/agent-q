@@ -6,6 +6,7 @@
 #include "agent_q_human_approval_settings.h"
 #include "agent_q_local_auth_worker.h"
 #include "agent_q_signing_mode.h"
+#include "agent_q_sui_account_settings.h"
 #include "agent_q_timeout_window.h"
 #include "freertos/FreeRTOS.h"
 
@@ -18,6 +19,7 @@ enum class AgentQLocalPinAuthPurpose {
     settings_signing_mode,
     settings_policy_reset,
     settings_change_pin,
+    settings_sui_accept_gas_sponsor,
     settings_sui_zklogin_clear,
     policy_update,
     sui_zklogin_proposal,
@@ -89,6 +91,7 @@ struct AgentQLocalPinAuthSnapshot {
     AgentQTimeoutWindow input_window;
     AgentQHumanApprovalInputMode target_human_approval_input_mode;
     AgentQSigningAuthorizationMode target_signing_authorization_mode;
+    AgentQSuiAccountSettings target_sui_account_settings;
     bool flow_active;
     bool accepts_keypad_input;
     bool processing;
@@ -111,6 +114,10 @@ bool local_pin_auth_begin_human_approval_input_setting(
     AgentQTimeoutWindow input_window);
 bool local_pin_auth_begin_signing_mode_setting(
     AgentQSigningAuthorizationMode target_mode,
+    TickType_t now,
+    AgentQTimeoutWindow input_window);
+bool local_pin_auth_begin_sui_accept_gas_sponsor_setting(
+    const AgentQSuiAccountSettings& target_settings,
     TickType_t now,
     AgentQTimeoutWindow input_window);
 bool local_pin_auth_begin_policy_reset_setting(TickType_t now, AgentQTimeoutWindow input_window);

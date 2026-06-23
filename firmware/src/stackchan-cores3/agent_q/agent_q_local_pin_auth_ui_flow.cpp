@@ -49,6 +49,7 @@ bool settings_pin_purpose(AgentQLocalPinAuthPurpose purpose)
            purpose == AgentQLocalPinAuthPurpose::settings_signing_mode ||
            purpose == AgentQLocalPinAuthPurpose::settings_policy_reset ||
            purpose == AgentQLocalPinAuthPurpose::settings_change_pin ||
+           purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor ||
            purpose == AgentQLocalPinAuthPurpose::settings_sui_zklogin_clear;
 }
 
@@ -1188,6 +1189,47 @@ void local_pin_auth_ui_start_settings_change_pin(
     }
 }
 
+void local_pin_auth_ui_start_settings_sui_accept_gas_sponsor(
+    const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    if (!start_settings_handoff(
+            "Stale Sui gas sponsor setting action ignored",
+            ops)) {
+        return;
+    }
+
+    AgentQSuiAccountSettings current_settings = kDefaultSuiAccountSettings;
+    if (ops.read_sui_account_settings == nullptr ||
+        !ops.read_sui_account_settings(&current_settings)) {
+        show_settings_error(ops);
+        return;
+    }
+
+    AgentQSuiAccountSettings target_settings = current_settings;
+    target_settings.accept_gas_sponsor = !current_settings.accept_gas_sponsor;
+    const TickType_t now = now_or_zero(ops);
+    if (!local_pin_auth_begin_sui_accept_gas_sponsor_setting(
+            target_settings,
+            now,
+            timeout_window_from_deadline(
+                now,
+                now + pdMS_TO_TICKS(ops.local_reset_entry_ms)))) {
+        show_message(ops, "Sui setting unavailable", AgentQMessageKind::error);
+        return;
+    }
+
+    if (!draw_local_pin_panel(
+            ops,
+            target_settings.accept_gas_sponsor
+                ? "Accept Sui gas sponsor"
+                : "Reject Sui gas sponsor")) {
+        wipe_local_pin_auth_scratch(
+            ops,
+            "Sui gas sponsor setting display allocation failed");
+        show_message(ops, "Display error", AgentQMessageKind::error);
+    }
+}
+
 void local_pin_auth_ui_start_settings_sui_zklogin_clear(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
@@ -1538,6 +1580,8 @@ void local_pin_auth_ui_commit_setting_if_ready(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
     const TickType_t now = now_or_zero(ops);
+    const AgentQLocalPinAuthPurpose purpose =
+        local_pin_auth_snapshot(now).purpose;
     const AgentQLocalPinAuthCommitResult result = local_pin_auth_commit_if_ready(now);
     if (result == AgentQLocalPinAuthCommitResult::not_ready) {
         return;
@@ -1560,20 +1604,36 @@ void local_pin_auth_ui_commit_setting_if_ready(
         return;
     }
     if (result == AgentQLocalPinAuthCommitResult::storage_error) {
-        complete_local_pin_processing_to_message(
-            ops,
-            "Settings error",
-            AgentQMessageKind::error);
+        if (purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor) {
+            complete_local_pin_processing_to_sui_settings(
+                ops,
+                "local Sui settings display allocation failed after setting storage error",
+                "Settings error",
+                AgentQMessageKind::error);
+        } else {
+            complete_local_pin_processing_to_message(
+                ops,
+                "Settings error",
+                AgentQMessageKind::error);
+        }
         return;
     }
 
-    complete_local_pin_processing_to_settings(
-        ops,
-        "local settings display allocation failed after PIN commit",
-        result == AgentQLocalPinAuthCommitResult::pin_changed
-            ? "PIN changed"
-            : "Settings saved",
-        AgentQMessageKind::success);
+    if (purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor) {
+        complete_local_pin_processing_to_sui_settings(
+            ops,
+            "local Sui settings display allocation failed after PIN commit",
+            "Settings saved",
+            AgentQMessageKind::success);
+    } else {
+        complete_local_pin_processing_to_settings(
+            ops,
+            "local settings display allocation failed after PIN commit",
+            result == AgentQLocalPinAuthCommitResult::pin_changed
+                ? "PIN changed"
+                : "Settings saved",
+            AgentQMessageKind::success);
+    }
 }
 
 void local_pin_auth_ui_handle_verify_worker_result(

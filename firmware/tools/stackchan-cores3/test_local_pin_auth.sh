@@ -70,6 +70,7 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include "agent_q_local_auth_test.h"
 #include "agent_q_local_auth_worker.h"
 #include "agent_q_signing_mode.h"
+#include "agent_q_sui_account_settings.h"
 #include "freertos/FreeRTOS.h"
 
 namespace {
@@ -78,6 +79,9 @@ TickType_t g_now = 1;
 char g_current_pin[agent_q::kLocalPinBufferSize] = "123456";
 agent_q::AgentQHumanApprovalInputMode g_human_approval_input_mode =
     agent_q::AgentQHumanApprovalInputMode::pin;
+agent_q::AgentQSuiAccountSettings g_sui_account_settings =
+    agent_q::kDefaultSuiAccountSettings;
+bool g_store_sui_account_settings_result = true;
 uint32_t g_last_worker_job_id = 0;
 uint32_t g_last_cancelled_worker_job_id = 0;
 
@@ -103,6 +107,16 @@ bool test_current_pin_is(const char* pin)
 agent_q::AgentQHumanApprovalInputMode test_human_approval_input_mode()
 {
     return g_human_approval_input_mode;
+}
+
+agent_q::AgentQSuiAccountSettings test_sui_account_settings()
+{
+    return g_sui_account_settings;
+}
+
+void test_set_store_sui_account_settings_result(bool result)
+{
+    g_store_sui_account_settings_result = result;
 }
 
 uint32_t test_last_worker_job_id()
@@ -220,6 +234,24 @@ bool store_signing_authorization_mode(AgentQSigningAuthorizationMode)
     return true;
 }
 
+bool read_sui_account_settings(AgentQSuiAccountSettings* settings)
+{
+    if (settings == nullptr) {
+        return false;
+    }
+    *settings = g_sui_account_settings;
+    return true;
+}
+
+bool store_sui_account_settings(const AgentQSuiAccountSettings& settings)
+{
+    if (!g_store_sui_account_settings_result) {
+        return false;
+    }
+    g_sui_account_settings = settings;
+    return true;
+}
+
 bool wipe_human_approval_input_mode()
 {
     return true;
@@ -262,12 +294,15 @@ cat >"${TMP_DIR}/local_pin_auth_test.cpp" <<'CPP'
 
 #include "agent_q_local_pin_auth.h"
 #include "agent_q_pin_attempt.h"
+#include "agent_q_sui_account_settings.h"
 #include "freertos/task.h"
 
 namespace agent_q {
 void test_set_tick(TickType_t now);
 bool test_current_pin_is(const char* pin);
 AgentQHumanApprovalInputMode test_human_approval_input_mode();
+AgentQSuiAccountSettings test_sui_account_settings();
+void test_set_store_sui_account_settings_result(bool result);
 uint32_t test_last_worker_job_id();
 uint32_t test_last_cancelled_worker_job_id();
 }
@@ -424,6 +459,16 @@ int main()
                "stale Sui zkLogin clear PIN window is rejected by state owner");
         expect(!agent_q::local_pin_auth_begin_sui_zklogin_clear_setting(200, pin_window(220, 260)),
                "future Sui zkLogin clear PIN window is rejected by state owner");
+        expect(!agent_q::local_pin_auth_begin_sui_accept_gas_sponsor_setting(
+                   agent_q::AgentQSuiAccountSettings{true},
+                   200,
+                   pin_window(100, 150)),
+               "stale Sui gas sponsor setting PIN window is rejected by state owner");
+        expect(!agent_q::local_pin_auth_begin_sui_accept_gas_sponsor_setting(
+                   agent_q::AgentQSuiAccountSettings{true},
+                   200,
+                   pin_window(220, 260)),
+               "future Sui gas sponsor setting PIN window is rejected by state owner");
     }
 
     {
@@ -562,6 +607,62 @@ int main()
             agent_q::AgentQLocalPinAuthStage::pin_verifying,
             "policy reset setting waits for UI-owned commit handling");
         agent_q::local_pin_auth_clear_flow();
+    }
+
+    {
+        agent_q::test_set_tick(338);
+        expect(agent_q::local_pin_auth_begin_sui_accept_gas_sponsor_setting(
+                   agent_q::AgentQSuiAccountSettings{true},
+                   338,
+                   pin_window(338, 368)),
+               "Sui gas sponsor setting PIN auth begins");
+        expect(agent_q::local_pin_auth_snapshot(338)
+                   .target_sui_account_settings.accept_gas_sponsor,
+               "Sui gas sponsor target is captured before PIN verification");
+        enter_pin("123456");
+        expect(agent_q::local_pin_auth_submit(339, 0, test_input_window(368), 348) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "Sui gas sponsor setting starts current-PIN verification");
+        agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
+        expect(agent_q::local_pin_auth_complete_verify_job(verify_result, pin_window(339, 368), 0, 342) ==
+                   agent_q::AgentQLocalPinAuthVerifyResult::started_setting_commit,
+               "verified Sui gas sponsor setting starts commit stage");
+        expect(agent_q::local_pin_auth_commit_if_ready(341) ==
+                   agent_q::AgentQLocalPinAuthCommitResult::not_ready,
+               "Sui gas sponsor setting does not commit before delay");
+        expect(agent_q::local_pin_auth_commit_if_ready(342) ==
+                   agent_q::AgentQLocalPinAuthCommitResult::setting_stored,
+               "Sui gas sponsor setting stores target setting");
+        expect(agent_q::test_sui_account_settings().accept_gas_sponsor,
+               "Sui gas sponsor setting persisted");
+        expect(!agent_q::local_pin_auth_snapshot(342).flow_active,
+               "Sui gas sponsor setting commit clears flow");
+    }
+
+    {
+        agent_q::test_set_store_sui_account_settings_result(false);
+        agent_q::test_set_tick(339);
+        expect(agent_q::local_pin_auth_begin_sui_accept_gas_sponsor_setting(
+                   agent_q::AgentQSuiAccountSettings{false},
+                   339,
+                   pin_window(339, 369)),
+               "Sui gas sponsor setting PIN auth begins before storage failure");
+        enter_pin("123456");
+        expect(agent_q::local_pin_auth_submit(340, 0, test_input_window(369), 349) ==
+                   agent_q::AgentQLocalPinAuthSubmitResult::started_verification,
+               "Sui gas sponsor setting storage-failure path starts verification");
+        agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
+        expect(agent_q::local_pin_auth_complete_verify_job(verify_result, pin_window(340, 369), 0, 343) ==
+                   agent_q::AgentQLocalPinAuthVerifyResult::started_setting_commit,
+               "verified Sui gas sponsor setting storage-failure path starts commit stage");
+        expect(agent_q::local_pin_auth_commit_if_ready(343) ==
+                   agent_q::AgentQLocalPinAuthCommitResult::storage_error,
+               "Sui gas sponsor setting reports storage failure");
+        expect(agent_q::test_sui_account_settings().accept_gas_sponsor,
+               "Sui gas sponsor storage failure preserves previous value");
+        expect(!agent_q::local_pin_auth_snapshot(343).flow_active,
+               "Sui gas sponsor storage failure clears flow");
+        agent_q::test_set_store_sui_account_settings_result(true);
     }
 
     {

@@ -212,7 +212,7 @@ check_settings_sui_clear_keeps_panel_until_wipe() {
   ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
 
   clear_line="$(grep -En 'clear_sui_zklogin_proof' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
-  restore_line="$(grep -En 'complete_local_pin_processing_to_settings|restore_settings_menu_after_pin' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  restore_line="$(grep -En 'complete_local_pin_processing_to_sui_settings|restore_sui_settings_after_pin' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
   clear_before_wipe_line="$(
     grep -En 'clear_local_pin_panel' "${snippet}" |
       awk -F: -v clear="${clear_line:-0}" '$1 < clear { print $1; exit }' || true

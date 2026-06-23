@@ -512,6 +512,7 @@ void provisioning_ui_handle_setup_auth_worker_result(
         case CommitResult::local_auth_storage_error:
         case CommitResult::signing_mode_storage_error:
         case CommitResult::human_approval_setting_storage_error:
+        case CommitResult::sui_account_settings_storage_error:
         case CommitResult::state_storage_error:
             log_warn(ops, "Local PIN confirmation storage error");
             show_result(ops, "Storage error", AgentQMessageKind::error);

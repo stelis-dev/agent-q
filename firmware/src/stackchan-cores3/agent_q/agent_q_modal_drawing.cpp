@@ -82,6 +82,7 @@ constexpr int kSettingsMenuRowControlX = 208;
 constexpr int kSettingsMenuRowHeight = 34;
 constexpr int kSettingsMenuActionButtonWidth = 72;
 constexpr int kSettingsMenuActionButtonHeight = 26;
+constexpr int kSuiSettingsGasSponsorRowY = 130;
 constexpr int kSuiSettingsClearButtonY = 164;
 constexpr int kConnectReviewTextLeft = 24;
 constexpr int kConnectReviewClientNameValueY = 108;
@@ -447,17 +448,16 @@ static bool make_settings_row_label(lv_obj_t* parent, const char* text, int y)
     return true;
 }
 
-static bool make_settings_menu_row(
+static bool make_settings_action_row_at(
     lv_obj_t* parent,
     const char* label,
     const char* button_text,
-    int row_index,
+    int y,
     SetupButtonKind button_kind,
     lv_color_t color,
     lv_event_cb_t callback,
     bool enabled = true)
 {
-    const int y = row_index * kSettingsMenuRowHeight;
     return make_settings_row_label(parent, label, y) &&
            make_setup_button(
                parent,
@@ -471,6 +471,28 @@ static bool make_settings_menu_row(
                callback,
                nullptr,
                enabled);
+}
+
+static bool make_settings_menu_row(
+    lv_obj_t* parent,
+    const char* label,
+    const char* button_text,
+    int row_index,
+    SetupButtonKind button_kind,
+    lv_color_t color,
+    lv_event_cb_t callback,
+    bool enabled = true)
+{
+    const int y = row_index * kSettingsMenuRowHeight;
+    return make_settings_action_row_at(
+        parent,
+        label,
+        button_text,
+        y,
+        button_kind,
+        color,
+        callback,
+        enabled);
 }
 
 static bool make_user_signing_review_row(
@@ -1783,7 +1805,8 @@ bool modal_draw_chain_settings_menu_panel()
 bool modal_draw_sui_settings_panel(const AgentQSuiSettingsViewModel& model)
 {
     if (model.account_kind == nullptr || model.account_kind[0] == '\0' ||
-        model.proof_status == nullptr || model.proof_status[0] == '\0') {
+        model.proof_status == nullptr || model.proof_status[0] == '\0' ||
+        model.gas_sponsor_status == nullptr || model.gas_sponsor_status[0] == '\0') {
         return false;
     }
 
@@ -1841,6 +1864,21 @@ bool modal_draw_sui_settings_panel(const AgentQSuiSettingsViewModel& model)
         !make_policy_update_review_row(panel, "Proof", model.proof_status, row_y + 2 * kPolicyUpdateReviewRowHeight) ||
         !make_policy_update_review_row(panel, "Max epoch", model.max_epoch, row_y + 3 * kPolicyUpdateReviewRowHeight) ||
         !make_policy_update_review_row(panel, "Proof hash", proof_hash_preview, row_y + 4 * kPolicyUpdateReviewRowHeight)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    if (!make_settings_action_row_at(
+            panel,
+            "Gas sponsor",
+            model.gas_sponsor_status,
+            kSuiSettingsGasSponsorRowY,
+            SetupButtonKind::outlined_keypad,
+            lv_color_hex(theme::kPrimary),
+            model.gas_sponsor_toggle_available
+                ? g_callbacks.on_sui_settings_gas_sponsor_clicked
+                : nullptr,
+            model.gas_sponsor_toggle_available)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
@@ -2139,6 +2177,9 @@ static const char* local_pin_auth_default_message(
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_policy_reset) {
         return "Enter PIN to reset policy.";
     }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor) {
+        return "Enter PIN to change Sui gas sponsor.";
+    }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_sui_zklogin_clear) {
         return "Enter PIN to clear Sui zkLogin.";
     }
@@ -2173,6 +2214,9 @@ static const char* local_pin_auth_title(const agent_q::AgentQLocalPinAuthSnapsho
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_policy_reset) {
         return "Reset Policy";
+    }
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor) {
+        return "Sui Gas Sponsor";
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::settings_sui_zklogin_clear) {
         return "Clear Sui";

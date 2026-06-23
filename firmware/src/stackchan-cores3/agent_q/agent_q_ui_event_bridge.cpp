@@ -142,6 +142,11 @@ void on_sui_settings_back_clicked(lv_event_t*)
     enqueue_ui_event(AgentQUiEventKind::sui_settings_back_requested);
 }
 
+void on_sui_settings_gas_sponsor_clicked(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::sui_settings_gas_sponsor_requested);
+}
+
 void on_sui_settings_clear_clicked(lv_event_t*)
 {
     enqueue_ui_event(AgentQUiEventKind::sui_settings_clear_requested);
@@ -329,6 +334,7 @@ void ui_event_bridge_register_callbacks()
     modal_callbacks.on_settings_reset_clicked = on_settings_reset_clicked;
     modal_callbacks.on_chain_settings_sui_clicked = on_chain_settings_sui_clicked;
     modal_callbacks.on_sui_settings_back_clicked = on_sui_settings_back_clicked;
+    modal_callbacks.on_sui_settings_gas_sponsor_clicked = on_sui_settings_gas_sponsor_clicked;
     modal_callbacks.on_sui_settings_clear_clicked = on_sui_settings_clear_clicked;
     modal_callbacks.on_error_recovery_erase_clicked = on_error_recovery_erase_clicked;
     modal_callbacks.on_error_recovery_cancel_clicked = on_error_recovery_cancel_clicked;

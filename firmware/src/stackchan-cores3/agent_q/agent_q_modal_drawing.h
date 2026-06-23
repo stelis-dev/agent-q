@@ -24,6 +24,7 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_settings_reset_clicked = nullptr;
     lv_event_cb_t on_chain_settings_sui_clicked = nullptr;
     lv_event_cb_t on_sui_settings_back_clicked = nullptr;
+    lv_event_cb_t on_sui_settings_gas_sponsor_clicked = nullptr;
     lv_event_cb_t on_sui_settings_clear_clicked = nullptr;
     lv_event_cb_t on_error_recovery_erase_clicked = nullptr;
     lv_event_cb_t on_error_recovery_cancel_clicked = nullptr;
@@ -77,6 +78,8 @@ struct AgentQSuiSettingsViewModel {
     const char* proof_status = nullptr;
     const char* max_epoch = nullptr;
     const char* proof_hash = nullptr;
+    const char* gas_sponsor_status = nullptr;
+    bool gas_sponsor_toggle_available = false;
     bool clear_available = false;
 };
 

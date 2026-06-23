@@ -83,4 +83,25 @@ if grep -Fq 'strcmp(model.rows[index].label, "Recipient")' "${MODAL_SOURCE}"; th
   fail "signing review layout must not depend on the visible Recipient label"
 fi
 
+SUI_SNIPPET="${TMP_DIR}/sui_settings.cpp"
+sed -n '/bool modal_draw_sui_settings_panel(/,/^}/p' "${MODAL_SOURCE}" >"${SUI_SNIPPET}"
+
+grep -Fq '"Gas sponsor"' "${SUI_SNIPPET}" ||
+  fail "Sui settings must display the gas sponsor account setting"
+grep -Fq 'g_callbacks.on_sui_settings_gas_sponsor_clicked' "${SUI_SNIPPET}" ||
+  fail "Sui settings gas sponsor row must be a local UI action"
+grep -Fq 'model.gas_sponsor_toggle_available' "${SUI_SNIPPET}" ||
+  fail "Sui settings gas sponsor action must be disableable when settings cannot be read"
+
+gas_sponsor_y="$(const_int kSuiSettingsGasSponsorRowY)"
+clear_y="$(const_int kSuiSettingsClearButtonY)"
+settings_action_height="$(const_int kSettingsMenuActionButtonHeight)"
+if [[ -z "${gas_sponsor_y}" || -z "${clear_y}" || -z "${settings_action_height}" ]]; then
+  fail "Sui settings gas sponsor layout constants must be parseable"
+fi
+
+if (( gas_sponsor_y + settings_action_height > clear_y )); then
+  fail "Sui settings gas sponsor row overlaps the clear button"
+fi
+
 printf 'Modal layout static checks passed\n'

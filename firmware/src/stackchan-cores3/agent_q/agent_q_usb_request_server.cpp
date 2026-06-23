@@ -225,6 +225,7 @@ void show_chain_settings_menu_from_active_settings();
 bool draw_sui_settings_panel_from_current_state();
 void show_sui_settings_from_chain_settings();
 void show_chain_settings_menu_from_sui_settings();
+void start_sui_gas_sponsor_from_sui_settings();
 void start_sui_zklogin_clear_from_sui_settings();
 
 void wipe_setup_scratch(const char* reason)
@@ -843,6 +844,7 @@ agent_q::AgentQUsbSessionLossLocalPinPurpose local_pin_loss_purpose(
         case LocalPinAuthPurpose::settings_signing_mode:
         case LocalPinAuthPurpose::settings_policy_reset:
         case LocalPinAuthPurpose::settings_change_pin:
+        case LocalPinAuthPurpose::settings_sui_accept_gas_sponsor:
         case LocalPinAuthPurpose::settings_sui_zklogin_clear:
             return agent_q::AgentQUsbSessionLossLocalPinPurpose::other;
     }
@@ -2252,6 +2254,7 @@ agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops()
         agent_q::human_approval_requires_pin,
         agent_q::read_human_approval_input_mode,
         agent_q::read_signing_authorization_mode,
+        agent_q::read_sui_account_settings,
         agent_q::store_default_policy,
         sui_zklogin_proof_clear_available,
         clear_sui_zklogin_proof_for_settings,
@@ -2746,6 +2749,10 @@ bool draw_sui_settings_panel_from_current_state()
                 identity.zklogin.proof_hash[0] != '\0'
             ? identity.zklogin.proof_hash
             : nullptr;
+    agent_q::AgentQSuiAccountSettings account_settings =
+        agent_q::kDefaultSuiAccountSettings;
+    const bool account_settings_read_ok =
+        agent_q::read_sui_account_settings(&account_settings);
 
     const agent_q::AgentQSuiSettingsViewModel model{
         sui_active_identity_kind_label(identity.kind),
@@ -2753,6 +2760,10 @@ bool draw_sui_settings_panel_from_current_state()
         sui_proof_status_label(proof_status),
         max_epoch,
         proof_hash,
+        account_settings_read_ok
+            ? (account_settings.accept_gas_sponsor ? "ACCEPT" : "REJECT")
+            : "ERR",
+        account_settings_read_ok,
         proof_status != agent_q::AgentQSuiZkLoginProofRecordStatus::missing,
     };
     return agent_q::modal_draw_sui_settings_panel(model);
@@ -2795,6 +2806,16 @@ void show_chain_settings_menu_from_sui_settings()
             AgentQUiMode::result,
             kAgentQResultDisplayMs);
     }
+}
+
+void start_sui_gas_sponsor_from_sui_settings()
+{
+    if (!agent_q_panel_active(AgentQUiPanelKind::sui_settings)) {
+        ESP_LOGW(kTag, "Stale Sui gas sponsor setting ignored");
+        return;
+    }
+    agent_q::local_pin_auth_ui_start_settings_sui_accept_gas_sponsor(
+        local_pin_auth_ui_flow_ops());
 }
 
 void start_sui_zklogin_clear_from_sui_settings()
@@ -3185,6 +3206,11 @@ void drain_ui_events()
 
         if (event.kind == AgentQUiEventKind::sui_settings_back_requested) {
             show_chain_settings_menu_from_sui_settings();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::sui_settings_gas_sponsor_requested) {
+            start_sui_gas_sponsor_from_sui_settings();
             continue;
         }
 
