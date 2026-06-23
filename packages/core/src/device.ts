@@ -11,8 +11,6 @@ import type {
   PolicyGetResult,
   CredentialPrepareResult,
   CredentialProposeResult,
-  IdentifiedDevice,
-  IdentifyDeviceFailure,
   IdentifyDevicesResult,
   SignPersonalMessageResult,
   SignTransactionResult,

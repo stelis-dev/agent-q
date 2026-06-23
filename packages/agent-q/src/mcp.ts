@@ -3,7 +3,6 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import * as z from "zod/v4";
 import { createDefaultAgentQCore } from "@stelis/agent-q-core";
 import {
-  AgentQCore,
   type ConnectDeviceResult,
   type DeviceListResult,
   type DeviceStatusToolResult,
@@ -12,7 +11,6 @@ import {
   type GetApprovalHistoryResult,
   type GetCapabilitiesResult,
   type PolicyGetResult,
-  type PolicyProposeResult,
   type SetDeviceMetadataResult,
   type SignPersonalMessageResult,
   type SignTransactionResult,

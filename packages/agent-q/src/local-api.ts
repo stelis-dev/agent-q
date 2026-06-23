@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { type AgentQCore, type DeviceListResult } from "@stelis/agent-q-core";
+import { type AgentQCore } from "@stelis/agent-q-core";
 import {
   AgentQError,
   hostSuccessOutputSchemas,
