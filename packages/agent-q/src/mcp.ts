@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
@@ -76,6 +77,18 @@ const purposeSchema = z.string().regex(PURPOSE_PATTERN).refine((value) => isVali
 const signNetworkSchema = z.string().describe(
   "Network identifier for the selected chain and method. Current executable Sui signing accepts mainnet, testnet, devnet, or localnet; Client Core and Firmware validate the value.",
 );
+
+const requirePackageJson = createRequire(import.meta.url);
+
+function readAgentQMcpServerVersion(): string {
+  const packageJson = requirePackageJson("../package.json") as { version?: unknown };
+  if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
+    throw new Error("@stelis/agent-q package.json must define a non-empty version");
+  }
+  return packageJson.version;
+}
+
+const AGENT_Q_MCP_SERVER_VERSION = readAgentQMcpServerVersion();
 
 function strictInputSchema<Shape extends z.ZodRawShape>(shape: Shape) {
   return z.object(shape).strict();
@@ -273,7 +286,7 @@ export const hostToolDefinitions = {
 export function createAgentQMcpServer(core = createDefaultAgentQCore()): McpServer {
   const server = new McpServer({
     name: "agent-q",
-    version: "0.1.1",
+    version: AGENT_Q_MCP_SERVER_VERSION,
   });
 
   // run() is the single MCP output boundary. It sanitizes every result so that
