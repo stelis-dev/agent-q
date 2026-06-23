@@ -1085,10 +1085,21 @@ bool usb_response_write_error(const char* id, const char* code, const char* mess
 }
 
 AgentQSuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
-    const SuiPolicySubjectFacts&)
+    const SuiPolicySubjectFacts&,
+    const AgentQSuiActiveIdentity&,
+    const AgentQSuiAccountSettings&)
 {
     ++g_binding_calls;
     return g_binding_result;
+}
+
+bool read_sui_account_settings(AgentQSuiAccountSettings* settings)
+{
+    if (settings == nullptr) {
+        return false;
+    }
+    settings->accept_gas_sponsor = true;
+    return true;
 }
 
 AgentQSuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(

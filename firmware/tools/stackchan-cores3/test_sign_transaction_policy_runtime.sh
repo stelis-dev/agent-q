@@ -77,6 +77,12 @@ constexpr const char* kSuiTypeTag =
     "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
 constexpr const char* kNonSuiTypeTag =
     "0x0000000000000000000000000000000000000000000000000000000000000123::coin::TOKEN";
+constexpr const char* kSenderAddress =
+    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+constexpr const char* kSponsorAddress =
+    "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+constexpr const char* kOtherSponsorAddress =
+    "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
 bool g_policy_summary_available = true;
 bool g_policy_document_available = true;
@@ -113,10 +119,8 @@ agent_q::SuiOfflinePolicyConditionFacts matching_facts()
     facts.valid_transaction_data = true;
     snprintf(facts.gas_budget_raw, sizeof(facts.gas_budget_raw), "%s", "50000000");
     snprintf(facts.gas_price_raw, sizeof(facts.gas_price_raw), "%s", "1000");
-    snprintf(facts.gas_owner, sizeof(facts.gas_owner), "%s",
-             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    snprintf(facts.sender, sizeof(facts.sender), "%s",
-             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    snprintf(facts.gas_owner, sizeof(facts.gas_owner), "%s", kSenderAddress);
+    snprintf(facts.sender, sizeof(facts.sender), "%s", kSenderAddress);
     facts.sponsored = false;
     snprintf(facts.command_count, sizeof(facts.command_count), "%s", "2");
     facts.command_kinds.count = 2;
@@ -135,6 +139,124 @@ agent_q::SuiOfflinePolicyConditionFacts matching_facts()
     facts.completeness = agent_q::SuiOfflinePolicyFactsCompleteness::complete;
     facts.reason = agent_q::SuiOfflinePolicyFactsReason::none;
     return facts;
+}
+
+agent_q::SuiOfflinePolicyConditionFacts sponsored_facts()
+{
+    agent_q::SuiOfflinePolicyConditionFacts facts = matching_facts();
+    snprintf(facts.gas_owner, sizeof(facts.gas_owner), "%s", kSponsorAddress);
+    facts.sponsored = true;
+    return facts;
+}
+
+const agent_q::AgentQCurrentPolicyDocument& sponsored_gas_policy_document()
+{
+    static const char* sponsored_values[] = {"true"};
+    static const char* owner_values[] = {kSponsorAddress};
+    static const char* budget_values[] = {"50000000"};
+    static const char* price_values[] = {"1000"};
+    static const agent_q::AgentQCurrentPolicyCondition conditions[] = {
+        {
+            "sui.sponsored",
+            agent_q::AgentQCurrentPolicyOperator::eq,
+            sponsored_values,
+            sizeof(sponsored_values) / sizeof(sponsored_values[0]),
+            nullptr,
+        },
+        {
+            "sui.gas_owner",
+            agent_q::AgentQCurrentPolicyOperator::eq,
+            owner_values,
+            sizeof(owner_values) / sizeof(owner_values[0]),
+            nullptr,
+        },
+        {
+            "sui.gas_budget_raw",
+            agent_q::AgentQCurrentPolicyOperator::lte,
+            budget_values,
+            sizeof(budget_values) / sizeof(budget_values[0]),
+            nullptr,
+        },
+        {
+            "sui.gas_price_raw",
+            agent_q::AgentQCurrentPolicyOperator::eq,
+            price_values,
+            sizeof(price_values) / sizeof(price_values[0]),
+            nullptr,
+        },
+    };
+    static const agent_q::AgentQCurrentPolicy policies[] = {
+        {
+            "sponsored-gas-facts",
+            agent_q::AgentQCurrentPolicyAction::sign,
+            conditions,
+            sizeof(conditions) / sizeof(conditions[0]),
+        },
+    };
+    static const agent_q::AgentQCurrentPolicyNetworkScope networks[] = {
+        {
+            "devnet",
+            policies,
+            sizeof(policies) / sizeof(policies[0]),
+        },
+    };
+    static const agent_q::AgentQCurrentPolicyBlockchainScope blockchains[] = {
+        {
+            "sui",
+            networks,
+            sizeof(networks) / sizeof(networks[0]),
+        },
+    };
+    static const agent_q::AgentQCurrentPolicyDocument document = {
+        agent_q::kAgentQCurrentPolicySchema,
+        agent_q::AgentQCurrentPolicyAction::reject,
+        blockchains,
+        sizeof(blockchains) / sizeof(blockchains[0]),
+    };
+    return document;
+}
+
+const agent_q::AgentQCurrentPolicyDocument& non_sponsored_only_policy_document()
+{
+    static const char* sponsored_values[] = {"false"};
+    static const agent_q::AgentQCurrentPolicyCondition conditions[] = {
+        {
+            "sui.sponsored",
+            agent_q::AgentQCurrentPolicyOperator::eq,
+            sponsored_values,
+            sizeof(sponsored_values) / sizeof(sponsored_values[0]),
+            nullptr,
+        },
+    };
+    static const agent_q::AgentQCurrentPolicy policies[] = {
+        {
+            "non-sponsored-only",
+            agent_q::AgentQCurrentPolicyAction::sign,
+            conditions,
+            sizeof(conditions) / sizeof(conditions[0]),
+        },
+    };
+    static const agent_q::AgentQCurrentPolicyNetworkScope networks[] = {
+        {
+            "devnet",
+            policies,
+            sizeof(policies) / sizeof(policies[0]),
+        },
+    };
+    static const agent_q::AgentQCurrentPolicyBlockchainScope blockchains[] = {
+        {
+            "sui",
+            networks,
+            sizeof(networks) / sizeof(networks[0]),
+        },
+    };
+    static const agent_q::AgentQCurrentPolicyDocument document = {
+        agent_q::kAgentQCurrentPolicySchema,
+        agent_q::AgentQCurrentPolicyAction::reject,
+        blockchains,
+        sizeof(blockchains) / sizeof(blockchains[0]),
+    };
+    return document;
 }
 
 const agent_q::AgentQCurrentPolicyDocument& sui_only_amount_policy_document()
@@ -417,6 +539,44 @@ int main()
     expect(strcmp(result.rule_ref, "sui-devnet-max-one-sui") == 0, "authorized rule ref");
     expect(result.tx_bytes != nullptr && result.tx_bytes_size == 3,
            "authorization exposes exact signable bytes");
+
+    agent_q::SuiOfflinePolicyConditionFacts sponsored = sponsored_facts();
+    result = agent_q::evaluate_sign_transaction_policy(prepared_request(true, &sponsored));
+    expect(result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized,
+           "sponsored facts reach policy runtime after account binding allows them");
+    expect(strcmp(result.reason_code, "policy_authorized") == 0,
+           "sponsored facts active policy reason");
+
+    agent_q::AgentQCurrentPolicyEvaluationResult sponsored_evaluation =
+        agent_q::evaluate_agent_q_current_policy_for_sui_sign_transaction(
+            sponsored_gas_policy_document(),
+            "devnet",
+            sponsored);
+    expect(sponsored_evaluation.status ==
+               agent_q::AgentQCurrentPolicyEvaluationStatus::authorized,
+           "sponsored gas owner and gas facts authorize");
+    expect(strcmp(sponsored_evaluation.rule_ref, "sponsored-gas-facts") == 0,
+           "sponsored gas facts rule ref");
+
+    sponsored_evaluation =
+        agent_q::evaluate_agent_q_current_policy_for_sui_sign_transaction(
+            non_sponsored_only_policy_document(),
+            "devnet",
+            sponsored);
+    expect(sponsored_evaluation.status ==
+               agent_q::AgentQCurrentPolicyEvaluationStatus::no_matching_policy,
+           "non-sponsored-only policy rejects sponsored facts");
+
+    agent_q::SuiOfflinePolicyConditionFacts wrong_sponsor = sponsored;
+    snprintf(wrong_sponsor.gas_owner, sizeof(wrong_sponsor.gas_owner), "%s", kOtherSponsorAddress);
+    sponsored_evaluation =
+        agent_q::evaluate_agent_q_current_policy_for_sui_sign_transaction(
+            sponsored_gas_policy_document(),
+            "devnet",
+            wrong_sponsor);
+    expect(sponsored_evaluation.status ==
+               agent_q::AgentQCurrentPolicyEvaluationStatus::no_matching_policy,
+           "sponsored gas owner condition must match the sponsor gas owner");
 
     agent_q::SuiOfflinePolicyConditionFacts too_large = facts;
     snprintf(too_large.token_totals_by_type[0].amount_raw, sizeof(too_large.token_totals_by_type[0].amount_raw),

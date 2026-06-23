@@ -17,19 +17,24 @@ AgentQSuiSigningActiveIdentityNetworkResult active_identity_error_to_network_res
 }  // namespace
 
 AgentQSuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
-    const SuiPolicySubjectFacts& facts)
+    const SuiPolicySubjectFacts& facts,
+    const AgentQSuiActiveIdentity& active_identity,
+    const AgentQSuiAccountSettings& account_settings)
 {
-    const AgentQSuiActiveIdentity active_identity = resolve_active_sui_identity();
     if (active_identity.kind == AgentQSuiActiveIdentityKind::error) {
         return active_identity.error == AgentQSuiActiveIdentityError::native_account_unavailable
                    ? AgentQSuiSigningAccountBindingResult::account_unavailable
                    : AgentQSuiSigningAccountBindingResult::active_identity_unavailable;
     }
-    const bool matches =
-        strcmp(facts.sender, active_identity.address) == 0 &&
-        strcmp(facts.gas_owner, active_identity.address) == 0;
-    return matches ? AgentQSuiSigningAccountBindingResult::ok
-                   : AgentQSuiSigningAccountBindingResult::account_mismatch;
+    const bool sender_matches = strcmp(facts.sender, active_identity.address) == 0;
+    if (!sender_matches) {
+        return AgentQSuiSigningAccountBindingResult::account_mismatch;
+    }
+    const bool gas_owner_matches = strcmp(facts.gas_owner, active_identity.address) == 0;
+    if (gas_owner_matches || account_settings.accept_gas_sponsor) {
+        return AgentQSuiSigningAccountBindingResult::ok;
+    }
+    return AgentQSuiSigningAccountBindingResult::account_mismatch;
 }
 
 AgentQSuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(

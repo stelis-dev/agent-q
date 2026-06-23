@@ -245,7 +245,7 @@ const char* signature_begin_error_message(AgentQUserSigningFlowBeginResult resul
         case AgentQUserSigningFlowBeginResult::account_unavailable:
             return "Signing account is unavailable.";
         case AgentQUserSigningFlowBeginResult::invalid_account:
-            return "Transaction sender does not match the device account.";
+            return "Transaction account binding is unavailable or not allowed by the device account setting.";
         case AgentQUserSigningFlowBeginResult::digest_error:
             return "Could not digest signing request.";
         case AgentQUserSigningFlowBeginResult::invalid_network:
@@ -315,7 +315,7 @@ const char* sui_preparation_error_message(AgentQSuiSigningPreparationResult resu
         case AgentQSuiSigningPreparationResult::active_identity_unavailable:
             return "Active Sui identity is unavailable.";
         case AgentQSuiSigningPreparationResult::invalid_account:
-            return "Transaction sender does not match the device account.";
+            return "Transaction account binding is unavailable or not allowed by the device account setting.";
         case AgentQSuiSigningPreparationResult::digest_error:
             return "Could not digest signing request.";
         case AgentQSuiSigningPreparationResult::invalid_network:

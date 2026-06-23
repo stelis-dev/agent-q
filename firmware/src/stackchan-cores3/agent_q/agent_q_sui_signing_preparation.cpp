@@ -5,6 +5,7 @@
 
 #include "agent_q_base64.h"
 #include "agent_q_bip39.h"
+#include "agent_q_sui_account_settings.h"
 #include "agent_q_sui_signing_authority.h"
 #include "agent_q_sui_zklogin_proof_store.h"
 #include "agent_q_common/sui/agent_q_sui_sign_transaction_adapter.h"
@@ -178,8 +179,18 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
         authorization_coverage.policy_mode_authorization_covered;
     out->user_authorization_outcome = authorization_coverage.user_outcome;
     out->policy_authorization_outcome = authorization_coverage.policy_outcome;
+    const AgentQSuiActiveIdentity active_identity = resolve_active_sui_identity();
+    AgentQSuiAccountSettings account_settings = kDefaultSuiAccountSettings;
+    if (active_identity.kind != AgentQSuiActiveIdentityKind::error &&
+        !read_sui_account_settings(&account_settings)) {
+        clear_prepared_sui_sign_transaction(out);
+        return AgentQSuiSigningPreparationResult::invalid_account;
+    }
     const AgentQSuiSigningAccountBindingResult account_result =
-        verify_sui_signing_active_account_binding(out->sui_policy_subject);
+        verify_sui_signing_active_account_binding(
+            out->sui_policy_subject,
+            active_identity,
+            account_settings);
     if (account_result != AgentQSuiSigningAccountBindingResult::ok) {
         clear_prepared_sui_sign_transaction(out);
         switch (account_result) {
@@ -195,7 +206,7 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
     }
     const AgentQSuiSigningPreparationResult network_result =
         active_identity_network_result_to_preparation_result(
-            verify_sui_signing_active_identity_network(out->network));
+            verify_sui_signing_active_identity_network(active_identity, out->network));
     if (network_result != AgentQSuiSigningPreparationResult::ok) {
         clear_prepared_sui_sign_transaction(out);
         return network_result;

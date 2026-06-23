@@ -49,6 +49,7 @@ cat >"${TMP_DIR}/user_signing_flow_test.cpp" <<'CPP'
 
 #include "agent_q_user_signing_flow_test.h"
 #include "agent_q_sui_account_store.h"
+#include "agent_q_sui_zklogin_proof_store.h"
 
 namespace {
 
@@ -416,6 +417,20 @@ SuiAccountDerivationResult derive_sui_ed25519_account_from_stored_root(
     }
     snprintf(address_out, address_out_size, "%s", g_account_address);
     return SuiAccountDerivationResult::ok;
+}
+
+AgentQSuiActiveIdentity resolve_active_sui_identity()
+{
+    AgentQSuiActiveIdentity identity = {};
+    if (g_account_result != SuiAccountDerivationResult::ok) {
+        identity.kind = AgentQSuiActiveIdentityKind::error;
+        identity.error = AgentQSuiActiveIdentityError::native_account_unavailable;
+        return identity;
+    }
+    identity.kind = AgentQSuiActiveIdentityKind::native;
+    identity.error = AgentQSuiActiveIdentityError::none;
+    snprintf(identity.address, sizeof(identity.address), "%s", g_account_address);
+    return identity;
 }
 
 }  // namespace agent_q

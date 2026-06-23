@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent_q_common/sui/agent_q_sui_transaction_facts.h"
+#include "agent_q_sui_account_settings.h"
 #include "agent_q_sui_zklogin_proof_store.h"
 
 namespace agent_q {
@@ -20,7 +21,9 @@ enum class AgentQSuiSigningActiveIdentityNetworkResult {
 };
 
 AgentQSuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
-    const SuiPolicySubjectFacts& facts);
+    const SuiPolicySubjectFacts& facts,
+    const AgentQSuiActiveIdentity& active_identity,
+    const AgentQSuiAccountSettings& account_settings);
 AgentQSuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(
     const AgentQSuiActiveIdentity& active_identity,
     const char* request_network);

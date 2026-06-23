@@ -52,6 +52,8 @@ agent_q::AgentQSuiActiveIdentityError g_active_identity_error =
 char g_derived_address[agent_q::kSuiAddressBufferSize] =
     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 char g_zklogin_network[agent_q::kAgentQSuiNetworkBufferSize] = "devnet";
+bool g_read_account_settings_ok = true;
+agent_q::AgentQSuiAccountSettings g_account_settings = {false};
 
 int hex_value(char value)
 {
@@ -318,16 +320,20 @@ AgentQSuiActiveIdentity resolve_active_sui_identity()
 }
 
 AgentQSuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
-    const SuiPolicySubjectFacts& facts)
+    const SuiPolicySubjectFacts& facts,
+    const AgentQSuiActiveIdentity& active_identity,
+    const AgentQSuiAccountSettings& account_settings)
 {
-    const AgentQSuiActiveIdentity active_identity = resolve_active_sui_identity();
     if (active_identity.kind == AgentQSuiActiveIdentityKind::error) {
         return active_identity.error == AgentQSuiActiveIdentityError::native_account_unavailable
                    ? AgentQSuiSigningAccountBindingResult::account_unavailable
                    : AgentQSuiSigningAccountBindingResult::active_identity_unavailable;
     }
-    return strcmp(facts.sender, active_identity.address) == 0 &&
-                   strcmp(facts.gas_owner, active_identity.address) == 0
+    if (strcmp(facts.sender, active_identity.address) != 0) {
+        return AgentQSuiSigningAccountBindingResult::account_mismatch;
+    }
+    return strcmp(facts.gas_owner, active_identity.address) == 0 ||
+                   account_settings.accept_gas_sponsor
                ? AgentQSuiSigningAccountBindingResult::ok
                : AgentQSuiSigningAccountBindingResult::account_mismatch;
 }
@@ -358,6 +364,18 @@ AgentQSuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_n
     const char* request_network)
 {
     return verify_sui_signing_active_identity_network(resolve_active_sui_identity(), request_network);
+}
+
+bool read_sui_account_settings(AgentQSuiAccountSettings* settings)
+{
+    if (settings != nullptr) {
+        *settings = kDefaultSuiAccountSettings;
+    }
+    if (!::g_read_account_settings_ok || settings == nullptr) {
+        return false;
+    }
+    *settings = ::g_account_settings;
+    return true;
 }
 
 }  // namespace agent_q
@@ -489,6 +507,56 @@ int main(int argc, char** argv)
                base64(sponsored).c_str(),
                sponsored.size(),
                &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_account);
+
+    ::g_account_settings.accept_gas_sponsor = true;
+    assert(agent_q::prepare_sui_sign_transaction(
+               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+               "devnet",
+               base64(sponsored).c_str(),
+               sponsored.size(),
+               &tx) == agent_q::AgentQSuiSigningPreparationResult::ok);
+    assert(strcmp(tx.sui_policy_subject.sender,
+                  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0);
+    assert(strcmp(tx.sui_policy_subject.gas_owner,
+                  "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") == 0);
+    assert(tx.user_mode_authorization_covered);
+    assert(tx.user_authorization_outcome ==
+           agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review);
+    assert(tx.policy_mode_authorization_covered);
+    assert(tx.policy_authorization_outcome ==
+           agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation);
+    assert(tx.sui_offline_policy_facts != nullptr);
+    assert(tx.sui_offline_policy_facts->sponsored);
+    assert(strcmp(tx.sui_offline_policy_facts->gas_owner,
+                  "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") == 0);
+    assert(strcmp(tx.sui_offline_policy_facts->gas_budget_raw, "50000000") == 0);
+    assert(strcmp(tx.sui_offline_policy_facts->gas_price_raw, "1000") == 0);
+    agent_q::clear_prepared_sui_sign_transaction(&tx);
+
+    snprintf(::g_derived_address,
+             sizeof(::g_derived_address),
+             "%s",
+             "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    assert(agent_q::prepare_sui_sign_transaction(
+               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+               "devnet",
+               base64(sponsored).c_str(),
+               sponsored.size(),
+               &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_account);
+    snprintf(::g_derived_address,
+             sizeof(::g_derived_address),
+             "%s",
+             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    ::g_account_settings.accept_gas_sponsor = false;
+
+    ::g_read_account_settings_ok = false;
+    assert(agent_q::prepare_sui_sign_transaction(
+               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+               "devnet",
+               base64(valid).c_str(),
+               valid.size(),
+               &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_account);
+    ::g_read_account_settings_ok = true;
 
     snprintf(::g_derived_address,
              sizeof(::g_derived_address),

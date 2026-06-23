@@ -60,12 +60,19 @@ cat >"${TMP_DIR}/user_signing_confirmation_test.cpp" <<'CPP'
 #include "agent_q_pin_attempt.h"
 #include "agent_q_user_signing_confirmation_test.h"
 #include "agent_q_user_signing_flow_test.h"
+#include "agent_q_sui_account_settings.h"
 #include "agent_q_sui_account_store.h"
+#include "agent_q_sui_zklogin_proof_store.h"
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
 
 bool store_signing_authorization_mode(AgentQSigningAuthorizationMode)
+{
+    return true;
+}
+
+bool store_sui_account_settings(const AgentQSuiAccountSettings&)
 {
     return true;
 }
@@ -387,6 +394,15 @@ SuiAccountDerivationResult derive_sui_ed25519_account_from_stored_root(
     }
     snprintf(address, address_size, "%s", g_account_address);
     return SuiAccountDerivationResult::ok;
+}
+
+AgentQSuiActiveIdentity resolve_active_sui_identity()
+{
+    AgentQSuiActiveIdentity identity = {};
+    identity.kind = AgentQSuiActiveIdentityKind::native;
+    identity.error = AgentQSuiActiveIdentityError::none;
+    snprintf(identity.address, sizeof(identity.address), "%s", g_account_address);
+    return identity;
 }
 
 bool is_valid_local_pin(const char* pin)
