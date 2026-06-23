@@ -82,8 +82,10 @@ constexpr int kSettingsMenuRowControlX = 208;
 constexpr int kSettingsMenuRowHeight = 34;
 constexpr int kSettingsMenuActionButtonWidth = 72;
 constexpr int kSettingsMenuActionButtonHeight = 26;
-constexpr int kSuiSettingsGasSponsorRowY = 130;
-constexpr int kSuiSettingsClearButtonY = 164;
+constexpr int kSuiSettingsInfoRowTop = 0;
+constexpr int kSuiSettingsActionDividerY = 88;
+constexpr int kSuiSettingsGasSponsorRowY = 98;
+constexpr int kSuiSettingsClearButtonY = 128;
 constexpr int kConnectReviewTextLeft = 24;
 constexpr int kConnectReviewClientNameValueY = 108;
 constexpr int kConnectReviewClientNameValueWidth = kInsetPanelWidth - 48;
@@ -471,6 +473,22 @@ static bool make_settings_action_row_at(
                callback,
                nullptr,
                enabled);
+}
+
+static bool make_settings_section_divider(lv_obj_t* parent, int y)
+{
+    lv_obj_t* divider = lv_obj_create(parent);
+    if (divider == nullptr) {
+        return false;
+    }
+    lv_obj_set_size(divider, kPolicyUpdateReviewRowWidth, 1);
+    lv_obj_align(divider, LV_ALIGN_TOP_LEFT, 18, y);
+    lv_obj_set_style_radius(divider, 0, 0);
+    lv_obj_set_style_border_width(divider, 0, 0);
+    lv_obj_set_style_bg_color(divider, lv_color_hex(theme::kOutlineVariant), 0);
+    lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(divider, LV_OBJ_FLAG_SCROLLABLE);
+    return true;
 }
 
 static bool make_settings_menu_row(
@@ -1853,23 +1871,39 @@ bool modal_draw_sui_settings_panel(const AgentQSuiSettingsViewModel& model)
     lv_obj_set_style_text_color(subtitle, lv_color_hex(theme::kOnSurfaceVariant), 0);
     lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
 
+    lv_obj_t* content = lv_obj_create(panel);
+    if (content == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_obj_set_size(content, kPanelContentWidth, kSettingsMenuContentHeight);
+    lv_obj_align(content, LV_ALIGN_TOP_LEFT, 0, kSettingsMenuContentY);
+    lv_obj_set_style_radius(content, 0, 0);
+    lv_obj_set_style_border_width(content, 0, 0);
+    lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(content, 0, 0);
+    lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(content, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
+
     char address_preview[30] = {};
     char proof_hash_preview[24] = {};
     format_middle_elided(model.address, address_preview, sizeof(address_preview), 10, 6);
     format_hash_prefix(model.proof_hash, proof_hash_preview, sizeof(proof_hash_preview));
 
-    int row_y = kPolicyUpdateReviewRowTop;
-    if (!make_policy_update_review_row(panel, "Account", model.account_kind, row_y) ||
-        !make_policy_update_review_row(panel, "Address", address_preview, row_y + kPolicyUpdateReviewRowHeight) ||
-        !make_policy_update_review_row(panel, "Proof", model.proof_status, row_y + 2 * kPolicyUpdateReviewRowHeight) ||
-        !make_policy_update_review_row(panel, "Max epoch", model.max_epoch, row_y + 3 * kPolicyUpdateReviewRowHeight) ||
-        !make_policy_update_review_row(panel, "Proof hash", proof_hash_preview, row_y + 4 * kPolicyUpdateReviewRowHeight)) {
+    int row_y = kSuiSettingsInfoRowTop;
+    if (!make_policy_update_review_row(content, "Account", model.account_kind, row_y) ||
+        !make_policy_update_review_row(content, "Address", address_preview, row_y + kPolicyUpdateReviewRowHeight) ||
+        !make_policy_update_review_row(content, "Proof", model.proof_status, row_y + 2 * kPolicyUpdateReviewRowHeight) ||
+        !make_policy_update_review_row(content, "Max epoch", model.max_epoch, row_y + 3 * kPolicyUpdateReviewRowHeight) ||
+        !make_policy_update_review_row(content, "Proof hash", proof_hash_preview, row_y + 4 * kPolicyUpdateReviewRowHeight) ||
+        !make_settings_section_divider(content, kSuiSettingsActionDividerY)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
 
     if (!make_settings_action_row_at(
-            panel,
+            content,
             "Gas sponsor",
             model.gas_sponsor_status,
             kSuiSettingsGasSponsorRowY,
@@ -1885,7 +1919,7 @@ bool modal_draw_sui_settings_panel(const AgentQSuiSettingsViewModel& model)
 
     if (model.clear_available &&
         !make_setup_button(
-            panel,
+            content,
             "Clear zkLogin",
             kSettingsMenuButtonCenterX,
             kSuiSettingsClearButtonY,

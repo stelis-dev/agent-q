@@ -92,6 +92,14 @@ grep -Fq 'g_callbacks.on_sui_settings_gas_sponsor_clicked' "${SUI_SNIPPET}" ||
   fail "Sui settings gas sponsor row must be a local UI action"
 grep -Fq 'model.gas_sponsor_toggle_available' "${SUI_SNIPPET}" ||
   fail "Sui settings gas sponsor action must be disableable when settings cannot be read"
+grep -Fq 'lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);' "${SUI_SNIPPET}" ||
+  fail "Sui settings account content must be scrollable"
+grep -Fq 'lv_obj_set_scroll_dir(content, LV_DIR_VER);' "${SUI_SNIPPET}" ||
+  fail "Sui settings account content must scroll vertically"
+grep -Fq 'make_settings_section_divider(content, kSuiSettingsActionDividerY)' "${SUI_SNIPPET}" ||
+  fail "Sui settings must visually separate account facts from actions"
+grep -Fq 'make_settings_action_row_at(' "${SUI_SNIPPET}" ||
+  fail "Sui settings gas sponsor action must use the settings action row"
 
 gas_sponsor_y="$(const_int kSuiSettingsGasSponsorRowY)"
 clear_y="$(const_int kSuiSettingsClearButtonY)"
