@@ -107,6 +107,12 @@ product-active limits.
   bytes, up to the Sui serialized transaction maximum. This is a payload and
   adapter input capacity, not a claim that every Sui transaction shape is
   semantically signable; unsupported or unbindable shapes fail before signing.
+- **Sui sponsored transaction receive path**: Firmware has a device-local Sui
+  account setting that controls whether it accepts transactions where the parsed
+  sender is the active account and the parsed gas owner is a different sponsor.
+  When accepted, Agent-Q still returns only the active sender's signature;
+  sponsor signature collection and transaction execution assembly are outside
+  Agent-Q.
 
 ## Request Flow
 
@@ -134,7 +140,7 @@ still being completed.
 
 | Chain | Method | Current behavior |
 | --- | --- | --- |
-| `sui` | `sign_transaction` | Current implementation supports inline or same-session staged Sui transaction bytes. It validates the request, parses bounded offline transaction facts when available, applies the device-local policy or user authorization gate, and produces a signature response only after that gate authorizes signing. Policy mode fails closed when required policy coverage is missing, incomplete, unmatched, or reject-matched. User mode shows covered offline facts when available; otherwise it shows a device-local blind-signing warning for a valid transaction bound to the active account. Blind signing means confirming signable bytes whose transaction details are not fully reviewable from offline facts. |
+| `sui` | `sign_transaction` | Current implementation supports inline or same-session staged Sui transaction bytes. It validates the request, parses bounded offline transaction facts when available, applies the device-local policy or user authorization gate, and produces a signature response only after that gate authorizes signing. The parsed sender must match the active account; the parsed gas owner must also match unless the active account's device-local Sui account setting accepts gas sponsors. Policy mode fails closed when required policy coverage is missing, incomplete, unmatched, or reject-matched. User mode shows covered offline facts when available; otherwise it shows a device-local blind-signing warning for a valid transaction bound to the active account. Blind signing means confirming signable bytes whose transaction details are not fully reviewable from offline facts. |
 | `sui` | `sign_personal_message` | Current implementation supports bounded Sui personal-message signing in user authorization mode. Policy authorization mode fails closed for this method. |
 
 The current implementation contains Sui zkLogin active identity paths, but
@@ -188,8 +194,10 @@ Current limitations:
 - Sui is the only executable chain.
 - Sui transaction parsing is bounded and offline. Agent-Q does not simulate Sui
   execution or fetch chain state.
-- Sponsored Sui transactions, Sui transaction execution/submission, and
-  policy-authorized personal-message signing are not implemented.
+- Sui sponsored transaction support is limited to the sender-bound receive path
+  described above. Agent-Q does not produce, collect, or assemble sponsor
+  signatures and does not execute or submit Sui transactions.
+- Policy-authorized personal-message signing is not implemented.
 - Sui zkLogin browser-to-device setup, clear, reconnect, and signing paths are
   not product-active.
 - Browser dapp signing requires the provider/browser runtime path, not the

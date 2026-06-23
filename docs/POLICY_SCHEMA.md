@@ -104,6 +104,12 @@ that would be signed. It does not trust host JSON or SDK JSON for policy facts.
 | `sui.sponsored` | `bool_string` | `eq` |
 | `sui.command_count` | `u64_decimal` | `eq`, `lte` |
 
+For sponsored Sui transactions, `sui.gas_owner`, `sui.gas_budget_raw`, and
+`sui.gas_price_raw` describe the sponsor gas data in the serialized transaction.
+They are not a user spending limit. Use `sui.sponsored eq false` when a policy
+must reject sponsored transactions. Use token-source and token-total facts for
+offline user-asset limits that Firmware can derive from the transaction bytes.
+
 ### Command Fields
 
 | Field | Type | Operators |
@@ -253,7 +259,7 @@ results, and fullnode state are not policy facts.
 | Condition | Outcome |
 | --- | --- |
 | Malformed or unsupported transaction bytes | No signing. |
-| Wrong account or unsupported account binding | No signing. |
+| Sender mismatch, rejected gas owner mismatch, or unsupported account binding | No signing. |
 | No active policy or no matching blockchain/network scope | Reject. |
 | Missing or incomplete condition facts | Reject. |
 | Unknown token type, unknown token amount, mixed known/unknown token provenance, or amount overflow | Reject. |

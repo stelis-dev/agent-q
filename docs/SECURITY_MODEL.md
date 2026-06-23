@@ -111,9 +111,12 @@ Implemented today:
   or through same-session staged payload delivery. Firmware derives
   offline-provable facts and account binding from the current Sui
   `TransactionData::V1 -> ProgrammableTransaction` facts extractor and stored
-  material, reads its device-local signing authorization mode, selects the
-  policy or user signing gate, requires history before signing, emits terminal
-  metadata, and owns cleanup. Unsupported versions, unsupported transaction
+  material, reads the active account's Sui gas sponsor setting, reads its
+  device-local signing authorization mode, selects the policy or user signing
+  gate, requires history before signing, emits terminal metadata, and owns
+  cleanup. The parsed sender must match the active account; the parsed gas owner
+  must also match unless that account setting accepts gas sponsors. Unsupported
+  versions, unsupported transaction
   kinds, `TransactionKind`-only bytes, malformed bytes, trailing bytes,
   oversized bytes, unbindable transactions, and out-of-range command references
   fail closed. Policy mode validates active policy availability, request network
@@ -282,6 +285,11 @@ requests, adapters, and host callers cannot choose it.
   policy reject is terminal and must not fall back to user confirmation. The
   current policy document shape and currently exposed Sui policy facts are
   cataloged in `docs/POLICY_SCHEMA.md`.
+- For sponsored transactions, gas owner, gas budget, and gas price policy facts
+  describe the sponsor gas data in the serialized transaction, not a user
+  spending limit. Policy authors should use `sui.sponsored` to reject sponsored
+  transactions and token facts for offline user-asset limits that Firmware can
+  derive from the transaction bytes.
 - Policy mode treats a matching current `sign` policy as sufficient for signing
   only after complete Firmware-derived condition facts, account binding, and the
   required policy history record. Missing, incomplete, unmatched, or

@@ -54,6 +54,7 @@ device RNG
   -> Firmware stores root material locally
   -> Firmware stores an active default-reject policy locally
   -> Firmware stores a salt + PIN verifier locally
+  -> Firmware stores Sui account settings locally
   -> Firmware exposes only public keys / addresses
 ```
 
@@ -64,7 +65,8 @@ Rules:
 - After confirmation, the mnemonic is not shown again.
 - If setup is canceled, Firmware wipes the generated material.
 - A device is not `provisioned` unless root material, an active policy, a local
-  PIN verifier, and a signing authorization mode are all present.
+  PIN verifier, signing authorization mode, and Sui account settings are all
+  present. New setup initializes the Sui account setting to reject gas sponsors.
 - The local PIN verifier is a DEV_PROFILE UX gate for connect approval when
   enabled, settings changes, local reset, the current policy-update proposal
   flow, and sensitive local writes. It is not root-material encryption or
@@ -171,14 +173,14 @@ The current DEV_PROFILE runtime implements the StackChan CoreS3 mnemonic UI flow
 persistent root material storage path. It loads and reports `provisioning.state`, but
 does not persist `provisioning` during the normal create-new-mnemonic flow.
 After physical backup confirmation, Firmware stores the binary BIP-39 root
-entropy, the active default-reject policy, a salt + PIN verifier, and signing
-authorization mode in ordinary DEV_PROFILE device-local NVS and only then moves
-to `provisioned`.
+entropy, the active default-reject policy, a salt + PIN verifier, signing
+authorization mode, and Sui account settings in ordinary DEV_PROFILE
+device-local NVS and only then moves to `provisioned`.
 Existing DEV_PROFILE devices with `prov_state = provisioned` but missing,
-unreadable, or unsupported current active policy material fail closed.
-Destructive local reset or error-state erase is the supported recovery path;
-Firmware recognizes only the current tracked policy storage layout as product
-state.
+unreadable, or unsupported current active policy material, signing authorization
+mode, or Sui account settings fail closed. Destructive local reset,
+error-state erase, or development flash erase is the supported recovery path;
+Firmware recognizes only the current tracked storage layout as product state.
 If the persisted state and required material records disagree after boot or
 during runtime checks, Firmware reports `provisioning.state = error`; it does
 not keep reporting `provisioned` while rejecting all session APIs.
@@ -191,7 +193,9 @@ bytes delivered inline or through same-session staging and for user-mode
 decoded by the Firmware Sui `TransactionData::V1 -> ProgrammableTransaction`
 facts extractor. Unsupported versions, unsupported transaction kinds,
 malformed bytes, out-of-range command references, and transactions whose
-minimum sender/gas-owner facts cannot be extracted and bound fail closed.
+minimum sender or gas owner facts cannot be extracted fail closed. The parsed
+sender must match the active account. The parsed gas owner must also match unless
+the active account's Sui account setting accepts gas sponsors.
 Valid account-bound transactions whose offline review facts are incomplete may
 enter the explicit user-mode blind-signing path; policy mode signs only when
 the active current policy has a matching `sign` policy over complete offline

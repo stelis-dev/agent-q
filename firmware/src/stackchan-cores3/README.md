@@ -203,6 +203,10 @@ facts, then signs only when the active current policy has a matching `sign`
 policy, while
 user mode may enter offline facts review or blind-signing device confirmation
 after Firmware validates and account-binds the transaction.
+For Sui transactions, the parsed sender must match the active account. The
+parsed gas owner must also match unless the active Sui account setting accepts
+gas sponsors; accepted sponsored transactions still return only the active
+sender signature.
 User mode then applies the current human approval input mode and records
 required history. Policy-incomplete valid transactions return `policy_rejected`
 in policy mode. It rejects unsupported transactions and returns `signed`,

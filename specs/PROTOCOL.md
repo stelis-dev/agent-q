@@ -408,8 +408,9 @@ default-reject policy. It does not
 use `locked` because no unlock model is
 implemented. DEV_PROFILE backup phrase display, device-local
 mnemonic import entry, persistent root material, active policy storage, local
-PIN verifier storage, signing authorization mode storage, local reset, and
-read-only `get_accounts` Sui account derivation are implemented.
+PIN verifier storage, signing authorization mode storage, Sui account settings
+storage, local reset, and read-only `get_accounts` Sui account derivation are
+implemented.
 USB, host process, or MCP mnemonic import is not implemented.
 Policy updates are available only through the Firmware-owned
 `policy_propose` proposal flow for current-schema policies. The `sign` action
@@ -418,10 +419,11 @@ uses it only after active policy availability, request network scope, account
 binding, and complete offline policy condition facts pass.
 
 If a target boots with `prov_state = provisioned` but missing, unreadable, or
-unsupported current active policy or signing authorization mode material,
-Firmware must fail closed instead of reporting normal `provisioned`. Existing
-DEV_PROFILE devices without the current local PIN verifier or signing
-authorization mode fail closed until reprovisioned.
+unsupported current active policy, signing authorization mode material, or Sui
+account settings, Firmware must fail closed instead of reporting normal
+`provisioned`. Existing DEV_PROFILE devices without the current local PIN
+verifier, signing authorization mode, or Sui account settings fail closed until
+erased and reprovisioned through local UX or a development flash-erase workflow.
 
 Device metadata strings are untrusted input and host process bounds them when
 parsing a response:
@@ -939,7 +941,10 @@ Approved response:
       "address": "0x...",
       "publicKey": "base64...",
       "keyScheme": "ed25519",
-      "derivationPath": "m/44'/784'/0'/0'/0'"
+      "derivationPath": "m/44'/784'/0'/0'/0'",
+      "sponsoredTransactions": {
+        "acceptGasSponsor": false
+      }
     }
   ]
 }
@@ -964,6 +969,13 @@ Rules:
   identity is read from the persisted proof record. A native derivation failure,
   invalid proof record, or proof storage read failure returns `account_error`
   with no partial account.
+- `sponsoredTransactions.acceptGasSponsor` is a read-only projection of the
+  active account's device-local Sui account setting. `false` means
+  `sign_transaction` rejects transactions whose parsed gas owner differs from
+  the active account. `true` means `sign_transaction` may continue when the
+  parsed sender matches the active account and the parsed gas owner is a
+  different sponsor. There is no protocol setter for this setting; changing it
+  is a device-local Settings action that requires local PIN verification.
 - The host process parses and re-validates the account shape, rejects any
   response that carries a secret-like field, and recomputes the Sui address from
   the scheme-prefixed `publicKey` or public identifier to reject mismatched
@@ -1483,8 +1495,9 @@ its device-local signing authorization mode and chooses the internal signing
 gate:
 
 - both modes validate the request envelope, parse the transaction bytes, bind
-  sender and gas owner to the stored device account, and reject when their
-  selected gate rejects the request;
+  the parsed sender to the active device account, apply the active account's Sui
+  gas sponsor setting to the parsed gas owner, and reject when their selected
+  gate rejects the request;
 - `policy`: validate active policy availability, request network scope, account
   binding, and offline policy condition facts, then sign only when the active
   current policy has a matching `sign` policy. Missing, incomplete, unmatched,
@@ -1555,9 +1568,9 @@ Current implementation rules:
   ProgrammableTransaction` bytes decoded by the Firmware facts extractor.
   Unsupported versions, unsupported transaction kinds, `TransactionKind`-only
   bytes, malformed bytes, trailing bytes, out-of-range command references,
-  serialized payload/input capacity overflow, and transactions whose sender and
-  gas owner cannot be extracted and bound to the stored device account fail
-  closed.
+  serialized payload/input capacity overflow, and transactions whose minimum
+  sender or gas owner facts cannot be extracted or cannot pass account binding
+  fail closed.
   Policy authorization validates active policy availability, request network
   scope, account binding, and complete offline policy condition facts, then
   signs only when the active current policy has a matching `sign` policy.
@@ -1589,7 +1602,7 @@ Current implementation rules:
   `unsupported_payload_size`; malformed decoded bytes return
   `malformed_transaction`; unsupported transaction identity, unsupported version
   or kind, `TransactionKind`-only payloads, or inputs whose minimum
-  sender/gas-owner facts cannot be extracted fail closed before signing.
+  sender or gas owner facts cannot be extracted fail closed before signing.
   Separate detail-review parser limits may prevent complete offline facts
   review without making the serialized payload oversized. A valid
   account-bound transaction that stays within the serialized payload/input
@@ -1597,10 +1610,19 @@ Current implementation rules:
   user-mode blind signing path, while policy mode rejects policy-incomplete
   transactions. These are Firmware adapter and authorization outcomes, not
   common Core, host process, MCP, and CLI request-format limits.
-- Firmware must derive the signing account from stored device material, and
-  the parsed sender and gas owner must both match that device-derived account.
-  Sponsored gas and request-supplied expected-signer bindings are unsupported
-  in the current implementation.
+- Firmware must derive the signing account from stored device material. The
+  parsed sender must match that device-derived account. The parsed gas owner
+  must also match unless `acceptGasSponsor` is `true` in the active account's
+  `get_accounts.accounts[].sponsoredTransactions` object. If the setting is
+  missing, unreadable, invalid, or `false`, a different parsed gas owner fails
+  closed with the existing `account_error` boundary.
+- When `acceptGasSponsor` is `true`, Agent-Q still signs only as the parsed
+  sender/active account and returns only that sender signature. It does not
+  produce, collect, or assemble a sponsor gas owner signature and does not
+  execute the transaction. Sponsor signature collection and execution assembly
+  are outside this protocol.
+- Request-supplied expected-signer bindings are unsupported in the current
+  implementation.
 - Firmware must not call the signing service before the required
   approval-history record for the selected authorization mode is durable. If a
   required history write fails, Firmware returns top-level `history_error` and

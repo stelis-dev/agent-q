@@ -125,6 +125,13 @@ user-mode only. Firmware records required history and signs or rejects. The
 provider does not decide whether signing is allowed and cannot select the
 authorization mode.
 
+`getAccounts` returns the raw Agent-Q Sui account projection. That projection
+includes `sponsoredTransactions.acceptGasSponsor`, a read-only value from the
+active account's device-local Firmware setting. It tells direct provider callers
+whether Firmware may accept transactions where the parsed sender is the active
+account and the parsed gas owner is a different sponsor. There is no provider,
+Wallet Standard, host, or dapp setter for this setting.
+
 `credentialPrepare` and `credentialPropose` send common `credential_prepare`
 and `credential_propose` requests. Enoki, OAuth, JWT handling, prover calls,
 salt services, and zkLogin address continuity are application or test-web
@@ -164,6 +171,11 @@ Credential setup is available through direct provider methods, not through
 Wallet Standard. The Wallet Standard wallet object does not expose
 `agentq:credentialPrepare`, `agentq:credentialPropose`, `credential_prepare`,
 `credential_propose`, or proof-clear features.
+
+The raw Agent-Q account projection and Wallet Standard account object are
+different shapes. Wallet Standard `ReadonlyWalletAccount` objects do not expose
+`sponsoredTransactions` or `acceptGasSponsor`; those values are available only
+from direct provider `getAccounts`.
 
 Apps can register the wallet directly:
 

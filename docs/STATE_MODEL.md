@@ -69,13 +69,16 @@ product state. The current StackChan CoreS3 persisted provisioning-state schema
 accepts only `unprovisioned` and `provisioned`; transient or unsupported
 persisted values such as `provisioning` are not normalized into product state.
 If Firmware boots with an unsupported `prov_state`, or with
-`prov_state = provisioned` but no valid active policy record, the device enters
-persistent material consistency error until either a device-local destructive
-wipe or a development flash-erase workflow clears the unsupported material set.
-After that cleanup, local setup or import can reprovision the device.
+`prov_state = provisioned` but no valid active policy record, signing
+authorization mode, Sui account settings, or local PIN verifier, the device
+enters persistent material consistency error until either a device-local
+destructive wipe or a development flash-erase workflow clears the unsupported
+material set. After that cleanup, local setup or import can reprovision the
+device.
 
-If persisted state, stored root material, and stored active policy disagree,
-or if the stored local PIN verifier is missing or invalid while `provisioned`,
+If persisted state disagrees with stored root material, stored active policy,
+signing authorization mode, Sui account settings, or stored local PIN verifier
+while `provisioned`,
 Firmware reports device `error` and fails closed for normal setup and session
 requests. Detecting the consistency error also clears any active RAM session
 immediately, so a session created before the error is not retained as a stale
@@ -198,11 +201,13 @@ material consistency error rather than silently resetting it to
 
 Root signing material and a committed active policy exist in device-local
 storage. In the current StackChan CoreS3 DEV_PROFILE implementation this means a
-binary BIP-39 entropy blob, a canonical active policy record, and a local
-6-digit PIN verifier record are stored in ordinary NVS and `prov_state` is
-`provisioned`; the normal product flow installs the default-reject policy, while
-read-only Sui account derivation, read-only active policy document readback,
-source-level local reset/material wipe, and the Firmware-owned
+binary BIP-39 entropy blob, a canonical active policy record, a local
+6-digit PIN verifier record, device-local signing authorization mode, and Sui
+account settings are stored in ordinary NVS and `prov_state` is `provisioned`;
+the normal product flow installs the default-reject policy and initializes Sui
+account settings to reject gas sponsors, while read-only Sui account derivation,
+read-only active policy document readback, source-level local reset/material
+wipe, and the Firmware-owned
 `policy_propose` proposal flow for current-schema policies is implemented. Sui
 `sign_transaction` policy mode evaluates the active current policy after active
 policy availability, request network, account-binding, and complete offline
@@ -276,6 +281,11 @@ the request. User authorization enters device review only when
 the parsed shape has either complete offline facts review coverage or an
 explicit blind-signing warning for a valid, account-bound transaction whose
 offline facts review coverage is incomplete.
+The parsed Sui transaction sender must match the active account. The parsed gas
+owner must also match unless the active account's Sui account setting accepts gas
+sponsors; missing, unreadable, invalid, or false settings reject a gas owner
+mismatch before user or policy authorization. When a sender-bound sponsored
+transaction is accepted, Agent-Q still returns only the active sender signature.
 Product-active status is not claimed unless
 `docs/IMPLEMENTATION_STATUS.md` says the matching source, docs, tests, build,
 hardware, and visual evidence are complete.
@@ -302,9 +312,9 @@ active session and returns the next account projection to the native identity.
 The host process must not evaluate policy. A corrupt, unreadable, missing,
 or invalid current active policy is a persistent-material consistency
 error, not a normal `provisioned` state. Provisioned DEV_PROFILE devices that
-lack the current local PIN verifier, active canonical policy, or signing
-authorization mode fail closed until erased and reprovisioned through a local UX
-or development reflash workflow.
+lack the current local PIN verifier, active canonical policy, signing
+authorization mode, or Sui account settings fail closed until erased and
+reprovisioned through a local UX or development reflash workflow.
 
 #### Request Authority Paths
 
@@ -383,7 +393,7 @@ Required owners for the device-confirmed signing pending state:
   PIN verifier, signing authorization mode, and approval history;
 - volatile sensitive scratch: Firmware-owned signable payload bytes, a request
   summary derived from the same signable payload bytes, the Firmware-derived
-  sender and gas-owner account binding, signature scratch, and any local PIN
+  sender and gas owner account binding, signature scratch, and any local PIN
   scratch;
 - pending approval state: Firmware-owned request id, session id, chain, method,
   request digest, current internal review/PIN input deadline, and terminal
