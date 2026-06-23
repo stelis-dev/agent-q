@@ -343,6 +343,9 @@ function startupAccounts(id) {
         publicKey: "AAq+Xr89q49TF0t6vCBe2vNY7V2KnqIOxBGteq0dv2WV",
         keyScheme: "ed25519",
         derivationPath: "m/44'/784'/0'/0'/0'",
+        sponsoredTransactions: {
+          acceptGasSponsor: false,
+        },
       },
     ],
   };

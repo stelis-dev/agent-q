@@ -396,12 +396,16 @@ export const mcpGetCapabilitiesToolOutputShape = z.discriminatedUnion("source", 
   errorToolResultShape,
 ]);
 
+const accountSponsoredTransactionsShape = z.object({
+  acceptGasSponsor: z.boolean(),
+}).strict();
 const nativeAccountShape = z.object({
   chain: z.literal("sui"),
   address: z.string().regex(SUI_ADDRESS_PATTERN),
   publicKey: z.string(),
   keyScheme: z.literal("ed25519"),
   derivationPath: z.literal(SUI_DERIVATION_PATH),
+  sponsoredTransactions: accountSponsoredTransactionsShape,
 }).strict().refine((account) => isSuiAddressForSchemePrefixedPublicKey(
   account.address,
   account.publicKey,
@@ -416,6 +420,7 @@ const zkLoginAccountShape = z.object({
   address: z.string().regex(SUI_ADDRESS_PATTERN),
   publicKey: z.string(),
   keyScheme: z.literal("zklogin"),
+  sponsoredTransactions: accountSponsoredTransactionsShape,
 }).strict().refine((account) => isSuiAddressForSchemePrefixedPublicKey(
   account.address,
   account.publicKey,

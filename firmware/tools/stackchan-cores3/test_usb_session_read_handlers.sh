@@ -93,6 +93,7 @@ int g_busy_calls = 0;
 int g_payload_admission_calls = 0;
 int g_require_session_calls = 0;
 int g_read_mode_calls = 0;
+int g_read_sui_account_settings_calls = 0;
 int g_sui_zklogin_credential_available_calls = 0;
 int g_resolve_active_identity_calls = 0;
 int g_record_root_material_unreadable_calls = 0;
@@ -104,6 +105,8 @@ bool g_busy = false;
 bool g_payload_admission_error = false;
 bool g_session_valid = true;
 bool g_read_mode_ok = true;
+bool g_read_sui_account_settings_ok = true;
+bool g_accept_gas_sponsor = false;
 bool g_sui_zklogin_credential_available = true;
 agent_q::AgentQSuiActiveIdentityKind g_active_identity_kind =
     agent_q::AgentQSuiActiveIdentityKind::native;
@@ -122,6 +125,8 @@ char g_last_json_account_address[80] = {};
 char g_last_json_account_public_key[128] = {};
 char g_last_json_account_key_scheme[16] = {};
 char g_last_json_account_derivation_path[32] = {};
+bool g_last_json_sponsored_transactions_present = false;
+bool g_last_json_accept_gas_sponsor = false;
 char g_last_json_capability_key_scheme[16] = {};
 char g_last_json_capability_derivation_path[32] = {};
 char g_last_json_policy_id[80] = {};
@@ -147,6 +152,7 @@ void reset_state()
     g_payload_admission_calls = 0;
     g_require_session_calls = 0;
     g_read_mode_calls = 0;
+    g_read_sui_account_settings_calls = 0;
     g_sui_zklogin_credential_available_calls = 0;
     g_resolve_active_identity_calls = 0;
     g_record_root_material_unreadable_calls = 0;
@@ -158,6 +164,8 @@ void reset_state()
     g_payload_admission_error = false;
     g_session_valid = true;
     g_read_mode_ok = true;
+    g_read_sui_account_settings_ok = true;
+    g_accept_gas_sponsor = false;
     g_sui_zklogin_credential_available = true;
     g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
     g_active_identity_error = agent_q::AgentQSuiActiveIdentityError::none;
@@ -174,6 +182,8 @@ void reset_state()
     g_last_json_account_public_key[0] = '\0';
     g_last_json_account_key_scheme[0] = '\0';
     g_last_json_account_derivation_path[0] = '\0';
+    g_last_json_sponsored_transactions_present = false;
+    g_last_json_accept_gas_sponsor = false;
     g_last_json_capability_key_scheme[0] = '\0';
     g_last_json_capability_derivation_path[0] = '\0';
     g_last_json_policy_id[0] = '\0';
@@ -259,6 +269,10 @@ bool usb_response_write_json(JsonDocument& response)
         sizeof(g_last_json_account_derivation_path),
         "%s",
         account_derivation_path);
+    JsonVariant sponsored_transactions = response["accounts"][0]["sponsoredTransactions"];
+    g_last_json_sponsored_transactions_present = !sponsored_transactions.isNull();
+    g_last_json_accept_gas_sponsor =
+        sponsored_transactions["acceptGasSponsor"] | false;
     const char* capability_key_scheme = response["chains"][0]["accounts"][0]["keyScheme"] | "";
     snprintf(
         g_last_json_capability_key_scheme,
@@ -344,6 +358,15 @@ bool read_signing_mode(agent_q::AgentQSigningAuthorizationMode* mode)
     g_read_mode_calls += 1;
     *mode = agent_q::AgentQSigningAuthorizationMode::policy;
     return g_read_mode_ok;
+}
+
+bool read_sui_account_settings(agent_q::AgentQSuiAccountSettings* settings)
+{
+    g_read_sui_account_settings_calls += 1;
+    if (settings != nullptr) {
+        settings->accept_gas_sponsor = g_accept_gas_sponsor;
+    }
+    return g_read_sui_account_settings_ok;
 }
 
 bool sui_zklogin_credential_available()
@@ -438,6 +461,7 @@ agent_q::AgentQUsbSessionReadHandlerOps make_ops()
         write_payload_admission_error,
         require_session,
         read_signing_mode,
+        read_sui_account_settings,
         sui_zklogin_credential_available,
         resolve_active_identity,
         record_root_material_unreadable,
@@ -613,21 +637,26 @@ int main()
         assert(g_write_error_calls == 0);
         assert(g_payload_admission_calls == 1);
         assert(g_resolve_active_identity_calls == 1);
+        assert(g_read_sui_account_settings_calls == 1);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_type, "accounts") == 0);
         assert(strcmp(g_last_json_account_address, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef") == 0);
         assert(strcmp(g_last_json_account_public_key, "AAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH") == 0);
         assert(strcmp(g_last_json_account_key_scheme, "ed25519") == 0);
         assert(strcmp(g_last_json_account_derivation_path, "m/44'/784'/0'/0'/0'") == 0);
+        assert(g_last_json_sponsored_transactions_present);
+        assert(!g_last_json_accept_gas_sponsor);
     }
 
     {
         reset_state();
         g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
+        g_accept_gas_sponsor = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_accounts\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_resolve_active_identity_calls == 1);
+        assert(g_read_sui_account_settings_calls == 1);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_account_address, "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890") == 0);
         assert(strcmp(
@@ -635,6 +664,8 @@ int main()
             "BQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB") == 0);
         assert(strcmp(g_last_json_account_key_scheme, "zklogin") == 0);
         assert(strcmp(g_last_json_account_derivation_path, "") == 0);
+        assert(g_last_json_sponsored_transactions_present);
+        assert(g_last_json_accept_gas_sponsor);
     }
 
     {
@@ -644,6 +675,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_accounts\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_resolve_active_identity_calls == 1);
+        assert(g_read_sui_account_settings_calls == 0);
         assert(g_record_root_material_unreadable_calls == 0);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "account_error") == 0);
@@ -656,7 +688,20 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_accounts\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_resolve_active_identity_calls == 1);
+        assert(g_read_sui_account_settings_calls == 0);
         assert(g_record_root_material_unreadable_calls == 1);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "account_error") == 0);
+    }
+
+    {
+        reset_state();
+        g_read_sui_account_settings_ok = false;
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_accounts\",\"sessionId\":\"session\"}");
+        agent_q::handle_usb_get_accounts_request("req", request, make_writer(), make_ops());
+        assert(g_resolve_active_identity_calls == 1);
+        assert(g_read_sui_account_settings_calls == 1);
+        assert(g_write_json_calls == 0);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "account_error") == 0);
     }

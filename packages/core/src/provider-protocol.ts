@@ -275,6 +275,10 @@ export interface CredentialCapability {
   operations: [typeof CREDENTIAL_PREPARE_OPERATION, typeof CREDENTIAL_PROPOSE_OPERATION];
 }
 
+export interface AccountSponsoredTransactions {
+  acceptGasSponsor: boolean;
+}
+
 export interface CapabilitiesResponse {
   id: string;
   version: typeof PROTOCOL_VERSION;
@@ -291,12 +295,14 @@ export type Account =
       publicKey: string;
       keyScheme: "ed25519";
       derivationPath: typeof SUI_DERIVATION_PATH;
+      sponsoredTransactions: AccountSponsoredTransactions;
     }
   | {
       chain: typeof SUI_CHAIN_ID;
       address: string;
       publicKey: string;
       keyScheme: "zklogin";
+      sponsoredTransactions: AccountSponsoredTransactions;
     };
 
 export interface AccountsResponse {
@@ -887,6 +893,16 @@ function validateAccountPublicKey(
   return publicKey;
 }
 
+function sanitizeAccountSponsoredTransactions(value: unknown): AccountSponsoredTransactions {
+  const sponsoredTransactions = asRecord(value, "Account sponsoredTransactions");
+  rejectSecretPayload(sponsoredTransactions, "Account sponsoredTransactions");
+  requireOnlyKeys(sponsoredTransactions, ["acceptGasSponsor"], "Account sponsoredTransactions");
+  if (typeof sponsoredTransactions.acceptGasSponsor !== "boolean") {
+    throw new ProtocolError("protocol_error", "Account sponsoredTransactions are malformed.");
+  }
+  return { acceptGasSponsor: sponsoredTransactions.acceptGasSponsor };
+}
+
 function sanitizeSigningCapabilities(value: unknown): SigningCapabilities | undefined {
   if (value === undefined) {
     return undefined;
@@ -980,7 +996,7 @@ function sanitizeAccount(value: unknown): Account {
     throw new ProtocolError("protocol_error", "Account entry is unsupported.");
   }
   if (account.keyScheme === "ed25519") {
-    requireOnlyKeys(account, ["chain", "address", "publicKey", "keyScheme", "derivationPath"], "Account entry");
+    requireOnlyKeys(account, ["chain", "address", "publicKey", "keyScheme", "derivationPath", "sponsoredTransactions"], "Account entry");
     if (account.derivationPath !== SUI_DERIVATION_PATH) {
       throw new ProtocolError("protocol_error", "Account entry is unsupported.");
     }
@@ -990,15 +1006,17 @@ function sanitizeAccount(value: unknown): Account {
       publicKey: validateAccountPublicKey(account.address, account.publicKey, "ed25519"),
       keyScheme: "ed25519",
       derivationPath: SUI_DERIVATION_PATH,
+      sponsoredTransactions: sanitizeAccountSponsoredTransactions(account.sponsoredTransactions),
     };
   }
   if (account.keyScheme === "zklogin") {
-    requireOnlyKeys(account, ["chain", "address", "publicKey", "keyScheme"], "Account entry");
+    requireOnlyKeys(account, ["chain", "address", "publicKey", "keyScheme", "sponsoredTransactions"], "Account entry");
     return {
       chain: SUI_CHAIN_ID,
       address: account.address,
       publicKey: validateAccountPublicKey(account.address, account.publicKey, "zklogin"),
       keyScheme: "zklogin",
+      sponsoredTransactions: sanitizeAccountSponsoredTransactions(account.sponsoredTransactions),
     };
   }
   throw new ProtocolError("protocol_error", "Account entry is unsupported.");

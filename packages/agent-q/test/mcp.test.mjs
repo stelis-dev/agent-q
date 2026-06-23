@@ -190,6 +190,9 @@ const noOpCore = {
           publicKey: "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp",
           keyScheme: "ed25519",
           derivationPath: "m/44'/784'/0'/0'/0'",
+          sponsoredTransactions: {
+            acceptGasSponsor: false,
+          },
         },
       ],
     };
@@ -1152,6 +1155,9 @@ const leakyCore = {
           publicKey: "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp",
           keyScheme: "ed25519",
           derivationPath: "m/44'/784'/0'/0'/0'",
+          sponsoredTransactions: {
+            acceptGasSponsor: false,
+          },
         },
       ],
       ...SECRET_EXTRAS,
@@ -1477,6 +1483,9 @@ test("get_accounts rejects a public key that does not match the Sui address", as
             publicKey: "vG6hEnkYNIpdmWa/WaLivd1FWBkxG+HfhXkyWgs9uP4=",
             keyScheme: "ed25519",
             derivationPath: "m/44'/784'/0'/0'/0'",
+            sponsoredTransactions: {
+              acceptGasSponsor: false,
+            },
           },
         ],
       };

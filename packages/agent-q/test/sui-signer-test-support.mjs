@@ -15,6 +15,9 @@ export const ACCOUNT = {
   publicKey: "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp",
   keyScheme: "ed25519",
   derivationPath: "m/44'/784'/0'/0'/0'",
+  sponsoredTransactions: {
+    acceptGasSponsor: false,
+  },
 };
 export const ZKLOGIN_ACCOUNT = {
   chain: "sui",
@@ -22,6 +25,9 @@ export const ZKLOGIN_ACCOUNT = {
   publicKey:
     "BRtodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ==",
   keyScheme: "zklogin",
+  sponsoredTransactions: {
+    acceptGasSponsor: false,
+  },
 };
 
 export function makeSuiSignerHarness(overrides = {}) {

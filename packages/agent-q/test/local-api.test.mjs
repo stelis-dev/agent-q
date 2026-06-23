@@ -117,6 +117,9 @@ function defaultCore(overrides = {}) {
             publicKey: suiPublicKey,
             keyScheme: "ed25519",
             derivationPath: "m/44'/784'/0'/0'/0'",
+            sponsoredTransactions: {
+              acceptGasSponsor: false,
+            },
           },
         ],
       };
@@ -509,6 +512,9 @@ test("Local API exposes signer account and transaction-signing endpoints", async
               publicKey: suiPublicKey,
               keyScheme: "ed25519",
               derivationPath: "m/44'/784'/0'/0'/0'",
+              sponsoredTransactions: {
+                acceptGasSponsor: false,
+              },
             },
           ],
         };

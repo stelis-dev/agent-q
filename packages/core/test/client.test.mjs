@@ -30,6 +30,9 @@ function validLiveAccount() {
     publicKey: SUI_PUBLIC_KEY,
     keyScheme: "ed25519",
     derivationPath: SUI_DERIVATION_PATH,
+    sponsoredTransactions: {
+      acceptGasSponsor: false,
+    },
   };
 }
 
@@ -764,6 +767,9 @@ test("adapter output schema keeps Sui account projection exact", () => {
     accounts: [validLiveAccount()],
   };
   assert.equal(schema.parse(output).accounts[0].address, SUI_ADDRESS);
+  assert.deepEqual(schema.parse(output).accounts[0].sponsoredTransactions, {
+    acceptGasSponsor: false,
+  });
   assert.throws(() => schema.parse({ ...output, sessionId: "session_should_not_leak" }));
   assert.throws(() => schema.parse({
     ...output,

@@ -53,6 +53,7 @@
 #include "agent_q_signing_route.h"
 #include "agent_q_signing_mode.h"
 #include "agent_q_sui_account.h"
+#include "agent_q_sui_account_settings.h"
 #include "agent_q_sui_account_store.h"
 #include "agent_q_sui_signing_preparation.h"
 #include "agent_q_sui_signing_service.h"
@@ -3551,6 +3552,7 @@ const agent_q::AgentQUsbSessionReadHandlerOps& session_read_handler_ops()
         write_payload_delivery_safe_read_admission_error,
         require_active_matching_session,
         agent_q::read_signing_authorization_mode,
+        agent_q::read_sui_account_settings,
         sui_zklogin_credential_available_for_session_read,
         agent_q::resolve_active_sui_identity,
         record_root_material_unreadable_for_session_read,

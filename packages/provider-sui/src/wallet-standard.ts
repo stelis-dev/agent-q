@@ -51,6 +51,9 @@ export type AgentQSuiWalletSuiAccount = {
   chain: "sui";
   address: string;
   publicKey: string;
+  sponsoredTransactions: {
+    acceptGasSponsor: boolean;
+  };
 } & (
   | {
       keyScheme: "ed25519";
@@ -464,8 +467,9 @@ function validateWalletAccount(value: unknown): AgentQSuiWalletSuiAccount {
   }
 
   const address = value.address.toLowerCase();
+  const sponsoredTransactions = validateWalletAccountSponsoredTransactions(value.sponsoredTransactions, message);
   if (value.keyScheme === "ed25519") {
-    requireExactKeys(value, ["chain", "address", "publicKey", "keyScheme", "derivationPath"], message);
+    requireExactKeys(value, ["chain", "address", "publicKey", "keyScheme", "derivationPath", "sponsoredTransactions"], message);
     if (
       value.derivationPath !== SUI_DERIVATION_PATH ||
       !isSuiAddressForWalletAccountPublicKey(
@@ -484,11 +488,12 @@ function validateWalletAccount(value: unknown): AgentQSuiWalletSuiAccount {
       publicKey: value.publicKey,
       keyScheme: "ed25519",
       derivationPath: SUI_DERIVATION_PATH,
+      sponsoredTransactions,
     };
   }
 
   if (value.keyScheme === "zklogin") {
-    requireExactKeys(value, ["chain", "address", "publicKey", "keyScheme"], message);
+    requireExactKeys(value, ["chain", "address", "publicKey", "keyScheme", "sponsoredTransactions"], message);
     if (
       !isSuiAddressForWalletAccountPublicKey(
         address,
@@ -505,10 +510,25 @@ function validateWalletAccount(value: unknown): AgentQSuiWalletSuiAccount {
       address,
       publicKey: value.publicKey,
       keyScheme: "zklogin",
+      sponsoredTransactions,
     };
   }
 
   throw new Error(message);
+}
+
+function validateWalletAccountSponsoredTransactions(
+  value: unknown,
+  message: string,
+): AgentQSuiWalletSuiAccount["sponsoredTransactions"] {
+  if (!isRecord(value)) {
+    throw new Error(message);
+  }
+  requireExactKeys(value, ["acceptGasSponsor"], message);
+  if (typeof value.acceptGasSponsor !== "boolean") {
+    throw new Error(message);
+  }
+  return { acceptGasSponsor: value.acceptGasSponsor };
 }
 
 function validateWalletAccountsResult(result: AgentQSuiWalletGetAccountsResult): AgentQSuiWalletSuiAccount[] {

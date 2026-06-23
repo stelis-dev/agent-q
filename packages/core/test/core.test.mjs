@@ -193,6 +193,9 @@ function defaultDriver(overrides = {}) {
             publicKey: "ACJkf+7vNjBgvUIFoWcaFfEKEjZ2WRixtfY42C8zz8Rp",
             keyScheme: "ed25519",
             derivationPath: "m/44'/784'/0'/0'/0'",
+            sponsoredTransactions: {
+              acceptGasSponsor: false,
+            },
           },
         ],
       };
@@ -1348,6 +1351,9 @@ test("getAccounts returns the Sui account over an active session and keeps the s
       result.accounts[0].address,
       "0xa2d14fad60c56049ecf75246a481934691214ce413e6a8ae2fe6834c173a6133",
     );
+    assert.deepEqual(result.accounts[0].sponsoredTransactions, {
+      acceptGasSponsor: false,
+    });
 
     // Read-only: the session is retained after get_accounts.
     const listed = await core.listDevices();

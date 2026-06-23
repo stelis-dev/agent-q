@@ -1564,6 +1564,9 @@ const accountsLine = (accountOverrides = {}) =>
         publicKey: VALID_SCHEME_PREFIXED_PUBLIC_KEY,
         keyScheme: "ed25519",
         derivationPath: "m/44'/784'/0'/0'/0'",
+        sponsoredTransactions: {
+          acceptGasSponsor: false,
+        },
         ...accountOverrides,
       },
     ],
@@ -1580,6 +1583,9 @@ test("parseProtocolResponse accepts a valid Sui accounts response", () => {
   );
   assert.equal(response.accounts[0].keyScheme, "ed25519");
   assert.equal(response.accounts[0].derivationPath, "m/44'/784'/0'/0'/0'");
+  assert.deepEqual(response.accounts[0].sponsoredTransactions, {
+    acceptGasSponsor: false,
+  });
   assert.equal(
     isSuiAddressForSchemePrefixedPublicKey(
       response.accounts[0].address,
@@ -1611,6 +1617,9 @@ test("parseProtocolResponse accepts a valid zkLogin Sui accounts response", () =
   assert.equal(response.accounts[0].publicKey, VALID_ZKLOGIN_PUBLIC_KEY);
   assert.equal(response.accounts[0].keyScheme, "zklogin");
   assert.equal("derivationPath" in response.accounts[0], false);
+  assert.deepEqual(response.accounts[0].sponsoredTransactions, {
+    acceptGasSponsor: false,
+  });
 });
 
 test("parseProtocolResponse rejects an accounts response carrying secret material", () => {
@@ -1664,6 +1673,26 @@ test("parseProtocolResponse rejects malformed or unsupported accounts", () => {
       ),
     { code: "protocol_error" },
   );
+  assert.throws(
+    () => parseProtocolResponse(accountsLine({ sponsoredTransactions: undefined }), "req_accounts"),
+    { code: "invalid_params" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        accountsLine({ sponsoredTransactions: { acceptGasSponsor: "true" } }),
+        "req_accounts",
+      ),
+    { code: "protocol_error" },
+  );
+  assert.throws(
+    () =>
+      parseProtocolResponse(
+        accountsLine({ sponsoredTransactions: { acceptGasSponsor: false, mode: "extra" } }),
+        "req_accounts",
+      ),
+    { code: "protocol_error" },
+  );
 });
 
 test("parseProtocolResponse rejects an accounts response exceeding the supported count", () => {
@@ -1673,6 +1702,9 @@ test("parseProtocolResponse rejects an accounts response exceeding the supported
     publicKey: VALID_SCHEME_PREFIXED_PUBLIC_KEY,
     keyScheme: "ed25519",
     derivationPath: "m/44'/784'/0'/0'/0'",
+    sponsoredTransactions: {
+      acceptGasSponsor: false,
+    },
   };
   const tooMany = JSON.stringify({
     id: "req_accounts",

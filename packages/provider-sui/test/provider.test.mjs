@@ -210,6 +210,9 @@ function createFakeCore() {
             publicKey: SUI_PUBLIC_KEY,
             keyScheme: "ed25519",
             derivationPath: SUI_DERIVATION_PATH,
+            sponsoredTransactions: {
+              acceptGasSponsor: false,
+            },
           },
         ],
       };
@@ -497,6 +500,9 @@ function createFakeBrowserProtocolResponse(request) {
             publicKey: SUI_PUBLIC_KEY,
             keyScheme: "ed25519",
             derivationPath: SUI_DERIVATION_PATH,
+            sponsoredTransactions: {
+              acceptGasSponsor: false,
+            },
           },
         ],
       };
@@ -733,6 +739,9 @@ test("browser provider runtime defers Web Serial port selection until connectDev
     const accounts = await provider.getAccounts();
     assert.equal(accounts.source, "live");
     assert.equal(accounts.accounts[0].address, SUI_ADDRESS);
+    assert.deepEqual(accounts.accounts[0].sponsoredTransactions, {
+      acceptGasSponsor: false,
+    });
     assertNoSecretFields(accounts);
 
     const transactionResult = await provider.signTransaction({
@@ -3653,6 +3662,7 @@ test("Wallet Standard connect and disconnect delegate through provider-sui witho
   assert.equal(connected.accounts[0].address, SUI_ADDRESS);
   assert.deepEqual(connected.accounts[0].chains, ["sui:devnet"]);
   assert.deepEqual(connected.accounts[0].features, [SuiSignTransaction, SuiSignPersonalMessage]);
+  assert.equal(Object.prototype.hasOwnProperty.call(connected.accounts[0], "sponsoredTransactions"), false);
   assertNoSecretFields(connected);
   assert.equal(wallet.policyGet, undefined);
   assert.equal(wallet.getApprovalHistory, undefined);
@@ -3696,6 +3706,9 @@ test("Wallet Standard connect projects a zkLogin active account", async () => {
             address: ZKLOGIN_ADDRESS,
             publicKey: ZKLOGIN_PUBLIC_KEY,
             keyScheme: "zklogin",
+            sponsoredTransactions: {
+              acceptGasSponsor: true,
+            },
           },
         ],
       };
@@ -3711,6 +3724,7 @@ test("Wallet Standard connect projects a zkLogin active account", async () => {
   assert.equal(connected.accounts[0].address, ZKLOGIN_ADDRESS);
   assert.equal(Buffer.from(connected.accounts[0].publicKey).toString("base64"), ZKLOGIN_PUBLIC_KEY);
   assert.deepEqual(connected.accounts[0].features, [SuiSignTransaction]);
+  assert.equal(Object.prototype.hasOwnProperty.call(connected.accounts[0], "sponsoredTransactions"), false);
 });
 
 test("Wallet Standard account features follow Firmware signing capability", async () => {
@@ -4079,6 +4093,37 @@ test("Wallet Standard connect exact-validates directly injected Sui accounts", a
           {
             ...validAccount,
             label: "unexpected",
+          },
+        ],
+      },
+    },
+    {
+      label: "sponsoredTransactions malformed",
+      output: {
+        source: "live",
+        deviceId: "device-1",
+        accounts: [
+          {
+            ...validAccount,
+            sponsoredTransactions: {
+              acceptGasSponsor: "true",
+            },
+          },
+        ],
+      },
+    },
+    {
+      label: "sponsoredTransactions extra field",
+      output: {
+        source: "live",
+        deviceId: "device-1",
+        accounts: [
+          {
+            ...validAccount,
+            sponsoredTransactions: {
+              acceptGasSponsor: false,
+              mode: "extra",
+            },
           },
         ],
       },

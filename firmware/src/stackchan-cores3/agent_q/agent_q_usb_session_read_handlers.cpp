@@ -242,6 +242,12 @@ bool write_accounts_response(
         return false;
     }
 
+    AgentQSuiAccountSettings account_settings = kDefaultSuiAccountSettings;
+    if (ops.read_sui_account_settings == nullptr ||
+        !ops.read_sui_account_settings(&account_settings)) {
+        return false;
+    }
+
     char public_key_base64[kSuiActivePublicKeyBase64BufferSize] = {};
     if (bytes_to_base64(
             active_identity.public_key,
@@ -264,6 +270,8 @@ bool write_accounts_response(
     if (active_identity.kind == AgentQSuiActiveIdentityKind::native) {
         account["derivationPath"] = "m/44'/784'/0'/0'/0'";
     }
+    JsonObject sponsored_transactions = account["sponsoredTransactions"].to<JsonObject>();
+    sponsored_transactions["acceptGasSponsor"] = account_settings.accept_gas_sponsor;
     return usb_response_write_json(response);
 }
 

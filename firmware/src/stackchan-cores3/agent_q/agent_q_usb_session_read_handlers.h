@@ -4,6 +4,7 @@
 
 #include "policy/agent_q_policy_document.h"
 #include "agent_q_signing_mode.h"
+#include "agent_q_sui_account_settings.h"
 #include "agent_q_sui_zklogin_proof_store.h"
 #include "agent_q_usb_operation_type.h"
 #include "agent_q_usb_operation_response_writer.h"
@@ -18,6 +19,7 @@ struct AgentQUsbSessionReadHandlerOps {
         AgentQUsbOperationType operation);
     bool (*require_active_matching_session)(const char* id, const char* session_id);
     bool (*read_signing_mode)(AgentQSigningAuthorizationMode* mode);
+    bool (*read_sui_account_settings)(AgentQSuiAccountSettings* settings);
     bool (*sui_zklogin_credential_available)();
     AgentQSuiActiveIdentity (*resolve_active_sui_identity)();
     void (*record_root_material_unreadable)();
