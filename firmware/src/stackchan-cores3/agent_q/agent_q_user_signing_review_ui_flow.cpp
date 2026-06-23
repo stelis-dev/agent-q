@@ -38,6 +38,16 @@ AgentQUserSigningFlowCoreSnapshot core_snapshot_or_inactive(
     return ops.core_snapshot();
 }
 
+AgentQUserSigningReviewTimerState review_timer_state_or_unavailable(
+    const AgentQUserSigningReviewUiFlowOps& ops,
+    TickType_t now)
+{
+    if (ops.review_timer_state == nullptr) {
+        return {};
+    }
+    return ops.review_timer_state(now);
+}
+
 bool reviewing(const AgentQUserSigningFlowCoreSnapshot& snapshot)
 {
     return snapshot.active &&
@@ -96,6 +106,11 @@ void finish_error_terminal(
 bool terminal_pending(const AgentQUserSigningReviewUiFlowOps& ops)
 {
     return ops.terminal_pending != nullptr && ops.terminal_pending();
+}
+
+bool review_panel_active(const AgentQUserSigningReviewUiFlowOps& ops)
+{
+    return ops.review_panel_active != nullptr && ops.review_panel_active();
 }
 
 struct UserSigningWorkContext {
@@ -165,11 +180,55 @@ void complete_review_to_terminal(
         &context);
 }
 
+bool stale_scroll_result(AgentQUserSigningTransitionResult result)
+{
+    return result == AgentQUserSigningTransitionResult::inactive ||
+           result == AgentQUserSigningTransitionResult::wrong_stage;
+}
+
+void handle_scroll_result(
+    const AgentQUserSigningReviewUiFlowOps& ops,
+    const char* request_id,
+    AgentQUserSigningTransitionResult result,
+    const char* stale_message)
+{
+    if (result == AgentQUserSigningTransitionResult::ok) {
+        const TickType_t now = now_or_zero(ops);
+        const AgentQUserSigningReviewTimerState timer =
+            review_timer_state_or_unavailable(ops, now);
+        if (ops.draw_review_timer != nullptr && !ops.draw_review_timer(timer)) {
+            finish_error_terminal(
+                ops,
+                request_id,
+                "ui_error",
+                "Could not update signing review timer UI.",
+                "Display error");
+        }
+        return;
+    }
+    if (stale_scroll_result(result)) {
+        log_warn(ops, stale_message);
+        return;
+    }
+    if (result == AgentQUserSigningTransitionResult::deadline_expired ||
+        terminal_pending(ops)) {
+        complete_review_to_terminal(ops, request_id);
+        return;
+    }
+    finish_error_terminal(
+        ops,
+        request_id,
+        "invalid_state",
+        "Signing request is unavailable.",
+        "Signing unavailable");
+}
+
 }  // namespace
 
 bool user_signing_review_ui_show(const AgentQUserSigningReviewUiFlowOps& ops)
 {
     const AgentQUserSigningFlowSnapshot* current = snapshot_or_null(ops);
+    const TickType_t now = now_or_zero(ops);
     AgentQUserSigningReviewViewModel model = {};
     if (current == nullptr ||
         ops.build_review_model == nullptr ||
@@ -178,8 +237,10 @@ bool user_signing_review_ui_show(const AgentQUserSigningReviewUiFlowOps& ops)
         memset(&g_review_snapshot_scratch, 0, sizeof(g_review_snapshot_scratch));
         return false;
     }
+    const AgentQUserSigningReviewTimerState timer =
+        review_timer_state_or_unavailable(ops, now);
     const bool drawn = ops.draw_review_panel != nullptr &&
-                       ops.draw_review_panel(model, current->request_window);
+                       ops.draw_review_panel(model, timer);
     memset(&g_review_snapshot_scratch, 0, sizeof(g_review_snapshot_scratch));
     return drawn;
 }
@@ -292,6 +353,46 @@ void user_signing_review_ui_reject(const AgentQUserSigningReviewUiFlowOps& ops)
     complete_review_to_terminal(ops, current.request_id);
 }
 
+void user_signing_review_ui_scroll_started(const AgentQUserSigningReviewUiFlowOps& ops)
+{
+    const AgentQUserSigningFlowCoreSnapshot current = core_snapshot_or_inactive(ops);
+    if (!reviewing(current) || !review_panel_active(ops)) {
+        log_warn(ops, "Stale user_signing review scroll start ignored");
+        return;
+    }
+
+    const TickType_t now = now_or_zero(ops);
+    const AgentQUserSigningTransitionResult result =
+        ops.pause_review_deadline != nullptr
+            ? ops.pause_review_deadline(now)
+            : AgentQUserSigningTransitionResult::invalid_argument;
+    handle_scroll_result(
+        ops,
+        current.request_id,
+        result,
+        "Stale user_signing review scroll start ignored");
+}
+
+void user_signing_review_ui_scroll_finished(const AgentQUserSigningReviewUiFlowOps& ops)
+{
+    const AgentQUserSigningFlowCoreSnapshot current = core_snapshot_or_inactive(ops);
+    if (!reviewing(current) || !review_panel_active(ops)) {
+        log_warn(ops, "Stale user_signing review scroll finish ignored");
+        return;
+    }
+
+    const TickType_t now = now_or_zero(ops);
+    const AgentQUserSigningTransitionResult result =
+        ops.resume_review_deadline != nullptr
+            ? ops.resume_review_deadline(now)
+            : AgentQUserSigningTransitionResult::invalid_argument;
+    handle_scroll_result(
+        ops,
+        current.request_id,
+        result,
+        "Stale user_signing review scroll finish ignored");
+}
+
 void user_signing_review_ui_clear_if_needed(const AgentQUserSigningReviewUiFlowOps& ops)
 {
     const TickType_t now = now_or_zero(ops);
@@ -300,14 +401,28 @@ void user_signing_review_ui_clear_if_needed(const AgentQUserSigningReviewUiFlowO
         return;
     }
 
-    const bool panel_active =
-        ops.review_panel_active != nullptr && ops.review_panel_active();
+    const bool panel_active = review_panel_active(ops);
+    const AgentQUserSigningReviewTimerState timer_before_timeout =
+        review_timer_state_or_unavailable(ops, now);
     const AgentQUserSigningTransitionResult timeout_result =
         ops.record_timeout != nullptr
             ? ops.record_timeout(now)
             : AgentQUserSigningTransitionResult::invalid_argument;
     if (timeout_result == AgentQUserSigningTransitionResult::deadline_not_reached) {
         if (panel_active) {
+            const AgentQUserSigningReviewTimerState timer_after_timeout =
+                review_timer_state_or_unavailable(ops, now);
+            if (timer_before_timeout.paused &&
+                !timer_after_timeout.paused &&
+                ops.draw_review_timer != nullptr &&
+                !ops.draw_review_timer(timer_after_timeout)) {
+                finish_error_terminal(
+                    ops,
+                    current.request_id,
+                    "ui_error",
+                    "Could not update signing review timer UI.",
+                    "Display error");
+            }
             return;
         }
         if (!user_signing_review_ui_show(ops)) {

@@ -79,18 +79,16 @@ AgentQTimeoutWindow request_backed_local_pin_cap_input_window(
 
     switch (request_backed_local_pin_owner_for_purpose(purpose)) {
         case AgentQRequestBackedLocalPinOwner::user_signing: {
-            const AgentQUserSigningFlowCoreSnapshot snapshot =
-                user_signing_flow_core_snapshot();
-            if (!snapshot.active) {
+            AgentQTimeoutWindow capped = kAgentQTimeoutWindowNone;
+            const AgentQUserSigningTransitionResult result =
+                user_signing_flow_cap_request_backed_pin_input_window(
+                    now,
+                    input_window,
+                    &capped);
+            if (result != AgentQUserSigningTransitionResult::ok) {
                 return kAgentQTimeoutWindowNone;
             }
-            const TickType_t capped_deadline =
-                timeout_window_cap_deadline(
-                    snapshot.request_window,
-                    input_window.deadline);
-            return timeout_window_from_deadline(
-                input_window.started_at,
-                capped_deadline);
+            return capped;
         }
         case AgentQRequestBackedLocalPinOwner::protocol_pin_approval: {
             const AgentQProtocolPinApprovalSnapshot snapshot =
@@ -164,7 +162,7 @@ bool request_backed_local_pin_deadline_reached(
 {
     switch (request_backed_local_pin_owner_for_purpose(purpose)) {
         case AgentQRequestBackedLocalPinOwner::user_signing:
-            return user_signing_flow_deadline_reached(now);
+            return user_signing_flow_apply_deadline_transition(now);
         case AgentQRequestBackedLocalPinOwner::protocol_pin_approval:
             return protocol_pin_approval_deadline_reached_for_local_pin_purpose(
                 purpose,

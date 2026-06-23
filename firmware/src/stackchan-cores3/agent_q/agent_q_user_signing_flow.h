@@ -11,6 +11,7 @@
 #include "agent_q_session.h"
 #include "agent_q_timeout_window.h"
 #include "agent_q_user_signing_limits.h"
+#include "agent_q_user_signing_review_timer_state.h"
 #include "agent_q_sui_account.h"
 #include "agent_q_sui_signing_preparation.h"
 #include "agent_q_common/sui/agent_q_sui_transaction_facts.h"
@@ -125,6 +126,7 @@ AgentQUserSigningTransitionResult user_signing_flow_clear();
 bool user_signing_flow_active();
 bool user_signing_flow_session_matches(const char* session_id);
 AgentQUserSigningFlowCoreSnapshot user_signing_flow_core_snapshot();
+AgentQUserSigningReviewTimerState user_signing_flow_review_timer_state(TickType_t now);
 bool user_signing_flow_snapshot_copy(AgentQUserSigningFlowSnapshot* output);
 AgentQUserSigningFlowSnapshot user_signing_flow_snapshot();
 
@@ -137,12 +139,22 @@ AgentQUserSigningFlowBeginResult user_signing_flow_begin_personal_message(
 AgentQUserSigningTransitionResult user_signing_flow_accept_review(
     TickType_t now,
     AgentQTimeoutWindow pin_input_window);
+AgentQUserSigningTransitionResult user_signing_flow_prepare_review_pin_input_window(
+    TickType_t now,
+    AgentQTimeoutWindow pin_input_window,
+    AgentQTimeoutWindow* output);
+AgentQUserSigningTransitionResult user_signing_flow_cap_request_backed_pin_input_window(
+    TickType_t now,
+    AgentQTimeoutWindow pin_input_window,
+    AgentQTimeoutWindow* output);
 AgentQUserSigningTransitionResult user_signing_flow_return_to_review(
     TickType_t now,
     AgentQTimeoutWindow review_window);
+AgentQUserSigningTransitionResult user_signing_flow_pause_review_deadline(TickType_t now);
+AgentQUserSigningTransitionResult user_signing_flow_resume_review_deadline(TickType_t now);
 AgentQUserSigningTransitionResult user_signing_flow_refresh_pin_deadline(TickType_t now);
 AgentQUserSigningTransitionResult user_signing_flow_pause_pin_deadline(TickType_t now);
-bool user_signing_flow_deadline_reached(TickType_t now);
+bool user_signing_flow_apply_deadline_transition(TickType_t now);
 AgentQUserSigningTransitionResult
 user_signing_flow_record_pin_verified_and_write_confirmation_history(
     TickType_t now,

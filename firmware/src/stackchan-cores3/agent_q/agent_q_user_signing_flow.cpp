@@ -26,6 +26,7 @@ struct AgentQUserSigningFlowState {
     char network[kAgentQUserSigningNetworkSize] = {};
     char payload_digest[kAgentQApprovalHistoryDigestSize] = {};
     AgentQTimeoutWindow request_window = kAgentQTimeoutWindowNone;
+    AgentQPausedTimeoutWindow paused_request_window = kAgentQPausedTimeoutWindowNone;
     AgentQTimeoutWindow pin_input_window = kAgentQTimeoutWindowNone;
     AgentQPausedTimeoutWindow paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
     uint8_t* signable_payload = nullptr;
@@ -58,6 +59,7 @@ struct AgentQUserSigningFlowState {
         wipe_sensitive_buffer(session_id, sizeof(session_id));
         wipe_sensitive_buffer(network, sizeof(network));
         request_window = kAgentQTimeoutWindowNone;
+        paused_request_window = kAgentQPausedTimeoutWindowNone;
         pin_input_window = kAgentQTimeoutWindowNone;
         paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
         blind_signing_confirmation = false;
@@ -195,6 +197,7 @@ void apply_common_begin_metadata(
     memcpy(g_state.network, metadata.network, sizeof(g_state.network));
     memcpy(g_state.payload_digest, payload_digest, sizeof(g_state.payload_digest));
     g_state.request_window = metadata.request_window;
+    g_state.paused_request_window = kAgentQPausedTimeoutWindowNone;
     g_state.pin_input_window = kAgentQTimeoutWindowNone;
     g_state.stage = AgentQUserSigningStage::reviewing;
 }
@@ -284,9 +287,68 @@ AgentQUserSigningFlowBeginResult begin_common_review_state_with_owned_payload(
     return AgentQUserSigningFlowBeginResult::ok;
 }
 
-bool any_deadline_reached(TickType_t now)
+bool review_deadline_paused()
+{
+    return timeout_paused_window_valid(g_state.paused_request_window);
+}
+
+TickType_t review_pause_fallback_deadline()
+{
+    if (!review_deadline_paused()) {
+        return 0;
+    }
+    const TickType_t duration =
+        g_state.paused_request_window.window.deadline -
+        g_state.paused_request_window.window.started_at;
+    return g_state.paused_request_window.paused_at + duration;
+}
+
+AgentQUserSigningTransitionResult resume_review_deadline_if_paused(TickType_t now)
+{
+    if (!review_deadline_paused()) {
+        return AgentQUserSigningTransitionResult::ok;
+    }
+    const AgentQTimeoutWindow resumed =
+        timeout_window_resume_at(g_state.paused_request_window, now);
+    if (!timeout_window_valid(resumed)) {
+        return AgentQUserSigningTransitionResult::invalid_deadline;
+    }
+    g_state.request_window = resumed;
+    g_state.paused_request_window = kAgentQPausedTimeoutWindowNone;
+    return AgentQUserSigningTransitionResult::ok;
+}
+
+AgentQUserSigningTransitionResult apply_review_pause_fallback(TickType_t now)
+{
+    if (g_state.stage != AgentQUserSigningStage::reviewing ||
+        !review_deadline_paused()) {
+        return AgentQUserSigningTransitionResult::ok;
+    }
+    const TickType_t fallback_deadline = review_pause_fallback_deadline();
+    if (fallback_deadline == 0 ||
+        !timeout_window_tick_reached(now, fallback_deadline)) {
+        return AgentQUserSigningTransitionResult::ok;
+    }
+    const AgentQTimeoutWindow resumed =
+        timeout_window_resume_at(g_state.paused_request_window, fallback_deadline);
+    g_state.paused_request_window = kAgentQPausedTimeoutWindowNone;
+    g_state.request_window = resumed;
+    if (!timeout_window_valid(resumed) ||
+        timeout_window_reached(resumed, now)) {
+        g_state.terminalize(AgentQUserSigningTerminalResult::timed_out);
+        return AgentQUserSigningTransitionResult::deadline_expired;
+    }
+    return AgentQUserSigningTransitionResult::ok;
+}
+
+bool apply_deadline_transition_and_report_reached(TickType_t now)
 {
     if (g_state.stage == AgentQUserSigningStage::reviewing) {
+        const AgentQUserSigningTransitionResult fallback =
+            apply_review_pause_fallback(now);
+        if (fallback == AgentQUserSigningTransitionResult::deadline_expired) {
+            return true;
+        }
         return timeout_window_reached(g_state.request_window, now);
     }
     if (g_state.stage == AgentQUserSigningStage::pin_entry) {
@@ -355,8 +417,10 @@ AgentQUserSigningTransitionResult require_active_session()
 
 AgentQUserSigningTransitionResult terminalize_if_deadline_expired(TickType_t now)
 {
-    if (any_deadline_reached(now)) {
-        g_state.terminalize(AgentQUserSigningTerminalResult::timed_out);
+    if (apply_deadline_transition_and_report_reached(now)) {
+        if (g_state.stage != AgentQUserSigningStage::terminal) {
+            g_state.terminalize(AgentQUserSigningTerminalResult::timed_out);
+        }
         return AgentQUserSigningTransitionResult::deadline_expired;
     }
     return AgentQUserSigningTransitionResult::ok;
@@ -477,6 +541,31 @@ AgentQUserSigningFlowCoreSnapshot user_signing_flow_core_snapshot()
     AgentQUserSigningFlowCoreSnapshot snapshot = {};
     populate_core_snapshot(snapshot);
     return snapshot;
+}
+
+AgentQUserSigningReviewTimerState user_signing_flow_review_timer_state(TickType_t now)
+{
+    AgentQUserSigningReviewTimerState state = {};
+    state.display_window = kAgentQTimeoutWindowNone;
+    if (!g_state.active() ||
+        g_state.stage != AgentQUserSigningStage::reviewing) {
+        return state;
+    }
+    if (review_deadline_paused()) {
+        state.available = true;
+        state.paused = true;
+        state.display_window = g_state.paused_request_window.window;
+        state.display_tick = g_state.paused_request_window.paused_at;
+        return state;
+    }
+    if (!timeout_window_active(g_state.request_window) ||
+        timeout_window_reached(g_state.request_window, now)) {
+        return state;
+    }
+    state.available = true;
+    state.display_window = g_state.request_window;
+    state.display_tick = now;
+    return state;
 }
 
 bool user_signing_flow_snapshot_copy(AgentQUserSigningFlowSnapshot* output)
@@ -630,10 +719,89 @@ AgentQUserSigningTransitionResult user_signing_flow_accept_review(
     TickType_t now,
     AgentQTimeoutWindow pin_input_window)
 {
+    AgentQTimeoutWindow capped_pin_input_window = kAgentQTimeoutWindowNone;
+    const AgentQUserSigningTransitionResult prepared =
+        user_signing_flow_prepare_review_pin_input_window(
+            now,
+            pin_input_window,
+            &capped_pin_input_window);
+    if (prepared != AgentQUserSigningTransitionResult::ok) {
+        return prepared;
+    }
+    g_state.stage = AgentQUserSigningStage::pin_entry;
+    g_state.paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
+    g_state.pin_input_window = capped_pin_input_window;
+    return AgentQUserSigningTransitionResult::ok;
+}
+
+AgentQUserSigningTransitionResult user_signing_flow_prepare_review_pin_input_window(
+    TickType_t now,
+    AgentQTimeoutWindow pin_input_window,
+    AgentQTimeoutWindow* output)
+{
+    if (output != nullptr) {
+        *output = kAgentQTimeoutWindowNone;
+    }
+    if (output == nullptr) {
+        return AgentQUserSigningTransitionResult::invalid_argument;
+    }
     if (!g_state.active()) {
         return AgentQUserSigningTransitionResult::inactive;
     }
     if (g_state.stage != AgentQUserSigningStage::reviewing) {
+        return AgentQUserSigningTransitionResult::wrong_stage;
+    }
+    if (!timeout_window_valid_and_open_at(pin_input_window, now)) {
+        return AgentQUserSigningTransitionResult::invalid_deadline;
+    }
+    AgentQUserSigningTransitionResult guard = require_active_session();
+    if (guard != AgentQUserSigningTransitionResult::ok) {
+        return guard;
+    }
+    guard = terminalize_if_deadline_expired(now);
+    if (guard != AgentQUserSigningTransitionResult::ok) {
+        return guard;
+    }
+    guard = resume_review_deadline_if_paused(now);
+    if (guard != AgentQUserSigningTransitionResult::ok) {
+        return guard;
+    }
+    const TickType_t capped_pin_deadline =
+        timeout_window_cap_deadline(g_state.request_window, pin_input_window.deadline);
+    if (timeout_window_tick_reached(now, capped_pin_deadline)) {
+        g_state.terminalize(AgentQUserSigningTerminalResult::timed_out);
+        return AgentQUserSigningTransitionResult::deadline_expired;
+    }
+    *output =
+        timeout_window_from_deadline(pin_input_window.started_at, capped_pin_deadline);
+    if (!timeout_window_valid_and_open_at(*output, now)) {
+        g_state.terminalize(AgentQUserSigningTerminalResult::timed_out);
+        return AgentQUserSigningTransitionResult::deadline_expired;
+    }
+    return AgentQUserSigningTransitionResult::ok;
+}
+
+AgentQUserSigningTransitionResult user_signing_flow_cap_request_backed_pin_input_window(
+    TickType_t now,
+    AgentQTimeoutWindow pin_input_window,
+    AgentQTimeoutWindow* output)
+{
+    if (output != nullptr) {
+        *output = kAgentQTimeoutWindowNone;
+    }
+    if (output == nullptr) {
+        return AgentQUserSigningTransitionResult::invalid_argument;
+    }
+    if (!g_state.active()) {
+        return AgentQUserSigningTransitionResult::inactive;
+    }
+    if (g_state.stage == AgentQUserSigningStage::reviewing) {
+        return user_signing_flow_prepare_review_pin_input_window(
+            now,
+            pin_input_window,
+            output);
+    }
+    if (g_state.stage != AgentQUserSigningStage::pin_entry) {
         return AgentQUserSigningTransitionResult::wrong_stage;
     }
     if (!timeout_window_valid_and_open_at(pin_input_window, now)) {
@@ -653,11 +821,9 @@ AgentQUserSigningTransitionResult user_signing_flow_accept_review(
         g_state.terminalize(AgentQUserSigningTerminalResult::timed_out);
         return AgentQUserSigningTransitionResult::deadline_expired;
     }
-    g_state.stage = AgentQUserSigningStage::pin_entry;
-    g_state.paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
-    g_state.pin_input_window =
+    *output =
         timeout_window_from_deadline(pin_input_window.started_at, capped_pin_deadline);
-    if (!timeout_window_valid_and_open_at(g_state.pin_input_window, now)) {
+    if (!timeout_window_valid_and_open_at(*output, now)) {
         g_state.terminalize(AgentQUserSigningTerminalResult::timed_out);
         return AgentQUserSigningTransitionResult::deadline_expired;
     }
@@ -691,9 +857,60 @@ AgentQUserSigningTransitionResult user_signing_flow_return_to_review(
     }
     g_state.stage = AgentQUserSigningStage::reviewing;
     g_state.request_window = review_window;
+    g_state.paused_request_window = kAgentQPausedTimeoutWindowNone;
     g_state.pin_input_window = kAgentQTimeoutWindowNone;
     g_state.paused_pin_input_window = kAgentQPausedTimeoutWindowNone;
     return AgentQUserSigningTransitionResult::ok;
+}
+
+AgentQUserSigningTransitionResult user_signing_flow_pause_review_deadline(TickType_t now)
+{
+    if (!g_state.active()) {
+        return AgentQUserSigningTransitionResult::inactive;
+    }
+    if (g_state.stage != AgentQUserSigningStage::reviewing) {
+        return AgentQUserSigningTransitionResult::wrong_stage;
+    }
+    const AgentQUserSigningTransitionResult guard = require_active_session();
+    if (guard != AgentQUserSigningTransitionResult::ok) {
+        return guard;
+    }
+    const AgentQUserSigningTransitionResult deadline =
+        terminalize_if_deadline_expired(now);
+    if (deadline != AgentQUserSigningTransitionResult::ok) {
+        return deadline;
+    }
+    if (review_deadline_paused()) {
+        return AgentQUserSigningTransitionResult::ok;
+    }
+    g_state.paused_request_window =
+        timeout_window_pause_at(g_state.request_window, now);
+    if (!timeout_paused_window_valid(g_state.paused_request_window)) {
+        g_state.paused_request_window = kAgentQPausedTimeoutWindowNone;
+        return AgentQUserSigningTransitionResult::invalid_deadline;
+    }
+    g_state.request_window = kAgentQTimeoutWindowNone;
+    return AgentQUserSigningTransitionResult::ok;
+}
+
+AgentQUserSigningTransitionResult user_signing_flow_resume_review_deadline(TickType_t now)
+{
+    if (!g_state.active()) {
+        return AgentQUserSigningTransitionResult::inactive;
+    }
+    if (g_state.stage != AgentQUserSigningStage::reviewing) {
+        return AgentQUserSigningTransitionResult::wrong_stage;
+    }
+    const AgentQUserSigningTransitionResult guard = require_active_session();
+    if (guard != AgentQUserSigningTransitionResult::ok) {
+        return guard;
+    }
+    const AgentQUserSigningTransitionResult deadline =
+        terminalize_if_deadline_expired(now);
+    if (deadline != AgentQUserSigningTransitionResult::ok) {
+        return deadline;
+    }
+    return resume_review_deadline_if_paused(now);
 }
 
 AgentQUserSigningTransitionResult user_signing_flow_refresh_pin_deadline(TickType_t now)
@@ -744,9 +961,9 @@ AgentQUserSigningTransitionResult user_signing_flow_pause_pin_deadline(TickType_
     return AgentQUserSigningTransitionResult::ok;
 }
 
-bool user_signing_flow_deadline_reached(TickType_t now)
+bool user_signing_flow_apply_deadline_transition(TickType_t now)
 {
-    return g_state.active() && any_deadline_reached(now);
+    return g_state.active() && apply_deadline_transition_and_report_reached(now);
 }
 
 AgentQUserSigningTransitionResult
@@ -817,6 +1034,10 @@ user_signing_flow_record_physical_confirmed_and_write_confirmation_history(
         return guard;
     }
     guard = terminalize_if_deadline_expired(now);
+    if (guard != AgentQUserSigningTransitionResult::ok) {
+        return guard;
+    }
+    guard = resume_review_deadline_if_paused(now);
     if (guard != AgentQUserSigningTransitionResult::ok) {
         return guard;
     }
@@ -916,10 +1137,12 @@ AgentQUserSigningTransitionResult user_signing_flow_record_timeout(TickType_t no
         g_state.stage != AgentQUserSigningStage::pin_entry) {
         return AgentQUserSigningTransitionResult::wrong_stage;
     }
-    if (!any_deadline_reached(now)) {
+    if (!apply_deadline_transition_and_report_reached(now)) {
         return AgentQUserSigningTransitionResult::deadline_not_reached;
     }
-    g_state.terminalize(AgentQUserSigningTerminalResult::timed_out);
+    if (g_state.stage != AgentQUserSigningStage::terminal) {
+        g_state.terminalize(AgentQUserSigningTerminalResult::timed_out);
+    }
     return AgentQUserSigningTransitionResult::ok;
 }
 

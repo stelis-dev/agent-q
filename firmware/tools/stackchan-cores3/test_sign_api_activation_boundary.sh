@@ -45,6 +45,7 @@ LOCAL_SETTINGS_RESET_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent
 LOCAL_PIN_AUTH_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_local_pin_auth_ui_flow.cpp"
 POLICY_UPDATE_REVIEW_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_policy_update_review_ui_flow.cpp"
 USER_SIGNING_REVIEW_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_review_ui_flow.cpp"
+MODAL_DRAWING_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_modal_drawing.h"
 REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_request_backed_local_pin_context.cpp"
 TRANSIENT_UI_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_transient_ui_flow.cpp"
 SIGNING_PREFLIGHT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_signing_preflight.cpp"
@@ -244,12 +245,20 @@ expect_present "${USER_SIGNING_REVIEW_UI_SOURCE}" 'user_signing_review_ui_reject
   "user signing review UI flow must own reject terminal effects"
 expect_present "${USER_SIGNING_REVIEW_UI_SOURCE}" 'user_signing_review_ui_clear_if_needed' \
   "user signing review UI flow must own timeout and panel-recovery effects"
+expect_present "${USER_SIGNING_REVIEW_UI_SOURCE}" 'user_signing_review_ui_scroll_started' \
+  "user signing review UI flow must own scroll-start effects"
+expect_present "${USER_SIGNING_REVIEW_UI_SOURCE}" 'user_signing_review_ui_scroll_finished' \
+  "user signing review UI flow must own scroll-finish effects"
 expect_present "${USB_SERVER}" 'policy_update_review_ui_continue' \
   "USB request server must delegate policy update review continue handling"
 expect_present "${USB_SERVER}" 'policy_update_review_ui_clear_if_needed' \
   "USB request server maintenance phase must delegate policy update review cleanup"
 expect_present "${USB_SERVER}" 'user_signing_review_ui_accept' \
   "USB request server must delegate user signing review accept handling"
+expect_present "${USB_SERVER}" 'user_signing_review_ui_scroll_started' \
+  "USB request server must delegate user signing review scroll-start handling"
+expect_present "${USB_SERVER}" 'user_signing_review_ui_scroll_finished' \
+  "USB request server must delegate user signing review scroll-finish handling"
 expect_present "${USB_SERVER}" 'user_signing_review_ui_clear_if_needed' \
   "USB request server maintenance phase must delegate user signing review cleanup"
 expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_local_pin_owner_for_purpose' \
@@ -262,6 +271,10 @@ expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_loca
   "request-backed local PIN context must own request-backed resume delegation"
 expect_absent "${USB_SERVER}" 'RequestBackedPinOwner|request_backed_pin_owner_for_purpose|protocol_pin_approval_refresh_deadline_for_local_pin_purpose|protocol_pin_approval_pause_deadline_for_local_pin_purpose|user_signing_flow_refresh_pin_deadline|user_signing_confirmation_mark_pin_verification_started' \
   "USB request server must not own request-backed local PIN owner/deadline delegation"
+expect_absent "${USB_SERVER}" 'agent_q::user_signing_flow_pause_review_deadline\(|agent_q::user_signing_flow_resume_review_deadline\(|agent_q::modal_pause_screen_bottom_timeout_timer_bar\(\)|agent_q::modal_resume_screen_bottom_timeout_timer_bar\(\)' \
+  "USB request server must not coordinate user signing review scroll state or timer display directly"
+expect_absent "${MODAL_DRAWING_HEADER}" 'modal_pause_screen_bottom_timeout_timer_bar|modal_resume_screen_bottom_timeout_timer_bar' \
+  "modal drawing must not expose unscoped bottom timer pause/resume controls"
 expect_absent "${USB_SERVER}" 'g_ui_event_queue|g_connect_review_choice_queue|modal_drawing_set_callbacks|drawing_surface_set_panel_deleted_callback|xQueueCreate|xQueueSend|xQueueReceive|on_(connect_review|user_signing_review|policy_update_review|setup|settings|error_recovery|reset|backup_phrase|pin|import).*clicked' \
   "USB request server must not own LVGL callback or UI input queue wiring"
 expect_present "${USB_LINE_HANDLER_SOURCE}" 'parse_usb_request_envelope' \

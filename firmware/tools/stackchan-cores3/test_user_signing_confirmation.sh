@@ -536,6 +536,31 @@ int main()
 
     {
         reset_all();
+        expect(begin_valid_flow_with_deadline("req_pin_busy_paused", 120),
+               "begin before paused local PIN conflict");
+        expect(agent_q::user_signing_flow_pause_review_deadline(90) ==
+                   agent_q::AgentQUserSigningTransitionResult::ok,
+               "review scroll pauses request deadline before local PIN conflict");
+        expect(agent_q::local_pin_auth_begin_connect(99, pin_window(99, 200)),
+               "unrelated local PIN flow begins before paused conflict test");
+        expect(agent_q::user_signing_confirmation_accept_review_and_begin_pin(
+                   100,
+                   pin_window(100, 200)) == Confirm::local_pin_busy,
+               "active unrelated local PIN blocks paused signing PIN without preparing handoff");
+        agent_q::AgentQUserSigningFlowSnapshot paused_busy_flow =
+            agent_q::user_signing_flow_snapshot();
+        agent_q::AgentQUserSigningReviewTimerState paused_busy_timer =
+            agent_q::user_signing_flow_review_timer_state(100);
+        expect(paused_busy_flow.stage == FlowStage::reviewing &&
+                   paused_busy_flow.request_window.started_at == 0 &&
+                   paused_busy_flow.request_window.deadline == 0 &&
+                   paused_busy_timer.paused &&
+                   paused_busy_timer.display_tick == 90,
+               "local PIN conflict leaves paused review deadline untouched");
+    }
+
+    {
+        reset_all();
         expect(begin_valid_flow("req_pin_ok"), "begin before signing PIN");
         expect(agent_q::user_signing_confirmation_accept_review_and_begin_pin(99, pin_window(99, 200)) ==
                    Confirm::ok,
@@ -613,6 +638,50 @@ int main()
                "verified PIN after input deadline still enters critical section");
         expect(agent_q::user_signing_flow_in_signing_critical_section(),
                "late verified PIN is not converted to timeout");
+
+        reset_all();
+        expect(begin_valid_flow_with_deadline("req_pin_from_paused_review", 100),
+               "begin before signing PIN from paused review");
+        expect(agent_q::user_signing_flow_pause_review_deadline(90) ==
+                   agent_q::AgentQUserSigningTransitionResult::ok,
+               "review scroll pauses request deadline before signing PIN");
+        expect(agent_q::user_signing_confirmation_accept_review_and_begin_pin(
+                   150,
+                   pin_window(150, 220)) == Confirm::ok,
+               "paused review Sign starts PIN with state-owned cap");
+        agent_q::AgentQLocalPinAuthSnapshot paused_pin =
+            agent_q::local_pin_auth_snapshot(150);
+        agent_q::AgentQUserSigningFlowSnapshot paused_flow =
+            agent_q::user_signing_flow_snapshot();
+        expect(paused_pin.flow_active &&
+                   paused_pin.input_window.started_at == 150 &&
+                   paused_pin.input_window.deadline == 160,
+               "local signing PIN uses resumed review deadline cap");
+        expect(paused_flow.stage == FlowStage::pin_entry &&
+                   paused_flow.request_window.started_at == 60 &&
+                   paused_flow.request_window.deadline == 160 &&
+                   paused_flow.pin_input_window.started_at == paused_pin.input_window.started_at &&
+                   paused_flow.pin_input_window.deadline == paused_pin.input_window.deadline,
+               "flow and local PIN share one capped signing PIN deadline");
+
+        reset_all();
+        expect(begin_valid_flow_with_deadline("req_pin_after_abandoned_scroll", 100),
+               "begin before signing PIN after abandoned scroll");
+        expect(agent_q::user_signing_flow_pause_review_deadline(90) ==
+                   agent_q::AgentQUserSigningTransitionResult::ok,
+               "review scroll pauses request deadline before late signing PIN");
+        expect(agent_q::user_signing_confirmation_accept_review_and_begin_pin(
+                   205,
+                   pin_window(205, 260)) == Confirm::deadline_expired,
+               "late paused review Sign applies abandoned fallback before PIN auth");
+        expect(!agent_q::user_signing_confirmation_pin_active(),
+               "late paused review Sign does not start local PIN auth");
+        agent_q::AgentQUserSigningFlowSnapshot late_paused_flow =
+            agent_q::user_signing_flow_snapshot();
+        expect(late_paused_flow.stage == FlowStage::terminal &&
+                   late_paused_flow.terminal_result ==
+                       agent_q::AgentQUserSigningTerminalResult::timed_out,
+               "late paused review Sign observes fallback-produced timeout");
     }
 
     {

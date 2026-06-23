@@ -397,7 +397,10 @@ Required owners for the device-confirmed signing pending state:
   scratch;
 - pending approval state: Firmware-owned request id, session id, chain, method,
   request digest, current internal review/PIN input deadline, and terminal
-  stage. The host cannot set or negotiate this deadline;
+  stage. The signing review deadline can pause while the user scrolls the
+  on-device review and resumes with the remaining time when scrolling ends or
+  when the Firmware-owned abandoned-scroll fallback fires. The host cannot set
+  or negotiate this deadline;
 - UI/display state: target-local temporary review, approval, and result layers
   only. UI object lifetime must not decide whether signing is allowed.
 

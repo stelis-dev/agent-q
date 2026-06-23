@@ -62,6 +62,16 @@ void on_user_signing_review_reject_clicked(lv_event_t*)
     enqueue_ui_event(AgentQUiEventKind::user_signing_review_reject_requested);
 }
 
+void on_user_signing_review_scroll_started(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::user_signing_review_scroll_started);
+}
+
+void on_user_signing_review_scroll_finished(lv_event_t*)
+{
+    enqueue_ui_event(AgentQUiEventKind::user_signing_review_scroll_finished);
+}
+
 void on_policy_update_review_continue_clicked(lv_event_t*)
 {
     enqueue_ui_event(AgentQUiEventKind::policy_update_review_continue_requested);
@@ -359,6 +369,8 @@ void ui_event_bridge_register_callbacks()
     modal_callbacks.on_sui_zklogin_review_reject_clicked = on_sui_zklogin_review_reject_clicked;
     modal_callbacks.on_user_signing_review_accept_clicked = on_user_signing_review_accept_clicked;
     modal_callbacks.on_user_signing_review_reject_clicked = on_user_signing_review_reject_clicked;
+    modal_callbacks.on_user_signing_review_scroll_started = on_user_signing_review_scroll_started;
+    modal_callbacks.on_user_signing_review_scroll_finished = on_user_signing_review_scroll_finished;
     modal_drawing_set_callbacks(modal_callbacks);
 }
 

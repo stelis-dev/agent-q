@@ -762,6 +762,34 @@ int main()
            "physical confirm signed terminal consumed");
 
     agent_q::user_signing_flow_clear();
+    reset_history_writer_stub();
+    expect(agent_q::user_signing_flow_begin(0,
+               make_valid_input("req_physical_scroll", agent_q::session_id(), payload.data(), payload.size(), 100)) ==
+               Begin::ok,
+           "begin before physical confirm from paused scroll");
+    expect(agent_q::user_signing_flow_pause_review_deadline(90) == Transition::ok,
+           "scroll start pauses review deadline before physical confirm");
+    expect(agent_q::user_signing_flow_record_physical_confirmed_and_write_confirmation_history(
+               150,
+               write_confirmation_history,
+               nullptr) == Transition::ok,
+           "physical confirm while scroll-paused resumes review deadline before history");
+    expect(g_history_write_calls == 1, "paused physical confirm history writer called once");
+    snapshot = agent_q::user_signing_flow_snapshot();
+    expect(snapshot.stage == Stage::signing_critical_section &&
+               snapshot.request_window.started_at == 60 &&
+               snapshot.request_window.deadline == 160,
+           "paused physical confirm preserves remaining review time for the critical snapshot");
+    expect(agent_q::user_signing_flow_consume_signable_payload(copied.data(), copied.size(), &copied_size) ==
+               Transition::ok,
+           "payload is consumable after paused physical confirmation history durability");
+    expect(agent_q::user_signing_flow_complete_signed() == Transition::ok,
+           "paused physical confirm signed terminal is recorded");
+    expect(agent_q::user_signing_flow_consume_terminal_result(&terminal) &&
+               terminal == Terminal::signed_success,
+           "paused physical confirm signed terminal consumed");
+
+    agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_reject"), "begin before reject");
     expect(agent_q::user_signing_flow_record_device_rejected() == Transition::ok,
            "device rejection terminalizes from review");
@@ -812,6 +840,146 @@ int main()
     expect(strcmp(agent_q::user_signing_flow_terminal_status(Terminal::timed_out), "user_timed_out") == 0 &&
                strcmp(agent_q::user_signing_flow_terminal_reason(Terminal::timed_out), "user_timed_out") == 0,
            "timeout terminal mapping");
+
+    agent_q::user_signing_flow_clear();
+    expect(agent_q::user_signing_flow_begin(0,
+               make_valid_input("req_scroll_paused", agent_q::session_id(), payload.data(), payload.size(), 100)) ==
+               Begin::ok,
+           "begin before scroll pause");
+    expect(agent_q::user_signing_flow_pause_review_deadline(90) == Transition::ok,
+           "scroll start pauses review deadline");
+    snapshot = agent_q::user_signing_flow_snapshot();
+    expect(snapshot.stage == Stage::reviewing &&
+               snapshot.request_window.started_at == 0 &&
+               snapshot.request_window.deadline == 0 &&
+               snapshot.signable_payload_available,
+           "paused scroll keeps review active without an active request deadline");
+    expect(agent_q::user_signing_flow_record_timeout(100) == Transition::deadline_not_reached,
+           "scroll pause prevents timeout at original deadline");
+    agent_q::AgentQUserSigningReviewTimerState timer =
+        agent_q::user_signing_flow_review_timer_state(150);
+    expect(timer.available &&
+               timer.paused &&
+               timer.display_window.started_at == 0 &&
+               timer.display_window.deadline == 100 &&
+               timer.display_tick == 90,
+           "paused review timer state exposes display window and paused display tick");
+    expect(!agent_q::user_signing_flow_apply_deadline_transition(150),
+           "deadline transition stays open while scrolling");
+    expect(agent_q::user_signing_flow_resume_review_deadline(150) == Transition::ok,
+           "scroll end resumes review deadline");
+    snapshot = agent_q::user_signing_flow_snapshot();
+    expect(snapshot.stage == Stage::reviewing &&
+               snapshot.request_window.started_at == 60 &&
+               snapshot.request_window.deadline == 160,
+           "scroll end resumes with the remaining review time");
+    expect(agent_q::user_signing_flow_record_timeout(159) == Transition::deadline_not_reached,
+           "resumed review remains open before shifted deadline");
+    expect(agent_q::user_signing_flow_record_timeout(160) == Transition::ok,
+           "resumed review times out after remaining time");
+
+    agent_q::user_signing_flow_clear();
+    expect(agent_q::user_signing_flow_begin(0,
+               make_valid_input("req_scroll_abandoned", agent_q::session_id(), payload.data(), payload.size(), 100)) ==
+               Begin::ok,
+           "begin before abandoned scroll pause");
+    expect(agent_q::user_signing_flow_pause_review_deadline(90) == Transition::ok,
+           "abandoned scroll start pauses review deadline");
+    expect(agent_q::user_signing_flow_record_timeout(189) == Transition::deadline_not_reached,
+           "abandoned scroll fallback waits for bounded pause duration");
+    timer = agent_q::user_signing_flow_review_timer_state(190);
+    expect(timer.available &&
+               timer.paused &&
+               timer.display_tick == 90,
+           "review timer projection does not apply abandoned scroll fallback");
+    snapshot = agent_q::user_signing_flow_snapshot();
+    expect(snapshot.stage == Stage::reviewing &&
+               snapshot.request_window.started_at == 0 &&
+               snapshot.request_window.deadline == 0,
+           "review timer projection leaves paused review state unchanged");
+    expect(agent_q::user_signing_flow_record_timeout(190) == Transition::deadline_not_reached,
+           "abandoned scroll fallback resumes review without immediate timeout");
+    snapshot = agent_q::user_signing_flow_snapshot();
+    expect(snapshot.stage == Stage::reviewing &&
+               snapshot.request_window.started_at == 100 &&
+               snapshot.request_window.deadline == 200,
+           "abandoned scroll fallback resumes at fallback deadline");
+    expect(agent_q::user_signing_flow_record_timeout(200) == Transition::ok,
+           "abandoned scroll times out after fallback-resumed remaining time");
+
+    agent_q::user_signing_flow_clear();
+    expect(agent_q::user_signing_flow_begin(0,
+               make_valid_input("req_scroll_late_check", agent_q::session_id(), payload.data(), payload.size(), 100)) ==
+               Begin::ok,
+           "begin before late paused deadline check");
+    expect(agent_q::user_signing_flow_pause_review_deadline(90) == Transition::ok,
+           "late paused deadline check starts from paused review");
+    expect(agent_q::user_signing_flow_apply_deadline_transition(205),
+           "late paused deadline transition applies abandoned fallback");
+    snapshot = agent_q::user_signing_flow_snapshot();
+    expect(snapshot.stage == Stage::terminal &&
+               snapshot.terminal_result == Terminal::timed_out,
+           "late paused deadline transition terminalizes timed-out review");
+
+    agent_q::user_signing_flow_clear();
+    reset_history_writer_stub();
+    expect(agent_q::user_signing_flow_begin(0,
+               make_valid_input("req_late_physical_scroll", agent_q::session_id(), payload.data(), payload.size(), 100)) ==
+               Begin::ok,
+           "begin before physical confirm after abandoned scroll");
+    expect(agent_q::user_signing_flow_pause_review_deadline(90) == Transition::ok,
+           "abandoned scroll starts before late physical confirm");
+    expect(agent_q::user_signing_flow_record_physical_confirmed_and_write_confirmation_history(
+               205,
+               write_confirmation_history,
+               nullptr) == Transition::deadline_expired,
+           "late physical confirm applies abandoned fallback before history");
+    expect(g_history_write_calls == 0,
+           "late physical confirm does not write history after timeout");
+    snapshot = agent_q::user_signing_flow_snapshot();
+    expect(snapshot.stage == Stage::terminal &&
+               snapshot.terminal_result == Terminal::timed_out,
+           "late physical confirm observes fallback-produced timeout");
+
+    agent_q::user_signing_flow_clear();
+    expect(agent_q::user_signing_flow_begin(0,
+               make_valid_input("req_late_scroll_end", agent_q::session_id(), payload.data(), payload.size(), 100)) ==
+               Begin::ok,
+           "begin before scroll end after abandoned scroll");
+    expect(agent_q::user_signing_flow_pause_review_deadline(90) == Transition::ok,
+           "abandoned scroll starts before late scroll end");
+    expect(agent_q::user_signing_flow_resume_review_deadline(205) ==
+               Transition::deadline_expired,
+           "late scroll end applies abandoned fallback before resume");
+    snapshot = agent_q::user_signing_flow_snapshot();
+    expect(snapshot.stage == Stage::terminal &&
+               snapshot.terminal_result == Terminal::timed_out,
+           "late scroll end observes fallback-produced timeout");
+
+    agent_q::user_signing_flow_clear();
+    expect(agent_q::user_signing_flow_begin(0,
+               make_valid_input("req_scroll_sign", agent_q::session_id(), payload.data(), payload.size(), 100)) ==
+               Begin::ok,
+           "begin before signing from paused scroll");
+    expect(agent_q::user_signing_flow_pause_review_deadline(90) == Transition::ok,
+           "scroll start before signing pauses review deadline");
+    expect(agent_q::user_signing_flow_accept_review(150, pin_window(150, 220)) == Transition::ok,
+           "Sign while scroll-paused resumes review deadline before PIN handoff");
+    snapshot = agent_q::user_signing_flow_snapshot();
+    expect(snapshot.stage == Stage::pin_entry &&
+               snapshot.request_window.started_at == 60 &&
+               snapshot.request_window.deadline == 160 &&
+               snapshot.pin_input_window.started_at == 150 &&
+               snapshot.pin_input_window.deadline == 160,
+           "paused-scroll Sign caps PIN entry to remaining review time");
+    agent_q::AgentQTimeoutWindow next_pin_window = {};
+    expect(agent_q::user_signing_flow_cap_request_backed_pin_input_window(
+               151,
+               pin_window(151, 220),
+               &next_pin_window) == Transition::ok,
+           "request-backed user-signing PIN cap remains available in pin_entry");
+    expect(next_pin_window.started_at == 151 && next_pin_window.deadline == 160,
+           "request-backed user-signing PIN cap uses flow-owned request deadline in pin_entry");
 
     agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_history_error"), "begin before history error");
@@ -934,7 +1102,7 @@ int main()
                snapshot.pin_input_window.started_at == 0 &&
                snapshot.pin_input_window.deadline == 0,
            "PIN verification pauses only local input deadline");
-    expect(!agent_q::user_signing_flow_deadline_reached(130),
+    expect(!agent_q::user_signing_flow_apply_deadline_transition(130),
            "request admission window does not reject while PIN verification runs");
     expect(record_verified_pin_and_write_confirmation_history(write_confirmation_history,
                nullptr,
@@ -957,7 +1125,7 @@ int main()
            "review accepted before late PIN refresh");
     expect(agent_q::user_signing_flow_pause_pin_deadline(120) == Transition::ok,
            "PIN retry refresh test pauses input before request admission window closes");
-    expect(!agent_q::user_signing_flow_deadline_reached(130),
+    expect(!agent_q::user_signing_flow_apply_deadline_transition(130),
            "paused PIN retry does not timeout at request admission window");
     expect(agent_q::user_signing_flow_refresh_pin_deadline(150) ==
                Transition::ok,

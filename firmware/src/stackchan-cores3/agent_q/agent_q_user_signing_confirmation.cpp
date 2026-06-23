@@ -155,37 +155,33 @@ user_signing_confirmation_accept_review_and_begin_pin(
     TickType_t now,
     AgentQTimeoutWindow pin_input_window)
 {
-    const AgentQUserSigningFlowCoreSnapshot flow =
-        user_signing_flow_core_snapshot();
-    if (!flow.active) {
-        return AgentQUserSigningConfirmationResult::inactive;
-    }
-    if (flow.stage != AgentQUserSigningStage::reviewing) {
-        return AgentQUserSigningConfirmationResult::wrong_stage;
-    }
-    if (!timeout_window_valid_and_open_at(pin_input_window, now)) {
-        return AgentQUserSigningConfirmationResult::invalid_deadline;
-    }
     if (local_pin_auth_flow_active()) {
         return AgentQUserSigningConfirmationResult::local_pin_busy;
     }
-    const TickType_t capped_pin_deadline =
-        timeout_window_cap_deadline(flow.request_window, pin_input_window.deadline);
-    pin_input_window =
-        timeout_window_from_deadline(pin_input_window.started_at, capped_pin_deadline);
-    if (!timeout_window_valid_and_open_at(pin_input_window, now)) {
-        return AgentQUserSigningConfirmationResult::deadline_expired;
+    AgentQTimeoutWindow capped_pin_input_window = kAgentQTimeoutWindowNone;
+    const AgentQUserSigningConfirmationResult prepared =
+        map_transition(user_signing_flow_prepare_review_pin_input_window(
+            now,
+            pin_input_window,
+            &capped_pin_input_window));
+    if (prepared != AgentQUserSigningConfirmationResult::ok) {
+        return prepared;
     }
+    const AgentQUserSigningFlowCoreSnapshot flow =
+        user_signing_flow_core_snapshot();
     SignaturePinBinding next_binding = {};
     next_binding.active = true;
     next_binding.pin.token = next_signature_pin_token();
     next_binding.flow = flow;
-    if (!local_pin_auth_begin_user_signing(next_binding.pin, now, pin_input_window)) {
+    if (!local_pin_auth_begin_user_signing(
+            next_binding.pin,
+            now,
+            capped_pin_input_window)) {
         return AgentQUserSigningConfirmationResult::local_pin_unavailable;
     }
 
     const AgentQUserSigningTransitionResult accepted =
-        user_signing_flow_accept_review(now, pin_input_window);
+        user_signing_flow_accept_review(now, capped_pin_input_window);
     if (accepted != AgentQUserSigningTransitionResult::ok) {
         local_pin_auth_clear_flow();
         return map_transition(accepted);
@@ -212,7 +208,7 @@ user_signing_confirmation_complete_pin_verify_job_and_write_history(
         clear_expected_flow_and_pin(expected);
         return AgentQUserSigningConfirmationResult::invalid_argument;
     }
-    if (user_signing_flow_deadline_reached(now)) {
+    if (user_signing_flow_apply_deadline_transition(now)) {
         clear_signature_pin_if_active();
         const AgentQUserSigningTransitionResult timeout =
             user_signing_flow_record_timeout(now);

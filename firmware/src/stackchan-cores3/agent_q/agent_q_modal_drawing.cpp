@@ -228,7 +228,8 @@ static bool make_timeout_timer_bar(
     int width,
     AgentQTimeoutWindow timeout_window,
     TickType_t now,
-    lv_obj_t** out_track = nullptr)
+    lv_obj_t** out_track = nullptr,
+    bool animate = true)
 {
     if (!timeout_window_active(timeout_window) || width <= 0) {
         return true;
@@ -277,6 +278,9 @@ static bool make_timeout_timer_bar(
     const TickType_t remaining_ticks = timeout_window_remaining_ticks(timeout_window, now);
     const int32_t current_width = timeout_window_fill_width(timeout_window, now, width);
     lv_obj_set_width(fill, current_width);
+    if (!animate) {
+        return true;
+    }
     const uint32_t remaining_ms = pdTICKS_TO_MS(remaining_ticks);
     lv_anim_t animation;
     lv_anim_init(&animation);
@@ -740,7 +744,8 @@ bool modal_draw_processing_overlay_on_current_panel(AgentQUiPanelKind expected_k
 static bool make_screen_bottom_timeout_timer_bar(
     lv_obj_t* owner_panel,
     AgentQTimeoutWindow timeout_window,
-    TickType_t now);
+    TickType_t now,
+    bool animate = true);
 
 
 bool modal_draw_connect_review_panel(
@@ -1202,7 +1207,8 @@ static bool make_import_candidate_area(lv_obj_t* parent)
 static bool make_screen_bottom_timeout_timer_bar(
     lv_obj_t* owner_panel,
     AgentQTimeoutWindow timeout_window,
-    TickType_t now)
+    TickType_t now,
+    bool animate)
 {
     if (!timeout_window_active(timeout_window)) {
         return true;
@@ -1216,7 +1222,8 @@ static bool make_screen_bottom_timeout_timer_bar(
             kScreenWidth - 2 * kTimeoutTimerBarTrackInset,
             timeout_window,
             now,
-            &track)) {
+            &track,
+            animate)) {
         return false;
     }
     if (track == nullptr) {
@@ -2557,7 +2564,7 @@ bool modal_draw_sui_zklogin_review_panel(
 
 bool modal_draw_user_signing_review_panel(
     const AgentQUserSigningReviewViewModel& model,
-    AgentQTimeoutWindow timeout_window)
+    AgentQUserSigningReviewTimerState timer)
 {
     if (model.title[0] == '\0' ||
         model.row_count == 0 ||
@@ -2613,6 +2620,20 @@ bool modal_draw_user_signing_review_panel(
     lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(content, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
+    if (g_callbacks.on_user_signing_review_scroll_started != nullptr) {
+        lv_obj_add_event_cb(
+            content,
+            g_callbacks.on_user_signing_review_scroll_started,
+            LV_EVENT_SCROLL_BEGIN,
+            nullptr);
+    }
+    if (g_callbacks.on_user_signing_review_scroll_finished != nullptr) {
+        lv_obj_add_event_cb(
+            content,
+            g_callbacks.on_user_signing_review_scroll_finished,
+            LV_EVENT_SCROLL_END,
+            nullptr);
+    }
 
     int row_y = 0;
     for (size_t index = 0; index < model.row_count; ++index) {
@@ -2628,10 +2649,13 @@ bool modal_draw_user_signing_review_panel(
             : kUserSigningReviewNormalRowHeight;
     }
 
+    const AgentQTimeoutWindow timeout_window =
+        timer.available ? timer.display_window : kAgentQTimeoutWindowNone;
     if (!make_screen_bottom_timeout_timer_bar(
             panel,
             timeout_window,
-            xTaskGetTickCount())) {
+            timer.display_tick,
+            !timer.paused)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
@@ -2662,6 +2686,27 @@ bool modal_draw_user_signing_review_panel(
 
     drawing_surface_move_panel_foreground_locked();
     return true;
+}
+
+bool modal_draw_user_signing_review_timer(AgentQUserSigningReviewTimerState timer)
+{
+    LvglLockGuard lock;
+    lv_obj_t* panel = drawing_surface_panel_locked();
+    if (panel == nullptr ||
+        drawing_surface_panel_kind_locked() != AgentQUiPanelKind::user_signing_review) {
+        return false;
+    }
+    clear_screen_bottom_timeout_timer_bar_locked();
+    const AgentQTimeoutWindow timeout_window =
+        timer.available ? timer.display_window : kAgentQTimeoutWindowNone;
+    if (!timeout_window_active(timeout_window)) {
+        return true;
+    }
+    return make_screen_bottom_timeout_timer_bar(
+        panel,
+        timeout_window,
+        timer.display_tick,
+        !timer.paused);
 }
 
 bool modal_draw_local_pin_auth_panel(const char* notice)

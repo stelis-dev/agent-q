@@ -1665,14 +1665,17 @@ User authorization mode:
   supplied by the request and is not the signing authorization mode.
 - Firmware owns fixed internal `30000` millisecond physical-input windows for
   review confirmation and PIN entry. The host cannot set or negotiate them
-  through the protocol. In PIN mode, submitting a complete PIN pauses the input
-  timer while stored-PIN cryptographic verification runs. The original signing
-  confirmation window is the review/PIN-entry admission boundary and caps PIN
-  entry before submit; it is not the terminal timeout authority for stored-PIN
-  cryptographic processing after submit. A wrong PIN result returns to the same
-  PIN-entry state by resuming the remaining paused input window unless the
-  shared wrong-PIN lockout is active. The internal local-auth worker watchdog
-  still fails closed as authentication unavailable.
+  through the protocol. In the signing review UI, scrolling the review pauses
+  the review window and the on-device timer bar; when scrolling ends or when
+  the Firmware-owned abandoned-scroll fallback fires, Firmware resumes the
+  remaining review time. In PIN mode, submitting a complete PIN
+  pauses the input timer while stored-PIN cryptographic verification runs. The
+  original signing confirmation window is the review/PIN-entry admission
+  boundary and caps PIN entry before submit; it is not the terminal timeout
+  authority for stored-PIN cryptographic processing after submit. A wrong PIN
+  result returns to the same PIN-entry state by resuming the remaining paused
+  input window unless the shared wrong-PIN lockout is active. The internal
+  local-auth worker watchdog still fails closed as authentication unavailable.
 - Review Reject is the terminal `user_rejected` action. Back from the PIN
   screen wipes only PIN scratch and returns to the offline facts review; it
   must not be reported as `user_rejected` or written as a terminal rejection.

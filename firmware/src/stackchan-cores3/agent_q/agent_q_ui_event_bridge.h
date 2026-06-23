@@ -50,6 +50,8 @@ enum class AgentQUiEventKind {
     sui_zklogin_review_reject_requested,
     user_signing_review_accept_requested,
     user_signing_review_reject_requested,
+    user_signing_review_scroll_started,
+    user_signing_review_scroll_finished,
 };
 
 struct AgentQUiEvent {

@@ -148,8 +148,12 @@ agent_q::AgentQSuiZkLoginProposalTerminalResult g_sui_last_terminal =
 char g_sui_last_error_code[48] = {};
 
 agent_q::AgentQUserSigningFlowSnapshot g_user_snapshot = {};
+agent_q::AgentQUserSigningReviewTimerState g_user_timer_state = {};
+agent_q::AgentQUserSigningReviewTimerState g_user_last_draw_timer = {};
+agent_q::AgentQUserSigningReviewTimerState g_user_last_timer_update = {};
 bool g_user_requires_pin = false;
 bool g_user_draw_result = true;
+bool g_user_timer_update_result = true;
 bool g_user_local_pin_draw_result = true;
 bool g_user_panel_active = true;
 bool g_user_terminal_pending = false;
@@ -161,6 +165,11 @@ agent_q::AgentQUserSigningConfirmationResult g_user_reject_result =
     agent_q::AgentQUserSigningConfirmationResult::ok;
 agent_q::AgentQUserSigningTransitionResult g_user_timeout_result =
     agent_q::AgentQUserSigningTransitionResult::deadline_not_reached;
+agent_q::AgentQUserSigningTransitionResult g_user_pause_result =
+    agent_q::AgentQUserSigningTransitionResult::ok;
+agent_q::AgentQUserSigningTransitionResult g_user_resume_result =
+    agent_q::AgentQUserSigningTransitionResult::ok;
+bool g_user_timeout_resumes_timer = false;
 int g_user_build_calls = 0;
 int g_user_draw_calls = 0;
 int g_user_clear_review_calls = 0;
@@ -169,6 +178,9 @@ int g_user_physical_calls = 0;
 int g_user_begin_pin_calls = 0;
 int g_user_reject_calls = 0;
 int g_user_timeout_calls = 0;
+int g_user_pause_calls = 0;
+int g_user_resume_calls = 0;
+int g_user_timer_update_calls = 0;
 int g_user_clear_flow_calls = 0;
 int g_user_cancel_pin_loss_calls = 0;
 int g_user_local_pin_draw_calls = 0;
@@ -291,8 +303,15 @@ void reset_user()
     g_user_snapshot.stage = agent_q::AgentQUserSigningStage::reviewing;
     snprintf(g_user_snapshot.request_id, sizeof(g_user_snapshot.request_id), "%s", "sign-1");
     g_user_snapshot.request_window = {10, 200};
+    g_user_timer_state = {};
+    g_user_timer_state.available = true;
+    g_user_timer_state.display_window = {10, 200};
+    g_user_timer_state.display_tick = g_now;
+    g_user_last_draw_timer = {};
+    g_user_last_timer_update = {};
     g_user_requires_pin = false;
     g_user_draw_result = true;
+    g_user_timer_update_result = true;
     g_user_local_pin_draw_result = true;
     g_user_panel_active = true;
     g_user_terminal_pending = false;
@@ -301,6 +320,9 @@ void reset_user()
     g_user_reject_result = agent_q::AgentQUserSigningConfirmationResult::ok;
     g_user_timeout_result =
         agent_q::AgentQUserSigningTransitionResult::deadline_not_reached;
+    g_user_pause_result = agent_q::AgentQUserSigningTransitionResult::ok;
+    g_user_resume_result = agent_q::AgentQUserSigningTransitionResult::ok;
+    g_user_timeout_resumes_timer = false;
     g_user_build_calls = 0;
     g_user_draw_calls = 0;
     g_user_clear_review_calls = 0;
@@ -309,6 +331,9 @@ void reset_user()
     g_user_begin_pin_calls = 0;
     g_user_reject_calls = 0;
     g_user_timeout_calls = 0;
+    g_user_pause_calls = 0;
+    g_user_resume_calls = 0;
+    g_user_timer_update_calls = 0;
     g_user_clear_flow_calls = 0;
     g_user_cancel_pin_loss_calls = 0;
     g_user_local_pin_draw_calls = 0;
@@ -558,6 +583,12 @@ agent_q::AgentQUserSigningFlowCoreSnapshot user_core_snapshot()
     return g_user_snapshot;
 }
 
+agent_q::AgentQUserSigningReviewTimerState user_timer_state(TickType_t tick)
+{
+    expect(tick == g_now, "user timer state receives current tick");
+    return g_user_timer_state;
+}
+
 agent_q::AgentQUserSigningReviewBuildResult build_user_model(
     const agent_q::AgentQUserSigningFlowSnapshot& snapshot,
     agent_q::AgentQUserSigningReviewViewModel* output)
@@ -572,11 +603,13 @@ agent_q::AgentQUserSigningReviewBuildResult build_user_model(
 
 bool draw_user_review(
     const agent_q::AgentQUserSigningReviewViewModel& model,
-    agent_q::AgentQTimeoutWindow window)
+    agent_q::AgentQUserSigningReviewTimerState timer)
 {
     ++g_user_draw_calls;
+    g_user_last_draw_timer = timer;
     expect(strcmp(model.title, "title") == 0, "user show passes model");
-    expect(window.deadline == 200, "user show passes review window");
+    expect(timer.available && timer.display_window.deadline == 200,
+           "user show passes review timer state");
     return g_user_draw_result;
 }
 
@@ -609,7 +642,29 @@ agent_q::AgentQUserSigningTransitionResult user_timeout(TickType_t tick)
 {
     expect(tick == g_now, "user timeout receives current tick");
     ++g_user_timeout_calls;
+    if (g_user_timeout_resumes_timer) {
+        g_user_timer_state.paused = false;
+        g_user_timer_state.display_tick = tick;
+    }
     return g_user_timeout_result;
+}
+agent_q::AgentQUserSigningTransitionResult pause_user_review(TickType_t tick)
+{
+    expect(tick == g_now, "user scroll start receives current tick");
+    ++g_user_pause_calls;
+    return g_user_pause_result;
+}
+agent_q::AgentQUserSigningTransitionResult resume_user_review(TickType_t tick)
+{
+    expect(tick == g_now, "user scroll finish receives current tick");
+    ++g_user_resume_calls;
+    return g_user_resume_result;
+}
+bool draw_user_review_timer(agent_q::AgentQUserSigningReviewTimerState timer)
+{
+    ++g_user_timer_update_calls;
+    g_user_last_timer_update = timer;
+    return g_user_timer_update_result;
 }
 agent_q::AgentQUserSigningTransitionResult clear_user_flow()
 {
@@ -702,9 +757,11 @@ agent_q::AgentQUserSigningReviewUiFlowOps user_ops()
     return {
         now,
         user_core_snapshot,
+        user_timer_state,
         user_snapshot,
         build_user_model,
         draw_user_review,
+        draw_user_review_timer,
         clear_panel,
         user_panel_active,
         requires_pin,
@@ -712,6 +769,8 @@ agent_q::AgentQUserSigningReviewUiFlowOps user_ops()
         begin_user_pin,
         record_user_rejected,
         user_timeout,
+        pause_user_review,
+        resume_user_review,
         clear_user_flow,
         user_terminal_pending,
         cancel_pin_loss,
@@ -852,6 +911,68 @@ void test_user_accept_reject_and_pin()
            "user reject prepares terminal result before clearing review");
 }
 
+void test_user_scroll_events()
+{
+    reset_user();
+    g_user_timer_state.paused = true;
+    g_user_timer_state.display_tick = g_now;
+    agent_q::user_signing_review_ui_scroll_started(user_ops());
+    expect(g_user_pause_calls == 1, "user scroll start delegates pause to flow");
+    expect(g_user_timer_update_calls == 1 &&
+               g_user_last_timer_update.paused &&
+               g_user_last_timer_update.display_tick == g_now,
+           "user scroll start redraws timer from paused state projection");
+    expect(g_user_resume_calls == 0, "user scroll start does not resume timer");
+
+    g_user_timer_state.paused = false;
+    g_user_timer_state.display_tick = g_now;
+    agent_q::user_signing_review_ui_scroll_finished(user_ops());
+    expect(g_user_resume_calls == 1, "user scroll finish delegates resume to flow");
+    expect(g_user_timer_update_calls == 2 &&
+               !g_user_last_timer_update.paused,
+           "user scroll finish redraws timer from resumed state projection");
+
+    reset_user();
+    g_user_snapshot.stage = agent_q::AgentQUserSigningStage::pin_entry;
+    agent_q::user_signing_review_ui_scroll_started(user_ops());
+    expect(g_user_pause_calls == 0 &&
+               g_user_timer_update_calls == 0 &&
+               g_user_finish_terminal_calls == 0,
+           "stale user scroll start does not touch state or timer display");
+
+    reset_user();
+    g_user_panel_active = false;
+    agent_q::user_signing_review_ui_scroll_started(user_ops());
+    expect(g_user_pause_calls == 0 &&
+               g_user_timer_update_calls == 0 &&
+               g_user_finish_terminal_calls == 0,
+           "inactive user review panel scroll start does not touch state or timer display");
+
+    reset_user();
+    g_user_pause_result = agent_q::AgentQUserSigningTransitionResult::deadline_expired;
+    g_user_terminal_pending = true;
+    agent_q::user_signing_review_ui_scroll_started(user_ops());
+    expect(g_user_pause_calls == 1 &&
+               g_user_timer_update_calls == 0 &&
+               g_user_finish_terminal_calls == 1,
+           "expired user scroll start finishes terminal without timer display update");
+
+    reset_user();
+    g_user_resume_result = agent_q::AgentQUserSigningTransitionResult::wrong_stage;
+    agent_q::user_signing_review_ui_scroll_finished(user_ops());
+    expect(g_user_resume_calls == 1 &&
+               g_user_timer_update_calls == 0 &&
+               g_user_finish_terminal_calls == 0,
+           "stale user scroll finish result does not touch timer display or terminal");
+
+    reset_user();
+    g_user_timer_update_result = false;
+    agent_q::user_signing_review_ui_scroll_started(user_ops());
+    expect(g_user_finish_error_calls == 1 &&
+               strcmp(g_user_last_error_code, "ui_error") == 0,
+           "timer update failure fails closed with display error");
+}
+
 void test_user_recovery_timeout_and_pin_display_failure()
 {
     reset_user();
@@ -859,10 +980,45 @@ void test_user_recovery_timeout_and_pin_display_failure()
     expect(g_user_build_calls == 1 && g_user_draw_calls == 1, "user show builds and draws");
 
     reset_user();
+    g_user_snapshot.request_window = {};
+    g_user_timer_state.paused = true;
+    g_user_timer_state.display_window = {10, 200};
+    g_user_timer_state.display_tick = g_now;
+    expect(agent_q::user_signing_review_ui_show(user_ops()),
+           "user show succeeds while review timer is paused");
+    expect(g_user_last_draw_timer.paused &&
+               g_user_last_draw_timer.display_window.deadline == 200 &&
+               g_user_last_draw_timer.display_tick == g_now,
+           "user show uses state-owned timer instead of raw snapshot window");
+
+    reset_user();
     g_user_panel_active = false;
     agent_q::user_signing_review_ui_clear_if_needed(user_ops());
     expect(g_user_timeout_calls == 1, "user maintenance records timeout check");
     expect(g_user_draw_calls == 1, "user maintenance redraws missing panel");
+
+    reset_user();
+    g_user_timer_state.paused = true;
+    g_user_timer_state.display_tick = g_now;
+    g_user_timeout_result =
+        agent_q::AgentQUserSigningTransitionResult::deadline_not_reached;
+    agent_q::user_signing_review_ui_clear_if_needed(user_ops());
+    expect(g_user_timer_update_calls == 0,
+           "maintenance does not redraw timer while pause remains active");
+
+    reset_user();
+    g_user_timer_state.paused = true;
+    g_user_timer_state.display_tick = g_now;
+    g_user_timeout_result =
+        agent_q::AgentQUserSigningTransitionResult::deadline_not_reached;
+    g_user_timeout_calls = 0;
+    g_user_timer_update_calls = 0;
+    g_user_last_timer_update = {};
+    g_user_timeout_resumes_timer = true;
+    agent_q::user_signing_review_ui_clear_if_needed(user_ops());
+    expect(g_user_timer_update_calls == 1 &&
+               !g_user_last_timer_update.paused,
+           "maintenance redraws timer after abandoned pause fallback resumes state");
 
     reset_user();
     g_user_panel_active = false;
@@ -899,6 +1055,7 @@ int main()
     test_policy_recovery_and_display_failure();
     test_sui_review_continue_reject_and_recovery();
     test_user_accept_reject_and_pin();
+    test_user_scroll_events();
     test_user_recovery_timeout_and_pin_display_failure();
     return failures == 0 ? 0 : 1;
 }

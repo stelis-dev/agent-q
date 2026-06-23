@@ -117,6 +117,8 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_sui_zklogin_review_reject_clicked = nullptr;
     lv_event_cb_t on_user_signing_review_accept_clicked = nullptr;
     lv_event_cb_t on_user_signing_review_reject_clicked = nullptr;
+    lv_event_cb_t on_user_signing_review_scroll_started = nullptr;
+    lv_event_cb_t on_user_signing_review_scroll_finished = nullptr;
 };
 
 void modal_drawing_set_callbacks(const AgentQModalDrawingCallbacks& callbacks);
@@ -241,6 +243,8 @@ int main()
     assert(g_callbacks.on_sui_settings_clear_clicked != nullptr);
     assert(g_callbacks.on_sui_zklogin_review_continue_clicked != nullptr);
     assert(g_callbacks.on_sui_zklogin_review_reject_clicked != nullptr);
+    assert(g_callbacks.on_user_signing_review_scroll_started != nullptr);
+    assert(g_callbacks.on_user_signing_review_scroll_finished != nullptr);
     assert(g_panel_deleted_callback != nullptr);
 
     g_callbacks.on_setup_generate_clicked(nullptr);
@@ -330,6 +334,12 @@ int main()
 
     g_callbacks.on_sui_zklogin_review_reject_clicked(nullptr);
     assert(receive_event().kind == agent_q::AgentQUiEventKind::sui_zklogin_review_reject_requested);
+
+    g_callbacks.on_user_signing_review_scroll_started(nullptr);
+    assert(receive_event().kind == agent_q::AgentQUiEventKind::user_signing_review_scroll_started);
+
+    g_callbacks.on_user_signing_review_scroll_finished(nullptr);
+    assert(receive_event().kind == agent_q::AgentQUiEventKind::user_signing_review_scroll_finished);
 
     printf("UI event bridge tests passed\n");
     return 0;

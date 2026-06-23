@@ -68,6 +68,9 @@ bool g_protocol_pause_result = false;
 bool g_protocol_deadline_reached = false;
 agent_q::AgentQUserSigningTransitionResult g_user_refresh_result =
     agent_q::AgentQUserSigningTransitionResult::inactive;
+agent_q::AgentQUserSigningTransitionResult g_user_prepare_pin_result =
+    agent_q::AgentQUserSigningTransitionResult::inactive;
+agent_q::AgentQTimeoutWindow g_user_prepare_pin_output = {};
 agent_q::AgentQUserSigningConfirmationResult g_user_pause_result =
     agent_q::AgentQUserSigningConfirmationResult::inactive;
 bool g_user_deadline_reached = false;
@@ -89,6 +92,8 @@ TickType_t g_last_protocol_deadline_now = 0;
 TickType_t g_last_user_refresh_now = 0;
 TickType_t g_last_user_pause_now = 0;
 TickType_t g_last_user_deadline_now = 0;
+TickType_t g_last_user_prepare_pin_now = 0;
+agent_q::AgentQTimeoutWindow g_last_user_prepare_pin_input = {};
 
 void expect(bool condition, const char* label)
 {
@@ -162,13 +167,26 @@ AgentQUserSigningFlowCoreSnapshot user_signing_flow_core_snapshot()
     return g_user_snapshot;
 }
 
+AgentQUserSigningTransitionResult user_signing_flow_cap_request_backed_pin_input_window(
+    TickType_t now,
+    AgentQTimeoutWindow pin_input_window,
+    AgentQTimeoutWindow* output)
+{
+    g_last_user_prepare_pin_now = now;
+    g_last_user_prepare_pin_input = pin_input_window;
+    if (output != nullptr) {
+        *output = g_user_prepare_pin_output;
+    }
+    return g_user_prepare_pin_result;
+}
+
 AgentQUserSigningTransitionResult user_signing_flow_refresh_pin_deadline(TickType_t now)
 {
     g_last_user_refresh_now = now;
     return g_user_refresh_result;
 }
 
-bool user_signing_flow_deadline_reached(TickType_t now)
+bool user_signing_flow_apply_deadline_transition(TickType_t now)
 {
     g_last_user_deadline_now = now;
     return g_user_deadline_reached;
@@ -261,6 +279,8 @@ int main()
                sizeof(request_id)) &&
                strcmp(request_id, "sign-1") == 0,
            "user-signing request id comes from user signing flow");
+    g_user_prepare_pin_result = agent_q::AgentQUserSigningTransitionResult::ok;
+    g_user_prepare_pin_output = window(40, 80);
 
     agent_q::AgentQTimeoutWindow capped =
         agent_q::request_backed_local_pin_cap_input_window(
@@ -274,7 +294,12 @@ int main()
         40,
         window(40, 120));
     expect(capped.started_at == 40 && capped.deadline == 80,
-           "user-signing PIN input deadline caps to request window");
+           "user-signing PIN input deadline delegates to user signing flow");
+    expect(g_last_user_prepare_pin_now == 40 &&
+               g_last_user_prepare_pin_input.started_at == 40 &&
+               g_last_user_prepare_pin_input.deadline == 120,
+           "user-signing PIN cap passes tick and requested window to state owner");
+    g_user_prepare_pin_result = agent_q::AgentQUserSigningTransitionResult::inactive;
     capped = agent_q::request_backed_local_pin_cap_input_window(
         Purpose::settings_signing_mode,
         40,

@@ -15,13 +15,15 @@ namespace agent_q {
 struct AgentQUserSigningReviewUiFlowOps {
     TickType_t (*now)();
     AgentQUserSigningFlowCoreSnapshot (*core_snapshot)();
+    AgentQUserSigningReviewTimerState (*review_timer_state)(TickType_t now);
     bool (*snapshot)(AgentQUserSigningFlowSnapshot* output);
     AgentQUserSigningReviewBuildResult (*build_review_model)(
         const AgentQUserSigningFlowSnapshot& snapshot,
         AgentQUserSigningReviewViewModel* output);
     bool (*draw_review_panel)(
         const AgentQUserSigningReviewViewModel& model,
-        AgentQTimeoutWindow window);
+        AgentQUserSigningReviewTimerState timer);
+    bool (*draw_review_timer)(AgentQUserSigningReviewTimerState timer);
     bool (*clear_panel_if_kind)(AgentQUiPanelKind kind, SensitiveUiClearPolicy policy);
     bool (*review_panel_active)();
     bool (*human_approval_requires_pin)();
@@ -35,6 +37,8 @@ struct AgentQUserSigningReviewUiFlowOps {
         AgentQTimeoutWindow pin_input_window);
     AgentQUserSigningConfirmationResult (*record_device_rejected)();
     AgentQUserSigningTransitionResult (*record_timeout)(TickType_t now);
+    AgentQUserSigningTransitionResult (*pause_review_deadline)(TickType_t now);
+    AgentQUserSigningTransitionResult (*resume_review_deadline)(TickType_t now);
     AgentQUserSigningTransitionResult (*clear_flow)();
     bool (*terminal_pending)();
     void (*cancel_for_pin_loss)();
@@ -56,6 +60,8 @@ struct AgentQUserSigningReviewUiFlowOps {
 bool user_signing_review_ui_show(const AgentQUserSigningReviewUiFlowOps& ops);
 void user_signing_review_ui_accept(const AgentQUserSigningReviewUiFlowOps& ops);
 void user_signing_review_ui_reject(const AgentQUserSigningReviewUiFlowOps& ops);
+void user_signing_review_ui_scroll_started(const AgentQUserSigningReviewUiFlowOps& ops);
+void user_signing_review_ui_scroll_finished(const AgentQUserSigningReviewUiFlowOps& ops);
 void user_signing_review_ui_clear_if_needed(const AgentQUserSigningReviewUiFlowOps& ops);
 
 }  // namespace agent_q

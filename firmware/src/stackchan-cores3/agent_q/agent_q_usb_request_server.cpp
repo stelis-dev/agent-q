@@ -2688,6 +2688,16 @@ void handle_user_signing_review_reject_from_ui()
     agent_q::user_signing_review_ui_reject(user_signing_review_ui_flow_ops());
 }
 
+void handle_user_signing_review_scroll_started_from_ui()
+{
+    agent_q::user_signing_review_ui_scroll_started(user_signing_review_ui_flow_ops());
+}
+
+void handle_user_signing_review_scroll_finished_from_ui()
+{
+    agent_q::user_signing_review_ui_scroll_finished(user_signing_review_ui_flow_ops());
+}
+
 void start_settings_human_approval_input_from_settings_menu()
 {
     agent_q::local_pin_auth_ui_start_settings_human_approval_input(
@@ -3306,6 +3316,16 @@ void drain_ui_events()
 
         if (event.kind == AgentQUiEventKind::user_signing_review_reject_requested) {
             handle_user_signing_review_reject_from_ui();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::user_signing_review_scroll_started) {
+            handle_user_signing_review_scroll_started_from_ui();
+            continue;
+        }
+
+        if (event.kind == AgentQUiEventKind::user_signing_review_scroll_finished) {
+            handle_user_signing_review_scroll_finished_from_ui();
             continue;
         }
 
@@ -3959,9 +3979,11 @@ const agent_q::AgentQUserSigningReviewUiFlowOps& user_signing_review_ui_flow_ops
     static const agent_q::AgentQUserSigningReviewUiFlowOps ops = {
         xTaskGetTickCount,
         agent_q::user_signing_flow_core_snapshot,
+        agent_q::user_signing_flow_review_timer_state,
         agent_q::user_signing_flow_snapshot_copy,
         agent_q::user_signing_review_view_model_build,
         agent_q::modal_draw_user_signing_review_panel,
+        agent_q::modal_draw_user_signing_review_timer,
         clear_agent_q_panel_if_kind,
         user_signing_review_panel_active,
         agent_q::human_approval_requires_pin,
@@ -3969,6 +3991,8 @@ const agent_q::AgentQUserSigningReviewUiFlowOps& user_signing_review_ui_flow_ops
         agent_q::user_signing_confirmation_accept_review_and_begin_pin,
         agent_q::user_signing_confirmation_record_device_rejected,
         agent_q::user_signing_flow_record_timeout,
+        agent_q::user_signing_flow_pause_review_deadline,
+        agent_q::user_signing_flow_resume_review_deadline,
         agent_q::user_signing_flow_clear,
         agent_q::user_signing_flow_terminal_pending,
         cancel_user_signing_confirmation_for_pin_loss,

@@ -6,6 +6,7 @@
 #include "agent_q_human_approval_settings.h"
 #include "agent_q_timeout_window.h"
 #include "agent_q_user_signing_review_view_model.h"
+#include "agent_q_user_signing_review_timer_state.h"
 #include "lvgl.h"
 
 namespace agent_q {
@@ -49,6 +50,8 @@ struct AgentQModalDrawingCallbacks {
     lv_event_cb_t on_sui_zklogin_review_reject_clicked = nullptr;
     lv_event_cb_t on_user_signing_review_accept_clicked = nullptr;
     lv_event_cb_t on_user_signing_review_reject_clicked = nullptr;
+    lv_event_cb_t on_user_signing_review_scroll_started = nullptr;
+    lv_event_cb_t on_user_signing_review_scroll_finished = nullptr;
 };
 
 struct AgentQPolicyUpdateReviewViewModel {
@@ -107,7 +110,8 @@ bool modal_draw_sui_zklogin_review_panel(
     AgentQTimeoutWindow timeout_window);
 bool modal_draw_user_signing_review_panel(
     const AgentQUserSigningReviewViewModel& model,
-    AgentQTimeoutWindow timeout_window);
+    AgentQUserSigningReviewTimerState timer);
+bool modal_draw_user_signing_review_timer(AgentQUserSigningReviewTimerState timer);
 bool modal_draw_processing_overlay_on_current_panel(AgentQUiPanelKind expected_kind);
 
 }  // namespace agent_q
