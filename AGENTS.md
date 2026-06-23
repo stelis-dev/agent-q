@@ -419,6 +419,28 @@ When asked for a review, prioritize defect discovery.
 - Do not add production secrets or real key material.
 - If technical debt remains, name it explicitly and explain the blocker.
 
+Fixture and evidence privacy:
+
+- Do not commit user-provided, wallet-derived, or mainnet/testnet live
+  signable payloads as fixtures, snapshots, expected values, tests, docs, or
+  package assets. This includes unsigned transaction bytes, object ids, object
+  digests, addresses, public keys, signatures, proof material, and decoded
+  facts that can link a person or device to on-chain activity. These values may
+  be public on-chain data and still be privacy-sensitive.
+- Keep real captures and hardware evidence under `.WORK/` or another ignored
+  evidence directory only. Before promoting any evidence-derived payload into a
+  tracked file, replace it with a deterministic synthetic fixture built from the
+  repository's fixture generator or another explicit tracked generator.
+- Synthetic fixtures must use obvious placeholder values, such as repeated-byte
+  addresses and object ids, and must preserve only the protocol shape needed by
+  the test. Expected values in tests must also use the synthetic values, not
+  values copied from the original user or hardware payload.
+- When work touches signing, transaction, account, proof, or hardware-smoke
+  fixtures, scan the tracked diff before completion for live addresses, object
+  ids, public keys, signatures, JWTs, proof material, and old evidence fixture
+  names. Report any remaining real value explicitly and do not commit it unless
+  the user has explicitly approved that exact disclosure.
+
 ## 11. Numeric, Signing, And Protocol Safety
 
 Treat signable data and protocol-facing data as safety-critical.

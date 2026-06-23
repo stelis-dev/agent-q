@@ -47,6 +47,7 @@ for required in \
   "${FIXTURE_DIR}/transaction_kind_only_sui_transfer_tx.bcs.hex" \
   "${FIXTURE_DIR}/result_reference_transfer_tx.bcs.hex" \
   "${FIXTURE_DIR}/sponsored_gas_owner_tx.bcs.hex" \
+  "${FIXTURE_DIR}/synthetic_swap_shape_tx.bcs.hex" \
   "${FIXTURE_DIR}/valid_sui_transfer_facts.json" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.sdk-v2-facts.json" \
   "${FIXTURE_DIR}/merge_coins_tx.sdk-v2-facts.json" \
@@ -812,6 +813,140 @@ void expect_review_row_present(
     }
 }
 
+void expect_review_row_absent(
+    const agent_q::SuiReviewSummary& summary,
+    const char* label,
+    int* failures)
+{
+    if (review_row_value(summary, label) != nullptr) {
+        fprintf(stderr, "unexpected review row: %s\n", label);
+        *failures += 1;
+    }
+}
+
+void expect_all_review_row_values_non_empty(
+    const agent_q::SuiReviewSummary& summary,
+    const char* label,
+    int* failures)
+{
+    for (uint16_t index = 0; index < summary.row_count; ++index) {
+        if (summary.rows[index].value[0] == '\0') {
+            fprintf(stderr, "%s has empty review row value for %s\n",
+                    label,
+                    summary.rows[index].label);
+            *failures += 1;
+        }
+    }
+}
+
+void copy_test_string(char* output, size_t output_size, const char* value)
+{
+    if (output_size == 0) {
+        return;
+    }
+    snprintf(output, output_size, "%s", value);
+}
+
+agent_q::SuiParsedTransactionFacts synthetic_move_call_facts()
+{
+    agent_q::SuiParsedTransactionFacts parsed = {};
+    parsed.transaction_data_version = agent_q::SuiTransactionDataVersionFact::v1;
+    parsed.transaction_kind = agent_q::SuiTransactionKindFact::programmable_transaction;
+    copy_test_string(
+        parsed.sender,
+        sizeof(parsed.sender),
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    copy_test_string(
+        parsed.gas_owner,
+        sizeof(parsed.gas_owner),
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    copy_test_string(parsed.gas_budget, sizeof(parsed.gas_budget), "5000000");
+    copy_test_string(parsed.gas_price, sizeof(parsed.gas_price), "1000");
+    parsed.expiration_kind = agent_q::SuiTransactionExpirationFact::none;
+    parsed.command_count = 1;
+    parsed.commands[0].kind = agent_q::SuiCommandFactKind::move_call;
+    copy_test_string(
+        parsed.commands[0].move_call.package,
+        sizeof(parsed.commands[0].move_call.package),
+        "0x2222222222222222222222222222222222222222222222222222222222222222");
+    copy_test_string(parsed.commands[0].move_call.module, sizeof(parsed.commands[0].move_call.module), "pay");
+    copy_test_string(parsed.commands[0].move_call.function, sizeof(parsed.commands[0].move_call.function), "spend");
+    return parsed;
+}
+
+void expect_required_value_coverage_hardening(int* failures)
+{
+    agent_q::SuiParsedTransactionFacts parsed = synthetic_move_call_facts();
+    agent_q::SuiReviewSummary summary = {};
+    if (!agent_q::build_sui_review_summary(parsed, &summary) ||
+        summary.status != agent_q::SuiReviewSummaryStatus::ok) {
+        fprintf(stderr, "synthetic complete review did not start as ok\n");
+        *failures += 1;
+        return;
+    }
+
+    parsed = synthetic_move_call_facts();
+    parsed.sender[0] = '\0';
+    summary = {};
+    if (!agent_q::build_sui_review_summary(parsed, &summary) ||
+        summary.status == agent_q::SuiReviewSummaryStatus::ok) {
+        fprintf(stderr, "empty required sender value must not produce clear review\n");
+        *failures += 1;
+    }
+
+    parsed = synthetic_move_call_facts();
+    parsed.commands[0].move_call.function[0] = '\0';
+    summary = {};
+    if (!agent_q::build_sui_review_summary(parsed, &summary) ||
+        summary.status == agent_q::SuiReviewSummaryStatus::ok) {
+        fprintf(stderr, "empty required command function value must not produce clear review\n");
+        *failures += 1;
+    }
+}
+
+void expect_display_budget_overflow_summary(int* failures)
+{
+    agent_q::SuiParsedTransactionFacts parsed = synthetic_move_call_facts();
+    parsed.command_count = static_cast<uint16_t>(agent_q::kSuiPolicyFactMaxCommands);
+    for (uint16_t command_index = 0; command_index < parsed.command_count; ++command_index) {
+        agent_q::SuiCommandFact& command = parsed.commands[command_index];
+        command.kind = agent_q::SuiCommandFactKind::move_call;
+        copy_test_string(
+            command.move_call.package,
+            sizeof(command.move_call.package),
+            "0x2222222222222222222222222222222222222222222222222222222222222222");
+        copy_test_string(command.move_call.module, sizeof(command.move_call.module), "pay");
+        copy_test_string(command.move_call.function, sizeof(command.move_call.function), "spend");
+        command.move_call.type_argument_count = static_cast<uint16_t>(agent_q::kSuiPolicyFactMaxTypeArguments);
+        for (uint16_t type_index = 0; type_index < command.move_call.type_argument_count; ++type_index) {
+            command.move_call.type_arguments[type_index].kind = agent_q::SuiTypeTagFactKind::u64;
+            copy_test_string(
+                command.move_call.type_arguments[type_index].canonical,
+                sizeof(command.move_call.type_arguments[type_index].canonical),
+                "u64");
+        }
+        command.argument_count = static_cast<uint16_t>(agent_q::kSuiPolicyFactMaxCommandArguments);
+        command.move_call.argument_count = command.argument_count;
+        for (uint16_t arg_index = 0; arg_index < command.argument_count; ++arg_index) {
+            command.arguments[arg_index].kind = agent_q::SuiArgumentFactKind::gas_coin;
+        }
+    }
+
+    agent_q::SuiReviewSummary summary = {};
+    if (!agent_q::build_sui_review_summary(parsed, &summary)) {
+        fprintf(stderr, "display budget overflow should build an insufficient review summary\n");
+        *failures += 1;
+        return;
+    }
+    if (summary.status != agent_q::SuiReviewSummaryStatus::insufficient_review) {
+        fprintf(stderr, "display budget overflow should remain insufficient_review\n");
+        *failures += 1;
+    }
+    expect_review_row_equal(summary, "Type", "Transaction review incomplete", failures);
+    expect_review_row_equal(summary, "Reason", "Transaction review exceeds display capacity", failures);
+    expect_all_review_row_values_non_empty(summary, "display-budget-overflow", failures);
+}
+
 void expect_review_summary(
     const char* fixture_path,
     const char* expected_type,
@@ -841,6 +976,7 @@ void expect_review_summary(
         *failures += 1;
         return;
     }
+    expect_all_review_row_values_non_empty(summary, fixture_path, failures);
     expect_review_row_equal(summary, "Type", expected_type, failures);
     expect_review_row_equal(summary, "Risk", expected_risk, failures);
     expect_review_row_equal(summary, "Sender", parsed.sender, failures);
@@ -920,6 +1056,7 @@ void expect_review_summary(
         if (parsed.inputs[0].kind == agent_q::SuiCallArgFactKind::object_shared) {
             expect_review_row_equal(summary, "Input0 object", parsed.inputs[0].object_ref.object_id, failures);
             expect_review_row_equal(summary, "Input0 version", parsed.inputs[0].shared_initial_version, failures);
+            expect_review_row_absent(summary, "Input0 digest", failures);
             expect_review_row_present(summary, "Input0 mutable", failures);
         }
         if (parsed.inputs[0].kind == agent_q::SuiCallArgFactKind::funds_withdrawal) {
@@ -928,6 +1065,58 @@ void expect_review_summary(
             expect_review_row_present(summary, "Input0 source", failures);
         }
     }
+}
+
+void expect_synthetic_swap_shape_review_summary(
+    const char* fixture_path,
+    int* failures)
+{
+    const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
+    agent_q::SuiParsedTransactionFacts parsed = {};
+    const agent_q::SuiTransactionFactsResult result =
+        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &parsed);
+    if (result != agent_q::SuiTransactionFactsResult::ok) {
+        fprintf(stderr, "%s expected ok parse for synthetic swap shape, got %s\n",
+                fixture_path,
+                agent_q::sui_transaction_facts_result_name(result));
+        *failures += 1;
+        return;
+    }
+    agent_q::SuiReviewSummary summary = {};
+    if (!agent_q::build_sui_review_summary(parsed, &summary)) {
+        fprintf(stderr, "%s failed to build synthetic swap-shape review summary\n", fixture_path);
+        *failures += 1;
+        return;
+    }
+    if (summary.status != agent_q::SuiReviewSummaryStatus::ok ||
+        summary.row_count > agent_q::kSuiReviewSummaryMaxRows) {
+        fprintf(stderr, "%s expected bounded ok review, got status/rows mismatch\n", fixture_path);
+        *failures += 1;
+    }
+    expect_all_review_row_values_non_empty(summary, fixture_path, failures);
+    expect_review_row_equal(summary, "Type", "Programmable transaction", failures);
+    expect_review_row_equal(summary, "Cmd2 function", "swap_exact_quote_for_base", failures);
+    expect_review_row_equal(
+        summary,
+        "Cmd3 recipient",
+        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        failures);
+    expect_review_row_equal(
+        summary,
+        "Input1 object",
+        "0x5555555555555555555555555555555555555555555555555555555555555555",
+        failures);
+    expect_review_row_equal(summary, "Input1 version", "390631965", failures);
+    expect_review_row_absent(summary, "Input1 digest", failures);
+    expect_review_row_equal(summary, "Input1 mutable", "yes", failures);
+    expect_review_row_equal(
+        summary,
+        "Input3 object",
+        "0x6666666666666666666666666666666666666666666666666666666666666666",
+        failures);
+    expect_review_row_equal(summary, "Input3 version", "1", failures);
+    expect_review_row_absent(summary, "Input3 digest", failures);
+    expect_review_row_equal(summary, "Input3 mutable", "no", failures);
 }
 
 }  // namespace
@@ -1016,6 +1205,11 @@ int main(int argc, char** argv)
         "High",
         agent_q::SuiReviewSummaryStatus::ok,
         &failures);
+    expect_synthetic_swap_shape_review_summary(
+        (fixture_dir + "/synthetic_swap_shape_tx.bcs.hex").c_str(),
+        &failures);
+    expect_required_value_coverage_hardening(&failures);
+    expect_display_budget_overflow_summary(&failures);
 
     agent_q::SuiPolicySubjectFacts facts = {};
     const agent_q::SuiTransactionFactsResult result =

@@ -371,15 +371,15 @@ function objectImmOrOwnedInput(ref = suiObjectRef()) {
   return enumVariant(1, enumVariant(0, ref));
 }
 
-function sharedObjectInput() {
+function sharedObjectInput(objectId = '0x' + '66'.repeat(32), initialVersion = 9n, mutable = true) {
   return enumVariant(
     1,
     enumVariant(
       1,
       concat(
-        hexToBytes('0x' + '66'.repeat(32)),
-        u64(9n),
-        bool(true),
+        hexToBytes(objectId),
+        u64(initialVersion),
+        bool(mutable),
       ),
     ),
   );
@@ -563,6 +563,73 @@ function moveCallOutOfRangeInputTx() {
   );
 }
 
+function coinZeroMoveCallCommand() {
+  return enumVariant(
+    0,
+    concat(
+      hexToBytes('0x' + '02'.padStart(64, '0')),
+      stringBytes('coin'),
+      stringBytes('zero'),
+      vector([typeTagStruct(nonSuiTokenPackage, 'token', 'TEST')]),
+      vector([]),
+    ),
+  );
+}
+
+function swapShapeMoveCallCommand() {
+  return enumVariant(
+    0,
+    concat(
+      hexToBytes('0x' + '22'.repeat(32)),
+      stringBytes('pool'),
+      stringBytes('swap_exact_quote_for_base'),
+      vector([
+        typeTagStruct(nonSuiTokenPackage, 'token', 'TEST'),
+        typeTagStruct('0x' + '02'.padStart(64, '0'), 'sui', 'SUI'),
+      ]),
+      vector([
+        argInput(1),
+        argNestedResult(0, 0),
+        argInput(2),
+        argInput(3),
+        argInput(4),
+      ]),
+    ),
+  );
+}
+
+function transferSwapResultsToRecipientCommand() {
+  return enumVariant(
+    1,
+    concat(
+      vector([
+        argNestedResult(0, 0),
+        argNestedResult(2, 0),
+        argInput(1),
+      ]),
+      argInput(4),
+    ),
+  );
+}
+
+function syntheticSwapShapeTx() {
+  return transactionDataWithInputs(
+    [
+      pure(u64(amount)),
+      sharedObjectInput('0x' + '55'.repeat(32), 390631965n, true),
+      pure(u64(112n)),
+      sharedObjectInput('0x' + '66'.repeat(32), 1n, false),
+      pure(hexToBytes(recipient)),
+    ],
+    [
+      splitCoinsCommand(),
+      coinZeroMoveCallCommand(),
+      swapShapeMoveCallCommand(),
+      transferSwapResultsToRecipientCommand(),
+    ],
+  );
+}
+
 function transactionKindOnlyTransfer() {
   return programmableTransaction([splitCoinsCommand(), transferObjectsCommand()]);
 }
@@ -731,6 +798,9 @@ async function main() {
   const largePureInput = largePureInputTx();
   await writeText('large_pure_input_tx.bcs.hex', bytesToHex(largePureInput));
   await writeSdkV2Oracle('large_pure_input_tx', largePureInput);
+  const syntheticSwapShape = syntheticSwapShapeTx();
+  await writeText('synthetic_swap_shape_tx.bcs.hex', bytesToHex(syntheticSwapShape));
+  await writeSdkV2Oracle('synthetic_swap_shape_tx', syntheticSwapShape);
   await writeText('move_call_out_of_range_input_tx.bcs.hex', bytesToHex(moveCallOutOfRangeInputTx()));
   await writeText('transaction_kind_only_sui_transfer_tx.bcs.hex', bytesToHex(transactionKindOnlyTransfer()));
   const sponsoredGasOwnerTx = transactionData([splitCoinsCommand(), transferObjectsCommand()], sponsoredGasOwner);

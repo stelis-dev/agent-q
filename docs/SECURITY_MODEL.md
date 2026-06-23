@@ -125,8 +125,11 @@ Implemented today:
   incomplete, unmatched, or reject-matched policy coverage returns
   `policy_rejected`.
   User mode shows covered offline facts when offline facts review coverage is
-  complete, or an explicit blind-signing warning when Firmware can validate and
-  account-bind the transaction but offline facts review coverage is incomplete.
+  complete. Complete user review coverage requires both Firmware-derived
+  semantic facts and a bounded display summary that includes the required review
+  details; parser success alone is not a clear-review guarantee. When Firmware
+  can validate and account-bind the transaction but offline facts review
+  coverage is incomplete, user mode shows an explicit blind-signing warning.
   Both user paths require the current human approval input mode.
   Requests cannot choose the authorization mode or the human approval input
   mode. Product-active status is not claimed unless
@@ -296,11 +299,14 @@ requests, adapters, and host callers cannot choose it.
   reject-matched policy coverage fails closed with speech-bubble status
   notifications instead of per-request device-local confirmation.
 - User mode uses device-local offline facts review when complete offline facts
-  review coverage exists. When Firmware can validate and account-bind a
-  transaction but offline facts review coverage is incomplete, user mode shows
-  an explicit blind-signing warning before the current human approval input
-  mode. Malformed transactions, account mismatches, and digest failures do not
-  reach this blind-signing path.
+  review coverage exists. Complete user review coverage depends on both
+  Firmware-derived semantic facts and the bounded review summary that is shown on
+  device. When Firmware can validate and account-bind a transaction but offline
+  facts review coverage is incomplete, including cases where required review
+  details cannot fit into the bounded display summary, user mode shows an
+  explicit blind-signing warning before the current human approval input mode.
+  Malformed transactions, account mismatches, and digest failures do not reach
+  this blind-signing path.
 - User mode confirmation does not prove the request came from a trustworthy
   host, dapp, provider, agent, or upstream user intent. The runtime models local
   human approval and does not let the request choose the input mode.

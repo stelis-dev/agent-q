@@ -222,14 +222,14 @@ std::vector<uint8_t> read_hex(const std::string& path)
     return bytes;
 }
 
-bool review_includes_label(const agent_q::SuiReviewSummary& review, const char* label)
+const char* review_row_value(const agent_q::SuiReviewSummary& review, const char* label)
 {
     for (uint16_t index = 0; index < review.row_count; ++index) {
         if (strcmp(review.rows[index].label, label) == 0) {
-            return true;
+            return review.rows[index].value;
         }
     }
-    return false;
+    return nullptr;
 }
 
 void validate_required_review_fields(
@@ -238,9 +238,13 @@ void validate_required_review_fields(
 {
     const std::vector<std::string> required = split_commas(field(row, "required_review_fields"));
     for (const std::string& label : required) {
+        const char* value = review_row_value(review, label.c_str());
         expect(
-            review_includes_label(review, label.c_str()),
+            value != nullptr,
             field(row, "fixture") + ": required review row missing: " + label);
+        expect(
+            value != nullptr && value[0] != '\0',
+            field(row, "fixture") + ": required review row has empty value: " + label);
     }
 }
 

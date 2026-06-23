@@ -1191,7 +1191,8 @@ const char* review_row_value(const SuiReviewSummary& summary, const char* label)
 
 bool review_row_present(const SuiReviewSummary& summary, const char* label)
 {
-    return review_row_value(summary, label) != nullptr;
+    const char* value = review_row_value(summary, label);
+    return value != nullptr && value[0] != '\0';
 }
 
 bool review_row_label_value_present(
@@ -1459,7 +1460,10 @@ bool add_review_input_rows(SuiReviewSummary* out, const SuiParsedTransactionFact
                     "version",
                     input.kind == SuiCallArgFactKind::object_shared
                         ? input.shared_initial_version
-                        : input.object_ref.version) ||
+                        : input.object_ref.version)) {
+                return false;
+            }
+            if (input.kind != SuiCallArgFactKind::object_shared &&
                 !add_review_row_label_value(
                     out,
                     SuiReviewRowKind::wrapped_value,
@@ -1893,7 +1897,6 @@ bool review_input_rows_complete(
             case SuiCallArgFactKind::object_shared:
                 if (!review_row_label_value_present(summary, "Input", index, "object") ||
                     !review_row_label_value_present(summary, "Input", index, "version") ||
-                    !review_row_label_value_present(summary, "Input", index, "digest") ||
                     !review_row_label_value_present(summary, "Input", index, "mutable")) {
                     return false;
                 }
@@ -2066,6 +2069,28 @@ bool build_generic_review_summary(
            copy_c_string(out->type_summary, sizeof(out->type_summary), "Programmable transaction") &&
            copy_c_string(out->risk_label, sizeof(out->risk_label), "High") &&
            add_common_review_rows(out, parsed);
+}
+
+bool build_incomplete_display_review_summary(
+    const SuiParsedTransactionFacts& parsed,
+    SuiReviewSummary* out)
+{
+    memset(out, 0, sizeof(*out));
+    out->status = SuiReviewSummaryStatus::insufficient_review;
+    out->risk = SuiReviewRiskLevel::high;
+    return copy_c_string(out->title, sizeof(out->title), "Review Sui transaction") &&
+           copy_c_string(out->type_summary, sizeof(out->type_summary), "Transaction review incomplete") &&
+           copy_c_string(out->risk_label, sizeof(out->risk_label), "High") &&
+           add_review_row(out, SuiReviewRowKind::warning, "Type", out->type_summary) &&
+           add_review_row(
+               out,
+               SuiReviewRowKind::warning,
+               "Reason",
+               "Transaction review exceeds display capacity") &&
+           add_review_row(out, SuiReviewRowKind::wrapped_value, "Sender", parsed.sender) &&
+           add_review_row(out, SuiReviewRowKind::wrapped_value, "Gas owner", parsed.gas_owner) &&
+           add_review_row(out, SuiReviewRowKind::normal, "Gas max", parsed.gas_budget) &&
+           add_review_row(out, SuiReviewRowKind::normal, "Gas price", parsed.gas_price);
 }
 
 SuiTransactionFactsResult parse_transaction_data(
@@ -2470,8 +2495,7 @@ bool build_sui_review_summary(
         built = build_generic_review_summary(parsed, out);
     }
     if (!built) {
-        memset(out, 0, sizeof(*out));
-        return false;
+        return build_incomplete_display_review_summary(parsed, out);
     }
     out->status = review_coverage_complete_for_user_confirmation(parsed, *out)
                       ? SuiReviewSummaryStatus::ok

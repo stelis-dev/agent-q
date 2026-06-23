@@ -1,0 +1,157 @@
+{
+  "version": 2,
+  "sender": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expiration": {
+    "None": true,
+    "$kind": "None"
+  },
+  "gasData": {
+    "budget": "50000000",
+    "price": "1000",
+    "owner": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "payment": [
+      {
+        "objectId": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "version": "7",
+        "digest": "Fw5KdYvFgue4q1HAQ264JTZax6VUr3jDVBJ1szuQ7dHE"
+      }
+    ]
+  },
+  "inputs": [
+    {
+      "Pure": {
+        "bytes": "QEIPAAAAAAA="
+      },
+      "$kind": "Pure"
+    },
+    {
+      "Object": {
+        "SharedObject": {
+          "objectId": "0x5555555555555555555555555555555555555555555555555555555555555555",
+          "initialSharedVersion": "390631965",
+          "mutable": true
+        },
+        "$kind": "SharedObject"
+      },
+      "$kind": "Object"
+    },
+    {
+      "Pure": {
+        "bytes": "cAAAAAAAAAA="
+      },
+      "$kind": "Pure"
+    },
+    {
+      "Object": {
+        "SharedObject": {
+          "objectId": "0x6666666666666666666666666666666666666666666666666666666666666666",
+          "initialSharedVersion": "1",
+          "mutable": false
+        },
+        "$kind": "SharedObject"
+      },
+      "$kind": "Object"
+    },
+    {
+      "Pure": {
+        "bytes": "u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s="
+      },
+      "$kind": "Pure"
+    }
+  ],
+  "commands": [
+    {
+      "SplitCoins": {
+        "coin": {
+          "GasCoin": true,
+          "$kind": "GasCoin"
+        },
+        "amounts": [
+          {
+            "Input": 0,
+            "$kind": "Input"
+          }
+        ]
+      },
+      "$kind": "SplitCoins"
+    },
+    {
+      "MoveCall": {
+        "package": "0x0000000000000000000000000000000000000000000000000000000000000002",
+        "module": "coin",
+        "function": "zero",
+        "typeArguments": [
+          "0x9999999999999999999999999999999999999999999999999999999999999999::token::TEST"
+        ],
+        "arguments": []
+      },
+      "$kind": "MoveCall"
+    },
+    {
+      "MoveCall": {
+        "package": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "module": "pool",
+        "function": "swap_exact_quote_for_base",
+        "typeArguments": [
+          "0x9999999999999999999999999999999999999999999999999999999999999999::token::TEST",
+          "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
+        ],
+        "arguments": [
+          {
+            "Input": 1,
+            "$kind": "Input"
+          },
+          {
+            "NestedResult": [
+              0,
+              0
+            ],
+            "$kind": "NestedResult"
+          },
+          {
+            "Input": 2,
+            "$kind": "Input"
+          },
+          {
+            "Input": 3,
+            "$kind": "Input"
+          },
+          {
+            "Input": 4,
+            "$kind": "Input"
+          }
+        ]
+      },
+      "$kind": "MoveCall"
+    },
+    {
+      "TransferObjects": {
+        "objects": [
+          {
+            "NestedResult": [
+              0,
+              0
+            ],
+            "$kind": "NestedResult"
+          },
+          {
+            "NestedResult": [
+              2,
+              0
+            ],
+            "$kind": "NestedResult"
+          },
+          {
+            "Input": 1,
+            "$kind": "Input"
+          }
+        ],
+        "address": {
+          "Input": 4,
+          "$kind": "Input"
+        }
+      },
+      "$kind": "TransferObjects"
+    }
+  ]
+}

@@ -1505,7 +1505,9 @@ gate:
   Malformed, unbindable, unsupported-version/kind, `TransactionKind`-only,
   trailing, or oversized transaction bytes remain request errors;
 - `user`: build an offline facts review when complete offline facts review
-  coverage exists.
+  coverage exists. Complete user review coverage requires both Firmware-derived
+  semantic facts and a bounded display summary that includes the required review
+  details.
   If Firmware can still validate and account-bind the transaction but cannot
   provide complete offline facts review coverage, it may show an explicit
   blind-signing warning instead. Both user paths require device-local human
@@ -1577,9 +1579,9 @@ Current implementation rules:
   Missing, incomplete, unmatched, or reject-matched policy coverage returns
   `policy_rejected`.
   User authorization shows covered offline facts when offline facts review
-  coverage is complete, or an explicit blind-signing warning when Firmware can
-  validate and bind the transaction but offline facts review coverage is
-  incomplete.
+  coverage is complete, including the required details in the bounded display
+  summary, or an explicit blind-signing warning when Firmware can validate and
+  bind the transaction but offline facts review coverage is incomplete.
 - `params.network` is required and must be one of `mainnet`, `testnet`,
   `devnet`, or `localnet`. Current Sui transaction bytes do not carry network
   identity, so Firmware validates this as request context only. It is not
@@ -1603,12 +1605,15 @@ Current implementation rules:
   `malformed_transaction`; unsupported transaction identity, unsupported version
   or kind, `TransactionKind`-only payloads, or inputs whose minimum
   sender or gas owner facts cannot be extracted fail closed before signing.
-  Separate detail-review parser limits may prevent complete offline facts
-  review without making the serialized payload oversized. A valid
-  account-bound transaction that stays within the serialized payload/input
-  bound but exceeds a detail-review parser limit may enter the explicit
-  user-mode blind signing path, while policy mode rejects policy-incomplete
-  transactions. These are Firmware adapter and authorization outcomes, not
+  Parser success, policy facts coverage, and user review display coverage are
+  separate outcomes. Separate detail-review parser limits may prevent complete
+  offline facts review without making the serialized payload oversized. A valid
+  account-bound transaction that stays within the serialized payload/input bound
+  but exceeds a detail-review parser limit may enter the explicit user-mode
+  blind signing path, while policy mode rejects policy-incomplete transactions.
+  A transaction can also parse successfully but still enter user-mode blind
+  signing when the bounded user review summary cannot display the required
+  review details. These are Firmware adapter and authorization outcomes, not
   common Core, host process, MCP, and CLI request-format limits.
 - Firmware must derive the signing account from stored device material. The
   parsed sender must match that device-derived account. The parsed gas owner
