@@ -160,6 +160,9 @@ AgentQLocalResetCommitResult wipe_persistent_material_for_local_reset(
         case AgentQPersistentMaterialWipeResult::signing_mode_wipe_error:
             record_material_failure(ops, AgentQPersistentMaterialRuntimeFailure::local_reset_signing_mode_wipe_failed);
             return AgentQLocalResetCommitResult::signing_mode_wipe_error;
+        case AgentQPersistentMaterialWipeResult::sui_account_settings_wipe_error:
+            record_material_failure(ops, AgentQPersistentMaterialRuntimeFailure::local_reset_sui_account_settings_wipe_failed);
+            return AgentQLocalResetCommitResult::sui_account_settings_wipe_error;
         case AgentQPersistentMaterialWipeResult::approval_history_wipe_error:
             record_material_failure(ops, AgentQPersistentMaterialRuntimeFailure::local_reset_approval_history_wipe_failed);
             return AgentQLocalResetCommitResult::approval_history_wipe_error;

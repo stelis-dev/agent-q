@@ -8,6 +8,7 @@
 #include "agent_q_policy_update_marker.h"
 #include "agent_q_root_material.h"
 #include "agent_q_signing_mode.h"
+#include "agent_q_sui_account_settings.h"
 #include "agent_q_sui_zklogin_proof_store.h"
 
 namespace agent_q {
@@ -38,6 +39,7 @@ enum class AgentQPersistentMaterialRuntimeFailure {
     local_reset_local_auth_wipe_failed,
     local_reset_human_approval_setting_wipe_failed,
     local_reset_signing_mode_wipe_failed,
+    local_reset_sui_account_settings_wipe_failed,
     local_reset_approval_history_wipe_failed,
     local_reset_policy_update_marker_wipe_failed,
     local_reset_zklogin_proof_wipe_failed,
@@ -57,6 +59,7 @@ enum class AgentQPersistentMaterialCommitResult {
     local_auth_storage_error,
     signing_mode_storage_error,
     human_approval_setting_storage_error,
+    sui_account_settings_storage_error,
     state_storage_error,
 };
 
@@ -67,6 +70,7 @@ enum class AgentQPersistentMaterialWipeResult {
     local_auth_wipe_error,
     human_approval_setting_wipe_error,
     signing_mode_wipe_error,
+    sui_account_settings_wipe_error,
     approval_history_wipe_error,
     policy_update_marker_wipe_error,
     zklogin_proof_wipe_error,
@@ -78,6 +82,7 @@ struct AgentQPersistentMaterialStatus {
     AgentQPolicyStoreStatus policy_status;
     AgentQLocalAuthStatus local_auth_status;
     AgentQSigningAuthorizationModeStatus signing_mode_status;
+    AgentQSuiAccountSettingsStatus sui_account_settings_status;
     AgentQPolicyUpdateMarkerStatus policy_update_marker_status;
     AgentQSuiZkLoginProofRecordStatus zklogin_proof_status;
 

@@ -32,6 +32,7 @@ enum class AgentQLocalResetCommitResult {
     local_auth_wipe_error,
     human_approval_setting_wipe_error,
     signing_mode_wipe_error,
+    sui_account_settings_wipe_error,
     approval_history_wipe_error,
     policy_update_marker_wipe_error,
     zklogin_proof_wipe_error,

@@ -6,6 +6,7 @@
 #include "agent_q_human_approval_settings.h"
 #include "agent_q_policy_update_marker.h"
 #include "agent_q_signing_mode.h"
+#include "agent_q_sui_account_settings.h"
 #include "agent_q_sui_zklogin_proof_store.h"
 
 namespace agent_q {
@@ -51,6 +52,7 @@ void rollback_setup_material()
     wipe_sui_zklogin_proof_record();
     wipe_human_approval_input_mode();
     wipe_signing_authorization_mode();
+    wipe_sui_account_settings();
     wipe_local_auth();
     wipe_policy();
     wipe_root_material();
@@ -75,6 +77,8 @@ const char* runtime_failure_message(AgentQPersistentMaterialRuntimeFailure failu
             return "Local reset could not wipe human approval input mode; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::local_reset_signing_mode_wipe_failed:
             return "Local reset could not wipe signing authorization mode; failing closed";
+        case AgentQPersistentMaterialRuntimeFailure::local_reset_sui_account_settings_wipe_failed:
+            return "Local reset could not wipe Sui account settings; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::local_reset_approval_history_wipe_failed:
             return "Local reset could not wipe approval history; failing closed";
         case AgentQPersistentMaterialRuntimeFailure::local_reset_policy_update_marker_wipe_failed:
@@ -111,7 +115,7 @@ AgentQPersistentMaterialConsistencyResult validate_loaded_runtime_state(
         }
         latch_consistency_error(
             ops,
-            "Stored provisioned state is missing root material, active policy, local PIN verifier, signing mode, has pending policy update material, or has invalid Sui zkLogin proof state; failing closed");
+            "Stored provisioned state is missing root material, active policy, local PIN verifier, signing mode, Sui account settings, has pending policy update material, or has invalid Sui zkLogin proof state; failing closed");
         return AgentQPersistentMaterialConsistencyResult::consistency_error;
     }
 
@@ -134,6 +138,7 @@ bool AgentQPersistentMaterialStatus::complete() const
            policy_status == AgentQPolicyStoreStatus::active &&
            local_auth_status == AgentQLocalAuthStatus::active &&
            signing_mode_status == AgentQSigningAuthorizationModeStatus::active &&
+           sui_account_settings_status == AgentQSuiAccountSettingsStatus::active &&
            policy_update_marker_status == AgentQPolicyUpdateMarkerStatus::clear &&
            (zklogin_proof_status == AgentQSuiZkLoginProofRecordStatus::missing ||
             zklogin_proof_status == AgentQSuiZkLoginProofRecordStatus::active);
@@ -145,6 +150,7 @@ bool AgentQPersistentMaterialStatus::any_material() const
            policy_status != AgentQPolicyStoreStatus::missing ||
            local_auth_status != AgentQLocalAuthStatus::missing ||
            signing_mode_status != AgentQSigningAuthorizationModeStatus::missing ||
+           sui_account_settings_status != AgentQSuiAccountSettingsStatus::missing ||
            policy_update_marker_status != AgentQPolicyUpdateMarkerStatus::clear ||
            zklogin_proof_status != AgentQSuiZkLoginProofRecordStatus::missing;
 }
@@ -180,6 +186,7 @@ AgentQPersistentMaterialStatus persistent_material_status()
         active_policy_status(),
         local_auth_status(),
         signing_authorization_mode_status(),
+        sui_account_settings_status(),
         policy_update_marker_status(),
         sui_zklogin_proof_record_status(),
     };
@@ -262,7 +269,7 @@ bool persistent_material_validate_runtime_state(
         }
         latch_consistency_error(
             ops,
-            "Provisioned state lost root material, active policy, local PIN verifier, signing mode, has pending policy update material, or has invalid Sui zkLogin proof state; failing closed");
+            "Provisioned state lost root material, active policy, local PIN verifier, signing mode, Sui account settings, has pending policy update material, or has invalid Sui zkLogin proof state; failing closed");
         return false;
     }
 
@@ -361,6 +368,16 @@ AgentQPersistentMaterialCommitResult persistent_material_commit_setup_with_prepa
         return AgentQPersistentMaterialCommitResult::human_approval_setting_storage_error;
     }
 
+    if (!store_sui_account_settings(kDefaultSuiAccountSettings)) {
+        rollback_setup_material();
+        if (persistent_material_exists()) {
+            latch_consistency_error(
+                ops,
+                "Sui account settings storage failed with persistent setup material present; failing closed");
+        }
+        return AgentQPersistentMaterialCommitResult::sui_account_settings_storage_error;
+    }
+
     if (!persist_state(ops, AgentQProvisioningPersistedState::provisioned)) {
         rollback_setup_material();
         if (persistent_material_exists()) {
@@ -382,6 +399,7 @@ AgentQPersistentMaterialWipeResult persistent_material_wipe_all()
     const bool local_auth_wiped = wipe_local_auth();
     const bool human_approval_setting_wiped = wipe_human_approval_input_mode();
     const bool signing_mode_wiped = wipe_signing_authorization_mode();
+    const bool sui_account_settings_wiped = wipe_sui_account_settings();
     const bool approval_history_wiped = approval_history_wipe();
     const bool policy_update_marker_wiped = policy_update_marker_clear();
     const bool zklogin_proof_wiped = wipe_sui_zklogin_proof_record();
@@ -400,6 +418,9 @@ AgentQPersistentMaterialWipeResult persistent_material_wipe_all()
     }
     if (!signing_mode_wiped) {
         return AgentQPersistentMaterialWipeResult::signing_mode_wipe_error;
+    }
+    if (!sui_account_settings_wiped) {
+        return AgentQPersistentMaterialWipeResult::sui_account_settings_wipe_error;
     }
     if (!approval_history_wiped) {
         return AgentQPersistentMaterialWipeResult::approval_history_wipe_error;
