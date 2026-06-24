@@ -80,14 +80,6 @@ export function isUint256DecimalString(value: unknown): value is string {
 }
 
 export const UNSUPPORTED_METHOD_MESSAGE = "Method is not supported.";
-export const SIGN_RESULT_ERROR_MESSAGES = {
-  user_rejected: "The signing request was rejected on the device.",
-  user_timed_out: "The signing request timed out on the device.",
-  policy_rejected: "The signing request was rejected by device policy.",
-  signing_failed: "The device could not produce a signature.",
-} as const;
-export type SignResultErrorCode = keyof typeof SIGN_RESULT_ERROR_MESSAGES;
-
 export const FORBIDDEN_SECRET_FIELD_NAMES = [
   "accessToken",
   "access_token",

@@ -53,6 +53,10 @@ import {
 } from "./protocol-payload-delivery.js";
 import { ProtocolError } from "./protocol-error.js";
 import {
+  SIGN_RESULT_ERROR_MESSAGES,
+  type SignResultErrorCode,
+} from "./device-contract.js";
+import {
   AGENT_Q_POLICY_SCHEMA,
   APPROVAL_HISTORY_HIGHEST_ACTIONS,
   APPROVAL_HISTORY_POLICY_UPDATE_RESULTS,
@@ -108,7 +112,6 @@ import {
   MAX_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
   MIN_SUI_ZKLOGIN_PUBLIC_KEY_BYTES,
   PROTOCOL_VERSION,
-  SIGN_RESULT_ERROR_MESSAGES,
   SUI_ADDRESS_PATTERN,
   SUI_CHAIN_ID,
   SUI_DERIVATION_PATH,
@@ -139,7 +142,6 @@ import {
   isSuiTransactionSignatureEnvelopeBase64,
   randomBytesPortable,
   utf8ByteLength,
-  type SignResultErrorCode,
   type SuiSignMethod,
   type SuiSignTransactionNetwork,
 } from "./protocol-primitives.js";

@@ -50,6 +50,7 @@ import {
   MAX_SESSION_TTL_MS,
   MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
+  SIGN_RESULT_ERROR_MESSAGES,
   normalizePayloadUploadRequest,
   parseProtocolResponse,
   sanitizeDisplayText,
@@ -2467,7 +2468,7 @@ const signResultLine = (overrides = {}, errorOverrides = {}) =>
     status: "user_rejected",
     error: {
       code: "user_rejected",
-      message: "The signing request was rejected on the device.",
+      message: SIGN_RESULT_ERROR_MESSAGES.user_rejected,
       ...errorOverrides,
     },
     ...overrides,
@@ -2598,19 +2599,19 @@ test("parseProtocolResponse accepts bounded sign_result terminal outcomes", () =
       status: "user_rejected",
       authorization: "user",
       code: "user_rejected",
-      message: "The signing request was rejected on the device.",
+      message: SIGN_RESULT_ERROR_MESSAGES.user_rejected,
     },
     {
       status: "user_timed_out",
       authorization: "user",
       code: "user_timed_out",
-      message: "The signing request timed out on the device.",
+      message: SIGN_RESULT_ERROR_MESSAGES.user_timed_out,
     },
     {
       status: "policy_rejected",
       authorization: "policy",
       code: "policy_rejected",
-      message: "The signing request was rejected by device policy.",
+      message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
       policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
       ruleRef: "default",
     },
@@ -2618,7 +2619,7 @@ test("parseProtocolResponse accepts bounded sign_result terminal outcomes", () =
       status: "signing_failed",
       authorization: "policy",
       code: "signing_failed",
-      message: "The device could not produce a signature.",
+      message: SIGN_RESULT_ERROR_MESSAGES.signing_failed,
     },
   ];
   for (const terminal of cases) {
@@ -2746,7 +2747,7 @@ test("parseProtocolResponse rejects sign_result leaks and inconsistent terminal 
       parseProtocolResponse(
         signResultLine({}, {
           code: "user_timed_out",
-          message: "The signing request timed out on the device.",
+          message: SIGN_RESULT_ERROR_MESSAGES.user_timed_out,
         }),
         "req_sign",
       ),
@@ -2772,7 +2773,7 @@ test("parseProtocolResponse rejects sign_result leaks and inconsistent terminal 
           ruleRef: "default",
         }, {
           code: "policy_rejected",
-          message: "The signing request was rejected by device policy.",
+          message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
         }),
         "req_sign",
       ),

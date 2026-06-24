@@ -1,2185 +1,379 @@
 # Agent-Q Communication Protocol
 
-This document defines the communication contract between Agent-Q and
-Agent-Q Firmware.
+This document defines the communication contract between the Agent-Q host
+process and Agent-Q Firmware.
 
-The protocol is small and does not copy a full wallet standard.
+This document is a protocol specification, not an implementation-status report.
+Tracked implementation status and hardware verification live in the repository
+status documents and test evidence.
 
-## Scope
+Agent-Q separates request surfaces from signing authority. External callers are
+request sources. Firmware is the authority for device state, policy state,
+device-local approval, signing, persistence, and failure cleanup.
 
-The protocol only needs enough structure for the host process and Firmware to agree on:
+## Single Device Request Contract
 
-- device discovery and selection
-- connection approval
-- Firmware status
-- provisioning setup-step boundary checks
-- supported chains and methods
-- addresses and public keys
-- signing requests and signing results
-- read-only Firmware approval history
+All host-to-Firmware product requests use one request envelope,
+`DeviceRequest`, and one response envelope, `DeviceResponse`.
 
-Chain-specific requests must fit into the supported method list instead of
-creating separate product-level protocols.
+The contract-level sources of truth are:
 
-## Roles
+- method identity;
+- payload carrier;
+- response envelope;
+- result carrier;
+- public failure code.
 
-Agent-Q:
+Method-specific payload and result shapes are named by the `DeviceMethod` table.
+Method rows do not own transport choice, payload-size routing, delivery
+capability, public error wording, or public helper names.
 
-- exposes MCP tools
-- sends protocol messages to Firmware
-- relays Firmware responses
-- does not store signing material
-- does not make signing or policy decisions
+Successful responses use `success: true` and `result`. Failed responses use
+`success: false` and `error`. Direct/upload delivery is internal to the host and
+Firmware transport and is not visible to adapters.
 
-Agent-Q Firmware:
+## Adapter Boundary
 
-- holds signing material and policy for the implemented material profile
-- evaluates requests
-- requests device-local approval when required
-- signs, rejects, or times out only request types implemented by the current
-  target/runtime state
+External entrypoints remain adapters:
 
-The local Admin Page served by the host process exists for device metadata,
-policy readback, approval-history readback, and current-schema policy proposal
-submission. Firmware-owned admin methods exist only where this protocol and a
-target implementation say so; the host process and Admin clients submit
-requests, but Firmware remains the authority for validation, device-local
-approval, persistence, and failure state.
+- Wallet Standard;
+- MCP tools;
+- local HTTP API;
+- CLI;
+- sample apps and app-web.
 
-## Request Authority Model
+Each adapter converts its external standard shape into:
 
-Protocol requests are not authority. the host process, MCP, Admin Page, provider, dapp,
-and CLI callers can submit bounded input only. Firmware owns the state gates,
-policy evaluation, device-local approval, signing execution, persistence, and
-failure cleanup.
-
-`sign_transaction` is the current transaction-signing protocol request.
-Authorization is not selected by the request, the host process, MCP, provider, Admin
-Page, dapp, or CLI caller. Firmware reads its device-local signing
-authorization mode and chooses one Firmware-owned signing gate:
-
-- `authorization: "policy"` means Firmware evaluates the active policy for an
-  implemented bounded signing request. Policy authorization is sufficient for
-  signing, this path does not require device-local confirmation for each
-  signing request, and policy rejection must not fall back to asking the user.
-- `authorization: "user"` means Firmware uses device-local review and the
-  current human approval input mode for an implemented bounded signing request.
-  For Sui `sign_transaction`, that review is either offline facts review or an
-  explicit blind-signing warning. User rejection or timeout is terminal and
-  must not fall back to policy-only signing.
-
-Both modes return a Firmware-authored `sign_result` that records the
-authorization actually used. Adapter package surfaces may choose different UX
-around the same protocol method, but adapter projection is not a security
-boundary against direct imports of broader core or local-server APIs.
-Firmware remains responsible for enforcing the request type, local
-authorization mode, selected signing gate, signing, persistence, and cleanup.
-
-Policy documents may use only actions accepted by the current schema and
-enforceable by the current runtime. Any other action value is invalid input and
-is rejected during validation. Firmware must not add named compatibility
-branches, reserved paths, migrations, or hidden conversion into another request
-type for action values outside the current schema.
-
-## Message Envelope
-
-All request and response messages use JSON Lines. Each JSON value is one
-complete message followed by `\n`.
-
-Firmware rejects JSONL frames that contain a raw NUL byte or exceed the target
-line buffer, and discards the rest of that frame until the next newline. JSON
-escape sequences such as `\u0000` are parsed as JSON strings and then rejected
-by string validators when the field requires a C-string-safe protocol value.
-
-All request messages must include:
-
-- `id`: request correlation id
-- `version`: wire protocol version
-- `type`: message type
-
-Request ids must be 1-79 characters and use only ASCII letters, digits, `_`,
-`-`, and `.`.
-
-The current protocol version is `1`.
-
-Example:
-
-```json
-{
-  "id": "req_001",
-  "version": 1,
-  "type": "get_status"
-}
+```ts
+requestDevice({ method, payload })
 ```
 
-Firmware rejects unsupported protocol versions with `unsupported_version`.
+The adapter converts the normalized `DeviceResponse` into the shape required by
+that external standard. Adapters do not decide direct/upload, classify
+payload-size errors, inspect Firmware upload capabilities, or construct upload
+descriptors.
 
-## Error Responses
+```mermaid
+flowchart LR
+  WS["Wallet Standard"] --> A["thin adapter"]
+  MCP["MCP"] --> A
+  API["Local API"] --> A
+  CLI["CLI"] --> A
+  APP["App / sample"] --> A
 
-Protocol errors use a stable error object.
-
-Example:
-
-```json
-{
-  "id": "req_001",
-  "version": 1,
-  "type": "error",
-  "error": {
-    "code": "unsupported_type",
-    "message": "Unsupported request type."
-  }
-}
+  A --> R["requestDevice({ method, payload })"]
+  R --> P["common payload transport"]
+  P --> F["Firmware protocol"]
+  F --> O["DeviceResponse"]
+  O --> A
 ```
 
-Protocol error codes:
-
-- `invalid_json`
-- `invalid_id`
-- `request_id_conflict`
-- `invalid_code`
-- `invalid_client_name`
-- `invalid_session`
-- `invalid_state`
-- `invalid_method`
-- `invalid_params`
-- `protocol_error`
-- `unsupported_version`
-- `unsupported_type`
-- `unsupported_chain`
-- `unsupported_method`
-- `unsupported_transaction`
-- `unsupported_payload_size`
-- `malformed_transaction`
-- `busy`
-- `rejected`
-- `timeout`
-- `policy_error`
-- `history_error`
-- `auth_unavailable`
-- `ui_error`
-- `rng_error`
-- `account_error`
-
-Transport-layer errors are owned by the host process and are not Firmware protocol
-errors.
-
-## Session Flow
-
-Protocol interaction has a clear discovery step, session start, and session end.
-The active-session baseline is:
-
-```text
-get_status
-  -> identify_device?
-  -> connect
-    -> get_capabilities
-    -> get_accounts
-    -> credential_prepare?
-    -> credential_propose?
-    -> policy_get
-    -> get_approval_history
-    -> sign_transaction*
-    -> sign_personal_message*
-  -> disconnect
+```mermaid
+flowchart LR
+  A["Wallet Standard / App / MCP / Local API / CLI"] --> B["thin adapter"]
+  B --> C["requestDevice({ method, payload })"]
+  C --> D["common payload transport"]
+  D --> E{"fits one device request frame?"}
+  E -->|yes| F["Firmware method request with inline payload"]
+  E -->|no| G["Firmware payload_transfer transport"]
+  G --> H["Firmware method request with payloadRef"]
+  F --> I["Firmware validates method payload"]
+  H --> I
+  I --> J["DeviceResponse"]
+  J --> B
+  B --> A
 ```
 
-`sign_transaction` uses the same wire shape regardless of the active
-authorization mode. Product-active status is not claimed from protocol shape
-alone.
+## DeviceRequest
 
-Flow rules:
+`DeviceRequest` is the only product request envelope sent by `requestDevice`.
 
-- `get_status` can be called before a session exists.
-- `get_status` is the transport handshake used to identify Firmware candidates.
-- `get_status` is read-like but not a pure cache read on Firmware. The current
-  StackChan CoreS3 target refreshes persistent-material consistency before
-  reporting status, and that refresh can fail closed by reporting `error` and
-  clearing stale runtime session state when stored material is inconsistent.
-- If multiple Firmware devices are connected, the host process must not silently choose
-  one. the host process should request Firmware devices to display short identification
-  codes, then use the user's selection to choose one active device.
-- The host process may store the selected `deviceId` and transport hint locally.
-- A stored transport hint is not identity. the host process must confirm identity with
-  Firmware before treating a device as live.
-- `connect` establishes a session when the host process does not already hold a valid
-  runtime session for the device. A fresh Firmware `connect` request requires
-  Firmware-owned human approval. Hardware targets may implement that approval
-  as a physical Confirm action or as local PIN verification, according to the
-  device-local human approval input mode, but PIN entry must never be a USB
-  protocol request.
-- `get_capabilities`, `get_accounts`, `policy_get`, `get_approval_history`,
-  `sign_transaction`, `sign_personal_message`, and `policy_propose` require
-  `sessionId`.
-- `disconnect` ends the session.
-- Firmware should reject session-scoped requests with an unknown or inactive
-  `sessionId`.
-- When the host process has an active runtime session and a session teardown or fresh
-  connect attempt ends with `invalid_session`, `timeout`, `port_not_found`,
-  `port_in_use`, or `transport_closed`, the host process must clear its local session
-  view. This does not prove Firmware observed disconnect; it prevents host process
-  from keeping a session it can no longer confirm.
-
-Implemented: `get_status`, `identify_device`, `connect`, `disconnect`,
-`get_capabilities`, `get_accounts`, `policy_get`, `get_approval_history`,
-`policy_propose`, `sign_transaction`, `sign_personal_message`, explicit local
-host-process device selection, and local host process caching of discovered devices. The
-current signing runtime enforces state and session gates, keeps unknown methods
-rejected, accepts inline `txBytes` or same-session staged payload references
-for Sui `sign_transaction`, recognizes bounded Sui personal-message bytes for
-`sign_personal_message`, records required approval-history metadata, and
-returns `sign_result`. In policy authorization mode, the active policy can
-authorize or reject `sign_transaction` according to the policy gate defined in
-the Transaction Signing Request section. Missing, incomplete, unmatched, or
-reject-matched policy coverage fails closed.
-`sign_personal_message` is user-mode only and fails closed in policy mode. In
-user authorization mode, Firmware uses device-local review and the device-local
-human approval input mode. Product-active status is tracked in
-`docs/IMPLEMENTATION_STATUS.md`.
-
-Provisioning and material reset transitions are not USB protocol requests in the
-current implementation. The StackChan CoreS3 target enters setup from its local
-unprovisioned setup UI and confirms or cancels the backup phrase on the
-device. There is no implemented USB request for starting provisioning, canceling
-provisioning, confirming a backup phrase, factory reset, or diagnostic
-display signaling.
-
-`connect` and `disconnect` are defined by the protocol and parsed by host process.
-The current StackChan CoreS3 target accepts `connect` only after persistent root
-material, active policy, local PIN verifier, and a `provisioned` state exist.
-Its default human approval input mode is local PIN entry on the device. The
-target's local settings can switch human approval input mode to physical
-Confirm, but changing that setting itself requires local PIN verification.
-
-Human approval input mode is a device-local setting with current values `pin`
-and `confirm`. It applies only when a request enters a Firmware-owned
-human-approval branch: `connect`, `sign_transaction` in user authorization mode,
-and `sign_personal_message` in user authorization mode. It does not apply to
-`sign_transaction` in policy authorization mode, unsupported
-`sign_personal_message` policy mode, `policy_propose`, local Settings changes,
-Change PIN, reset, provisioning, or recovery.
-
-`connect` and `disconnect` establish and end a runtime communication session
-between the host process and Firmware. A connection session does not authorize signing,
-does not prove agent identity, and does not change Firmware policy.
-
-`get_capabilities` is implemented as a read-only, session-scoped capability
-request that reports Sui account identity, no delegated public methods, and
-top-level `signing` availability. `signing.authorization` is Firmware-authored
-read-only runtime state that describes the current device-local signing
-authorization mode; it is not a request option, setter, or security decision
-made by the host process, MCP, provider, Admin Page, dapp, or CLI callers.
-`get_accounts` is implemented as a read-only, session-scoped identity request
-for the Sui Ed25519 account at index 0 in the `provisioned` state.
-`policy_get` is implemented as a read-only, session-scoped readback of the
-committed active policy document; it is not a policy update surface.
-The normal product flow still installs the DEV_PROFILE default-reject policy.
-`get_approval_history` is implemented as a read-only, session-scoped
-view of Firmware-owned persistent decision metadata. The current Sign API
-runtime paths are session-scoped: unknown methods are rejected, Sui
-`sign_transaction` uses the current Sui `TransactionData::V1 ->
-ProgrammableTransaction` facts extractor and uses the Firmware-local signing
-authorization mode. Policy authorization validates active policy availability,
-request network scope, account binding, and offline policy condition facts.
-Policy authorization signs only when the active current policy has a matching
-`sign` policy. Missing, incomplete, unmatched, or reject-matched policy coverage
-fails closed with a policy rejection;
-user authorization enters device review only when the parsed shape has
-complete offline facts review coverage or when Firmware can validate and
-account-bind the transaction but must show an explicit blind-signing warning
-because offline facts review coverage is incomplete.
-Sui
-`sign_personal_message` validates bounded personal-message bytes in user
-authorization mode only. Both methods return `sign_result` for supported
-terminal outcomes. Hardware verification remains required for product-active
-claims after changes to `policy_get`, `get_approval_history`, policy-mode
-`sign_transaction`, user-mode `sign_transaction`, and user-mode
-`sign_personal_message` paths.
-
-## Device Discovery And Selection
-
-the host process discovers Firmware candidates by scanning supported transports and
-calling `get_status` only on likely candidates. the host process must avoid blind writes
-to unrelated ports or devices.
-
-USB discovery writes a `get_status` handshake only to candidate serial ports
-selected from currently observed USB metadata. A stored port path is only a
-hint; it must be rechecked against current port metadata before any write.
-
-the host process must not silently change the active device after discovery. Even when
-one Firmware candidate is found, the host process should request the device to show an
-identification code before saving it as the active device. If more than one
-Firmware candidate is found, the host process must require explicit user selection before
-changing the active device.
-
-The intended multi-device selection flow is:
-
-```text
-user asks to find devices
-  -> the host process scans transport candidates
-  -> the host process calls get_status on likely candidates
-  -> the host process requests temporary identification display on candidate devices
-  -> Firmware devices show short codes
-  -> user chooses one code
-  -> the host process stores the selected deviceId and transport hint
+```ts
+type DeviceRequest = {
+  id: string;
+  version: 1;
+  sessionId?: string;
+  method: DeviceMethod;
+  payload?: unknown;
+};
 ```
 
-Identification display is temporary UI. Firmware must return to the previous
-device state after showing the code.
-
-## Status
-
-the host process can request whether Firmware is available and what status Firmware reports.
-
-Read-only status requests must not show physical approval UI.
-
-Request:
-
-```json
-{
-  "id": "req_001",
-  "version": 1,
-  "type": "get_status"
-}
-```
-
-Response:
-
-```json
-{
-  "id": "req_001",
-  "version": 1,
-  "type": "status",
-  "device": {
-    "deviceId": "uuid-string",
-    "state": "idle",
-    "firmwareName": "Agent-Q Firmware",
-    "hardware": "hardware-id",
-    "firmwareVersion": "0.0.0"
-  },
-  "provisioning": {
-    "state": "unprovisioned"
-  }
-}
-```
-
-Device states:
-
-- `idle`: ready for read-only requests.
-- `busy`: processing another request.
-- `awaiting_approval`: Firmware-owned device-local approval UI is active.
-- `locked`: device requires local unlock before sensitive actions.
-- `error`: device is running but cannot currently serve requests.
-
-The current Firmware emits `idle`, `busy`, `awaiting_approval`, and `error`. It
-reports `busy` while device-only setup material or a sensitive local subflow is
-active, reports `error` for material/state consistency failure, and also uses
-`busy` as an error code for requests that cannot run while another operation
-owns the device UI. An idle target Settings menu remains `idle` because existing
-session-scoped read and cleanup requests can still proceed. Other states are
-not emitted by the current Firmware.
-
-`deviceId` is a Firmware-generated UUID stored in device-local persistent
-storage. It must not be derived from MAC address, USB serial number, account
-public key, or signing key.
-
-`firmwareName` is a descriptive label for display and diagnostics. It is not a
-security boundary and must not be treated as proof that the device is trusted.
-
-Provisioning states:
-
-- `unprovisioned`: root signing material, active policy, local PIN verifier, and signing authorization mode are not present.
-- `provisioning`: local provisioning is in progress.
-- `provisioned`: root signing material, active policy, local PIN verifier, and signing authorization mode are present.
-- `locked`: the provisioning state cannot be used until the device is unlocked.
-- `error`: Firmware detected persistent-material inconsistency and is failing closed.
-
-`provisioning.state` reports only the Firmware's provisioning state. It is not
-signing readiness, it does not prove that signing APIs exist, and it does not
-authorize host process to make policy decisions. the host process must preserve and
-display the value without treating it as authority.
-
-The current StackChan CoreS3 target persists `unprovisioned` and `provisioned`
-and may report `error` when the persisted state and material records disagree.
-It may report `provisioned` only when `prov_state`, the device-local root
-material blob, a committed active policy record, the local PIN verifier, and
-the signing authorization mode all exist. The current product flow installs the
-default-reject policy. It does not
-use `locked` because no unlock model is
-implemented. DEV_PROFILE backup phrase display, device-local
-mnemonic import entry, persistent root material, active policy storage, local
-PIN verifier storage, signing authorization mode storage, Sui account settings
-storage, local reset, and read-only `get_accounts` Sui account derivation are
-implemented.
-USB, host process, or MCP mnemonic import is not implemented.
-Policy updates are available only through the Firmware-owned
-`policy_propose` proposal flow for current-schema policies. The `sign` action
-value is part of the current schema, and Sui `sign_transaction` policy mode
-uses it only after active policy availability, request network scope, account
-binding, and complete offline policy condition facts pass.
-
-If a target boots with `prov_state = provisioned` but missing, unreadable, or
-unsupported current active policy, signing authorization mode material, or Sui
-account settings, Firmware must fail closed instead of reporting normal
-`provisioned`. Existing DEV_PROFILE devices without the current local PIN
-verifier, signing authorization mode, or Sui account settings fail closed until
-erased and reprovisioned through local UX or a development flash-erase workflow.
-
-Device metadata strings are untrusted input and host process bounds them when
-parsing a response:
-
-- `deviceId`: a safe identifier of `[A-Za-z0-9_.-]`, 1-128 characters. A
-  response whose `deviceId` is outside this set is rejected as malformed.
-- `firmwareName`, `hardware`, `firmwareVersion`: display strings. The host process keeps
-  printable ASCII only and caps length (64, 64, and 32 characters), dropping
-  control characters and newlines. These are display values, not a trust
-  signal, so they are sanitized rather than rejected.
-
-## Local Provisioning And Reset Boundary
-
-Provisioning setup and destructive material reset are device-local UX flows in
-the current protocol. the host process can observe the resulting state through
-`get_status`, but it cannot trigger setup, cancellation, backup phrase
-confirmation, mnemonic import, factory reset, or diagnostic display
-approval by sending a USB request.
-
-The StackChan CoreS3 target enters setup from the local unprovisioned setup
-speech bubble and then shows a local Generate/Import choice. Generate creates
-a 12-word BIP-39 backup phrase in RAM, displays up-to-4-letter word prefixes
-on the device in a 3-column by 4-row grid, and exposes only local Cancel and
-Confirm controls on the backup phrase panel. Three-letter BIP-39 words are
-displayed as the full word.
-
-Firmware owns the volatile setup scratch substate, separate from
-persistent `provisioning.state`, session state, display power state, and LVGL
-object lifetime. The current substates are:
-
-- `none`: no generated backup phrase is valid in RAM.
-- `setup_choice`: local setup mode selection is active; no root material is
-  valid yet.
-- `backup_phrase_displayed`: root entropy and backup phrase scratch exist
-  in RAM and the device backup phrase panel is active.
-- `import_word_entry`: local mnemonic import word-entry scratch exists in
-  RAM; the device shows three word-entry cells per page, local A-Z prefix
-  buttons, and scrollable BIP-39 candidate bubbles. No persistent material is
-  stored in this state.
-- `pin_first_entry`: root entropy and the first typed PIN scratch exist in RAM
-  and the device-local numeric PIN setup panel is active.
-- `pin_repeat_entry`: root entropy, the first PIN scratch, and the repeat typed
-  PIN scratch exist in RAM and the device-local numeric PIN setup panel is
-  active.
-- `pin_committing`: root entropy and matching PIN scratch exist in RAM while
-  Firmware persists root material, policy, PIN verifier, and provisioned state;
-  the PIN panel remains active with a non-interactive processing overlay and
-  further local input is ignored.
-
-The UI panel is an output of this substate machine, not the source of truth. If
-the backup phrase or PIN panel is removed, replaced, expires, is canceled, or
-fails to store material, Firmware wipes the volatile setup scratch and returns
-the scratch substate to `none`. Screen/backlight sleep does not by itself change
-the security state; Agent-Q UI wakes the display before showing setup material
-or approval UI.
-
-Local Confirm is the only implemented backup confirmation transition for the
-Generate path. It stores no persistent material by itself; it advances the
-scratch state to local 6-digit PIN entry and wipes phrase text/prefix scratch.
-The Import path accepts mnemonic input only through the device-local word-entry
-UI: three word cells per page, A-Z prefix buttons, and on-device candidate
-selection. After 12 selected BIP-39 words pass checksum validation, Firmware
-reconstructs root entropy in RAM and enters the same local PIN setup state as
-Generate. Matching PIN repeat stores binary root material, the active
-default-reject policy, and the salt + PIN verifier first, then persists
-`provisioned`, then wipes volatile scratch. If root material, policy, PIN
-verifier, or state persistence fails, Firmware rolls back persistent setup
-material where possible, wipes volatile scratch, and must not report
-`provisioned`. Local Cancel wipes volatile scratch and leaves persistent state
-`unprovisioned`.
-
-The host process must not receive the generated phrase, displayed prefixes,
-imported words, entropy, seed, private key, account data, policy data, or import
-text.
-BIP-39 English word prefixes of up to four letters identify the words and must
-be treated as secret material.
-
-The current protocol has no factory-reset or reprovisioning USB
-request. Destructive material reset is device-local UX only. A target reset flow
-must start from `provisioned`, require local user action plus stored local
-authentication, wipe root material, active policy, local-auth verifier,
-signing authorization mode, approval-history records, policy-update terminal
-markers, reset-scoped local settings such as connect-approval preferences, and
-runtime session, and return to `unprovisioned`. Implementations that record an internal reset-pending marker
-before destructive wipe starts can resume an interrupted reset at boot. Wrong
-authentication, timeout, or cancel preserves existing material. Reset
-authentication lockout is target-local state, not a protocol state, and must not
-create a host-triggered recovery path. A target may offer a device-local,
-PIN-less, destructive erase-only recovery from material/state consistency
-`error` when the PIN verifier may be unreadable, but that path still must not be
-exposed as a USB, host process, and MCP request and must not read, export, repair, or
-unlock stored material.
-
-## Identify Device
-
-the host process can request Firmware to show a short temporary identification code. This is
-used for selecting the intended device after discovery. It is not signing
-approval.
-
-`identify_device` may be used for one candidate or many candidates. the host process must
-not save an active device until the user has selected one of the displayed
-codes.
-
-Request:
-
-```json
-{
-  "id": "req_identify_001",
-  "version": 1,
-  "type": "identify_device",
-  "params": {
-    "code": "1234"
-  }
-}
-```
-
-Response:
-
-```json
-{
-  "id": "req_identify_001",
-  "version": 1,
-  "type": "identify_device_result",
-  "status": "displayed",
-  "code": "1234",
-  "device": {
-    "deviceId": "uuid-string",
-    "state": "idle",
-    "firmwareName": "Agent-Q Firmware",
-    "hardware": "hardware-id",
-    "firmwareVersion": "0.0.0"
-  }
-}
-```
-
-Identification codes are four decimal digits. Identification display duration is
-Firmware-owned temporary UI with a fixed internal `30000` millisecond window; it
-is not a request parameter. The host process may stop waiting before the device clears
-the temporary layer; there is no cancel message.
-
-Identification display is temporary UI. Firmware must return to the previous
-device state after the display duration or when another request replaces the
-temporary layer.
-
-## Connect
-
-When the host process has no valid in-memory runtime session for a live device, it opens
-a communication session by sending `connect`. A Firmware `connect` request
-requires Firmware-owned device-local approval every time it is sent. Connect is
-not signing approval and does not authorize signing.
-
-Request:
-
-```json
-{
-  "id": "req_connect_001",
-  "version": 1,
-  "type": "connect",
-  "params": {
-    "clientName": "Agent-Q"
-  }
-}
-```
-
-Request rules:
-
-- `connect` is valid only after Firmware reports `provisioned` from stored root
-  material.
-- `clientName` is a host-process-supplied display label. It is not a security
-  boundary and Firmware must not treat it as proof that the requester is
-  trusted.
-- `clientName` is required, 1-64 characters of printable ASCII.
-- Firmware owns fixed internal `30000` millisecond physical-input windows for
-  local approval/PIN entry. The host cannot set or negotiate them through the
-  protocol.
-- Host-side transport waits for `connect` are internally fixed and include a
-  non-configurable budget for Firmware PIN retry/lockout handling plus a
-  transport margin. This is not a request field and callers cannot set or
-  negotiate it.
-
-Approved response:
-
-```json
-{
-  "id": "req_connect_001",
-  "version": 1,
-  "type": "connect_result",
-  "status": "approved",
-  "sessionId": "session_...",
-  "sessionTtlMs": 4294967295,
-  "device": {
-    "deviceId": "uuid-string",
-    "state": "idle",
-    "firmwareName": "Agent-Q Firmware",
-    "hardware": "hardware-id",
-    "firmwareVersion": "0.0.0"
-  }
-}
-```
-
-Rejected response:
-
-```json
-{
-  "id": "req_connect_001",
-  "version": 1,
-  "type": "connect_result",
-  "status": "rejected",
-  "error": {
-    "code": "rejected",
-    "message": "Connection rejected."
-  }
-}
-```
-
-Timeout response uses the rejected shape with:
-
-```json
-{
-  "code": "timeout",
-  "message": "Connection approval timed out."
-}
-```
-
-Connect rules:
-
-- Establishing a session requires Firmware-owned device-local approval every
-  time a Firmware `connect` request is sent. Firmware does not remember a
-  previously approved host process.
-- `connect_device` may reuse a host process RAM-held session only after contacting
-  Firmware with a session-scoped read-only request and receiving a response that
-  proves the current `sessionId` is still valid. If validation fails with
-  `invalid_session`, the host process must clear its local session and send a fresh
-  Firmware `connect` request, which requires device-local approval.
-- Firmware remains the only authority that can issue a fresh `sessionId`. A
-  direct USB `connect` request must not return an existing session id without
-  device-local approval.
-- The current StackChan CoreS3 target stores a local human approval input mode
-  setting. The mode selects the device-local input used after Firmware enters a
-  human-approval branch for an external request: `pin` means review page then
-  local PIN entry; `confirm` means review page with a physical Confirm action.
-  Missing setting means the secure default, `pin`. Invalid stored values fail
-  closed to `pin` and are logged. The setting is device-local; there is no USB,
-  host process, or MCP request for changing it.
-- When the human approval input mode is `pin`, successful device-local PIN entry
-  is the connect approval. Firmware must not add a second Confirm step after
-  PIN success. Wrong PIN attempts are rate-limited as device-local touch
-  attempts: five wrong stored-PIN verification attempts across connect, Settings,
-  Change PIN, and reset lock the local PIN UI for 30 seconds in RAM. Canceling
-  and reopening the PIN UI must not clear the lockout. Power cycling clears it.
-- Device-local PIN entry uses a Firmware-owned input window. Submitting a
-  complete PIN pauses that input timeout while Firmware performs stored-PIN
-  verification. This pause does not disable Firmware's internal local-auth
-  worker watchdog; a stalled or lost worker result fails closed as local
-  authentication unavailable, not as a wrong PIN. The original connect request
-  window is the admission boundary and caps PIN entry before the PIN is
-  submitted; it is not the terminal timeout authority for stored-PIN
-  cryptographic processing after submit. A correct PIN result may proceed after
-  verification even if the prior input window would have expired during the
-  cryptographic work. If the submitted PIN is wrong, Firmware returns to the
-  same PIN-entry state by resuming the remaining paused input window, subject
-  to the shared wrong-PIN lockout.
-- When the human approval input mode is `confirm`, connect approval uses the
-  same review page and completes through a physical Confirm action instead of
-  PIN entry.
-- PIN is never submitted over USB. There is no protocol request or parameter for
-  connect PIN, settings PIN, reset PIN, PIN verifier write, PIN change, or PIN
-  reset.
-- `connect` does not authorize signing.
-- `connect` does not prove which agent or upstream user triggered the request.
-- `sessionId` is generated by Firmware. The format is `session_` followed by
-  random hex.
-- `sessionId` must be derived from device RNG. It must not be derived from MAC
-  address, USB serial number, `deviceId`, account public key, or signing key.
-- `sessionTtlMs` is Firmware-owned wire metadata. `sessionTtlMs` is a uint32
-  millisecond value; the host process treats a `connect_result` whose `sessionTtlMs` is
-  not a positive integer within the uint32 range (`1`..`4294967295`) as a
-  malformed response. A target whose sessions are bound to the physical USB link
-  may advertise the maximum value to avoid implying a shorter time-based
-  reapproval deadline.
-- Approving a new connect replaces any previously active Firmware session.
-- A host runtime session is held in memory only. the host process must not persist
-  `sessionId` to disk. `sessionId` is a Firmware-issued token kept internal to
-  host process; the host process must not return it to untrusted MCP clients.
-- When host process already has an in-memory runtime session for a live device,
-  `connect_device` must validate that session with a session-scoped read-only
-  request and return the existing connection if validation succeeds. It must not
-  send a fresh Firmware `connect` request solely because the caller invoked
-  `connect_device` again.
-- host process restart and explicit disconnect end the host process's view of the session;
-  Firmware reboot ends the session on the device. Host process restart clears only
-  the host process's in-memory record. Firmware cannot observe a host process restart and
-  keeps its active session until target policy clears it, such as on USB link
-  loss, reboot, explicit disconnect, persistent-material error cleanup, or
-  replacement by a new approved connect.
-- Firmware targets may clear an active session earlier when the transport link
-  is lost. On StackChan CoreS3, USB connected means USB host SOF is observed by
-  `usb_serial_jtag_is_connected()`. It does not prove The host process is running or that
-  the serial port is open. Cable removal, host suspend, or SOF loss can clear
-  the Firmware RAM session by policy.
-- The host process's local session cache is a RAM-only mirror, not authority. The host process
-  must clear it when Firmware rejects the session or when the transport can no
-  longer be confirmed. A successful live USB scan that no longer observes the
-  device is enough evidence to clear the host process's RAM mirror for that device.
-  the host process must not use local time alone to force reapproval while the Firmware
-  session remains valid.
-- Firmware should return `busy` for UI-affecting or session-changing requests
-  (including `connect` and `disconnect`) while an approval UI, device-only setup
-  material display, or sensitive local PIN/reset/settings subflow is already
-  open. Idle target Settings menus are local UI and do not by themselves end the
-  active session; existing session-scoped requests may still proceed when they
-  do not mutate the Settings flow. `get_status` remains read-like: it may
-  refresh persistent-material consistency as described above, but it must not
-  trigger, change, or clear approval or Settings UI.
-
-## Disconnect
-
-the host process can disconnect and end the active session.
-
-After disconnect, the host process must call `connect` again before calling
-session-scoped requests.
-
-Request:
-
-```json
-{
-  "id": "req_disconnect_001",
-  "version": 1,
-  "type": "disconnect",
-  "sessionId": "session_..."
-}
-```
-
-Disconnect rules:
-
-- `disconnect` does not require physical approval.
-- Firmware may return `busy` instead of clearing the session while an approval
-  UI, device-only setup material display, or sensitive local PIN/reset/settings
-  subflow is active. Idle target Settings menus do not by themselves block
-  `disconnect`.
-- A pending policy-update approval is session-bound rather than generic local
-  UI. A matching `disconnect` cancels that pending proposal and clears the
-  session unless Firmware is already inside the policy commit critical section.
-  The canceled `policy_propose` request is terminated with
-  `invalid_session`; the `disconnect` request receives `disconnect_result`.
-- Firmware validates only the session lifecycle for `disconnect`; persistent
-  material readiness is not a prerequisite. If material inconsistency already
-  cleared the session, Firmware returns `invalid_session` rather than
-  `invalid_state`.
-- Firmware returns `invalid_session` when `sessionId` is missing, unknown,
-  inactive, or does not match the active Firmware session.
-
-Response:
-
-```json
-{
-  "id": "req_disconnect_001",
-  "version": 1,
-  "type": "disconnect_result",
-  "status": "disconnected"
-}
-```
-
-## Capabilities
-
-the host process can request which chains and methods Firmware supports.
-
-Request:
-
-```json
-{
-  "id": "req_004",
-  "version": 1,
-  "type": "get_capabilities",
-  "sessionId": "session_001"
-}
-```
-
-Response:
-
-```json
-{
-  "id": "req_004",
-  "version": 1,
-  "type": "capabilities",
-  "chains": [
-    {
-      "id": "sui",
-      "accounts": [
-        {
-          "keyScheme": "ed25519",
-          "derivationPath": "m/44'/784'/0'/0'/0'"
-        }
-      ],
-      "methods": []
+| Field | Required | Type | Owner | Rule |
+| --- | --- | --- | --- | --- |
+| `id` | yes | safe request id string | caller creates; Core validates | Echoed by response when parseable. |
+| `version` | yes | current protocol version | Core/Firmware protocol | Unsupported version returns `unsupported_version`. |
+| `sessionId` | method-dependent | session id string | session owner | Required only for methods marked session-required in the method table. Forbidden for methods marked no-session. |
+| `method` | yes | `DeviceMethod` | protocol contract | Only values in the method table are accepted. Unknown values return `unsupported_method`. |
+| `payload` | method-dependent | method payload object or omitted | method schema owner | Presence follows the method table. |
+
+`id` is correlation only. A method that targets another request, such as
+`get_result` or `ack_result`, carries the target request id inside `payload` as
+`retainedRequestId`.
+
+## DeviceResponse
+
+`DeviceResponse` is the only product response envelope returned by Firmware to
+`requestDevice`.
+
+```ts
+type DeviceResponse =
+  | {
+      id?: string;
+      version: 1;
+      success: true;
+      method: DeviceMethod;
+      result: unknown;
     }
-  ],
-  "credentials": [
-    {
-      "chain": "sui",
-      "credential": "zklogin",
-      "operations": ["credential_prepare", "credential_propose"]
-    }
-  ],
-  "signing": {
-    "authorization": "user",
-    "methods": [
-      {
-        "chain": "sui",
-        "method": "sign_transaction",
-        "payload": {
-          "kind": "transaction",
-          "inlineMaxBytes": "384",
-          "chunkMaxBytes": "2700",
-          "payloadMaxBytes": "131072"
-        }
-      },
-      {
-        "chain": "sui",
-        "method": "sign_personal_message"
-      }
-    ]
-  }
-}
+  | {
+      id?: string;
+      version: 1;
+      success: false;
+      method?: DeviceMethod;
+      error: {
+        code: DeviceErrorCode;
+        message: string;
+        retryable: boolean;
+      };
+    };
 ```
 
-Rules:
-
-- `get_capabilities` is session-scoped and requires `sessionId`.
-- Firmware returns capabilities only when `provisioning.state` is `provisioned`
-  and persistent material, including root material, active policy, local PIN
-  verifier, and signing authorization mode, is consistent. Before that it returns
-  `invalid_state`.
-- A missing, inactive, or mismatched session returns `invalid_session`.
-- The current StackChan CoreS3 target advertises Sui Ed25519 account identity
-  for account 0 at `m/44'/784'/0'/0'/0'` when the native Sui identity is active,
-  or Sui zkLogin account identity when a locally stored zkLogin proof is active.
-  It reports exactly one active account identity, no entries in
-  `chains[].methods`, optional `credentials[]` availability for Sui zkLogin
-  proof setup only while native account identity is active, and top-level Sui
-  signing availability in `signing.methods`. In user authorization mode this
-  includes `sign_transaction` and `sign_personal_message`; in policy
-  authorization mode this includes `sign_transaction` only.
-- `signing.authorization` is the Firmware-authored read-only local signing
-  authorization mode (`"user"` or `"policy"`) that will be used for supported
-  signing methods. Protocol requests must not contain this field, and there is
-  no protocol setter.
-- A `signing.methods[]` entry for `sign_transaction` may include `payload`
-  metadata. This advertises Firmware-owned payload delivery limits for signing
-  requests:
-  `inlineMaxBytes` for the decoded payload size that may be sent inside
-  `params.txBytes`, `chunkMaxBytes` for each decoded upload chunk, and
-  `payloadMaxBytes` for one finalized decoded payload. These are decimal
-  strings. `chunkMaxBytes` must be at least 2048 decoded bytes for the current
-  Agent-Q host/provider staged signing deadline model; smaller values are
-  unusable capability metadata and fail closed as `protocol_error`. These fields
-  do not give the host signing authority and do not allow application code to
-  choose the signing authorization mode.
-- A non-empty `methods` list is a Firmware-authored availability claim. Firmware
-  must advertise only delegated non-signing methods that have a connected
-  runtime implementation, result schema, required approval behavior, required
-  history behavior, host parser/output support, MCP output support, and
-  provider support for the same method boundary. Signing availability must use
-  top-level `signing`.
-- A `credentials[]` entry advertises only credential-preparation availability.
-  The current supported entry is `{ "chain": "sui", "credential": "zklogin",
-  "operations": ["credential_prepare", "credential_propose"] }`. It is not a
-  signer selector, proof-clear API, or host-controlled state transition.
-  Firmware advertises it only when Sui native account identity is active. If a
-  zkLogin proof is already active, preparation and proposal fail closed until
-  the user clears the proof locally in device Settings.
-- the host process, MCP, provider-sui, and UI consumers may use
-  `signing.authorization` only to describe expected behavior. The security
-  decision is the Firmware-authored `sign_result` and its recorded
-  authorization.
-- The host process validates the response strictly, rejects unknown chains, unsupported
-  account schemes or derivation paths, unknown method lists, unknown signing
-  availability entries,
-  secret-like fields, and any unexpected `sessionId` in the response. The host process
-  does not infer or add capabilities.
-
-## Accounts
-
-`get_accounts` is a session-scoped read-only request that returns Firmware's
-single active Sui account identity. When no zkLogin proof is active, Firmware
-projects the native Ed25519 account derived from stored root material. When a
-zkLogin proof is active, Firmware projects the stored zkLogin address and public
-identifier instead. It exposes only public material: address, scheme-prefixed
-public key or public identifier, key scheme, and a derivation path only for the
-native Ed25519 account. It never returns a mnemonic, seed, entropy, private key,
-raw JWT, proof input secret, or any signing key, and it does not perform
-signing.
-
-Request:
-
-```json
-{
-  "id": "req_005",
-  "version": 1,
-  "type": "get_accounts",
-  "sessionId": "session_001"
-}
-```
-
-Approved response:
-
-```json
-{
-  "id": "req_005",
-  "version": 1,
-  "type": "accounts",
-  "accounts": [
-    {
-      "chain": "sui",
-      "address": "0x...",
-      "publicKey": "base64...",
-      "keyScheme": "ed25519",
-      "derivationPath": "m/44'/784'/0'/0'/0'",
-      "sponsoredTransactions": {
-        "acceptGasSponsor": false
-      }
-    }
-  ]
-}
-```
-
-Rules:
-
-- `publicKey` is base64 of the Sui scheme-prefixed public identity. For native
-  Ed25519 account identity it is `0x00 || raw 32-byte Ed25519 public key`. For
-  zkLogin account identity it is the Sui zkLogin public identifier, whose first
-  byte is the Sui zkLogin scheme flag `0x05`. The scheme is also reported in
-  `keyScheme`, and the address must match the Sui address derived from the
-  scheme-prefixed public identity.
-- Firmware returns accounts only when `provisioning.state` is `provisioned` and
-  persistent material, including root material, active policy, local PIN
-  verifier, and signing authorization mode, is consistent. Before that it
-  returns `invalid_state`.
-- The request requires `sessionId`. A missing, inactive, or mismatched session
-  returns `invalid_session`.
-- Native account derivation runs in Firmware on demand and wipes all
-  intermediate secret material. When a zkLogin proof is active, the account
-  identity is read from the persisted proof record. A native derivation failure,
-  invalid proof record, or proof storage read failure returns `account_error`
-  with no partial account.
-- `sponsoredTransactions.acceptGasSponsor` is a read-only projection of the
-  active account's device-local Sui account setting. `false` means
-  `sign_transaction` rejects transactions whose parsed gas owner differs from
-  the active account. `true` means `sign_transaction` may continue when the
-  parsed sender matches the active account and the parsed gas owner is a
-  different sponsor. There is no protocol setter for this setting; changing it
-  is a device-local Settings action that requires local PIN verification.
-- The host process parses and re-validates the account shape, rejects any
-  response that carries a secret-like field, and recomputes the Sui address from
-  the scheme-prefixed `publicKey` or public identifier to reject mismatched
-  public identities. Firmware still owns account derivation and active identity
-  resolution; host-process validation is consistency checking, not signing
-  authority. The host process MCP `get_accounts` tool never exposes the session
-  id.
-- The current StackChan CoreS3 target returns exactly one `accounts[]` entry:
-  either the native Sui Ed25519 account at index 0 (`m/44'/784'/0'/0'/0'`) or
-  the active Sui zkLogin identity. The host process rejects any other account
-  count for this target. Additional chains and accounts are added as more
-  `accounts[]` entries only after the protocol, capability response, and host
-  process bounds are updated. StackChan CoreS3 hardware smoke verifies the
-  native single-account response over an approved session and zkLogin account
-  projection after browser/Web Serial activation; product-active status remains
-  tracked in `docs/IMPLEMENTATION_STATUS.md`.
-  `get_accounts` reads identity only. Current delegated public method
-  availability is reported by `get_capabilities.chains[].methods`.
-  Signing availability is reported separately through top-level `signing`,
-  including the Firmware-authored `authorization` mode and supported signing
-  methods.
-
-## Credential Preparation
-
-Credential preparation uses shared top-level protocol operations. These
-operations are not chain-specific product APIs, not signing requests, and not
-state setters. The current supported credential is Sui zkLogin.
-
-`credential_prepare` returns the native device-held public material that an
-external browser flow can use to compute a Sui zkLogin nonce and obtain a JWT.
-It is read-like and does not store proof material.
-
-Request:
-
-```json
-{
-  "id": "req_credential_prepare",
-  "version": 1,
-  "type": "credential_prepare",
-  "sessionId": "session_001",
-  "params": {
-    "chain": "sui",
-    "credential": "zklogin"
-  }
-}
-```
-
-Prepared response:
-
-```json
-{
-  "id": "req_credential_prepare",
-  "version": 1,
-  "type": "credential_prepare_result",
-  "status": "prepared",
-  "chain": "sui",
-  "credential": "zklogin",
-  "preparation": {
-    "address": "0x...",
-    "publicKey": "base64...",
-    "keyScheme": "ed25519"
-  }
-}
-```
-
-`credential_propose` submits bounded zkLogin proof material produced outside the
-device. Firmware validates the bounded record shape, shows a device-local
-review, requires local PIN approval, and stores the proof only after the
-Firmware-owned approval and commit succeed. It does not accept raw JWTs and does
-not claim local OAuth, prover, or Sui validator verification.
-
-Request:
-
-```json
-{
-  "id": "req_credential_propose",
-  "version": 1,
-  "type": "credential_propose",
-  "sessionId": "session_001",
-  "params": {
-    "chain": "sui",
-    "credential": "zklogin",
-    "network": "devnet",
-    "address": "0x...",
-    "publicKey": "base64...",
-    "maxEpoch": "123",
-    "inputs": {
-      "proofPoints": {
-        "a": ["1", "2", "3"],
-        "b": [["1", "2"], ["3", "4"], ["5", "6"]],
-        "c": ["1", "2", "3"]
-      },
-      "issBase64Details": {
-        "value": "base64url",
-        "indexMod4": 1
-      },
-      "headerBase64": "base64url",
-      "addressSeed": "123"
-    }
-  }
-}
-```
-
-Terminal response:
-
-```json
-{
-  "id": "req_credential_propose",
-  "version": 1,
-  "type": "credential_propose_result",
-  "status": "activated",
-  "reasonCode": "activated",
-  "sessionEnded": true
-}
-```
-
-Rules:
-
-- Both operations are session-scoped and require material-backed `provisioned`
-  state, persistent material consistency, and a matching active session.
-- Only `{ "chain": "sui", "credential": "zklogin" }` is supported. Unsupported
-  credentials return `invalid_params`.
-- Firmware allows preparation and proposal only while the native Sui identity is
-  active. If any zkLogin proof record is active, invalid, or unavailable,
-  preparation/proposal fail closed; clearing is available only through the
-  device-local Sui chain view.
-- `credential_prepare_result.preparation.publicKey` is base64 of
-  `0x00 || raw 32-byte Ed25519 public key`. The external flow may use this
-  public key to compute the Sui zkLogin nonce. The device does not need to
-  perform Poseidon hashing to support this boundary.
-- `credential_propose.params.publicKey` is the Sui zkLogin public identifier,
-  base64 encoded. Firmware requires the public identifier to carry the stored
-  issuer and `inputs.addressSeed`, and the public identifier must derive
-  `params.address`.
-- `credential_propose.params.maxEpoch` is stored and displayed as metadata. The
-  current Firmware boundary has no trusted Sui epoch source and does not locally
-  classify proof freshness; Sui validators remain the freshness authority.
-- Firmware stores the bounded proof record needed to build a zkLogin signature
-  envelope. It must not store raw JWTs, OAuth tokens, provider secrets, or
-  private key material.
-- A successful activation ends the current session so callers reconnect before
-  reading the new active account identity. Rejection, timeout, UI error, invalid
-  proof, storage error, and consistency error return terminal
-  `credential_propose_result` statuses without silently activating a proof.
-- `sessionEnded` reports whether Firmware ended the active session as part of
-  the terminal result.
-
-## Policy Readback
-
-`policy_get` is a session-scoped read-only request that returns the committed
-active Firmware-owned policy document used by `sign_transaction`. It does not
-return policy secrets, signing material, pending policy proposals, approval
-history, or an editor surface.
-
-The current policy document shape and currently exposed Sui policy facts are
-cataloged in `docs/POLICY_SCHEMA.md`.
-
-Request:
-
-```json
-{
-  "id": "req_policy",
-  "version": 1,
-  "type": "policy_get",
-  "sessionId": "session_001"
-}
-```
-
-Response:
-
-```json
-{
-  "id": "req_policy",
-  "version": 1,
-  "type": "policy",
-  "policy": {
-    "schema": "agentq.policy",
-    "policyId": "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-    "defaultAction": "reject",
-    "blockchainCount": 1,
-    "networkCount": 1,
-    "policyCount": 0,
-    "conditionCount": 0,
-    "blockchains": [
-      {
-        "blockchain": "sui",
-        "networks": [
-          {
-            "network": "testnet",
-            "policies": []
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Rules:
-
-- Firmware returns the active policy document only when `provisioning.state` is
-  `provisioned`, persistent material is consistent, a committed active policy
-  record exists, and the request has a matching active session.
-- Corrupt, unreadable, missing, or unsupported current active policy material is a
-  persistent-material consistency error. Firmware must fail closed instead of
-  continuing to report a normal `provisioned` state when the policy cannot be
-  made active.
-- `policyId` is the lowercase SHA-256 identifier for the canonical stored
-  policy record. It is metadata for drift detection, not an authorization token.
-- The current StackChan CoreS3 target supports `agentq.policy`,
-  `defaultAction: "reject"`, bounded scope counts, and bounded
-  `blockchains[].networks[].policies[]` entries using the current field and
-  operator catalog. The normal product flow installs a valid empty
-  default-reject policy. The Firmware-owned `policy_propose` flow validates,
-  displays, and commits bounded current-schema policy material after
-  device-local approval.
-- `blockchainCount`, `networkCount`, `policyCount`, and `conditionCount` must
-  match the nested document.
-- The host process validates the response strictly, rejects secret-like fields and any
-  unexpected `sessionId`, and does not evaluate policy.
-- The host process MCP `policy_get` tool never exposes the session id.
-
-## Approval History
-
-`get_approval_history` is a session-scoped read-only request that returns
-Firmware-authored decision metadata. It is not an on-chain transaction history,
-not a host activity log, and not a policy edit surface. The current StackChan
-CoreS3 implementation stores this history in a fixed-size binary NVS ring
-buffer and wipes it during local material reset or error-state erase recovery.
-
-Request:
-
-```json
-{
-  "id": "req_history",
-  "version": 1,
-  "type": "get_approval_history",
-  "sessionId": "session_001",
-  "params": {
-    "limit": 4,
-    "beforeSeq": "42"
-  }
-}
-```
-
-`params` is optional. `limit` is an integer from `1` to `4`. `beforeSeq` is a
-canonical unsigned 64-bit decimal string used for newest-first pagination; the
-single value `"0"` is allowed, but other leading-zero encodings are rejected.
-
-Response:
-
-```json
-{
-  "id": "req_history",
-  "version": 1,
-  "type": "approval_history",
-  "records": [
-    {
-      "seq": "41",
-      "uptimeMs": "183204",
-      "timeSource": "uptime",
-      "eventKind": "signing",
-      "recordKind": "terminal",
-      "authorization": "policy",
-      "terminalResult": "policy_rejected",
-      "chain": "sui",
-      "method": "sign_transaction",
-      "reasonCode": "policy_rejected",
-      "payloadDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      "policyHash": "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-      "ruleRef": "default"
-    },
-    {
-      "seq": "40",
-      "uptimeMs": "183100",
-      "timeSource": "uptime",
-      "eventKind": "policy_update",
-      "result": "applied",
-      "reasonCode": "device_confirmed",
-      "policyHash": "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-      "policyCount": 1,
-      "highestAction": "reject"
-    }
-  ],
-  "hasMore": false
-}
-```
-
-Rules:
-
-- Firmware returns approval history only when `provisioning.state` is
-  `provisioned`, persistent material is consistent, and the request has a
-  matching active session.
-- The API is read-only. The protocol has no request to add, edit, delete, or
-  clear approval-history records.
-- Records are newest-first. `seq` and `uptimeMs` are unsigned decimal strings.
-  `timeSource: "uptime"` means the timestamp is device uptime, not wall-clock
-  time.
-- Current StackChan CoreS3 source records required signing confirmation and
-  terminal metadata plus recordable terminal metadata from
-  `policy_propose`. Invalid parameter, request-id conflict, malformed
-  transaction, unsupported chain, unsupported method, unsupported payload
-  size, unsupported transaction, and unsupported policy-action errors are not
-  persisted as approval history.
-- User signing confirmation records use `reasonCode: "device_confirmed"` for
-  offline facts review confirmation and `reasonCode: "blind_signing_confirmed"`
-  when the device showed the blind-signing warning for a valid account-bound
-  transaction whose offline facts review coverage was incomplete.
-- The offline-facts/blind distinction is recorded on the required confirmation record.
-  Terminal records describe the terminal result (`signed`, `user_rejected`,
-  `user_timed_out`, or `signing_failed`) and do not repeat whether the preceding
-  confirmation was offline facts review or blind signing.
-- Approval-history persistence is part of the terminal decision contract for
-  decisions that are recorded. If Firmware cannot persist a required history
-  record or its write budget is exhausted, `sign_transaction` returns the top-level
-  `history_error` protocol error instead of a `sign_result`.
-- Firmware rate-limits optional persistent signing history writes to reduce
-  flash wear. Required signing and policy-update history records are part of
-  their respective terminal contracts and must either be persisted before the
-  corresponding terminal result is reported or fail closed through the defined
-  error path.
-- History records must not store or return raw transaction bytes, full decoded
-  transactions, session ids, raw request ids, client names, mnemonic text,
-  seed, private key material, PINs, or complete policy documents.
-- The host process validates the response strictly, rejects secret-like fields and any
-  unexpected `sessionId`, preserves protocol integers as strings, and does not
-  evaluate policy or signing safety.
-- The host process MCP `get_approval_history` tool never exposes the session id.
-
-## Shared Signing Route And Validation Order
-
-Signing uses shared top-level request types rather than chain-specific product
-APIs. Firmware and host process independently classify the bounded
-`(type, chain, method)` route:
-
-- chain identifiers use `[a-z][a-z0-9_.-]*` and are at most 32 characters;
-- method identifiers use `[a-z][a-z0-9_.-]*` and are at most 64 characters;
-- malformed or missing route identifiers return `invalid_params`;
-- a syntactically valid unsupported chain returns `unsupported_chain`;
-- a supported chain with an unsupported or type-mismatched method returns
-  `unsupported_method`;
-- the only executable routes currently are Sui `sign_transaction` and Sui
-  `sign_personal_message`.
-
-`specs/sign-route-vectors.tsv` is the shared regression fixture for this
-contract. Client and Firmware tests must consume it when the route grammar,
-supported routes, or unsupported-route error classification changes. The
-current implementation uses small explicit classifiers in Client and Firmware
-instead of generated route constants or a dynamic registry. Route expansion
-must preserve the explicit switch/default routing boundary.
-
-Route classification is bounded and side-effect-free. Unsupported routes must
-not reach device/session state checks, stored-result replay, policy evaluation,
-approval UI, history writes, adapter decoding, or signing.
-
-For a supported signing route, validation order is:
-
-```text
-common envelope
-  -> (type, chain, method) route
-  -> device state and active session
-  -> shallow method parameters
-  -> form-discriminated signing-request identity
-  -> matching stored-result replay or `request_id_conflict`
-  -> selected chain-method adapter capacity and semantics
-  -> selected Firmware authorization gate
-```
-
-An explicit same-id signing retry replays a stored result only when its
-form-discriminated signing-request identity matches the stored identity. The identity
-binds the supported route and every validated method parameter through a
-length-delimited canonical serialization and SHA-256 fingerprint. A different
-validated signing request using the same `(session, request id)` returns
-`request_id_conflict` without adapter, policy, approval, history, or signing
-work. `get_result`, `ack_result`, and session-bound result cleanup remain keyed
-by `(session, request id)` and unchanged.
-
-The signing-request identity is Firmware-local recovery state. Hosts do not
-compute or verify it. Tracked target identity vectors are regression fixtures
-for the current inline and staged request forms, not a cross-version persistence
-or compatibility format.
-
-Stored signing results are bounded RAM recovery state, not persistent replay
-protection. Retry match and `request_id_conflict` behavior apply only while the
-original `(session, request id)` entry remains buffered. After eviction, ack,
-session end, or reset, `get_result` returns `unknown_request` and a same-id
-signing submission is evaluated as a normal new request through the current
-route, state/session, parameter, adapter, and authorization gates.
-
-Common core, the host process, MCP, and CLI request validation owns canonical base64
-syntax and the chain-independent transport/frame bound. It must not reject a
-request using the current Sui adapter's decoded-payload capacity. Firmware's
-selected Sui adapter owns base64 decoding, its current implementation capacity,
-transaction or message semantics, account binding, and signing preparation.
-
-## Signable Payload Upload
-
-Large payloads for signing requests use a shared, chain-neutral upload family
-before the signing request consumes a finalized descriptor. These operations
-submit bounded input to Firmware-owned volatile state. They are not external
-state setters, do not select the signing authorization mode, and do not
-authorize signing by themselves.
-
-Supported operations:
-
-```text
-payload_upload_begin
-payload_upload_chunk
-payload_upload_finish
-payload_upload_abort
-```
-
-`payload_upload_begin` declares the supported signing route, payload kind,
-decoded size, and raw payload digest:
-
-```json
-{
-  "id": "req_payload_begin_001",
-  "version": 1,
-  "type": "payload_upload_begin",
-  "sessionId": "session_001",
-  "chain": "sui",
-  "method": "sign_transaction",
-  "payloadKind": "transaction",
-  "sizeBytes": "131072",
-  "payloadDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-}
-```
-
-`payload_upload_chunk` appends the next sequential decoded chunk. The current
-contract is streaming-only: `offsetBytes` must equal Firmware's current
-received-byte count for the active upload.
-
-```json
-{
-  "id": "req_payload_chunk_001",
-  "version": 1,
-  "type": "payload_upload_chunk",
-  "sessionId": "session_001",
-  "uploadId": "upload_001",
-  "offsetBytes": "0",
-  "chunk": "AA..."
-}
-```
-
-`payload_upload_finish` verifies the declared size and digest, then returns an
-immutable payload descriptor:
-
-```json
-{
-  "id": "req_payload_finish_001",
-  "version": 1,
-  "type": "payload_upload_finish",
-  "sessionId": "session_001",
-  "uploadId": "upload_001"
-}
-```
-
-```json
-{
-  "id": "req_payload_finish_001",
-  "version": 1,
-  "type": "payload_upload_finish_result",
-  "payloadRef": "payload_001",
-  "chain": "sui",
-  "method": "sign_transaction",
-  "payloadKind": "transaction",
-  "sizeBytes": "131072",
-  "payloadDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-}
-```
-
-`payload_upload_abort` wipes a same-session active upload or finalized payload
-by `uploadId` or `payloadRef`:
-
-```json
-{
-  "id": "req_payload_abort_001",
-  "version": 1,
-  "type": "payload_upload_abort",
-  "sessionId": "session_001",
-  "payloadRef": "payload_001"
-}
-```
-
-Rules:
-
-- Upload operations require material-backed `provisioned` state and a matching
-  active session.
-- Firmware allows at most one active or finalized upload per session.
-- Upload bytes are volatile RAM scratch. They are wiped on abort, timeout,
-  session cleanup, disconnect/session end, material error, reset, and signing
-  terminal cleanup. An incomplete upload must block signing. A finalized payload
-  may be consumed only by the same-session `sign_transaction` request whose
-  `payloadRef` and descriptor echo match the finalized descriptor. Other
-  sensitive flows, including connection approval, identification display, policy
-  proposal, personal-message signing, nested upload, or unrelated transaction
-  signing, must fail `busy` while upload/finalized payload scratch is pending
-  unless Firmware explicitly owns a cleanup transition before entering that
-  flow.
-- `payloadDigest` is the SHA-256 digest of the raw decoded payload bytes. It is
-  upload integrity and display/history identity metadata, not a Sui signing
-  intent digest and not a host-supplied signing input.
-- A finalized `payloadRef` is immutable and same-session only. A stale,
-  wrong-session, wrong-route, or already-consumed `payloadRef` must fail closed
-  before adapter, policy, approval, history, or signing work.
-- Retained-result lookup for a re-submitted signing request occurs after
-  shallow method parameter validation and before live payload bytes are
-  resolved. This lets same-id retry return a retained result even after the
-  finalized payload bytes were wiped by the original terminal path.
-
-## Transaction Signing Request
-
-`sign_transaction` is the shared protocol request for transaction signing.
-The request shape does not contain an authorization selector. Firmware reads
-its device-local signing authorization mode and chooses the internal signing
-gate:
-
-- both modes validate the request envelope, parse the transaction bytes, bind
-  the parsed sender to the active device account, apply the active account's Sui
-  gas sponsor setting to the parsed gas owner, and reject when their selected
-  gate rejects the request;
-- `policy`: validate active policy availability, request network scope, account
-  binding, and offline policy condition facts, then sign only when the active
-  current policy has a matching `sign` policy. Missing, incomplete, unmatched,
-  or reject-matched policy coverage returns `status: "policy_rejected"`.
-  Malformed, unbindable, unsupported-version/kind, `TransactionKind`-only,
-  trailing, or oversized transaction bytes remain request errors;
-- `user`: build an offline facts review when complete offline facts review
-  coverage exists. Complete user review coverage requires both Firmware-derived
-  semantic facts and a bounded display summary that includes the required review
-  details.
-  If Firmware can still validate and account-bind the transaction but cannot
-  provide complete offline facts review coverage, it may show an explicit
-  blind-signing warning instead. Both user paths require device-local human
-  approval using the
-  current human approval input mode and either reject, time out, or sign the
-  original transaction bytes.
-
-There is no cross-over between gates. A policy rejection or incomplete policy
-coverage in policy mode ends the request without user confirmation. A user
-rejection or timeout in user mode ends the request.
-
-Request shape:
-
-Inline form:
-
-```json
-{
-  "id": "req_sign_001",
-  "version": 1,
-  "type": "sign_transaction",
-  "sessionId": "session_001",
-  "chain": "sui",
-  "method": "sign_transaction",
-  "params": {
-    "network": "devnet",
-    "txBytes": "AA..."
-  }
-}
-```
-
-Staged form:
-
-```json
-{
-  "id": "req_sign_002",
-  "version": 1,
-  "type": "sign_transaction",
-  "sessionId": "session_001",
-  "chain": "sui",
-  "method": "sign_transaction",
-  "params": {
-    "network": "devnet",
-    "payloadRef": "payload_001",
-    "payloadKind": "transaction",
-    "sizeBytes": "131072",
-    "payloadDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-  }
-}
-```
-
-Current implementation rules:
-
-- `sign_transaction` is valid only in material-backed `provisioned` state with
-  a matching active session.
-- Request fields may not include `authorization`, `timeoutMs`,
-  `approvalTimeoutMs`, `durationMs`, raw session tokens beyond the envelope
-  `sessionId`, or signing material.
-- The current implementation is limited to `chain: "sui"` and
-  `method: "sign_transaction"` for bounded Sui `TransactionData::V1 ->
-  ProgrammableTransaction` bytes decoded by the Firmware facts extractor.
-  Unsupported versions, unsupported transaction kinds, `TransactionKind`-only
-  bytes, malformed bytes, trailing bytes, out-of-range command references,
-  serialized payload/input capacity overflow, and transactions whose minimum
-  sender or gas owner facts cannot be extracted or cannot pass account binding
-  fail closed.
-  Policy authorization validates active policy availability, request network
-  scope, account binding, and complete offline policy condition facts, then
-  signs only when the active current policy has a matching `sign` policy.
-  Missing, incomplete, unmatched, or reject-matched policy coverage returns
-  `policy_rejected`.
-  User authorization shows covered offline facts when offline facts review
-  coverage is complete, including the required details in the bounded display
-  summary, or an explicit blind-signing warning when Firmware can validate and
-  bind the transaction but offline facts review coverage is incomplete.
-- `params.network` is required and must be one of `mainnet`, `testnet`,
-  `devnet`, or `localnet`. Current Sui transaction bytes do not carry network
-  identity, so Firmware validates this as request context only. It is not
-  emitted as a policy authorization fact. When the active Sui identity is
-  zkLogin, Firmware also requires `params.network` to match the locally stored
-  zkLogin proof network before payload admission, staged payload resolution, Sui
-  adapter preparation, or any authorization gate can sign.
-- `params` must contain exactly one payload source: inline `txBytes` or staged
-  `payloadRef`. `txBytes` must be canonical base64 and fit the shared
-  transport/frame bound. A staged request must echo the immutable descriptor
-  fields returned by `payload_upload_finish`: `payloadKind`, `sizeBytes`, and
-  `payloadDigest`. These fields are untrusted request metadata; Firmware
-  compares them with the finalized same-session descriptor before consuming
-  live payload bytes. If both or neither payload source forms are present, the
-  request is invalid.
-- The current Sui transaction route can receive staged payload bytes up to the
-  Sui serialized transaction maximum. This capacity is a payload delivery and
-  adapter input bound, not a claim that every Sui transaction shape is
-  semantically signable. Serialized payload/input capacity overflow returns
-  `unsupported_payload_size`; malformed decoded bytes return
-  `malformed_transaction`; unsupported transaction identity, unsupported version
-  or kind, `TransactionKind`-only payloads, or inputs whose minimum
-  sender or gas owner facts cannot be extracted fail closed before signing.
-  Parser success, policy facts coverage, and user review display coverage are
-  separate outcomes. Separate detail-review parser limits may prevent complete
-  offline facts review without making the serialized payload oversized. A valid
-  account-bound transaction that stays within the serialized payload/input bound
-  but exceeds a detail-review parser limit may enter the explicit user-mode
-  blind signing path, while policy mode rejects policy-incomplete transactions.
-  A transaction can also parse successfully but still enter user-mode blind
-  signing when the bounded user review summary cannot display the required
-  review details. These are Firmware adapter and authorization outcomes, not
-  common Core, host process, MCP, and CLI request-format limits.
-- Firmware must derive the signing account from stored device material. The
-  parsed sender must match that device-derived account. The parsed gas owner
-  must also match unless `acceptGasSponsor` is `true` in the active account's
-  `get_accounts.accounts[].sponsoredTransactions` object. If the setting is
-  missing, unreadable, invalid, or `false`, a different parsed gas owner fails
-  closed with the existing `account_error` boundary.
-- When `acceptGasSponsor` is `true`, Agent-Q still signs only as the parsed
-  sender/active account and returns only that sender signature. It does not
-  produce, collect, or assemble a sponsor gas owner signature and does not
-  execute the transaction. Sponsor signature collection and execution assembly
-  are outside this protocol.
-- Request-supplied expected-signer bindings are unsupported in the current
-  implementation.
-- Firmware must not call the signing service before the required
-  approval-history record for the selected authorization mode is durable. If a
-  required history write fails, Firmware returns top-level `history_error` and
-  must not claim the corresponding terminal result.
-- `get_capabilities.methods` does not advertise signing. Signing availability
-  is advertised only through top-level `signing.authorization` and
-  `signing.methods`.
-
-Policy authorization mode:
-
-- Firmware evaluates already extracted transaction facts against the stored
-  active policy. The common evaluator owns shared `common.*` policy fields;
-  chain-specific field identifiers, descriptor enablement, and transaction
-  meaning stay in the corresponding method adapter.
-- A `reject` decision returns `sign_result` with `authorization: "policy"` and
-  `status: "policy_rejected"` after the corresponding terminal
-  approval-history record is persisted.
-- A `sign` decision writes the required policy signing confirmation history
-  record before calling the signing service, then writes the durable signed
-  terminal history record before returning `sign_result` with
-  `authorization: "policy"` and `status: "signed"`.
-- Missing or invalid active policy providers fail closed. In normal boot-time
-  state handling that condition is a persistent-material consistency error, and
-  any late provider failure is mapped to `policy_error`.
-
-User authorization mode:
-
-- Firmware must parse enough input to show a bounded offline facts summary
-  before entering device confirmation. Unsupported or malformed transactions
-  must fail before any signing approval UI can be confirmed. The displayed
-  summary must be derived from the same inline or staged transaction bytes that
-  would be signed; callers must not supply independent review facts.
-- Human approval input mode controls whether the review proceeds directly by
-  physical Confirm or continues to local PIN verification. This setting is not
-  supplied by the request and is not the signing authorization mode.
-- Firmware owns fixed internal `30000` millisecond physical-input windows for
-  review confirmation and PIN entry. The host cannot set or negotiate them
-  through the protocol. In the signing review UI, scrolling the review pauses
-  the review window and the on-device timer bar; when scrolling ends or when
-  the Firmware-owned abandoned-scroll fallback fires, Firmware resumes the
-  remaining review time. In PIN mode, submitting a complete PIN
-  pauses the input timer while stored-PIN cryptographic verification runs. The
-  original signing confirmation window is the review/PIN-entry admission
-  boundary and caps PIN entry before submit; it is not the terminal timeout
-  authority for stored-PIN cryptographic processing after submit. A wrong PIN
-  result returns to the same PIN-entry state by resuming the remaining paused
-  input window unless the shared wrong-PIN lockout is active. The internal
-  local-auth worker watchdog still fails closed as authentication unavailable.
-- Review Reject is the terminal `user_rejected` action. Back from the PIN
-  screen wipes only PIN scratch and returns to the offline facts review; it
-  must not be reported as `user_rejected` or written as a terminal rejection.
-- The state owner must validate the session immediately before performing the
-  required confirmation history write and must enter the signing critical
-  section in the same successful transition. A session loss after the write
-  succeeds must not downgrade the request to pre-signing cleanup.
-
-## Personal Message Signing Request
-
-`sign_personal_message` is the shared protocol request for Sui personal-message
-signing. The request shape does not contain an authorization selector. The
-current implementation supports this method only in device-local `user`
-authorization mode because policy facts and policy rules for personal-message
-contents are not implemented.
-
-Request shape:
-
-```json
-{
-  "id": "req_sign_msg_001",
-  "version": 1,
-  "type": "sign_personal_message",
-  "sessionId": "session_001",
-  "chain": "sui",
-  "method": "sign_personal_message",
-  "params": {
-    "network": "devnet",
-    "message": "base64-message-bytes"
-  }
-}
-```
-
-Current implementation rules:
-
-- `sign_personal_message` is valid only in material-backed `provisioned` state
-  with a matching active session.
-- Request fields may not include `authorization`, `timeoutMs`,
-  `approvalTimeoutMs`, `durationMs`, raw session tokens beyond the envelope
-  `sessionId`, or signing material.
-- The current implementation is limited to `chain: "sui"` and
-  `method: "sign_personal_message"` with canonical base64 `params.message`
-  that fits the shared transport/frame bound. The current Sui Firmware adapter
-  has a 256-byte decoded personal-message implementation capacity. Capacity
-  overflow returns `unsupported_payload_size`; this is an adapter outcome, not
-  a common Core, host process, MCP, and CLI request-format limit.
-- `params.network` is required and must be one of `mainnet`, `testnet`,
-  `devnet`, or `localnet`. Current Sui personal-message bytes do not carry
-  network identity, so Firmware validates this only as request context and does
-  not expose it as a policy fact or message-derived history proof. When the
-  active Sui identity is zkLogin, Firmware also requires `params.network` to
-  match the locally stored zkLogin proof network before entering user
-  authorization.
-- Firmware must derive the signing account from stored device material and show
-  a bounded clear-signing review derived from the exact message bytes that will
-  be signed. Full message display may be replaced by bounded preview plus digest
-  metadata, but callers must not supply independent review facts.
-- Review Reject is the terminal `user_rejected` action. Back from the PIN
-  screen wipes only PIN scratch and returns to the clear-signing review; it
-  must not be reported as `user_rejected` or written as a terminal rejection.
-- Firmware must build the Sui PersonalMessage intent digest by BCS-serializing
-  the message as a byte vector, applying the Sui PersonalMessage intent, and
-  signing that digest. It must not reuse the Sui transaction-intent signing path
-  for this method.
-- Firmware must not call the signing service before the required local-PIN
-  confirmation history record is durable. If a required history write fails,
-  Firmware returns top-level `history_error` and must not claim the corresponding
-  terminal result.
-- If the device-local signing authorization mode is `policy`, Firmware returns
-  a fail-closed `unsupported_method` error. It must not fall back to user
-  confirmation.
-- `get_capabilities.methods` does not advertise signing. Signing availability
-  is advertised only through top-level `signing.authorization` and
-  `signing.methods`. `sign_personal_message` appears only when the current
-  Firmware-local signing authorization mode is `user`.
-- `sign_result` for a signed personal message includes `authorization: "user"`,
-  `chain: "sui"`, `method: "sign_personal_message"`, `signature`, and
-  `messageBytes`, where `messageBytes` is the canonical base64 message bytes
-  that Firmware signed. Non-signed terminal responses do not include
-  `messageBytes`.
-- History must not store or return raw full message bytes, session ids, raw
-  request ids, mnemonic text, seed, private key material, PINs, or device-local
-  UI state.
-
-## Sign Result Response Examples
-
-The following examples apply to the signing requests above. Signed transaction
-responses do not include `messageBytes`; signed personal-message responses
-include the canonical base64 message bytes that Firmware signed.
-
-Signed transaction response:
-
-```json
-{
-  "id": "req_sign_tx_001",
-  "version": 1,
-  "type": "sign_result",
-  "authorization": "user",
-  "status": "signed",
-  "chain": "sui",
-  "method": "sign_transaction",
-  "signature": "base64-sui-ed25519-signature-envelope"
-}
-```
-
-Signed personal-message response:
-
-```json
-{
-  "id": "req_sign_msg_001",
-  "version": 1,
-  "type": "sign_result",
-  "authorization": "user",
-  "status": "signed",
-  "chain": "sui",
-  "method": "sign_personal_message",
-  "messageBytes": "base64-message-bytes",
-  "signature": "base64-sui-ed25519-signature-envelope"
-}
-```
-
-User rejected response:
-
-```json
-{
-  "id": "req_sign_tx_001",
-  "version": 1,
-  "type": "sign_result",
-  "authorization": "user",
-  "status": "user_rejected",
-  "error": {
-    "code": "user_rejected",
-    "message": "The signing request was rejected on the device."
-  }
-}
-```
-
-`sign_result.status` values for `authorization: "user"`:
-
-- `signed`: Firmware generated the signature after device confirmation, the
-  required pre-signing confirmation history record, and a durable signed
-  terminal history record.
-- `user_rejected`: device-local confirmation explicitly rejected the request.
-- `user_timed_out`: device-local confirmation expired without approval.
-- `signing_failed`: device confirmation succeeded, but signing failed before a
-  signature response could be produced.
-
-Pre-signing session loss, disconnect cancellation, or pre-signing confirmation
-history write failure are cleanup failures, not signature results. They must
-produce no signature and may return a top-level error instead of `sign_result`.
-
-Terminal error mapping:
-
-| status | error.code | error.message |
+| Field | Success | Failure | Type | Rule |
+| --- | --- | --- | --- | --- |
+| `id` | present when request id was parseable | present when request id was parseable | safe request id string | Never invented after an unparseable id. |
+| `version` | yes | yes | current protocol version | Response version is the responder's current protocol version. |
+| `success` | `true` | `false` | boolean | Determines whether `result` or `error` is present. |
+| `method` | yes | present when request method was parseable | `DeviceMethod` | Never invented after an unparseable method. |
+| `result` | yes | forbidden | method result object | Parsed by the caller according to `method`. |
+| `error` | forbidden | yes | normalized error object | Contains canonical code, message, and retryable flag. |
+
+The failure `error` object is:
+
+| Field | Type | Rule |
 | --- | --- | --- |
-| `user_rejected` | `user_rejected` | `The signing request was rejected on the device.` |
-| `user_timed_out` | `user_timed_out` | `The signing request timed out on the device.` |
-| `signing_failed` | `signing_failed` | `The device could not produce a signature.` |
+| `code` | `DeviceErrorCode` | Fixed by the single public error table. |
+| `message` | string | Fixed by `DeviceErrorCode`; adapters and Firmware handlers do not author user-visible text. |
+| `retryable` | boolean | Fixed by `DeviceErrorCode`; adapters do not override it. |
 
-`signed` transaction responses may contain only `authorization`, `chain`,
-`method`, and `signature` as method-specific output. `signed`
-personal-message responses also include canonical base64 `messageBytes` for the
-message bytes that Firmware signed. Non-signed terminal responses may contain
-only `authorization` and `error` beyond the shared envelope fields. A
-`policy_rejected` response also includes `policyHash` and `ruleRef`. No
-`sign_result` response may contain raw transaction bytes, decoded transaction
-internals, session id, request id beyond the envelope id, account private
-material, seed, mnemonic, PIN, policy scratch, or device-local UI state.
-Client, provider, and MCP parsers must fail closed on extra or secret-like
-fields. Current adapter projections may expose only a subset of signing paths,
-but Firmware remains responsible for rejecting unavailable or invalid signing
-requests.
+Method-specific success status fields are allowed only inside `result` when
+`success=true`. Rejection, timeout, unsupported state, payload failure, signing
+failure, and policy rejection are top-level failed outcomes.
 
-Firmware-authored `sign_result` output fields are bounded by their output
-contract, not by request-frame limits or the current Sui adapter input
-capacity. The current Sui `signature` is a fixed-format Ed25519 Sui signature
-envelope; `policyHash`, `ruleRef`, and terminal `error` objects are fixed by
-their protocol patterns and canonical messages. The current variable-size
-signed-result payload field is personal-message `messageBytes`; host parsers
-bound it by the protocol response-line transport limit while still requiring
-canonical base64 syntax.
+## DeviceErrorCode
 
-## Response Delivery And Provider Boundary
+`DeviceErrorCode` is the only user-visible failure code source of truth.
+Successful responses do not have a code.
 
-- Firmware signature generation, terminal history persistence, USB response
-  delivery, host receipt, provider return, and application use of a
-  signature are separate events.
-- `sign_result.status: "signing_failed"` means the authorization source
-  approved signing but Firmware could not produce a signature. It is not a
-  response-delivery failure status.
-- `signing_failed` is terminal-idempotent for the signing request id. If the
-  retained result is imported with the same `(session, request id)` and the
-  same signing-request identity, Firmware must replay the stored
-  `signing_failed` result instead of attempting to sign again. A caller that
-  wants a new signing attempt after `signing_failed` must submit a fresh
-  request id and pass through the normal route, state/session, parameter,
-  adapter, and authorization gates again.
-- If Firmware generates a signature but cannot record the required signed
-  terminal history record before sending `sign_result`, Firmware must not send
-  the signature. It may return a top-level `history_error`. That error means
-  signature generation occurred, provider receipt did not occur, and a later
-  `get_approval_history` read must not be treated as signed terminal proof
-  unless the signed terminal record exists.
-- If Firmware generates a signature and records a durable `signed` terminal
-  record, then response delivery fails before the host process receives the response, the
-  caller-facing result is a transport or protocol failure. That failure must
-  not be reported as `user_rejected`, `user_timed_out`, `policy_rejected`, or
-  `signing_failed`, and it must not claim that Firmware did not generate a
-  signature. A later `get_approval_history` read may show the durable `signed`
-  terminal record.
-- Firmware buffers each completed `sign_result` in bounded RAM, keyed by
-  `(session, request id)`, so a result whose response delivery failed can be
-  recovered while the entry is still retained. The current Firmware store is a
-  small fixed-size buffer and evicts the oldest entry when full. The host
-  recovers a retained result by re-sending the same request id (Firmware returns
-  the buffered result instead of signing again) or by a `get_result` request
-  (standard envelope + `sessionId`, with `id` set to the original signing
-  request's id), which returns the buffered `sign_result` or an
-  `unknown_request` error if none is buffered. An `ack_result` request releases
-  a buffered result. The buffer is session-bound (another session cannot read
-  it), survives a transient link drop via a short session grace window, and is
-  cleared on ack, session end, disconnect/session cleanup, wipe, or device
-  reset. A device reset clears it, so a later re-request re-runs the normal
-  signing gates. The host owns request id uniqueness. A re-submitted signing
-  request replays only when its validated signing-request identity matches the
-  stored identity and the bounded RAM entry is still retained; a different
-  request using the same id returns `request_id_conflict` only while the
-  original entry is still retained. Because `signing_failed` is one of these
-  completed terminal `sign_result` values, same-id retry returns the stored
-  failure while retained; it is not a transient retry trigger.
-- A re-submitted signing request reaches buffered-result lookup only after its
-  common envelope, supported `(type, chain, method)` route, device state, and
-  active session, exact fields, and shallow method parameters succeed.
-  Unsupported routes and malformed requests cannot access buffered signing
-  results.
-- The provider `signTransaction` API and MCP `sign_transaction` tool return
-  discriminated results for Firmware-authored terminal `sign_result` statuses.
-  Device rejection, device timeout, policy rejection, and signing failure are
-  product outcomes, not provider or MCP exceptions. Adapter promise rejection is
-  reserved for local adapter/programmer errors; host process or transport failures
-  use the same structured public-error style as the current methods.
-- Provider-sui must not expose Admin, policy proposal, active policy reads,
-  approval-history reads, or a host-selected policy-signing API. MCP/Admin
-  package surfaces may expose management and policy proposal tools, but
-  Firmware remains the authority for security-relevant enforcement.
+| Code | Retryable | Fixed message | Meaning |
+| --- | --- | --- | --- |
+| `invalid_request` | false | Device request is malformed. | Envelope, JSON, id, version, or method shape is invalid. |
+| `invalid_params` | false | Device request payload is invalid. | Method payload shape or value is invalid. |
+| `invalid_state` | false | Device state does not allow this request. | Firmware state does not allow the method. |
+| `invalid_session` | false | Session is missing, expired, or does not match. | Session is missing, expired, or does not match. |
+| `request_id_conflict` | false | Request id is already bound to a different request. | Request id is already bound to a different retained request identity. |
+| `unknown_request` | false | Requested retained result does not exist. | Requested retained result does not exist in the current session. |
+| `no_active_device` | false | No active device is configured. | Host process has no selected active device for the requested scope. |
+| `device_not_found` | true | Requested device is not known to Agent-Q. | Host process cannot find the requested stored device. |
+| `invalid_device_id` | false | Device id is invalid. | Host-side device id input is invalid. |
+| `invalid_device` | false | Device identity is unsafe. | Host process rejected a device identity as unsafe. |
+| `device_mismatch` | false | Connected device does not match the requested device. | Host process connected to a device whose Firmware identity did not match the requested device id. |
+| `unsupported_method` | false | Device method is not supported. | Method is not implemented by this Firmware or host boundary. |
+| `unsupported_version` | false | Protocol version is not supported. | Protocol version is not supported. |
+| `unsupported_chain` | false | Chain is not supported. | Chain is not supported for the method. |
+| `unsupported_transaction` | false | Transaction shape is not supported. | Transaction shape is not supported by the current signing path. |
+| `malformed_transaction` | false | Transaction bytes are malformed. | Transaction bytes or transaction structure are malformed. |
+| `payload_too_large` | false | Payload exceeds the current device payload capacity. | Payload exceeds the current device payload capacity. |
+| `payload_unavailable` | false | Referenced payload is unavailable. | Referenced internal payload is missing, expired, consumed, or wrong-session. |
+| `payload_conflict` | true | Another sensitive request blocks this payload. | Another payload or sensitive flow blocks this request. |
+| `busy` | true | Device is busy with another request. | Device is already handling another request. |
+| `timeout` | true | The signing request timed out on the device. | Device or user action timed out. |
+| `user_rejected` | false | The signing request was rejected on the device. | Device-local user confirmation rejected the request. |
+| `policy_rejected` | false | The signing request was rejected by device policy. | Firmware policy rejected the request. |
+| `signing_failed` | false | The device could not produce a signature. | Firmware could not produce the requested signature. |
+| `ui_error` | false | Device could not display or manage required UI. | Firmware could not display or manage required device UI. |
+| `auth_unavailable` | false | Device-local authentication verifier is unavailable. | Device-local authentication verifier is unavailable. |
+| `account_unavailable` | false | Device account material is unavailable or does not match the request. | Device account material is unavailable or does not match the request. |
+| `policy_unavailable` | false | Firmware policy store or active policy is unavailable. | Firmware policy store or active policy is unavailable. |
+| `history_unavailable` | false | Approval history is unavailable. | Approval history is unavailable. |
+| `rng_unavailable` | true | Device random generator is unavailable. | Firmware random generator is unavailable. |
+| `invalid_response` | true | Device response is malformed. | Firmware response JSON, envelope, or method result shape is invalid. |
+| `handshake_failed` | true | Device status or identification handshake failed. | Device status or identification handshake failed. |
+| `port_not_found` | true | Requested device port is not connected. | Requested device port is not connected. |
+| `port_in_use` | true | Requested device port is already in use. | Requested device port is already in use. |
+| `port_permission_denied` | false | Host process lacks permission to access the device port. | Host process lacks permission to access the device port. |
+| `unsupported_transport` | false | Host environment does not support the required device transport. | Host environment does not provide the transport required by the adapter. |
+| `transport_closed` | true | Device connection closed before a valid response. | Established host-device connection closed before a valid response. |
+| `transport_error` | true | Host-device transport failed before a valid response. | Host-device transport failed before a valid device response was received. |
+| `local_server_unavailable` | true | Local Agent-Q server is unavailable. | Local CLI client cannot reach the local Agent-Q server. |
+| `identification_code_exhausted` | true | Identification code could not be allocated. | Host process could not allocate a unique identification code. |
+| `internal_output_error` | false | Agent-Q produced an unexpected internal result. | Output sanitization or internal result validation failed. |
+| `unknown_error` | false | Agent-Q request failed. | Failure did not match a known public code. |
 
-Approval-history contract:
+Rules:
 
-- Device-confirmed and policy-authorized signing use `eventKind: "signing"`.
-- Required pre-signing records use `recordKind: "confirmation"`. User-confirmed
-  signing uses `confirmationKind: "local_pin"` when human approval input mode
-  is PIN and `confirmationKind: "physical_confirm"` when human approval input
-  mode is Confirm. Policy-authorized signing uses `confirmationKind: "policy"`
-  and includes `policyHash` and `ruleRef`.
-- Recordable terminal results are `signed`, `user_rejected`,
-  `user_timed_out`, `policy_rejected`, and `signing_failed`.
-- Terminal records use `recordKind: "terminal"` and store only bounded metadata:
-  authorization, chain, method, reason code, payload digest, optional
-  `policyHash`, optional `ruleRef`, and optional terminal result. They must not
-  store raw transaction bytes, decoded transaction internals, session ids, raw request
-  ids, PINs, seed, mnemonic, private key material, or full UI text.
-- A durable `signed` terminal record means Firmware generated a signature after
-  device confirmation or policy authorization. It does not prove host process
-  received the signature.
-- If a required confirmation history write fails before signing, Firmware must
-  return top-level `history_error` and must not call the signing service.
+- Every code in this table is a failure code used as `error.code`.
+- Every failure code has exactly one fixed message.
+- Every failure code has exactly one fixed retryable value.
+- Method handlers, adapters, providers, CLI, MCP, local HTTP, and Firmware
+  response writers select only an error code. They do not author public text.
+- Firmware local result enums are internal only. Every public failure maps
+  through this table before leaving a boundary.
+- Any unmapped error becomes `unknown_error`.
 
-## Policy Update Proposal
+## DeviceMethod
 
-Admin is a host process capability, not a separate product protocol. The current
-policy-write path is the top-level `policy_propose` request. It is not a
-signing method, it must not use `chain` or `method`, and it must not route
-through `sign_transaction`.
+`DeviceMethod` is the only product method table. Adding a device method means
+adding one row here and then implementing that row through the same
+`DeviceRequest` and `DeviceResponse` contract.
 
-### `policy_propose`
+| Method | Session rule | Payload rule | Payload schema owner | Result schema owner | Firmware gate |
+| --- | --- | --- | --- | --- | --- |
+| `get_status` | forbidden | forbidden | no payload | `StatusResult` object: device status and provisioning status | Firmware status/material consistency refresh gate. |
+| `identify_device` | forbidden | required | `IdentifyDevicePayload` object: `{ code }` | `IdentifyDeviceResult` object: displayed code and device status | Firmware identification display gate. |
+| `connect` | forbidden | required | `ConnectPayload` object: `{ clientName }` | `ConnectResult` object: session id, session TTL, and device status | Provisioned material, active policy, local authentication verifier, and Firmware-owned device-local approval gate. |
+| `disconnect` | required | forbidden | no payload | `DisconnectResult` object: `{ status: "disconnected" }` | Active session cleanup gate. |
+| `get_capabilities` | required | forbidden | no payload | `CapabilitiesResult` object: chains, accounts, methods, signing state, and credential support | Active session and provisioned material gate. |
+| `get_accounts` | required | forbidden | no payload | `AccountsResult` object: public accounts | Active session and account-material gate. |
+| `policy_get` | required | forbidden | no payload | `PolicyGetResult` object: active policy document | Active session and policy-store gate. |
+| `get_approval_history` | required | required | `ApprovalHistoryPayload` object: `{ limit, beforeSeq? }` | `ApprovalHistoryResult` object: records and `hasMore` | Active session and approval-history store gate. |
+| `sign_transaction` | required | required | `SuiSignTransactionPayload` object: `{ chain, network, txBytes }` after payload resolution | `SignTransactionResult` object: signature metadata for signed result | Active session, account binding, device-local signing mode, policy or device-confirmation signing gate. |
+| `sign_personal_message` | required | required | `SuiSignPersonalMessagePayload` object: `{ chain, network, message }` after payload resolution | `SignPersonalMessageResult` object: signature and message bytes for signed result | Active session, account binding, user-confirmed signing gate; policy mode fails closed. |
+| `policy_propose` | required | required | `PolicyProposePayload` object: `{ policy }` after payload resolution | `PolicyProposeResult` object: applied/rejected/timed-out/storage result and policy summary when available | Active session, policy parser, device-local policy review, local authentication, and policy-store commit gate. |
+| `credential_prepare` | required | required | `CredentialPreparePayload` object: `{ chain, credential }` | `CredentialPrepareResult` object: public key and derived address preparation | Active session and credential preparation gate. |
+| `credential_propose` | required | required | `CredentialProposePayload` object: `{ chain, credential, network, address, publicKey, maxEpoch, inputs }` after payload resolution | `CredentialProposeResult` object: activated/rejected/timed-out/storage result and session-ended flag | Active session, proof parser, device-local credential review, local authentication, and credential-store commit gate. |
+| `get_result` | required | required | `RetainedResultPayload` object: `{ retainedRequestId }` | method result object retained for `retainedRequestId` | Active session and retained-result lookup gate. |
+| `ack_result` | required | required | `RetainedResultPayload` object: `{ retainedRequestId }` | `AckResult` object: `{ status: "acked" }` | Active session and retained-result cleanup gate. |
 
-`policy_propose` is a policy-write proposal request. StackChan CoreS3
-Firmware, host process, and MCP implement the current supported path: a
-session-scoped current-schema policy proposal is validated by Firmware, shown
-on device as a policy-update summary review, advanced to local PIN approval
-only after device-local Continue, committed through the canonical active-policy
-store, and reported as `policy_propose_result`. The local Admin Page can submit
-current-schema policy proposals, including a minimal Sui testnet policy
-template. Policy reset is a Firmware-local Settings action, not a protocol
-request or host API shortcut.
+`Session rule` values are exactly `forbidden`, `required`, or `optional`.
+`Payload rule` values are exactly `forbidden`, `required`, or `optional`.
 
-The method is a proposal, not a setter. The host process or Admin may submit a bounded
-policy document, but Firmware remains the authority that validates the document,
-shows device-local approval, commits the active policy, and reports the result.
-The pending proposal remains bound to the same active `sessionId` until the
-terminal result. If that session ends, disconnects, or no longer matches
-before commit, Firmware must cancel the pending proposal and must not change the
-active policy.
+## Payload Transport
 
-Request shape:
+Direct/upload is an internal transport strategy under `requestDevice`.
 
-```json
-{
-  "id": "req_policy_propose",
-  "version": 1,
-  "type": "policy_propose",
-  "sessionId": "session_001",
-  "params": {
-    "policy": {
-      "schema": "agentq.policy",
-      "defaultAction": "reject",
-      "blockchains": [
-        {
-          "blockchain": "sui",
-          "networks": [
-            {
-              "network": "testnet",
-              "policies": []
-            }
-          ]
-        }
-      ]
-    }
-  }
-}
+| Boundary | Allowed to choose direct/upload | Allowed to know upload descriptor | Allowed to validate method payload | Rule |
+| --- | --- | --- | --- | --- |
+| adapter | no | no | no | Converts external input to `requestDevice` only. |
+| `requestDevice` | yes | yes, internally | no | Chooses transport and sends device request. |
+| payload store | no | yes | no | Owns payload descriptor metadata. |
+| method handler | no | no | yes | Receives resolved method payload only. |
+
+Rules:
+
+- No adapter code measures payload size to choose direct/upload.
+- No method-specific code measures payload size to choose direct/upload.
+- No method payload echoes `payloadKind`, `sizeBytes`, or `payloadDigest`.
+- Any internal `payloadRef` is resolved before method validation.
+- Public capabilities do not expose `inlineMaxBytes`, `chunkMaxBytes`,
+  `payloadMaxBytes`, `payloadKind`, `sizeBytes`, or `payloadDigest` as adapter
+  decision inputs.
+
+Required transport flow:
+
+```text
+adapter -> requestDevice({ method, payload })
+requestDevice -> common payload transport
+common payload transport -> direct frame or upload frames
+Firmware -> method handler after payload resolution
 ```
 
-Policy document rules for the current version:
+Forbidden transport flow:
 
-- Wire format: JSON inside the existing JSONL protocol envelope. Firmware must
-  parse the JSON into a bounded internal policy AST before validation or
-  storage. The wire JSON is not stored directly.
-- The policy proposal request and Firmware request-line receiver are bounded to
-  the current policy proposal size. The current policy proposal object and
-  canonical policy record cap is 16384 bytes. This is separate from the smaller
-  default request-frame bound used by ordinary request builders and staged
-  payload chunks.
-- Stored format: a Firmware-canonical binary policy record derived from the
-  bounded AST. Policy hash/id is computed over that canonical record.
-- `schema` must be `agentq.policy`.
-- `defaultAction` must be `reject`.
-- A policy document is scoped as `blockchains[].networks[].policies[]`.
-- `blockchain` and `network` are scope selectors, not condition fields.
-- Current accepted active policy material may include bounded `policies[]`
-  entries using the current field and operator catalog. Policy-mode Sui
-  `sign_transaction` uses those entries only after the active policy, request
-  network, account-binding, and complete offline condition-facts gates pass.
-- No policy may depend on client labels, purpose routing, client name, raw
-  request id, session id, external market data, network fetches, JavaScript,
-  Rego, CEL, JSONPath, arbitrary code execution, or a Sui host-supplied network
-  label. Other chains may expose chain-specific transaction-bound network facts
-  only when implemented by their chain adapter.
-
-State and authorization rules:
-
-- `unprovisioned`, `provisioning`, `error`, and `locked` reject policy update
-  proposals with the state error defined for unavailable methods.
-- `provisioned` plus a matching active session may accept a proposal for
-  Firmware validation.
-- A valid proposal enters a Firmware-owned pending policy-update state. The
-  pending state is not a protocol state setter and is not derived from UI object
-  lifetime.
-- A second policy update proposal while one is pending is rejected with `busy`.
-- Device-local approval is required before commit. For the current display
-  target, approval is a two-step device flow: first a summary review showing a
-  bounded policy hash prefix, scope/policy/condition counts, default action,
-  highest action, and the current-schema action summary; then local PIN entry
-  after device-local Continue. Rejecting or timing out on the summary review
-  terminates the proposal without starting PIN state. Back from the PIN screen
-  returns to the summary review and wipes only the PIN scratch; review Reject is
-  the terminal rejected action. This implementation does not rely on host-only
-  confirmation.
-- During pending approval, read-only session methods may remain available only
-  if they do not dismiss or mutate the pending state. `sign_transaction` and nested
-  policy updates must return `busy` while a policy update is pending or
-  committing.
-- `policy_get` returns the committed active policy only. It must not include or
-  imply the pending proposal.
-- `disconnect` may perform session cleanup except during the commit critical
-  section, where Firmware may return `busy`.
-
-Storage and rollback rules:
-
-- The active policy store uses two bounded binary slots plus small metadata
-  identifying the current committed slot. NVS key names must fit the target
-  NVS key limit.
-- Commit writes a pending marker for the intended inactive slot and commit
-  metadata record, writes and validates that slot, then flips the active
-  metadata. The old policy remains authoritative until the metadata flip
-  commits.
-- The metadata flip is the commit point. After that point, Firmware must not
-  return a storage failure that implies the old policy remained active. Pending
-  marker cleanup after the flip is best-effort; a stale marker that exactly
-  matches the selected committed policy is ignored by active-policy selection.
-  Stale commit metadata is removed before its slot/metadata key is reused by a
-  later write. A write result must terminate as exactly one of: new policy
-  applied, previous policy proven unchanged, or persistent-material consistency
-  error.
-- On write, validation, or cleanup failure before the metadata flip, Firmware
-  keeps the old policy and reports failure unless the material is left in a
-  consistency-error state. The pending marker is the only reason a torn target
-  slot or target commit record may be ignored in favor of the previous committed
-  policy, and pending targets that overlap the selected active slot or commit
-  metadata without exactly matching it are treated as corruption rather than
-  erased. Firmware recognizes only the current tracked active-policy storage
-  layout as product state.
-- On ambiguous boot state, Firmware selects the newest valid committed slot
-  unless a valid pending marker identifies an interrupted write target. Present
-  but invalid commit metadata without that pending marker is a
-  persistent-material consistency error rather than silent rollback.
-- DEV_PROFILE slot selection is not rollback protection. USER_PROFILE policy
-  storage requires secure anti-rollback or monotonic commit protection before it
-  can claim rollback resistance.
-- Local reset and error-state erase wipe all policy slots and policy metadata.
-
-Response shape:
-
-`policy_propose` returns `policy_propose_result` only after Firmware has
-accepted the protocol envelope, authenticated the active session, and classified
-the policy proposal path. Envelope, version, request id, session, state, busy,
-and oversized raw-message failures remain top-level protocol errors.
-
-When Firmware has a canonical policy proposal, `policy` is required:
-
-```json
-{
-  "id": "req_policy_propose",
-  "version": 1,
-  "type": "policy_propose_result",
-  "status": "applied",
-  "reasonCode": "device_confirmed",
-  "policy": {
-    "policyHash": "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
-    "blockchainCount": 1,
-    "networkCount": 1,
-    "policyCount": 1,
-    "conditionCount": 1,
-    "highestAction": "reject"
-  }
-}
+```text
+adapter/method code -> measure size -> choose direct/upload -> build descriptor
 ```
 
-For `invalid_policy`, `policy` must be omitted because Firmware may not have a
-canonical policy hash, count metadata, or highest action:
+`payload_transfer` is the only host-Firmware payload transfer operation used by
+`requestDevice`. It is not an app, MCP, Wallet Standard, local HTTP, or CLI
+method. It is not a `DeviceMethod`.
 
-```json
-{
-  "id": "req_policy_propose",
-  "version": 1,
-  "type": "policy_propose_result",
-  "status": "invalid_policy",
-  "reasonCode": "invalid_policy"
-}
-```
+`payload_transfer` is a closed discriminated transport request. Each action has
+one exact field list. Fields for another action are invalid input. Product
+method handlers never receive the action object.
 
-Response outcomes:
+| Action | Exact fields | Success result |
+| --- | --- | --- |
+| `begin` | `id`, `version`, `type: "payload_transfer"`, `action: "begin"`, `sessionId`, `totalBytes`, `payloadDigest` | `{ transferId, receivedBytes, chunkMaxBytes }` |
+| `chunk` | `id`, `version`, `type: "payload_transfer"`, `action: "chunk"`, `sessionId`, `transferId`, `offsetBytes`, `chunk` | `{ receivedBytes }` |
+| `finish` | `id`, `version`, `type: "payload_transfer"`, `action: "finish"`, `sessionId`, `transferId` | `{ payloadRef }` |
+| `abort` | `id`, `version`, `type: "payload_transfer"`, `action: "abort"`, `sessionId`, `transferId` | `{ status: "aborted" }` |
 
-- `applied`: Firmware validated, approved, committed, and activated the new
-  policy. The `policy` metadata is required.
-- `rejected`: local user rejected the proposal. The `policy` metadata is
-  required.
-- `timed_out`: local approval expired with no change. The `policy` metadata is
-  required.
-- `invalid_policy`: Firmware rejected the proposal before a canonical policy was
-  available. The `policy` metadata is forbidden.
-- `ui_error`: Firmware accepted and canonicalized the proposal but could not
-  display or restore the required device-local approval UI, so no policy changed.
-  The `policy` metadata is required. This is not a user timeout and is not a
-  durable policy-update history result.
-- `storage_error`: Firmware could not commit the new policy; the old policy
-  remains active unless Firmware reports a persistent-material consistency
-  error on an ambiguous state. The `policy` metadata is required.
-- `consistency_error`: Firmware reached an ambiguous policy-update terminal
-  state, typically after the commit point. Firmware must fail closed through the
-  persistent-material consistency boundary. The `policy` metadata is required
-  when the response is tied to a canonical proposal.
+`payloadDigest` is the SHA-256 digest of the raw payload bytes received by the
+payload store. It is transport metadata only. The method request that consumes a
+finalized payload carries only the internal `payloadRef` until Firmware resolves
+it to the method payload bytes before method validation.
 
-`busy` is a top-level protocol error for a request that cannot enter the policy
-update flow because another sensitive local flow or policy update is active. It
-is not a `policy_propose_result` status and is not stored as policy-update
-history.
+## External Surface Mapping
 
-`policy_propose_result` is not a buffered signing result. `get_result` and
-`ack_result` remain scoped to retained `sign_result` recovery for
-`sign_transaction` and `sign_personal_message`. Policy-update outcomes are
-delivered as the `policy_propose` response and, where recordable, through the
-policy-update approval-history and persistent-material consistency contracts
-defined below.
+Existing external surfaces remain external standards. They do not become device
+protocol methods.
 
-Policy update history:
+| External surface | Existing exposed operation | Adapter payload built | DeviceMethod | Adapter result |
+| --- | --- | --- | --- | --- |
+| Wallet Standard | connect feature | `ConnectPayload` | `connect` | Wallet Standard account/connect result |
+| Wallet Standard | disconnect feature | no payload | `disconnect` | Wallet Standard disconnect result |
+| Wallet Standard | account/capability read through provider | no payload | `get_capabilities`, `get_accounts` | Wallet account and feature projection |
+| Wallet Standard | `sui:signTransaction` | `SuiSignTransactionPayload` | `sign_transaction` | Wallet Standard signed transaction result |
+| Wallet Standard | `sui:signPersonalMessage` | `SuiSignPersonalMessagePayload` | `sign_personal_message` | Wallet Standard personal-message signature result |
+| MCP | `scan_devices` | no device request payload | host status scan using `get_status` | MCP scan result |
+| MCP | `identify_devices` | `IdentifyDevicePayload` per live candidate | `identify_device` | MCP identify result |
+| MCP | `select_device`, `list_devices`, `set_device_metadata`, `get_device_status` | host process metadata/status input | host-only operation or `get_status` where live status is required | MCP host result |
+| MCP | `connect_device` | `ConnectPayload` | `connect` | MCP connect result |
+| MCP | `disconnect_device` | no payload | `disconnect` | MCP disconnect result |
+| MCP | `get_capabilities` | no payload | `get_capabilities` | MCP capabilities result |
+| MCP | `get_accounts` | no payload | `get_accounts` | MCP accounts result |
+| MCP | `policy_get` | no payload | `policy_get` | MCP policy result |
+| MCP | `get_approval_history` | `ApprovalHistoryPayload` | `get_approval_history` | MCP approval-history result |
+| MCP | `sign_transaction` | `SuiSignTransactionPayload` | `sign_transaction` | MCP signing result |
+| MCP | `sign_personal_message` | `SuiSignPersonalMessagePayload` | `sign_personal_message` | MCP personal-message signing result |
+| MCP | `policy_propose` | `PolicyProposePayload` | `policy_propose` | MCP policy proposal result |
+| local HTTP API | `/api/connect` | `ConnectPayload` | `connect` | `{ ok: true, result }` or `{ ok: false, error }` |
+| local HTTP API | `/api/disconnect` | no payload | `disconnect` | `{ ok: true, result }` or `{ ok: false, error }` |
+| local HTTP API | `/api/get_accounts` | no payload | `get_accounts` | `{ ok: true, result }` or `{ ok: false, error }` |
+| local HTTP API | `/api/sign_transaction` | `SuiSignTransactionPayload` | `sign_transaction` | `{ ok: true, result }` or `{ ok: false, error }` |
+| local HTTP API | `/api/policy_get` | no payload | `policy_get` | `{ ok: true, result }` or `{ ok: false, error }` |
+| local HTTP API | `/api/get_approval_history` | `ApprovalHistoryPayload` | `get_approval_history` | `{ ok: true, result }` or `{ ok: false, error }` |
+| local HTTP API | `/api/policy_template_minimal_sui_testnet` | no device request payload | host-only operation | local HTTP template result |
+| local HTTP API | `/api/policy_propose` | `PolicyProposePayload` | `policy_propose` | `{ ok: true, result }` or `{ ok: false, error }` |
+| CLI | `agent-q serve --request-connect` | `ConnectPayload` | `connect` | stderr diagnostic and process status |
+| CLI | `agent-q-sui-signer configure` | account/capability read payloads | `connect`, `get_accounts`, `disconnect` | CLI signer configuration output |
+| CLI | `agent-q-sui-signer` sign request | `SuiSignTransactionPayload` | `connect`, `sign_transaction`, `disconnect` | Sui external signer JSON-RPC result |
+| sample apps and app-web | provider or local API calls | adapter-specific payload converted by provider/local API | method selected by adapter | app-specific UI result |
 
-- Firmware records policy update proposal outcomes as approval-history metadata
-  when the outcome is recordable.
-  Recordable policy-update history results are `applied`, `rejected`,
-  `timed_out`, and `storage_error`. `invalid_policy` is a response-only result
-  for proposals rejected before a canonical policy hash exists. `ui_error` is a
-  response-only display failure before local approval was usable. `history_error`
-  is a top-level error meaning the required history record could not be
-  persisted; `consistency_error` is a device/material state and must not be
-  stored as a durable policy-update history `result`.
-- Policy-update outcome history is part of the terminal-result contract. The
-  implementation must not report `applied` unless the committed policy and the
-  corresponding history record are both durable. Before the policy commit point,
-  required-history failure leaves the previous active policy unchanged. After the
-  policy commit point, required-history failure is an ambiguous terminal state:
-  Firmware must leave/report persistent-material consistency error rather than
-  claiming the old policy remained active.
-- History records may include sequence, uptime, event kind, result, policy
-  hash/id, rule count, highest-risk action, and reason code.
-- History records must not store raw policy documents, full rule content,
-  session ids, request ids, client names, PINs, mnemonic text, seed, or private
-  key material.
+Rows must not introduce a new external operation for upload, direct payloads,
+uploaded payloads, or payload references.
+
+## Exposure Reduction Requirements
+
+The single device request contract is incomplete while any exposed surface
+bypasses `requestDevice`.
+
+Required audit surfaces:
+
+- package exports;
+- protocol builders;
+- provider entrypoints;
+- Wallet Standard features;
+- MCP tools;
+- local HTTP routes;
+- CLI commands;
+- sample/app-web calls;
+- Firmware USB operation handlers;
+- Firmware response writers;
+- tests that encode public request/response shape.
+
+Final dispositions for existing surfaces are:
+
+- `adapter over requestDevice`;
+- `internal only`;
+- `removed from public export`;
+- `method row inside DeviceMethod`;
+- `unchanged external standard wrapper`.
+
+Package exports must not expose payload transport primitives, payload
+references, direct/upload helpers, direct/upload constants, or request builders
+that expose payload transport as public product API. Internal transport code
+remains reachable only from `requestDevice` and Firmware transport handlers.
+
+No raw device, OS, serial, Firmware, parser, or unexpected error message leaves
+an output boundary. Output boundaries choose one `DeviceErrorCode`; the fixed
+message and retryable flag come from the single public error table.

@@ -14,6 +14,10 @@ import {
 } from "./safe-text.js";
 import { ProtocolError } from "./protocol-error.js";
 import {
+  SIGN_RESULT_ERROR_MESSAGES,
+  type SignResultErrorCode,
+} from "./device-contract.js";
+import {
   ED25519_PUBLIC_KEY_BASE64_PATTERN,
   CREDENTIAL_PREPARE_OPERATION,
   CREDENTIAL_PROPOSE_OPERATION,
@@ -34,7 +38,6 @@ import {
   PROTOCOL_VERSION,
   HASH_ID_PATTERN,
   RULE_REF_PATTERN,
-  SIGN_RESULT_ERROR_MESSAGES,
   SUI_ADDRESS_PATTERN,
   SUI_CHAIN_ID,
   SUI_DERIVATION_PATH,
@@ -64,7 +67,6 @@ import {
   validateCanonicalBase64Bytes,
   validateCanonicalBase64Syntax,
   validateSuiSignTransactionNetwork,
-  type SignResultErrorCode,
   type SuiSignMethod,
   type SuiSignTransactionNetwork,
 } from "./protocol-primitives.js";

@@ -7,7 +7,7 @@ import { ConfigStore } from "../dist/config.js";
 import { AgentQCore } from "../dist/core.js";
 import { AgentQError } from "../dist/errors.js";
 import { makeSignPersonalMessageRequest, makeSignTransactionRequest } from "../dist/provider-protocol.js";
-import { MAX_SESSION_TTL_MS } from "../dist/protocol.js";
+import { MAX_SESSION_TTL_MS, SIGN_RESULT_ERROR_MESSAGES } from "../dist/protocol.js";
 import {
   markRequestMayHaveReachedFirmware,
   requestSignResultWithRecovery,
@@ -412,7 +412,7 @@ test("scan stores live device without selecting it", async () => {
             ruleRef: "default",
             error: {
               code: "policy_rejected",
-              message: "The signing request was rejected by device policy.",
+              message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
             },
           };
         },
@@ -650,7 +650,7 @@ test("selects default and purpose-specific active devices", async () => {
             ruleRef: "default",
             error: {
               code: "policy_rejected",
-              message: "The signing request was rejected by device policy.",
+              message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
             },
           };
         },
@@ -1774,7 +1774,7 @@ test("signTransaction returns Firmware's policy_rejected sign_result and keeps t
             ruleRef: "default",
             error: {
               code: "policy_rejected",
-              message: "The signing request was rejected by device policy.",
+              message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
             },
           };
         },
@@ -1818,7 +1818,7 @@ test("signTransaction uses the internal request deadline by default", async () =
             ruleRef: "default",
             error: {
               code: "policy_rejected",
-              message: "The signing request was rejected by device policy.",
+              message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
             },
           };
         },
@@ -1932,7 +1932,7 @@ test("signTransaction validates input before USB live-port probing", async () =>
             ruleRef: "default",
             error: {
               code: "policy_rejected",
-              message: "The signing request was rejected by device policy.",
+              message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
             },
           };
         },
@@ -2209,7 +2209,7 @@ test("signTransaction forwards canonical payload above the current Firmware adap
             ruleRef: "default",
             error: {
               code: "policy_rejected",
-              message: "The signing request was rejected by device policy.",
+              message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
             },
           };
         },
@@ -2234,17 +2234,17 @@ test("signTransaction returns Firmware terminal outcomes without throwing", asyn
     {
       status: "user_rejected",
       code: "user_rejected",
-      message: "The signing request was rejected on the device.",
+      message: SIGN_RESULT_ERROR_MESSAGES.user_rejected,
     },
     {
       status: "user_timed_out",
       code: "user_timed_out",
-      message: "The signing request timed out on the device.",
+      message: SIGN_RESULT_ERROR_MESSAGES.user_timed_out,
     },
     {
       status: "signing_failed",
       code: "signing_failed",
-      message: "The device could not produce a signature.",
+      message: SIGN_RESULT_ERROR_MESSAGES.signing_failed,
     },
   ]) {
     await withStore(async (store) => {
