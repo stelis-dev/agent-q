@@ -1000,7 +1000,7 @@ int main()
     expect_terminal_review_metadata_wiped(snapshot, "history error terminal clears review metadata");
     expect(strcmp(agent_q::user_signing_flow_terminal_status(Terminal::history_error), "") == 0 &&
                strcmp(agent_q::user_signing_flow_terminal_reason(Terminal::history_error), "") == 0,
-           "history error is cleanup-only, not a sign_result status");
+           "history error is cleanup-only, not a signing response status");
 
     agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_disconnect"), "begin before disconnect");
@@ -1023,7 +1023,7 @@ int main()
     expect_terminal_review_metadata_wiped(snapshot, "disconnect terminal clears review metadata");
     expect(strcmp(agent_q::user_signing_flow_terminal_status(Terminal::canceled), "") == 0 &&
                strcmp(agent_q::user_signing_flow_terminal_reason(Terminal::canceled), "") == 0,
-           "canceled is cleanup-only, not a sign_result status");
+           "canceled is cleanup-only, not a signing response status");
 
     agent_q::user_signing_flow_clear();
     expect(begin_valid_flow("req_review_ui_loss"), "begin before review UI loss");

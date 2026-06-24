@@ -205,11 +205,11 @@ bool replace_session()
     ++g_replace_session_calls;
     return g_replace_session_result;
 }
-bool write_error(const char*, const char* code, const char* message)
+bool write_error(const char*, const char* code)
 {
     ++g_write_error_calls;
     snprintf(g_last_response_code, sizeof(g_last_response_code), "%s", code);
-    snprintf(g_last_response_message, sizeof(g_last_response_message), "%s", message);
+    g_last_response_message[0] = '\0';
     return true;
 }
 bool write_approved(const char*)
@@ -217,11 +217,11 @@ bool write_approved(const char*)
     ++g_write_approved_calls;
     return g_write_approved_result;
 }
-bool write_rejected(const char*, const char* code, const char* message)
+bool write_rejected(const char*, const char* code)
 {
     ++g_write_rejected_calls;
     snprintf(g_last_response_code, sizeof(g_last_response_code), "%s", code);
-    snprintf(g_last_response_message, sizeof(g_last_response_message), "%s", message);
+    g_last_response_message[0] = '\0';
     return g_write_rejected_result;
 }
 void log_info(const char*, const char*) { ++g_log_info_calls; }
@@ -304,7 +304,7 @@ int main()
     expect(g_reset_choice_calls == 1, "terminal choice resets choice queue");
     expect(g_clear_calls == 1, "terminal rejected connect clears approval state");
     expect(g_write_rejected_calls == 1, "terminal rejected connect writes rejected response");
-    expect(strcmp(g_last_response_code, "rejected") == 0, "rejected response code");
+    expect(strcmp(g_last_response_code, "user_rejected") == 0, "rejected response code");
     expect(g_show_result_calls == 1, "terminal rejected connect shows result");
     expect(strcmp(g_last_result_message, "Connection rejected") == 0, "rejected result message");
     expect(g_last_result_kind == AgentQMessageKind::rejected, "rejected result kind");
@@ -315,8 +315,6 @@ int main()
     expect(g_clear_calls == 1, "timeout clears approval state before result");
     expect(g_write_rejected_calls == 1, "timeout writes rejected response");
     expect(strcmp(g_last_response_code, "timeout") == 0, "timeout response code");
-    expect(strcmp(g_last_response_message, "Connection approval timed out.") == 0,
-           "timeout response message");
     expect(g_show_result_calls == 1, "timeout shows result");
     expect(strcmp(g_last_result_message, "Connection timed out") == 0, "timeout result message");
     expect(g_last_result_kind == AgentQMessageKind::timeout, "timeout result kind");
@@ -336,7 +334,7 @@ int main()
     g_replace_session_result = false;
     agent_q::connect_review_response_flow_run(ops());
     expect(g_write_error_calls == 1, "session creation failure writes public error");
-    expect(strcmp(g_last_response_code, "rng_error") == 0, "session failure code");
+    expect(strcmp(g_last_response_code, "rng_unavailable") == 0, "session failure code");
     expect(g_log_error_calls == 1, "session creation failure logs error");
     expect(strcmp(g_last_result_message, "RNG error") == 0, "session failure result");
     expect(g_last_result_kind == AgentQMessageKind::error, "session failure result kind");

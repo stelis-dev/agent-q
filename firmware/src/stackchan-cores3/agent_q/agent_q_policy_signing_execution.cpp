@@ -143,7 +143,7 @@ AgentQPolicySigningExecutionResult handle_policy_filter_result(
             material_ops);
         return make_policy_execution_result(
             AgentQPolicySigningExecutionStatus::request_error,
-            "account_error",
+            "account_unavailable",
             "Stored signing account is unavailable.");
     }
 
@@ -159,7 +159,7 @@ AgentQPolicySigningExecutionResult handle_policy_filter_result(
                 true)) {
             return make_policy_execution_result(
                 AgentQPolicySigningExecutionStatus::history_error,
-                "history_error",
+                "history_unavailable",
                 "Could not record policy signing terminal result.");
         }
         AgentQPolicySigningExecutionResult result = make_policy_execution_result(
@@ -169,7 +169,7 @@ AgentQPolicySigningExecutionResult handle_policy_filter_result(
         if (!copy_policy_metadata(&result, policy_result)) {
             return make_policy_execution_result(
                 AgentQPolicySigningExecutionStatus::history_error,
-                "history_error",
+                "history_unavailable",
                 "Could not record policy signing terminal result.");
         }
         return result;
@@ -177,7 +177,7 @@ AgentQPolicySigningExecutionResult handle_policy_filter_result(
 
     return make_policy_execution_result(
         AgentQPolicySigningExecutionStatus::request_error,
-        "protocol_error",
+        "internal_output_error",
         "Policy signing request is invalid.");
 }
 
@@ -194,7 +194,7 @@ AgentQPolicySigningExecutionResult execute_policy_sign_transaction(
     if (!write_policy_signing_confirmation_history(policy_result)) {
         return make_policy_execution_result(
             AgentQPolicySigningExecutionStatus::history_error,
-            "history_error",
+            "history_unavailable",
             "Could not record policy signing approval.");
     }
 
@@ -205,7 +205,7 @@ AgentQPolicySigningExecutionResult execute_policy_sign_transaction(
     if (!copy_policy_metadata(&result, policy_result)) {
         return make_policy_execution_result(
             AgentQPolicySigningExecutionStatus::history_error,
-            "history_error",
+            "history_unavailable",
             "Could not record policy signing terminal result.");
     }
     if (policy_result.tx_bytes == nullptr || policy_result.tx_bytes_size == 0) {
@@ -236,12 +236,12 @@ AgentQPolicySigningExecutionResult execute_policy_sign_transaction(
             if (!terminal_recorded) {
                 return make_policy_execution_result(
                     AgentQPolicySigningExecutionStatus::history_error,
-                    "history_error",
+                    "history_unavailable",
                     "Could not record policy signing terminal result.");
             }
             return make_policy_execution_result(
                 AgentQPolicySigningExecutionStatus::account_error,
-                "account_error",
+                "account_unavailable",
                 "Stored signing account is unavailable.");
         }
         if (!write_policy_signing_terminal_history(
@@ -251,7 +251,7 @@ AgentQPolicySigningExecutionResult execute_policy_sign_transaction(
                 false)) {
             return make_policy_execution_result(
                 AgentQPolicySigningExecutionStatus::history_error,
-                "history_error",
+                "history_unavailable",
                 "Could not record policy signing terminal result.");
         }
         return make_policy_execution_result(
@@ -269,7 +269,7 @@ AgentQPolicySigningExecutionResult execute_policy_sign_transaction(
         result.signature_size = 0;
         return make_policy_execution_result(
             AgentQPolicySigningExecutionStatus::history_error,
-            "history_error",
+            "history_unavailable",
             "Could not record policy signing terminal result.");
     }
     return result;

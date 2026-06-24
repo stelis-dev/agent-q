@@ -21,8 +21,6 @@ AgentQSignTransactionUserIngressResult map_validation_result(
             return AgentQSignTransactionUserIngressResult::invalid_request_shape;
         case AgentQSignTransactionUserValidationResult::unsupported_version:
             return AgentQSignTransactionUserIngressResult::unsupported_version;
-        case AgentQSignTransactionUserValidationResult::unsupported_type:
-            return AgentQSignTransactionUserIngressResult::unsupported_type;
         case AgentQSignTransactionUserValidationResult::invalid_session:
             return AgentQSignTransactionUserIngressResult::invalid_session;
         case AgentQSignTransactionUserValidationResult::invalid_params_shape:
@@ -74,11 +72,11 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_identit
         return AgentQSignTransactionUserValidationResult::unsupported_version;
     }
 
-    const char* request_type = nullptr;
-    if (!agent_q_json_value_c_string(request_object["type"], &request_type) ||
-        strcmp(request_type, "sign_transaction") != 0) {
+    const char* method = nullptr;
+    if (!agent_q_json_value_c_string(request_object["method"], &method) ||
+        strcmp(method, "sign_transaction") != 0) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignTransactionUserValidationResult::unsupported_type;
+        return AgentQSignTransactionUserValidationResult::unsupported_method;
     }
 
     return AgentQSignTransactionUserValidationResult::ok;
@@ -151,8 +149,6 @@ const char* sign_transaction_user_ingress_result_name(
             return "invalid_request_shape";
         case AgentQSignTransactionUserIngressResult::unsupported_version:
             return "unsupported_version";
-        case AgentQSignTransactionUserIngressResult::unsupported_type:
-            return "unsupported_type";
         case AgentQSignTransactionUserIngressResult::invalid_state:
             return "invalid_state";
         case AgentQSignTransactionUserIngressResult::busy:

@@ -9,7 +9,9 @@ namespace agent_q {
 
 struct AgentQUsbConnectHandlerOps {
     bool (*material_ready)();
-    bool (*write_connect_admission_error)(const char* id);
+    bool (*write_connect_admission_error)(
+        const char* id,
+        const AgentQUsbOperationResponseWriter& writer);
     AgentQTimeoutTick (*current_tick)();
     AgentQTimeoutWindow (*make_approval_window)(AgentQTimeoutTick now);
     bool (*begin_connect_approval)(

@@ -52,9 +52,9 @@ bool format_opaque_id(const char* prefix, uint64_t value, char* output, size_t o
 
 }  // namespace
 
-bool payload_delivery_upload_id_format_valid(const char* value)
+bool payload_delivery_transfer_id_format_valid(const char* value)
 {
-    return id_matches_prefix(value, "upload_", kAgentQPayloadDeliveryUploadIdSize);
+    return id_matches_prefix(value, "transfer_", kAgentQPayloadDeliveryTransferIdSize);
 }
 
 bool payload_delivery_payload_ref_format_valid(const char* value)
@@ -79,9 +79,9 @@ bool payload_delivery_payload_digest_format_valid(const char* value)
     return true;
 }
 
-bool payload_delivery_format_upload_id(uint64_t value, char* output, size_t output_size)
+bool payload_delivery_format_transfer_id(uint64_t value, char* output, size_t output_size)
 {
-    return format_opaque_id("upload_", value, output, output_size);
+    return format_opaque_id("transfer_", value, output, output_size);
 }
 
 bool payload_delivery_format_payload_ref(uint64_t value, char* output, size_t output_size)

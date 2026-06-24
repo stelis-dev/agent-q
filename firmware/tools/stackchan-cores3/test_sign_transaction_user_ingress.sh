@@ -140,10 +140,9 @@ std::string request_with_session_and_params(
     const std::string& session_id,
     const std::string& params)
 {
-    return "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
+    return "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction\","
            "\"sessionId\":\"" + session_id + "\","
-           "\"chain\":\"sui\",\"method\":\"sign_transaction\","
-           "\"params\":" + params + "}";
+           "\"payload\":" + params + "}";
 }
 
 std::string valid_request()
@@ -155,10 +154,9 @@ std::string request_with_extra_top_level(
     const std::string& session_id,
     const std::string& params)
 {
-    return "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
+    return "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction\","
            "\"sessionId\":\"" + session_id + "\","
-           "\"chain\":\"sui\",\"method\":\"sign_transaction\","
-           "\"params\":" + params + ","
+           "\"payload\":" + params + ","
            "\"extra\":true}";
 }
 
@@ -312,11 +310,11 @@ int main()
         SessionCheck check{"session_aaaaaaaaaaaaaaaa", SessionResult::ok, 0};
         int calls = 0;
         expect_ingress(
-            "unsupported type before state",
-            "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction_policy\","
-            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":[]}",
+            "unsupported method before state",
+            "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction_policy\","
+            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":[]}",
             state(false, false, &check),
-            IngressResult::unsupported_type,
+            IngressResult::unsupported_method,
             &calls);
     }
 
@@ -470,7 +468,7 @@ int main()
                 "session_aaaaaaaaaaaaaaaa",
                 "{\"network\":\"devnet\",\"payloadRef\":\"payload_aaaaaaaa\"}"),
             state(true, false, &session, &payload),
-            IngressResult::invalid_params_shape,
+            IngressResult::ok,
             &calls);
         if (payload.calls != 0) {
             fprintf(stderr, "staged payload admission expected zero calls, got %d\n",

@@ -10,8 +10,13 @@ namespace agent_q {
 
 struct AgentQUsbPolicyProposeHandlerOps {
     bool (*material_ready)();
-    bool (*write_policy_propose_admission_error)(const char* id);
-    bool (*require_active_matching_session)(const char* id, const char* session_id);
+    bool (*write_policy_propose_admission_error)(
+        const char* id,
+        const AgentQUsbOperationResponseWriter& writer);
+    bool (*require_active_matching_session)(
+        const char* id,
+        const char* session_id,
+        const AgentQUsbOperationResponseWriter& writer);
     AgentQTimeoutTick (*current_tick)();
     AgentQTimeoutWindow (*make_review_window)(AgentQTimeoutTick now);
     AgentQPolicyUpdateFlowBeginResult (*begin_policy_update)(

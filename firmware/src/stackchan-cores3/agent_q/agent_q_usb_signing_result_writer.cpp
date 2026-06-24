@@ -29,16 +29,15 @@ void clear_heap_buffer(char* buffer, size_t size)
     }
 }
 
-const char* sign_result_user_error_message(
-    AgentQUserSigningTerminalResult result)
+const char* user_terminal_device_error_code(AgentQUserSigningTerminalResult result)
 {
     switch (result) {
         case AgentQUserSigningTerminalResult::rejected:
-            return "The signing request was rejected on the device.";
+            return "user_rejected";
         case AgentQUserSigningTerminalResult::timed_out:
-            return "The signing request timed out on the device.";
+            return "timeout";
         case AgentQUserSigningTerminalResult::signing_failed:
-            return "The device could not produce a signature.";
+            return "signing_failed";
         case AgentQUserSigningTerminalResult::signed_success:
         case AgentQUserSigningTerminalResult::canceled:
         case AgentQUserSigningTerminalResult::history_error:
@@ -48,7 +47,7 @@ const char* sign_result_user_error_message(
     }
 }
 
-bool buffer_sign_result_for_retry(
+bool buffer_signing_response_for_retry(
     const char* session_id,
     const char* request_id,
     const uint8_t* request_identity,
@@ -81,7 +80,17 @@ bool buffer_sign_result_for_retry(
     return stored;
 }
 
-bool write_sign_result_signed_fields(
+bool buffer_and_write_response(
+    const char* session_id,
+    const char* request_id,
+    const uint8_t* request_identity,
+    JsonDocument& response)
+{
+    buffer_signing_response_for_retry(session_id, request_id, request_identity, response);
+    return usb_response_write_json(response);
+}
+
+bool write_signed_signing_response(
     const char* id,
     const char* session_id,
     const uint8_t* request_identity,
@@ -150,23 +159,24 @@ bool write_sign_result_signed_fields(
         return false;
     }
 
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["type"] = "sign_result";
-    response["authorization"] = authorization;
-    response["status"] = "signed";
-    response["chain"] = chain;
-    response["method"] = method;
-    response["signature"] = signature_base64;
+    JsonDocument result_document;
+    JsonObject result = result_document.to<JsonObject>();
+    result["authorization"] = authorization;
+    result["chain"] = chain;
+    result["method"] = method;
+    result["signature"] = signature_base64;
     if (signing_route_requires_message_bytes(signing_route)) {
-        response["messageBytes"] = message_base64;
+        result["messageBytes"] = message_base64;
     }
-    buffer_sign_result_for_retry(session_id, id, request_identity, response);
-    return usb_response_write_json(response);
+
+    JsonDocument response;
+    if (!usb_response_prepare_success_result(response, id, method, result)) {
+        return false;
+    }
+    return buffer_and_write_response(session_id, id, request_identity, response);
 }
 
-bool write_sign_result_policy_rejected(
+bool write_policy_rejected_signing_response(
     const char* id,
     const char* session_id,
     const uint8_t* request_identity,
@@ -178,20 +188,13 @@ bool write_sign_result_policy_rejected(
         return false;
     }
     JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["type"] = "sign_result";
-    response["authorization"] = "policy";
-    response["status"] = "policy_rejected";
-    response["policyHash"] = policy_hash;
-    response["ruleRef"] = rule_ref;
-    response["error"]["code"] = "policy_rejected";
-    response["error"]["message"] = "The signing request was rejected by device policy.";
-    buffer_sign_result_for_retry(session_id, id, request_identity, response);
-    return usb_response_write_json(response);
+    if (!usb_response_prepare_method_error(response, id, "sign_transaction", "policy_rejected")) {
+        return false;
+    }
+    return buffer_and_write_response(session_id, id, request_identity, response);
 }
 
-bool write_sign_result_signing_failed(
+bool write_failed_signing_response(
     const char* id,
     const char* session_id,
     const uint8_t* request_identity,
@@ -202,15 +205,10 @@ bool write_sign_result_signing_failed(
         return false;
     }
     JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["type"] = "sign_result";
-    response["authorization"] = authorization;
-    response["status"] = "signing_failed";
-    response["error"]["code"] = "signing_failed";
-    response["error"]["message"] = "The device could not produce a signature.";
-    buffer_sign_result_for_retry(session_id, id, request_identity, response);
-    return usb_response_write_json(response);
+    if (!usb_response_prepare_method_error(response, id, "sign_transaction", "signing_failed")) {
+        return false;
+    }
+    return buffer_and_write_response(session_id, id, request_identity, response);
 }
 
 }  // namespace
@@ -226,7 +224,7 @@ bool usb_signing_result_write_user_signed(
         signing_output.signing_route != snapshot.signing_route) {
         return false;
     }
-    return write_sign_result_signed_fields(
+    return write_signed_signing_response(
         id,
         session_id,
         snapshot.request_identity,
@@ -242,27 +240,20 @@ bool usb_signing_result_write_user_terminal(
     const char* id,
     const char* session_id,
     const uint8_t* request_identity,
+    const char* method,
     AgentQUserSigningTerminalResult result)
 {
-    const char* status = user_signing_flow_terminal_status(result);
-    const char* reason = user_signing_flow_terminal_reason(result);
-    const char* message = sign_result_user_error_message(result);
-    if (status == nullptr || status[0] == '\0' ||
-        reason == nullptr || reason[0] == '\0' ||
-        message == nullptr || message[0] == '\0') {
+    const char* error_code = user_terminal_device_error_code(result);
+    if (method == nullptr || method[0] == '\0' ||
+        error_code == nullptr || error_code[0] == '\0') {
         return false;
     }
 
     JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["type"] = "sign_result";
-    response["authorization"] = "user";
-    response["status"] = status;
-    response["error"]["code"] = reason;
-    response["error"]["message"] = message;
-    buffer_sign_result_for_retry(session_id, id, request_identity, response);
-    return usb_response_write_json(response);
+    if (!usb_response_prepare_method_error(response, id, method, error_code)) {
+        return false;
+    }
+    return buffer_and_write_response(session_id, id, request_identity, response);
 }
 
 bool usb_signing_result_write_policy_execution(
@@ -275,18 +266,18 @@ bool usb_signing_result_write_policy_execution(
         case AgentQPolicySigningExecutionStatus::request_error:
         case AgentQPolicySigningExecutionStatus::history_error:
         case AgentQPolicySigningExecutionStatus::account_error:
-            return usb_response_write_error(id, result.code, result.message);
+            return usb_response_write_method_error(id, "sign_transaction", result.code);
         case AgentQPolicySigningExecutionStatus::policy_rejected:
-            return write_sign_result_policy_rejected(
+            return write_policy_rejected_signing_response(
                 id,
                 session_id,
                 request_identity,
                 result.policy_hash,
                 result.rule_ref);
         case AgentQPolicySigningExecutionStatus::signing_failed:
-            return write_sign_result_signing_failed(id, session_id, request_identity, "policy");
+            return write_failed_signing_response(id, session_id, request_identity, "policy");
         case AgentQPolicySigningExecutionStatus::signed_success:
-            return write_sign_result_signed_fields(
+            return write_signed_signing_response(
                 id,
                 session_id,
                 request_identity,
@@ -297,7 +288,10 @@ bool usb_signing_result_write_policy_execution(
                 nullptr,
                 0);
         default:
-            return usb_response_write_error(id, "protocol_error", "Policy signing request is invalid.");
+            return usb_response_write_method_error(
+                id,
+                "sign_transaction",
+                "internal_output_error");
     }
 }
 

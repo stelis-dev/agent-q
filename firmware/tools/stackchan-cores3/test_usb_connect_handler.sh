@@ -81,9 +81,7 @@ bool g_begin_ok = true;
 const char* g_last_id = nullptr;
 const char* g_last_client_name = nullptr;
 const char* g_last_error_code = nullptr;
-const char* g_last_error_message = nullptr;
 const char* g_last_rejected_code = nullptr;
-const char* g_last_rejected_message = nullptr;
 agent_q::AgentQTimeoutWindow g_last_window = {};
 
 void reset_state()
@@ -108,18 +106,15 @@ void reset_state()
     g_last_id = nullptr;
     g_last_client_name = nullptr;
     g_last_error_code = nullptr;
-    g_last_error_message = nullptr;
     g_last_rejected_code = nullptr;
-    g_last_rejected_message = nullptr;
     g_last_window = agent_q::AgentQTimeoutWindow{0, 0};
 }
 
-bool write_error(const char* id, const char* code, const char* message)
+bool write_error(const char* id, const char* code)
 {
     g_write_error_calls += 1;
     g_last_id = id;
     g_last_error_code = code;
-    g_last_error_message = message;
     return true;
 }
 
@@ -136,10 +131,13 @@ bool material_ready()
     return g_material_ready;
 }
 
-bool write_busy(const char* id)
+bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     g_busy_calls += 1;
     g_last_id = id;
+    if (g_busy) {
+        writer.write_error(id, "busy");
+    }
     return g_busy;
 }
 
@@ -173,12 +171,11 @@ bool begin_connect(
 
 namespace agent_q {
 
-bool usb_response_write_connect_rejected(const char* id, const char* code, const char* message)
+bool usb_response_write_connect_rejected(const char* id, const char* code)
 {
     g_write_rejected_calls += 1;
     g_last_id = id;
     g_last_rejected_code = code;
-    g_last_rejected_message = message;
     return true;
 }
 
@@ -241,7 +238,7 @@ JsonDocument parse_request(const char* json)
 
 const char* valid_request()
 {
-    return "{\"id\":\"req\",\"version\":1,\"type\":\"connect\",\"params\":{\"clientName\":\"Agent-Q\"}}";
+    return "{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"Agent-Q\"}}";
 }
 
 }  // namespace
@@ -265,65 +262,62 @@ int main()
         JsonDocument request = parse_request(valid_request());
         agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_busy_calls == 1);
-        assert(g_write_error_calls == 0);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "busy") == 0);
         assert(g_begin_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"connect\",\"params\":{\"clientName\":\"Agent-Q\"},\"sessionId\":\"bad\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"Agent-Q\"},\"sessionId\":\"bad\"}");
         agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "connect request contains unsupported fields.") == 0);
         assert(g_begin_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"connect\",\"params\":7}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":7}");
         agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "connect params contain unsupported fields.") == 0);
         assert(g_begin_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"connect\",\"params\":{\"clientName\":\"Agent-Q\",\"extra\":true}}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"Agent-Q\",\"extra\":true}}");
         agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "connect params contain unsupported fields.") == 0);
         assert(g_begin_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"connect\",\"params\":{}}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{}}");
         agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_client_name") == 0);
-        assert(strcmp(g_last_error_message, "clientName must be 1-64 printable ASCII characters.") == 0);
+        assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"connect\",\"params\":{\"clientName\":\"\"}}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"\"}}");
         agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_client_name") == 0);
+        assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"connect\",\"params\":{\"clientName\":\"bad\\nname\"}}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"bad\\nname\"}}");
         agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_client_name") == 0);
+        assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
     }
 
@@ -334,11 +328,11 @@ int main()
         JsonDocument request;
         request["id"] = "req";
         request["version"] = 1;
-        request["type"] = "connect";
-        request["params"]["clientName"] = long_name;
+        request["method"] = "connect";
+        request["payload"]["clientName"] = long_name;
         agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_client_name") == 0);
+        assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
     }
 
@@ -356,7 +350,6 @@ int main()
         assert(g_last_window.deadline == g_current_tick + 18);
         assert(g_write_rejected_calls == 1);
         assert(strcmp(g_last_rejected_code, "invalid_state") == 0);
-        assert(strcmp(g_last_rejected_message, "Connect is unavailable.") == 0);
         assert(g_show_unavailable_calls == 1);
         assert(g_reset_queue_calls == 0);
         assert(g_show_review_calls == 0);

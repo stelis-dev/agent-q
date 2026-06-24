@@ -71,7 +71,7 @@
 #include "agent_q_usb_operation_manifest.h"
 #include "agent_q_usb_operation_response_writer.h"
 #include "agent_q_usb_policy_propose_handler.h"
-#include "agent_q_usb_payload_upload_handlers.h"
+#include "agent_q_usb_payload_transfer_handlers.h"
 #include "agent_q_usb_policy_propose_result_writer.h"
 #include "agent_q_ui_panel_cleanup.h"
 #include "agent_q_usb_operation_type.h"
@@ -131,9 +131,9 @@ constexpr const char* kNvsNamespace = "agent_q";
 constexpr const char* kDeviceIdKey = "device_id";
 constexpr uint32_t kIdentifyDisplayDefaultMs = 30000;
 constexpr uint32_t kConnectApprovalDefaultMs = 30000;
-constexpr uint32_t kPayloadUploadBaseWindowMs = 30000;
-constexpr uint32_t kPayloadUploadPerChunkWindowMs = 1000;
-constexpr uint32_t kPayloadUploadMaxWindowMs = 180000;
+constexpr uint32_t kPayloadTransferBaseWindowMs = 30000;
+constexpr uint32_t kPayloadTransferPerChunkWindowMs = 1000;
+constexpr uint32_t kPayloadTransferMaxWindowMs = 180000;
 constexpr uint32_t kProvisioningApprovalMaxMs = 30000;
 constexpr uint32_t kLocalPinInputWindowMs = 30000;
 constexpr uint32_t kBackupPhraseDisplayMs = kProvisioningApprovalMaxMs;
@@ -180,6 +180,7 @@ bool provisioned_material_ready();
 bool agent_q_ui_idle_for_local_settings();
 bool write_busy_if_pending_or_local_flow_active_for_operation(
     const char* id,
+    const AgentQUsbOperationResponseWriter& writer,
     agent_q::AgentQUsbOperationType operation);
 agent_q::AgentQPersistentMaterialOps persistent_material_ops();
 agent_q::AgentQLocalResetPersistenceOps local_reset_persistence_ops();
@@ -404,10 +405,22 @@ const char* current_device_state()
 const AgentQUsbOperationResponseWriter& usb_operation_response_writer()
 {
     static const AgentQUsbOperationResponseWriter writer = {
-        agent_q::usb_response_write_error,
+        agent_q::usb_response_write_method_error,
         agent_q::usb_response_log_write_failure,
     };
     return writer;
+}
+
+bool write_operation_error(
+    const char* id,
+    agent_q::AgentQUsbOperationType operation,
+    const char* code,
+    const char* message)
+{
+    return agent_q::usb_response_write_method_error(
+        id,
+        agent_q::usb_operation_type_wire_name(operation),
+        code);
 }
 
 agent_q::AgentQUsbDeviceResponseInfo usb_device_response_info()
@@ -448,6 +461,7 @@ static char g_signing_preflight_retry_stored_result[agent_q::kSigningResultMaxSi
 
 agent_q::AgentQSigningPreflightRetryDisposition respond_to_signing_retry(
     const char* request_id,
+    const char* method,
     const agent_q::AgentQSigningRetryDeliveryResult& retry,
     const char* stored_result,
     void*)
@@ -455,6 +469,7 @@ agent_q::AgentQSigningPreflightRetryDisposition respond_to_signing_retry(
     const agent_q::AgentQSigningRetryResponseResult response_result =
         agent_q::deliver_signing_retry_response(
             request_id,
+            method,
             retry,
             stored_result,
             write_retry_response_json,
@@ -660,7 +675,12 @@ void finish_user_signing_error_terminal(
     const char* display_message)
 {
     if (request_id != nullptr && request_id[0] != '\0') {
-        agent_q::usb_response_write_error(request_id, error_code, error_message);
+        const agent_q::AgentQUserSigningFlowCoreSnapshot snapshot =
+            agent_q::user_signing_flow_core_snapshot();
+        agent_q::usb_response_write_method_error(
+            request_id,
+            snapshot.method,
+            error_code);
     }
     consume_user_signing_terminal_if_pending();
     agent_q::user_signing_flow_clear();
@@ -683,7 +703,10 @@ void finish_user_signing_terminal(
         snapshot.stage != agent_q::AgentQUserSigningStage::terminal ||
         result == agent_q::AgentQUserSigningTerminalResult::none) {
         if (request_id != nullptr && request_id[0] != '\0') {
-            agent_q::usb_response_write_error(request_id, "invalid_state", "Signing request is unavailable.");
+            agent_q::usb_response_write_method_error(
+                request_id,
+                snapshot.method,
+                "invalid_state");
         }
         agent_q::avatar_overlay_show_message(
             "Signing unavailable",
@@ -695,7 +718,10 @@ void finish_user_signing_terminal(
 
     if (!write_user_signing_terminal_history(snapshot, result)) {
         if (request_id != nullptr && request_id[0] != '\0') {
-            agent_q::usb_response_write_error(request_id, "history_error", "Could not record signing terminal result.");
+            agent_q::usb_response_write_method_error(
+                request_id,
+                snapshot.method,
+                "history_unavailable");
         }
         consume_user_signing_terminal_if_pending();
         ESP_LOGW(kTag, "user_signing terminal history write failed: id=%s", request_id);
@@ -710,7 +736,7 @@ void finish_user_signing_terminal(
     }
 
     bool wrote_response = false;
-    const char* response_type = "sign_result";
+    const char* response_type = snapshot.method;
     const char* display_message = "Signing failed";
     AgentQMessageKind display_kind = AgentQMessageKind::error;
     const char* delivery_failed_message = "Signing failed; USB failed";
@@ -727,24 +753,27 @@ void finish_user_signing_terminal(
         display_kind = wrote_response ? AgentQMessageKind::success : AgentQMessageKind::error;
     } else if (result == agent_q::AgentQUserSigningTerminalResult::rejected) {
         wrote_response = agent_q::usb_signing_result_write_user_terminal(
-            request_id, agent_q::session_id(), snapshot.request_identity, result);
+            request_id, agent_q::session_id(), snapshot.request_identity, snapshot.method, result);
         display_message = wrote_response ? "Signing rejected" : "Rejected; USB failed";
         delivery_failed_message = "Rejected; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::rejected : AgentQMessageKind::error;
     } else if (result == agent_q::AgentQUserSigningTerminalResult::timed_out) {
         wrote_response = agent_q::usb_signing_result_write_user_terminal(
-            request_id, agent_q::session_id(), snapshot.request_identity, result);
+            request_id, agent_q::session_id(), snapshot.request_identity, snapshot.method, result);
         display_message = wrote_response ? "Signing timed out" : "Timeout; USB failed";
         delivery_failed_message = "Timeout; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::timeout : AgentQMessageKind::error;
     } else if (result == agent_q::AgentQUserSigningTerminalResult::signing_failed) {
         wrote_response = agent_q::usb_signing_result_write_user_terminal(
-            request_id, agent_q::session_id(), snapshot.request_identity, result);
+            request_id, agent_q::session_id(), snapshot.request_identity, snapshot.method, result);
         display_message = wrote_response ? "Signing failed" : "Failure; USB failed";
         delivery_failed_message = "Failure; USB failed";
     } else if (request_id != nullptr && request_id[0] != '\0') {
-        wrote_response = agent_q::usb_response_write_error(request_id, "invalid_session", "Signing request session ended.");
-        response_type = "error";
+        wrote_response = agent_q::usb_response_write_method_error(
+            request_id,
+            snapshot.method,
+            "invalid_session");
+        response_type = snapshot.method;
         display_message = wrote_response ? "Session ended" : "Session; USB failed";
         delivery_failed_message = "Session; USB failed";
     }
@@ -1139,15 +1168,13 @@ bool unrelated_user_signing_ingress_busy()
 
 bool write_payload_delivery_operation_busy(
     const char* id,
+    const AgentQUsbOperationResponseWriter& writer,
     agent_q::AgentQUsbOperationType operation)
 {
     const agent_q::AgentQUsbOperationManifestEntry* entry =
         agent_q::usb_operation_manifest_entry(operation);
     if (entry == nullptr) {
-        agent_q::usb_response_write_error(
-            id,
-            "unsupported_type",
-            "Unsupported request type.");
+        writer.write_error(id, "internal_output_error");
         return true;
     }
     const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
@@ -1162,52 +1189,59 @@ bool write_payload_delivery_operation_busy(
     if (!agent_q::payload_delivery_admission_blocks_sensitive_flow(admission)) {
         return false;
     }
-    agent_q::usb_response_write_error(
-        id,
-        "busy",
-        "Device has a pending signable payload.");
+    writer.write_error(id, "busy");
     return true;
 }
 
-bool write_payload_delivery_identify_device_busy(const char* id)
+bool write_payload_delivery_identify_device_busy(
+    const char* id,
+    const AgentQUsbOperationResponseWriter& writer)
 {
     return write_busy_if_pending_or_local_flow_active_for_operation(
         id,
+        writer,
         agent_q::AgentQUsbOperationType::identify_device);
 }
 
-bool write_payload_delivery_connect_busy(const char* id)
+bool write_payload_delivery_connect_busy(
+    const char* id,
+    const AgentQUsbOperationResponseWriter& writer)
 {
     return write_busy_if_pending_or_local_flow_active_for_operation(
         id,
+        writer,
         agent_q::AgentQUsbOperationType::connect);
 }
 
-bool write_payload_delivery_policy_propose_busy(const char* id)
+bool write_payload_delivery_policy_propose_busy(
+    const char* id,
+    const AgentQUsbOperationResponseWriter& writer)
 {
     return write_busy_if_pending_or_local_flow_active_for_operation(
         id,
+        writer,
         agent_q::AgentQUsbOperationType::policy_propose);
 }
 
-bool write_payload_delivery_credential_propose_busy(const char* id)
+bool write_payload_delivery_credential_propose_busy(
+    const char* id,
+    const AgentQUsbOperationResponseWriter& writer)
 {
     return write_busy_if_pending_or_local_flow_active_for_operation(
         id,
+        writer,
         agent_q::AgentQUsbOperationType::credential_propose);
 }
 
 bool write_payload_delivery_disconnect_admission_error(
     const char* id,
-    agent_q::AgentQUsbOperationType operation)
+    agent_q::AgentQUsbOperationType operation,
+    const AgentQUsbOperationResponseWriter& writer)
 {
     const agent_q::AgentQUsbOperationManifestEntry* entry =
         agent_q::usb_operation_manifest_entry(operation);
     if (entry == nullptr) {
-        agent_q::usb_response_write_error(
-            id,
-            "unsupported_type",
-            "Unsupported request type.");
+        writer.write_error(id, "internal_output_error");
         return true;
     }
     const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
@@ -1222,24 +1256,19 @@ bool write_payload_delivery_disconnect_admission_error(
     if (agent_q::payload_delivery_admission_allows_disconnect_cleanup(admission)) {
         return false;
     }
-    agent_q::usb_response_write_error(
-        id,
-        "busy",
-        "Device has a pending signable payload.");
+    writer.write_error(id, "busy");
     return true;
 }
 
 bool write_payload_delivery_safe_read_admission_error(
     const char* id,
-    agent_q::AgentQUsbOperationType operation)
+    agent_q::AgentQUsbOperationType operation,
+    const AgentQUsbOperationResponseWriter& writer)
 {
     const agent_q::AgentQUsbOperationManifestEntry* entry =
         agent_q::usb_operation_manifest_entry(operation);
     if (entry == nullptr) {
-        agent_q::usb_response_write_error(
-            id,
-            "unsupported_type",
-            "Unsupported request type.");
+        writer.write_error(id, "internal_output_error");
         return true;
     }
     const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
@@ -1254,24 +1283,19 @@ bool write_payload_delivery_safe_read_admission_error(
     if (agent_q::payload_delivery_admission_allows_safe_read(admission)) {
         return false;
     }
-    agent_q::usb_response_write_error(
-        id,
-        "busy",
-        "Device has a pending signable payload.");
+    writer.write_error(id, "busy");
     return true;
 }
 
 bool write_payload_delivery_retained_result_admission_error(
     const char* id,
-    agent_q::AgentQUsbOperationType operation)
+    agent_q::AgentQUsbOperationType operation,
+    const AgentQUsbOperationResponseWriter& writer)
 {
     const agent_q::AgentQUsbOperationManifestEntry* entry =
         agent_q::usb_operation_manifest_entry(operation);
     if (entry == nullptr) {
-        agent_q::usb_response_write_error(
-            id,
-            "unsupported_type",
-            "Unsupported request type.");
+        writer.write_error(id, "internal_output_error");
         return true;
     }
     const agent_q::AgentQPayloadDeliveryAdmissionDecision admission =
@@ -1286,10 +1310,7 @@ bool write_payload_delivery_retained_result_admission_error(
     if (agent_q::payload_delivery_admission_allows_retained_result_cleanup(admission)) {
         return false;
     }
-    agent_q::usb_response_write_error(
-        id,
-        "busy",
-        "Device has a pending signable payload.");
+    writer.write_error(id, "busy");
     return true;
 }
 
@@ -1323,6 +1344,7 @@ bool local_settings_touch_entry_candidate_allowed()
 
 bool write_busy_if_pending_or_local_flow_active(
     const char* id,
+    const AgentQUsbOperationResponseWriter& writer,
     bool allow_settings_menu = false,
     bool allow_payload_delivery = false)
 {
@@ -1333,45 +1355,53 @@ bool write_busy_if_pending_or_local_flow_active(
     if (!block.blocked) {
         return false;
     }
-    agent_q::usb_response_write_error(id, block.code, block.message);
+    writer.write_error(id, block.code);
     return true;
 }
 
 bool write_busy_if_pending_or_local_flow_active_for_operation(
     const char* id,
+    const AgentQUsbOperationResponseWriter& writer,
     agent_q::AgentQUsbOperationType operation)
 {
-    return write_busy_if_pending_or_local_flow_active(id, false, true) ||
-           write_payload_delivery_operation_busy(id, operation);
+    return write_busy_if_pending_or_local_flow_active(id, writer, false, true) ||
+           write_payload_delivery_operation_busy(id, writer, operation);
 }
 
-bool write_busy_if_pending_or_local_flow_active_allow_settings(const char* id)
+bool write_busy_if_pending_or_local_flow_active_allow_settings(
+    const char* id,
+    const AgentQUsbOperationResponseWriter& writer)
 {
-    return write_busy_if_pending_or_local_flow_active(id, true, true);
+    return write_busy_if_pending_or_local_flow_active(id, writer, true, true);
 }
 
-bool write_busy_if_pending_or_local_flow_active_allow_payload_delivery(const char* id)
+bool write_busy_if_pending_or_local_flow_active_allow_payload_delivery(
+    const char* id,
+    const AgentQUsbOperationResponseWriter& writer)
 {
-    return write_busy_if_pending_or_local_flow_active(id, false, true);
+    return write_busy_if_pending_or_local_flow_active(id, writer, false, true);
 }
 
-bool require_active_matching_session(const char* id, const char* session_id)
+bool require_active_matching_session(
+    const char* id,
+    const char* session_id,
+    const AgentQUsbOperationResponseWriter& writer)
 {
     switch (agent_q::session_validate(session_id)) {
         case agent_q::AgentQSessionValidationResult::ok:
             return true;
         case agent_q::AgentQSessionValidationResult::invalid_format:
-            agent_q::usb_response_write_error(id, "invalid_session", "Invalid sessionId.");
+            writer.write_error(id, "invalid_session");
             return false;
         case agent_q::AgentQSessionValidationResult::missing:
             cancel_policy_update_after_session_loss("active session missing during request validation");
             cancel_sui_zklogin_proposal_after_session_loss("active session missing during request validation");
             cancel_user_signing_after_session_loss("active session missing during request validation");
-            agent_q::usb_response_write_error(id, "invalid_session", "Session is unknown or already ended.");
+            writer.write_error(id, "invalid_session");
             return false;
         case agent_q::AgentQSessionValidationResult::mismatch:
         default:
-            agent_q::usb_response_write_error(id, "invalid_session", "Session is unknown or already ended.");
+            writer.write_error(id, "invalid_session");
             return false;
     }
 }
@@ -1379,7 +1409,11 @@ bool require_active_matching_session(const char* id, const char* session_id)
 void write_policy_update_invalid_session_and_clear(const char* request_id, const char* log_reason)
 {
     if (request_id != nullptr && request_id[0] != '\0') {
-        agent_q::usb_response_write_error(request_id, "invalid_session", "Policy update session is unknown or already ended.");
+        write_operation_error(
+            request_id,
+            agent_q::AgentQUsbOperationType::policy_propose,
+            "invalid_session",
+            "Policy update session is unknown or already ended.");
     }
     agent_q::policy_update_flow_clear();
     agent_q::protocol_pin_approval_clear();
@@ -1424,8 +1458,9 @@ void write_sui_zklogin_proposal_invalid_session_and_clear(
     const char* log_reason)
 {
     if (request_id != nullptr && request_id[0] != '\0') {
-        agent_q::usb_response_write_error(
+        write_operation_error(
             request_id,
+            agent_q::AgentQUsbOperationType::credential_propose,
             "invalid_session",
             "Sui zkLogin proposal session is unknown or already ended.");
     }
@@ -1567,8 +1602,9 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
         if (policy_snapshot.request_id != nullptr &&
             policy_snapshot.request_id[0] != '\0' &&
             (id == nullptr || strcmp(policy_snapshot.request_id, id) != 0)) {
-            agent_q::usb_response_write_error(
+            write_operation_error(
                 policy_snapshot.request_id,
+                agent_q::AgentQUsbOperationType::policy_propose,
                 "invalid_session",
                 "Policy update session is unknown or already ended.");
         }
@@ -1599,8 +1635,9 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
     }
     if (policy_request_id[0] != '\0' &&
         (id == nullptr || strcmp(policy_request_id, id) != 0)) {
-        agent_q::usb_response_write_error(
+        write_operation_error(
             policy_request_id,
+            agent_q::AgentQUsbOperationType::policy_propose,
             "invalid_session",
             "Policy update session is unknown or already ended.");
     }
@@ -1636,8 +1673,9 @@ bool disconnect_pending_sui_zklogin_proposal_for_session(const char* id, const c
         if (proposal_snapshot.request_id != nullptr &&
             proposal_snapshot.request_id[0] != '\0' &&
             (id == nullptr || strcmp(proposal_snapshot.request_id, id) != 0)) {
-            agent_q::usb_response_write_error(
+            write_operation_error(
                 proposal_snapshot.request_id,
+                agent_q::AgentQUsbOperationType::credential_propose,
                 "invalid_session",
                 "Sui zkLogin proposal session is unknown or already ended.");
         }
@@ -1672,8 +1710,9 @@ bool disconnect_pending_sui_zklogin_proposal_for_session(const char* id, const c
         SensitiveUiClearPolicy::preserve);
     if (proposal_request_id[0] != '\0' &&
         (id == nullptr || strcmp(proposal_request_id, id) != 0)) {
-        agent_q::usb_response_write_error(
+        write_operation_error(
             proposal_request_id,
+            agent_q::AgentQUsbOperationType::credential_propose,
             "invalid_session",
             "Sui zkLogin proposal session is unknown or already ended.");
     }
@@ -1700,7 +1739,11 @@ bool disconnect_pending_user_signing_for_session(const char* id, const char* ses
     const agent_q::AgentQUserSigningConfirmationResult result =
         agent_q::user_signing_confirmation_cancel_for_disconnect(session_id);
     if (result == agent_q::AgentQUserSigningConfirmationResult::busy) {
-        agent_q::usb_response_write_error(id, "busy", "Device is signing a request.");
+        write_operation_error(
+            id,
+            agent_q::AgentQUsbOperationType::disconnect,
+            "busy",
+            "Device is signing a request.");
         return true;
     }
 
@@ -1708,10 +1751,10 @@ bool disconnect_pending_user_signing_for_session(const char* id, const char* ses
     clear_agent_q_panel_if_kind(AgentQUiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
     if (snapshot.request_id[0] != '\0' &&
         (id == nullptr || strcmp(snapshot.request_id, id) != 0)) {
-        agent_q::usb_response_write_error(
+        agent_q::usb_response_write_method_error(
             snapshot.request_id,
-            "invalid_session",
-            "Signing request session is unknown or already ended.");
+            snapshot.method,
+            "invalid_session");
     }
     consume_user_signing_terminal_if_pending();
     clear_active_session();
@@ -2451,7 +2494,11 @@ void finish_policy_update_error_terminal(
     const char* error_message,
     const char* display_message)
 {
-    agent_q::usb_response_write_error(request_id, error_code, error_message);
+    write_operation_error(
+        request_id,
+        agent_q::AgentQUsbOperationType::policy_propose,
+        error_code,
+        error_message);
     clear_policy_update_terminal_state();
     agent_q::avatar_overlay_show_message(
         display_message,
@@ -2516,7 +2563,7 @@ void finish_policy_update_terminal(
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::history_error:
             finish_policy_update_error_terminal(
                 request_id,
-                "history_error",
+                "history_unavailable",
                 "Could not record policy update.",
                 "History error");
             return;
@@ -2574,7 +2621,11 @@ void finish_sui_zklogin_proposal_error_terminal(
     const char* error_message,
     const char* display_message)
 {
-    agent_q::usb_response_write_error(request_id, error_code, error_message);
+    write_operation_error(
+        request_id,
+        agent_q::AgentQUsbOperationType::credential_propose,
+        error_code,
+        error_message);
     clear_sui_zklogin_proposal_terminal_state();
     agent_q::avatar_overlay_show_message(
         display_message,
@@ -3608,16 +3659,16 @@ const agent_q::AgentQUsbSessionReadHandlerOps& session_read_handler_ops()
     return ops;
 }
 
-agent_q::AgentQTimeoutWindow payload_upload_timeout_window_for_size(size_t size_bytes)
+agent_q::AgentQTimeoutWindow payload_transfer_timeout_window_for_size(size_t size_bytes)
 {
     const size_t chunk_count =
         (size_bytes + agent_q::kAgentQPayloadDeliveryDefaultChunkMaxBytes - 1) /
         agent_q::kAgentQPayloadDeliveryDefaultChunkMaxBytes;
     uint64_t window_ms =
-        static_cast<uint64_t>(kPayloadUploadBaseWindowMs) +
-        static_cast<uint64_t>(chunk_count) * static_cast<uint64_t>(kPayloadUploadPerChunkWindowMs);
-    if (window_ms > kPayloadUploadMaxWindowMs) {
-        window_ms = kPayloadUploadMaxWindowMs;
+        static_cast<uint64_t>(kPayloadTransferBaseWindowMs) +
+        static_cast<uint64_t>(chunk_count) * static_cast<uint64_t>(kPayloadTransferPerChunkWindowMs);
+    if (window_ms > kPayloadTransferMaxWindowMs) {
+        window_ms = kPayloadTransferMaxWindowMs;
     }
     const TickType_t now = xTaskGetTickCount();
     return agent_q::timeout_window_from_deadline(
@@ -3625,14 +3676,14 @@ agent_q::AgentQTimeoutWindow payload_upload_timeout_window_for_size(size_t size_
         now + pdMS_TO_TICKS(static_cast<uint32_t>(window_ms)));
 }
 
-const agent_q::AgentQUsbPayloadUploadHandlerOps& payload_upload_handler_ops()
+const agent_q::AgentQUsbPayloadTransferHandlerOps& payload_transfer_handler_ops()
 {
-    static const agent_q::AgentQUsbPayloadUploadHandlerOps ops = {
+    static const agent_q::AgentQUsbPayloadTransferHandlerOps ops = {
         provisioned_material_ready,
         write_busy_if_pending_or_local_flow_active_allow_payload_delivery,
         require_active_matching_session,
         current_timeout_tick,
-        payload_upload_timeout_window_for_size,
+        payload_transfer_timeout_window_for_size,
     };
     return ops;
 }
@@ -3661,52 +3712,52 @@ void handle_policy_get_request(
     agent_q::handle_usb_policy_get_request(id, request, writer, session_read_handler_ops());
 }
 
-void handle_payload_upload_begin_request(
+void handle_payload_transfer_begin_request(
     const char* id,
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer)
 {
-    agent_q::handle_usb_payload_upload_begin_request(
+    agent_q::handle_usb_payload_transfer_begin_request(
         id,
         request,
         writer,
-        payload_upload_handler_ops());
+        payload_transfer_handler_ops());
 }
 
-void handle_payload_upload_chunk_request(
+void handle_payload_transfer_chunk_request(
     const char* id,
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer)
 {
-    agent_q::handle_usb_payload_upload_chunk_request(
+    agent_q::handle_usb_payload_transfer_chunk_request(
         id,
         request,
         writer,
-        payload_upload_handler_ops());
+        payload_transfer_handler_ops());
 }
 
-void handle_payload_upload_finish_request(
+void handle_payload_transfer_finish_request(
     const char* id,
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer)
 {
-    agent_q::handle_usb_payload_upload_finish_request(
+    agent_q::handle_usb_payload_transfer_finish_request(
         id,
         request,
         writer,
-        payload_upload_handler_ops());
+        payload_transfer_handler_ops());
 }
 
-void handle_payload_upload_abort_request(
+void handle_payload_transfer_abort_request(
     const char* id,
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer)
 {
-    agent_q::handle_usb_payload_upload_abort_request(
+    agent_q::handle_usb_payload_transfer_abort_request(
         id,
         request,
         writer,
-        payload_upload_handler_ops());
+        payload_transfer_handler_ops());
 }
 
 const agent_q::AgentQUsbDisconnectHandlerOps& disconnect_handler_ops()
@@ -4145,10 +4196,10 @@ const agent_q::AgentQUsbOperationHandlers& usb_operation_handlers()
         handle_policy_propose_request,
         handle_credential_prepare_request,
         handle_credential_propose_request,
-        handle_payload_upload_begin_request,
-        handle_payload_upload_chunk_request,
-        handle_payload_upload_finish_request,
-        handle_payload_upload_abort_request,
+        handle_payload_transfer_begin_request,
+        handle_payload_transfer_chunk_request,
+        handle_payload_transfer_finish_request,
+        handle_payload_transfer_abort_request,
     };
     return handlers;
 }
@@ -4161,9 +4212,9 @@ void handle_line(const char* line)
         usb_operation_handlers());
 }
 
-void write_usb_line_error(const char* code, const char* message)
+void write_usb_line_error(const char* code)
 {
-    agent_q::usb_response_write_error(nullptr, code, message);
+    agent_q::usb_response_write_error(nullptr, code);
 }
 
 void poll_usb_input()

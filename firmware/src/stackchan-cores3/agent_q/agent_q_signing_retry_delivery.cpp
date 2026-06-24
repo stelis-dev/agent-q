@@ -14,8 +14,7 @@ AgentQSigningRetryDeliveryResult evaluate_signing_retry_delivery(
 {
     AgentQSigningRetryDeliveryResult result = {};
     result.status = AgentQSigningRetryDeliveryStatus::lookup_error;
-    result.error_code = "protocol_error";
-    result.error_message = "Stored signing result lookup failed.";
+    result.error_code = "internal_output_error";
 
     const SigningResultRetryLookup lookup =
         signing_result_find_for_retry(
@@ -31,7 +30,6 @@ AgentQSigningRetryDeliveryResult evaluate_signing_retry_delivery(
         case SigningResultRetryLookup::not_found:
             result.status = AgentQSigningRetryDeliveryStatus::not_found;
             result.error_code = nullptr;
-            result.error_message = nullptr;
             if (stored_result != nullptr && stored_result_size > 0) {
                 memset(stored_result, 0, stored_result_size);
             }
@@ -40,12 +38,10 @@ AgentQSigningRetryDeliveryResult evaluate_signing_retry_delivery(
         case SigningResultRetryLookup::match:
             result.status = AgentQSigningRetryDeliveryStatus::match;
             result.error_code = nullptr;
-            result.error_message = nullptr;
             return result;
         case SigningResultRetryLookup::conflict:
             result.status = AgentQSigningRetryDeliveryStatus::request_id_conflict;
             result.error_code = "request_id_conflict";
-            result.error_message = "Request id is already bound to a different signing request.";
             if (stored_result != nullptr && stored_result_size > 0) {
                 memset(stored_result, 0, stored_result_size);
             }

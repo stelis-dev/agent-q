@@ -83,22 +83,19 @@ JsonDocument parse_json(const char* label, const std::string& json)
 
 std::string valid_request_with_params(const std::string& params)
 {
-    return "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
+    return "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction\","
            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\","
-           "\"chain\":\"sui\",\"method\":\"sign_transaction\","
-           "\"params\":" + params + "}";
+           "\"payload\":" + params + "}";
 }
 
 std::string request_with_shape(
-    const char* chain_fragment,
     const char* method_fragment,
     const std::string& params)
 {
-    return "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
+    return "{\"id\":\"req_sign_1\",\"version\":1,"
            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\"," +
-           std::string(chain_fragment == nullptr ? "" : chain_fragment) +
            std::string(method_fragment == nullptr ? "" : method_fragment) +
-           "\"params\":" + params + "}";
+           "\"payload\":" + params + "}";
 }
 
 void expect_base64(const char* label, const char* value, size_t max_size, bool expected)
@@ -228,9 +225,7 @@ void expect_staged_params(
     const std::string& json,
     agent_q::AgentQSignTransactionUserValidationResult expected,
     const char* expected_network = nullptr,
-    const char* expected_payload_ref = nullptr,
-    size_t expected_payload_size = 0,
-    const char* expected_payload_digest = nullptr)
+    const char* expected_payload_ref = nullptr)
 {
     JsonDocument document = parse_json(label, json);
     agent_q::AgentQSignTransactionUserParams output = {};
@@ -248,12 +243,8 @@ void expect_staged_params(
     }
     if (expected_network == nullptr ||
         expected_payload_ref == nullptr ||
-        expected_payload_digest == nullptr ||
         strcmp(output.network, expected_network) != 0 ||
-        strcmp(output.payload_ref, expected_payload_ref) != 0 ||
-        strcmp(output.payload_kind, "transaction") != 0 ||
-        output.payload_size_bytes != expected_payload_size ||
-        strcmp(output.payload_digest, expected_payload_digest) != 0) {
+        strcmp(output.payload_ref, expected_payload_ref) != 0) {
         fprintf(stderr, "%s: staged params output fields did not match\n", label);
         ++failures;
     }
@@ -279,8 +270,8 @@ int main()
     using Result = agent_q::AgentQSignTransactionUserValidationResult;
 
     const std::string malformed_params_request =
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
-        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":[]}";
+        "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction\","
+        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":[]}";
 
     expect_envelope(
         "valid envelope ignores malformed params",
@@ -316,103 +307,103 @@ int main()
 
     expect_envelope(
         "missing id",
-        "{\"version\":1,\"type\":\"sign_transaction\","
-        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
+        "{\"version\":1,\"method\":\"sign_transaction\","
+        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "embedded nul id",
-        "{\"id\":\"req_sign_1\\u0000x\",\"version\":1,\"type\":\"sign_transaction\","
-        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
+        "{\"id\":\"req_sign_1\\u0000x\",\"version\":1,\"method\":\"sign_transaction\","
+        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "unsafe id with slash",
-        "{\"id\":\"req/signature/1\",\"version\":1,\"type\":\"sign_transaction\","
-        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
+        "{\"id\":\"req/signature/1\",\"version\":1,\"method\":\"sign_transaction\","
+        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "unsafe id with space",
-        "{\"id\":\"req signature 1\",\"version\":1,\"type\":\"sign_transaction\","
-        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
+        "{\"id\":\"req signature 1\",\"version\":1,\"method\":\"sign_transaction\","
+        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "overlong id",
         "{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
-        "\"version\":1,\"type\":\"sign_transaction\","
-        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
+        "\"version\":1,\"method\":\"sign_transaction\","
+        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_request_shape);
     expect_envelope(
         "unsupported version",
-        "{\"id\":\"req_sign_1\",\"version\":2,\"type\":\"sign_transaction\","
-        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
+        "{\"id\":\"req_sign_1\",\"version\":2,\"method\":\"sign_transaction\","
+        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::unsupported_version);
     expect_envelope(
-        "missing type",
+        "missing method",
         "{\"id\":\"req_sign_1\",\"version\":1,"
-        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
+        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
-        Result::unsupported_type);
+        Result::unsupported_method);
     expect_envelope(
-        "wrong type",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction_policy\","
-        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"params\":{"
+        "wrong method",
+        "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction_policy\","
+        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
-        Result::unsupported_type);
+        Result::unsupported_method);
     expect_envelope(
         "top level unsupported field",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
-        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"extra\":true,\"params\":{"
+        "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction\","
+        "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"extra\":true,\"payload\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::unsupported_field);
     expect_session(
         "missing session",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
-        "\"params\":{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}}",
+        "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction\","
+        "\"payload\":{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_session(
         "bad session prefix",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
-        "\"sessionId\":\"not_session_aaaaaaaaaaaaaaaa\",\"params\":{"
+        "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction\","
+        "\"sessionId\":\"not_session_aaaaaaaaaaaaaaaa\",\"payload\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_session(
         "uppercase session hex",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
-        "\"sessionId\":\"session_AAAAAAAAAAAAAAAA\",\"params\":{"
+        "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction\","
+        "\"sessionId\":\"session_AAAAAAAAAAAAAAAA\",\"payload\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_session(
         "embedded nul session",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
-        "\"sessionId\":\"session_aaaaaaaa\\u0000x\",\"params\":{"
+        "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction\","
+        "\"sessionId\":\"session_aaaaaaaa\\u0000x\",\"payload\":{"
         "\"network\":\"devnet\","
         "\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_session(
         "overlong session",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
-        "\"params\":{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}}",
+        "\"payload\":{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_params(
         "params missing",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"type\":\"sign_transaction\","
+        "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction\","
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\"}",
         Result::invalid_params_shape);
     expect_params(
@@ -425,27 +416,24 @@ int main()
                                   "\"requestAuthority\":\"user_confirmed\"}"),
         Result::unsupported_field);
     expect_params(
-        "selected route owns identity when raw chain is absent",
+        "selected route owns identity when envelope method is present",
         request_with_shape(
-            nullptr,
             "\"method\":\"sign_transaction\",",
             "{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
         Result::ok,
         3,
         "devnet");
     expect_params(
-        "selected route owns identity when raw chain differs",
+        "payload chain is not a transport selector",
         request_with_shape(
-            "\"chain\":\"evm\",",
             "\"method\":\"sign_transaction\",",
-            "{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
+            "{\"chain\":\"evm\",\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
         Result::ok,
         3,
         "devnet");
     expect_params(
-        "selected route owns identity when raw method differs",
+        "payload validator ignores envelope method already classified by ingress",
         request_with_shape(
-            "\"chain\":\"sui\",",
             "\"method\":\"sign_personal_message\",",
             "{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}"),
         Result::ok,
@@ -489,60 +477,41 @@ int main()
         387,
         "devnet",
         above_adapter_capacity.c_str());
-    const char* digest =
-        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     expect_staged_params(
         "valid staged params",
         valid_request_with_params(std::string("{\"network\":\"devnet\","
-                                  "\"payloadRef\":\"payload_abcdef0123456789\","
-                                  "\"payloadKind\":\"transaction\","
-                                  "\"sizeBytes\":\"131072\","
-                                  "\"payloadDigest\":\"") + digest + "\"}"),
+                                  "\"payloadRef\":\"payload_abcdef0123456789\"}")),
         Result::ok,
         "devnet",
-        "payload_abcdef0123456789",
-        131072,
-        digest);
+        "payload_abcdef0123456789");
     expect_staged_params(
-        "staged params reject non-canonical size",
+        "staged params reject descriptor echo",
         valid_request_with_params(std::string("{\"network\":\"devnet\","
                                   "\"payloadRef\":\"payload_abcdef0123456789\","
                                   "\"payloadKind\":\"transaction\","
                                   "\"sizeBytes\":\"00037\","
-                                  "\"payloadDigest\":\"") + digest + "\"}"),
-        Result::invalid_payload_descriptor);
+                                  "\"payloadDigest\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}")),
+        Result::unsupported_field);
     expect_staged_params(
-        "staged params reject uint64 overflow size",
-        valid_request_with_params(std::string("{\"network\":\"devnet\","
-                                  "\"payloadRef\":\"payload_abcdef0123456789\","
-                                  "\"payloadKind\":\"transaction\","
-                                  "\"sizeBytes\":\"18446744073709551616\","
-                                  "\"payloadDigest\":\"") + digest + "\"}"),
-        Result::invalid_payload_descriptor);
-    expect_staged_params(
-        "staged params missing descriptor",
+        "staged params malformed payloadRef",
         valid_request_with_params("{\"network\":\"devnet\","
-                                  "\"payloadRef\":\"payload_abcdef0123456789\"}"),
+                                  "\"payloadRef\":\"payload_abc/def\"}"),
+        Result::invalid_payload_descriptor);
+    expect_staged_params(
+        "staged params missing payload source",
+        valid_request_with_params("{\"network\":\"devnet\"}"),
         Result::invalid_params_shape);
-    expect_staged_params(
-        "staged params malformed digest",
-        valid_request_with_params("{\"network\":\"devnet\","
-                                  "\"payloadRef\":\"payload_abcdef0123456789\","
-                                  "\"payloadKind\":\"transaction\","
-                                  "\"sizeBytes\":\"131072\","
-                                  "\"payloadDigest\":\"sha256:xyz\"}"),
-        Result::invalid_payload_descriptor);
     expect_params(
         "inline params reject descriptor echo",
         valid_request_with_params(std::string("{\"network\":\"devnet\","
                                   "\"txBytes\":\"AAAA\","
                                   "\"payloadKind\":\"transaction\","
                                   "\"sizeBytes\":\"3\","
-                                  "\"payloadDigest\":\"") + digest + "\"}"),
-        Result::invalid_params_shape);
+                                  "\"payloadDigest\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}")),
+        Result::unsupported_field);
     if (strcmp(agent_q::sign_transaction_user_validation_result_name(Result::ok), "ok") != 0 ||
-        strcmp(agent_q::sign_transaction_user_validation_result_name(Result::unsupported_type),
-               "unsupported_type") != 0 ||
+        strcmp(agent_q::sign_transaction_user_validation_result_name(Result::unsupported_method),
+               "unsupported_method") != 0 ||
         strcmp(agent_q::sign_transaction_user_validation_result_name(Result::invalid_tx_bytes),
                "invalid_tx_bytes") != 0 ||
         strcmp(agent_q::sign_transaction_user_validation_result_name(Result::invalid_payload_descriptor),
@@ -556,22 +525,22 @@ int main()
     expect_base64("base64 unterminated within max", unterminated, 3, false);
 
     expect_payload_primitive(
-        "upload id valid max suffix",
-        agent_q::payload_delivery_upload_id_format_valid(
-            "upload_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-ABCDEFG"),
+        "transfer id valid max suffix",
+        agent_q::payload_delivery_transfer_id_format_valid(
+            "transfer_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-ABCDEFG"),
         true);
     expect_payload_primitive(
-        "upload id rejects empty suffix",
-        agent_q::payload_delivery_upload_id_format_valid("upload_"),
+        "transfer id rejects empty suffix",
+        agent_q::payload_delivery_transfer_id_format_valid("transfer_"),
         false);
     expect_payload_primitive(
-        "upload id rejects slash",
-        agent_q::payload_delivery_upload_id_format_valid("upload_abc/def"),
+        "transfer id rejects slash",
+        agent_q::payload_delivery_transfer_id_format_valid("transfer_abc/def"),
         false);
     expect_payload_primitive(
-        "upload id rejects long suffix",
-        agent_q::payload_delivery_upload_id_format_valid(
-            "upload_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-ABCDEFGH"),
+        "transfer id rejects long suffix",
+        agent_q::payload_delivery_transfer_id_format_valid(
+            "transfer_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-ABCDEFGH"),
         false);
     expect_payload_primitive(
         "payload ref valid max suffix",
@@ -586,6 +555,8 @@ int main()
         "payload ref rejects slash",
         agent_q::payload_delivery_payload_ref_format_valid("payload_abc/def"),
         false);
+    const char* digest =
+        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     expect_payload_primitive(
         "payload digest accepts lowercase sha256",
         agent_q::payload_delivery_payload_digest_format_valid(digest),

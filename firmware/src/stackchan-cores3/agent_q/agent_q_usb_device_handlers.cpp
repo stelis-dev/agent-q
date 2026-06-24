@@ -10,13 +10,10 @@ namespace {
 
 bool write_status_response(const char* id, const AgentQUsbDeviceResponseInfo& info)
 {
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["type"] = "status";
-    usb_response_write_device_fields(response["device"].to<JsonObject>(), info);
-    response["provisioning"]["state"] = info.provisioning_state;
-    return usb_response_write_json(response);
+    JsonDocument result;
+    usb_response_write_device_fields(result["device"].to<JsonObject>(), info);
+    result["provisioning"]["state"] = info.provisioning_state;
+    return usb_response_write_success_result(id, "get_status", result.as<JsonObjectConst>());
 }
 
 bool write_identify_device_result(
@@ -24,14 +21,11 @@ bool write_identify_device_result(
     const char* code,
     const AgentQUsbDeviceResponseInfo& info)
 {
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["type"] = "identify_device_result";
-    response["status"] = "displayed";
-    response["code"] = code;
-    usb_response_write_device_fields(response["device"].to<JsonObject>(), info);
-    return usb_response_write_json(response);
+    JsonDocument result;
+    result["status"] = "displayed";
+    result["code"] = code;
+    usb_response_write_device_fields(result["device"].to<JsonObject>(), info);
+    return usb_response_write_success_result(id, "identify_device", result.as<JsonObjectConst>());
 }
 
 }  // namespace
@@ -42,18 +36,19 @@ void handle_usb_get_status_request(
     const AgentQUsbOperationResponseWriter& writer,
     const AgentQUsbGetStatusHandlerOps& ops)
 {
-    const char* const allowed_request_fields[] = {"id", "version", "type"};
+    const char* const allowed_request_fields[] = {"id", "version", "method"};
     if (!agent_q_json_object_fields_supported(
             request.as<JsonVariantConst>(),
             allowed_request_fields,
             3)) {
-        writer.write_error(id, "invalid_params", "get_status request contains unsupported fields.");
+        writer.write_error(id, "invalid_params");
         return;
     }
     if (ops.write_payload_delivery_safe_read_admission_error != nullptr &&
         ops.write_payload_delivery_safe_read_admission_error(
             id,
-            AgentQUsbOperationType::get_status)) {
+            AgentQUsbOperationType::get_status,
+            writer)) {
         return;
     }
     if (ops.refresh_persistent_material_consistency != nullptr) {
@@ -75,34 +70,34 @@ void handle_usb_identify_device_request(
     const AgentQUsbIdentifyDeviceHandlerOps& ops)
 {
     if (ops.write_identify_device_admission_error != nullptr &&
-        ops.write_identify_device_admission_error(id)) {
+        ops.write_identify_device_admission_error(id, writer)) {
         return;
     }
-    const char* const allowed_request_fields[] = {"id", "version", "type", "params"};
+    const char* const allowed_request_fields[] = {"id", "version", "method", "payload"};
     if (!agent_q_json_object_fields_supported(
             request.as<JsonVariantConst>(),
             allowed_request_fields,
             4)) {
-        writer.write_error(id, "invalid_params", "identify_device request contains unsupported fields.");
+        writer.write_error(id, "invalid_params");
         return;
     }
     const char* const allowed_identify_params[] = {"code"};
     if (!agent_q_json_object_fields_supported(
-            request["params"],
+            request["payload"],
             allowed_identify_params,
             1)) {
-        writer.write_error(id, "invalid_params", "identify_device params contain unsupported fields.");
+        writer.write_error(id, "invalid_params");
         return;
     }
 
     const char* code = nullptr;
-    if (!agent_q_json_optional_c_string(request["params"]["code"], "", &code)) {
-        writer.write_error(id, "invalid_code", "Invalid identification code.");
+    if (!agent_q_json_optional_c_string(request["payload"]["code"], "", &code)) {
+        writer.write_error(id, "invalid_params");
         return;
     }
     if (ops.is_safe_identification_code == nullptr ||
         !ops.is_safe_identification_code(code)) {
-        writer.write_error(id, "invalid_code", "Invalid identification code.");
+        writer.write_error(id, "invalid_params");
         return;
     }
 

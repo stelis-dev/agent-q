@@ -14,12 +14,15 @@ struct AgentQUsbGetStatusHandlerOps {
     bool (*refresh_persistent_material_consistency)();
     bool (*write_payload_delivery_safe_read_admission_error)(
         const char* id,
-        AgentQUsbOperationType operation);
+        AgentQUsbOperationType operation,
+        const AgentQUsbOperationResponseWriter& writer);
     AgentQUsbDeviceResponseInfo (*device_response_info)();
 };
 
 struct AgentQUsbIdentifyDeviceHandlerOps {
-    bool (*write_identify_device_admission_error)(const char* id);
+    bool (*write_identify_device_admission_error)(
+        const char* id,
+        const AgentQUsbOperationResponseWriter& writer);
     bool (*is_safe_identification_code)(const char* value);
     void (*show_identification_code)(const char* code, uint32_t duration_ms);
     AgentQUsbDeviceResponseInfo (*device_response_info)();

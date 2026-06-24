@@ -7,7 +7,7 @@ namespace agent_q {
 constexpr size_t kAgentQUsbRequestLineMaxBytes = 16 * 1024;
 
 using AgentQUsbRequestLineHandler = void (*)(const char* line);
-using AgentQUsbRequestLineErrorHandler = void (*)(const char* code, const char* message);
+using AgentQUsbRequestLineErrorHandler = void (*)(const char* code);
 
 void usb_line_receiver_reset();
 void usb_line_receiver_poll(

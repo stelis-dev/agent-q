@@ -34,7 +34,7 @@ AgentQPayloadDeliveryAdmissionDecision admit_sign_transaction_from_snapshot(
     if (snapshot.state == AgentQPayloadDeliveryState::receiving) {
         return decision(
             AgentQPayloadDeliveryAdmissionResult::busy,
-            AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_upload);
+            AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_transfer);
     }
 
     if (!input.staged_payload_ref) {
@@ -67,9 +67,9 @@ AgentQPayloadDeliveryAdmissionDecision payload_delivery_admit_operation(
     const AgentQPayloadDeliverySnapshot snapshot = payload_delivery_advance_and_snapshot(input.now_tick);
     if (snapshot.state == AgentQPayloadDeliveryState::idle) {
         switch (input.operation) {
-            case AgentQPayloadDeliveryOperationKind::payload_upload_chunk:
-            case AgentQPayloadDeliveryOperationKind::payload_upload_finish:
-            case AgentQPayloadDeliveryOperationKind::payload_upload_abort:
+            case AgentQPayloadDeliveryOperationKind::payload_transfer_chunk:
+            case AgentQPayloadDeliveryOperationKind::payload_transfer_finish:
+            case AgentQPayloadDeliveryOperationKind::payload_transfer_abort:
                 return decision(
                     AgentQPayloadDeliveryAdmissionResult::unknown_request,
                     AgentQPayloadDeliveryAdmissionReason::missing_active_payload);
@@ -77,7 +77,7 @@ AgentQPayloadDeliveryAdmissionDecision payload_delivery_admit_operation(
                 return admit_sign_transaction_from_snapshot(snapshot, input);
             case AgentQPayloadDeliveryOperationKind::safe_read:
             case AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup:
-            case AgentQPayloadDeliveryOperationKind::payload_upload_begin:
+            case AgentQPayloadDeliveryOperationKind::payload_transfer_begin:
             case AgentQPayloadDeliveryOperationKind::sign_personal_message:
             case AgentQPayloadDeliveryOperationKind::policy_propose:
             case AgentQPayloadDeliveryOperationKind::credential_propose:
@@ -112,27 +112,27 @@ AgentQPayloadDeliveryAdmissionDecision payload_delivery_admit_operation(
                 snapshot.state == AgentQPayloadDeliveryState::receiving
                     ? AgentQPayloadDeliveryAdmissionReason::receiving_disconnect_cleanup
                     : AgentQPayloadDeliveryAdmissionReason::finalized_disconnect_cleanup);
-        case AgentQPayloadDeliveryOperationKind::payload_upload_begin:
+        case AgentQPayloadDeliveryOperationKind::payload_transfer_begin:
             return decision(
                 AgentQPayloadDeliveryAdmissionResult::busy,
                 snapshot.state == AgentQPayloadDeliveryState::receiving
-                    ? AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_upload
+                    ? AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_transfer
                     : AgentQPayloadDeliveryAdmissionReason::blocked_pending_finalized_payload);
-        case AgentQPayloadDeliveryOperationKind::payload_upload_chunk:
-        case AgentQPayloadDeliveryOperationKind::payload_upload_finish:
+        case AgentQPayloadDeliveryOperationKind::payload_transfer_chunk:
+        case AgentQPayloadDeliveryOperationKind::payload_transfer_finish:
             return snapshot.state == AgentQPayloadDeliveryState::receiving
                        ? decision(
                              AgentQPayloadDeliveryAdmissionResult::ok,
-                             AgentQPayloadDeliveryAdmissionReason::receiving_upload_continue)
+                             AgentQPayloadDeliveryAdmissionReason::receiving_transfer_continue)
                        : decision(
                              AgentQPayloadDeliveryAdmissionResult::busy,
                              AgentQPayloadDeliveryAdmissionReason::blocked_pending_finalized_payload);
-        case AgentQPayloadDeliveryOperationKind::payload_upload_abort:
+        case AgentQPayloadDeliveryOperationKind::payload_transfer_abort:
             return decision(
                 AgentQPayloadDeliveryAdmissionResult::ok,
                 snapshot.state == AgentQPayloadDeliveryState::receiving
-                    ? AgentQPayloadDeliveryAdmissionReason::receiving_upload_abort
-                    : AgentQPayloadDeliveryAdmissionReason::finalized_upload_abort);
+                    ? AgentQPayloadDeliveryAdmissionReason::receiving_transfer_abort
+                    : AgentQPayloadDeliveryAdmissionReason::finalized_transfer_abort);
         case AgentQPayloadDeliveryOperationKind::sign_transaction:
             return admit_sign_transaction_from_snapshot(snapshot, input);
         case AgentQPayloadDeliveryOperationKind::sign_personal_message:
@@ -143,7 +143,7 @@ AgentQPayloadDeliveryAdmissionDecision payload_delivery_admit_operation(
             return decision(
                 AgentQPayloadDeliveryAdmissionResult::busy,
                 snapshot.state == AgentQPayloadDeliveryState::receiving
-                    ? AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_upload
+                    ? AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_transfer
                     : AgentQPayloadDeliveryAdmissionReason::blocked_unrelated_sensitive_flow);
     }
     return decision(
@@ -195,22 +195,22 @@ const char* payload_delivery_admission_reason_name(
             return "receiving_retained_result";
         case AgentQPayloadDeliveryAdmissionReason::receiving_disconnect_cleanup:
             return "receiving_disconnect_cleanup";
-        case AgentQPayloadDeliveryAdmissionReason::receiving_upload_continue:
-            return "receiving_upload_continue";
-        case AgentQPayloadDeliveryAdmissionReason::receiving_upload_abort:
-            return "receiving_upload_abort";
+        case AgentQPayloadDeliveryAdmissionReason::receiving_transfer_continue:
+            return "receiving_transfer_continue";
+        case AgentQPayloadDeliveryAdmissionReason::receiving_transfer_abort:
+            return "receiving_transfer_abort";
         case AgentQPayloadDeliveryAdmissionReason::finalized_safe_read:
             return "finalized_safe_read";
         case AgentQPayloadDeliveryAdmissionReason::finalized_retained_result:
             return "finalized_retained_result";
         case AgentQPayloadDeliveryAdmissionReason::finalized_disconnect_cleanup:
             return "finalized_disconnect_cleanup";
-        case AgentQPayloadDeliveryAdmissionReason::finalized_upload_abort:
-            return "finalized_upload_abort";
+        case AgentQPayloadDeliveryAdmissionReason::finalized_transfer_abort:
+            return "finalized_transfer_abort";
         case AgentQPayloadDeliveryAdmissionReason::finalized_matching_staged_consumer:
             return "finalized_matching_staged_consumer";
-        case AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_upload:
-            return "blocked_incomplete_upload";
+        case AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_transfer:
+            return "blocked_incomplete_transfer";
         case AgentQPayloadDeliveryAdmissionReason::blocked_pending_finalized_payload:
             return "blocked_pending_finalized_payload";
         case AgentQPayloadDeliveryAdmissionReason::blocked_unrelated_sensitive_flow:

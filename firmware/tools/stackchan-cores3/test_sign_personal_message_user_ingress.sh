@@ -86,10 +86,9 @@ std::string request_with_session_and_params(
     const std::string& session_id,
     const std::string& params)
 {
-    return "{\"id\":\"req_sign_msg_1\",\"version\":1,\"type\":\"sign_personal_message\","
+    return "{\"id\":\"req_sign_msg_1\",\"version\":1,\"method\":\"sign_personal_message\","
            "\"sessionId\":\"" + session_id + "\","
-           "\"chain\":\"sui\",\"method\":\"sign_personal_message\","
-           "\"params\":" + params + "}";
+           "\"payload\":" + params + "}";
 }
 
 std::string valid_request()
@@ -199,13 +198,12 @@ int main()
                    IngressResult::ok, 1, true);
 
     check = SessionCheck{"session_aaaaaaaaaaaaaaaa", SessionResult::ok, 0};
-    expect_ingress("bad type stops before state",
-                   "{\"id\":\"req_sign_msg_1\",\"version\":1,\"type\":\"sign_transaction\","
+    expect_ingress("bad method stops before state",
+                   "{\"id\":\"req_sign_msg_1\",\"version\":1,\"method\":\"sign_transaction\","
                    "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\","
-                   "\"chain\":\"sui\",\"method\":\"sign_personal_message\","
-                   "\"params\":{\"network\":\"devnet\",\"message\":\"aGVsbG8=\"}}",
+                   "\"payload\":{\"network\":\"devnet\",\"message\":\"aGVsbG8=\"}}",
                    state(false, false, &check),
-                   IngressResult::unsupported_type,
+                   IngressResult::unsupported_method,
                    0);
 
     check = SessionCheck{"session_aaaaaaaaaaaaaaaa", SessionResult::ok, 0};

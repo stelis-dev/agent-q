@@ -12,10 +12,8 @@ namespace {
 struct AgentQPayloadDeliveryStore {
     AgentQPayloadDeliveryState state = AgentQPayloadDeliveryState::idle;
     char session_id[kAgentQSessionIdSize] = {};
-    char upload_id[kAgentQPayloadDeliveryUploadIdSize] = {};
+    char transfer_id[kAgentQPayloadDeliveryTransferIdSize] = {};
     char payload_ref[kAgentQPayloadDeliveryPayloadRefSize] = {};
-    AgentQSupportedSignRoute route = AgentQSupportedSignRoute::unsupported;
-    char payload_kind[kAgentQPayloadDeliveryPayloadKindSize] = {};
     size_t declared_size_bytes = 0;
     size_t received_bytes = 0;
     size_t chunk_max_bytes = 0;
@@ -26,7 +24,7 @@ struct AgentQPayloadDeliveryStore {
 };
 
 AgentQPayloadDeliveryStore g_store;
-uint64_t g_next_upload_id = 1;
+uint64_t g_next_transfer_id = 1;
 uint64_t g_next_payload_ref = 1;
 
 bool string_equal(const char* left, const char* right)
@@ -64,7 +62,6 @@ void reset_store_without_wipe()
 {
     memset(&g_store, 0, sizeof(g_store));
     g_store.state = AgentQPayloadDeliveryState::idle;
-    g_store.route = AgentQSupportedSignRoute::unsupported;
 }
 
 void clear_store()
@@ -88,9 +85,8 @@ AgentQPayloadDeliverySnapshot snapshot_current_store()
     AgentQPayloadDeliverySnapshot snapshot = {};
     snapshot.state = g_store.state;
     memcpy(snapshot.session_id, g_store.session_id, sizeof(snapshot.session_id));
-    memcpy(snapshot.upload_id, g_store.upload_id, sizeof(snapshot.upload_id));
+    memcpy(snapshot.transfer_id, g_store.transfer_id, sizeof(snapshot.transfer_id));
     memcpy(snapshot.payload_ref, g_store.payload_ref, sizeof(snapshot.payload_ref));
-    snapshot.route = g_store.route;
     snapshot.declared_size_bytes = g_store.declared_size_bytes;
     snapshot.received_bytes = g_store.received_bytes;
     snapshot.chunk_max_bytes = g_store.chunk_max_bytes;
@@ -105,20 +101,20 @@ bool active_session_matches(const char* session_id)
            string_equal(g_store.session_id, session_id);
 }
 
-AgentQPayloadDeliveryResult validate_active_upload_ref(
+AgentQPayloadDeliveryResult validate_active_transfer_ref(
     const char* session_id,
-    const char* upload_id)
+    const char* transfer_id)
 {
     if (!session_id_format_valid(session_id)) {
         return AgentQPayloadDeliveryResult::invalid_session;
     }
-    if (!payload_delivery_upload_id_format_valid(upload_id)) {
-        return AgentQPayloadDeliveryResult::invalid_upload_id;
+    if (!payload_delivery_transfer_id_format_valid(transfer_id)) {
+        return AgentQPayloadDeliveryResult::invalid_transfer_id;
     }
     if (!string_equal(g_store.session_id, session_id)) {
         return AgentQPayloadDeliveryResult::invalid_session;
     }
-    if (!string_equal(g_store.upload_id, upload_id)) {
+    if (!string_equal(g_store.transfer_id, transfer_id)) {
         return AgentQPayloadDeliveryResult::not_found;
     }
     return AgentQPayloadDeliveryResult::ok;
@@ -151,16 +147,6 @@ void fill_descriptor(AgentQPayloadDeliveryDescriptor* descriptor)
     memset(descriptor, 0, sizeof(*descriptor));
     memcpy(descriptor->session_id, g_store.session_id, sizeof(descriptor->session_id));
     memcpy(descriptor->payload_ref, g_store.payload_ref, sizeof(descriptor->payload_ref));
-    descriptor->route = g_store.route;
-    copy_nonempty_string(
-        sign_route_wire_chain(g_store.route),
-        descriptor->chain,
-        sizeof(descriptor->chain));
-    copy_nonempty_string(
-        sign_route_wire_method(g_store.route),
-        descriptor->method,
-        sizeof(descriptor->method));
-    memcpy(descriptor->payload_kind, g_store.payload_kind, sizeof(descriptor->payload_kind));
     descriptor->size_bytes = g_store.declared_size_bytes;
     memcpy(
         descriptor->payload_digest,
@@ -175,17 +161,11 @@ AgentQPayloadDeliveryResult validate_begin_input(
     if (!session_id_format_valid(input.session_id)) {
         return AgentQPayloadDeliveryResult::invalid_session;
     }
-    if (input.route != AgentQSupportedSignRoute::sui_sign_transaction) {
-        return AgentQPayloadDeliveryResult::unsupported_method;
-    }
-    if (!string_equal(input.payload_kind, kAgentQPayloadDeliveryPayloadKindTransaction)) {
-        return AgentQPayloadDeliveryResult::unsupported_payload_kind;
-    }
     if (input.size_bytes == 0 ||
         input.limits.payload_max_bytes == 0 ||
         input.size_bytes > input.limits.payload_max_bytes ||
         input.limits.payload_max_bytes > kAgentQPayloadDeliveryDefaultMaxBytes) {
-        return AgentQPayloadDeliveryResult::unsupported_payload_size;
+        return AgentQPayloadDeliveryResult::payload_too_large;
     }
     if (input.limits.chunk_max_bytes == 0 ||
         input.limits.chunk_max_bytes > input.limits.payload_max_bytes) {
@@ -206,7 +186,7 @@ AgentQPayloadDeliveryResult validate_begin_input(
 void payload_delivery_store_reset()
 {
     clear_store();
-    g_next_upload_id = 1;
+    g_next_transfer_id = 1;
     g_next_payload_ref = 1;
 }
 
@@ -245,8 +225,6 @@ AgentQPayloadDeliveryResult payload_delivery_begin(
     g_store.buffer = buffer;
     g_store.state = AgentQPayloadDeliveryState::receiving;
     copy_nonempty_string(input.session_id, g_store.session_id, sizeof(g_store.session_id));
-    g_store.route = input.route;
-    copy_nonempty_string(input.payload_kind, g_store.payload_kind, sizeof(g_store.payload_kind));
     g_store.declared_size_bytes = input.size_bytes;
     g_store.received_bytes = 0;
     g_store.chunk_max_bytes = input.limits.chunk_max_bytes;
@@ -256,15 +234,15 @@ AgentQPayloadDeliveryResult payload_delivery_begin(
         input.payload_digest,
         g_store.expected_payload_digest,
         sizeof(g_store.expected_payload_digest));
-    if (!payload_delivery_format_upload_id(
-            g_next_upload_id++,
-            g_store.upload_id,
-            sizeof(g_store.upload_id))) {
+    if (!payload_delivery_format_transfer_id(
+            g_next_transfer_id++,
+            g_store.transfer_id,
+            sizeof(g_store.transfer_id))) {
         clear_store();
         return AgentQPayloadDeliveryResult::invalid_argument;
     }
 
-    memcpy(output->upload_id, g_store.upload_id, sizeof(output->upload_id));
+    memcpy(output->transfer_id, g_store.transfer_id, sizeof(output->transfer_id));
     output->received_bytes = g_store.received_bytes;
     output->chunk_max_bytes = g_store.chunk_max_bytes;
     return AgentQPayloadDeliveryResult::ok;
@@ -289,7 +267,7 @@ AgentQPayloadDeliveryResult payload_delivery_append_chunk(
         return AgentQPayloadDeliveryResult::invalid_state;
     }
     const AgentQPayloadDeliveryResult ref_result =
-        validate_active_upload_ref(input.session_id, input.upload_id);
+        validate_active_transfer_ref(input.session_id, input.transfer_id);
     if (ref_result != AgentQPayloadDeliveryResult::ok) {
         return ref_result;
     }
@@ -317,7 +295,7 @@ AgentQPayloadDeliveryResult payload_delivery_append_chunk(
 AgentQPayloadDeliveryResult payload_delivery_reject_chunk_too_large(
     AgentQTimeoutTick now_tick,
     const char* session_id,
-    const char* upload_id)
+    const char* transfer_id)
 {
     advance_store_to(now_tick);
     if (g_store.state == AgentQPayloadDeliveryState::idle) {
@@ -327,7 +305,7 @@ AgentQPayloadDeliveryResult payload_delivery_reject_chunk_too_large(
         return AgentQPayloadDeliveryResult::invalid_state;
     }
     const AgentQPayloadDeliveryResult ref_result =
-        validate_active_upload_ref(session_id, upload_id);
+        validate_active_transfer_ref(session_id, transfer_id);
     if (ref_result != AgentQPayloadDeliveryResult::ok) {
         return ref_result;
     }
@@ -354,7 +332,7 @@ AgentQPayloadDeliveryResult payload_delivery_finish(
         return AgentQPayloadDeliveryResult::invalid_state;
     }
     const AgentQPayloadDeliveryResult ref_result =
-        validate_active_upload_ref(input.session_id, input.upload_id);
+        validate_active_transfer_ref(input.session_id, input.transfer_id);
     if (ref_result != AgentQPayloadDeliveryResult::ok) {
         return ref_result;
     }
@@ -385,7 +363,7 @@ AgentQPayloadDeliveryResult payload_delivery_finish(
         return AgentQPayloadDeliveryResult::invalid_argument;
     }
     g_store.state = AgentQPayloadDeliveryState::finalized;
-    g_store.upload_id[0] = '\0';
+    g_store.transfer_id[0] = '\0';
     fill_descriptor(&output->descriptor);
     return AgentQPayloadDeliveryResult::ok;
 }
@@ -395,17 +373,17 @@ AgentQPayloadDeliveryResult payload_delivery_abort(
     const AgentQPayloadDeliveryAbortInput& input)
 {
     advance_store_to(now_tick);
-    const bool has_upload_id = input.upload_id != nullptr && input.upload_id[0] != '\0';
+    const bool has_transfer_id = input.transfer_id != nullptr && input.transfer_id[0] != '\0';
     const bool has_payload_ref = input.payload_ref != nullptr && input.payload_ref[0] != '\0';
-    if (input.session_id == nullptr || has_upload_id == has_payload_ref) {
+    if (input.session_id == nullptr || has_transfer_id == has_payload_ref) {
         return AgentQPayloadDeliveryResult::invalid_argument;
     }
-    if (has_upload_id) {
+    if (has_transfer_id) {
         if (g_store.state != AgentQPayloadDeliveryState::receiving) {
             return AgentQPayloadDeliveryResult::not_found;
         }
         const AgentQPayloadDeliveryResult ref_result =
-            validate_active_upload_ref(input.session_id, input.upload_id);
+            validate_active_transfer_ref(input.session_id, input.transfer_id);
         if (ref_result != AgentQPayloadDeliveryResult::ok) {
             return ref_result;
         }
@@ -511,16 +489,12 @@ const char* payload_delivery_result_name(AgentQPayloadDeliveryResult result)
             return "invalid_state";
         case AgentQPayloadDeliveryResult::invalid_session:
             return "invalid_session";
-        case AgentQPayloadDeliveryResult::unsupported_method:
-            return "unsupported_method";
-        case AgentQPayloadDeliveryResult::unsupported_payload_kind:
-            return "unsupported_payload_kind";
-        case AgentQPayloadDeliveryResult::unsupported_payload_size:
-            return "unsupported_payload_size";
+        case AgentQPayloadDeliveryResult::payload_too_large:
+            return "payload_too_large";
         case AgentQPayloadDeliveryResult::invalid_payload_digest:
             return "invalid_payload_digest";
-        case AgentQPayloadDeliveryResult::invalid_upload_id:
-            return "invalid_upload_id";
+        case AgentQPayloadDeliveryResult::invalid_transfer_id:
+            return "invalid_transfer_id";
         case AgentQPayloadDeliveryResult::invalid_payload_ref:
             return "invalid_payload_ref";
         case AgentQPayloadDeliveryResult::allocation_failed:

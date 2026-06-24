@@ -17,15 +17,12 @@ bool parse_approval_history_params(JsonDocument& request, size_t* limit, uint64_
     *limit = kAgentQApprovalHistoryPageMax;
     *before_sequence = 0;
 
-    JsonVariant params = request["params"];
-    if (params.isNull()) {
-        return true;
-    }
-    if (!params.is<JsonObject>()) {
+    JsonVariant payload = request["payload"];
+    if (!payload.is<JsonObject>()) {
         return false;
     }
 
-    JsonObject params_object = params.as<JsonObject>();
+    JsonObject params_object = payload.as<JsonObject>();
     for (JsonPair pair : params_object) {
         JsonVariant value = pair.value();
         if (agent_q_json_string_equals(pair.key(), "limit")) {
@@ -57,12 +54,9 @@ bool parse_approval_history_params(JsonDocument& request, size_t* limit, uint64_
 
 bool write_approval_history_response(const char* id, const AgentQApprovalHistoryPage& page)
 {
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["type"] = "approval_history";
-    response["hasMore"] = page.has_more;
-    JsonArray records = response["records"].to<JsonArray>();
+    JsonDocument result;
+    result["hasMore"] = page.has_more;
+    JsonArray records = result["records"].to<JsonArray>();
     for (size_t index = 0; index < page.count; ++index) {
         const AgentQApprovalHistoryRecord& source = page.records[index];
         JsonObject record = records.add<JsonObject>();
@@ -112,7 +106,7 @@ bool write_approval_history_response(const char* id, const AgentQApprovalHistory
             }
         }
     }
-    return usb_response_write_json(response);
+    return usb_response_write_success_result(id, "get_approval_history", result.as<JsonObjectConst>());
 }
 
 }  // namespace
@@ -124,43 +118,44 @@ void handle_usb_get_approval_history_request(
     const AgentQUsbApprovalHistoryHandlerOps& ops)
 {
     if (ops.material_ready == nullptr || !ops.material_ready()) {
-        writer.write_error(id, "invalid_state", "Approval history is available only after provisioning is complete.");
+        writer.write_error(id, "invalid_state");
         return;
     }
     if (ops.write_busy_if_pending_or_local_flow_active != nullptr &&
-        ops.write_busy_if_pending_or_local_flow_active(id)) {
+        ops.write_busy_if_pending_or_local_flow_active(id, writer)) {
         return;
     }
     if (ops.write_payload_delivery_safe_read_admission_error != nullptr &&
         ops.write_payload_delivery_safe_read_admission_error(
             id,
-            AgentQUsbOperationType::get_approval_history)) {
+            AgentQUsbOperationType::get_approval_history,
+            writer)) {
         return;
     }
 
     const char* session_id = nullptr;
     if (!agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-        writer.write_error(id, "invalid_session", "Invalid session.");
+        writer.write_error(id, "invalid_session");
         return;
     }
     if (ops.require_active_matching_session == nullptr ||
-        !ops.require_active_matching_session(id, session_id)) {
+        !ops.require_active_matching_session(id, session_id, writer)) {
         return;
     }
 
-    const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "params"};
+    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
     if (!agent_q_json_object_fields_supported(
             request.as<JsonVariantConst>(),
             allowed_request_fields,
             5)) {
-        writer.write_error(id, "invalid_params", "get_approval_history request contains unsupported fields.");
+        writer.write_error(id, "invalid_params");
         return;
     }
 
     size_t limit = kAgentQApprovalHistoryPageMax;
     uint64_t before_sequence = 0;
     if (!parse_approval_history_params(request, &limit, &before_sequence)) {
-        writer.write_error(id, "invalid_params", "Approval history params are invalid.");
+        writer.write_error(id, "invalid_params");
         return;
     }
 
@@ -170,7 +165,7 @@ void handle_usb_get_approval_history_request(
         write_approval_history_response(id, page)) {
         return;
     }
-    writer.write_error(id, "history_error", "Approval history is unavailable.");
+    writer.write_error(id, "history_unavailable");
 }
 
 }  // namespace agent_q

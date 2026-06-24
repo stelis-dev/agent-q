@@ -47,9 +47,9 @@ struct AgentQLocalPinAuthUiFlowOps {
     bool (*connect_approval_return_to_review)(TickType_t now, AgentQTimeoutWindow window);
     void (*show_connect_review)();
     bool (*replace_active_session)();
-    bool (*write_error)(const char* id, const char* code, const char* message);
+    bool (*write_error)(const char* id, const char* code);
     bool (*write_connect_approved)(const char* id);
-    bool (*write_connect_rejected)(const char* id, const char* code, const char* message);
+    bool (*write_connect_rejected)(const char* id, const char* code);
     void (*log_connect_session_creation_failed)(const char* id);
     void (*log_connect_pin_approved)(const char* id);
     void (*log_write_failure)(const char* response_type, const char* id);

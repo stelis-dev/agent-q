@@ -182,7 +182,7 @@ AgentQDeviceActivityUsbRequestBlock device_activity_usb_request_block(
             true,
             "busy",
             activity.payload_delivery_receiving
-                ? "Device has a pending payload upload."
+                ? "Device has a pending payload transfer."
                 : "Device has a pending signable payload.",
         };
     }

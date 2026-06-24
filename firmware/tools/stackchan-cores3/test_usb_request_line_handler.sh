@@ -27,12 +27,15 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_usb_request_line_handler.h" \
   "${AGENT_Q_DIR}/agent_q_usb_request_envelope.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_request_envelope.h" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_dispatch.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_dispatch.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_type.h" \
+  "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -78,8 +81,8 @@ int g_handler_calls = 0;
 char g_last_id[96] = {};
 int g_write_error_calls = 0;
 char g_last_error_id[96] = {};
+char g_last_error_method[96] = {};
 const char* g_last_error_code = nullptr;
-const char* g_last_error_message = nullptr;
 int g_log_write_failure_calls = 0;
 
 void reset_state()
@@ -89,17 +92,17 @@ void reset_state()
     g_last_id[0] = '\0';
     g_write_error_calls = 0;
     g_last_error_id[0] = '\0';
+    g_last_error_method[0] = '\0';
     g_last_error_code = nullptr;
-    g_last_error_message = nullptr;
     g_log_write_failure_calls = 0;
 }
 
-bool write_error(const char* id, const char* code, const char* message)
+bool write_method_error(const char* id, const char* method, const char* code)
 {
     g_write_error_calls += 1;
     snprintf(g_last_error_id, sizeof(g_last_error_id), "%s", id == nullptr ? "" : id);
+    snprintf(g_last_error_method, sizeof(g_last_error_method), "%s", method == nullptr ? "" : method);
     g_last_error_code = code;
-    g_last_error_message = message;
     return true;
 }
 
@@ -116,8 +119,8 @@ void handle_get_status(
     const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     (void)writer;
-    const char* type = request["type"] | "";
-    assert(strcmp(type, "get_status") == 0);
+    const char* method = request["method"] | "";
+    assert(strcmp(method, "get_status") == 0);
     g_last_handler = HandlerSlot::get_status;
     g_handler_calls += 1;
     snprintf(g_last_id, sizeof(g_last_id), "%s", id == nullptr ? "" : id);
@@ -129,8 +132,8 @@ void handle_sign_transaction(
     const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     (void)writer;
-    const char* type = request["type"] | "";
-    assert(strcmp(type, "sign_transaction") == 0);
+    const char* method = request["method"] | "";
+    assert(strcmp(method, "sign_transaction") == 0);
     g_last_handler = HandlerSlot::sign_transaction;
     g_handler_calls += 1;
     snprintf(g_last_id, sizeof(g_last_id), "%s", id == nullptr ? "" : id);
@@ -142,10 +145,10 @@ void handle_policy_propose(
     const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     (void)writer;
-    const char* type = request["type"] | "";
+    const char* method = request["method"] | "";
     const char* condition_field =
-        request["params"]["policy"]["blockchains"][0]["networks"][0]["policies"][0]["conditions"][0]["field"] | "";
-    assert(strcmp(type, "policy_propose") == 0);
+        request["payload"]["policy"]["blockchains"][0]["networks"][0]["policies"][0]["conditions"][0]["field"] | "";
+    assert(strcmp(method, "policy_propose") == 0);
     assert(strcmp(condition_field, "sui.token_sources.source") == 0);
     g_last_handler = HandlerSlot::policy_propose;
     g_handler_calls += 1;
@@ -158,9 +161,9 @@ void handle_credential_prepare(
     const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     (void)writer;
-    const char* type = request["type"] | "";
-    const char* credential = request["params"]["credential"] | "";
-    assert(strcmp(type, "credential_prepare") == 0);
+    const char* method = request["method"] | "";
+    const char* credential = request["payload"]["credential"] | "";
+    assert(strcmp(method, "credential_prepare") == 0);
     assert(strcmp(credential, "zklogin") == 0);
     g_last_handler = HandlerSlot::credential_prepare;
     g_handler_calls += 1;
@@ -173,9 +176,9 @@ void handle_credential_propose(
     const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     (void)writer;
-    const char* type = request["type"] | "";
-    const char* credential = request["params"]["credential"] | "";
-    assert(strcmp(type, "credential_propose") == 0);
+    const char* method = request["method"] | "";
+    const char* credential = request["payload"]["credential"] | "";
+    assert(strcmp(method, "credential_propose") == 0);
     assert(strcmp(credential, "zklogin") == 0);
     g_last_handler = HandlerSlot::credential_propose;
     g_handler_calls += 1;
@@ -185,7 +188,7 @@ void handle_credential_propose(
 agent_q::AgentQUsbOperationResponseWriter make_writer()
 {
     return agent_q::AgentQUsbOperationResponseWriter{
-        write_error,
+        write_method_error,
         log_write_failure,
     };
 }
@@ -204,8 +207,8 @@ agent_q::AgentQUsbOperationHandlers make_handlers()
 void expect_error(
     const char* line,
     const char* expected_id,
-    const char* expected_code,
-    const char* expected_message)
+    const char* expected_method,
+    const char* expected_code)
 {
     reset_state();
     agent_q::handle_usb_request_line(line, make_writer(), make_handlers());
@@ -216,8 +219,12 @@ void expect_error(
     } else {
         assert(strcmp(g_last_error_id, expected_id) == 0);
     }
+    if (expected_method == nullptr) {
+        assert(g_last_error_method[0] == '\0');
+    } else {
+        assert(strcmp(g_last_error_method, expected_method) == 0);
+    }
     assert(strcmp(g_last_error_code, expected_code) == 0);
-    assert(strcmp(g_last_error_message, expected_message) == 0);
 }
 
 void expect_handler(
@@ -235,50 +242,67 @@ void expect_handler(
 
 }  // namespace
 
+namespace agent_q {
+
+void wipe_sensitive_buffer(void* data, size_t size)
+{
+    if (data == nullptr) {
+        return;
+    }
+    memset(data, 0, size);
+}
+
+}  // namespace agent_q
+
 int main()
 {
     expect_handler(
-        "{\"id\":\"req_status\",\"version\":1,\"type\":\"get_status\"}",
+        "{\"id\":\"req_status\",\"version\":1,\"method\":\"get_status\"}",
         HandlerSlot::get_status,
         "req_status");
     expect_handler(
-        "{\"id\":\"req_sign\",\"version\":1,\"type\":\"sign_transaction\",\"chain\":\"sui\"}",
+        "{\"id\":\"req_sign\",\"version\":1,\"method\":\"sign_transaction\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{\"chain\":\"sui\",\"network\":\"testnet\",\"txBytes\":\"AA==\"}}",
         HandlerSlot::sign_transaction,
         "req_sign");
     expect_handler(
-        "{\"id\":\"req_policy\",\"version\":1,\"type\":\"policy_propose\",\"sessionId\":\"session_abc\",\"params\":{\"policy\":{\"schema\":\"agentq.policy\",\"defaultAction\":\"reject\",\"blockchains\":[{\"blockchain\":\"sui\",\"networks\":[{\"network\":\"testnet\",\"policies\":[{\"id\":\"reject-source\",\"action\":\"reject\",\"conditions\":[{\"field\":\"sui.token_sources.source\",\"op\":\"eq\",\"value\":\"gas_coin\"}]}]}]}]}}}",
+        "{\"id\":\"req_policy\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{\"policy\":{\"schema\":\"agentq.policy\",\"defaultAction\":\"reject\",\"blockchains\":[{\"blockchain\":\"sui\",\"networks\":[{\"network\":\"testnet\",\"policies\":[{\"id\":\"reject-source\",\"action\":\"reject\",\"conditions\":[{\"field\":\"sui.token_sources.source\",\"op\":\"eq\",\"value\":\"gas_coin\"}]}]}]}]}}}",
         HandlerSlot::policy_propose,
         "req_policy");
     expect_handler(
-        "{\"id\":\"req_credential_prepare\",\"version\":1,\"type\":\"credential_prepare\",\"sessionId\":\"session_abc\",\"params\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}",
+        "{\"id\":\"req_credential_prepare\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}",
         HandlerSlot::credential_prepare,
         "req_credential_prepare");
     expect_handler(
-        "{\"id\":\"req_credential_propose\",\"version\":1,\"type\":\"credential_propose\",\"sessionId\":\"session_abc\",\"params\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}",
+        "{\"id\":\"req_credential_propose\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\",\"network\":\"testnet\",\"address\":\"0x00\",\"publicKey\":\"AA==\",\"maxEpoch\":\"1\",\"inputs\":{}}}",
         HandlerSlot::credential_propose,
         "req_credential_propose");
 
-    expect_error("{not-json", nullptr, "invalid_json", "Invalid JSON.");
+    expect_error("{not-json", nullptr, nullptr, "invalid_request");
     expect_error(
         "{\"version\":1,\"type\":\"get_status\"}",
         nullptr,
-        "invalid_id",
-        "Invalid request id.");
+        nullptr,
+        "invalid_request");
     expect_error(
-        "{\"id\":\"req_version\",\"version\":2,\"type\":\"get_status\"}",
+        "{\"id\":\"req_version\",\"version\":2,\"method\":\"get_status\"}",
         "req_version",
-        "unsupported_version",
-        "Unsupported protocol version.");
+        nullptr,
+        "unsupported_version");
     expect_error(
-        "{\"id\":\"req_unknown\",\"version\":1,\"type\":\"unknown\"}",
+        "{\"id\":\"req_unknown\",\"version\":1,\"method\":\"unknown\"}",
         "req_unknown",
-        "unsupported_type",
-        "Unsupported request type.");
+        nullptr,
+        "unsupported_method");
     expect_error(
-        "{\"id\":\"req_missing_handler\",\"version\":1,\"type\":\"connect\"}",
+        "{\"id\":\"req_session_missing\",\"version\":1,\"method\":\"get_accounts\"}",
+        "req_session_missing",
+        "get_accounts",
+        "invalid_session");
+    expect_error(
+        "{\"id\":\"req_missing_handler\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"Agent\"}}",
         "req_missing_handler",
-        "protocol_error",
-        "USB operation handler is unavailable.");
+        "connect",
+        "internal_output_error");
 
     printf("USB request line handler tests passed\n");
     return 0;
@@ -292,8 +316,10 @@ CPP
   "${TMP_DIR}/test.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_request_line_handler.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_request_envelope.cpp" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_dispatch.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
+  "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
   -o "${TMP_DIR}/test"
 

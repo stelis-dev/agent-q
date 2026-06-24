@@ -126,8 +126,7 @@ void send_connect_terminal_response_if_needed(
             if (ops.write_rejected != nullptr) {
                 ops.write_rejected(
                     request_id,
-                    "timeout",
-                    "Connection approval timed out.");
+                    "timeout");
             }
             log_info(ops, "connect timed out", request_id);
             show_result_and_clear_review(
@@ -152,8 +151,7 @@ void send_connect_terminal_response_if_needed(
             if (ops.write_error != nullptr) {
                 ops.write_error(
                     request_id,
-                    "rng_error",
-                    "Could not create session id.");
+                    "rng_unavailable");
             }
             log_error(ops, "connect could not create session id", request_id);
             show_result_and_clear_review(ops, "RNG error", AgentQMessageKind::error);
@@ -169,7 +167,7 @@ void send_connect_terminal_response_if_needed(
     }
 
     if (ops.write_rejected != nullptr &&
-        ops.write_rejected(request_id, "rejected", "Connection rejected.")) {
+        ops.write_rejected(request_id, "user_rejected")) {
         log_info(ops, "connect rejected", request_id);
     } else {
         log_write_failure(ops, "connect_result", request_id);

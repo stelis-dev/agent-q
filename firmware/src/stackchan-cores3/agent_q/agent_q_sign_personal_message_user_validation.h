@@ -15,7 +15,6 @@ enum class AgentQSignPersonalMessageUserValidationResult {
     ok,
     invalid_request_shape,
     unsupported_version,
-    unsupported_type,
     invalid_session,
     invalid_params_shape,
     unsupported_field,

@@ -37,28 +37,33 @@ bool session_read_material_ready(const AgentQUsbSessionReadHandlerOps& ops)
     return ops.material_ready != nullptr && ops.material_ready();
 }
 
-bool session_read_busy(const AgentQUsbSessionReadHandlerOps& ops, const char* id)
+bool session_read_busy(
+    const AgentQUsbSessionReadHandlerOps& ops,
+    const char* id,
+    const AgentQUsbOperationResponseWriter& writer)
 {
     return ops.write_busy_if_pending_or_local_flow_active != nullptr &&
-           ops.write_busy_if_pending_or_local_flow_active(id);
+           ops.write_busy_if_pending_or_local_flow_active(id, writer);
 }
 
 bool session_read_payload_delivery_admission_error(
     const AgentQUsbSessionReadHandlerOps& ops,
     const char* id,
-    AgentQUsbOperationType operation)
+    AgentQUsbOperationType operation,
+    const AgentQUsbOperationResponseWriter& writer)
 {
     return ops.write_payload_delivery_safe_read_admission_error != nullptr &&
-           ops.write_payload_delivery_safe_read_admission_error(id, operation);
+           ops.write_payload_delivery_safe_read_admission_error(id, operation, writer);
 }
 
 bool session_read_session_valid(
     const AgentQUsbSessionReadHandlerOps& ops,
     const char* id,
-    const char* session_id)
+    const char* session_id,
+    const AgentQUsbOperationResponseWriter& writer)
 {
     return ops.require_active_matching_session != nullptr &&
-           ops.require_active_matching_session(id, session_id);
+           ops.require_active_matching_session(id, session_id, writer);
 }
 
 bool parse_session_id_or_write_error(
@@ -70,13 +75,13 @@ bool parse_session_id_or_write_error(
     if (agent_q_json_optional_c_string(request["sessionId"], "", session_id)) {
         return true;
     }
-    writer.write_error(id, "invalid_session", "Invalid session.");
+    writer.write_error(id, "invalid_session");
     return false;
 }
 
 bool session_read_request_fields_supported(JsonDocument& request)
 {
-    const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
+    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId"};
     return agent_q_json_object_fields_supported(
         request.as<JsonVariantConst>(),
         allowed_request_fields,
@@ -89,28 +94,26 @@ bool guard_session_read_request(
     const AgentQUsbOperationResponseWriter& writer,
     const AgentQUsbSessionReadHandlerOps& ops,
     AgentQUsbOperationType operation,
-    const char* invalid_state_message,
-    const char* unsupported_fields_message,
     const char** session_id)
 {
     if (!session_read_material_ready(ops)) {
-        writer.write_error(id, "invalid_state", invalid_state_message);
+        writer.write_error(id, "invalid_state");
         return false;
     }
-    if (session_read_busy(ops, id)) {
+    if (session_read_busy(ops, id, writer)) {
         return false;
     }
-    if (session_read_payload_delivery_admission_error(ops, id, operation)) {
+    if (session_read_payload_delivery_admission_error(ops, id, operation, writer)) {
         return false;
     }
     if (!parse_session_id_or_write_error(id, request, writer, session_id)) {
         return false;
     }
-    if (!session_read_session_valid(ops, id, *session_id)) {
+    if (!session_read_session_valid(ops, id, *session_id, writer)) {
         return false;
     }
     if (!session_read_request_fields_supported(request)) {
-        writer.write_error(id, "invalid_params", unsupported_fields_message);
+        writer.write_error(id, "invalid_params");
         return false;
     }
     return true;
@@ -148,11 +151,8 @@ bool write_capabilities_response(
     const AgentQSuiActiveIdentity& active_identity,
     bool sui_zklogin_credential_available)
 {
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["type"] = "capabilities";
-    JsonArray chains = response["chains"].to<JsonArray>();
+    JsonDocument result;
+    JsonArray chains = result["chains"].to<JsonArray>();
     JsonObject sui = chains.add<JsonObject>();
     sui["id"] = "sui";
     JsonArray accounts = sui["accounts"].to<JsonArray>();
@@ -161,7 +161,7 @@ bool write_capabilities_response(
         return false;
     }
     sui["methods"].to<JsonArray>();
-    JsonObject signing = response["signing"].to<JsonObject>();
+    JsonObject signing = result["signing"].to<JsonObject>();
     signing["authorization"] = signing_authorization_mode_name(signing_mode);
     JsonArray signing_routes = signing["methods"].to<JsonArray>();
     if (signing_route_allowed_for_authorization_mode(
@@ -171,29 +171,6 @@ bool write_capabilities_response(
         signing_entry["chain"] = "sui";
         signing_entry["method"] = signing_route_wire_method(
             AgentQSigningRoute::sui_sign_transaction);
-        char inline_max_bytes[24] = {};
-        char chunk_max_bytes[24] = {};
-        char payload_max_bytes[24] = {};
-        snprintf(
-            inline_max_bytes,
-            sizeof(inline_max_bytes),
-            "%u",
-            static_cast<unsigned>(kAgentQSuiSignTransactionInlineTxBytesMaxBytes));
-        snprintf(
-            chunk_max_bytes,
-            sizeof(chunk_max_bytes),
-            "%u",
-            static_cast<unsigned>(kAgentQPayloadDeliveryDefaultChunkMaxBytes));
-        snprintf(
-            payload_max_bytes,
-            sizeof(payload_max_bytes),
-            "%u",
-            static_cast<unsigned>(kAgentQPayloadDeliveryDefaultMaxBytes));
-        JsonObject payload = signing_entry["payload"].to<JsonObject>();
-        payload["kind"] = "transaction";
-        payload["inlineMaxBytes"] = inline_max_bytes;
-        payload["chunkMaxBytes"] = chunk_max_bytes;
-        payload["payloadMaxBytes"] = payload_max_bytes;
     }
     if (signing_route_allowed_for_authorization_mode(
             AgentQSigningRoute::sui_sign_personal_message,
@@ -204,7 +181,7 @@ bool write_capabilities_response(
             AgentQSigningRoute::sui_sign_personal_message);
     }
     if (sui_zklogin_credential_available) {
-        JsonArray credentials = response["credentials"].to<JsonArray>();
+        JsonArray credentials = result["credentials"].to<JsonArray>();
         JsonObject credential = credentials.add<JsonObject>();
         credential["chain"] = "sui";
         credential["credential"] = "zklogin";
@@ -212,7 +189,7 @@ bool write_capabilities_response(
         operations.add("credential_prepare");
         operations.add("credential_propose");
     }
-    return usb_response_write_json(response);
+    return usb_response_write_success_result(id, "get_capabilities", result.as<JsonObjectConst>());
 }
 
 bool write_accounts_response(
@@ -257,11 +234,8 @@ bool write_accounts_response(
         return false;
     }
 
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["type"] = "accounts";
-    JsonArray accounts = response["accounts"].to<JsonArray>();
+    JsonDocument result;
+    JsonArray accounts = result["accounts"].to<JsonArray>();
     JsonObject account = accounts.add<JsonObject>();
     account["chain"] = "sui";
     account["address"] = active_identity.address;
@@ -272,7 +246,7 @@ bool write_accounts_response(
     }
     JsonObject sponsored_transactions = account["sponsoredTransactions"].to<JsonObject>();
     sponsored_transactions["acceptGasSponsor"] = account_settings.accept_gas_sponsor;
-    return usb_response_write_json(response);
+    return usb_response_write_success_result(id, "get_accounts", result.as<JsonObjectConst>());
 }
 
 bool write_policy_response(
@@ -283,11 +257,8 @@ bool write_policy_response(
         return false;
     }
 
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["type"] = "policy";
-    JsonObject policy_json = response["policy"].to<JsonObject>();
+    JsonDocument result;
+    JsonObject policy_json = result["policy"].to<JsonObject>();
     policy_json["schema"] = policy.schema;
     policy_json["policyId"] = policy.policy_id;
     policy_json["defaultAction"] = policy.default_action;
@@ -342,7 +313,7 @@ bool write_policy_response(
             }
         }
     }
-    return usb_response_write_json(response);
+    return usb_response_write_success_result(id, "policy_get", result.as<JsonObjectConst>());
 }
 
 bool read_active_policy(
@@ -379,8 +350,6 @@ void handle_usb_get_capabilities_request(
             writer,
             ops,
             AgentQUsbOperationType::get_capabilities,
-            "Capabilities are available only after provisioning is complete.",
-            "get_capabilities request contains unsupported fields.",
             &session_id)) {
         return;
     }
@@ -388,11 +357,11 @@ void handle_usb_get_capabilities_request(
 
     AgentQSigningAuthorizationMode signing_mode = AgentQSigningAuthorizationMode::user;
     if (ops.read_signing_mode == nullptr || !ops.read_signing_mode(&signing_mode)) {
-        writer.write_error(id, "invalid_state", "Signing authorization mode is unavailable.");
+        writer.write_error(id, "invalid_state");
         return;
     }
     if (ops.resolve_active_sui_identity == nullptr) {
-        writer.write_error(id, "account_error", "Could not derive accounts.");
+        writer.write_error(id, "account_unavailable");
         return;
     }
     const AgentQSuiActiveIdentity active_identity = ops.resolve_active_sui_identity();
@@ -401,7 +370,7 @@ void handle_usb_get_capabilities_request(
             ops.record_root_material_unreadable != nullptr) {
             ops.record_root_material_unreadable();
         }
-        writer.write_error(id, "account_error", "Could not derive accounts.");
+        writer.write_error(id, "account_unavailable");
         return;
     }
     const bool sui_zklogin_credential_available =
@@ -430,8 +399,6 @@ void handle_usb_get_accounts_request(
             writer,
             ops,
             AgentQUsbOperationType::get_accounts,
-            "Accounts are available only after provisioning is complete.",
-            "get_accounts request contains unsupported fields.",
             &session_id)) {
         return;
     }
@@ -445,7 +412,7 @@ void handle_usb_get_accounts_request(
         ops.record_root_material_unreadable != nullptr) {
         ops.record_root_material_unreadable();
     }
-    writer.write_error(id, "account_error", "Could not derive accounts.");
+    writer.write_error(id, "account_unavailable");
 }
 
 void handle_usb_policy_get_request(
@@ -461,8 +428,6 @@ void handle_usb_policy_get_request(
             writer,
             ops,
             AgentQUsbOperationType::policy_get,
-            "Policy is available only after provisioning is complete.",
-            "policy_get request contains unsupported fields.",
             &session_id)) {
         return;
     }
@@ -474,7 +439,7 @@ void handle_usb_policy_get_request(
         if (ops.record_active_policy_unavailable != nullptr) {
             ops.record_active_policy_unavailable();
         }
-        writer.write_error(id, "policy_error", "Active policy is unavailable.");
+        writer.write_error(id, "policy_unavailable");
         return;
     }
     if (write_policy_response(id, policy)) {

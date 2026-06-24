@@ -25,6 +25,8 @@ ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.h" \
   "${AGENT_Q_DIR}/agent_q_signing_retry_response.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_retry_response.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -80,14 +82,12 @@ JsonDocument parse_json(const std::string& json)
 agent_q::AgentQSigningRetryDeliveryResult retry_result(
     agent_q::AgentQSigningRetryDeliveryStatus status,
     size_t stored_result_len = 0,
-    const char* code = nullptr,
-    const char* message = nullptr)
+    const char* code = nullptr)
 {
     return agent_q::AgentQSigningRetryDeliveryResult{
         status,
         stored_result_len,
         code,
-        message,
     };
 }
 
@@ -95,12 +95,18 @@ agent_q::AgentQSigningRetryDeliveryResult retry_result(
 
 int main()
 {
-    const char stored[] = "{\"id\":\"req_sign\",\"version\":1,\"type\":\"sign_result\",\"status\":\"signed\"}";
+    const char stored[] =
+        "{\"id\":\"req_sign\",\"version\":1,\"success\":true,\"method\":\"sign_transaction\","
+        "\"result\":{\"authorization\":\"user\",\"chain\":\"sui\","
+        "\"method\":\"sign_transaction\",\"signature\":\"sig\"}}";
+    const char invalid_stored[] =
+        "{\"id\":\"req_sign\",\"version\":1,\"success\":true,\"result\":{\"signature\":\"sig\"}}";
 
     {
         Capture capture;
         const auto result = agent_q::deliver_signing_retry_response(
             "req_sign",
+            "sign_transaction",
             retry_result(agent_q::AgentQSigningRetryDeliveryStatus::not_found),
             stored,
             capture_response,
@@ -113,6 +119,7 @@ int main()
         Capture capture;
         const auto result = agent_q::deliver_signing_retry_response(
             "req_sign",
+            "sign_transaction",
             retry_result(
                 agent_q::AgentQSigningRetryDeliveryStatus::match,
                 strlen(stored)),
@@ -122,46 +129,65 @@ int main()
         assert(result == agent_q::AgentQSigningRetryResponseResult::replayed_result);
         assert(capture.calls == 1);
         JsonDocument document = parse_json(capture.json);
-        assert(strcmp(document["type"], "sign_result") == 0);
+        assert(document["success"] == true);
         assert(strcmp(document["id"], "req_sign") == 0);
-        assert(strcmp(document["status"], "signed") == 0);
+        assert(strcmp(document["method"], "sign_transaction") == 0);
+        assert(strcmp(document["result"]["signature"], "sig") == 0);
     }
 
     {
         Capture capture;
         const auto result = agent_q::deliver_signing_retry_response(
             "req_sign",
+            "sign_transaction",
+            retry_result(
+                agent_q::AgentQSigningRetryDeliveryStatus::match,
+                strlen(invalid_stored)),
+            invalid_stored,
+            capture_response,
+            &capture);
+        assert(result == agent_q::AgentQSigningRetryResponseResult::invalid_stored_result);
+        assert(capture.calls == 0);
+    }
+
+    {
+        Capture capture;
+        const auto result = agent_q::deliver_signing_retry_response(
+            "req_sign",
+            "sign_transaction",
             retry_result(
                 agent_q::AgentQSigningRetryDeliveryStatus::request_id_conflict,
                 0,
-                "request_id_conflict",
-                "Request id is already bound to a different signing request."),
+                "request_id_conflict"),
             stored,
             capture_response,
             &capture);
         assert(result == agent_q::AgentQSigningRetryResponseResult::error_response);
         JsonDocument document = parse_json(capture.json);
-        assert(strcmp(document["type"], "error") == 0);
+        assert(document["success"] == false);
         assert(strcmp(document["id"], "req_sign") == 0);
+        assert(strcmp(document["method"], "sign_transaction") == 0);
         assert(strcmp(document["error"]["code"], "request_id_conflict") == 0);
+        assert(document["error"]["retryable"] == false);
     }
 
     {
         Capture capture;
         const auto result = agent_q::deliver_signing_retry_response(
             "req_sign",
+            "sign_transaction",
             retry_result(
                 agent_q::AgentQSigningRetryDeliveryStatus::lookup_error,
                 0,
-                "protocol_error",
-                "Stored signing result lookup failed."),
+                "internal_output_error"),
             stored,
             capture_response,
             &capture);
         assert(result == agent_q::AgentQSigningRetryResponseResult::error_response);
         JsonDocument document = parse_json(capture.json);
-        assert(strcmp(document["type"], "error") == 0);
-        assert(strcmp(document["error"]["code"], "protocol_error") == 0);
+        assert(document["success"] == false);
+        assert(strcmp(document["method"], "sign_transaction") == 0);
+        assert(strcmp(document["error"]["code"], "internal_output_error") == 0);
     }
 
     {
@@ -169,6 +195,7 @@ int main()
         const char malformed[] = "{not-json";
         const auto result = agent_q::deliver_signing_retry_response(
             "req_sign",
+            "sign_transaction",
             retry_result(
                 agent_q::AgentQSigningRetryDeliveryStatus::match,
                 strlen(malformed)),
@@ -184,6 +211,7 @@ int main()
         capture.fail = true;
         const auto result = agent_q::deliver_signing_retry_response(
             "req_sign",
+            "sign_transaction",
             retry_result(
                 agent_q::AgentQSigningRetryDeliveryStatus::match,
                 strlen(stored)),
@@ -199,11 +227,11 @@ int main()
         capture.fail = true;
         const auto result = agent_q::deliver_signing_retry_response(
             "req_sign",
+            "sign_transaction",
             retry_result(
                 agent_q::AgentQSigningRetryDeliveryStatus::request_id_conflict,
                 0,
-                "request_id_conflict",
-                "Request id is already bound to a different signing request."),
+                "request_id_conflict"),
             stored,
             capture_response,
             &capture);
@@ -221,6 +249,7 @@ CPP
   -I"${AGENT_Q_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_retry_response.cpp" \
   -o "${TMP_DIR}/test"
 

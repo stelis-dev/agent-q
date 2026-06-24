@@ -18,11 +18,9 @@ bool request_top_level_fields_supported(JsonObjectConst request)
     for (JsonPairConst pair : request) {
         if (!agent_q_json_string_equals(pair.key(), "id") &&
             !agent_q_json_string_equals(pair.key(), "version") &&
-            !agent_q_json_string_equals(pair.key(), "type") &&
-            !agent_q_json_string_equals(pair.key(), "sessionId") &&
-            !agent_q_json_string_equals(pair.key(), "chain") &&
             !agent_q_json_string_equals(pair.key(), "method") &&
-            !agent_q_json_string_equals(pair.key(), "params")) {
+            !agent_q_json_string_equals(pair.key(), "sessionId") &&
+            !agent_q_json_string_equals(pair.key(), "payload")) {
             return false;
         }
     }
@@ -33,6 +31,7 @@ bool request_params_fields_supported(JsonObjectConst params)
 {
     for (JsonPairConst pair : params) {
         if (!agent_q_json_string_equals(pair.key(), "network") &&
+            !agent_q_json_string_equals(pair.key(), "chain") &&
             !agent_q_json_string_equals(pair.key(), "message")) {
             return false;
         }
@@ -77,11 +76,11 @@ validate_sign_personal_message_user_envelope(
         return AgentQSignPersonalMessageUserValidationResult::unsupported_version;
     }
 
-    const char* request_type = nullptr;
-    if (!agent_q_json_value_c_string(request_object["type"], &request_type) ||
-        strcmp(request_type, "sign_personal_message") != 0) {
+    const char* method = nullptr;
+    if (!agent_q_json_value_c_string(request_object["method"], &method) ||
+        strcmp(method, "sign_personal_message") != 0) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignPersonalMessageUserValidationResult::unsupported_type;
+        return AgentQSignPersonalMessageUserValidationResult::unsupported_method;
     }
 
     return AgentQSignPersonalMessageUserValidationResult::ok;
@@ -133,7 +132,7 @@ validate_sign_personal_message_user_params(
         return AgentQSignPersonalMessageUserValidationResult::invalid_params_shape;
     }
 
-    JsonVariantConst params_value = request_object["params"];
+    JsonVariantConst params_value = request_object["payload"];
     JsonObjectConst params = params_value.as<JsonObjectConst>();
     if (params.isNull()) {
         memset(output, 0, sizeof(*output));
@@ -183,8 +182,6 @@ const char* sign_personal_message_user_validation_result_name(
             return "invalid_request_shape";
         case AgentQSignPersonalMessageUserValidationResult::unsupported_version:
             return "unsupported_version";
-        case AgentQSignPersonalMessageUserValidationResult::unsupported_type:
-            return "unsupported_type";
         case AgentQSignPersonalMessageUserValidationResult::invalid_session:
             return "invalid_session";
         case AgentQSignPersonalMessageUserValidationResult::invalid_params_shape:

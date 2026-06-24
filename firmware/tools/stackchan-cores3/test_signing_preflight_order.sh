@@ -50,14 +50,15 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${SIGNING_CORE}/byte_conversions.c" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_request_identity.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_payload_upload_handlers.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_payload_upload_handlers.h" \
+  "${AGENT_Q_DIR}/agent_q_usb_payload_transfer_handlers.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_payload_transfer_handlers.h" \
   "${AGENT_Q_DIR}/agent_q_usb_signing_handlers.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_signing_handlers.h" \
   "${AGENT_Q_DIR}/agent_q_usb_signing_result_writer.cpp" \
@@ -120,12 +121,14 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "agent_q_sign_request_identity.h"
 #include "agent_q_signing_retry_response.h"
 #include "agent_q_signing_result_store.h"
+#include "agent_q_device_contract.h"
+#include "agent_q_protocol_constants.h"
 #include "agent_q_usb_signing_result_writer.h"
 #include "agent_q_sui_account_store.h"
 #include "agent_q_sui_signing_authority.h"
 #include "agent_q_sui_signing_preparation.h"
 #include "agent_q_sui_zklogin_proof_store.h"
-#include "agent_q_usb_payload_upload_handlers.h"
+#include "agent_q_usb_payload_transfer_handlers.h"
 #include "agent_q_usb_signing_handlers.h"
 
 extern "C" {
@@ -141,7 +144,7 @@ int g_binding_calls = 0;
 agent_q::AgentQSuiActiveIdentityKind g_active_identity_kind =
     agent_q::AgentQSuiActiveIdentityKind::native;
 char g_zklogin_network[agent_q::kAgentQSuiNetworkBufferSize] = "devnet";
-int g_upload_error_calls = 0;
+int g_transfer_error_calls = 0;
 int g_handler_preflight_calls = 0;
 int g_handler_begin_transaction_calls = 0;
 int g_handler_clear_prepared_calls = 0;
@@ -155,13 +158,13 @@ int g_handler_policy_evaluation_event = 0;
 int g_handler_policy_execution_event = 0;
 int g_handler_policy_response_event = 0;
 int g_handler_last_clear_prepared_event = 0;
-char g_upload_response_type[64] = {};
-char g_upload_response_upload_id[agent_q::kAgentQPayloadDeliveryUploadIdSize] = {};
-char g_upload_response_payload_ref[agent_q::kAgentQPayloadDeliveryPayloadRefSize] = {};
-char g_upload_response_received_bytes[32] = {};
-char g_upload_response_payload_digest[96] = {};
-char g_upload_response_size_bytes[32] = {};
-char g_upload_response_error_code[48] = {};
+char g_transfer_response_type[64] = {};
+char g_transfer_response_transfer_id[agent_q::kAgentQPayloadDeliveryTransferIdSize] = {};
+char g_transfer_response_payload_ref[agent_q::kAgentQPayloadDeliveryPayloadRefSize] = {};
+char g_transfer_response_received_bytes[32] = {};
+char g_transfer_response_payload_digest[96] = {};
+char g_transfer_response_size_bytes[32] = {};
+char g_transfer_response_error_code[48] = {};
 char g_handler_last_waiting_id[64] = {};
 
 agent_q::AgentQSessionValidationResult g_session_result =
@@ -192,7 +195,8 @@ enum class PreflightOutcome {
     replay_conflict,
     network_mismatch,
     preparation_error,
-    preparation_unsupported_payload_size,
+    preparation_payload_too_large,
+    payload_unavailable,
 };
 
 int hex_value(char value)
@@ -249,45 +253,43 @@ JsonDocument parse_json(const std::string& json)
     return document;
 }
 
-std::string payload_upload_begin_json(
+std::string payload_transfer_begin_json(
     const char* request_id,
     const char* session_id,
     size_t size_bytes,
     const char* payload_digest)
 {
     return std::string("{\"id\":\"") + request_id +
-           "\",\"version\":1,\"type\":\"payload_upload_begin\"," +
+           "\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"begin\"," +
            "\"sessionId\":\"" + session_id + "\"," +
-           "\"chain\":\"sui\",\"method\":\"sign_transaction\"," +
-           "\"payloadKind\":\"transaction\"," +
-           "\"sizeBytes\":\"" + std::to_string(size_bytes) +
+           "\"totalBytes\":\"" + std::to_string(size_bytes) +
            "\",\"payloadDigest\":\"" + payload_digest + "\"}";
 }
 
-std::string payload_upload_chunk_json(
+std::string payload_transfer_chunk_json(
     const char* request_id,
     const char* session_id,
-    const char* upload_id,
+    const char* transfer_id,
     size_t offset_bytes,
     const char* chunk_base64)
 {
     return std::string("{\"id\":\"") + request_id +
-           "\",\"version\":1,\"type\":\"payload_upload_chunk\"," +
+           "\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"chunk\"," +
            "\"sessionId\":\"" + session_id + "\"," +
-           "\"uploadId\":\"" + upload_id + "\"," +
+           "\"transferId\":\"" + transfer_id + "\"," +
            "\"offsetBytes\":\"" + std::to_string(offset_bytes) +
            "\",\"chunk\":\"" + chunk_base64 + "\"}";
 }
 
-std::string payload_upload_finish_json(
+std::string payload_transfer_finish_json(
     const char* request_id,
     const char* session_id,
-    const char* upload_id)
+    const char* transfer_id)
 {
     return std::string("{\"id\":\"") + request_id +
-           "\",\"version\":1,\"type\":\"payload_upload_finish\"," +
+           "\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"finish\"," +
            "\"sessionId\":\"" + session_id + "\"," +
-           "\"uploadId\":\"" + upload_id + "\"}";
+           "\"transferId\":\"" + transfer_id + "\"}";
 }
 
 std::string request_json(
@@ -298,12 +300,12 @@ std::string request_json(
     const char* network,
     const char* tx_bytes)
 {
+    (void)method;
     return std::string("{\"id\":\"") + request_id +
-           "\",\"version\":1,\"type\":\"sign_transaction\"," +
+           "\",\"version\":1,\"method\":\"sign_transaction\"," +
            "\"sessionId\":\"" + session_id + "\"," +
-           "\"chain\":\"" + chain + "\"," +
-           "\"method\":\"" + method + "\"," +
-           "\"params\":{\"network\":\"" + network + "\",\"txBytes\":\"" + tx_bytes + "\"}}";
+           "\"payload\":{\"chain\":\"" + chain + "\",\"network\":\"" + network +
+           "\",\"txBytes\":\"" + tx_bytes + "\"}}";
 }
 
 std::string staged_request_json(
@@ -316,16 +318,14 @@ std::string staged_request_json(
     size_t size_bytes,
     const char* payload_digest)
 {
+    (void)method;
+    (void)size_bytes;
+    (void)payload_digest;
     return std::string("{\"id\":\"") + request_id +
-           "\",\"version\":1,\"type\":\"sign_transaction\"," +
+           "\",\"version\":1,\"method\":\"sign_transaction\"," +
            "\"sessionId\":\"" + session_id + "\"," +
-           "\"chain\":\"" + chain + "\"," +
-           "\"method\":\"" + method + "\"," +
-           "\"params\":{\"network\":\"" + network +
-           "\",\"payloadRef\":\"" + payload_ref +
-           "\",\"payloadKind\":\"transaction\"," +
-           "\"sizeBytes\":\"" + std::to_string(size_bytes) +
-           "\",\"payloadDigest\":\"" + payload_digest + "\"}}";
+           "\"payload\":{\"chain\":\"" + chain + "\",\"network\":\"" + network +
+           "\",\"payloadRef\":\"" + payload_ref + "\"}}";
 }
 
 agent_q::AgentQSessionValidationResult validate_session(
@@ -339,22 +339,25 @@ agent_q::AgentQSessionValidationResult validate_session(
     return g_session_result;
 }
 
-bool upload_material_ready()
+bool transfer_material_ready()
 {
     return true;
 }
 
-bool upload_not_busy(const char*)
+bool transfer_not_busy(const char*, const agent_q::AgentQUsbOperationResponseWriter&)
 {
     return false;
 }
 
-bool upload_require_active_matching_session(const char*, const char* session_id)
+bool transfer_require_active_matching_session(
+    const char*,
+    const char* session_id,
+    const agent_q::AgentQUsbOperationResponseWriter&)
 {
     return session_id != nullptr && strcmp(session_id, "session_aaaaaaaaaaaaaaaa") == 0;
 }
 
-agent_q::AgentQTimeoutWindow upload_timeout_window_for_size(size_t)
+agent_q::AgentQTimeoutWindow transfer_timeout_window_for_size(size_t)
 {
     return agent_q::timeout_window_from_deadline(0, 100000);
 }
@@ -364,35 +367,34 @@ agent_q::AgentQTimeoutTick current_tick()
     return 0;
 }
 
-bool upload_write_error(const char*, const char* code, const char*)
-{
-    ++g_upload_error_calls;
-    snprintf(g_upload_response_error_code, sizeof(g_upload_response_error_code), "%s", code);
+bool transfer_write_error(const char*, const char* code){
+    ++g_transfer_error_calls;
+    snprintf(g_transfer_response_error_code, sizeof(g_transfer_response_error_code), "%s", code);
     return true;
 }
 
-void upload_log_write_failure(const char*, const char*)
+void transfer_log_write_failure(const char*, const char*)
 {
-    ++g_upload_error_calls;
-    snprintf(g_upload_response_error_code, sizeof(g_upload_response_error_code), "%s", "write_failed");
+    ++g_transfer_error_calls;
+    snprintf(g_transfer_response_error_code, sizeof(g_transfer_response_error_code), "%s", "write_failed");
 }
 
-agent_q::AgentQUsbOperationResponseWriter upload_writer()
+agent_q::AgentQUsbOperationResponseWriter transfer_writer()
 {
     return agent_q::AgentQUsbOperationResponseWriter{
-        upload_write_error,
-        upload_log_write_failure,
+        transfer_write_error,
+        transfer_log_write_failure,
     };
 }
 
-agent_q::AgentQUsbPayloadUploadHandlerOps upload_ops()
+agent_q::AgentQUsbPayloadTransferHandlerOps transfer_ops()
 {
-    return agent_q::AgentQUsbPayloadUploadHandlerOps{
-        upload_material_ready,
-        upload_not_busy,
-        upload_require_active_matching_session,
+    return agent_q::AgentQUsbPayloadTransferHandlerOps{
+        transfer_material_ready,
+        transfer_not_busy,
+        transfer_require_active_matching_session,
         current_tick,
-        upload_timeout_window_for_size,
+        transfer_timeout_window_for_size,
     };
 }
 
@@ -439,6 +441,8 @@ PreflightOutcome preflight_result_outcome(
                     return PreflightOutcome::ingress_invalid_session;
                 case agent_q::AgentQSignTransactionUserIngressResult::invalid_tx_bytes:
                     return PreflightOutcome::ingress_invalid_tx_bytes;
+                case agent_q::AgentQSignTransactionUserIngressResult::invalid_payload_ref:
+                    return PreflightOutcome::payload_unavailable;
                 default:
                     return PreflightOutcome::identity_error;
             }
@@ -457,8 +461,12 @@ PreflightOutcome preflight_result_outcome(
                 return PreflightOutcome::network_mismatch;
             }
             if (output.preparation_result ==
-                agent_q::AgentQSuiSigningPreparationResult::unsupported_payload_size) {
-                return PreflightOutcome::preparation_unsupported_payload_size;
+                agent_q::AgentQSuiSigningPreparationResult::payload_too_large) {
+                return PreflightOutcome::preparation_payload_too_large;
+            }
+            if (output.preparation_result ==
+                agent_q::AgentQSuiSigningPreparationResult::payload_unavailable) {
+                return PreflightOutcome::payload_unavailable;
             }
             return PreflightOutcome::preparation_error;
         default:
@@ -485,6 +493,7 @@ bool capture_retry_response(JsonDocument& response, void*)
 
 agent_q::AgentQSigningPreflightRetryDisposition respond_to_retry(
     const char* request_id,
+    const char* method,
     const agent_q::AgentQSigningRetryDeliveryResult& retry,
     const char* stored_result,
     void*)
@@ -493,6 +502,7 @@ agent_q::AgentQSigningPreflightRetryDisposition respond_to_retry(
     const agent_q::AgentQSigningRetryResponseResult response_result =
         agent_q::deliver_signing_retry_response(
             request_id,
+            method,
             retry,
             stored_result,
             capture_retry_response,
@@ -761,14 +771,14 @@ void reset_counters()
     g_retry_status = agent_q::AgentQSigningRetryDeliveryStatus::not_found;
     g_retry_response_write_calls = 0;
     g_retry_response_json.clear();
-    g_upload_error_calls = 0;
-    g_upload_response_type[0] = '\0';
-    g_upload_response_upload_id[0] = '\0';
-    g_upload_response_payload_ref[0] = '\0';
-    g_upload_response_received_bytes[0] = '\0';
-    g_upload_response_payload_digest[0] = '\0';
-    g_upload_response_size_bytes[0] = '\0';
-    g_upload_response_error_code[0] = '\0';
+    g_transfer_error_calls = 0;
+    g_transfer_response_type[0] = '\0';
+    g_transfer_response_transfer_id[0] = '\0';
+    g_transfer_response_payload_ref[0] = '\0';
+    g_transfer_response_received_bytes[0] = '\0';
+    g_transfer_response_payload_digest[0] = '\0';
+    g_transfer_response_size_bytes[0] = '\0';
+    g_transfer_response_error_code[0] = '\0';
     g_handler_preflight_calls = 0;
     g_handler_begin_transaction_calls = 0;
     g_handler_clear_prepared_calls = 0;
@@ -852,7 +862,7 @@ void store_identity_for(
     const agent_q::AgentQSignRouteClassification classification =
         agent_q::classify_sign_route(
             agent_q::AgentQSignOperation::sign_transaction,
-            document["chain"].as<const char*>(),
+            document["payload"]["chain"].as<const char*>(),
             document["method"].as<const char*>());
     assert(classification.result == agent_q::AgentQSignRouteResult::ok);
     agent_q::AgentQSignTransactionUserIngressOutput ingress = {};
@@ -886,7 +896,7 @@ void store_staged_identity_for(
     const agent_q::AgentQSignRouteClassification classification =
         agent_q::classify_sign_route(
             agent_q::AgentQSignOperation::sign_transaction,
-            document["chain"].as<const char*>(),
+            document["payload"]["chain"].as<const char*>(),
             document["method"].as<const char*>());
     assert(classification.result == agent_q::AgentQSignRouteResult::ok);
     agent_q::AgentQSignTransactionUserIngressOutput ingress = {};
@@ -896,13 +906,19 @@ void store_staged_identity_for(
                state(true, false),
                &ingress) == agent_q::AgentQSignTransactionUserIngressResult::ok);
     assert(ingress.params.payload_form == agent_q::AgentQSignTransactionPayloadForm::staged_payload_ref);
+    agent_q::AgentQPayloadDeliveryView view = {};
+    assert(agent_q::payload_delivery_resolve_finalized(
+               0,
+               ingress.session.session_id,
+               ingress.params.payload_ref,
+               &view) == agent_q::AgentQPayloadDeliveryResult::ok);
     uint8_t identity[agent_q::kAgentQSignRequestIdentitySize] = {};
     assert(agent_q::sign_request_identity_for_payload_descriptor(
         classification.route,
         ingress.params.network,
-        ingress.params.payload_kind,
-        ingress.params.payload_size_bytes,
-        ingress.params.payload_digest,
+        agent_q::kAgentQPayloadDeliveryPayloadKindTransaction,
+        view.descriptor.size_bytes,
+        view.descriptor.payload_digest,
         identity,
         sizeof(identity)));
     assert(agent_q::signing_result_store(
@@ -923,8 +939,6 @@ std::string stage_payload(const std::vector<uint8_t>& payload, const char* paylo
         agent_q::payload_delivery_begin(0,
             agent_q::AgentQPayloadDeliveryBeginInput{
                 "session_aaaaaaaaaaaaaaaa",
-                agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
-                "transaction",
                 payload.size(),
                 payload_digest,
                 agent_q::AgentQPayloadDeliveryLimits{4096, 128 * 1024},
@@ -937,7 +951,7 @@ std::string stage_payload(const std::vector<uint8_t>& payload, const char* paylo
         agent_q::payload_delivery_append_chunk(0,
             agent_q::AgentQPayloadDeliveryChunkInput{
                 "session_aaaaaaaaaaaaaaaa",
-                begin.upload_id,
+                begin.transfer_id,
                 0,
                 payload.data(),
                 payload.size(),
@@ -950,7 +964,7 @@ std::string stage_payload(const std::vector<uint8_t>& payload, const char* paylo
         agent_q::payload_delivery_finish(0,
             agent_q::AgentQPayloadDeliveryFinishInput{
                 "session_aaaaaaaaaaaaaaaa",
-                begin.upload_id,
+                begin.transfer_id,
             },
             &finish);
     assert(finish_result == agent_q::AgentQPayloadDeliveryResult::ok);
@@ -965,20 +979,20 @@ std::string stage_payload_through_usb_handlers(
     (void)payload_base64;
     agent_q::payload_delivery_store_reset();
     JsonDocument begin_doc = parse_json(
-        payload_upload_begin_json(
-            "req_upload_begin",
+        payload_transfer_begin_json(
+            "req_transfer_begin",
             "session_aaaaaaaaaaaaaaaa",
             payload.size(),
             payload_digest));
-    agent_q::handle_usb_payload_upload_begin_request(
-        "req_upload_begin",
+    agent_q::handle_usb_payload_transfer_begin_request(
+        "req_transfer_begin",
         begin_doc,
-        upload_writer(),
-        upload_ops());
-    assert(g_upload_error_calls == 0);
-    assert(strcmp(g_upload_response_type, "payload_upload_begin_result") == 0);
-    assert(g_upload_response_upload_id[0] != '\0');
-    const std::string upload_id = g_upload_response_upload_id;
+        transfer_writer(),
+        transfer_ops());
+    assert(g_transfer_error_calls == 0);
+    assert(strcmp(g_transfer_response_type, "") == 0);
+    assert(g_transfer_response_transfer_id[0] != '\0');
+    const std::string transfer_id = g_transfer_response_transfer_id;
 
     size_t offset = 0;
     while (offset < payload.size()) {
@@ -990,41 +1004,41 @@ std::string stage_payload_through_usb_handlers(
             payload.begin() + static_cast<std::ptrdiff_t>(offset + next_size));
         const size_t next_offset = offset + next_size;
         JsonDocument chunk_doc = parse_json(
-            payload_upload_chunk_json(
-                "req_upload_chunk",
+            payload_transfer_chunk_json(
+                "req_transfer_chunk",
                 "session_aaaaaaaaaaaaaaaa",
-                upload_id.c_str(),
+                transfer_id.c_str(),
                 offset,
                 base64(chunk).c_str()));
-        agent_q::handle_usb_payload_upload_chunk_request(
-            "req_upload_chunk",
+        agent_q::handle_usb_payload_transfer_chunk_request(
+            "req_transfer_chunk",
             chunk_doc,
-            upload_writer(),
-            upload_ops());
-        assert(g_upload_error_calls == 0);
-        assert(strcmp(g_upload_response_type, "payload_upload_chunk_result") == 0);
+            transfer_writer(),
+            transfer_ops());
+        assert(g_transfer_error_calls == 0);
+        assert(strcmp(g_transfer_response_type, "") == 0);
         assert(strcmp(
-                   g_upload_response_received_bytes,
+                   g_transfer_response_received_bytes,
                    std::to_string(next_offset).c_str()) == 0);
         offset = next_offset;
     }
 
     JsonDocument finish_doc = parse_json(
-        payload_upload_finish_json(
-            "req_upload_finish",
+        payload_transfer_finish_json(
+            "req_transfer_finish",
             "session_aaaaaaaaaaaaaaaa",
-            upload_id.c_str()));
-    agent_q::handle_usb_payload_upload_finish_request(
-        "req_upload_finish",
+            transfer_id.c_str()));
+    agent_q::handle_usb_payload_transfer_finish_request(
+        "req_transfer_finish",
         finish_doc,
-        upload_writer(),
-        upload_ops());
-    assert(g_upload_error_calls == 0);
-    assert(strcmp(g_upload_response_type, "payload_upload_finish_result") == 0);
-    assert(strcmp(g_upload_response_size_bytes, std::to_string(payload.size()).c_str()) == 0);
-    assert(strcmp(g_upload_response_payload_digest, payload_digest) == 0);
-    assert(g_upload_response_payload_ref[0] != '\0');
-    return g_upload_response_payload_ref;
+        transfer_writer(),
+        transfer_ops());
+    assert(g_transfer_error_calls == 0);
+    assert(strcmp(g_transfer_response_type, "") == 0);
+    assert(strcmp(g_transfer_response_size_bytes, "") == 0);
+    assert(strcmp(g_transfer_response_payload_digest, "") == 0);
+    assert(g_transfer_response_payload_ref[0] != '\0');
+    return g_transfer_response_payload_ref;
 }
 
 }  // namespace
@@ -1067,20 +1081,75 @@ const char* user_signing_flow_terminal_reason(AgentQUserSigningTerminalResult)
 
 bool usb_response_write_json(JsonDocument& response)
 {
-    snprintf(g_upload_response_type, sizeof(g_upload_response_type), "%s", response["type"] | "");
-    snprintf(g_upload_response_upload_id, sizeof(g_upload_response_upload_id), "%s", response["uploadId"] | "");
-    snprintf(g_upload_response_payload_ref, sizeof(g_upload_response_payload_ref), "%s", response["payloadRef"] | "");
-    snprintf(g_upload_response_received_bytes, sizeof(g_upload_response_received_bytes), "%s", response["receivedBytes"] | "");
-    snprintf(g_upload_response_payload_digest, sizeof(g_upload_response_payload_digest), "%s", response["payloadDigest"] | "");
-    snprintf(g_upload_response_size_bytes, sizeof(g_upload_response_size_bytes), "%s", response["sizeBytes"] | "");
+    snprintf(g_transfer_response_type, sizeof(g_transfer_response_type), "%s", response["method"] | response["type"] | "");
+    snprintf(g_transfer_response_transfer_id, sizeof(g_transfer_response_transfer_id), "%s", response["result"]["transferId"] | "");
+    snprintf(g_transfer_response_payload_ref, sizeof(g_transfer_response_payload_ref), "%s", response["result"]["payloadRef"] | "");
+    snprintf(g_transfer_response_received_bytes, sizeof(g_transfer_response_received_bytes), "%s", response["result"]["receivedBytes"] | "");
+    snprintf(g_transfer_response_payload_digest, sizeof(g_transfer_response_payload_digest), "%s", response["payloadDigest"] | "");
+    snprintf(g_transfer_response_size_bytes, sizeof(g_transfer_response_size_bytes), "%s", response["sizeBytes"] | "");
     return true;
 }
 
-bool usb_response_write_error(const char* id, const char* code, const char* message)
+bool usb_response_prepare_success_result(
+    JsonDocument& response,
+    const char* id,
+    const char* method,
+    JsonObjectConst result)
+{
+    if (method == nullptr || method[0] == '\0' || result.isNull()) {
+        return false;
+    }
+    response.clear();
+    response["id"] = id;
+    response["version"] = kAgentQProtocolVersion;
+    response["success"] = true;
+    response["method"] = method;
+    response["result"].set(result);
+    return true;
+}
+
+bool usb_response_prepare_method_error(
+    JsonDocument& response,
+    const char* id,
+    const char* method,
+    const char* code)
+{
+    const AgentQDeviceErrorRow* error = device_error_row(code);
+    if (error == nullptr) {
+        error = device_error_row("unknown_error");
+    }
+    if (error == nullptr) {
+        return false;
+    }
+    response.clear();
+    response["id"] = id;
+    response["version"] = kAgentQProtocolVersion;
+    response["success"] = false;
+    if (method != nullptr && method[0] != '\0') {
+        response["method"] = method;
+    }
+    response["error"]["code"] = error->code;
+    response["error"]["message"] = error->message;
+    response["error"]["retryable"] = error->retryable;
+    return true;
+}
+
+bool usb_response_write_method_error(
+    const char* id,
+    const char* method,
+    const char* code)
+{
+    JsonDocument response;
+    if (!usb_response_prepare_method_error(response, id, method, code)) {
+        return false;
+    }
+    return usb_response_write_json(response);
+}
+
+bool usb_response_write_error(const char* id, const char* code)
 {
     (void)id;
-    (void)message;
-    snprintf(g_upload_response_error_code, sizeof(g_upload_response_error_code), "%s", code);
+    snprintf(g_transfer_response_error_code, sizeof(g_transfer_response_error_code), "%s", code);
     return true;
 }
 
@@ -1236,7 +1305,11 @@ int main(int argc, char** argv)
         0);
 
     reset_counters();
-    store_identity_for(valid_request, "{\"type\":\"sign_result\",\"status\":\"signed\"}");
+    store_identity_for(
+        valid_request,
+        "{\"version\":1,\"success\":true,\"method\":\"sign_transaction\","
+        "\"result\":{\"authorization\":\"user\",\"chain\":\"sui\","
+        "\"method\":\"sign_transaction\",\"signature\":\"sig\"}}");
     expect_case(
         "matching retry replays before preparation",
         run_transaction_preflight(valid_request, true, false),
@@ -1249,15 +1322,16 @@ int main(int argc, char** argv)
                 g_retry_response_write_calls);
         ++g_failures;
     }
-    expect_contains("matching retry response", g_retry_response_json, "\"type\":\"sign_result\"");
-    expect_contains("matching retry response", g_retry_response_json, "\"status\":\"signed\"");
+    expect_contains("matching retry response", g_retry_response_json, "\"success\":true");
+    expect_contains("matching retry response", g_retry_response_json, "\"method\":\"sign_transaction\"");
+    expect_contains("matching retry response", g_retry_response_json, "\"signature\":\"sig\"");
 
     reset_counters();
     store_identity_for(
         valid_request,
-        "{\"type\":\"sign_result\",\"status\":\"signing_failed\","
+        "{\"version\":1,\"success\":false,\"method\":\"sign_transaction\","
         "\"error\":{\"code\":\"signing_failed\","
-        "\"message\":\"The device could not produce a signature.\"}}");
+        "\"message\":\"The device could not produce a signature.\",\"retryable\":false}}");
     expect_case(
         "matching signing_failed retry replays terminal failure without preparation",
         run_transaction_preflight(valid_request, true, false),
@@ -1274,18 +1348,18 @@ int main(int argc, char** argv)
     expect_contains(
         "matching signing_failed retry response",
         g_retry_response_json,
-        "\"type\":\"sign_result\"");
-    expect_contains(
-        "matching signing_failed retry response",
-        g_retry_response_json,
-        "\"status\":\"signing_failed\"");
+        "\"success\":false");
     expect_contains(
         "matching signing_failed retry response",
         g_retry_response_json,
         "\"code\":\"signing_failed\"");
 
     reset_counters();
-    store_identity_for(valid_request, "{\"type\":\"sign_result\",\"status\":\"signed\"}");
+    store_identity_for(
+        valid_request,
+        "{\"version\":1,\"success\":true,\"method\":\"sign_transaction\","
+        "\"result\":{\"authorization\":\"user\",\"chain\":\"sui\","
+        "\"method\":\"sign_transaction\",\"signature\":\"sig\"}}");
     expect_case(
         "conflicting retry stops before preparation",
         run_transaction_preflight(
@@ -1307,11 +1381,15 @@ int main(int argc, char** argv)
                 g_retry_response_write_calls);
         ++g_failures;
     }
-    expect_contains("conflicting retry response", g_retry_response_json, "\"type\":\"error\"");
+    expect_contains("conflicting retry response", g_retry_response_json, "\"success\":false");
     expect_contains("conflicting retry response", g_retry_response_json, "request_id_conflict");
 
     reset_counters();
-    store_identity_for(valid_request, "{\"type\":\"sign_result\",\"status\":\"signed\"}");
+    store_identity_for(
+        valid_request,
+        "{\"version\":1,\"success\":true,\"method\":\"sign_transaction\","
+        "\"result\":{\"authorization\":\"user\",\"chain\":\"sui\","
+        "\"method\":\"sign_transaction\",\"signature\":\"sig\"}}");
     expect_case(
         "invalid current request shape cannot replay a stored result",
         run_transaction_preflight(
@@ -1371,7 +1449,7 @@ int main(int argc, char** argv)
                 base64(above_inline_payload).c_str()),
             true,
             false),
-        PreflightOutcome::preparation_unsupported_payload_size,
+        PreflightOutcome::preparation_payload_too_large,
         1,
         0,
         0);
@@ -1429,27 +1507,43 @@ int main(int argc, char** argv)
             valid.size(),
             staged_digest);
     reset_counters();
+    store_staged_identity_for(
+        staged_request_for_retry,
+        "{\"version\":1,\"success\":true,\"method\":\"sign_transaction\","
+        "\"result\":{\"authorization\":\"user\",\"chain\":\"sui\","
+        "\"method\":\"sign_transaction\",\"signature\":\"sig\"}}");
     expect_case(
-        "fresh staged request reaches preparation with descriptor identity",
-        run_transaction_preflight(staged_request_for_retry, true, false),
-        PreflightOutcome::ok_prepared,
-        1,
-        0,
-        1);
-
-    reset_counters();
-    store_staged_identity_for(staged_request_for_retry, "{\"type\":\"sign_result\",\"status\":\"signed\"}");
-    expect_case(
-        "staged matching retry replays after live payload cleanup",
+        "staged matching retry replays from store descriptor identity",
         run_transaction_preflight(staged_request_for_retry, true, false),
         PreflightOutcome::replay_match,
         1,
         0,
         0);
-    expect_contains("staged matching retry response", g_retry_response_json, "\"type\":\"sign_result\"");
-    expect_contains("staged matching retry response", g_retry_response_json, "\"status\":\"signed\"");
+    expect_contains("staged matching retry response", g_retry_response_json, "\"success\":true");
+    expect_contains("staged matching retry response", g_retry_response_json, "\"signature\":\"sig\"");
 
     reset_counters();
+    const std::string fresh_staged_ref = stage_payload(valid, staged_digest);
+    const std::string fresh_staged_request =
+        staged_request_json(
+            "req_staged_fresh",
+            "session_aaaaaaaaaaaaaaaa",
+            "sui",
+            "sign_transaction",
+            "devnet",
+            fresh_staged_ref.c_str(),
+            valid.size(),
+            staged_digest);
+    expect_case(
+        "fresh staged request reaches preparation with store descriptor identity",
+        run_transaction_preflight(fresh_staged_request, true, false),
+        PreflightOutcome::ok_prepared,
+        1,
+        1,
+        1);
+
+    reset_counters();
+    const std::string ref_swap_ref = stage_payload(valid, staged_digest);
     const std::string ref_independent_original =
         staged_request_json(
             "req_staged_ref_independent",
@@ -1457,7 +1551,7 @@ int main(int argc, char** argv)
             "sui",
             "sign_transaction",
             "devnet",
-            "payload_original_descriptor",
+            ref_swap_ref.c_str(),
             valid.size(),
             staged_digest);
     const std::string ref_independent_retry =
@@ -1467,50 +1561,62 @@ int main(int argc, char** argv)
             "sui",
             "sign_transaction",
             "devnet",
-            "payload_different_handle",
+            "payload_ffffffffffffffff",
             valid.size(),
             staged_digest);
     store_staged_identity_for(
         ref_independent_original,
-        "{\"type\":\"sign_result\",\"status\":\"signed\"}");
+        "{\"version\":1,\"success\":true,\"method\":\"sign_transaction\","
+        "\"result\":{\"authorization\":\"user\",\"chain\":\"sui\","
+        "\"method\":\"sign_transaction\",\"signature\":\"sig\"}}");
     expect_case(
-        "staged retained identity ignores payloadRef handle after cleanup",
+        "staged retry with wrong payloadRef fails before retained replay",
         run_transaction_preflight(ref_independent_retry, true, false),
-        PreflightOutcome::replay_match,
+        PreflightOutcome::payload_unavailable,
         1,
-        0,
+        1,
         0);
-    expect_contains(
-        "staged payloadRef-independent retry response",
-        g_retry_response_json,
-        "\"type\":\"sign_result\"");
 
     reset_counters();
-    store_staged_identity_for(staged_request_for_retry, "{\"type\":\"sign_result\",\"status\":\"signed\"}");
+    const std::string conflict_ref = stage_payload(valid, staged_digest);
+    const std::string conflict_original =
+        staged_request_json(
+            "req_staged_1",
+            "session_aaaaaaaaaaaaaaaa",
+            "sui",
+            "sign_transaction",
+            "devnet",
+            conflict_ref.c_str(),
+            valid.size(),
+            staged_digest);
+    store_staged_identity_for(
+        conflict_original,
+        "{\"version\":1,\"success\":true,\"method\":\"sign_transaction\","
+        "\"result\":{\"authorization\":\"user\",\"chain\":\"sui\","
+        "\"method\":\"sign_transaction\",\"signature\":\"sig\"}}");
     expect_case(
-        "staged descriptor conflict stops before live payload resolution",
+        "staged descriptor conflict comes from store descriptor identity",
         run_transaction_preflight(
             staged_request_json(
                 "req_staged_1",
                 "session_aaaaaaaaaaaaaaaa",
                 "sui",
                 "sign_transaction",
-                "devnet",
-                staged_ref.c_str(),
+                "testnet",
+                conflict_ref.c_str(),
                 valid.size(),
-                "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
+                staged_digest),
             true,
             false),
         PreflightOutcome::replay_conflict,
         1,
-        0,
+        1,
         0);
     expect_contains("staged descriptor conflict response", g_retry_response_json, "request_id_conflict");
 
-    const std::string mismatch_ref = stage_payload(valid, staged_digest);
     reset_counters();
     expect_case(
-        "fresh staged descriptor mismatch fails before taking finalized payload",
+        "missing staged payloadRef fails before taking finalized payload",
         run_transaction_preflight(
             staged_request_json(
                 "req_staged_mismatch",
@@ -1518,15 +1624,16 @@ int main(int argc, char** argv)
                 "sui",
                 "sign_transaction",
                 "devnet",
-                mismatch_ref.c_str(),
+                "payload_eeeeeeeeeeeeeeee",
                 valid.size(),
-                "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+                staged_digest),
             true,
             false),
-        PreflightOutcome::preparation_error,
+        PreflightOutcome::payload_unavailable,
         1,
         0,
         0);
+    const std::string mismatch_ref = stage_payload(valid, staged_digest);
     reset_counters();
     expect_case(
         "matching staged request still consumes after mismatch rejection",
@@ -1561,7 +1668,7 @@ int main(int argc, char** argv)
             staged_digest);
     reset_counters();
     expect_case(
-        "USB upload handlers produce finalized payload consumed by production preflight",
+        "USB transfer handlers produce finalized payload consumed by production preflight",
         run_transaction_preflight(usb_staged_request, true, false),
         PreflightOutcome::ok_prepared,
         1,
@@ -1586,10 +1693,10 @@ int main(int argc, char** argv)
         agent_q::handle_usb_sign_transaction_request(
             "req_usb_full_staged_1",
             full_handler_doc,
-            upload_writer(),
+            transfer_writer(),
             signing_handler_ops());
     }
-    if (g_upload_error_calls != 0 ||
+    if (g_transfer_error_calls != 0 ||
         g_handler_preflight_calls != 1 ||
         g_handler_begin_transaction_calls != 1 ||
         g_handler_clear_prepared_calls != 2 ||
@@ -1601,7 +1708,7 @@ int main(int argc, char** argv)
         fprintf(stderr,
                 "USB staged signing handler path failed: errors/preflight/begin/clear/waiting/policy = "
                 "%d/%d/%d/%d/%d/%d/%d/%d\n",
-                g_upload_error_calls,
+                g_transfer_error_calls,
                 g_handler_preflight_calls,
                 g_handler_begin_transaction_calls,
                 g_handler_clear_prepared_calls,
@@ -1636,10 +1743,10 @@ int main(int argc, char** argv)
         agent_q::handle_usb_sign_transaction_request(
             "req_usb_full_staged_policy_1",
             full_handler_doc,
-            upload_writer(),
+            transfer_writer(),
             signing_handler_ops());
     }
-    if (g_upload_error_calls != 0 ||
+    if (g_transfer_error_calls != 0 ||
         g_handler_preflight_calls != 1 ||
         g_handler_begin_transaction_calls != 0 ||
         g_handler_waiting_calls != 0 ||
@@ -1654,7 +1761,7 @@ int main(int argc, char** argv)
         fprintf(stderr,
                 "USB staged policy signing handler path failed: errors/preflight/begin/waiting/policy/clear/events = "
                 "%d/%d/%d/%d/%d/%d/%d/%d/%d/%d/%d/%d\n",
-                g_upload_error_calls,
+                g_transfer_error_calls,
                 g_handler_preflight_calls,
                 g_handler_begin_transaction_calls,
                 g_handler_waiting_calls,
@@ -1686,9 +1793,9 @@ int main(int argc, char** argv)
             ++g_failures;
         } else {
             const std::string stored_json(stored, stored_len);
-            expect_contains("USB staged policy buffered result", stored_json, "\"type\":\"sign_result\"");
+            expect_contains("USB staged policy buffered result", stored_json, "\"success\":true");
             expect_contains("USB staged policy buffered result", stored_json, "\"authorization\":\"policy\"");
-            expect_contains("USB staged policy buffered result", stored_json, "\"status\":\"signed\"");
+            expect_contains("USB staged policy buffered result", stored_json, "\"method\":\"sign_transaction\"");
         }
     }
 
@@ -1715,22 +1822,22 @@ int main(int argc, char** argv)
         agent_q::handle_usb_sign_transaction_request(
             "req_usb_max_staged_1",
             max_handler_doc,
-            upload_writer(),
+            transfer_writer(),
             signing_handler_ops());
     }
-    if (g_upload_error_calls != 1 ||
+    if (g_transfer_error_calls != 1 ||
         g_handler_preflight_calls != 1 ||
         g_handler_begin_transaction_calls != 0 ||
         g_handler_policy_evaluation_calls != 0 ||
         g_handler_policy_execution_calls != 0 ||
         g_handler_policy_response_calls != 0 ||
-        (strcmp(g_upload_response_error_code, "malformed_transaction") != 0 &&
-         strcmp(g_upload_response_error_code, "unsupported_transaction") != 0)) {
+        (strcmp(g_transfer_response_error_code, "malformed_transaction") != 0 &&
+         strcmp(g_transfer_response_error_code, "unsupported_transaction") != 0)) {
         fprintf(stderr,
                 "USB max staged payload fail-closed path failed: errors/code/preflight/begin/policy = "
                 "%d/%s/%d/%d/%d/%d/%d\n",
-                g_upload_error_calls,
-                g_upload_response_error_code,
+                g_transfer_error_calls,
+                g_transfer_response_error_code,
                 g_handler_preflight_calls,
                 g_handler_begin_transaction_calls,
                 g_handler_policy_evaluation_calls,
@@ -1803,13 +1910,14 @@ CPP
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${AGENT_Q_DIR}/agent_q_base64.cpp" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_request_identity.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_payload_upload_handlers.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_payload_transfer_handlers.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_signing_handlers.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_signing_result_writer.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_preflight.cpp" \

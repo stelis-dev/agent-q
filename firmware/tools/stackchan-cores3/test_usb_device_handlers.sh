@@ -62,7 +62,6 @@ bool g_safe_code = true;
 bool g_write_json_ok = true;
 const char* g_last_id = nullptr;
 const char* g_last_error_code = nullptr;
-const char* g_last_error_message = nullptr;
 const char* g_last_code = nullptr;
 uint32_t g_last_duration_ms = 0;
 char g_last_json_type[32] = {};
@@ -86,7 +85,6 @@ void reset_state()
     g_write_json_ok = true;
     g_last_id = nullptr;
     g_last_error_code = nullptr;
-    g_last_error_message = nullptr;
     g_last_code = nullptr;
     g_last_duration_ms = 0;
     g_last_json_type[0] = '\0';
@@ -131,16 +129,36 @@ bool usb_response_write_json(JsonDocument& response)
     return g_write_json_ok;
 }
 
+bool usb_response_write_success_result(const char* id, const char* method, JsonObjectConst result)
+{
+    (void)id;
+    g_write_json_calls += 1;
+    const char* type = method != nullptr ? method : "";
+    const char* status = result["status"] | "";
+    const char* code = result["code"] | "";
+    const char* device_state = result["device"]["state"] | "";
+    const char* provisioning_state = result["provisioning"]["state"] | "";
+    snprintf(g_last_json_type, sizeof(g_last_json_type), "%s", type);
+    snprintf(g_last_json_status, sizeof(g_last_json_status), "%s", status);
+    snprintf(g_last_json_code, sizeof(g_last_json_code), "%s", code);
+    snprintf(g_last_json_device_state, sizeof(g_last_json_device_state), "%s", device_state);
+    snprintf(
+        g_last_json_provisioning_state,
+        sizeof(g_last_json_provisioning_state),
+        "%s",
+        provisioning_state);
+    return g_write_json_ok;
+}
+
 }  // namespace agent_q
 
 namespace {
 
-bool write_error(const char* id, const char* code, const char* message)
+bool write_error(const char* id, const char* code)
 {
     g_write_error_calls += 1;
     g_last_id = id;
     g_last_error_code = code;
-    g_last_error_message = message;
     return true;
 }
 
@@ -151,16 +169,20 @@ void log_write_failure(const char* response_type, const char* id)
     g_last_id = id;
 }
 
-bool write_busy(const char* id)
+bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     g_busy_calls += 1;
     g_last_id = id;
+    if (g_busy) {
+        writer.write_error(id, "busy");
+    }
     return g_busy;
 }
 
 bool write_payload_admission_error(
     const char* id,
-    agent_q::AgentQUsbOperationType operation)
+    agent_q::AgentQUsbOperationType operation,
+    const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     assert(operation == agent_q::AgentQUsbOperationType::get_status);
     g_payload_admission_calls += 1;
@@ -168,7 +190,7 @@ bool write_payload_admission_error(
     if (!g_payload_admission_error) {
         return false;
     }
-    return write_error(id, "busy", "Device has a pending signable payload.");
+    return writer.write_error(id, "busy");
 }
 
 bool is_safe_code(const char* value)
@@ -244,33 +266,32 @@ int main()
 {
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"type\":\"get_status\"}");
+        JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"method\":\"get_status\"}");
         agent_q::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
         assert(g_payload_admission_calls == 1);
         assert(g_refresh_calls == 1);
         assert(g_write_json_calls == 1);
         assert(g_write_error_calls == 0);
-        assert(strcmp(g_last_json_type, "status") == 0);
+        assert(strcmp(g_last_json_type, "get_status") == 0);
         assert(strcmp(g_last_json_device_state, "idle") == 0);
         assert(strcmp(g_last_json_provisioning_state, "provisioned") == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"type\":\"get_status\",\"extra\":1}");
+        JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"method\":\"get_status\",\"extra\":1}");
         agent_q::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
         assert(g_write_json_calls == 0);
         assert(g_write_error_calls == 1);
         assert(g_payload_admission_calls == 0);
         assert(g_refresh_calls == 0);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "get_status request contains unsupported fields.") == 0);
     }
 
     {
         reset_state();
         g_payload_admission_error = true;
-        JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"type\":\"get_status\"}");
+        JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"method\":\"get_status\"}");
         agent_q::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
         assert(g_payload_admission_calls == 1);
         assert(g_refresh_calls == 0);
@@ -282,51 +303,50 @@ int main()
     {
         reset_state();
         g_busy = true;
-        JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"type\":\"identify_device\",\"params\":{\"code\":\"1234\"}}");
+        JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\"}}");
         agent_q::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_busy_calls == 1);
-        assert(g_write_error_calls == 0);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "busy") == 0);
         assert(g_show_calls == 0);
         assert(g_write_json_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"type\":\"identify_device\",\"params\":{\"code\":\"1234\"},\"extra\":1}");
+        JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\"},\"extra\":1}");
         agent_q::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "identify_device request contains unsupported fields.") == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"type\":\"identify_device\",\"params\":{\"code\":\"1234\",\"extra\":1}}");
+        JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\",\"extra\":1}}");
         agent_q::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "identify_device params contain unsupported fields.") == 0);
     }
 
     {
         reset_state();
         g_safe_code = false;
-        JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"type\":\"identify_device\",\"params\":{\"code\":\"abcd\"}}");
+        JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"abcd\"}}");
         agent_q::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_code") == 0);
+        assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_show_calls == 0);
         assert(g_write_json_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"type\":\"identify_device\",\"params\":{\"code\":\"1234\"}}");
+        JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\"}}");
         agent_q::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_write_error_calls == 0);
         assert(g_show_calls == 1);
         assert(g_write_json_calls == 1);
-        assert(strcmp(g_last_json_type, "identify_device_result") == 0);
+        assert(strcmp(g_last_json_type, "identify_device") == 0);
         assert(strcmp(g_last_json_status, "displayed") == 0);
         assert(strcmp(g_last_json_code, "1234") == 0);
         assert(strcmp(g_last_json_device_state, "idle") == 0);
@@ -336,7 +356,7 @@ int main()
     {
         reset_state();
         g_write_json_ok = false;
-        JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"type\":\"identify_device\",\"params\":{\"code\":\"1234\"}}");
+        JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\"}}");
         agent_q::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_show_calls == 1);
         assert(g_write_json_calls == 1);

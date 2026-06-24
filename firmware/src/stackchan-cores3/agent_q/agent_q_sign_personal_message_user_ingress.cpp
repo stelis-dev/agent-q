@@ -21,8 +21,6 @@ AgentQSignPersonalMessageUserIngressResult map_validation_result(
             return AgentQSignPersonalMessageUserIngressResult::invalid_request_shape;
         case AgentQSignPersonalMessageUserValidationResult::unsupported_version:
             return AgentQSignPersonalMessageUserIngressResult::unsupported_version;
-        case AgentQSignPersonalMessageUserValidationResult::unsupported_type:
-            return AgentQSignPersonalMessageUserIngressResult::unsupported_type;
         case AgentQSignPersonalMessageUserValidationResult::invalid_session:
             return AgentQSignPersonalMessageUserIngressResult::invalid_session;
         case AgentQSignPersonalMessageUserValidationResult::invalid_params_shape:
@@ -71,11 +69,11 @@ validate_sign_personal_message_user_identity(
         return AgentQSignPersonalMessageUserValidationResult::unsupported_version;
     }
 
-    const char* request_type = nullptr;
-    if (!agent_q_json_value_c_string(request_object["type"], &request_type) ||
-        strcmp(request_type, "sign_personal_message") != 0) {
+    const char* method = nullptr;
+    if (!agent_q_json_value_c_string(request_object["method"], &method) ||
+        strcmp(method, "sign_personal_message") != 0) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignPersonalMessageUserValidationResult::unsupported_type;
+        return AgentQSignPersonalMessageUserValidationResult::unsupported_method;
     }
 
     return AgentQSignPersonalMessageUserValidationResult::ok;
@@ -149,8 +147,6 @@ const char* sign_personal_message_user_ingress_result_name(
             return "invalid_request_shape";
         case AgentQSignPersonalMessageUserIngressResult::unsupported_version:
             return "unsupported_version";
-        case AgentQSignPersonalMessageUserIngressResult::unsupported_type:
-            return "unsupported_type";
         case AgentQSignPersonalMessageUserIngressResult::invalid_state:
             return "invalid_state";
         case AgentQSignPersonalMessageUserIngressResult::busy:

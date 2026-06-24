@@ -35,33 +35,33 @@ void handle_usb_connect_request(
     const AgentQUsbConnectHandlerOps& ops)
 {
     if (ops.material_ready == nullptr || !ops.material_ready()) {
-        writer.write_error(id, "invalid_state", "Connect is available only after provisioning is complete.");
+        writer.write_error(id, "invalid_state");
         return;
     }
     if (ops.write_connect_admission_error != nullptr &&
-        ops.write_connect_admission_error(id)) {
+        ops.write_connect_admission_error(id, writer)) {
         return;
     }
 
-    const char* const allowed_request_fields[] = {"id", "version", "type", "params"};
+    const char* const allowed_request_fields[] = {"id", "version", "method", "payload"};
     if (!agent_q_json_object_fields_supported(
             request.as<JsonVariantConst>(),
             allowed_request_fields,
             4)) {
-        writer.write_error(id, "invalid_params", "connect request contains unsupported fields.");
+        writer.write_error(id, "invalid_params");
         return;
     }
 
     const char* const allowed_connect_params[] = {"clientName"};
-    if (!agent_q_json_object_fields_supported(request["params"], allowed_connect_params, 1)) {
-        writer.write_error(id, "invalid_params", "connect params contain unsupported fields.");
+    if (!agent_q_json_object_fields_supported(request["payload"], allowed_connect_params, 1)) {
+        writer.write_error(id, "invalid_params");
         return;
     }
 
     const char* client_name = nullptr;
-    if (!agent_q_json_optional_c_string(request["params"]["clientName"], "", &client_name) ||
+    if (!agent_q_json_optional_c_string(request["payload"]["clientName"], "", &client_name) ||
         !is_printable_ascii_client_name(client_name)) {
-        writer.write_error(id, "invalid_client_name", "clientName must be 1-64 printable ASCII characters.");
+        writer.write_error(id, "invalid_params");
         return;
     }
 
@@ -72,14 +72,14 @@ void handle_usb_connect_request(
         ops.reset_review_choice_queue == nullptr ||
         ops.show_connect_review == nullptr ||
         ops.record_review_waiting == nullptr) {
-        writer.write_error(id, "protocol_error", "Connect handler is unavailable.");
+        writer.write_error(id, "internal_output_error");
         return;
     }
 
     const AgentQTimeoutTick now = ops.current_tick();
     const AgentQTimeoutWindow approval_window = ops.make_approval_window(now);
     if (!ops.begin_connect_approval(id, client_name, now, approval_window)) {
-        usb_response_write_connect_rejected(id, "invalid_state", "Connect is unavailable.");
+        usb_response_write_connect_rejected(id, "invalid_state");
         ops.show_connect_unavailable();
         return;
     }

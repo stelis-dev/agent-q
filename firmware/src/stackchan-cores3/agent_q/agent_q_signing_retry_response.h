@@ -19,6 +19,7 @@ using AgentQSigningRetryResponseWriter = bool (*)(JsonDocument& response, void* 
 
 AgentQSigningRetryResponseResult deliver_signing_retry_response(
     const char* request_id,
+    const char* method,
     const AgentQSigningRetryDeliveryResult& retry,
     const char* stored_result,
     AgentQSigningRetryResponseWriter write_response,

@@ -133,10 +133,10 @@ expect_request_server_wiring \
   'write_busy_if_pending_or_local_flow_active_for_operation' \
   "USB request server must expose operation-aware busy gating"
 expect_request_server_wiring \
-  'write_busy_if_pending_or_local_flow_active\(id, false, true\)' \
+  'write_busy_if_pending_or_local_flow_active\(id, writer, false, true\)' \
   "operation-aware busy gate must preserve local-flow busy checks while delegating payload delivery admission"
 expect_request_server_wiring \
-  'write_payload_delivery_operation_busy\(id, operation\)' \
+  'write_payload_delivery_operation_busy\(id, writer, operation\)' \
   "operation-aware busy gate must consume payload delivery admission"
 expect_request_server_wiring \
   'payload_delivery_advance_and_snapshot\(now\)' \
@@ -513,8 +513,6 @@ agent_q::AgentQPayloadDeliveryBeginInput begin_input(
     last_digest = digest_for(payload);
     return agent_q::AgentQPayloadDeliveryBeginInput{
         session_id,
-        agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
-        "transaction",
         payload.size(),
         last_digest.c_str(),
         agent_q::AgentQPayloadDeliveryLimits{chunk_max, payload_max},
@@ -526,7 +524,7 @@ agent_q::AgentQPayloadDeliveryBeginInput begin_input(
 
 void append_all(
     const char* session_id,
-    const char* upload_id,
+    const char* transfer_id,
     const std::vector<uint8_t>& payload,
     size_t chunk_size)
 {
@@ -538,7 +536,7 @@ void append_all(
             agent_q::payload_delivery_append_chunk(0,
                 agent_q::AgentQPayloadDeliveryChunkInput{
                     session_id,
-                    upload_id,
+                    transfer_id,
                     offset,
                     payload.data() + offset,
                     next_size,
@@ -560,18 +558,13 @@ void test_successful_finalize_and_resolve()
            "begin succeeds");
     expect(begin.received_bytes == 0, "begin starts at zero bytes");
     expect(begin.chunk_max_bytes == 5, "begin returns chunk limit");
-    append_all("session_abcdef", begin.upload_id, payload, 5);
+    append_all("session_abcdef", begin.transfer_id, payload, 5);
 
     agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
     expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.upload_id},
+               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
                &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
            "finish succeeds");
-    expect(strcmp(finish.descriptor.chain, "sui") == 0, "descriptor chain projected from route");
-    expect(strcmp(finish.descriptor.method, "sign_transaction") == 0,
-           "descriptor method projected from route");
-    expect(strcmp(finish.descriptor.payload_kind, "transaction") == 0,
-           "descriptor payload kind preserved");
     expect(finish.descriptor.size_bytes == payload.size(), "descriptor stores payload size");
     expect(strcmp(finish.descriptor.payload_digest, digest_for(payload).c_str()) == 0,
            "descriptor stores digest");
@@ -603,13 +596,13 @@ void test_default_max_payload_round_trip()
            "default max payload begin succeeds");
     append_all(
         "session_abcdef",
-        begin.upload_id,
+        begin.transfer_id,
         payload,
         agent_q::kAgentQPayloadDeliveryDefaultChunkMaxBytes);
 
     agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
     expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.upload_id},
+               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
                &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
            "default max payload finish succeeds");
     expect(finish.descriptor.size_bytes == payload.size(),
@@ -637,11 +630,11 @@ void test_take_finalized_transfers_ownership_and_clears_store()
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload), &begin) ==
                agent_q::AgentQPayloadDeliveryResult::ok,
            "begin before take succeeds");
-    append_all("session_abcdef", begin.upload_id, payload, 5);
+    append_all("session_abcdef", begin.transfer_id, payload, 5);
 
     agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
     expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.upload_id},
+               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
                &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
            "finish before take succeeds");
 
@@ -677,12 +670,12 @@ void test_admission_matrix()
 
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_upload_begin,
+                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_begin,
                    "session_abcdef",
                    false,
                    nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
-           "idle allows upload begin");
+           "idle allows transfer begin");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
@@ -706,26 +699,26 @@ void test_admission_matrix()
         agent_q::AgentQPayloadDeliveryAdmissionReason::idle_passthrough,
         "idle staged sign transaction reaches retained lookup before live resolve");
     expect_admission_decision(
-        agent_q::AgentQPayloadDeliveryOperationKind::payload_upload_chunk,
+        agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_chunk,
         false,
         nullptr,
         agent_q::AgentQPayloadDeliveryAdmissionResult::unknown_request,
         agent_q::AgentQPayloadDeliveryAdmissionReason::missing_active_payload,
-        "idle rejects upload chunk before store lookup");
+        "idle rejects transfer chunk before store lookup");
     expect_admission_decision(
-        agent_q::AgentQPayloadDeliveryOperationKind::payload_upload_finish,
+        agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_finish,
         false,
         nullptr,
         agent_q::AgentQPayloadDeliveryAdmissionResult::unknown_request,
         agent_q::AgentQPayloadDeliveryAdmissionReason::missing_active_payload,
-        "idle rejects upload finish before store lookup");
+        "idle rejects transfer finish before store lookup");
     expect_admission_decision(
-        agent_q::AgentQPayloadDeliveryOperationKind::payload_upload_abort,
+        agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_abort,
         false,
         nullptr,
         agent_q::AgentQPayloadDeliveryAdmissionResult::unknown_request,
         agent_q::AgentQPayloadDeliveryAdmissionReason::missing_active_payload,
-        "idle rejects upload abort before store lookup");
+        "idle rejects transfer abort before store lookup");
 
     agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload), &begin) ==
@@ -791,36 +784,36 @@ void test_admission_matrix()
            "receiving disconnect cleanup is exposed through contract predicate");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_upload_begin,
+                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_begin,
                    "session_abcdef",
                    false,
                    nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
-           "receiving blocks nested upload begin");
+           "receiving blocks nested transfer begin");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_upload_chunk,
+                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_chunk,
                    "session_abcdef",
                    false,
                    nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
-           "receiving allows upload chunk");
+           "receiving allows transfer chunk");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_upload_finish,
+                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_finish,
                    "session_abcdef",
                    false,
                    nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
-           "receiving allows upload finish");
+           "receiving allows transfer finish");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_upload_abort,
+                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_abort,
                    "session_abcdef",
                    false,
                    nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
-           "receiving allows upload abort");
+           "receiving allows transfer abort");
     expect_sensitive_operations_blocked("receiving");
     expect(agent_q::payload_delivery_admit_sign_transaction(
                agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput{0,
@@ -835,8 +828,8 @@ void test_admission_matrix()
         false,
         nullptr,
         agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
-        agent_q::AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_upload,
-        "receiving blocks signing because upload is incomplete");
+        agent_q::AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_transfer,
+        "receiving blocks signing because transfer is incomplete");
     expect(agent_q::payload_delivery_admission_blocks_sensitive_flow(
                agent_q::payload_delivery_admit_operation(
                    agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
@@ -847,10 +840,10 @@ void test_admission_matrix()
                    })),
            "receiving signing block is exposed through sensitive-flow predicate");
 
-    append_all("session_abcdef", begin.upload_id, payload, 5);
+    append_all("session_abcdef", begin.transfer_id, payload, 5);
     agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
     expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.upload_id},
+               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
                &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
            "finish for admission test succeeds");
     expect(agent_q::payload_delivery_admit_operation(
@@ -895,36 +888,36 @@ void test_admission_matrix()
            "finalized allows disconnect cleanup");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_upload_begin,
+                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_begin,
                    "session_abcdef",
                    false,
                    nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
-           "finalized blocks nested upload begin");
+           "finalized blocks nested transfer begin");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_upload_chunk,
+                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_chunk,
                    "session_abcdef",
                    false,
                    nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
-           "finalized blocks upload chunk");
+           "finalized blocks transfer chunk");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_upload_finish,
+                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_finish,
                    "session_abcdef",
                    false,
                    nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
-           "finalized blocks upload finish");
+           "finalized blocks transfer finish");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_upload_abort,
+                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_abort,
                    "session_abcdef",
                    false,
                    nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
-           "finalized allows upload abort");
+           "finalized allows transfer abort");
     expect_sensitive_operations_blocked("finalized");
     expect(agent_q::payload_delivery_admit_sign_transaction(
                agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput{0,
@@ -985,21 +978,21 @@ void test_guards_and_cleanup()
     expect(agent_q::payload_delivery_append_chunk(0,
                agent_q::AgentQPayloadDeliveryChunkInput{
                    "session_abcdef",
-                   "upload_0000000000000001",
+                   "transfer_0000000000000001",
                    0,
                    first_chunk,
                    sizeof(first_chunk),
                },
                nullptr) == agent_q::AgentQPayloadDeliveryResult::not_found,
-           "chunk without active upload is not found");
+           "chunk without active transfer is not found");
     agent_q::AgentQPayloadDeliveryFinishOutput idle_finish = {};
     expect(agent_q::payload_delivery_finish(0,
                agent_q::AgentQPayloadDeliveryFinishInput{
                    "session_abcdef",
-                   "upload_0000000000000001",
+                   "transfer_0000000000000001",
                },
                &idle_finish) == agent_q::AgentQPayloadDeliveryResult::not_found,
-           "finish without active upload is not found");
+           "finish without active transfer is not found");
 
     agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
@@ -1010,7 +1003,7 @@ void test_guards_and_cleanup()
     expect(agent_q::payload_delivery_append_chunk(0,
                agent_q::AgentQPayloadDeliveryChunkInput{
                    "session_abcdef",
-                   begin.upload_id,
+                   begin.transfer_id,
                    0,
                    too_large,
                    sizeof(too_large),
@@ -1018,17 +1011,17 @@ void test_guards_and_cleanup()
                nullptr) == agent_q::AgentQPayloadDeliveryResult::chunk_too_large,
            "chunk max+1 rejected");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
-           "chunk too large wipes owned active upload");
+           "chunk too large wipes owned active transfer");
 
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
                agent_q::AgentQPayloadDeliveryResult::ok,
            "begin for reported chunk oversize succeeds");
     expect(agent_q::payload_delivery_reject_chunk_too_large(0,
                "session_abcdef",
-               begin.upload_id) == agent_q::AgentQPayloadDeliveryResult::chunk_too_large,
+               begin.transfer_id) == agent_q::AgentQPayloadDeliveryResult::chunk_too_large,
            "reported chunk oversize rejected by store owner");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
-           "reported chunk oversize wipes owned active upload");
+           "reported chunk oversize wipes owned active transfer");
 
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
                agent_q::AgentQPayloadDeliveryResult::ok,
@@ -1037,7 +1030,7 @@ void test_guards_and_cleanup()
     expect(agent_q::payload_delivery_append_chunk(0,
                agent_q::AgentQPayloadDeliveryChunkInput{
                    "session_abcdef",
-                   begin.upload_id,
+                   begin.transfer_id,
                    1,
                    payload.data(),
                    2,
@@ -1045,7 +1038,7 @@ void test_guards_and_cleanup()
                nullptr) == agent_q::AgentQPayloadDeliveryResult::offset_mismatch,
            "offset mismatch rejected");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
-           "offset mismatch wipes owned active upload");
+           "offset mismatch wipes owned active transfer");
 
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
                agent_q::AgentQPayloadDeliveryResult::ok,
@@ -1054,7 +1047,7 @@ void test_guards_and_cleanup()
     expect(agent_q::payload_delivery_append_chunk(0,
                agent_q::AgentQPayloadDeliveryChunkInput{
                    "session_other",
-                   begin.upload_id,
+                   begin.transfer_id,
                    0,
                    payload.data(),
                    2,
@@ -1063,25 +1056,25 @@ void test_guards_and_cleanup()
            "different session cannot append");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state ==
                agent_q::AgentQPayloadDeliveryState::receiving,
-           "different session failure does not wipe active upload");
+           "different session failure does not wipe active transfer");
     expect(agent_q::payload_delivery_reject_chunk_too_large(0,
                "session_other",
-               begin.upload_id) == agent_q::AgentQPayloadDeliveryResult::invalid_session,
-           "different session reported oversize cannot clear active upload");
+               begin.transfer_id) == agent_q::AgentQPayloadDeliveryResult::invalid_session,
+           "different session reported oversize cannot clear active transfer");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state ==
                agent_q::AgentQPayloadDeliveryState::receiving,
-           "different session reported oversize preserves active upload");
+           "different session reported oversize preserves active transfer");
 
     expect(agent_q::payload_delivery_append_chunk(0,
                agent_q::AgentQPayloadDeliveryChunkInput{
                    "session_abcdef",
-                   "bad-upload",
+                   "bad-transfer",
                    0,
                    payload.data(),
                    2,
                },
-               nullptr) == agent_q::AgentQPayloadDeliveryResult::invalid_upload_id,
-           "malformed upload id is separated from session mismatch");
+               nullptr) == agent_q::AgentQPayloadDeliveryResult::invalid_transfer_id,
+           "malformed transfer id is separated from session mismatch");
 
     agent_q::payload_delivery_store_reset();
     agent_q::AgentQPayloadDeliveryBeginInput inactive_deadline =
@@ -1126,10 +1119,10 @@ void test_guards_and_cleanup()
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
                agent_q::AgentQPayloadDeliveryResult::ok,
            "begin for deadline cleanup succeeds");
-    expect(!agent_q::payload_delivery_clear_expired(49), "deadline before expiry keeps upload");
-    expect(agent_q::payload_delivery_clear_expired(50), "deadline expiry clears upload");
+    expect(!agent_q::payload_delivery_clear_expired(49), "deadline before expiry keeps transfer");
+    expect(agent_q::payload_delivery_clear_expired(50), "deadline expiry clears transfer");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
-           "expired upload returns to idle");
+           "expired transfer returns to idle");
 
     agent_q::AgentQPayloadDeliveryBeginOutput wrap_begin = {};
     expect(agent_q::payload_delivery_begin(0,
@@ -1138,11 +1131,11 @@ void test_guards_and_cleanup()
                agent_q::AgentQPayloadDeliveryResult::ok,
            "begin for wrapped deadline succeeds");
     expect(!agent_q::payload_delivery_clear_expired(UINT32_MAX - 2),
-           "wrapped deadline keeps upload before deadline");
+           "wrapped deadline keeps transfer before deadline");
     expect(agent_q::payload_delivery_clear_expired(5),
-           "wrapped deadline clears upload at deadline");
+           "wrapped deadline clears transfer at deadline");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
-           "wrapped expired upload returns to idle");
+           "wrapped expired transfer returns to idle");
 }
 
 void test_timeout_operation_boundaries()
@@ -1159,7 +1152,7 @@ void test_timeout_operation_boundaries()
                50,
                agent_q::AgentQPayloadDeliveryChunkInput{
                    "session_abcdef",
-                   begin.upload_id,
+                   begin.transfer_id,
                    0,
                    payload.data(),
                    payload.size(),
@@ -1172,11 +1165,11 @@ void test_timeout_operation_boundaries()
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 8, 8, 50), &begin) ==
                agent_q::AgentQPayloadDeliveryResult::ok,
            "begin for expired finish boundary succeeds");
-    append_all("session_abcdef", begin.upload_id, payload, 8);
+    append_all("session_abcdef", begin.transfer_id, payload, 8);
     agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
     expect(agent_q::payload_delivery_finish(
                50,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.upload_id},
+               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
                &finish) == agent_q::AgentQPayloadDeliveryResult::not_found,
            "expired finish clears store before finalizing");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
@@ -1185,10 +1178,10 @@ void test_timeout_operation_boundaries()
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 8, 8, 50), &begin) ==
                agent_q::AgentQPayloadDeliveryResult::ok,
            "begin for expired finalized boundary succeeds");
-    append_all("session_abcdef", begin.upload_id, payload, 8);
+    append_all("session_abcdef", begin.transfer_id, payload, 8);
     expect(agent_q::payload_delivery_finish(
                0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.upload_id},
+               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
                &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
            "finish before deadline succeeds");
     const std::string payload_ref = finish.descriptor.payload_ref;
@@ -1205,10 +1198,10 @@ void test_timeout_operation_boundaries()
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 8, 8, 50), &begin) ==
                agent_q::AgentQPayloadDeliveryResult::ok,
            "begin for expired take boundary succeeds");
-    append_all("session_abcdef", begin.upload_id, payload, 8);
+    append_all("session_abcdef", begin.transfer_id, payload, 8);
     expect(agent_q::payload_delivery_finish(
                0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.upload_id},
+               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
                &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
            "finish before expired take succeeds");
     const std::string take_payload_ref = finish.descriptor.payload_ref;
@@ -1226,10 +1219,10 @@ void test_timeout_operation_boundaries()
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 8, 8, 50), &begin) ==
                agent_q::AgentQPayloadDeliveryResult::ok,
            "begin for expired admission boundary succeeds");
-    append_all("session_abcdef", begin.upload_id, payload, 8);
+    append_all("session_abcdef", begin.transfer_id, payload, 8);
     expect(agent_q::payload_delivery_finish(
                0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.upload_id},
+               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
                &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
            "finish before expired admission succeeds");
     const agent_q::AgentQPayloadDeliveryAdmissionDecision expired_consumer =
@@ -1253,7 +1246,7 @@ void test_oversize_and_digest_mismatch()
     const std::vector<uint8_t> payload = bytes(9);
     agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::unsupported_payload_size,
+               agent_q::AgentQPayloadDeliveryResult::payload_too_large,
            "payload max+1 rejected at begin");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
            "begin max+1 leaves store idle");
@@ -1267,14 +1260,14 @@ void test_oversize_and_digest_mismatch()
     expect(agent_q::payload_delivery_begin(0, input, &begin) ==
                agent_q::AgentQPayloadDeliveryResult::ok,
            "begin with well-formed wrong digest succeeds");
-    append_all("session_abcdef", begin.upload_id, valid, 4);
+    append_all("session_abcdef", begin.transfer_id, valid, 4);
     agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
     expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.upload_id},
+               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
                &finish) == agent_q::AgentQPayloadDeliveryResult::digest_mismatch,
            "digest mismatch rejected at finish");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
-           "digest mismatch wipes upload");
+           "digest mismatch wipes transfer");
 }
 
 void test_size_mismatch_and_payload_overflow()
@@ -1290,7 +1283,7 @@ void test_size_mismatch_and_payload_overflow()
     expect(agent_q::payload_delivery_append_chunk(0,
                agent_q::AgentQPayloadDeliveryChunkInput{
                    "session_abcdef",
-                   begin.upload_id,
+                   begin.transfer_id,
                    0,
                    payload.data(),
                    4,
@@ -1301,21 +1294,21 @@ void test_size_mismatch_and_payload_overflow()
 
     agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
     expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.upload_id},
+               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
                &finish) == agent_q::AgentQPayloadDeliveryResult::size_mismatch,
            "early finish returns size mismatch");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
-           "size mismatch wipes owned active upload");
+           "size mismatch wipes owned active transfer");
     expect(agent_q::payload_delivery_append_chunk(0,
                agent_q::AgentQPayloadDeliveryChunkInput{
                    "session_abcdef",
-                   begin.upload_id,
+                   begin.transfer_id,
                    4,
                    payload.data() + 4,
                    4,
                },
                &received) == agent_q::AgentQPayloadDeliveryResult::not_found,
-           "stale upload cannot continue after size mismatch");
+           "stale transfer cannot continue after size mismatch");
 
     agent_q::payload_delivery_store_reset();
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 6, 8), &begin) ==
@@ -1324,7 +1317,7 @@ void test_size_mismatch_and_payload_overflow()
     expect(agent_q::payload_delivery_append_chunk(0,
                agent_q::AgentQPayloadDeliveryChunkInput{
                    "session_abcdef",
-                   begin.upload_id,
+                   begin.transfer_id,
                    0,
                    payload.data(),
                    6,
@@ -1335,7 +1328,7 @@ void test_size_mismatch_and_payload_overflow()
     expect(agent_q::payload_delivery_append_chunk(0,
                agent_q::AgentQPayloadDeliveryChunkInput{
                    "session_abcdef",
-                   begin.upload_id,
+                   begin.transfer_id,
                    6,
                    overflow_chunk,
                    sizeof(overflow_chunk),
@@ -1343,7 +1336,7 @@ void test_size_mismatch_and_payload_overflow()
                nullptr) == agent_q::AgentQPayloadDeliveryResult::payload_overflow,
            "declared-size overflow is rejected");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
-           "declared-size overflow wipes upload");
+           "declared-size overflow wipes transfer");
 }
 
 void test_abort_active_and_finalized()
@@ -1357,20 +1350,20 @@ void test_abort_active_and_finalized()
     expect(agent_q::payload_delivery_abort(0,
                agent_q::AgentQPayloadDeliveryAbortInput{
                    "session_abcdef",
-                   begin.upload_id,
+                   begin.transfer_id,
                    nullptr,
                }) == agent_q::AgentQPayloadDeliveryResult::ok,
-           "active upload abort succeeds");
+           "active transfer abort succeeds");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
            "active abort clears store");
 
     expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload), &begin) ==
                agent_q::AgentQPayloadDeliveryResult::ok,
            "begin finalized abort succeeds");
-    append_all("session_abcdef", begin.upload_id, payload, 5);
+    append_all("session_abcdef", begin.transfer_id, payload, 5);
     agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
     expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.upload_id},
+               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
                &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
            "finish for abort succeeds");
     expect(agent_q::payload_delivery_abort(0,

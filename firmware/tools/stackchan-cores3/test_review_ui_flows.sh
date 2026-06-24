@@ -673,8 +673,7 @@ agent_q::AgentQUserSigningTransitionResult clear_user_flow()
 }
 bool user_terminal_pending() { return g_user_terminal_pending; }
 void cancel_pin_loss() { ++g_user_cancel_pin_loss_calls; }
-bool write_error(const char*, const char* code, const char*)
-{
+bool write_error(const char*, const char* code){
     ++g_user_write_error_calls;
     snprintf(g_user_last_error_code, sizeof(g_user_last_error_code), "%s", code);
     return true;

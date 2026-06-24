@@ -394,8 +394,7 @@ void handle_local_pin_auth_display_failure(
         if (ops.write_connect_rejected != nullptr) {
             ops.write_connect_rejected(
                 request_id,
-                "ui_error",
-                "Could not show local PIN UI.");
+                "ui_error");
         }
         if (ops.clear_connect_approval != nullptr) {
             ops.clear_connect_approval();
@@ -458,8 +457,7 @@ bool finish_request_backed_local_pin_input_timeout_if_reached(
                 if (ops.write_connect_rejected != nullptr) {
                     ops.write_connect_rejected(
                         request_id,
-                        "timeout",
-                        "Connection PIN timed out.");
+                        "timeout");
                 }
                 if (ops.clear_connect_approval != nullptr) {
                     ops.clear_connect_approval();
@@ -956,8 +954,7 @@ bool local_pin_auth_ui_begin_connect(
         if (ops.write_connect_rejected != nullptr) {
             ops.write_connect_rejected(
                 request_id,
-                "invalid_state",
-                "Connect is unavailable.");
+                "invalid_state");
         }
         if (ops.clear_connect_approval != nullptr) {
             ops.clear_connect_approval();
@@ -969,8 +966,7 @@ bool local_pin_auth_ui_begin_connect(
         if (ops.write_connect_rejected != nullptr) {
             ops.write_connect_rejected(
                 request_id,
-                "invalid_state",
-                "Connect PIN is unavailable.");
+                "invalid_state");
         }
         if (ops.clear_connect_approval != nullptr) {
             ops.clear_connect_approval();
@@ -984,8 +980,7 @@ bool local_pin_auth_ui_begin_connect(
         if (ops.write_connect_rejected != nullptr) {
             ops.write_connect_rejected(
                 request_id,
-                "ui_error",
-                "Could not show local PIN UI.");
+                "ui_error");
         }
         wipe_local_pin_auth_scratch(ops, "connect PIN display allocation failed");
         if (ops.clear_connect_approval != nullptr) {
@@ -1355,8 +1350,7 @@ void local_pin_auth_ui_cancel(
             if (ops.write_connect_rejected != nullptr) {
                 ops.write_connect_rejected(
                     request_id,
-                    "invalid_state",
-                    "Connect is unavailable.");
+                    "invalid_state");
             }
             if (ops.clear_connect_approval != nullptr) {
                 ops.clear_connect_approval();
@@ -1703,7 +1697,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
                 complete_local_pin_to_user_error_terminal(
                     ops,
                     request_id,
-                    "history_error",
+                    "history_unavailable",
                     "Could not record signing confirmation.",
                     "History error");
                 return;
@@ -1747,8 +1741,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
             if (ops.write_error != nullptr) {
                 ops.write_error(
                     request_id,
-                    "invalid_state",
-                    "Policy update is unavailable.");
+                    "invalid_state");
             }
             policy_update_flow_clear();
             protocol_pin_approval_clear();
@@ -1771,8 +1764,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
             if (ops.write_connect_rejected != nullptr) {
                 ops.write_connect_rejected(
                     request_id,
-                    "invalid_state",
-                    "Connect is unavailable.");
+                    "invalid_state");
             }
             if (ops.clear_connect_approval != nullptr) {
                 ops.clear_connect_approval();
@@ -1856,8 +1848,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
                 if (ops.write_connect_rejected != nullptr) {
                     ops.write_connect_rejected(
                         request_id,
-                        "auth_unavailable",
-                        "Local PIN verifier unavailable.");
+                        "auth_unavailable");
                 }
                 if (ops.clear_connect_approval != nullptr) {
                     ops.clear_connect_approval();
@@ -1954,7 +1945,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
             if (ops.replace_active_session == nullptr ||
                 !ops.replace_active_session()) {
                 if (request_id[0] != '\0' && ops.write_error != nullptr) {
-                    ops.write_error(request_id, "rng_error", "Could not create session id.");
+                    ops.write_error(request_id, "rng_unavailable");
                 }
                 if (ops.log_connect_session_creation_failed != nullptr) {
                     ops.log_connect_session_creation_failed(request_id);
@@ -2221,8 +2212,7 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
                 if (ops.write_connect_rejected != nullptr) {
                     ops.write_connect_rejected(
                         request_id,
-                        "auth_unavailable",
-                        "Local PIN verifier unavailable.");
+                        "auth_unavailable");
                 }
                 if (ops.clear_connect_approval != nullptr) {
                     ops.clear_connect_approval();
@@ -2255,8 +2245,7 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
             if (ops.write_connect_rejected != nullptr) {
                 ops.write_connect_rejected(
                     request_id,
-                    "timeout",
-                    "Connection PIN timed out.");
+                    "timeout");
             }
             if (ops.clear_connect_approval != nullptr) {
                 ops.clear_connect_approval();
@@ -2428,8 +2417,7 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
                 if (ops.write_connect_rejected != nullptr) {
                     ops.write_connect_rejected(
                         request_id,
-                        "ui_error",
-                        "Could not restore local PIN UI.");
+                        "ui_error");
                 }
                 if (ops.clear_connect_approval != nullptr) {
                     ops.clear_connect_approval();
@@ -2478,8 +2466,7 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
         if (ops.write_connect_rejected != nullptr) {
             ops.write_connect_rejected(
                 request_id,
-                expired ? "timeout" : "rejected",
-                expired ? "Connection PIN timed out." : "Connection PIN UI closed.");
+                expired ? "timeout" : "user_rejected");
         }
         if (ops.clear_connect_approval != nullptr) {
             ops.clear_connect_approval();

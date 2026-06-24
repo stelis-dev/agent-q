@@ -12,7 +12,6 @@ enum class CommonSignatureIngressError {
     ok,
     invalid_request_shape,
     unsupported_version,
-    unsupported_type,
     invalid_state,
     busy,
     invalid_session,
@@ -21,43 +20,16 @@ enum class CommonSignatureIngressError {
     unsupported_field,
     invalid_network,
     payload_invalid,
+    payload_unavailable,
 };
-
-const char* signature_payload_invalid_message(AgentQSigningRoute route)
-{
-    switch (route) {
-        case AgentQSigningRoute::sui_sign_transaction:
-            return "Signing txBytes are invalid.";
-        case AgentQSigningRoute::sui_sign_personal_message:
-            return "Signing message is invalid.";
-        case AgentQSigningRoute::unsupported:
-        default:
-            return "Signing payload is invalid.";
-    }
-}
-
-const char* signature_unavailable_message(AgentQSigningRoute route)
-{
-    switch (route) {
-        case AgentQSigningRoute::sui_sign_transaction:
-            return "sign_transaction is available only after provisioning is complete.";
-        case AgentQSigningRoute::sui_sign_personal_message:
-            return "sign_personal_message is available only after provisioning is complete.";
-        case AgentQSigningRoute::unsupported:
-        default:
-            return "Signing is available only after provisioning is complete.";
-    }
-}
 
 const char* signature_ingress_error_code(CommonSignatureIngressError result)
 {
     switch (result) {
         case CommonSignatureIngressError::invalid_request_shape:
-            return "invalid_id";
+            return "invalid_request";
         case CommonSignatureIngressError::unsupported_version:
             return "unsupported_version";
-        case CommonSignatureIngressError::unsupported_type:
-            return "unsupported_type";
         case CommonSignatureIngressError::invalid_state:
             return "invalid_state";
         case CommonSignatureIngressError::busy:
@@ -71,42 +43,11 @@ const char* signature_ingress_error_code(CommonSignatureIngressError result)
         case CommonSignatureIngressError::invalid_network:
         case CommonSignatureIngressError::payload_invalid:
             return "invalid_params";
+        case CommonSignatureIngressError::payload_unavailable:
+            return "payload_unavailable";
         case CommonSignatureIngressError::ok:
         default:
-            return "protocol_error";
-    }
-}
-
-const char* signature_ingress_error_message(
-    CommonSignatureIngressError result,
-    AgentQSigningRoute route)
-{
-    switch (result) {
-        case CommonSignatureIngressError::invalid_state:
-            return signature_unavailable_message(route);
-        case CommonSignatureIngressError::busy:
-            return "Device is busy with another request.";
-        case CommonSignatureIngressError::invalid_session:
-            return "Session is unknown or already ended.";
-        case CommonSignatureIngressError::unsupported_method:
-            return "Signing method is not supported.";
-        case CommonSignatureIngressError::invalid_network:
-            return "Signing network is unsupported.";
-        case CommonSignatureIngressError::payload_invalid:
-            return signature_payload_invalid_message(route);
-        case CommonSignatureIngressError::unsupported_field:
-            return "Signing request contains unsupported fields.";
-        case CommonSignatureIngressError::invalid_params_shape:
-            return "Signing request params are invalid.";
-        case CommonSignatureIngressError::unsupported_version:
-            return "Unsupported protocol version.";
-        case CommonSignatureIngressError::unsupported_type:
-            return "Unsupported request type.";
-        case CommonSignatureIngressError::invalid_request_shape:
-            return "Signing request envelope is invalid.";
-        case CommonSignatureIngressError::ok:
-        default:
-            return "Signing request is invalid.";
+            return "internal_output_error";
     }
 }
 
@@ -118,8 +59,6 @@ CommonSignatureIngressError common_signature_ingress_error(
             return CommonSignatureIngressError::invalid_request_shape;
         case AgentQSignTransactionUserIngressResult::unsupported_version:
             return CommonSignatureIngressError::unsupported_version;
-        case AgentQSignTransactionUserIngressResult::unsupported_type:
-            return CommonSignatureIngressError::unsupported_type;
         case AgentQSignTransactionUserIngressResult::invalid_state:
             return CommonSignatureIngressError::invalid_state;
         case AgentQSignTransactionUserIngressResult::busy:
@@ -135,9 +74,10 @@ CommonSignatureIngressError common_signature_ingress_error(
         case AgentQSignTransactionUserIngressResult::invalid_network:
             return CommonSignatureIngressError::invalid_network;
         case AgentQSignTransactionUserIngressResult::invalid_tx_bytes:
-        case AgentQSignTransactionUserIngressResult::invalid_payload_ref:
         case AgentQSignTransactionUserIngressResult::invalid_payload_descriptor:
             return CommonSignatureIngressError::payload_invalid;
+        case AgentQSignTransactionUserIngressResult::invalid_payload_ref:
+            return CommonSignatureIngressError::payload_unavailable;
         case AgentQSignTransactionUserIngressResult::ok:
         default:
             return CommonSignatureIngressError::ok;
@@ -152,8 +92,6 @@ CommonSignatureIngressError common_signature_ingress_error(
             return CommonSignatureIngressError::invalid_request_shape;
         case AgentQSignPersonalMessageUserIngressResult::unsupported_version:
             return CommonSignatureIngressError::unsupported_version;
-        case AgentQSignPersonalMessageUserIngressResult::unsupported_type:
-            return CommonSignatureIngressError::unsupported_type;
         case AgentQSignPersonalMessageUserIngressResult::invalid_state:
             return CommonSignatureIngressError::invalid_state;
         case AgentQSignPersonalMessageUserIngressResult::busy:
@@ -182,26 +120,10 @@ const char* signature_ingress_error_code(
     return signature_ingress_error_code(common_signature_ingress_error(result));
 }
 
-const char* signature_ingress_error_message(
-    AgentQSignTransactionUserIngressResult result)
-{
-    return signature_ingress_error_message(
-        common_signature_ingress_error(result),
-        AgentQSigningRoute::sui_sign_transaction);
-}
-
 const char* signature_ingress_error_code(
     AgentQSignPersonalMessageUserIngressResult result)
 {
     return signature_ingress_error_code(common_signature_ingress_error(result));
-}
-
-const char* signature_ingress_error_message(
-    AgentQSignPersonalMessageUserIngressResult result)
-{
-    return signature_ingress_error_message(
-        common_signature_ingress_error(result),
-        AgentQSigningRoute::sui_sign_personal_message);
 }
 
 const char* signature_begin_error_code(AgentQUserSigningFlowBeginResult result)
@@ -217,9 +139,9 @@ const char* signature_begin_error_code(AgentQUserSigningFlowBeginResult result)
             return "unsupported_transaction";
         case AgentQUserSigningFlowBeginResult::account_unavailable:
         case AgentQUserSigningFlowBeginResult::invalid_account:
-            return "account_error";
+            return "account_unavailable";
         case AgentQUserSigningFlowBeginResult::digest_error:
-            return "history_error";
+            return "history_unavailable";
         case AgentQUserSigningFlowBeginResult::invalid_network:
         case AgentQUserSigningFlowBeginResult::invalid_payload:
         case AgentQUserSigningFlowBeginResult::invalid_argument:
@@ -228,33 +150,6 @@ const char* signature_begin_error_code(AgentQUserSigningFlowBeginResult result)
         case AgentQUserSigningFlowBeginResult::ok:
         default:
             return "invalid_state";
-    }
-}
-
-const char* signature_begin_error_message(AgentQUserSigningFlowBeginResult result)
-{
-    switch (result) {
-        case AgentQUserSigningFlowBeginResult::active:
-            return "Device has a pending signing request.";
-        case AgentQUserSigningFlowBeginResult::invalid_session:
-            return "Session is unknown or already ended.";
-        case AgentQUserSigningFlowBeginResult::malformed_transaction:
-            return "Transaction bytes are malformed.";
-        case AgentQUserSigningFlowBeginResult::unsupported_transaction:
-            return "Transaction shape is not supported.";
-        case AgentQUserSigningFlowBeginResult::account_unavailable:
-            return "Signing account is unavailable.";
-        case AgentQUserSigningFlowBeginResult::invalid_account:
-            return "Transaction account binding is unavailable or not allowed by the device account setting.";
-        case AgentQUserSigningFlowBeginResult::digest_error:
-            return "Could not digest signing request.";
-        case AgentQUserSigningFlowBeginResult::invalid_network:
-        case AgentQUserSigningFlowBeginResult::invalid_payload:
-        case AgentQUserSigningFlowBeginResult::invalid_argument:
-        case AgentQUserSigningFlowBeginResult::invalid_deadline:
-        case AgentQUserSigningFlowBeginResult::ok:
-        default:
-            return "Signing request params are invalid.";
     }
 }
 
@@ -283,8 +178,10 @@ const char* sui_preparation_error_code(AgentQSuiSigningPreparationResult result)
         case AgentQSuiSigningPreparationResult::invalid_argument:
         case AgentQSuiSigningPreparationResult::invalid_network:
             return "invalid_params";
-        case AgentQSuiSigningPreparationResult::unsupported_payload_size:
-            return "unsupported_payload_size";
+        case AgentQSuiSigningPreparationResult::payload_too_large:
+            return "payload_too_large";
+        case AgentQSuiSigningPreparationResult::payload_unavailable:
+            return "payload_unavailable";
         case AgentQSuiSigningPreparationResult::malformed_transaction:
             return "malformed_transaction";
         case AgentQSuiSigningPreparationResult::unsupported_transaction:
@@ -292,45 +189,18 @@ const char* sui_preparation_error_code(AgentQSuiSigningPreparationResult result)
         case AgentQSuiSigningPreparationResult::account_unavailable:
         case AgentQSuiSigningPreparationResult::active_identity_unavailable:
         case AgentQSuiSigningPreparationResult::invalid_account:
-            return "account_error";
+            return "account_unavailable";
         case AgentQSuiSigningPreparationResult::digest_error:
-            return "history_error";
+            return "history_unavailable";
         case AgentQSuiSigningPreparationResult::ok:
         default:
             return "invalid_state";
     }
 }
 
-const char* sui_preparation_error_message(AgentQSuiSigningPreparationResult result)
-{
-    switch (result) {
-        case AgentQSuiSigningPreparationResult::unsupported_payload_size:
-            return "Signing payload exceeds the current Sui adapter capacity.";
-        case AgentQSuiSigningPreparationResult::malformed_transaction:
-            return "Transaction bytes are malformed.";
-        case AgentQSuiSigningPreparationResult::unsupported_transaction:
-            return "Transaction shape is not supported.";
-        case AgentQSuiSigningPreparationResult::account_unavailable:
-            return "Signing account is unavailable.";
-        case AgentQSuiSigningPreparationResult::active_identity_unavailable:
-            return "Active Sui identity is unavailable.";
-        case AgentQSuiSigningPreparationResult::invalid_account:
-            return "Transaction account binding is unavailable or not allowed by the device account setting.";
-        case AgentQSuiSigningPreparationResult::digest_error:
-            return "Could not digest signing request.";
-        case AgentQSuiSigningPreparationResult::invalid_network:
-            return "Signing network does not match the active Sui identity.";
-        case AgentQSuiSigningPreparationResult::invalid_params:
-        case AgentQSuiSigningPreparationResult::invalid_argument:
-        case AgentQSuiSigningPreparationResult::ok:
-        default:
-            return "Signing request params are invalid.";
-    }
-}
-
 bool sui_preparation_error_should_notify(AgentQSuiSigningPreparationResult result)
 {
-    return result == AgentQSuiSigningPreparationResult::unsupported_payload_size ||
+    return result == AgentQSuiSigningPreparationResult::payload_too_large ||
            result == AgentQSuiSigningPreparationResult::malformed_transaction ||
            result == AgentQSuiSigningPreparationResult::unsupported_transaction;
 }
@@ -338,7 +208,7 @@ bool sui_preparation_error_should_notify(AgentQSuiSigningPreparationResult resul
 const char* sui_preparation_notice_message(AgentQSuiSigningPreparationResult result)
 {
     switch (result) {
-        case AgentQSuiSigningPreparationResult::unsupported_payload_size:
+        case AgentQSuiSigningPreparationResult::payload_too_large:
             return "Payload too large";
         case AgentQSuiSigningPreparationResult::malformed_transaction:
             return "Malformed transaction";
@@ -356,13 +226,13 @@ bool write_sign_route_preflight_error(
 {
     switch (result) {
         case AgentQSigningPreflightResult::route_invalid_params:
-            writer.write_error(id, "invalid_params", "Signing route identifiers are invalid.");
+            writer.write_error(id, "invalid_params");
             return true;
         case AgentQSigningPreflightResult::route_unsupported_chain:
-            writer.write_error(id, "unsupported_chain", "Signing chain is unsupported.");
+            writer.write_error(id, "unsupported_chain");
             return true;
         case AgentQSigningPreflightResult::route_unsupported_method:
-            writer.write_error(id, "unsupported_method", "Signing method is unsupported.");
+            writer.write_error(id, "unsupported_method");
             return true;
         default:
             break;
@@ -380,12 +250,12 @@ bool write_common_signing_preflight_error(
     }
     switch (result) {
         case AgentQSigningPreflightResult::identity_error:
-            writer.write_error(id, "protocol_error", "Could not bind signing request identity.");
+            writer.write_error(id, "internal_output_error");
             return true;
         case AgentQSigningPreflightResult::retry_consumed:
             return true;
         case AgentQSigningPreflightResult::signing_mode_unavailable:
-            writer.write_error(id, "invalid_state", "Signing authorization mode is unavailable.");
+            writer.write_error(id, "invalid_state");
             return true;
         default:
             break;
@@ -412,8 +282,7 @@ void write_sui_preparation_error(
     record_preparation_runtime_failure_if_needed(result, ops);
     writer.write_error(
         id,
-        sui_preparation_error_code(result),
-        sui_preparation_error_message(result));
+        sui_preparation_error_code(result));
     if (sui_preparation_error_should_notify(result) &&
         ops.show_policy_signing_notice != nullptr) {
         ops.show_policy_signing_notice(
@@ -436,8 +305,7 @@ bool write_sign_transaction_preflight_error(
         case AgentQSigningPreflightResult::transaction_ingress_error:
             writer.write_error(
                 id,
-                signature_ingress_error_code(output.ingress_result),
-                signature_ingress_error_message(output.ingress_result));
+                signature_ingress_error_code(output.ingress_result));
             return true;
         case AgentQSigningPreflightResult::transaction_preparation_error:
             write_sui_preparation_error(id, output.preparation_result, writer, ops);
@@ -445,7 +313,7 @@ bool write_sign_transaction_preflight_error(
         default:
             break;
     }
-    writer.write_error(id, "protocol_error", "Signing preflight failed.");
+    writer.write_error(id, "internal_output_error");
     return true;
 }
 
@@ -463,11 +331,10 @@ bool write_sign_personal_message_preflight_error(
         case AgentQSigningPreflightResult::personal_message_ingress_error:
             writer.write_error(
                 id,
-                signature_ingress_error_code(output.ingress_result),
-                signature_ingress_error_message(output.ingress_result));
+                signature_ingress_error_code(output.ingress_result));
             return true;
         case AgentQSigningPreflightResult::personal_message_policy_mode:
-            writer.write_error(id, "unsupported_method", "sign_personal_message is not available in policy authorization mode.");
+            writer.write_error(id, "unsupported_method");
             return true;
         case AgentQSigningPreflightResult::personal_message_preparation_error:
             write_sui_preparation_error(id, output.preparation_result, writer, ops);
@@ -475,7 +342,7 @@ bool write_sign_personal_message_preflight_error(
         default:
             break;
     }
-    writer.write_error(id, "protocol_error", "Signing preflight failed.");
+    writer.write_error(id, "internal_output_error");
     return true;
 }
 
@@ -573,7 +440,7 @@ bool policy_execution_request_error_reportable(const char* code)
 {
     return code != nullptr &&
            (strcmp(code, "unsupported_transaction") == 0 ||
-            strcmp(code, "unsupported_payload_size") == 0 ||
+            strcmp(code, "payload_too_large") == 0 ||
             strcmp(code, "malformed_transaction") == 0);
 }
 
@@ -590,7 +457,7 @@ bool policy_execution_status_reportable(
 
 void log_policy_execution_status(
     const char* id,
-    const AgentQSignTransactionPolicyRuntimeResult& sign_result,
+    const AgentQSignTransactionPolicyRuntimeResult& policy_result,
     AgentQPolicySigningExecutionStatus status,
     const AgentQUsbSigningHandlerOps& ops)
 {
@@ -599,23 +466,23 @@ void log_policy_execution_status(
             if (ops.log_policy_rejected != nullptr) {
                 ops.log_policy_rejected(
                     id,
-                    sign_result.chain,
-                    sign_result.method,
-                    sign_result.rule_ref);
+                    policy_result.chain,
+                    policy_result.method,
+                    policy_result.rule_ref);
             }
             break;
         case AgentQPolicySigningExecutionStatus::signing_failed:
             if (ops.log_policy_signing_failed != nullptr) {
-                ops.log_policy_signing_failed(id, sign_result.chain, sign_result.method);
+                ops.log_policy_signing_failed(id, policy_result.chain, policy_result.method);
             }
             break;
         case AgentQPolicySigningExecutionStatus::signed_success:
             if (ops.log_policy_signed != nullptr) {
                 ops.log_policy_signed(
                     id,
-                    sign_result.chain,
-                    sign_result.method,
-                    sign_result.rule_ref);
+                    policy_result.chain,
+                    policy_result.method,
+                    policy_result.rule_ref);
             }
             break;
         default:
@@ -633,7 +500,7 @@ const char* policy_execution_notice_message(
             if (!wrote_response) {
                 return "Request failed; USB failed";
             }
-            if (strcmp(code, "unsupported_payload_size") == 0) {
+            if (strcmp(code, "payload_too_large") == 0) {
                 return "Payload too large";
             }
             if (strcmp(code, "malformed_transaction") == 0) {
@@ -671,22 +538,22 @@ AgentQUsbSigningNoticeKind policy_execution_notice_kind(
 
 void report_policy_execution_outcome(
     const char* id,
-    const AgentQSignTransactionPolicyRuntimeResult& sign_result,
+    const AgentQSignTransactionPolicyRuntimeResult& policy_result,
     AgentQPolicySigningExecutionStatus status,
     bool wrote_response,
     const AgentQUsbSigningHandlerOps& ops)
 {
-    if (!policy_execution_status_reportable(status, sign_result.code)) {
+    if (!policy_execution_status_reportable(status, policy_result.code)) {
         return;
     }
     if (wrote_response) {
-        log_policy_execution_status(id, sign_result, status, ops);
+        log_policy_execution_status(id, policy_result, status, ops);
     } else {
-        log_response_write_failure(ops, "sign_result", id);
+        log_response_write_failure(ops, "policy_result", id);
     }
     show_policy_notice(
         ops,
-        policy_execution_notice_message(status, sign_result.code, wrote_response),
+        policy_execution_notice_message(status, policy_result.code, wrote_response),
         policy_execution_notice_kind(status, wrote_response));
 }
 
@@ -700,8 +567,7 @@ void finish_user_signing_review_entry(
     if (begin_result != AgentQUserSigningFlowBeginResult::ok) {
         writer.write_error(
             id,
-            signature_begin_error_code(begin_result),
-            signature_begin_error_message(begin_result));
+            signature_begin_error_code(begin_result));
         if (signature_begin_error_should_notify(begin_result) &&
             ops.show_policy_signing_notice != nullptr) {
             ops.show_policy_signing_notice(
@@ -713,7 +579,7 @@ void finish_user_signing_review_entry(
 
     if (!ops.show_user_signing_review()) {
         ops.clear_user_signing_flow();
-        writer.write_error(id, "ui_error", "Could not show signing review UI.");
+        writer.write_error(id, "ui_error");
         ops.show_user_signing_display_error();
         return;
     }
@@ -730,23 +596,23 @@ void handle_sign_transaction_policy_mode_with_prepared_borrow(
     // execution, response writing, and policy cleanup inside this helper so the
     // caller can clear the prepared payload only after the borrowed result is
     // fully consumed.
-    AgentQSignTransactionPolicyRuntimeResult sign_result =
+    AgentQSignTransactionPolicyRuntimeResult policy_result =
         ops.evaluate_transaction_policy(prepared);
-    if (sign_result.status == AgentQSignTransactionPolicyRuntimeStatus::policy_authorized) {
+    if (policy_result.status == AgentQSignTransactionPolicyRuntimeStatus::policy_authorized) {
         show_policy_notice(ops, "Policy signing", AgentQUsbSigningNoticeKind::info);
     }
     AgentQPolicySigningExecutionResult execution_result =
-        ops.execute_policy_transaction(sign_result);
+        ops.execute_policy_transaction(policy_result);
     const bool wrote_response =
         ops.write_policy_execution_response(id, request_identity, execution_result);
     report_policy_execution_outcome(
         id,
-        sign_result,
+        policy_result,
         execution_result.status,
         wrote_response,
         ops);
     ops.clear_policy_execution_result(&execution_result);
-    ops.clear_transaction_policy_result(&sign_result);
+    ops.clear_transaction_policy_result(&policy_result);
 }
 
 }  // namespace
@@ -758,7 +624,7 @@ void handle_usb_sign_transaction_request(
     const AgentQUsbSigningHandlerOps& ops)
 {
     if (!transaction_signing_handler_available(ops)) {
-        writer.write_error(id, "protocol_error", "Signing handler is unavailable.");
+        writer.write_error(id, "internal_output_error");
         return;
     }
 
@@ -818,7 +684,7 @@ void handle_usb_sign_personal_message_request(
     const AgentQUsbSigningHandlerOps& ops)
 {
     if (!personal_message_signing_handler_available(ops)) {
-        writer.write_error(id, "protocol_error", "Signing handler is unavailable.");
+        writer.write_error(id, "internal_output_error");
         return;
     }
 

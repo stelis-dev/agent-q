@@ -12,7 +12,6 @@ enum class AgentQSignTransactionUserIngressResult {
     ok,
     invalid_request_shape,
     unsupported_version,
-    unsupported_type,
     invalid_state,
     busy,
     invalid_session,

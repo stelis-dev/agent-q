@@ -11,8 +11,12 @@ struct AgentQUsbRetainedResultHandlerOps {
     bool (*material_ready)();
     bool (*write_payload_delivery_retained_result_admission_error)(
         const char* id,
-        AgentQUsbOperationType operation);
-    bool (*require_active_matching_session)(const char* id, const char* session_id);
+        AgentQUsbOperationType operation,
+        const AgentQUsbOperationResponseWriter& writer);
+    bool (*require_active_matching_session)(
+        const char* id,
+        const char* session_id,
+        const AgentQUsbOperationResponseWriter& writer);
 };
 
 void handle_usb_get_result_request(

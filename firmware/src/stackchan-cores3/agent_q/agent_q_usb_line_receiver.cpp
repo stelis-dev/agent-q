@@ -18,11 +18,10 @@ bool g_discarding_invalid_line = false;
 
 void report_line_error(
     AgentQUsbRequestLineErrorHandler write_error,
-    const char* code,
-    const char* message)
+    const char* code)
 {
     if (write_error != nullptr) {
-        write_error(code, message);
+        write_error(code);
     }
 }
 
@@ -60,14 +59,12 @@ void usb_line_receiver_poll(
             case AgentQUsbLineFeedResult::rejected_nul:
                 report_line_error(
                     write_error,
-                    "invalid_json",
-                    "JSON line contains a NUL byte.");
+                    "invalid_request");
                 break;
             case AgentQUsbLineFeedResult::rejected_too_long:
                 report_line_error(
                     write_error,
-                    "invalid_json",
-                    "JSON line is too long.");
+                    "invalid_request");
                 break;
             case AgentQUsbLineFeedResult::none:
                 break;

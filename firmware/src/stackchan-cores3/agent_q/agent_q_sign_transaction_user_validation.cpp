@@ -21,11 +21,9 @@ bool request_top_level_fields_supported(JsonObjectConst request)
     for (JsonPairConst pair : request) {
         if (!agent_q_json_string_equals(pair.key(), "id") &&
             !agent_q_json_string_equals(pair.key(), "version") &&
-            !agent_q_json_string_equals(pair.key(), "type") &&
-            !agent_q_json_string_equals(pair.key(), "sessionId") &&
-            !agent_q_json_string_equals(pair.key(), "chain") &&
             !agent_q_json_string_equals(pair.key(), "method") &&
-            !agent_q_json_string_equals(pair.key(), "params")) {
+            !agent_q_json_string_equals(pair.key(), "sessionId") &&
+            !agent_q_json_string_equals(pair.key(), "payload")) {
             return false;
         }
     }
@@ -36,11 +34,9 @@ bool request_params_fields_supported(JsonObjectConst params)
 {
     for (JsonPairConst pair : params) {
         if (!agent_q_json_string_equals(pair.key(), "network") &&
+            !agent_q_json_string_equals(pair.key(), "chain") &&
             !agent_q_json_string_equals(pair.key(), "txBytes") &&
-            !agent_q_json_string_equals(pair.key(), "payloadRef") &&
-            !agent_q_json_string_equals(pair.key(), "payloadKind") &&
-            !agent_q_json_string_equals(pair.key(), "sizeBytes") &&
-            !agent_q_json_string_equals(pair.key(), "payloadDigest")) {
+            !agent_q_json_string_equals(pair.key(), "payloadRef")) {
             return false;
         }
     }
@@ -58,23 +54,6 @@ bool object_has_key(JsonObjectConst object, const char* key)
         }
     }
     return false;
-}
-
-bool parse_payload_size_string(const char* value, size_t* output)
-{
-    if (output == nullptr) {
-        return false;
-    }
-    *output = 0;
-    uint64_t parsed = 0;
-    if (!parse_canonical_u64_decimal_string(value, &parsed)) {
-        return false;
-    }
-    if (parsed > static_cast<uint64_t>(SIZE_MAX)) {
-        return false;
-    }
-    *output = static_cast<size_t>(parsed);
-    return true;
 }
 
 }  // namespace
@@ -113,11 +92,11 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_envelop
         return AgentQSignTransactionUserValidationResult::unsupported_version;
     }
 
-    const char* request_type = nullptr;
-    if (!agent_q_json_value_c_string(request_object["type"], &request_type) ||
-        strcmp(request_type, "sign_transaction") != 0) {
+    const char* method = nullptr;
+    if (!agent_q_json_value_c_string(request_object["method"], &method) ||
+        strcmp(method, "sign_transaction") != 0) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignTransactionUserValidationResult::unsupported_type;
+        return AgentQSignTransactionUserValidationResult::unsupported_method;
     }
 
     return AgentQSignTransactionUserValidationResult::ok;
@@ -167,7 +146,7 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_params(
         return AgentQSignTransactionUserValidationResult::invalid_params_shape;
     }
 
-    JsonVariantConst params_value = request_object["params"];
+    JsonVariantConst params_value = request_object["payload"];
     JsonObjectConst params = params_value.as<JsonObjectConst>();
     if (params.isNull()) {
         memset(output, 0, sizeof(*output));
@@ -195,19 +174,12 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_params(
 
     const bool has_tx_bytes = object_has_key(params, "txBytes");
     const bool has_payload_ref = object_has_key(params, "payloadRef");
-    const bool has_payload_kind = object_has_key(params, "payloadKind");
-    const bool has_size_bytes = object_has_key(params, "sizeBytes");
-    const bool has_payload_digest = object_has_key(params, "payloadDigest");
     if (has_tx_bytes == has_payload_ref) {
         memset(output, 0, sizeof(*output));
         return AgentQSignTransactionUserValidationResult::invalid_params_shape;
     }
 
     if (has_tx_bytes) {
-        if (has_payload_kind || has_size_bytes || has_payload_digest) {
-            memset(output, 0, sizeof(*output));
-            return AgentQSignTransactionUserValidationResult::invalid_params_shape;
-        }
         const char* tx_bytes_base64 = nullptr;
         if (!agent_q_json_value_c_string(params["txBytes"], &tx_bytes_base64) ||
             !validate_canonical_base64_syntax(
@@ -222,35 +194,13 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_params(
         return AgentQSignTransactionUserValidationResult::ok;
     }
 
-    if (!has_payload_kind || !has_size_bytes || !has_payload_digest) {
-        memset(output, 0, sizeof(*output));
-        return AgentQSignTransactionUserValidationResult::invalid_params_shape;
-    }
-
     const char* payload_ref = nullptr;
-    const char* payload_kind = nullptr;
-    const char* size_bytes_string = nullptr;
-    const char* payload_digest = nullptr;
     if (!agent_q_json_value_c_string(params["payloadRef"], &payload_ref) ||
         !payload_delivery_payload_ref_format_valid(payload_ref) ||
-        !agent_q_json_value_c_string(params["payloadKind"], &payload_kind) ||
-        strcmp(payload_kind, kAgentQPayloadDeliveryPayloadKindTransaction) != 0 ||
-        !agent_q_json_value_c_string(params["sizeBytes"], &size_bytes_string) ||
-        !parse_payload_size_string(size_bytes_string, &output->payload_size_bytes) ||
-        !agent_q_json_value_c_string(params["payloadDigest"], &payload_digest) ||
-        !payload_delivery_payload_digest_format_valid(payload_digest) ||
         !copy_nonempty_c_string(
             payload_ref,
             output->payload_ref,
-            sizeof(output->payload_ref)) ||
-        !copy_nonempty_c_string(
-            payload_kind,
-            output->payload_kind,
-            sizeof(output->payload_kind)) ||
-        !copy_nonempty_c_string(
-            payload_digest,
-            output->payload_digest,
-            sizeof(output->payload_digest))) {
+            sizeof(output->payload_ref))) {
         memset(output, 0, sizeof(*output));
         return AgentQSignTransactionUserValidationResult::invalid_payload_descriptor;
     }
@@ -269,8 +219,6 @@ const char* sign_transaction_user_validation_result_name(
             return "invalid_request_shape";
         case AgentQSignTransactionUserValidationResult::unsupported_version:
             return "unsupported_version";
-        case AgentQSignTransactionUserValidationResult::unsupported_type:
-            return "unsupported_type";
         case AgentQSignTransactionUserValidationResult::invalid_session:
             return "invalid_session";
         case AgentQSignTransactionUserValidationResult::invalid_params_shape:

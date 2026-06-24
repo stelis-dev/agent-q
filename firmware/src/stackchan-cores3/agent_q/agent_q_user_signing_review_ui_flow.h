@@ -43,7 +43,7 @@ struct AgentQUserSigningReviewUiFlowOps {
     bool (*terminal_pending)();
     void (*cancel_for_pin_loss)();
     bool (*draw_local_pin_auth_panel)();
-    bool (*write_error)(const char* id, const char* code, const char* message);
+    bool (*write_error)(const char* id, const char* code);
     void (*show_display_error)();
     AgentQUserSigningHistoryWriteFn write_confirmation_history;
     void (*execute_critical_section_and_finish)(const char* request_id);

@@ -6,7 +6,6 @@
 #include "agent_q_approval_history.h"
 #include "agent_q_payload_delivery_primitives.h"
 #include "agent_q_session.h"
-#include "agent_q_sign_route.h"
 #include "agent_q_timeout_window.h"
 #include "agent_q_user_signing_limits.h"
 
@@ -28,11 +27,9 @@ enum class AgentQPayloadDeliveryResult {
     invalid_argument,
     invalid_state,
     invalid_session,
-    unsupported_method,
-    unsupported_payload_kind,
-    unsupported_payload_size,
+    payload_too_large,
     invalid_payload_digest,
-    invalid_upload_id,
+    invalid_transfer_id,
     invalid_payload_ref,
     allocation_failed,
     chunk_too_large,
@@ -51,8 +48,6 @@ struct AgentQPayloadDeliveryLimits {
 
 struct AgentQPayloadDeliveryBeginInput {
     const char* session_id;
-    AgentQSupportedSignRoute route;
-    const char* payload_kind;
     size_t size_bytes;
     const char* payload_digest;
     AgentQPayloadDeliveryLimits limits;
@@ -60,14 +55,14 @@ struct AgentQPayloadDeliveryBeginInput {
 };
 
 struct AgentQPayloadDeliveryBeginOutput {
-    char upload_id[kAgentQPayloadDeliveryUploadIdSize];
+    char transfer_id[kAgentQPayloadDeliveryTransferIdSize];
     size_t received_bytes;
     size_t chunk_max_bytes;
 };
 
 struct AgentQPayloadDeliveryChunkInput {
     const char* session_id;
-    const char* upload_id;
+    const char* transfer_id;
     size_t offset_bytes;
     const uint8_t* chunk;
     size_t chunk_size;
@@ -75,22 +70,18 @@ struct AgentQPayloadDeliveryChunkInput {
 
 struct AgentQPayloadDeliveryFinishInput {
     const char* session_id;
-    const char* upload_id;
+    const char* transfer_id;
 };
 
 struct AgentQPayloadDeliveryAbortInput {
     const char* session_id;
-    const char* upload_id;
+    const char* transfer_id;
     const char* payload_ref;
 };
 
 struct AgentQPayloadDeliveryDescriptor {
     char session_id[kAgentQSessionIdSize];
     char payload_ref[kAgentQPayloadDeliveryPayloadRefSize];
-    AgentQSupportedSignRoute route;
-    char chain[kAgentQUserSigningChainSize];
-    char method[kAgentQUserSigningMethodSize];
-    char payload_kind[kAgentQPayloadDeliveryPayloadKindSize];
     size_t size_bytes;
     char payload_digest[kAgentQApprovalHistoryDigestSize];
 };
@@ -114,9 +105,8 @@ struct AgentQPayloadDeliveryOwnedPayload {
 struct AgentQPayloadDeliverySnapshot {
     AgentQPayloadDeliveryState state;
     char session_id[kAgentQSessionIdSize];
-    char upload_id[kAgentQPayloadDeliveryUploadIdSize];
+    char transfer_id[kAgentQPayloadDeliveryTransferIdSize];
     char payload_ref[kAgentQPayloadDeliveryPayloadRefSize];
-    AgentQSupportedSignRoute route;
     size_t declared_size_bytes;
     size_t received_bytes;
     size_t chunk_max_bytes;
@@ -140,7 +130,7 @@ AgentQPayloadDeliveryResult payload_delivery_append_chunk(
 AgentQPayloadDeliveryResult payload_delivery_reject_chunk_too_large(
     AgentQTimeoutTick now_tick,
     const char* session_id,
-    const char* upload_id);
+    const char* transfer_id);
 AgentQPayloadDeliveryResult payload_delivery_finish(
     AgentQTimeoutTick now_tick,
     const AgentQPayloadDeliveryFinishInput& input,

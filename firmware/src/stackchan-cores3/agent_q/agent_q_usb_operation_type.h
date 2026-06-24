@@ -19,10 +19,10 @@ enum class AgentQUsbOperationType {
     policy_propose,
     credential_prepare,
     credential_propose,
-    payload_upload_begin,
-    payload_upload_chunk,
-    payload_upload_finish,
-    payload_upload_abort,
+    payload_transfer_begin,
+    payload_transfer_chunk,
+    payload_transfer_finish,
+    payload_transfer_abort,
 };
 
 AgentQUsbOperationType classify_usb_operation_type(const char* type);

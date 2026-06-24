@@ -277,7 +277,7 @@ void user_signing_review_ui_accept(const AgentQUserSigningReviewUiFlowOps& ops)
             ops,
             current.request_id,
             result == AgentQUserSigningTransitionResult::history_error
-                ? "history_error"
+                ? "history_unavailable"
                 : "invalid_state",
             "Signing request is unavailable.",
             "Signing unavailable");
@@ -432,8 +432,7 @@ void user_signing_review_ui_clear_if_needed(const AgentQUserSigningReviewUiFlowO
             if (ops.write_error != nullptr) {
                 ops.write_error(
                     current.request_id,
-                    "ui_error",
-                    "Could not restore signing review UI.");
+                    "ui_error");
             }
             if (ops.show_display_error != nullptr) {
                 ops.show_display_error();

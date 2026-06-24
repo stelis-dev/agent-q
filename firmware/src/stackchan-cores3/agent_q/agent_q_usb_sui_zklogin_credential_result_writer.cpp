@@ -34,27 +34,24 @@ bool usb_sui_zklogin_credential_prepare_result_write(
         return false;
     }
 
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["type"] = "credential_prepare_result";
-    response["status"] = "prepared";
-    response["chain"] = "sui";
-    response["credential"] = "zklogin";
-    JsonObject preparation = response["preparation"].to<JsonObject>();
+    JsonDocument result;
+    result["status"] = "prepared";
+    result["chain"] = "sui";
+    result["credential"] = "zklogin";
+    JsonObject preparation = result["preparation"].to<JsonObject>();
     preparation["publicKey"] = public_key_base64;
     preparation["keyScheme"] = "ed25519";
     preparation["address"] = address;
-    return usb_response_write_json(response);
+    return usb_response_write_success_result(id, "credential_prepare", result.as<JsonObjectConst>());
 }
 
 bool usb_sui_zklogin_credential_propose_result_write(
     const char* id,
-    AgentQSuiZkLoginProposalTerminalResult result,
+    AgentQSuiZkLoginProposalTerminalResult terminal_result,
     bool session_ended)
 {
-    const char* status = sui_zklogin_proposal_terminal_status(result);
-    const char* reason = sui_zklogin_proposal_terminal_reason(result);
+    const char* status = sui_zklogin_proposal_terminal_status(terminal_result);
+    const char* reason = sui_zklogin_proposal_terminal_reason(terminal_result);
     if (id == nullptr ||
         status == nullptr ||
         status[0] == '\0' ||
@@ -63,14 +60,11 @@ bool usb_sui_zklogin_credential_propose_result_write(
         return false;
     }
 
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["type"] = "credential_propose_result";
-    response["status"] = status;
-    response["reasonCode"] = reason;
-    response["sessionEnded"] = session_ended;
-    return usb_response_write_json(response);
+    JsonDocument result;
+    result["status"] = status;
+    result["reasonCode"] = reason;
+    result["sessionEnded"] = session_ended;
+    return usb_response_write_success_result(id, "credential_propose", result.as<JsonObjectConst>());
 }
 
 }  // namespace agent_q

@@ -13,11 +13,17 @@ namespace agent_q {
 
 struct AgentQUsbApprovalHistoryHandlerOps {
     bool (*material_ready)();
-    bool (*write_busy_if_pending_or_local_flow_active)(const char* id);
+    bool (*write_busy_if_pending_or_local_flow_active)(
+        const char* id,
+        const AgentQUsbOperationResponseWriter& writer);
     bool (*write_payload_delivery_safe_read_admission_error)(
         const char* id,
-        AgentQUsbOperationType operation);
-    bool (*require_active_matching_session)(const char* id, const char* session_id);
+        AgentQUsbOperationType operation,
+        const AgentQUsbOperationResponseWriter& writer);
+    bool (*require_active_matching_session)(
+        const char* id,
+        const char* session_id,
+        const AgentQUsbOperationResponseWriter& writer);
     AgentQApprovalHistoryReadResult (*read_approval_history_page)(
         uint64_t before_sequence,
         size_t limit,

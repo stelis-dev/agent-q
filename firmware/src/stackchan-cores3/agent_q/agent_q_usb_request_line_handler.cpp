@@ -15,12 +15,13 @@ void handle_usb_request_line(
     AgentQUsbRequestEnvelope envelope = {};
     const AgentQUsbRequestEnvelopeParseStatus envelope_status =
         parse_usb_request_envelope(line, request, &envelope);
+    const AgentQUsbOperationResponseWriter method_writer =
+        response_writer.for_method(envelope.method);
     if (envelope_status != AgentQUsbRequestEnvelopeParseStatus::ok) {
-        if (response_writer.write_error != nullptr) {
-            response_writer.write_error(
+        if (method_writer.can_write_error()) {
+            method_writer.write_error(
                 envelope.id,
-                usb_request_envelope_error_code(envelope_status),
-                usb_request_envelope_error_message(envelope_status));
+                usb_request_envelope_error_code(envelope_status));
         }
         return;
     }
@@ -29,7 +30,7 @@ void handle_usb_request_line(
         envelope.id,
         envelope.operation_type,
         request,
-        response_writer,
+        method_writer,
         handlers);
 }
 

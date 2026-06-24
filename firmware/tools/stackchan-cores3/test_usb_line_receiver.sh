@@ -75,10 +75,9 @@ void handle_line(const char* line)
     g_lines.emplace_back(line != nullptr ? line : "");
 }
 
-void write_error(const char* code, const char* message)
+void write_error(const char* code)
 {
-    g_errors.emplace_back(std::string(code != nullptr ? code : "") + ":" +
-                          std::string(message != nullptr ? message : ""));
+    g_errors.emplace_back(code != nullptr ? code : "");
 }
 
 void poll_all()
@@ -118,7 +117,7 @@ int main()
     set_input(std::vector<uint8_t>{'a', '\0', 'b', '\n', 'o', 'k', '\n'});
     poll_all();
     assert(g_errors.size() == 1);
-    assert(g_errors[0].find("invalid_json:JSON line contains a NUL byte.") == 0);
+    assert(g_errors[0] == "invalid_request");
     assert(g_lines.size() == 1);
     assert(g_lines[0] == "ok");
 
@@ -133,7 +132,7 @@ int main()
     set_input(oversized);
     poll_all();
     assert(g_errors.size() == 1);
-    assert(g_errors[0].find("invalid_json:JSON line is too long.") == 0);
+    assert(g_errors[0] == "invalid_request");
     assert(g_lines.size() == 1);
     assert(g_lines[0] == "hi");
 

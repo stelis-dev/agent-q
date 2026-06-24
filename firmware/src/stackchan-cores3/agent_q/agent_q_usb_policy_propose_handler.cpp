@@ -12,43 +12,43 @@ void handle_usb_policy_propose_request(
     const AgentQUsbPolicyProposeHandlerOps& ops)
 {
     if (ops.material_ready == nullptr || !ops.material_ready()) {
-        writer.write_error(id, "invalid_state", "Policy update is available only after provisioning is complete.");
+        writer.write_error(id, "invalid_state");
         return;
     }
     if (ops.write_policy_propose_admission_error != nullptr &&
-        ops.write_policy_propose_admission_error(id)) {
+        ops.write_policy_propose_admission_error(id, writer)) {
         return;
     }
 
     const char* session_id = nullptr;
     if (!agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-        writer.write_error(id, "invalid_session", "Invalid session.");
+        writer.write_error(id, "invalid_session");
         return;
     }
     if (ops.require_active_matching_session == nullptr ||
-        !ops.require_active_matching_session(id, session_id)) {
+        !ops.require_active_matching_session(id, session_id, writer)) {
         return;
     }
 
-    const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "params"};
+    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
     if (!agent_q_json_object_fields_supported(
             request.as<JsonVariantConst>(),
             allowed_request_fields,
             5)) {
-        writer.write_error(id, "invalid_params", "policy_propose request contains unsupported fields.");
+        writer.write_error(id, "invalid_params");
         return;
     }
 
-    JsonVariant params = request["params"];
-    if (!params.is<JsonObject>()) {
-        writer.write_error(id, "invalid_params", "Policy update params must be an object.");
+    JsonVariant payload = request["payload"];
+    if (!payload.is<JsonObject>()) {
+        writer.write_error(id, "invalid_params");
         return;
     }
-    JsonObject params_object = params.as<JsonObject>();
+    JsonObject payload_object = payload.as<JsonObject>();
     const char* const allowed_policy_params[] = {"policy"};
-    if (!agent_q_json_object_fields_supported(params, allowed_policy_params, 1) ||
-        params_object["policy"].isNull()) {
-        writer.write_error(id, "invalid_params", "Policy update params require policy.");
+    if (!agent_q_json_object_fields_supported(payload, allowed_policy_params, 1) ||
+        payload_object["policy"].isNull()) {
+        writer.write_error(id, "invalid_params");
         return;
     }
 
@@ -59,7 +59,7 @@ void handle_usb_policy_propose_request(
         ops.show_policy_update_review == nullptr ||
         ops.record_ui_error == nullptr ||
         ops.finish_policy_update_terminal == nullptr) {
-        writer.write_error(id, "protocol_error", "Policy update handler is unavailable.");
+        writer.write_error(id, "internal_output_error");
         return;
     }
 
@@ -67,7 +67,7 @@ void handle_usb_policy_propose_request(
     const AgentQTimeoutWindow review_window = ops.make_review_window(now);
     const AgentQPolicyUpdateFlowBeginResult begin_result =
         ops.begin_policy_update(
-            params_object["policy"],
+            payload_object["policy"],
             id,
             session_id,
             now,

@@ -499,7 +499,7 @@ int main(int argc, char** argv)
                oversized_owned,
                oversized_tx.size(),
                nullptr,
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::unsupported_payload_size);
+               &tx) == agent_q::AgentQSuiSigningPreparationResult::payload_too_large);
 
     assert(agent_q::prepare_sui_sign_transaction(
                agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
@@ -658,7 +658,7 @@ int main(int argc, char** argv)
                "devnet",
                base64(oversized_message).c_str(),
                oversized_message.size(),
-               &message) == agent_q::AgentQSuiSigningPreparationResult::unsupported_payload_size);
+               &message) == agent_q::AgentQSuiSigningPreparationResult::payload_too_large);
 
     ::g_derivation_result = agent_q::SuiAccountDerivationResult::root_material_unavailable;
     assert(agent_q::prepare_sui_sign_personal_message(

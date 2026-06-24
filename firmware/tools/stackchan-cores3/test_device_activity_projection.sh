@@ -277,7 +277,7 @@ int main()
            "payload delivery receiving blocks local settings start");
     expect(agent_q::device_activity_blocks_user_signing_ingress(activity),
            "payload delivery receiving blocks signing ingress");
-    expect_usb_block(activity, false, false, true, "Device has a pending payload upload.");
+    expect_usb_block(activity, false, false, true, "Device has a pending payload transfer.");
     expect_usb_block(activity, false, true, false, nullptr);
 
     facts = idle_facts();

@@ -13,14 +13,14 @@ bool require_common_request_fields(
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer)
 {
-    const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId", "params"};
+    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
     if (agent_q_json_object_fields_supported(
             request.as<JsonVariantConst>(),
             allowed_request_fields,
             5)) {
         return true;
     }
-    writer.write_error(id, "invalid_params", "credential request contains unsupported fields.");
+    writer.write_error(id, "invalid_params");
     return false;
 }
 
@@ -33,7 +33,7 @@ bool parse_session_id_or_write_error(
     if (agent_q_json_optional_c_string(request["sessionId"], "", session_id)) {
         return true;
     }
-    writer.write_error(id, "invalid_session", "Invalid session.");
+    writer.write_error(id, "invalid_session");
     return false;
 }
 
@@ -44,7 +44,7 @@ bool parse_supported_credential_params(
     bool prepare_only)
 {
     if (!params.is<JsonObjectConst>()) {
-        writer.write_error(id, "invalid_params", "Credential params must be an object.");
+        writer.write_error(id, "invalid_params");
         return false;
     }
     JsonObjectConst object = params.as<JsonObjectConst>();
@@ -62,7 +62,7 @@ bool parse_supported_credential_params(
             params,
             prepare_only ? prepare_keys : propose_keys,
             prepare_only ? 2 : 7)) {
-        writer.write_error(id, "invalid_params", "Credential params contain unsupported fields.");
+        writer.write_error(id, "invalid_params");
         return false;
     }
     const char* chain = nullptr;
@@ -71,7 +71,7 @@ bool parse_supported_credential_params(
         !agent_q_json_value_c_string(object["credential"], &credential) ||
         strcmp(chain, "sui") != 0 ||
         strcmp(credential, "zklogin") != 0) {
-        writer.write_error(id, "invalid_params", "Credential is unsupported.");
+        writer.write_error(id, "invalid_params");
         return false;
     }
     return true;
@@ -82,18 +82,17 @@ bool guard_common(
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer,
     const AgentQUsbSuiZkLoginCredentialHandlerOps& ops,
-    const char* invalid_state_message,
     const char** session_id)
 {
     if (ops.material_ready == nullptr || !ops.material_ready()) {
-        writer.write_error(id, "invalid_state", invalid_state_message);
+        writer.write_error(id, "invalid_state");
         return false;
     }
     if (!parse_session_id_or_write_error(id, request, writer, session_id)) {
         return false;
     }
     if (ops.require_active_matching_session == nullptr ||
-        !ops.require_active_matching_session(id, *session_id)) {
+        !ops.require_active_matching_session(id, *session_id, writer)) {
         return false;
     }
     if (!require_common_request_fields(id, request, writer)) {
@@ -113,17 +112,13 @@ bool active_identity_allows_preparation(
         case AgentQSuiActiveIdentityKind::zklogin:
             writer.write_error(
                 id,
-                "invalid_state",
-                "Sui zkLogin proof is already active. Clear it locally before preparing a new proof.");
+                "invalid_state");
             return false;
         case AgentQSuiActiveIdentityKind::error:
         default:
             writer.write_error(
                 id,
-                "invalid_state",
-                identity.error == AgentQSuiActiveIdentityError::proof_storage_error
-                    ? "Sui zkLogin proof state is unavailable."
-                    : "Sui native account is unavailable.");
+                "invalid_state");
             return false;
     }
 }
@@ -137,13 +132,14 @@ void handle_usb_credential_prepare_request(
     const AgentQUsbSuiZkLoginCredentialHandlerOps& ops)
 {
     if (ops.write_credential_prepare_admission_error != nullptr &&
-        ops.write_credential_prepare_admission_error(id)) {
+        ops.write_credential_prepare_admission_error(id, writer)) {
         return;
     }
     if (ops.write_payload_delivery_safe_read_admission_error != nullptr &&
         ops.write_payload_delivery_safe_read_admission_error(
             id,
-            AgentQUsbOperationType::credential_prepare)) {
+            AgentQUsbOperationType::credential_prepare,
+            writer)) {
         return;
     }
 
@@ -153,16 +149,15 @@ void handle_usb_credential_prepare_request(
             request,
             writer,
             ops,
-            "Credential preparation is available only after provisioning is complete.",
             &session_id)) {
         return;
     }
     (void)session_id;
-    if (!parse_supported_credential_params(id, request["params"], writer, true)) {
+    if (!parse_supported_credential_params(id, request["payload"], writer, true)) {
         return;
     }
     if (ops.resolve_active_identity == nullptr) {
-        writer.write_error(id, "protocol_error", "Credential handler is unavailable.");
+        writer.write_error(id, "internal_output_error");
         return;
     }
     const AgentQSuiActiveIdentity identity = ops.resolve_active_identity();
@@ -185,7 +180,7 @@ void handle_usb_credential_propose_request(
     const AgentQUsbSuiZkLoginCredentialHandlerOps& ops)
 {
     if (ops.write_credential_propose_admission_error != nullptr &&
-        ops.write_credential_propose_admission_error(id)) {
+        ops.write_credential_propose_admission_error(id, writer)) {
         return;
     }
 
@@ -195,11 +190,10 @@ void handle_usb_credential_propose_request(
             request,
             writer,
             ops,
-            "Credential proposal is available only after provisioning is complete.",
             &session_id)) {
         return;
     }
-    if (!parse_supported_credential_params(id, request["params"], writer, false)) {
+    if (!parse_supported_credential_params(id, request["payload"], writer, false)) {
         return;
     }
     if (ops.resolve_active_identity == nullptr ||
@@ -208,7 +202,7 @@ void handle_usb_credential_propose_request(
         ops.begin_proposal == nullptr ||
         ops.begin_result_reason == nullptr ||
         ops.show_proposal_review == nullptr) {
-        writer.write_error(id, "protocol_error", "Credential handler is unavailable.");
+        writer.write_error(id, "internal_output_error");
         return;
     }
 
@@ -220,8 +214,8 @@ void handle_usb_credential_propose_request(
     const AgentQTimeoutTick now = ops.current_tick();
     const AgentQTimeoutWindow request_window = ops.make_proposal_window(now);
     const AgentQSuiZkLoginProposalBeginResult begin_result =
-        ops.begin_proposal(
-            request["params"],
+            ops.begin_proposal(
+            request["payload"],
             id,
             session_id,
             now,

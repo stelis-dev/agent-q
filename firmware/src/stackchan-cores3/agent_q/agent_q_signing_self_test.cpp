@@ -40,12 +40,12 @@ void run_signing_self_test()
         return;
     }
 
-    const int sign_result =
+    const int signing_result =
         sui_signing_sign_ed25519(sui_signature, kSelfTestMessage, sizeof(kSelfTestMessage), seed);
     wipe_bytes(seed, sizeof(seed));
 
-    if (sign_result != 0) {
-        ESP_LOGE(kTag, "Ed25519 signing self-test failed: %d", sign_result);
+    if (signing_result != 0) {
+        ESP_LOGE(kTag, "Ed25519 signing self-test failed: %d", signing_result);
         wipe_bytes(sui_signature, sizeof(sui_signature));
         return;
     }

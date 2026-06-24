@@ -101,10 +101,10 @@ int main()
     expect_type("policy_propose", Type::policy_propose);
     expect_type("credential_prepare", Type::credential_prepare);
     expect_type("credential_propose", Type::credential_propose);
-    expect_type("payload_upload_begin", Type::payload_upload_begin);
-    expect_type("payload_upload_chunk", Type::payload_upload_chunk);
-    expect_type("payload_upload_finish", Type::payload_upload_finish);
-    expect_type("payload_upload_abort", Type::payload_upload_abort);
+    expect_type("payload_transfer_begin", Type::payload_transfer_begin);
+    expect_type("payload_transfer_chunk", Type::payload_transfer_chunk);
+    expect_type("payload_transfer_finish", Type::payload_transfer_finish);
+    expect_type("payload_transfer_abort", Type::payload_transfer_abort);
     expect_type("", Type::unsupported);
     expect_type("sign_transaction_user", Type::unsupported);
     expect_type("sign_transaction_policy", Type::unsupported);

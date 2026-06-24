@@ -57,7 +57,43 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 
 #include "agent_q_usb_request_envelope.h"
 
+namespace agent_q {
+
+void wipe_sensitive_buffer(void* data, size_t size)
+{
+    volatile unsigned char* cursor = static_cast<volatile unsigned char*>(data);
+    while (cursor != nullptr && size > 0) {
+        *cursor++ = 0;
+        --size;
+    }
+}
+
+}  // namespace agent_q
+
 namespace {
+
+const char* status_name(agent_q::AgentQUsbRequestEnvelopeParseStatus status)
+{
+    switch (status) {
+        case agent_q::AgentQUsbRequestEnvelopeParseStatus::ok:
+            return "ok";
+        case agent_q::AgentQUsbRequestEnvelopeParseStatus::invalid_json:
+            return "invalid_json";
+        case agent_q::AgentQUsbRequestEnvelopeParseStatus::invalid_id:
+            return "invalid_id";
+        case agent_q::AgentQUsbRequestEnvelopeParseStatus::invalid_request:
+            return "invalid_request";
+        case agent_q::AgentQUsbRequestEnvelopeParseStatus::invalid_params:
+            return "invalid_params";
+        case agent_q::AgentQUsbRequestEnvelopeParseStatus::invalid_session:
+            return "invalid_session";
+        case agent_q::AgentQUsbRequestEnvelopeParseStatus::unsupported_version:
+            return "unsupported_version";
+        case agent_q::AgentQUsbRequestEnvelopeParseStatus::unsupported_method:
+            return "unsupported_method";
+    }
+    return "unknown";
+}
 
 void expect_status(
     const char* line,
@@ -68,6 +104,12 @@ void expect_status(
     JsonDocument request;
     agent_q::AgentQUsbRequestEnvelope envelope = {};
     const auto status = agent_q::parse_usb_request_envelope(line, request, &envelope);
+    if (status != expected_status) {
+        fprintf(stderr, "status mismatch for %s: actual=%s expected=%s\n",
+                line,
+                status_name(status),
+                status_name(expected_status));
+    }
     assert(status == expected_status);
     if (expected_id == nullptr) {
         assert(envelope.id == nullptr);
@@ -86,24 +128,39 @@ int main()
     using Type = agent_q::AgentQUsbOperationType;
 
     expect_status(
-        "{\"id\":\"req_1\",\"version\":1,\"type\":\"get_status\"}",
+        "{\"id\":\"req_1\",\"version\":1,\"method\":\"get_status\"}",
         Status::ok,
         "req_1",
         Type::get_status);
     expect_status(
-        "{\"id\":\"req_sign\",\"version\":1,\"type\":\"sign_transaction\"}",
+        "{\"id\":\"req_sign\",\"version\":1,\"method\":\"sign_transaction\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{\"chain\":\"sui\",\"network\":\"devnet\",\"txBytes\":\"AA==\"}}",
         Status::ok,
         "req_sign",
         Type::sign_transaction);
     expect_status(
-        "{\"id\":\"req_missing_type\",\"version\":1}",
+        "{\"id\":\"req_transfer\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"begin\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"totalBytes\":\"1\",\"payloadDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
         Status::ok,
-        "req_missing_type",
+        "req_transfer",
+        Type::payload_transfer_begin);
+    expect_status(
+        "{\"id\":\"req_missing_method\",\"version\":1}",
+        Status::unsupported_method,
+        "req_missing_method",
         Type::unsupported);
     expect_status(
-        "{\"id\":\"req_unknown\",\"version\":1,\"type\":\"unknown\"}",
-        Status::ok,
+        "{\"id\":\"req_unknown\",\"version\":1,\"method\":\"unknown\"}",
+        Status::unsupported_method,
         "req_unknown",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_old_type\",\"version\":1,\"type\":\"get_status\"}",
+        Status::unsupported_method,
+        "req_old_type",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_unknown_transfer\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"unknown\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\"}",
+        Status::unsupported_method,
+        "req_unknown_transfer",
         Type::unsupported);
     expect_status(
         "{not-json",
@@ -116,30 +173,28 @@ int main()
         nullptr,
         Type::unsupported);
     expect_status(
-        "{\"version\":1,\"type\":\"get_status\"}",
+        "{\"version\":1,\"method\":\"get_status\"}",
         Status::invalid_id,
         nullptr,
         Type::unsupported);
     expect_status(
-        "{\"id\":\"bad id\",\"version\":1,\"type\":\"get_status\"}",
+        "{\"id\":\"bad id\",\"version\":1,\"method\":\"get_status\"}",
         Status::invalid_id,
         nullptr,
         Type::unsupported);
     expect_status(
-        "{\"id\":\"req_version\",\"version\":2,\"type\":\"get_status\"}",
+        "{\"id\":\"req_version\",\"version\":2,\"method\":\"get_status\"}",
         Status::unsupported_version,
         "req_version",
         Type::unsupported);
     expect_status(
         "{\"id\":\"req_bad_type\",\"version\":1,\"type\":7}",
-        Status::unsupported_type,
+        Status::invalid_request,
         "req_bad_type",
         Type::unsupported);
 
-    assert(strcmp(agent_q::usb_request_envelope_error_code(Status::invalid_json), "invalid_json") == 0);
-    assert(strcmp(agent_q::usb_request_envelope_error_message(Status::invalid_id), "Invalid request id.") == 0);
+    assert(strcmp(agent_q::usb_request_envelope_error_code(Status::invalid_json), "invalid_request") == 0);
     assert(agent_q::usb_request_envelope_error_code(Status::ok) == nullptr);
-    assert(agent_q::usb_request_envelope_error_message(Status::ok) == nullptr);
 
     printf("USB request envelope tests passed\n");
     return 0;
@@ -151,6 +206,8 @@ CPP
   -I"${ARDUINOJSON_ROOT}" \
   -I"${AGENT_Q_DIR}" \
   "${TMP_DIR}/test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
+  "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_request_envelope.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \

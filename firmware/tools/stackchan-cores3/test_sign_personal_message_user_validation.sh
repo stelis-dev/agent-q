@@ -76,18 +76,16 @@ std::string valid_params()
 
 std::string valid_request_with_params(const std::string& params)
 {
-    return "{\"id\":\"req_sign_msg_1\",\"version\":1,\"type\":\"sign_personal_message\","
+    return "{\"id\":\"req_sign_msg_1\",\"version\":1,\"method\":\"sign_personal_message\","
            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\","
-           "\"chain\":\"sui\",\"method\":\"sign_personal_message\","
-           "\"params\":" + params + "}";
+           "\"payload\":" + params + "}";
 }
 
-std::string request_with_type(const char* type)
+std::string request_with_method(const char* method)
 {
-    return "{\"id\":\"req_sign_msg_1\",\"version\":1,\"type\":\"" + std::string(type) + "\","
+    return "{\"id\":\"req_sign_msg_1\",\"version\":1,\"method\":\"" + std::string(method) + "\","
            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\","
-           "\"chain\":\"sui\",\"method\":\"sign_personal_message\","
-           "\"params\":" + valid_params() + "}";
+           "\"payload\":" + valid_params() + "}";
 }
 
 void expect(bool condition, const char* label)
@@ -189,21 +187,19 @@ int main()
             network);
     }
 
-    expect_envelope("wrong type rejected", request_with_type("sign_transaction"), Result::unsupported_type);
+    expect_envelope("wrong method rejected", request_with_method("sign_transaction"), Result::unsupported_method);
     expect_envelope("extra top-level rejected",
-                    valid.substr(0, valid.size() - 1) + ",\"authorization\":\"user\"}",
-                    Result::unsupported_field);
+                   valid.substr(0, valid.size() - 1) + ",\"authorization\":\"user\"}",
+                   Result::unsupported_field);
     expect_session("bad session rejected",
-                   "{\"id\":\"req_sign_msg_1\",\"version\":1,\"type\":\"sign_personal_message\","
+                   "{\"id\":\"req_sign_msg_1\",\"version\":1,\"method\":\"sign_personal_message\","
                    "\"sessionId\":\"bad_session\","
-                   "\"chain\":\"sui\",\"method\":\"sign_personal_message\","
-                   "\"params\":{\"network\":\"devnet\",\"message\":\"aGVsbG8=\"}}",
+                   "\"payload\":{\"network\":\"devnet\",\"message\":\"aGVsbG8=\"}}",
                    Result::invalid_session);
-    expect_params("selected route owns identity when raw method differs",
-                  "{\"id\":\"req_sign_msg_1\",\"version\":1,\"type\":\"sign_personal_message\","
+    expect_params("payload validator ignores envelope method already classified by ingress",
+                  "{\"id\":\"req_sign_msg_1\",\"version\":1,\"method\":\"sign_message\","
                   "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\","
-                  "\"chain\":\"sui\",\"method\":\"sign_message\","
-                  "\"params\":{\"network\":\"devnet\",\"message\":\"aGVsbG8=\"}}",
+                  "\"payload\":{\"network\":\"devnet\",\"message\":\"aGVsbG8=\"}}",
                   Result::ok,
                   5);
     expect_params("bad network rejected",

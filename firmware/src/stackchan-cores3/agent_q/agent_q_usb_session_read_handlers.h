@@ -13,11 +13,17 @@ namespace agent_q {
 
 struct AgentQUsbSessionReadHandlerOps {
     bool (*material_ready)();
-    bool (*write_busy_if_pending_or_local_flow_active)(const char* id);
+    bool (*write_busy_if_pending_or_local_flow_active)(
+        const char* id,
+        const AgentQUsbOperationResponseWriter& writer);
     bool (*write_payload_delivery_safe_read_admission_error)(
         const char* id,
-        AgentQUsbOperationType operation);
-    bool (*require_active_matching_session)(const char* id, const char* session_id);
+        AgentQUsbOperationType operation,
+        const AgentQUsbOperationResponseWriter& writer);
+    bool (*require_active_matching_session)(
+        const char* id,
+        const char* session_id,
+        const AgentQUsbOperationResponseWriter& writer);
     bool (*read_signing_mode)(AgentQSigningAuthorizationMode* mode);
     bool (*read_sui_account_settings)(AgentQSuiAccountSettings* settings);
     bool (*sui_zklogin_credential_available)();

@@ -118,7 +118,6 @@ bool g_write_json_ok = true;
 const char* g_last_id = nullptr;
 const char* g_last_session = nullptr;
 const char* g_last_error_code = nullptr;
-const char* g_last_error_message = nullptr;
 char g_last_json_type[32] = {};
 char g_last_json_auth[16] = {};
 char g_last_json_account_address[80] = {};
@@ -175,7 +174,6 @@ void reset_state()
     g_last_id = nullptr;
     g_last_session = nullptr;
     g_last_error_code = nullptr;
-    g_last_error_message = nullptr;
     g_last_json_type[0] = '\0';
     g_last_json_auth[0] = '\0';
     g_last_json_account_address[0] = '\0';
@@ -240,72 +238,86 @@ const char* signing_authorization_mode_name(AgentQSigningAuthorizationMode mode)
 bool usb_response_write_json(JsonDocument& response)
 {
     g_write_json_calls += 1;
-    const char* type = response["type"] | "";
+    JsonObjectConst result =
+        response["result"].is<JsonObjectConst>()
+            ? response["result"].as<JsonObjectConst>()
+            : response.as<JsonObjectConst>();
+    const char* type = response["method"] | response["type"] | "";
     snprintf(g_last_json_type, sizeof(g_last_json_type), "%s", type);
-    const char* authorization = response["signing"]["authorization"] | "";
+    const char* authorization = result["signing"]["authorization"] | "";
     snprintf(g_last_json_auth, sizeof(g_last_json_auth), "%s", authorization);
-    JsonArray methods = response["signing"]["methods"].as<JsonArray>();
+    JsonArrayConst methods = result["signing"]["methods"].as<JsonArrayConst>();
     g_last_json_signing_method_count = methods.size();
-    JsonObject payload = methods[0]["payload"].as<JsonObject>();
+    JsonObjectConst payload = methods[0]["payload"].as<JsonObjectConst>();
     snprintf(g_last_payload_kind, sizeof(g_last_payload_kind), "%s", payload["kind"] | "");
     snprintf(g_last_payload_inline_max, sizeof(g_last_payload_inline_max), "%s", payload["inlineMaxBytes"] | "");
     snprintf(g_last_payload_chunk_max, sizeof(g_last_payload_chunk_max), "%s", payload["chunkMaxBytes"] | "");
     snprintf(g_last_payload_max, sizeof(g_last_payload_max), "%s", payload["payloadMaxBytes"] | "");
-    JsonArray credentials = response["credentials"].as<JsonArray>();
+    JsonArrayConst credentials = result["credentials"].as<JsonArrayConst>();
     g_last_json_credential_count = credentials.size();
     if (g_last_json_credential_count > 0) {
-        JsonArray operations = credentials[0]["operations"].as<JsonArray>();
+        JsonArrayConst operations = credentials[0]["operations"].as<JsonArrayConst>();
         g_last_json_credential_operation_count = operations.size();
     }
-    const char* account_address = response["accounts"][0]["address"] | "";
+    const char* account_address = result["accounts"][0]["address"] | "";
     snprintf(g_last_json_account_address, sizeof(g_last_json_account_address), "%s", account_address);
-    const char* account_public_key = response["accounts"][0]["publicKey"] | "";
+    const char* account_public_key = result["accounts"][0]["publicKey"] | "";
     snprintf(g_last_json_account_public_key, sizeof(g_last_json_account_public_key), "%s", account_public_key);
-    const char* account_key_scheme = response["accounts"][0]["keyScheme"] | "";
+    const char* account_key_scheme = result["accounts"][0]["keyScheme"] | "";
     snprintf(g_last_json_account_key_scheme, sizeof(g_last_json_account_key_scheme), "%s", account_key_scheme);
-    const char* account_derivation_path = response["accounts"][0]["derivationPath"] | "";
+    const char* account_derivation_path = result["accounts"][0]["derivationPath"] | "";
     snprintf(
         g_last_json_account_derivation_path,
         sizeof(g_last_json_account_derivation_path),
         "%s",
         account_derivation_path);
-    JsonVariant sponsored_transactions = response["accounts"][0]["sponsoredTransactions"];
+    JsonVariantConst sponsored_transactions = result["accounts"][0]["sponsoredTransactions"];
     g_last_json_sponsored_transactions_present = !sponsored_transactions.isNull();
     g_last_json_accept_gas_sponsor =
         sponsored_transactions["acceptGasSponsor"] | false;
-    const char* capability_key_scheme = response["chains"][0]["accounts"][0]["keyScheme"] | "";
+    const char* capability_key_scheme = result["chains"][0]["accounts"][0]["keyScheme"] | "";
     snprintf(
         g_last_json_capability_key_scheme,
         sizeof(g_last_json_capability_key_scheme),
         "%s",
         capability_key_scheme);
     const char* capability_derivation_path =
-        response["chains"][0]["accounts"][0]["derivationPath"] | "";
+        result["chains"][0]["accounts"][0]["derivationPath"] | "";
     snprintf(
         g_last_json_capability_derivation_path,
         sizeof(g_last_json_capability_derivation_path),
         "%s",
         capability_derivation_path);
-    const char* policy_id = response["policy"]["policyId"] | "";
+    const char* policy_id = result["policy"]["policyId"] | "";
     snprintf(g_last_json_policy_id, sizeof(g_last_json_policy_id), "%s", policy_id);
     const char* where_type =
-        response["policy"]["blockchains"][0]["networks"][0]["policies"][0]["conditions"][0]["where"]["type"] | "";
+        result["policy"]["blockchains"][0]["networks"][0]["policies"][0]["conditions"][0]["where"]["type"] | "";
     snprintf(g_last_json_condition_where_type, sizeof(g_last_json_condition_where_type), "%s", where_type);
-    g_last_json_policy_count = response["policy"]["policyCount"] | 0;
-    g_last_json_policy_condition_count = response["policy"]["conditionCount"] | 0;
+    g_last_json_policy_count = result["policy"]["policyCount"] | 0;
+    g_last_json_policy_condition_count = result["policy"]["conditionCount"] | 0;
     return g_write_json_ok;
+}
+
+bool usb_response_write_success_result(const char* id, const char* method, JsonObjectConst result)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = 1;
+    response["success"] = true;
+    response["method"] = method;
+    response["result"].set(result);
+    return usb_response_write_json(response);
 }
 
 }  // namespace agent_q
 
 namespace {
 
-bool write_error(const char* id, const char* code, const char* message)
+bool write_error(const char* id, const char* code)
 {
     g_write_error_calls += 1;
     g_last_id = id;
     g_last_error_code = code;
-    g_last_error_message = message;
     return true;
 }
 
@@ -322,16 +334,20 @@ bool material_ready()
     return g_material_ready;
 }
 
-bool write_busy(const char* id)
+bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     g_busy_calls += 1;
     g_last_id = id;
+    if (g_busy) {
+        writer.write_error(id, "busy");
+    }
     return g_busy;
 }
 
 bool write_payload_admission_error(
     const char* id,
-    agent_q::AgentQUsbOperationType operation)
+    agent_q::AgentQUsbOperationType operation,
+    const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     assert(operation == agent_q::AgentQUsbOperationType::get_capabilities ||
            operation == agent_q::AgentQUsbOperationType::get_accounts ||
@@ -339,17 +355,23 @@ bool write_payload_admission_error(
     g_payload_admission_calls += 1;
     g_last_id = id;
     if (g_payload_admission_error) {
-        write_error(id, "busy", "Device has a pending signable payload.");
+        writer.write_error(id, "busy");
         return true;
     }
     return false;
 }
 
-bool require_session(const char* id, const char* session_id)
+bool require_session(
+    const char* id,
+    const char* session_id,
+    const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     g_require_session_calls += 1;
     g_last_id = id;
     g_last_session = session_id;
+    if (!g_session_valid) {
+        writer.write_error(id, "invalid_session");
+    }
     return g_session_valid;
 }
 
@@ -485,7 +507,7 @@ int main()
     {
         reset_state();
         g_material_ready = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
@@ -499,12 +521,13 @@ int main()
     {
         reset_state();
         g_busy = true;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_material_calls == 1);
         assert(g_busy_calls == 1);
         assert(g_payload_admission_calls == 0);
-        assert(g_write_error_calls == 0);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "busy") == 0);
         assert(g_require_session_calls == 0);
         assert(g_read_mode_calls == 0);
     }
@@ -512,7 +535,7 @@ int main()
     {
         reset_state();
         g_payload_admission_error = true;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_material_calls == 1);
         assert(g_busy_calls == 1);
@@ -525,7 +548,7 @@ int main()
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":7}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":7}");
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
@@ -537,28 +560,28 @@ int main()
     {
         reset_state();
         g_session_valid = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_payload_admission_calls == 1);
         assert(g_require_session_calls == 1);
-        assert(g_write_error_calls == 0);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_read_mode_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":\"session\",\"extra\":1}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\",\"extra\":1}");
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "get_capabilities request contains unsupported fields.") == 0);
         assert(g_read_mode_calls == 0);
     }
 
     {
         reset_state();
         g_read_mode_ok = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_read_mode_calls == 1);
         assert(g_write_error_calls == 1);
@@ -570,7 +593,7 @@ int main()
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_payload_admission_calls == 1);
@@ -578,15 +601,15 @@ int main()
         assert(g_resolve_active_identity_calls == 1);
         assert(g_sui_zklogin_credential_available_calls == 1);
         assert(g_write_json_calls == 1);
-        assert(strcmp(g_last_json_type, "capabilities") == 0);
+        assert(strcmp(g_last_json_type, "get_capabilities") == 0);
         assert(strcmp(g_last_json_auth, "policy") == 0);
         assert(strcmp(g_last_json_capability_key_scheme, "ed25519") == 0);
         assert(strcmp(g_last_json_capability_derivation_path, "m/44'/784'/0'/0'/0'") == 0);
         assert(g_last_json_signing_method_count == 1);
-        assert(strcmp(g_last_payload_kind, "transaction") == 0);
-        assert(strcmp(g_last_payload_inline_max, "384") == 0);
-        assert(strcmp(g_last_payload_chunk_max, "2700") == 0);
-        assert(strcmp(g_last_payload_max, "131072") == 0);
+        assert(strcmp(g_last_payload_kind, "") == 0);
+        assert(strcmp(g_last_payload_inline_max, "") == 0);
+        assert(strcmp(g_last_payload_chunk_max, "") == 0);
+        assert(strcmp(g_last_payload_max, "") == 0);
         assert(g_last_json_credential_count == 1);
         assert(g_last_json_credential_operation_count == 2);
     }
@@ -595,7 +618,7 @@ int main()
         reset_state();
         g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
         g_sui_zklogin_credential_available = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_resolve_active_identity_calls == 1);
@@ -610,20 +633,20 @@ int main()
         reset_state();
         g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::error;
         g_active_identity_error = agent_q::AgentQSuiActiveIdentityError::proof_storage_error;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_resolve_active_identity_calls == 1);
         assert(g_sui_zklogin_credential_available_calls == 0);
         assert(g_write_json_calls == 0);
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "account_error") == 0);
+        assert(strcmp(g_last_error_code, "account_unavailable") == 0);
         assert(g_record_root_material_unreadable_calls == 0);
     }
 
     {
         reset_state();
         g_write_json_ok = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_capabilities\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_write_json_calls == 1);
         assert(g_log_write_failure_calls == 1);
@@ -632,14 +655,14 @@ int main()
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_accounts\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_payload_admission_calls == 1);
         assert(g_resolve_active_identity_calls == 1);
         assert(g_read_sui_account_settings_calls == 1);
         assert(g_write_json_calls == 1);
-        assert(strcmp(g_last_json_type, "accounts") == 0);
+        assert(strcmp(g_last_json_type, "get_accounts") == 0);
         assert(strcmp(g_last_json_account_address, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef") == 0);
         assert(strcmp(g_last_json_account_public_key, "AAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH") == 0);
         assert(strcmp(g_last_json_account_key_scheme, "ed25519") == 0);
@@ -652,7 +675,7 @@ int main()
         reset_state();
         g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
         g_accept_gas_sponsor = true;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_accounts\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_resolve_active_identity_calls == 1);
@@ -672,59 +695,58 @@ int main()
         reset_state();
         g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::error;
         g_active_identity_error = agent_q::AgentQSuiActiveIdentityError::proof_storage_error;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_accounts\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_resolve_active_identity_calls == 1);
         assert(g_read_sui_account_settings_calls == 0);
         assert(g_record_root_material_unreadable_calls == 0);
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "account_error") == 0);
+        assert(strcmp(g_last_error_code, "account_unavailable") == 0);
     }
 
     {
         reset_state();
         g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::error;
         g_active_identity_error = agent_q::AgentQSuiActiveIdentityError::native_account_unavailable;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_accounts\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_resolve_active_identity_calls == 1);
         assert(g_read_sui_account_settings_calls == 0);
         assert(g_record_root_material_unreadable_calls == 1);
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "account_error") == 0);
+        assert(strcmp(g_last_error_code, "account_unavailable") == 0);
     }
 
     {
         reset_state();
         g_read_sui_account_settings_ok = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_accounts\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_resolve_active_identity_calls == 1);
         assert(g_read_sui_account_settings_calls == 1);
         assert(g_write_json_calls == 0);
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "account_error") == 0);
+        assert(strcmp(g_last_error_code, "account_unavailable") == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_accounts\",\"sessionId\":\"session\",\"extra\":1}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\",\"extra\":1}");
         agent_q::handle_usb_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "get_accounts request contains unsupported fields.") == 0);
         assert(g_resolve_active_identity_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"policy_get\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_get\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_payload_admission_calls == 1);
         assert(g_read_policy_calls == 1);
         assert(g_write_json_calls == 1);
-        assert(strcmp(g_last_json_type, "policy") == 0);
+        assert(strcmp(g_last_json_type, "policy_get") == 0);
         assert(strcmp(g_last_json_policy_id, "sha256:test") == 0);
         assert(g_last_json_policy_count == 0);
         assert(g_last_json_policy_condition_count == 0);
@@ -773,7 +795,7 @@ int main()
             blockchains,
             sizeof(blockchains) / sizeof(blockchains[0]),
         };
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"policy_get\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_get\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_read_policy_calls == 1);
@@ -786,30 +808,29 @@ int main()
     {
         reset_state();
         g_read_policy_ok = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"policy_get\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_get\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
         assert(g_read_policy_calls == 1);
         assert(g_record_policy_unavailable_calls == 1);
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "policy_error") == 0);
-        assert(strcmp(g_last_error_message, "Active policy is unavailable.") == 0);
+        assert(strcmp(g_last_error_code, "policy_unavailable") == 0);
     }
 
     {
         reset_state();
         g_policy_has_document = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"policy_get\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_get\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
         assert(g_read_policy_calls == 1);
         assert(g_record_policy_unavailable_calls == 1);
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "policy_error") == 0);
+        assert(strcmp(g_last_error_code, "policy_unavailable") == 0);
     }
 
     {
         reset_state();
         g_write_json_ok = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"policy_get\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_get\",\"sessionId\":\"session\"}");
         agent_q::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
         assert(g_read_policy_calls == 1);
         assert(g_log_write_failure_calls == 1);
@@ -818,11 +839,10 @@ int main()
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"policy_get\",\"sessionId\":\"session\",\"extra\":1}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_get\",\"sessionId\":\"session\",\"extra\":1}");
         agent_q::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "policy_get request contains unsupported fields.") == 0);
         assert(g_read_policy_calls == 0);
     }
 

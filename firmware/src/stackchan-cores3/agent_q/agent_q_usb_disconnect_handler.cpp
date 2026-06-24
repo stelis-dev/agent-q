@@ -13,20 +13,20 @@ void handle_usb_disconnect_request(
 {
     const char* session_id = nullptr;
     if (!agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-        writer.write_error(id, "invalid_session", "Invalid session.");
+        writer.write_error(id, "invalid_session");
         return;
     }
     if (ops.require_active_matching_session == nullptr ||
-        !ops.require_active_matching_session(id, session_id)) {
+        !ops.require_active_matching_session(id, session_id, writer)) {
         return;
     }
 
-    const char* const allowed_request_fields[] = {"id", "version", "type", "sessionId"};
+    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId"};
     if (!agent_q_json_object_fields_supported(
             request.as<JsonVariantConst>(),
             allowed_request_fields,
             4)) {
-        writer.write_error(id, "invalid_params", "disconnect request contains unsupported fields.");
+        writer.write_error(id, "invalid_params");
         return;
     }
     if (ops.disconnect_pending_policy_update_for_session != nullptr &&
@@ -42,13 +42,14 @@ void handle_usb_disconnect_request(
         return;
     }
     if (ops.write_busy_if_pending_or_local_flow_active != nullptr &&
-        ops.write_busy_if_pending_or_local_flow_active(id)) {
+        ops.write_busy_if_pending_or_local_flow_active(id, writer)) {
         return;
     }
     if (ops.write_payload_delivery_disconnect_admission_error != nullptr &&
         ops.write_payload_delivery_disconnect_admission_error(
             id,
-            AgentQUsbOperationType::disconnect)) {
+            AgentQUsbOperationType::disconnect,
+            writer)) {
         return;
     }
     if (ops.clear_active_session != nullptr) {

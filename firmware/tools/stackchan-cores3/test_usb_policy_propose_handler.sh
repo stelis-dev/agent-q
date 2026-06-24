@@ -119,7 +119,6 @@ agent_q::AgentQPolicyUpdateFlowTerminalResult g_ui_error_result =
 const char* g_last_id = nullptr;
 const char* g_last_session = nullptr;
 const char* g_last_error_code = nullptr;
-const char* g_last_error_message = nullptr;
 char g_last_response_id[32] = {};
 char g_last_response_type[40] = {};
 char g_last_policy_status[40] = {};
@@ -157,7 +156,6 @@ void reset_state()
     g_last_id = nullptr;
     g_last_session = nullptr;
     g_last_error_code = nullptr;
-    g_last_error_message = nullptr;
     g_last_response_id[0] = '\0';
     g_last_response_type[0] = '\0';
     g_last_policy_status[0] = '\0';
@@ -170,12 +168,11 @@ void reset_state()
     g_last_window = agent_q::AgentQTimeoutWindow{0, 0};
 }
 
-bool write_error(const char* id, const char* code, const char* message)
+bool write_error(const char* id, const char* code)
 {
     g_write_error_calls += 1;
     g_last_id = id;
     g_last_error_code = code;
-    g_last_error_message = message;
     return true;
 }
 
@@ -192,14 +189,19 @@ bool material_ready()
     return g_material_ready;
 }
 
-bool write_busy(const char* id)
+bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     g_busy_calls += 1;
     g_last_id = id;
+    if (g_busy) {
+        writer.write_error(id, "busy");
+    }
     return g_busy;
 }
 
-bool write_busy_from_payload_delivery(const char* id)
+bool write_busy_from_payload_delivery(
+    const char* id,
+    const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     g_busy_calls += 1;
     if (agent_q::payload_delivery_admit_operation(
@@ -212,14 +214,20 @@ bool write_busy_from_payload_delivery(const char* id)
         agent_q::AgentQPayloadDeliveryAdmissionResult::busy) {
         return false;
     }
-    return write_error(id, "busy", "Device has a pending signable payload.");
+    return writer.write_error(id, "busy");
 }
 
-bool require_session(const char* id, const char* session_id)
+bool require_session(
+    const char* id,
+    const char* session_id,
+    const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     g_require_session_calls += 1;
     g_last_id = id;
     g_last_session = session_id;
+    if (!g_session_valid) {
+        writer.write_error(id, "invalid_session");
+    }
     return g_session_valid;
 }
 
@@ -345,8 +353,6 @@ void stage_finalized_payload()
     assert(agent_q::payload_delivery_begin(0,
         agent_q::AgentQPayloadDeliveryBeginInput{
             "session_abcdef",
-            agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
-            "transaction",
             sizeof(payload),
             digest,
             agent_q::AgentQPayloadDeliveryLimits{16, 128},
@@ -357,7 +363,7 @@ void stage_finalized_payload()
     assert(agent_q::payload_delivery_append_chunk(0,
         agent_q::AgentQPayloadDeliveryChunkInput{
             "session_abcdef",
-            begin.upload_id,
+            begin.transfer_id,
             0,
             payload,
             sizeof(payload),
@@ -368,7 +374,7 @@ void stage_finalized_payload()
     assert(agent_q::payload_delivery_finish(0,
         agent_q::AgentQPayloadDeliveryFinishInput{
             "session_abcdef",
-            begin.upload_id,
+            begin.transfer_id,
         },
         &finish) == agent_q::AgentQPayloadDeliveryResult::ok);
 }
@@ -383,7 +389,7 @@ JsonDocument parse_request(const char* json)
 
 const char* valid_request()
 {
-    return "{\"id\":\"req\",\"version\":1,\"type\":\"policy_propose\",\"sessionId\":\"session\",\"params\":{\"policy\":{\"version\":1}}}";
+    return "{\"id\":\"req\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":\"session\",\"payload\":{\"policy\":{\"version\":1}}}";
 }
 
 }  // namespace
@@ -434,19 +440,34 @@ bool approval_history_digest_payload(
 bool usb_response_write_json(JsonDocument& response)
 {
     g_json_write_calls += 1;
+    JsonObjectConst result =
+        response["result"].is<JsonObjectConst>()
+            ? response["result"].as<JsonObjectConst>()
+            : response.as<JsonObjectConst>();
     snprintf(g_last_response_id, sizeof(g_last_response_id), "%s", response["id"].as<const char*>());
-    snprintf(g_last_response_type, sizeof(g_last_response_type), "%s", response["type"].as<const char*>());
-    snprintf(g_last_policy_status, sizeof(g_last_policy_status), "%s", response["status"].as<const char*>());
-    snprintf(g_last_policy_reason, sizeof(g_last_policy_reason), "%s", response["reasonCode"].as<const char*>());
-    g_last_policy_included = !response["policy"].isNull();
+    snprintf(g_last_response_type, sizeof(g_last_response_type), "%s", response["method"] | response["type"] | "");
+    snprintf(g_last_policy_status, sizeof(g_last_policy_status), "%s", result["status"].as<const char*>());
+    snprintf(g_last_policy_reason, sizeof(g_last_policy_reason), "%s", result["reasonCode"].as<const char*>());
+    g_last_policy_included = !result["policy"].isNull();
     if (g_last_policy_included) {
-        JsonObject policy = response["policy"].as<JsonObject>();
+        JsonObjectConst policy = result["policy"].as<JsonObjectConst>();
         snprintf(g_last_policy_hash, sizeof(g_last_policy_hash), "%s", policy["policyHash"].as<const char*>());
         g_last_policy_count = policy["policyCount"].as<size_t>();
         g_last_policy_condition_count = policy["conditionCount"].as<size_t>();
         snprintf(g_last_policy_highest_action, sizeof(g_last_policy_highest_action), "%s", policy["highestAction"].as<const char*>());
     }
     return g_json_write_ok;
+}
+
+bool usb_response_write_success_result(const char* id, const char* method, JsonObjectConst result)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = 1;
+    response["success"] = true;
+    response["method"] = method;
+    response["result"].set(result);
+    return usb_response_write_json(response);
 }
 
 }  // namespace agent_q
@@ -471,7 +492,8 @@ int main()
         JsonDocument request = parse_request(valid_request());
         agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_busy_calls == 1);
-        assert(g_write_error_calls == 0);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "busy") == 0);
         assert(g_require_session_calls == 0);
         assert(g_begin_calls == 0);
     }
@@ -494,7 +516,7 @@ int main()
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"policy_propose\",\"sessionId\":7,\"params\":{\"policy\":{}}}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":7,\"payload\":{\"policy\":{}}}");
         agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
@@ -509,48 +531,45 @@ int main()
         agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_require_session_calls == 1);
         assert(strcmp(g_last_session, "session") == 0);
-        assert(g_write_error_calls == 0);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_begin_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"policy_propose\",\"sessionId\":\"session\",\"params\":{\"policy\":{}},\"extra\":true}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":\"session\",\"payload\":{\"policy\":{}},\"extra\":true}");
         agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_require_session_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "policy_propose request contains unsupported fields.") == 0);
         assert(g_begin_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"policy_propose\",\"sessionId\":\"session\",\"params\":7}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":\"session\",\"payload\":7}");
         agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "Policy update params must be an object.") == 0);
         assert(g_begin_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"policy_propose\",\"sessionId\":\"session\",\"params\":{\"policy\":{},\"extra\":true}}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":\"session\",\"payload\":{\"policy\":{},\"extra\":true}}");
         agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "Policy update params require policy.") == 0);
         assert(g_begin_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"policy_propose\",\"sessionId\":\"session\",\"params\":{}}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":\"session\",\"payload\":{}}");
         agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "Policy update params require policy.") == 0);
         assert(g_begin_calls == 0);
     }
 
@@ -564,7 +583,7 @@ int main()
         assert(g_reason_calls == 1);
         assert(g_json_write_calls == 1);
         assert(strcmp(g_last_response_id, "req") == 0);
-        assert(strcmp(g_last_response_type, "policy_propose_result") == 0);
+        assert(strcmp(g_last_response_type, "policy_propose") == 0);
         assert(strcmp(g_last_policy_status, "invalid_policy") == 0);
         assert(strcmp(g_last_policy_reason, "too_large") == 0);
         assert(!g_last_policy_included);
@@ -604,7 +623,7 @@ int main()
         assert(agent_q::usb_policy_propose_result_write("req", "applied", "applied", &snapshot));
         assert(g_json_write_calls == 1);
         assert(strcmp(g_last_response_id, "req") == 0);
-        assert(strcmp(g_last_response_type, "policy_propose_result") == 0);
+        assert(strcmp(g_last_response_type, "policy_propose") == 0);
         assert(strcmp(g_last_policy_status, "applied") == 0);
         assert(strcmp(g_last_policy_reason, "applied") == 0);
         assert(g_last_policy_included);

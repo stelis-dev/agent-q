@@ -20,6 +20,7 @@ bool usb_signing_result_write_user_terminal(
     const char* id,
     const char* session_id,
     const uint8_t* request_identity,
+    const char* method,
     AgentQUserSigningTerminalResult result);
 
 bool usb_signing_result_write_policy_execution(

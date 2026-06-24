@@ -18,7 +18,6 @@ struct AgentQSigningRetryDeliveryResult {
     AgentQSigningRetryDeliveryStatus status;
     size_t stored_result_len;
     const char* error_code;
-    const char* error_message;
 };
 
 AgentQSigningRetryDeliveryResult evaluate_signing_retry_delivery(

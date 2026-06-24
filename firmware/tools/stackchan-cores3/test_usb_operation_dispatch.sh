@@ -76,10 +76,10 @@ enum class HandlerSlot {
     policy_propose,
     credential_prepare,
     credential_propose,
-    payload_upload_begin,
-    payload_upload_chunk,
-    payload_upload_finish,
-    payload_upload_abort,
+    payload_transfer_begin,
+    payload_transfer_chunk,
+    payload_transfer_finish,
+    payload_transfer_abort,
 };
 
 HandlerSlot g_last_handler = HandlerSlot::none;
@@ -87,7 +87,6 @@ int g_handler_calls = 0;
 const char* g_last_id = nullptr;
 int g_write_error_calls = 0;
 const char* g_last_error_code = nullptr;
-const char* g_last_error_message = nullptr;
 
 void reset_state()
 {
@@ -96,7 +95,6 @@ void reset_state()
     g_last_id = nullptr;
     g_write_error_calls = 0;
     g_last_error_code = nullptr;
-    g_last_error_message = nullptr;
 }
 
 void record_handler(HandlerSlot slot, const char* id)
@@ -106,12 +104,11 @@ void record_handler(HandlerSlot slot, const char* id)
     g_last_id = id;
 }
 
-bool write_error(const char* id, const char* code, const char* message)
+bool write_error(const char* id, const char* code)
 {
     g_last_id = id;
     g_write_error_calls += 1;
     g_last_error_code = code;
-    g_last_error_message = message;
     return true;
 }
 
@@ -144,10 +141,10 @@ DEFINE_HANDLER(handle_get_approval_history, HandlerSlot::get_approval_history)
 DEFINE_HANDLER(handle_policy_propose, HandlerSlot::policy_propose)
 DEFINE_HANDLER(handle_credential_prepare, HandlerSlot::credential_prepare)
 DEFINE_HANDLER(handle_credential_propose, HandlerSlot::credential_propose)
-DEFINE_HANDLER(handle_payload_upload_begin, HandlerSlot::payload_upload_begin)
-DEFINE_HANDLER(handle_payload_upload_chunk, HandlerSlot::payload_upload_chunk)
-DEFINE_HANDLER(handle_payload_upload_finish, HandlerSlot::payload_upload_finish)
-DEFINE_HANDLER(handle_payload_upload_abort, HandlerSlot::payload_upload_abort)
+DEFINE_HANDLER(handle_payload_transfer_begin, HandlerSlot::payload_transfer_begin)
+DEFINE_HANDLER(handle_payload_transfer_chunk, HandlerSlot::payload_transfer_chunk)
+DEFINE_HANDLER(handle_payload_transfer_finish, HandlerSlot::payload_transfer_finish)
+DEFINE_HANDLER(handle_payload_transfer_abort, HandlerSlot::payload_transfer_abort)
 
 #undef DEFINE_HANDLER
 
@@ -169,10 +166,10 @@ agent_q::AgentQUsbOperationHandlers make_handlers()
         handle_policy_propose,
         handle_credential_prepare,
         handle_credential_propose,
-        handle_payload_upload_begin,
-        handle_payload_upload_chunk,
-        handle_payload_upload_finish,
-        handle_payload_upload_abort,
+        handle_payload_transfer_begin,
+        handle_payload_transfer_chunk,
+        handle_payload_transfer_finish,
+        handle_payload_transfer_abort,
     };
 }
 
@@ -226,10 +223,10 @@ int main()
     expect_dispatch(Type::policy_propose, HandlerSlot::policy_propose);
     expect_dispatch(Type::credential_prepare, HandlerSlot::credential_prepare);
     expect_dispatch(Type::credential_propose, HandlerSlot::credential_propose);
-    expect_dispatch(Type::payload_upload_begin, HandlerSlot::payload_upload_begin);
-    expect_dispatch(Type::payload_upload_chunk, HandlerSlot::payload_upload_chunk);
-    expect_dispatch(Type::payload_upload_finish, HandlerSlot::payload_upload_finish);
-    expect_dispatch(Type::payload_upload_abort, HandlerSlot::payload_upload_abort);
+    expect_dispatch(Type::payload_transfer_begin, HandlerSlot::payload_transfer_begin);
+    expect_dispatch(Type::payload_transfer_chunk, HandlerSlot::payload_transfer_chunk);
+    expect_dispatch(Type::payload_transfer_finish, HandlerSlot::payload_transfer_finish);
+    expect_dispatch(Type::payload_transfer_abort, HandlerSlot::payload_transfer_abort);
 
     {
         reset_state();
@@ -244,8 +241,7 @@ int main()
         assert(g_handler_calls == 0);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_id, "req_unsupported") == 0);
-        assert(strcmp(g_last_error_code, "unsupported_type") == 0);
-        assert(strcmp(g_last_error_message, "Unsupported request type.") == 0);
+        assert(strcmp(g_last_error_code, "unsupported_method") == 0);
     }
 
     {
@@ -263,8 +259,7 @@ int main()
         assert(g_handler_calls == 0);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_id, "req_missing_handler") == 0);
-        assert(strcmp(g_last_error_code, "protocol_error") == 0);
-        assert(strcmp(g_last_error_message, "USB operation handler is unavailable.") == 0);
+        assert(strcmp(g_last_error_code, "internal_output_error") == 0);
     }
 
     printf("USB operation dispatch tests passed\n");

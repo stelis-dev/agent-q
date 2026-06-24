@@ -16,7 +16,6 @@ enum class AgentQSignTransactionUserValidationResult {
     ok,
     invalid_request_shape,
     unsupported_version,
-    unsupported_type,
     invalid_session,
     invalid_params_shape,
     unsupported_field,
@@ -46,9 +45,6 @@ struct AgentQSignTransactionUserParams {
     const char* tx_bytes_base64;
     size_t tx_bytes_decoded_size;
     char payload_ref[kAgentQPayloadDeliveryPayloadRefSize];
-    char payload_kind[kAgentQPayloadDeliveryPayloadKindSize];
-    size_t payload_size_bytes;
-    char payload_digest[kAgentQApprovalHistoryDigestSize];
 };
 
 AgentQSignTransactionUserValidationResult validate_sign_transaction_user_envelope(

@@ -23,6 +23,8 @@ ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.h" \
   "${AGENT_Q_DIR}/agent_q_protocol_constants.h" \
   "${AGENT_Q_DIR}/agent_q_usb_response_writer.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_response_writer.h"; do
@@ -150,28 +152,31 @@ int main()
         JsonDocument parsed = parse_written_json();
         assert(strcmp(parsed["id"] | "", "req") == 0);
         assert(parsed["version"].as<int>() == agent_q::kAgentQProtocolVersion);
-        assert(strcmp(parsed["type"] | "", "connect_result") == 0);
-        assert(strcmp(parsed["status"] | "", "approved") == 0);
-        assert(strcmp(parsed["sessionId"] | "", "session_aaaaaaaaaaaaaaaa") == 0);
-        assert(parsed["sessionTtlMs"].as<int>() == 30000);
-        assert(strcmp(parsed["device"]["deviceId"] | "", "device-1") == 0);
-        assert(strcmp(parsed["device"]["state"] | "", "idle") == 0);
-        assert(strcmp(parsed["device"]["firmwareName"] | "", "Agent-Q Firmware") == 0);
-        assert(strcmp(parsed["device"]["hardware"] | "", "stackchan-cores3") == 0);
-        assert(strcmp(parsed["device"]["firmwareVersion"] | "", "0.0.0") == 0);
+        assert(parsed["success"].as<bool>());
+        assert(strcmp(parsed["method"] | "", "connect") == 0);
+        assert(strcmp(parsed["result"]["sessionId"] | "", "session_aaaaaaaaaaaaaaaa") == 0);
+        assert(parsed["result"]["sessionTtlMs"].as<int>() == 30000);
+        assert(strcmp(parsed["result"]["device"]["deviceId"] | "", "device-1") == 0);
+        assert(strcmp(parsed["result"]["device"]["state"] | "", "idle") == 0);
+        assert(strcmp(parsed["result"]["device"]["firmwareName"] | "", "Agent-Q Firmware") == 0);
+        assert(strcmp(parsed["result"]["device"]["hardware"] | "", "stackchan-cores3") == 0);
+        assert(strcmp(parsed["result"]["device"]["firmwareVersion"] | "", "0.0.0") == 0);
     }
 
     {
         reset_written();
-        assert(agent_q::usb_response_write_connect_rejected(
+        assert(agent_q::usb_response_write_method_error(
             "req",
-            "rejected",
-            "Connection rejected."));
+            "connect",
+            "user_rejected"));
         JsonDocument parsed = parse_written_json();
-        assert(strcmp(parsed["type"] | "", "connect_result") == 0);
-        assert(strcmp(parsed["status"] | "", "rejected") == 0);
-        assert(strcmp(parsed["error"]["code"] | "", "rejected") == 0);
-        assert(strcmp(parsed["error"]["message"] | "", "Connection rejected.") == 0);
+        assert(strcmp(parsed["id"] | "", "req") == 0);
+        assert(parsed["version"].as<int>() == agent_q::kAgentQProtocolVersion);
+        assert(!(parsed["success"] | true));
+        assert(strcmp(parsed["method"] | "", "connect") == 0);
+        assert(strcmp(parsed["error"]["code"] | "", "user_rejected") == 0);
+        assert(strcmp(parsed["error"]["message"] | "", "The signing request was rejected on the device.") == 0);
+        assert(!parsed["error"]["retryable"].as<bool>());
     }
 
     printf("USB response writer tests passed\n");
@@ -185,6 +190,7 @@ CPP
   -I"${AGENT_Q_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_response_writer.cpp" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
   -o "${TMP_DIR}/test_usb_response_writer"
 
 "${TMP_DIR}/test_usb_response_writer"

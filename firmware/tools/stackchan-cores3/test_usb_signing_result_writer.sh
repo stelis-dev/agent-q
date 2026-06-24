@@ -10,6 +10,8 @@ ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.h" \
   "${AGENT_Q_DIR}/agent_q_usb_signing_result_writer.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_signing_result_writer.h" \
   "${AGENT_Q_DIR}/agent_q_signing_result_store.cpp" \
@@ -86,6 +88,8 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string>
 
 #include "agent_q_usb_signing_result_writer.h"
+#include "agent_q_device_contract.h"
+#include "agent_q_protocol_constants.h"
 #include "agent_q_signing_result_store.h"
 #include "agent_q_sui_zklogin_proof_store.h"
 
@@ -96,7 +100,6 @@ int g_json_writes = 0;
 int g_error_writes = 0;
 const char* g_last_error_id = nullptr;
 const char* g_last_error_code = nullptr;
-const char* g_last_error_message = nullptr;
 
 void reset_capture()
 {
@@ -105,7 +108,6 @@ void reset_capture()
     g_error_writes = 0;
     g_last_error_id = nullptr;
     g_last_error_code = nullptr;
-    g_last_error_message = nullptr;
 }
 
 JsonDocument parse_json(const std::string& json)
@@ -159,12 +161,67 @@ bool usb_response_write_json(JsonDocument& response)
     return true;
 }
 
-bool usb_response_write_error(const char* id, const char* code, const char* message)
+bool usb_response_prepare_success_result(
+    JsonDocument& response,
+    const char* id,
+    const char* method,
+    JsonObjectConst result)
+{
+    if (method == nullptr || method[0] == '\0' || result.isNull()) {
+        return false;
+    }
+    response.clear();
+    response["id"] = id;
+    response["version"] = kAgentQProtocolVersion;
+    response["success"] = true;
+    response["method"] = method;
+    response["result"].set(result);
+    return true;
+}
+
+bool usb_response_prepare_method_error(
+    JsonDocument& response,
+    const char* id,
+    const char* method,
+    const char* code)
+{
+    const AgentQDeviceErrorRow* error = device_error_row(code);
+    if (error == nullptr) {
+        error = device_error_row("unknown_error");
+    }
+    if (error == nullptr) {
+        return false;
+    }
+    response.clear();
+    response["id"] = id;
+    response["version"] = kAgentQProtocolVersion;
+    response["success"] = false;
+    if (method != nullptr && method[0] != '\0') {
+        response["method"] = method;
+    }
+    response["error"]["code"] = error->code;
+    response["error"]["message"] = error->message;
+    response["error"]["retryable"] = error->retryable;
+    return true;
+}
+
+bool usb_response_write_method_error(
+    const char* id,
+    const char* method,
+    const char* code)
+{
+    JsonDocument response;
+    if (!usb_response_prepare_method_error(response, id, method, code)) {
+        return false;
+    }
+    return usb_response_write_json(response);
+}
+
+bool usb_response_write_error(const char* id, const char* code)
 {
     g_error_writes += 1;
     g_last_error_id = id;
     g_last_error_code = code;
-    g_last_error_message = message;
     return true;
 }
 
@@ -229,14 +286,16 @@ int main()
             result));
         assert(g_json_writes == 1);
         JsonDocument response = parse_json(g_last_json);
-        assert(strcmp(response["type"], "sign_result") == 0);
-        assert(strcmp(response["authorization"], "policy") == 0);
-        assert(strcmp(response["status"], "signed") == 0);
-        assert(strcmp(response["chain"], "sui") == 0);
+        assert(response["success"] == true);
         assert(strcmp(response["method"], "sign_transaction") == 0);
-        assert(strlen(response["signature"]) > 0);
+        assert(strcmp(response["result"]["authorization"], "policy") == 0);
+        assert(strcmp(response["result"]["chain"], "sui") == 0);
+        assert(strcmp(response["result"]["method"], "sign_transaction") == 0);
+        assert(strlen(response["result"]["signature"]) > 0);
         JsonDocument stored = stored_json("session-a", "req-policy-signed");
-        assert(strcmp(stored["status"], "signed") == 0);
+        assert(stored["success"] == true);
+        assert(strcmp(stored["method"], "sign_transaction") == 0);
+        assert(strcmp(stored["result"]["authorization"], "policy") == 0);
     }
 
     {
@@ -252,11 +311,12 @@ int main()
             identity,
             result));
         JsonDocument response = parse_json(g_last_json);
-        assert(strcmp(response["authorization"], "policy") == 0);
-        assert(strcmp(response["status"], "signed") == 0);
         assert(strcmp(response["method"], "sign_transaction") == 0);
+        assert(strcmp(response["result"]["authorization"], "policy") == 0);
+        assert(strcmp(response["result"]["method"], "sign_transaction") == 0);
         JsonDocument stored = stored_json("session-a", "req-policy-zklogin-signed");
-        assert(strcmp(stored["status"], "signed") == 0);
+        assert(stored["success"] == true);
+        assert(strcmp(stored["result"]["authorization"], "policy") == 0);
     }
 
     {
@@ -278,12 +338,14 @@ int main()
             snapshot,
             output));
         JsonDocument response = parse_json(g_last_json);
-        assert(strcmp(response["authorization"], "user") == 0);
-        assert(strcmp(response["status"], "signed") == 0);
+        assert(response["success"] == true);
         assert(strcmp(response["method"], "sign_personal_message") == 0);
-        assert(strcmp(response["messageBytes"], "aGk=") == 0);
+        assert(strcmp(response["result"]["authorization"], "user") == 0);
+        assert(strcmp(response["result"]["method"], "sign_personal_message") == 0);
+        assert(strcmp(response["result"]["messageBytes"], "aGk=") == 0);
         JsonDocument stored = stored_json("session-a", "req-user-signed");
-        assert(strcmp(stored["messageBytes"], "aGk=") == 0);
+        assert(stored["success"] == true);
+        assert(strcmp(stored["result"]["messageBytes"], "aGk=") == 0);
     }
 
     {
@@ -305,12 +367,13 @@ int main()
             snapshot,
             output));
         JsonDocument response = parse_json(g_last_json);
-        assert(strcmp(response["authorization"], "user") == 0);
-        assert(strcmp(response["status"], "signed") == 0);
         assert(strcmp(response["method"], "sign_personal_message") == 0);
-        assert(strcmp(response["messageBytes"], "aGk=") == 0);
+        assert(strcmp(response["result"]["authorization"], "user") == 0);
+        assert(strcmp(response["result"]["method"], "sign_personal_message") == 0);
+        assert(strcmp(response["result"]["messageBytes"], "aGk=") == 0);
         JsonDocument stored = stored_json("session-a", "req-user-zklogin-personal-message");
-        assert(strcmp(stored["messageBytes"], "aGk=") == 0);
+        assert(stored["success"] == true);
+        assert(strcmp(stored["result"]["messageBytes"], "aGk=") == 0);
     }
 
     {
@@ -319,30 +382,36 @@ int main()
             "req-user-rejected",
             "session-b",
             identity,
+            "sign_personal_message",
             agent_q::AgentQUserSigningTerminalResult::rejected));
         JsonDocument response = parse_json(g_last_json);
-        assert(strcmp(response["authorization"], "user") == 0);
-        assert(strcmp(response["status"], "user_rejected") == 0);
+        assert(response["success"] == false);
+        assert(strcmp(response["method"], "sign_personal_message") == 0);
         assert(strcmp(response["error"]["code"], "user_rejected") == 0);
+        assert(response["error"]["retryable"] == false);
         JsonDocument stored = stored_json("session-b", "req-user-rejected");
-        assert(strcmp(stored["status"], "user_rejected") == 0);
+        assert(stored["success"] == false);
+        assert(strcmp(stored["method"], "sign_personal_message") == 0);
+        assert(strcmp(stored["error"]["code"], "user_rejected") == 0);
     }
 
     {
         reset_capture();
         agent_q::AgentQPolicySigningExecutionResult result = {};
         result.status = agent_q::AgentQPolicySigningExecutionStatus::account_error;
-        result.code = "account_error";
+        result.code = "account_unavailable";
         result.message = "Signing account is unavailable.";
         assert(agent_q::usb_signing_result_write_policy_execution(
             "req-policy-error",
             "session-c",
             identity,
             result));
-        assert(g_json_writes == 0);
-        assert(g_error_writes == 1);
-        assert(strcmp(g_last_error_id, "req-policy-error") == 0);
-        assert(strcmp(g_last_error_code, "account_error") == 0);
+        assert(g_json_writes == 1);
+        assert(g_error_writes == 0);
+        JsonDocument response = parse_json(g_last_json);
+        assert(response["success"] == false);
+        assert(strcmp(response["method"], "sign_transaction") == 0);
+        assert(strcmp(response["error"]["code"], "account_unavailable") == 0);
     }
 
     printf("USB signing result writer tests passed\n");
@@ -356,6 +425,7 @@ CPP
   -I"${AGENT_Q_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_signing_result_writer.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_result_store.cpp" \
   -o "${TMP_DIR}/test_usb_signing_result_writer"

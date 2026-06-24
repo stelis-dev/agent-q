@@ -20,7 +20,7 @@ namespace agent_q {
 // not a vanished signature). All entries clear on disconnect/session end and on wipe.
 
 constexpr size_t kSigningResultStoreCapacity = 4;
-// Bounds one serialized sign_result line. Native Ed25519 results are small, while
+// Bounds one serialized signing response line. Native Ed25519 results are small, while
 // zkLogin transaction envelopes can carry a base64 signature of up to ~2732 chars.
 constexpr size_t kSigningResultMaxSize = 4096;
 

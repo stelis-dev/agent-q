@@ -12,12 +12,20 @@ namespace agent_q {
 
 struct AgentQUsbSuiZkLoginCredentialHandlerOps {
     bool (*material_ready)();
-    bool (*write_credential_prepare_admission_error)(const char* id);
-    bool (*write_credential_propose_admission_error)(const char* id);
+    bool (*write_credential_prepare_admission_error)(
+        const char* id,
+        const AgentQUsbOperationResponseWriter& writer);
+    bool (*write_credential_propose_admission_error)(
+        const char* id,
+        const AgentQUsbOperationResponseWriter& writer);
     bool (*write_payload_delivery_safe_read_admission_error)(
         const char* id,
-        AgentQUsbOperationType operation);
-    bool (*require_active_matching_session)(const char* id, const char* session_id);
+        AgentQUsbOperationType operation,
+        const AgentQUsbOperationResponseWriter& writer);
+    bool (*require_active_matching_session)(
+        const char* id,
+        const char* session_id,
+        const AgentQUsbOperationResponseWriter& writer);
     AgentQSuiActiveIdentity (*resolve_active_identity)();
     AgentQTimeoutTick (*current_tick)();
     AgentQTimeoutWindow (*make_proposal_window)(AgentQTimeoutTick now);

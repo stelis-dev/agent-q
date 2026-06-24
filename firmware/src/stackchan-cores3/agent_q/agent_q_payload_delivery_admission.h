@@ -23,14 +23,14 @@ enum class AgentQPayloadDeliveryAdmissionReason {
     receiving_safe_read,
     receiving_retained_result,
     receiving_disconnect_cleanup,
-    receiving_upload_continue,
-    receiving_upload_abort,
+    receiving_transfer_continue,
+    receiving_transfer_abort,
     finalized_safe_read,
     finalized_retained_result,
     finalized_disconnect_cleanup,
-    finalized_upload_abort,
+    finalized_transfer_abort,
     finalized_matching_staged_consumer,
-    blocked_incomplete_upload,
+    blocked_incomplete_transfer,
     blocked_pending_finalized_payload,
     blocked_unrelated_sensitive_flow,
     invalid_consumer_session,
@@ -100,7 +100,7 @@ inline bool payload_delivery_admission_blocks_sensitive_flow(
 {
     return decision.result == AgentQPayloadDeliveryAdmissionResult::busy &&
            (decision.reason ==
-                AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_upload ||
+                AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_transfer ||
             decision.reason ==
                 AgentQPayloadDeliveryAdmissionReason::blocked_pending_finalized_payload ||
             decision.reason ==

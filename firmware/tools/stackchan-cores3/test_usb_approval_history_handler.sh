@@ -111,7 +111,6 @@ uint64_t g_last_before = 0;
 const char* g_last_id = nullptr;
 const char* g_last_session = nullptr;
 const char* g_last_error_code = nullptr;
-const char* g_last_error_message = nullptr;
 char g_last_response_id[32] = {};
 char g_last_response_type[32] = {};
 bool g_last_has_more = false;
@@ -145,7 +144,6 @@ void reset_state()
     g_last_id = nullptr;
     g_last_session = nullptr;
     g_last_error_code = nullptr;
-    g_last_error_message = nullptr;
     g_last_response_id[0] = '\0';
     g_last_response_type[0] = '\0';
     g_last_has_more = false;
@@ -159,12 +157,11 @@ void reset_state()
     g_last_record_terminal_result[0] = '\0';
 }
 
-bool write_error(const char* id, const char* code, const char* message)
+bool write_error(const char* id, const char* code)
 {
     g_write_error_calls += 1;
     g_last_id = id;
     g_last_error_code = code;
-    g_last_error_message = message;
     return true;
 }
 
@@ -181,16 +178,20 @@ bool material_ready()
     return g_material_ready;
 }
 
-bool write_busy(const char* id)
+bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     g_busy_calls += 1;
     g_last_id = id;
+    if (g_busy) {
+        writer.write_error(id, "busy");
+    }
     return g_busy;
 }
 
 bool write_payload_admission_error(
     const char* id,
-    agent_q::AgentQUsbOperationType operation)
+    agent_q::AgentQUsbOperationType operation,
+    const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     assert(operation == agent_q::AgentQUsbOperationType::get_approval_history);
     g_payload_admission_calls += 1;
@@ -198,14 +199,20 @@ bool write_payload_admission_error(
     if (!g_payload_admission_error) {
         return false;
     }
-    return write_error(id, "busy", "Device has a pending signable payload.");
+    return writer.write_error(id, "busy");
 }
 
-bool require_session(const char* id, const char* session_id)
+bool require_session(
+    const char* id,
+    const char* session_id,
+    const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     g_require_session_calls += 1;
     g_last_id = id;
     g_last_session = session_id;
+    if (!g_session_valid) {
+        writer.write_error(id, "invalid_session");
+    }
     return g_session_valid;
 }
 
@@ -269,13 +276,17 @@ namespace agent_q {
 bool usb_response_write_json(JsonDocument& response)
 {
     g_json_write_calls += 1;
+    JsonObjectConst result =
+        response["result"].is<JsonObjectConst>()
+            ? response["result"].as<JsonObjectConst>()
+            : response.as<JsonObjectConst>();
     snprintf(g_last_response_id, sizeof(g_last_response_id), "%s", response["id"].as<const char*>());
-    snprintf(g_last_response_type, sizeof(g_last_response_type), "%s", response["type"].as<const char*>());
-    g_last_has_more = response["hasMore"].as<bool>();
-    JsonArray records = response["records"].as<JsonArray>();
+    snprintf(g_last_response_type, sizeof(g_last_response_type), "%s", response["method"] | response["type"] | "");
+    g_last_has_more = result["hasMore"].as<bool>();
+    JsonArrayConst records = result["records"].as<JsonArrayConst>();
     g_last_record_count = records.size();
     if (g_last_record_count > 0) {
-        JsonObject record = records[0].as<JsonObject>();
+        JsonObjectConst record = records[0].as<JsonObjectConst>();
         snprintf(g_last_record_seq, sizeof(g_last_record_seq), "%s", record["seq"].as<const char*>());
         snprintf(g_last_record_uptime, sizeof(g_last_record_uptime), "%s", record["uptimeMs"].as<const char*>());
         snprintf(g_last_record_event_kind, sizeof(g_last_record_event_kind), "%s", record["eventKind"].as<const char*>());
@@ -287,6 +298,17 @@ bool usb_response_write_json(JsonDocument& response)
     return g_json_write_ok;
 }
 
+bool usb_response_write_success_result(const char* id, const char* method, JsonObjectConst result)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = 1;
+    response["success"] = true;
+    response["method"] = method;
+    response["result"].set(result);
+    return usb_response_write_json(response);
+}
+
 }  // namespace agent_q
 
 int main()
@@ -294,7 +316,7 @@ int main()
     {
         reset_state();
         g_material_ready = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
@@ -308,12 +330,13 @@ int main()
     {
         reset_state();
         g_busy = true;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_material_calls == 1);
         assert(g_busy_calls == 1);
         assert(g_payload_admission_calls == 0);
-        assert(g_write_error_calls == 0);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "busy") == 0);
         assert(g_require_session_calls == 0);
         assert(g_read_history_calls == 0);
         assert(g_json_write_calls == 0);
@@ -322,7 +345,7 @@ int main()
     {
         reset_state();
         g_payload_admission_error = true;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_material_calls == 1);
         assert(g_busy_calls == 1);
@@ -336,7 +359,7 @@ int main()
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":7}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":7}");
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
@@ -349,39 +372,18 @@ int main()
     {
         reset_state();
         g_session_valid = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_require_session_calls == 1);
-        assert(g_write_error_calls == 0);
-        assert(g_read_history_calls == 0);
-        assert(g_json_write_calls == 0);
-    }
-
-    {
-        reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\",\"extra\":1}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "get_approval_history request contains unsupported fields.") == 0);
+        assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_read_history_calls == 0);
         assert(g_json_write_calls == 0);
     }
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\",\"params\":7}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
-        assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
-        assert(strcmp(g_last_error_message, "Approval history params are invalid.") == 0);
-        assert(g_read_history_calls == 0);
-        assert(g_json_write_calls == 0);
-    }
-
-    {
-        reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\",\"params\":{\"limit\":0}}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"extra\":1}");
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
@@ -391,7 +393,7 @@ int main()
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\",\"params\":{\"beforeSeq\":7}}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":7}");
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
@@ -401,7 +403,27 @@ int main()
 
     {
         reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\",\"params\":{\"limit\":2,\"beforeSeq\":\"42\"}}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{\"limit\":0}}");
+        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(g_read_history_calls == 0);
+        assert(g_json_write_calls == 0);
+    }
+
+    {
+        reset_state();
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{\"beforeSeq\":7}}");
+        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(g_read_history_calls == 0);
+        assert(g_json_write_calls == 0);
+    }
+
+    {
+        reset_state();
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{\"limit\":2,\"beforeSeq\":\"42\"}}");
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_read_history_calls == 1);
@@ -409,7 +431,7 @@ int main()
         assert(g_last_limit == 2);
         assert(g_last_before == 42);
         assert(strcmp(g_last_response_id, "req") == 0);
-        assert(strcmp(g_last_response_type, "approval_history") == 0);
+        assert(strcmp(g_last_response_type, "get_approval_history") == 0);
         assert(g_last_has_more);
         assert(g_last_record_count == 1);
         assert(strcmp(g_last_record_seq, "7") == 0);
@@ -424,25 +446,23 @@ int main()
     {
         reset_state();
         g_read_history_result = agent_q::AgentQApprovalHistoryReadResult::storage_error;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_read_history_calls == 1);
         assert(g_json_write_calls == 0);
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "history_error") == 0);
-        assert(strcmp(g_last_error_message, "Approval history is unavailable.") == 0);
+        assert(strcmp(g_last_error_code, "history_unavailable") == 0);
     }
 
     {
         reset_state();
         g_json_write_ok = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"type\":\"get_approval_history\",\"sessionId\":\"session\"}");
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
         agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_read_history_calls == 1);
         assert(g_json_write_calls == 1);
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "history_error") == 0);
-        assert(strcmp(g_last_error_message, "Approval history is unavailable.") == 0);
+        assert(strcmp(g_last_error_code, "history_unavailable") == 0);
     }
 
     printf("USB approval-history handler tests passed\n");

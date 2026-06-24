@@ -38,6 +38,7 @@ using AgentQSigningModeReadFn =
 using AgentQSigningPreflightRetryResponder =
     AgentQSigningPreflightRetryDisposition (*)(
         const char* request_id,
+        const char* method,
         const AgentQSigningRetryDeliveryResult& retry,
         const char* stored_result,
         void* context);

@@ -120,7 +120,6 @@ const char* g_policy_message = "Policy authorized signing.";
 
 const char* g_last_id = nullptr;
 const char* g_last_error_code = nullptr;
-const char* g_last_error_message = nullptr;
 const char* g_last_policy_response_code = nullptr;
 const char* g_last_policy_response_message = nullptr;
 const char* g_last_notice_message = nullptr;
@@ -176,7 +175,6 @@ void reset_state()
     g_policy_message = "Policy authorized signing.";
     g_last_id = nullptr;
     g_last_error_code = nullptr;
-    g_last_error_message = nullptr;
     g_last_policy_response_code = nullptr;
     g_last_policy_response_message = nullptr;
     g_last_notice_message = nullptr;
@@ -185,12 +183,11 @@ void reset_state()
     memset(g_retry_buffer, 0, sizeof(g_retry_buffer));
 }
 
-bool write_error(const char* id, const char* code, const char* message)
+bool write_error(const char* id, const char* code)
 {
     g_write_error_calls += 1;
     g_last_id = id;
     g_last_error_code = code;
-    g_last_error_message = message;
     return true;
 }
 void log_write_failure(const char*, const char* id)
@@ -235,6 +232,7 @@ bool read_mode(agent_q::AgentQSigningAuthorizationMode* mode, void*)
 }
 
 agent_q::AgentQSigningPreflightRetryDisposition retry_responder(
+    const char*,
     const char*,
     const agent_q::AgentQSigningRetryDeliveryResult&,
     const char*,
@@ -509,7 +507,7 @@ void test_unavailable_ops()
     agent_q::AgentQUsbSigningHandlerOps ops = {};
     agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), ops);
     assert(g_write_error_calls == 1);
-    assert(strcmp(g_last_error_code, "protocol_error") == 0);
+    assert(strcmp(g_last_error_code, "internal_output_error") == 0);
     assert(g_tx_preflight_calls == 0);
 }
 
@@ -523,7 +521,6 @@ void test_transaction_ingress_error_mapping()
     assert(g_tx_preflight_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "invalid_params") == 0);
-    assert(strcmp(g_last_error_message, "Signing txBytes are invalid.") == 0);
     assert(g_clear_tx_prepared_calls == 2);
 }
 
@@ -537,7 +534,6 @@ void test_personal_message_ingress_error_mapping()
     assert(g_pm_preflight_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "invalid_params") == 0);
-    assert(strcmp(g_last_error_message, "Signing message is invalid.") == 0);
     assert(g_clear_pm_prepared_calls == 0);
 }
 
@@ -550,7 +546,7 @@ void test_preparation_account_failure_mapping()
     agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_record_runtime_failure_calls == 1);
     assert(g_write_error_calls == 1);
-    assert(strcmp(g_last_error_code, "account_error") == 0);
+    assert(strcmp(g_last_error_code, "account_unavailable") == 0);
     assert(g_notice_calls == 0);
 }
 
@@ -563,8 +559,7 @@ void test_preparation_active_identity_failure_mapping()
     agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_record_runtime_failure_calls == 0);
     assert(g_write_error_calls == 1);
-    assert(strcmp(g_last_error_code, "account_error") == 0);
-    assert(strcmp(g_last_error_message, "Active Sui identity is unavailable.") == 0);
+    assert(strcmp(g_last_error_code, "account_unavailable") == 0);
     assert(g_notice_calls == 0);
 }
 
@@ -577,9 +572,7 @@ void test_preparation_invalid_account_mapping()
     agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_record_runtime_failure_calls == 0);
     assert(g_write_error_calls == 1);
-    assert(strcmp(g_last_error_code, "account_error") == 0);
-    assert(strcmp(g_last_error_message,
-                  "Transaction account binding is unavailable or not allowed by the device account setting.") == 0);
+    assert(strcmp(g_last_error_code, "account_unavailable") == 0);
     assert(g_notice_calls == 0);
 }
 
@@ -593,7 +586,7 @@ void test_personal_message_preparation_account_failure_mapping()
     agent_q::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
     assert(g_record_runtime_failure_calls == 1);
     assert(g_write_error_calls == 1);
-    assert(strcmp(g_last_error_code, "account_error") == 0);
+    assert(strcmp(g_last_error_code, "account_unavailable") == 0);
     assert(g_notice_calls == 0);
 }
 
@@ -607,7 +600,6 @@ void test_transaction_preparation_unsupported_notifies()
     agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "unsupported_transaction") == 0);
-    assert(strcmp(g_last_error_message, "Transaction shape is not supported.") == 0);
     assert(g_notice_calls == 1);
     assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
     assert(strcmp(g_last_notice_message, "Unsupported transaction") == 0);
@@ -619,12 +611,11 @@ void test_transaction_preparation_payload_too_large_notifies()
     reset_state();
     g_tx_preflight_result =
         agent_q::AgentQSigningPreflightResult::transaction_preparation_error;
-    g_preparation_result = agent_q::AgentQSuiSigningPreparationResult::unsupported_payload_size;
+    g_preparation_result = agent_q::AgentQSuiSigningPreparationResult::payload_too_large;
     JsonDocument request;
     agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_write_error_calls == 1);
-    assert(strcmp(g_last_error_code, "unsupported_payload_size") == 0);
-    assert(strcmp(g_last_error_message, "Signing payload exceeds the current Sui adapter capacity.") == 0);
+    assert(strcmp(g_last_error_code, "payload_too_large") == 0);
     assert(g_notice_calls == 1);
     assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
     assert(strcmp(g_last_notice_message, "Payload too large") == 0);

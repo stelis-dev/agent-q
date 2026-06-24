@@ -20,9 +20,9 @@ struct AgentQConnectReviewResponseFlowOps {
     bool (*request_id)(char* output, size_t output_size);
     void (*clear_approval)();
     bool (*replace_active_session)();
-    bool (*write_error)(const char* id, const char* code, const char* message);
+    bool (*write_error)(const char* id, const char* code);
     bool (*write_approved)(const char* id);
-    bool (*write_rejected)(const char* id, const char* code, const char* message);
+    bool (*write_rejected)(const char* id, const char* code);
     void (*log_info)(const char* message, const char* id);
     void (*log_error)(const char* message, const char* id);
     void (*log_write_failure)(const char* response_type, const char* id);

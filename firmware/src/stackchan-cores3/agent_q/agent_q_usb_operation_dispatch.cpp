@@ -13,11 +13,10 @@ bool call_handler(
     const AgentQUsbOperationResponseWriter& response_writer)
 {
     if (handler == nullptr) {
-        if (response_writer.write_error != nullptr) {
+        if (response_writer.can_write_error()) {
             response_writer.write_error(
                 id,
-                "protocol_error",
-                "USB operation handler is unavailable.");
+                "internal_output_error");
         }
         return false;
     }
@@ -37,8 +36,8 @@ bool dispatch_usb_operation(
     const AgentQUsbOperationManifestEntry* entry =
         usb_operation_manifest_entry(operation_type);
     if (entry == nullptr) {
-        if (response_writer.write_error != nullptr) {
-            response_writer.write_error(id, "unsupported_type", "Unsupported request type.");
+        if (response_writer.can_write_error()) {
+            response_writer.write_error(id, "unsupported_method");
         }
         return false;
     }
@@ -74,14 +73,14 @@ bool dispatch_usb_operation(
             return call_handler(handlers.credential_prepare, id, request, response_writer);
         case AgentQUsbOperationHandlerSlot::credential_propose:
             return call_handler(handlers.credential_propose, id, request, response_writer);
-        case AgentQUsbOperationHandlerSlot::payload_upload_begin:
-            return call_handler(handlers.payload_upload_begin, id, request, response_writer);
-        case AgentQUsbOperationHandlerSlot::payload_upload_chunk:
-            return call_handler(handlers.payload_upload_chunk, id, request, response_writer);
-        case AgentQUsbOperationHandlerSlot::payload_upload_finish:
-            return call_handler(handlers.payload_upload_finish, id, request, response_writer);
-        case AgentQUsbOperationHandlerSlot::payload_upload_abort:
-            return call_handler(handlers.payload_upload_abort, id, request, response_writer);
+        case AgentQUsbOperationHandlerSlot::payload_transfer_begin:
+            return call_handler(handlers.payload_transfer_begin, id, request, response_writer);
+        case AgentQUsbOperationHandlerSlot::payload_transfer_chunk:
+            return call_handler(handlers.payload_transfer_chunk, id, request, response_writer);
+        case AgentQUsbOperationHandlerSlot::payload_transfer_finish:
+            return call_handler(handlers.payload_transfer_finish, id, request, response_writer);
+        case AgentQUsbOperationHandlerSlot::payload_transfer_abort:
+            return call_handler(handlers.payload_transfer_abort, id, request, response_writer);
         case AgentQUsbOperationHandlerSlot::none:
             break;
     }

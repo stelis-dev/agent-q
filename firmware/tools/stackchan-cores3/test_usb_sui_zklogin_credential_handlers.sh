@@ -106,7 +106,6 @@ bool g_show_review_result = true;
 const char* g_last_id = nullptr;
 const char* g_last_session = nullptr;
 const char* g_last_error_code = nullptr;
-const char* g_last_error_message = nullptr;
 char g_last_json_type[40] = {};
 char g_last_json_status[40] = {};
 char g_last_json_reason[40] = {};
@@ -151,7 +150,6 @@ void reset_state()
     g_last_id = nullptr;
     g_last_session = nullptr;
     g_last_error_code = nullptr;
-    g_last_error_message = nullptr;
     g_last_json_type[0] = '\0';
     g_last_json_status[0] = '\0';
     g_last_json_reason[0] = '\0';
@@ -161,12 +159,11 @@ void reset_state()
     g_last_safe_read_operation = agent_q::AgentQUsbOperationType::unsupported;
 }
 
-bool write_error(const char* id, const char* code, const char* message)
+bool write_error(const char* id, const char* code)
 {
     g_write_error_calls += 1;
     g_last_id = id;
     g_last_error_code = code;
-    g_last_error_message = message;
     return true;
 }
 
@@ -183,23 +180,23 @@ bool material_ready()
     return g_material_ready;
 }
 
-bool write_prepare_admission(const char* id)
+bool write_prepare_admission(const char* id, const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     g_prepare_admission_calls += 1;
     g_last_id = id;
     if (g_prepare_admission_blocks) {
-        write_error(id, "busy", "Device is busy.");
+        writer.write_error(id, "busy");
         return true;
     }
     return false;
 }
 
-bool write_propose_admission(const char* id)
+bool write_propose_admission(const char* id, const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     g_propose_admission_calls += 1;
     g_last_id = id;
     if (g_propose_admission_blocks) {
-        write_error(id, "busy", "Device is busy.");
+        writer.write_error(id, "busy");
         return true;
     }
     return false;
@@ -207,23 +204,30 @@ bool write_propose_admission(const char* id)
 
 bool write_safe_read_admission(
     const char* id,
-    agent_q::AgentQUsbOperationType operation)
+    agent_q::AgentQUsbOperationType operation,
+    const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     g_safe_read_admission_calls += 1;
     g_last_id = id;
     g_last_safe_read_operation = operation;
     if (g_safe_read_admission_blocks) {
-        write_error(id, "busy", "Device has a pending signable payload.");
+        writer.write_error(id, "busy");
         return true;
     }
     return false;
 }
 
-bool require_session(const char* id, const char* session_id)
+bool require_session(
+    const char* id,
+    const char* session_id,
+    const agent_q::AgentQUsbOperationResponseWriter& writer)
 {
     g_require_session_calls += 1;
     g_last_id = id;
     g_last_session = session_id;
+    if (!g_session_valid) {
+        writer.write_error(id, "invalid_session");
+    }
     return g_session_valid;
 }
 
@@ -315,15 +319,30 @@ namespace agent_q {
 bool usb_response_write_json(JsonDocument& response)
 {
     g_write_json_calls += 1;
-    snprintf(g_last_json_type, sizeof(g_last_json_type), "%s", response["type"] | "");
-    snprintf(g_last_json_status, sizeof(g_last_json_status), "%s", response["status"] | "");
-    snprintf(g_last_json_reason, sizeof(g_last_json_reason), "%s", response["reasonCode"] | "");
+    JsonObjectConst result =
+        response["result"].is<JsonObjectConst>()
+            ? response["result"].as<JsonObjectConst>()
+            : response.as<JsonObjectConst>();
+    snprintf(g_last_json_type, sizeof(g_last_json_type), "%s", response["method"] | response["type"] | "");
+    snprintf(g_last_json_status, sizeof(g_last_json_status), "%s", result["status"] | "");
+    snprintf(g_last_json_reason, sizeof(g_last_json_reason), "%s", result["reasonCode"] | "");
     snprintf(g_last_json_public_key, sizeof(g_last_json_public_key), "%s",
-             response["preparation"]["publicKey"] | "");
+             result["preparation"]["publicKey"] | "");
     snprintf(g_last_json_address, sizeof(g_last_json_address), "%s",
-             response["preparation"]["address"] | "");
-    g_last_json_session_ended = response["sessionEnded"] | false;
+             result["preparation"]["address"] | "");
+    g_last_json_session_ended = result["sessionEnded"] | false;
     return true;
+}
+
+bool usb_response_write_success_result(const char* id, const char* method, JsonObjectConst result)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = 1;
+    response["success"] = true;
+    response["method"] = method;
+    response["result"].set(result);
+    return usb_response_write_json(response);
 }
 
 const char* sui_zklogin_proposal_terminal_status(
@@ -359,7 +378,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request(
-            "{\"id\":\"req\",\"version\":1,\"type\":\"credential_prepare\",\"sessionId\":\"session\",\"params\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
         agent_q::handle_usb_credential_prepare_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_prepare_admission_calls == 1);
@@ -368,7 +387,7 @@ int main()
         assert(g_require_session_calls == 1);
         assert(g_resolve_identity_calls == 1);
         assert(g_write_json_calls == 1);
-        assert(strcmp(g_last_json_type, "credential_prepare_result") == 0);
+        assert(strcmp(g_last_json_type, "credential_prepare") == 0);
         assert(strcmp(g_last_json_status, "prepared") == 0);
         assert(strcmp(g_last_json_public_key, "scheme-key-base64") == 0);
         assert(strcmp(g_last_json_address, g_identity.address) == 0);
@@ -378,18 +397,17 @@ int main()
         reset_state();
         g_identity.kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
         JsonDocument request = parse_request(
-            "{\"id\":\"req\",\"version\":1,\"type\":\"credential_prepare\",\"sessionId\":\"session\",\"params\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
         agent_q::handle_usb_credential_prepare_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
-        assert(strstr(g_last_error_message, "already active") != nullptr);
         assert(g_write_json_calls == 0);
     }
 
     {
         reset_state();
         JsonDocument request = parse_request(
-            "{\"id\":\"req\",\"version\":1,\"type\":\"credential_prepare\",\"sessionId\":\"session\",\"params\":{\"chain\":\"sui\",\"credential\":\"passkey\"}}");
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session\",\"payload\":{\"chain\":\"sui\",\"credential\":\"passkey\"}}");
         agent_q::handle_usb_credential_prepare_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
@@ -399,7 +417,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request(
-            "{\"id\":\"req\",\"version\":1,\"type\":\"credential_propose\",\"sessionId\":\"session\",\"params\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
         agent_q::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_propose_admission_calls == 1);
@@ -416,12 +434,12 @@ int main()
         reset_state();
         g_begin_result = agent_q::AgentQSuiZkLoginProposalBeginResult::invalid_proof;
         JsonDocument request = parse_request(
-            "{\"id\":\"req\",\"version\":1,\"type\":\"credential_propose\",\"sessionId\":\"session\",\"params\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
         agent_q::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
         assert(g_begin_proposal_calls == 1);
         assert(g_show_review_calls == 0);
         assert(g_write_json_calls == 1);
-        assert(strcmp(g_last_json_type, "credential_propose_result") == 0);
+        assert(strcmp(g_last_json_type, "credential_propose") == 0);
         assert(strcmp(g_last_json_status, "invalid_proof") == 0);
         assert(strcmp(g_last_json_reason, "invalid_proof") == 0);
         assert(!g_last_json_session_ended);
@@ -431,7 +449,7 @@ int main()
         reset_state();
         g_identity.kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
         JsonDocument request = parse_request(
-            "{\"id\":\"req\",\"version\":1,\"type\":\"credential_propose\",\"sessionId\":\"session\",\"params\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
         agent_q::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);

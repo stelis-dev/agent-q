@@ -87,7 +87,7 @@ AgentQSignTransactionPolicyRuntimeResult make_policy_rejected_result(
             rule_ref)) {
         return make_result(
             AgentQSignTransactionPolicyRuntimeStatus::policy_error,
-            "policy_error",
+            "policy_unavailable",
             "Active policy is unavailable.");
     }
     return result;
@@ -112,7 +112,7 @@ AgentQSignTransactionPolicyRuntimeResult make_policy_authorized_result(
             rule_ref)) {
         return make_result(
             AgentQSignTransactionPolicyRuntimeStatus::policy_error,
-            "policy_error",
+            "policy_unavailable",
             "Active policy is unavailable.");
     }
     result.tx_bytes = prepared.tx_bytes;
@@ -185,7 +185,7 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
         if (!read_active_policy_summary(&policy_summary)) {
             return make_result(
                 AgentQSignTransactionPolicyRuntimeStatus::policy_error,
-                "policy_error",
+                "policy_unavailable",
                 "Active policy is unavailable.");
         }
         return make_policy_rejected_result(
@@ -201,7 +201,7 @@ AgentQSignTransactionPolicyRuntimeResult evaluate_sui_sign_transaction(
         policy.document == nullptr) {
         return make_result(
             AgentQSignTransactionPolicyRuntimeStatus::policy_error,
-            "policy_error",
+            "policy_unavailable",
             "Active policy is unavailable.");
     }
     const AgentQCurrentPolicyEvaluationResult evaluation =

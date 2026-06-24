@@ -179,10 +179,12 @@ expect_present "${USB_OPERATION_MANIFEST_SOURCE}" '"sign_transaction"' \
   "USB operation manifest must accept public sign_transaction messages"
 expect_absent "${USB_OPERATION_MANIFEST_SOURCE}" '"sign_transaction_user"|"sign_transaction_policy"' \
   "USB operation classifier must not accept host-selected authorization request types"
-expect_present "${USB_SIGNING_RESULT_WRITER_SOURCE}" '"sign_result"|usb_signing_result_write' \
-  "USB signing result writer must own public sign_result responses"
+expect_present "${USB_SIGNING_RESULT_WRITER_SOURCE}" 'usb_response_prepare_success_result|usb_response_prepare_method_error' \
+  "USB signing result writer must emit DeviceResponse envelopes through the shared response writer"
+expect_absent "${USB_SIGNING_RESULT_WRITER_SOURCE}" 'response\["type"\][[:space:]]*=[[:space:]]*"sign_result"' \
+  "USB signing response writer must not emit legacy signing envelopes"
 expect_absent "${USB_SERVER}" 'response\["type"\][[:space:]]*=[[:space:]]*"sign_result"|write_sign_result_signed|write_sign_result_user_terminal|write_sign_result_policy_rejected|write_sign_result_signing_failed' \
-  "USB request server must not own public sign_result response JSON"
+  "USB request server must not own public signing response JSON"
 expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '"signing"' \
   "session-read handler must advertise shared signing capabilities"
 expect_present "${USB_OPERATION_RESPONSE_WRITER_HEADER}" 'AgentQUsbOperationResponseWriter' \
@@ -331,8 +333,8 @@ expect_present "${USB_SERVER}" 'handle_get_approval_history_request' \
   "USB request server must route get_approval_history through an operation handler"
 expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" 'handle_usb_get_approval_history_request' \
   "get_approval_history operation handler must live outside the USB server"
-expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" 'response\["type"\][[:space:]]*=[[:space:]]*"approval_history"' \
-  "get_approval_history handler must own approval_history response JSON"
+expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" 'usb_response_write_success_result\(id,[[:space:]]*"get_approval_history"' \
+  "get_approval_history handler must own get_approval_history response JSON"
 expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" 'read_approval_history_page' \
   "get_approval_history handler must own approval-history page read dispatch"
 expect_absent "${USB_SERVER}" 'response\["type"\][[:space:]]*=[[:space:]]*"approval_history"|write_approval_history_response' \
@@ -341,8 +343,8 @@ expect_present "${USB_SERVER}" 'handle_policy_propose_request' \
   "USB request server must route policy_propose through an operation handler"
 expect_present "${USB_POLICY_PROPOSE_HANDLER_SOURCE}" 'handle_usb_policy_propose_request' \
   "policy_propose operation handler must live outside the USB server"
-expect_present "${USB_POLICY_PROPOSE_RESULT_WRITER_SOURCE}" 'response\["type"\][[:space:]]*=[[:space:]]*"policy_propose_result"' \
-  "policy_propose result writer must own policy_propose_result response JSON"
+expect_present "${USB_POLICY_PROPOSE_RESULT_WRITER_SOURCE}" 'usb_response_write_success_result\(id,[[:space:]]*"policy_propose"' \
+  "policy_propose result writer must own policy_propose response JSON"
 expect_absent "${USB_SERVER}" 'response\["type"\][[:space:]]*=[[:space:]]*"policy_propose_result"|write_policy_propose_result_response' \
   "USB request server must not own policy_propose_result response JSON"
 expect_present "${USB_SERVER}" 'handle_sign_transaction_request' \
@@ -463,8 +465,10 @@ expect_order "${SIGN_PERSONAL_MESSAGE_INGRESS_SOURCE}" 'validate_sign_personal_m
   "sign_personal_message preflight must exact-check the request before shallow params"
 expect_present "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'AgentQSigningAuthorizationMode::policy' \
   "sign_personal_message branch must explicitly handle policy mode"
-expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'sign_personal_message is not available in policy authorization mode' \
+expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'personal_message_policy_mode' \
   "sign_personal_message policy mode must fail closed as unsupported"
+expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'writer\.write_error\(id, "unsupported_method"\)' \
+  "sign_personal_message policy mode must emit unsupported_method"
 expect_present "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'evaluate_sign_personal_message_user_ingress' \
   "sign_personal_message user mode must use the method-specific ingress owner"
 expect_absent "${USB_SERVER}" 'decode_sign_personal_message_request' \
@@ -489,7 +493,7 @@ expect_absent "${USER_SIGNING_SOURCE}" 'strcmp\(snapshot\.method' \
 expect_absent "${USER_SIGNING_SOURCE}" 'classify_signing_route' \
   "signing critical section must not reclassify raw method strings"
 expect_absent "${USB_SERVER}" 'classify_signing_route' \
-  "sign_result writer must not reclassify raw method strings"
+  "signing response writer must not reclassify raw method strings"
 expect_absent "${POLICY_SIGNING_EXECUTION_SOURCE}" 'classify_sui_sign_transaction|base64_to_bytes|approval_history_digest_payload' \
   "policy signing execution must consume prepared signing data, not re-prepare transaction bytes"
 expect_absent "${USER_SIGNING_SOURCE}" 'classify_sui_sign_transaction|base64_to_bytes|approval_history_digest_payload|derive_sui_ed25519_account_from_stored_root' \
@@ -599,27 +603,27 @@ awk '
 expect_absent "${USB_CLEAR_MESSAGE_SNIPPET}" 'avatar_overlay_message_deadline_reached|avatar_overlay_clear' \
   "USB clear_agent_q_message_if_needed must not inline temporary message expiry logic"
 
-expect_present "${USB_CONNECT_HANDLER_SOURCE}" "connect request contains unsupported fields" \
+expect_present "${USB_CONNECT_HANDLER_SOURCE}" '\{"id", "version", "method", "payload"\}' \
   "extracted connect handler must exact-check top-level request fields"
-expect_present "${USB_POLICY_PROPOSE_HANDLER_SOURCE}" "policy_propose request contains unsupported fields" \
+expect_present "${USB_POLICY_PROPOSE_HANDLER_SOURCE}" '\{"id", "version", "method", "sessionId", "payload"\}' \
   "extracted policy_propose handler must exact-check top-level request fields"
-expect_present "${USB_DEVICE_HANDLERS_SOURCE}" "get_status request contains unsupported fields" \
+expect_present "${USB_DEVICE_HANDLERS_SOURCE}" '\{"id", "version", "method"\}' \
   "extracted get_status handler must exact-check top-level request fields"
-expect_present "${USB_DEVICE_HANDLERS_SOURCE}" "identify_device request contains unsupported fields" \
+expect_present "${USB_DEVICE_HANDLERS_SOURCE}" '\{"id", "version", "method", "payload"\}' \
   "extracted identify_device handler must exact-check top-level request fields"
-expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" "get_result request contains unsupported fields" \
+expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" '\{"id", "version", "method", "sessionId", "payload"\}' \
   "extracted get_result handler must exact-check top-level request fields"
-expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" "ack_result request contains unsupported fields" \
+expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" '\{"id", "version", "method", "sessionId", "payload"\}' \
   "extracted ack_result handler must exact-check top-level request fields"
-expect_present "${USB_DISCONNECT_HANDLER_SOURCE}" "disconnect request contains unsupported fields" \
+expect_present "${USB_DISCONNECT_HANDLER_SOURCE}" '\{"id", "version", "method", "sessionId"\}' \
   "extracted disconnect handler must exact-check top-level request fields"
-expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" "get_approval_history request contains unsupported fields" \
+expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" '\{"id", "version", "method", "sessionId", "payload"\}' \
   "extracted get_approval_history handler must exact-check top-level request fields"
-expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" "get_capabilities request contains unsupported fields" \
+expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '\{"id", "version", "method", "sessionId"\}' \
   "extracted get_capabilities handler must exact-check top-level request fields"
-expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" "get_accounts request contains unsupported fields" \
+expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '\{"id", "version", "method", "sessionId"\}' \
   "extracted get_accounts handler must exact-check top-level request fields"
-expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" "policy_get request contains unsupported fields" \
+expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '\{"id", "version", "method", "sessionId"\}' \
   "extracted policy_get handler must exact-check top-level request fields"
 
 expect_tree_present "${CORE_SOURCE}" 'signTransaction|sign_transaction|sign_result' \

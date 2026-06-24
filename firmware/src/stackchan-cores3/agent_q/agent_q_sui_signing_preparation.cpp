@@ -48,7 +48,7 @@ AgentQSuiSigningPreparationResult validate_encoded_payload_size(
         return AgentQSuiSigningPreparationResult::invalid_params;
     }
     if (actual_decoded_size > max_decoded_size) {
-        return AgentQSuiSigningPreparationResult::unsupported_payload_size;
+        return AgentQSuiSigningPreparationResult::payload_too_large;
     }
     if (actual_decoded_size != caller_decoded_size) {
         return AgentQSuiSigningPreparationResult::invalid_params;
@@ -133,7 +133,7 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
             free(tx_bytes);
         }
         return tx_bytes_size > kAgentQSuiSignTransactionTxBytesMaxBytes
-                   ? AgentQSuiSigningPreparationResult::unsupported_payload_size
+                   ? AgentQSuiSigningPreparationResult::payload_too_large
                    : AgentQSuiSigningPreparationResult::invalid_argument;
     }
 
@@ -246,7 +246,7 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction(
     }
     uint8_t* tx_bytes = static_cast<uint8_t*>(malloc(decoded_tx_size));
     if (tx_bytes == nullptr) {
-        return AgentQSuiSigningPreparationResult::unsupported_payload_size;
+        return AgentQSuiSigningPreparationResult::payload_too_large;
     }
     memset(tx_bytes, 0, decoded_tx_size);
     if (base64_to_bytes(
