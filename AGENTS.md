@@ -310,6 +310,40 @@ Current provider package commands:
 - Build: `cd packages/provider-sui && npm run build`
 - Test: `cd packages/provider-sui && npm test`
 
+Version and release metadata changes:
+
+- Treat every version bump as a release metadata change, not as a local cleanup.
+  Before editing, inspect the root `package.json`, `package-lock.json`, the
+  publishable package manifests under `packages/core/`, `packages/agent-q/`, and
+  `packages/provider-sui/`, the private sample package manifests, `server.json`,
+  and `.github/workflows/npm-publish.yml`.
+- For the current repository, the npm publish set is exactly
+  `@stelis/agent-q-core`, `@stelis/agent-q`, and
+  `@stelis/agent-q-provider-sui`. Private sample packages must stay private and
+  must not gain publish workflow steps as part of a version bump.
+- Keep release versions in lockstep unless the user explicitly asks for a
+  different release plan: root package version, publishable package versions,
+  internal `@stelis/*` dependency versions, private sample dependencies on local
+  `@stelis/*` packages, and the corresponding `package-lock.json` entries.
+- `server.json` is the MCP Registry marker for the local server package only.
+  Its top-level `version` and `packages[0].version` must match
+  `packages/agent-q/package.json`, and `packages[0].identifier` must remain
+  `@stelis/agent-q` unless the product registry identity is intentionally
+  changed.
+- Do not change the npm publish workflow, publish package graph, package names,
+  package privacy, repository metadata, registry identity, or MCP Registry
+  marker to explain a publish failure unless direct evidence shows the tracked
+  repository metadata is the cause. Registry errors can come from external
+  npm-token, organization, scope, provenance, or permission configuration; keep
+  those separate from repository fixes.
+- If a version bump is canceled, revert all version-only edits together. Do not
+  leave a partial bump in package manifests, the lockfile, dependencies,
+  `server.json`, docs, or release notes.
+- Before committing a version bump, verify the same release graph conditions
+  enforced by `.github/workflows/npm-publish.yml` from the current files, then
+  run `npm test` when available. Also run `npm pack --dry-run` for each
+  publishable package when release contents are in scope.
+
 Current common firmware helper commands:
 
 - Regenerate common Sui transaction facts fixtures:
