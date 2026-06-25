@@ -29,6 +29,9 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_usb_signing_handlers.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h" \
   "${AGENT_Q_DIR}/agent_q_signing_preflight.h" \
+  "${AGENT_Q_DIR}/agent_q_sign_personal_message_limits.h" \
+  "${AGENT_Q_DIR}/agent_q_signing_response_store.h" \
+  "${AGENT_Q_DIR}/agent_q_sui_signing_service.h" \
   "${AGENT_Q_DIR}/agent_q_policy_signing_execution.h" \
   "${COMMON_ROOT}/sui/agent_q_sui_transaction_facts.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -62,6 +65,11 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
+#include <string>
+
+#include "agent_q_sign_personal_message_limits.h"
+#include "agent_q_signing_response_store.h"
+#include "agent_q_sui_signing_service.h"
 #include "agent_q_usb_signing_handlers.h"
 
 namespace {
@@ -535,6 +543,40 @@ void test_personal_message_ingress_error_mapping()
     assert(g_clear_pm_prepared_calls == 0);
 }
 
+void test_personal_message_capacity_ingress_error_mapping()
+{
+    reset_state();
+    g_pm_preflight_result = agent_q::AgentQSigningPreflightResult::personal_message_ingress_error;
+    g_pm_ingress_result = agent_q::AgentQSignPersonalMessageUserIngressResult::message_too_large;
+    JsonDocument request;
+    agent_q::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
+    assert(g_pm_preflight_calls == 1);
+    assert(g_write_error_calls == 1);
+    assert(strcmp(g_last_error_code, "payload_too_large") == 0);
+    assert(g_clear_pm_prepared_calls == 0);
+}
+
+void test_max_personal_message_success_response_fits_retained_budget()
+{
+    JsonDocument result;
+    result["authorization"] = "user";
+    result["chain"] = "sui";
+    result["method"] = "sign_personal_message";
+    result["signature"] = std::string(agent_q::kSuiSignatureEnvelopeBase64MaxChars, 'A');
+    result["messageBytes"] = std::string(agent_q::kAgentQSuiSignPersonalMessageMaxBase64Size, 'A');
+
+    JsonDocument response;
+    response["id"] = "req_sign_budget";
+    response["version"] = 1;
+    response["success"] = true;
+    response["method"] = "sign_personal_message";
+    response["result"].set(result.as<JsonObjectConst>());
+
+    std::string serialized;
+    serializeJson(response, serialized);
+    assert(serialized.size() < agent_q::kSigningResponseMaxSize);
+}
+
 void test_preparation_account_failure_mapping()
 {
     reset_state();
@@ -787,6 +829,8 @@ int main()
     test_unavailable_ops();
     test_transaction_ingress_error_mapping();
     test_personal_message_ingress_error_mapping();
+    test_personal_message_capacity_ingress_error_mapping();
+    test_max_personal_message_success_response_fits_retained_budget();
     test_preparation_account_failure_mapping();
     test_preparation_active_identity_failure_mapping();
     test_preparation_invalid_account_mapping();

@@ -389,6 +389,7 @@ test("package metadata exposes the current core entrypoints", async () => {
     ".",
     "./adapter-internal",
     "./device",
+    "./device-request-internal",
     "./package.json",
     "./protocol",
     "./provider-protocol",
@@ -401,6 +402,10 @@ test("package metadata exposes the current core entrypoints", async () => {
     types: "./dist/device.d.ts",
     import: "./dist/device.js",
   });
+  assert.deepEqual(packageJson.exports["./device-request-internal"], {
+    types: "./dist/device-request-internal.d.ts",
+    import: "./dist/device-request-internal.js",
+  });
   assert.equal(packageJson.exports["./usb"], undefined);
   assert.equal(packageJson.exports["./payload-delivery-internal"], undefined);
   assert.equal(packageJson.bin, undefined);
@@ -412,13 +417,15 @@ test("package self-reference resolves only core entrypoints", async () => {
   const root = await import("@stelis/agent-q-core");
   const adapterInternal = await import("@stelis/agent-q-core/adapter-internal");
   const device = await import("@stelis/agent-q-core/device");
+  const deviceRequest = await import("@stelis/agent-q-core/device-request-internal");
   const protocol = await import("@stelis/agent-q-core/protocol");
   const providerProtocol = await import("@stelis/agent-q-core/provider-protocol");
   assert.equal(typeof root.createDefaultAgentQCore, "function");
   assert.equal(root.createDefaultAgentQDeviceClient, undefined);
   assert.equal(typeof adapterInternal.hostSuccessOutputSchemas, "object");
-  assert.equal(typeof adapterInternal.requestDevice, "function");
+  assert.equal(adapterInternal.requestDevice, undefined);
   assert.equal(typeof device.createDefaultAgentQDeviceClient, "function");
+  assert.equal(typeof deviceRequest.requestDevice, "function");
   assert.equal(typeof protocol.parseDeviceResponse, "function");
   assert.equal(typeof protocol.assertConnectResult, "function");
   assert.equal(typeof protocol.assertSigningOutcome, "function");
@@ -460,14 +467,17 @@ test("protocol declaration does not expose pre-DeviceRequest request envelopes",
   assert.match(types, /export interface CredentialPrepareParams/);
 });
 
-test("adapter-internal declaration exposes requestDevice without payload-transfer wire primitives", async () => {
+test("device-request-internal declaration exposes requestDevice without payload-transfer wire primitives", async () => {
   const typesPath = fileURLToPath(new URL("../dist/adapter-internal.d.ts", import.meta.url));
+  const deviceRequestTypesPath = fileURLToPath(new URL("../dist/device-request-internal.d.ts", import.meta.url));
   const transportTypesPath = fileURLToPath(new URL("../dist/device-request-transport.d.ts", import.meta.url));
-  const types = `${await readFile(typesPath, "utf8")}\n${await readFile(transportTypesPath, "utf8")}`;
+  const adapterTypes = await readFile(typesPath, "utf8");
+  const types = `${await readFile(deviceRequestTypesPath, "utf8")}\n${await readFile(transportTypesPath, "utf8")}`;
   assert.match(types, /requestDevice/);
   assert.match(types, /requestLine:\s*string/);
   assert.match(types, /DeviceRequestInput/);
   assert.match(types, /DeviceRequestExecutor/);
+  assert.doesNotMatch(adapterTypes, /requestDevice/);
 });
 
 test("client internals keep signing and recovery helper ownership separated", async () => {

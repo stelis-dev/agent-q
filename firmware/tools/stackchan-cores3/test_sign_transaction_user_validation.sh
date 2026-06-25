@@ -437,16 +437,16 @@ int main()
         "txBytes embedded nul",
         valid_request_with_params("{\"network\":\"devnet\",\"txBytes\":\"AAAA\\u0000x\"}"),
         Result::invalid_tx_bytes);
-    const std::string above_adapter_capacity(516, 'A');
+    const std::string above_removed_inline_cap(516, 'A');
     expect_params(
-        "txBytes above adapter capacity remains valid request format",
+        "txBytes above removed inline cap remains valid request format",
         valid_request_with_params(std::string("{\"network\":\"devnet\",\"txBytes\":\"") +
-                                  above_adapter_capacity +
+                                  above_removed_inline_cap +
                                   "\"}"),
         Result::ok,
         387,
         "devnet",
-        above_adapter_capacity.c_str());
+        above_removed_inline_cap.c_str());
     expect_params(
         "payloadRef is not a method parameter",
         valid_request_with_params(std::string("{\"network\":\"devnet\","

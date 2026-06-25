@@ -4,7 +4,6 @@
 
 #include "agent_q_json_input.h"
 #include "agent_q_payload_delivery_admission.h"
-#include "agent_q_sign_transaction_limits.h"
 #include "agent_q_sui_signing_authority.h"
 
 namespace agent_q {
@@ -248,12 +247,6 @@ AgentQSigningPreflightResult evaluate_sign_transaction_preflight(
         return AgentQSigningPreflightResult::transaction_ingress_error;
     }
 
-    if (output->ingress.params.tx_bytes_decoded_size >
-        kAgentQSuiSignTransactionInlineTxBytesMaxBytes) {
-        output->preparation_result =
-            AgentQSuiSigningPreparationResult::payload_too_large;
-        return AgentQSigningPreflightResult::transaction_preparation_error;
-    }
     output->preparation_result =
         prepare_sui_sign_transaction(
             classification.route,

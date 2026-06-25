@@ -33,6 +33,8 @@ AgentQSignPersonalMessageUserIngressResult map_validation_result(
             return AgentQSignPersonalMessageUserIngressResult::invalid_network;
         case AgentQSignPersonalMessageUserValidationResult::invalid_message:
             return AgentQSignPersonalMessageUserIngressResult::invalid_message;
+        case AgentQSignPersonalMessageUserValidationResult::message_too_large:
+            return AgentQSignPersonalMessageUserIngressResult::message_too_large;
     }
     return AgentQSignPersonalMessageUserIngressResult::invalid_request_shape;
 }
@@ -163,6 +165,8 @@ const char* sign_personal_message_user_ingress_result_name(
             return "invalid_network";
         case AgentQSignPersonalMessageUserIngressResult::invalid_message:
             return "invalid_message";
+        case AgentQSignPersonalMessageUserIngressResult::message_too_large:
+            return "message_too_large";
     }
     return "invalid_request_shape";
 }

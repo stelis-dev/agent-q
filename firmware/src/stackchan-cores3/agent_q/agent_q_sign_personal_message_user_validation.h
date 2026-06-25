@@ -21,6 +21,7 @@ enum class AgentQSignPersonalMessageUserValidationResult {
     unsupported_method,
     invalid_network,
     invalid_message,
+    message_too_large,
 };
 
 struct AgentQSignPersonalMessageUserEnvelope {

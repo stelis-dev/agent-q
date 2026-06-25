@@ -20,6 +20,7 @@ enum class CommonSignatureIngressError {
     unsupported_field,
     invalid_network,
     payload_invalid,
+    payload_too_large,
     payload_unavailable,
 };
 
@@ -43,6 +44,8 @@ const char* signature_ingress_error_code(CommonSignatureIngressError result)
         case CommonSignatureIngressError::invalid_network:
         case CommonSignatureIngressError::payload_invalid:
             return "invalid_params";
+        case CommonSignatureIngressError::payload_too_large:
+            return "payload_too_large";
         case CommonSignatureIngressError::payload_unavailable:
             return "payload_unavailable";
         case CommonSignatureIngressError::ok:
@@ -105,6 +108,8 @@ CommonSignatureIngressError common_signature_ingress_error(
             return CommonSignatureIngressError::invalid_network;
         case AgentQSignPersonalMessageUserIngressResult::invalid_message:
             return CommonSignatureIngressError::payload_invalid;
+        case AgentQSignPersonalMessageUserIngressResult::message_too_large:
+            return CommonSignatureIngressError::payload_too_large;
         case AgentQSignPersonalMessageUserIngressResult::ok:
         default:
             return CommonSignatureIngressError::ok;

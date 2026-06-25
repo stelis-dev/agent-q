@@ -28,6 +28,7 @@ import {
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
   MAX_SIGNING_OUTCOME_PAYLOAD_BASE64_CHARS,
+  MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
   SIGNING_OUTCOME_ERROR_MESSAGES,
   sanitizeDisplayText,
@@ -40,7 +41,9 @@ import {
 } from "../dist/protocol.js";
 import {
   makeDeviceFailureResponse,
+  makeDeviceRequest,
   makeDeviceSuccessResponse,
+  serializeDeviceRequest,
 } from "../dist/device-contract.js";
 import {
   makePayloadTransferAbortRequest,
@@ -340,6 +343,48 @@ test("payload transfer chunk frame budget fits the transport chunk size", () => 
   assert.deepEqual(normalizePayloadTransferRequest(request), request);
 });
 
+test("sign_transaction direct-frame boundary is computed from the DeviceRequest line", () => {
+  function requestLineForDecodedTxBytes(decodedBytes) {
+    return serializeDeviceRequest(makeDeviceRequest({
+      id: "req_sign_boundary",
+      method: "sign_transaction",
+      sessionId: "session_aaaaaaaaaaaaaaaa",
+      payload: {
+        chain: "sui",
+        network: "devnet",
+        txBytes: Buffer.alloc(decodedBytes, 1).toString("base64"),
+      },
+    }));
+  }
+
+  let low = 0;
+  let high = MAX_RAW_PROTOCOL_JSON_BYTES;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(requestLineForDecodedTxBytes(mid), "utf8") <= MAX_RAW_PROTOCOL_JSON_BYTES) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  const maxDirectDecodedBytes = low;
+  const maxDirectTxBytes = Buffer.alloc(maxDirectDecodedBytes, 1).toString("base64");
+  const nextTxBytes = Buffer.alloc(maxDirectDecodedBytes + 1, 1).toString("base64");
+
+  assert.ok(maxDirectDecodedBytes > 656);
+  assert.ok(Buffer.byteLength(requestLineForDecodedTxBytes(maxDirectDecodedBytes), "utf8") <= MAX_RAW_PROTOCOL_JSON_BYTES);
+  assert.ok(Buffer.byteLength(requestLineForDecodedTxBytes(maxDirectDecodedBytes + 1), "utf8") > MAX_RAW_PROTOCOL_JSON_BYTES);
+  assert.equal(
+    validateSignRequestInput("sui", "sign_transaction", { network: "devnet", txBytes: maxDirectTxBytes }).txBytes,
+    maxDirectTxBytes,
+  );
+  assert.equal(
+    validateSignRequestInput("sui", "sign_transaction", { network: "devnet", txBytes: nextTxBytes }).txBytes,
+    nextTxBytes,
+  );
+});
+
 test("parsePayloadTransferResponse accepts and exact-validates payload transfer responses", () => {
   const begin = parsePayloadTransferResponse({
     id: "req_upload_begin",
@@ -621,14 +666,23 @@ test("sign transaction input validation rejects caller-selected authorization wi
     () => validateSignRequestInput("sui", "sign_transaction", { ...params, privateKey: "must-not-forward" }),
     /secret material/,
   );
-  const aboveCurrentAdapterCapacity = Buffer.alloc(385, 1).toString("base64");
+  const observedAppWebTxBytes = Buffer.alloc(656, 1).toString("base64");
   assert.equal(
     validateSignRequestInput(
       "sui",
       "sign_transaction",
-      { network: "devnet", txBytes: aboveCurrentAdapterCapacity },
+      { network: "devnet", txBytes: observedAppWebTxBytes },
     ).txBytes,
-    aboveCurrentAdapterCapacity,
+    observedAppWebTxBytes,
+  );
+  const aboveRemovedInlineCapacity = Buffer.alloc(385, 1).toString("base64");
+  assert.equal(
+    validateSignRequestInput(
+      "sui",
+      "sign_transaction",
+      { network: "devnet", txBytes: aboveRemovedInlineCapacity },
+    ).txBytes,
+    aboveRemovedInlineCapacity,
   );
   assert.throws(
     () => validateSignRequestInput(
@@ -636,7 +690,7 @@ test("sign transaction input validation rejects caller-selected authorization wi
       "sign_transaction",
       { network: "devnet", txBytes: Buffer.alloc(MAX_SUI_SIGN_TRANSACTION_TX_BYTES + 1).toString("base64") },
     ),
-    /maximum decoded byte length/,
+    { code: "payload_too_large" },
   );
 });
 
@@ -659,14 +713,31 @@ test("sign personal-message input validation rejects caller-selected authorizati
     () => validateSignPersonalMessageRequestInput("sui", "sign_personal_message", { ...params, seed: "must-not-forward" }),
     /secret material/,
   );
-  const aboveCurrentAdapterCapacity = Buffer.alloc(257, 1).toString("base64");
+  const observedAppWebMessage = Buffer.alloc(518, 1).toString("base64");
   assert.equal(
     validateSignPersonalMessageRequestInput(
       "sui",
       "sign_personal_message",
-      { network: "devnet", message: aboveCurrentAdapterCapacity },
+      { network: "devnet", message: observedAppWebMessage },
     ).message,
-    aboveCurrentAdapterCapacity,
+    observedAppWebMessage,
+  );
+  const aboveRemovedPersonalMessageCapacity = Buffer.alloc(257, 1).toString("base64");
+  assert.equal(
+    validateSignPersonalMessageRequestInput(
+      "sui",
+      "sign_personal_message",
+      { network: "devnet", message: aboveRemovedPersonalMessageCapacity },
+    ).message,
+    aboveRemovedPersonalMessageCapacity,
+  );
+  assert.throws(
+    () => validateSignPersonalMessageRequestInput(
+      "sui",
+      "sign_personal_message",
+      { network: "devnet", message: Buffer.alloc(MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES + 1).toString("base64") },
+    ),
+    { code: "payload_too_large" },
   );
 });
 

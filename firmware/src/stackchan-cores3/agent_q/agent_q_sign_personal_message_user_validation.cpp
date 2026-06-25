@@ -159,13 +159,24 @@ validate_sign_personal_message_user_params(
     }
 
     const char* message_base64 = nullptr;
-    if (!agent_q_json_value_c_string(params["message"], &message_base64) ||
-        !validate_canonical_base64_syntax(
+    if (!agent_q_json_value_c_string(params["message"], &message_base64)) {
+        memset(output, 0, sizeof(*output));
+        return AgentQSignPersonalMessageUserValidationResult::invalid_message;
+    }
+    if (strlen(message_base64) > kAgentQSuiSignPersonalMessageMaxBase64Size) {
+        memset(output, 0, sizeof(*output));
+        return AgentQSignPersonalMessageUserValidationResult::message_too_large;
+    }
+    if (!validate_canonical_base64_syntax(
             message_base64,
             kAgentQSuiSignPersonalMessageMaxBase64Size,
             &output->message_decoded_size)) {
         memset(output, 0, sizeof(*output));
         return AgentQSignPersonalMessageUserValidationResult::invalid_message;
+    }
+    if (output->message_decoded_size > kAgentQSuiSignPersonalMessageMaxBytes) {
+        memset(output, 0, sizeof(*output));
+        return AgentQSignPersonalMessageUserValidationResult::message_too_large;
     }
     output->message_base64 = message_base64;
 
@@ -194,6 +205,8 @@ const char* sign_personal_message_user_validation_result_name(
             return "invalid_network";
         case AgentQSignPersonalMessageUserValidationResult::invalid_message:
             return "invalid_message";
+        case AgentQSignPersonalMessageUserValidationResult::message_too_large:
+            return "message_too_large";
     }
     return "unknown";
 }

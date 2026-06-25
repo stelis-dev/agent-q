@@ -235,10 +235,24 @@ int main()
                    state(true, false, &check),
                    IngressResult::invalid_message,
                    1);
+    check = SessionCheck{"session_aaaaaaaaaaaaaaaa", SessionResult::ok, 0};
+    const std::string oversized_message(
+        ((agent_q::kAgentQSuiSignPersonalMessageMaxBytes + 3) / 3) * 4,
+        'A');
+    expect_ingress("oversized message rejected as capacity after session",
+                   request_with_session_and_params(
+                       "session_aaaaaaaaaaaaaaaa",
+                       std::string("{\"network\":\"devnet\",\"message\":\"") +
+                           oversized_message + "\"}"),
+                   state(true, false, &check),
+                   IngressResult::message_too_large,
+                   1);
 
     if (strcmp(agent_q::sign_personal_message_user_ingress_result_name(IngressResult::busy), "busy") != 0 ||
         strcmp(agent_q::sign_personal_message_user_ingress_result_name(IngressResult::invalid_message),
-               "invalid_message") != 0) {
+               "invalid_message") != 0 ||
+        strcmp(agent_q::sign_personal_message_user_ingress_result_name(IngressResult::message_too_large),
+               "message_too_large") != 0) {
         fprintf(stderr, "FAILED: ingress result names are stable\n");
         ++failures;
     }

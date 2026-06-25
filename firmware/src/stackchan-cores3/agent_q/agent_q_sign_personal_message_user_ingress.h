@@ -19,6 +19,7 @@ enum class AgentQSignPersonalMessageUserIngressResult {
     unsupported_method,
     invalid_network,
     invalid_message,
+    message_too_large,
 };
 
 using AgentQSignPersonalMessageUserSessionValidateFn =

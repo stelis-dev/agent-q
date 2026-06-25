@@ -2168,7 +2168,7 @@ test("signTransaction forwards a bounded provider signing request with internal 
   });
 });
 
-test("signTransaction forwards canonical payload above the current Firmware adapter capacity", async () => {
+test("signTransaction forwards canonical payload above the removed inline payload cap", async () => {
   await withStore(async (store) => {
     const txBytes = Buffer.alloc(385, 1).toString("base64");
     let observedTxBytes = null;

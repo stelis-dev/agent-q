@@ -42,6 +42,12 @@ AgentQSuiSigningPreparationResult validate_encoded_payload_size(
     size_t max_decoded_size)
 {
     size_t actual_decoded_size = 0;
+    if (base64 == nullptr) {
+        return AgentQSuiSigningPreparationResult::invalid_params;
+    }
+    if (strlen(base64) > max_base64_size) {
+        return AgentQSuiSigningPreparationResult::payload_too_large;
+    }
     if (!validate_canonical_base64_syntax(
             base64,
             max_base64_size,

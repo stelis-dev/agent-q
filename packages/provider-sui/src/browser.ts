@@ -34,7 +34,7 @@ import {
 import {
   requestDevice,
   type DeviceRequestInput,
-} from "@stelis/agent-q-core/adapter-internal";
+} from "@stelis/agent-q-core/device-request-internal";
 import type {
   AgentQSuiWalletGetAccountsResult,
   AgentQSuiWalletGetCapabilitiesResult,

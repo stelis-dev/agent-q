@@ -7,8 +7,8 @@ export const INVALID_ID_ERROR_CODE = "invalid_request";
 // authority; it is bounded here only to reject malformed Firmware responses.
 export const MAX_SESSION_TTL_MS = 4_294_967_295;
 export const MAX_RAW_PROTOCOL_JSON_BYTES = 4096;
-// Variable-size Firmware-authored signing outcome payload fields are bounded by the
-// response line transport cap, not by request-frame or current adapter capacity.
+// Variable-size Firmware-authored signing outcome payload fields are bounded by
+// the response line transport cap, not by request-frame capacity.
 export const MAX_SIGNING_OUTCOME_PAYLOAD_BASE64_CHARS = MAX_PROTOCOL_RESPONSE_LINE_BYTES;
 export { MAX_PROTOCOL_RESPONSE_LINE_BYTES };
 
@@ -26,8 +26,9 @@ export type SuiSignTransactionNetwork = (typeof SUI_SIGN_TRANSACTION_NETWORKS)[n
 export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES = 128 * 1024;
 export const MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS =
   Math.ceil(MAX_SUI_SIGN_TRANSACTION_TX_BYTES / 3) * 4;
-export const MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES = 256;
-export const MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS = 344;
+export const MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES = 768;
+export const MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS =
+  Math.ceil(MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES / 3) * 4;
 
 export const SUI_ADDRESS_PATTERN = /^0x[0-9a-f]{64}$/;
 // Raw 32-byte Ed25519 public key as base64 is exactly 43 payload chars + one "=".
@@ -237,15 +238,20 @@ export function validateCanonicalBase64Bytes(
   maxDecodedBytes: number,
   label: string,
   errorCode = "invalid_params",
+  capacityErrorCode = errorCode,
 ): string {
+  const maxChars = Math.ceil(maxDecodedBytes / 3) * 4;
+  if (typeof value === "string" && value.length > maxChars) {
+    throw new ProtocolError(capacityErrorCode, `${label} exceeds maximum decoded byte length.`);
+  }
   const normalized = validateCanonicalBase64Syntax(
     value,
-    Math.ceil(maxDecodedBytes / 3) * 4,
+    maxChars,
     label,
     errorCode,
   );
   if (canonicalBase64DecodedByteLength(normalized) > maxDecodedBytes) {
-    throw new ProtocolError(errorCode, `${label} exceeds maximum decoded byte length.`);
+    throw new ProtocolError(capacityErrorCode, `${label} exceeds maximum decoded byte length.`);
   }
   return normalized;
 }

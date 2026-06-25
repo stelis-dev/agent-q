@@ -211,20 +211,35 @@ int main()
     expect_params("noncanonical message rejected",
                   valid_request_with_params("{\"network\":\"devnet\",\"message\":\"aGVsbG9\"}"),
                   Result::invalid_message);
-    const std::string above_adapter_capacity(344, 'A');
+    const std::string observed_app_message(
+        ((agent_q::kAgentQSuiSignPersonalMessageMaxBytes + 2) / 3) * 4,
+        'A');
     expect_params(
-        "message above adapter capacity remains valid request format",
+        "maximum message remains valid request format",
         valid_request_with_params(std::string("{\"network\":\"devnet\",\"message\":\"") +
-                                  above_adapter_capacity +
+                                  observed_app_message +
                                   "\"}"),
         Result::ok,
-        258,
+        agent_q::kAgentQSuiSignPersonalMessageMaxBytes,
         "devnet",
-        above_adapter_capacity.c_str());
+        observed_app_message.c_str());
+
+    const std::string oversized_message(
+        ((agent_q::kAgentQSuiSignPersonalMessageMaxBytes + 3) / 3) * 4,
+        'A');
+    expect_params(
+        "message above capacity is payload capacity failure",
+        valid_request_with_params(std::string("{\"network\":\"devnet\",\"message\":\"") +
+                                  oversized_message +
+                                  "\"}"),
+        Result::message_too_large);
 
     expect(strcmp(agent_q::sign_personal_message_user_validation_result_name(Result::invalid_message),
                   "invalid_message") == 0,
            "result names expose invalid_message");
+    expect(strcmp(agent_q::sign_personal_message_user_validation_result_name(Result::message_too_large),
+                  "message_too_large") == 0,
+           "result names expose message_too_large");
 
     if (failures != 0) {
         fprintf(stderr, "%d sign_personal_message validation test(s) failed\n", failures);

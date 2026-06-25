@@ -20,6 +20,10 @@
       "types": "./dist/device.d.ts",
       "import": "./dist/device.js"
     },
+    "./device-request-internal": {
+      "types": "./dist/device-request-internal.d.ts",
+      "import": "./dist/device-request-internal.js"
+    },
     "./adapter-internal": {
       "types": "./dist/adapter-internal.d.ts",
       "import": "./dist/adapter-internal.js"

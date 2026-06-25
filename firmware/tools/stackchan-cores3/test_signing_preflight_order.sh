@@ -71,7 +71,8 @@ for required in \
   "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
-  "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex"; do
+  "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
+  "${FIXTURE_DIR}/synthetic_swap_shape_tx.bcs.hex"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -694,9 +695,11 @@ AgentQSuiActiveIdentity resolve_active_sui_identity()
 
 int main(int argc, char** argv)
 {
-    assert(argc == 2);
+    assert(argc == 3);
     const std::vector<uint8_t> valid = read_hex(argv[1]);
+    const std::vector<uint8_t> large_valid = read_hex(argv[2]);
     const std::string valid_b64 = base64(valid);
+    const std::string large_valid_b64 = base64(large_valid);
     const std::string valid_request =
         request_json(
             "req_sign_1",
@@ -888,12 +891,9 @@ int main(int argc, char** argv)
         1,
         1);
 
-    const std::vector<uint8_t> above_inline_payload(
-        agent_q::kAgentQSuiSignTransactionInlineTxBytesMaxBytes + 1,
-        0xA5);
     reset_counters();
     expect_case(
-        "fresh inline payload above inline cap fails at preparation capacity",
+        "fresh transaction above removed inline cap reaches preparation",
         run_transaction_preflight(
             request_json(
                 "req_above_inline_cap",
@@ -901,17 +901,17 @@ int main(int argc, char** argv)
                 "sui",
                 "sign_transaction",
                 "devnet",
-                base64(above_inline_payload).c_str()),
+                large_valid_b64.c_str()),
             true,
             false),
-        PreflightOutcome::preparation_payload_too_large,
+        PreflightOutcome::ok_prepared,
         1,
-        0,
-        0);
+        1,
+        1);
 
     reset_counters();
     const std::vector<uint8_t> malformed_tx(
-        agent_q::kAgentQSuiSignTransactionInlineTxBytesMaxBytes,
+        512,
         0x42);
     const std::string malformed_b64 = base64(malformed_tx);
     expect_case(
@@ -990,4 +990,6 @@ CPP
   "${TMP_DIR}/platform_util.o" \
   -o "${TMP_DIR}/test"
 
-"${TMP_DIR}/test" "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex"
+"${TMP_DIR}/test" \
+  "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
+  "${FIXTURE_DIR}/synthetic_swap_shape_tx.bcs.hex"

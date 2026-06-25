@@ -89,6 +89,9 @@ proof-clear path.
   internal deadline constants; it does not expose retained-response recovery
   request or response types, recovery builders, Admin, policy read/update,
   approval-history, or full-protocol request serialization.
+- `@stelis/agent-q-core/device-request-internal` exposes the browser-safe
+  `DeviceRequest` transport helper used by official Agent-Q adapters. It is an
+  internal adapter support entrypoint, not an application API.
 - `@stelis/agent-q-core/adapter-internal` exposes support APIs for official
   Agent-Q adapters, including bounded output schemas, public error mapping, safe
   text validation, and the local host device registry. It is not the

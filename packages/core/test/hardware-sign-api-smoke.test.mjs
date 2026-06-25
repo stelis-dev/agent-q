@@ -46,18 +46,12 @@ import {
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
 } from "../dist/protocol.js";
 
-const SIGN_TRANSACTION_PAYLOAD_CAPABILITY = Object.freeze({
-  kind: "transaction",
-  inlineMaxBytes: "384",
-  chunkMaxBytes: "2700",
-  payloadMaxBytes: "131072",
-});
 const USER_SIGNING_METHODS = Object.freeze([
-  { chain: "sui", method: "sign_transaction", payload: SIGN_TRANSACTION_PAYLOAD_CAPABILITY },
+  { chain: "sui", method: "sign_transaction" },
   { chain: "sui", method: "sign_personal_message" },
 ]);
 const POLICY_SIGNING_METHODS = Object.freeze([
-  { chain: "sui", method: "sign_transaction", payload: SIGN_TRANSACTION_PAYLOAD_CAPABILITY },
+  { chain: "sui", method: "sign_transaction" },
 ]);
 const DEFAULT_PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q personal message check").toString("base64");
 

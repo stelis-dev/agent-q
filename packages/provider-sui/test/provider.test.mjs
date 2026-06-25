@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test, { mock } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Transaction } from "@mysten/sui/transactions";
 import {
   getWallets,
@@ -68,6 +68,45 @@ function assertNoSecretFields(value) {
     assert.equal(text.includes(fieldName.toLowerCase()), false, `${fieldName} must not appear in provider output`);
   }
   assert.equal(text.includes("sessionid"), false, "sessionId must not appear in provider output");
+}
+
+const ESM_IMPORT_RE =
+  /\bimport\s+(?:[^'"]*?\s+from\s+)?["']([^"']+)["']|\bexport\s+[^'"]*?\s+from\s+["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g;
+
+function staticImportSpecifiers(source) {
+  const specifiers = [];
+  for (const match of source.matchAll(ESM_IMPORT_RE)) {
+    specifiers.push(match[1] ?? match[2] ?? match[3]);
+  }
+  return specifiers;
+}
+
+async function collectBrowserRuntimeImportGraph(entryPath) {
+  const visited = new Map();
+  const edges = [];
+
+  async function visit(filePath) {
+    if (visited.has(filePath)) {
+      return;
+    }
+    const source = await readFile(filePath, "utf8");
+    visited.set(filePath, source);
+    for (const specifier of staticImportSpecifiers(source)) {
+      edges.push({ from: filePath, specifier });
+      let resolvedPath = null;
+      if (specifier.startsWith(".")) {
+        resolvedPath = fileURLToPath(new URL(specifier, pathToFileURL(filePath)));
+      } else if (specifier.startsWith("@stelis/agent-q-core/")) {
+        resolvedPath = fileURLToPath(import.meta.resolve(specifier));
+      }
+      if (resolvedPath !== null) {
+        await visit(resolvedPath);
+      }
+    }
+  }
+
+  await visit(entryPath);
+  return { visited, edges };
 }
 
 function validCredentialCapability() {
@@ -663,7 +702,8 @@ test("browser provider runtime stays separated from Admin, MCP, and Node serial 
   const source = await readFile(browserPath, "utf8");
   assert.match(source, /@stelis\/agent-q-core\/provider-protocol/);
   assert.match(source, /@stelis\/agent-q-core\/protocol["']/);
-  assert.match(source, /@stelis\/agent-q-core\/adapter-internal/);
+  assert.match(source, /@stelis\/agent-q-core\/device-request-internal/);
+  assert.doesNotMatch(source, /@stelis\/agent-q-core\/adapter-internal/);
   assert.doesNotMatch(source, /@stelis\/agent-q-core\/admin/);
   assert.doesNotMatch(source, /@stelis\/agent-q(?!-core)/);
   assert.doesNotMatch(source, /serialport/);
@@ -685,6 +725,23 @@ test("browser provider runtime stays separated from Admin, MCP, and Node serial 
   assert.doesNotMatch(types, /payload-delivery-internal/);
   assert.doesNotMatch(types, /serialport/);
   assert.doesNotMatch(types, /node:/);
+});
+
+test("browser provider runtime import graph stays separated from host-only core modules", async () => {
+  const browserPath = fileURLToPath(new URL("../dist/browser.js", import.meta.url));
+  const { visited, edges } = await collectBrowserRuntimeImportGraph(browserPath);
+  const visitedPaths = [...visited.keys()].join("\n");
+
+  assert.doesNotMatch(visitedPaths, /(?:^|\/)adapter-internal\.(?:js|d\.ts)$/);
+  assert.doesNotMatch(visitedPaths, /(?:^|\/)host-output-schema\.js$/);
+  assert.doesNotMatch(visitedPaths, /(?:^|\/)config\.js$/);
+  assert.doesNotMatch(visitedPaths, /(?:^|\/)usb\.js$/);
+
+  for (const edge of edges) {
+    assert.notEqual(edge.specifier, "@stelis/agent-q-core/adapter-internal");
+    assert.notEqual(edge.specifier, "serialport");
+    assert.equal(edge.specifier.startsWith("node:"), false, `${edge.from} imports ${edge.specifier}`);
+  }
 });
 
 test("browser provider runtime defers Web Serial port selection until connectDevice", async () => {
@@ -3550,46 +3607,13 @@ test("Wallet Standard direct capabilities exact validator rejects malformed prov
     },
     {
       output: mutate((output) => {
-        output.signing.methods[0].payload = {
-          kind: "transaction",
-          inlineMaxBytes: "384",
-          chunkMaxBytes: "2048",
-          payloadMaxBytes: "131072",
-          maxChunkCount: "64",
-        };
+        output.signing.methods[0].payload = { kind: "transaction" };
       }),
-      label: "signing payload capability extra field",
+      label: "signing method entry must not carry payload delivery metadata",
     },
     {
       output: mutate((output) => {
-        output.signing.methods[0].payload = {
-          kind: "transaction",
-          inlineMaxBytes: "384",
-          chunkMaxBytes: "2048",
-          payloadMaxBytes: "not-a-number",
-        };
-      }),
-      label: "signing payload capability malformed size",
-    },
-    {
-      output: mutate((output) => {
-        output.signing.methods[0].payload = {
-          kind: "transaction",
-          inlineMaxBytes: "384",
-          chunkMaxBytes: "2047",
-          payloadMaxBytes: "131072",
-        };
-      }),
-      label: "signing payload capability unusable chunk size",
-    },
-    {
-      output: mutate((output) => {
-        output.signing.methods[1].payload = {
-          kind: "transaction",
-          inlineMaxBytes: "384",
-          chunkMaxBytes: "2048",
-          payloadMaxBytes: "131072",
-        };
+        output.signing.methods[1].payload = { kind: "transaction" };
       }),
       label: "personal-message signing must not carry payload delivery metadata",
     },

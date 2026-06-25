@@ -61,7 +61,6 @@ import {
   rejectSecretPayload,
   requireOnlyKeys,
   validateCanonicalBase64Bytes,
-  validateCanonicalBase64Syntax,
   validateSuiSignTransactionNetwork,
   type SuiSignMethod,
   type SuiSignTransactionNetwork,
@@ -289,6 +288,8 @@ export function validateSignTransactionParams(
       normalized.txBytes,
       MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
       "sui/sign_transaction txBytes",
+      "invalid_params",
+      "payload_too_large",
     ),
   };
 }
@@ -310,10 +311,12 @@ export function validateSignPersonalMessageParams(
   const normalized = asSignParamsRecord(params, requestType, ["network", "message"]);
   return {
     network: validateSuiNetwork(normalized.network),
-    message: validateCanonicalBase64Syntax(
+    message: validateCanonicalBase64Bytes(
       normalized.message,
-      MAX_RAW_PROTOCOL_JSON_BYTES,
+      MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
       "sui/sign_personal_message message",
+      "invalid_params",
+      "payload_too_large",
     ),
   };
 }
