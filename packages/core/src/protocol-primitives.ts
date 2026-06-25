@@ -2,7 +2,7 @@ import { MAX_PROTOCOL_RESPONSE_LINE_BYTES } from "./transport-invariants.js";
 import { ProtocolError } from "./protocol-error.js";
 
 export const PROTOCOL_VERSION = 1;
-export const INVALID_ID_ERROR_CODE = "invalid_id";
+export const INVALID_ID_ERROR_CODE = "invalid_request";
 // sessionTtlMs is uint32 wire metadata. Agent-Q does not use it as the session
 // authority; it is bounded here only to reject malformed Firmware responses.
 export const MAX_SESSION_TTL_MS = 4_294_967_295;
@@ -146,11 +146,11 @@ export function consumeDeviceResponseLineChunk(
 
   for (const line of lines) {
     if (utf8ByteLength(line) > maxLineBytes) {
-      throw new ProtocolError("protocol_error", "Device response line exceeds maximum length.");
+      throw new ProtocolError("invalid_response", "Device response line exceeds maximum length.");
     }
   }
   if (utf8ByteLength(nextBuffer) > maxLineBytes) {
-    throw new ProtocolError("protocol_error", "Device response line exceeds maximum length.");
+    throw new ProtocolError("invalid_response", "Device response line exceeds maximum length.");
   }
 
   return { buffer: nextBuffer, lines };
@@ -167,9 +167,14 @@ export function asRecord(value: unknown, label: string): Record<string, unknown>
   return value;
 }
 
-export function requireOnlyKeys(value: Record<string, unknown>, allowedKeys: readonly string[], label: string): void {
+export function requireOnlyKeys(
+  value: Record<string, unknown>,
+  allowedKeys: readonly string[],
+  label: string,
+  errorCode = "invalid_params",
+): void {
   if (!hasOnlyObjectKeys(value, allowedKeys)) {
-    throw new ProtocolError("protocol_error", `${label} contains unsupported fields.`);
+    throw new ProtocolError(errorCode, `${label} contains unsupported fields.`);
   }
 }
 
@@ -197,7 +202,7 @@ export function hasSecretPayloadKey(value: unknown): boolean {
 
 export function rejectSecretPayload(value: Record<string, unknown>, label: string): void {
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", `${label} must not include secret material.`);
+    throw new ProtocolError("invalid_params", `${label} must not include secret material.`);
   }
 }
 

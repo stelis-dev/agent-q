@@ -846,7 +846,7 @@ export function parseJsonLine(line: string): unknown {
   try {
     return JSON.parse(line);
   } catch {
-    throw new ProtocolError("invalid_json", "Invalid JSON response.");
+    throw new ProtocolError("invalid_response", "Invalid JSON response.");
   }
 }
 
@@ -1265,10 +1265,10 @@ function sanitizePolicyConditionWhere(value: unknown): { type: string } | null {
     return null;
   }
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Policy condition selector must not include secret material.");
+    throw new ProtocolError("invalid_response", "Policy condition selector must not include secret material.");
   }
   if (!hasOnlyObjectKeys(value, ["type"])) {
-    throw new ProtocolError("protocol_error", "Policy condition selector contains unsupported fields.");
+    throw new ProtocolError("invalid_response", "Policy condition selector contains unsupported fields.");
   }
   if (!policyConditionTypeSelectorValid(value.type)) {
     return null;
@@ -1281,7 +1281,7 @@ function sanitizePolicyCondition(value: unknown): PolicyCondition | null {
     return null;
   }
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Policy condition must not include secret material.");
+    throw new ProtocolError("invalid_response", "Policy condition must not include secret material.");
   }
   if (!isBoundedPolicyString(value.field, MAX_POLICY_FIELD_ID_LENGTH) ||
       !POLICY_FIELD_ID_PATTERN.test(value.field) ||
@@ -1315,7 +1315,7 @@ function sanitizePolicyCondition(value: unknown): PolicyCondition | null {
       ? ["field", "op", "where", "values"]
       : ["field", "op", "values"];
     if (!hasOnlyObjectKeys(value, allowedKeys)) {
-      throw new ProtocolError("protocol_error", "Policy condition contains unsupported fields.");
+      throw new ProtocolError("invalid_response", "Policy condition contains unsupported fields.");
     }
     if (!Array.isArray(value.values) ||
         value.values.length === 0 ||
@@ -1338,7 +1338,7 @@ function sanitizePolicyCondition(value: unknown): PolicyCondition | null {
     ? ["field", "op", "where", "value"]
     : ["field", "op", "value"];
   if (!hasOnlyObjectKeys(value, allowedKeys)) {
-    throw new ProtocolError("protocol_error", "Policy condition contains unsupported fields.");
+    throw new ProtocolError("invalid_response", "Policy condition contains unsupported fields.");
   }
   if (!policyConditionValueValid(descriptor.type, value.value)) {
     return null;
@@ -1359,10 +1359,10 @@ function sanitizePolicyEntry(value: unknown): PolicyEntry | null {
     return null;
   }
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Policy entry must not include secret material.");
+    throw new ProtocolError("invalid_response", "Policy entry must not include secret material.");
   }
   if (!hasOnlyObjectKeys(value, ["id", "action", "conditions"])) {
-    throw new ProtocolError("protocol_error", "Policy entry contains unsupported fields.");
+    throw new ProtocolError("invalid_response", "Policy entry contains unsupported fields.");
   }
   if (
     !isBoundedPolicyString(value.id, MAX_POLICY_ID_LENGTH) ||
@@ -1392,10 +1392,10 @@ function sanitizePolicyNetworkScope(value: unknown): PolicyNetworkScope | null {
     return null;
   }
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Policy network scope must not include secret material.");
+    throw new ProtocolError("invalid_response", "Policy network scope must not include secret material.");
   }
   if (!hasOnlyObjectKeys(value, ["network", "policies"])) {
-    throw new ProtocolError("protocol_error", "Policy network scope contains unsupported fields.");
+    throw new ProtocolError("invalid_response", "Policy network scope contains unsupported fields.");
   }
   if (!isBoundedPolicyString(value.network, MAX_POLICY_NETWORK_LENGTH) ||
       !isSupportedPolicyNetwork(value.network) ||
@@ -1422,10 +1422,10 @@ function sanitizePolicyBlockchainScope(value: unknown): PolicyBlockchainScope | 
     return null;
   }
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Policy blockchain scope must not include secret material.");
+    throw new ProtocolError("invalid_response", "Policy blockchain scope must not include secret material.");
   }
   if (!hasOnlyObjectKeys(value, ["blockchain", "networks"])) {
-    throw new ProtocolError("protocol_error", "Policy blockchain scope contains unsupported fields.");
+    throw new ProtocolError("invalid_response", "Policy blockchain scope contains unsupported fields.");
   }
   if (!isBoundedPolicyString(value.blockchain, MAX_POLICY_BLOCKCHAIN_LENGTH) ||
       !isSupportedPolicyBlockchain(value.blockchain) ||
@@ -1452,7 +1452,7 @@ export function sanitizeCurrentPolicyDocument(value: unknown): PolicyDocument | 
     return null;
   }
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Policy document must not include secret material.");
+    throw new ProtocolError("invalid_response", "Policy document must not include secret material.");
   }
   if (!hasOnlyObjectKeys(value, [
     "schema",
@@ -1464,7 +1464,7 @@ export function sanitizeCurrentPolicyDocument(value: unknown): PolicyDocument | 
     "conditionCount",
     "blockchains",
   ])) {
-    throw new ProtocolError("protocol_error", "Policy document contains unsupported fields.");
+    throw new ProtocolError("invalid_response", "Policy document contains unsupported fields.");
   }
   if (
     value.schema !== AGENT_Q_POLICY_SCHEMA ||
@@ -1533,10 +1533,10 @@ function sanitizePolicyProposeResultPolicy(value: unknown): PolicyProposeResultP
     return undefined;
   }
   if (!isRecord(value)) {
-    throw new ProtocolError("protocol_error", "policy_propose_result policy metadata is malformed.");
+    throw new ProtocolError("invalid_response", "policy_propose_result policy metadata is malformed.");
   }
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "policy_propose_result policy metadata must not include secret material.");
+    throw new ProtocolError("invalid_response", "policy_propose_result policy metadata must not include secret material.");
   }
   if (!hasOnlyObjectKeys(value, [
     "policyHash",
@@ -1546,7 +1546,7 @@ function sanitizePolicyProposeResultPolicy(value: unknown): PolicyProposeResultP
     "conditionCount",
     "highestAction",
   ])) {
-    throw new ProtocolError("protocol_error", "policy_propose_result policy metadata contains unsupported fields.");
+    throw new ProtocolError("invalid_response", "policy_propose_result policy metadata contains unsupported fields.");
   }
   if (
     typeof value.policyHash !== "string" ||
@@ -1569,7 +1569,7 @@ function sanitizePolicyProposeResultPolicy(value: unknown): PolicyProposeResultP
     value.conditionCount > MAX_POLICY_TOTAL_CONDITIONS ||
     !APPROVAL_HISTORY_HIGHEST_ACTIONS.includes(value.highestAction as ApprovalHistoryHighestAction)
   ) {
-    throw new ProtocolError("protocol_error", "policy_propose_result policy metadata is malformed.");
+    throw new ProtocolError("invalid_response", "policy_propose_result policy metadata is malformed.");
   }
   return {
     policyHash: value.policyHash,
@@ -1583,10 +1583,10 @@ function sanitizePolicyProposeResultPolicy(value: unknown): PolicyProposeResultP
 
 function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
   if (!isRecord(value)) {
-    throw new ProtocolError("protocol_error", "Approval history record is malformed.");
+    throw new ProtocolError("invalid_response", "Approval history record is malformed.");
   }
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("protocol_error", "Approval history record must not include secret material.");
+    throw new ProtocolError("invalid_response", "Approval history record must not include secret material.");
   }
   const allowedKeys = [
     "seq",
@@ -1608,7 +1608,7 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
     "terminalResult",
   ];
   if (!hasOnlyObjectKeys(value, allowedKeys)) {
-    throw new ProtocolError("protocol_error", "Approval history record contains unsupported fields.");
+    throw new ProtocolError("invalid_response", "Approval history record contains unsupported fields.");
   }
   if (
     typeof value.seq !== "string" ||
@@ -1619,7 +1619,7 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
     typeof value.reasonCode !== "string" ||
     !APPROVAL_HISTORY_REASON_CODE_PATTERN.test(value.reasonCode)
   ) {
-    throw new ProtocolError("protocol_error", "Approval history record is malformed.");
+    throw new ProtocolError("invalid_response", "Approval history record is malformed.");
   }
 
   if (value.eventKind === "policy_update") {
@@ -1640,7 +1640,7 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
       value.policyCount > MAX_POLICY_TOTAL_POLICIES ||
       !APPROVAL_HISTORY_HIGHEST_ACTIONS.includes(value.highestAction as ApprovalHistoryHighestAction)
     ) {
-      throw new ProtocolError("protocol_error", "Approval history policy update record is malformed.");
+      throw new ProtocolError("invalid_response", "Approval history policy update record is malformed.");
     }
     return {
       seq: value.seq,
@@ -1667,11 +1667,11 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
       typeof value.payloadDigest !== "string" ||
       !POLICY_ID_PATTERN.test(value.payloadDigest)
     ) {
-      throw new ProtocolError("protocol_error", "Approval history signing record is malformed.");
+      throw new ProtocolError("invalid_response", "Approval history signing record is malformed.");
     }
     if (value.recordKind === "confirmation") {
       if (value.terminalResult !== undefined) {
-        throw new ProtocolError("protocol_error", "Approval history signing record is malformed.");
+        throw new ProtocolError("invalid_response", "Approval history signing record is malformed.");
       }
       if (value.authorization === "user") {
         if (
@@ -1680,7 +1680,7 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
           value.policyHash !== undefined ||
           value.ruleRef !== undefined
         ) {
-          throw new ProtocolError("protocol_error", "Approval history signing record is malformed.");
+          throw new ProtocolError("invalid_response", "Approval history signing record is malformed.");
         }
         return {
           seq: value.seq,
@@ -1703,7 +1703,7 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
         typeof value.ruleRef !== "string" ||
         !APPROVAL_HISTORY_RULE_REF_PATTERN.test(value.ruleRef)
       ) {
-        throw new ProtocolError("protocol_error", "Approval history signing policy metadata is malformed.");
+        throw new ProtocolError("invalid_response", "Approval history signing policy metadata is malformed.");
       }
       return {
         seq: value.seq,
@@ -1727,7 +1727,7 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
         value.terminalResult as SigningHistoryTerminalResult,
       )
     ) {
-      throw new ProtocolError("protocol_error", "Approval history signing record is malformed.");
+      throw new ProtocolError("invalid_response", "Approval history signing record is malformed.");
     }
     const terminalResult = value.terminalResult as SigningHistoryTerminalResult;
     if (value.authorization === "policy") {
@@ -1738,14 +1738,14 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
         typeof value.ruleRef !== "string" ||
         !APPROVAL_HISTORY_RULE_REF_PATTERN.test(value.ruleRef)
       ) {
-        throw new ProtocolError("protocol_error", "Approval history signing policy metadata is malformed.");
+        throw new ProtocolError("invalid_response", "Approval history signing policy metadata is malformed.");
       }
     } else if (
       !["signed", "user_rejected", "user_timed_out", "signing_failed"].includes(terminalResult) ||
       value.policyHash !== undefined ||
       value.ruleRef !== undefined
     ) {
-      throw new ProtocolError("protocol_error", "Approval history signing policy metadata is malformed.");
+      throw new ProtocolError("invalid_response", "Approval history signing policy metadata is malformed.");
     }
     return {
       seq: value.seq,
@@ -1766,7 +1766,7 @@ function sanitizeApprovalHistoryRecord(value: unknown): ApprovalHistoryRecord {
     };
   }
 
-  throw new ProtocolError("protocol_error", "Approval history record is malformed.");
+  throw new ProtocolError("invalid_response", "Approval history record is malformed.");
 }
 
 export function sanitizeDeviceStatusSnapshot(value: unknown): DeviceStatusSnapshot | null {
@@ -1787,7 +1787,7 @@ function isIdentificationCode(value: unknown): value is string {
 
 function validateRequestId(id: string): void {
   if (!isSafeRequestId(id)) {
-    throw new ProtocolError("invalid_id", "Invalid request id.");
+    throw new ProtocolError("invalid_request", "Invalid request id.");
   }
 }
 
@@ -1796,12 +1796,12 @@ function requireWireDeviceStatusShape(value: unknown, label: string): void {
     !isRecord(value) ||
     !hasOnlyObjectKeys(value, ["deviceId", "state", "firmwareName", "hardware", "firmwareVersion"])
   ) {
-    throw new ProtocolError("protocol_error", `${label} contains unsupported fields.`);
+    throw new ProtocolError("invalid_response", `${label} contains unsupported fields.`);
   }
 }
 
 function requireWireProvisioningStatusShape(value: unknown, label: string): void {
   if (!isRecord(value) || !hasOnlyObjectKeys(value, ["state"])) {
-    throw new ProtocolError("protocol_error", `${label} contains unsupported fields.`);
+    throw new ProtocolError("invalid_response", `${label} contains unsupported fields.`);
   }
 }

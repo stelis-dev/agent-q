@@ -172,7 +172,7 @@ export async function runSuiSignCli(
     }
     if (!isSuiTransactionSignatureEnvelopeBase64(result.signature)) {
       resultCode = await writeFailure(dependencies, {
-        code: "protocol_error",
+        code: "invalid_response",
         message: "The device returned an unexpected signature shape.",
       });
       return resultCode;
@@ -556,7 +556,7 @@ async function writeCleanupFailure(
   try {
     await dependencies.writeStderr(
       `${JSON.stringify({
-        code: "agent_q_error",
+        code: "unknown_error",
         message: signatureProduced
           ? "Agent-Q produced a signature but could not confirm session cleanup."
           : "Agent-Q could not confirm session cleanup.",

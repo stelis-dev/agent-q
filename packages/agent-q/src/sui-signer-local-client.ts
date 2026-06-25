@@ -91,7 +91,7 @@ class LocalServerSuiSignCliCore implements SuiSignCliCore {
 async function readBoundedResponseText(response: Response): Promise<string> {
   const reader = response.body?.getReader();
   if (reader === undefined) {
-    throw new AgentQError("protocol_error", "Agent-Q local server response was empty.", true);
+    throw new AgentQError("invalid_response", "Agent-Q local server response was empty.", true);
   }
 
   const decoder = new TextDecoder();
@@ -104,7 +104,7 @@ async function readBoundedResponseText(response: Response): Promise<string> {
     }
     raw += decoder.decode(value, { stream: true });
     if (Buffer.byteLength(raw, "utf8") > MAX_LOCAL_SERVER_RESPONSE_BYTES) {
-      throw new AgentQError("protocol_error", "Agent-Q local server response was too large.", true);
+      throw new AgentQError("invalid_response", "Agent-Q local server response was too large.", true);
     }
   }
 }
@@ -114,20 +114,20 @@ function parseLocalApiResponse(raw: string): LocalApiResponse {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new AgentQError("protocol_error", "Agent-Q local server response was not JSON.", true);
+    throw new AgentQError("invalid_response", "Agent-Q local server response was not JSON.", true);
   }
   if (!isRecord(parsed) || typeof parsed.ok !== "boolean") {
-    throw new AgentQError("protocol_error", "Agent-Q local server response was malformed.", true);
+    throw new AgentQError("invalid_response", "Agent-Q local server response was malformed.", true);
   }
   if (parsed.ok) {
     return { ok: true, result: parsed.result };
   }
   if (!isRecord(parsed.error)) {
-    throw new AgentQError("protocol_error", "Agent-Q local server error was malformed.", true);
+    throw new AgentQError("invalid_response", "Agent-Q local server error was malformed.", true);
   }
   const { code, message, retryable } = parsed.error;
   if (typeof code !== "string" || typeof message !== "string" || typeof retryable !== "boolean") {
-    throw new AgentQError("protocol_error", "Agent-Q local server error was malformed.", true);
+    throw new AgentQError("invalid_response", "Agent-Q local server error was malformed.", true);
   }
   return { ok: false, error: { code, message, retryable } };
 }

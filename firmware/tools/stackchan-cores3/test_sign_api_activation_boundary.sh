@@ -182,7 +182,7 @@ expect_absent "${USB_OPERATION_MANIFEST_SOURCE}" '"sign_transaction_user"|"sign_
 expect_present "${USB_SIGNING_RESULT_WRITER_SOURCE}" 'usb_response_prepare_success_result|usb_response_prepare_method_error' \
   "USB signing result writer must emit DeviceResponse envelopes through the shared response writer"
 expect_absent "${USB_SIGNING_RESULT_WRITER_SOURCE}" 'response\["type"\][[:space:]]*=[[:space:]]*"sign_result"' \
-  "USB signing response writer must not emit legacy signing envelopes"
+  "USB signing response writer must emit only DeviceResponse envelopes"
 expect_absent "${USB_SERVER}" 'response\["type"\][[:space:]]*=[[:space:]]*"sign_result"|write_sign_result_signed|write_sign_result_user_terminal|write_sign_result_policy_rejected|write_sign_result_signing_failed' \
   "USB request server must not own public signing response JSON"
 expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '"signing"' \

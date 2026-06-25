@@ -282,7 +282,7 @@ test("builds and exact-normalizes payload transfer requests", () => {
 
   assert.throws(
     () => normalizePayloadTransferRequest({ ...begin, extra: true }),
-    { code: "protocol_error" },
+    { code: "invalid_request" },
   );
   assert.throws(
     () => normalizePayloadTransferRequest({ ...begin, action: "replace" }),
@@ -408,7 +408,7 @@ test("parsePayloadTransferResponse accepts and exact-validates payload transfer 
         sizeBytes: "131072",
       },
     }, "req_upload_finish", sanitizePayloadTransferFinishResult),
-    { code: "protocol_error" },
+    { code: "invalid_response" },
   );
   const failure = parsePayloadTransferResponse({
     id: "req_payload_abort",

@@ -332,7 +332,7 @@ int main()
     const std::vector<uint8_t> valid_enum_blob = g_blob;
     g_blob[4] = 0;
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
-           "stored legacy approval history format marker fails closed");
+           "stored unsupported approval history format marker fails closed");
     g_blob = valid_enum_blob;
     expect(mutate_first_method_record_byte(16, 0xFF), "mutate stored confirmation enum");
     expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,

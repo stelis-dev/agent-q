@@ -2707,7 +2707,7 @@ test("browser provider rejects oversized Web Serial response lines", async () =>
     const provider = createAgentQSuiBrowserProvider();
     await assert.rejects(
       () => provider.connectDevice(),
-      { code: "protocol_error" },
+      { code: "invalid_response" },
     );
   } finally {
     if (previousNavigator === undefined) {

@@ -14,7 +14,7 @@ import {
 import {
   SIGN_RESULT_ERROR_MESSAGES,
 } from "./device-contract.js";
-import { PUBLIC_ERROR_MESSAGES } from "./public-error.js";
+import { PUBLIC_ERROR_MESSAGES, toPublicError } from "./public-error.js";
 import {
   APPROVAL_HISTORY_HIGHEST_ACTIONS,
   APPROVAL_HISTORY_POLICY_UPDATE_RESULTS,
@@ -74,9 +74,8 @@ import {
   isValidPurpose,
 } from "./safe-text.js";
 
-// Mirrors public-error.ts exactly: the code must be an allowlisted public code
-// and the message must be that code's canonical string. This keeps Agent-Q
-// egress schemas in lockstep with the runtime.
+// Mirrors the DeviceErrorCode projection exactly: code, message, and retryable
+// must all come from the same canonical error row.
 export const publicErrorShape = z
   .object({
     code: z.string(),
@@ -84,8 +83,13 @@ export const publicErrorShape = z
     retryable: z.boolean(),
   })
   .strict()
-  .refine((value) => PUBLIC_ERROR_MESSAGES[value.code] === value.message, {
-    message: "error must be a canonical public error (allowlisted code with its matching message)",
+  .refine((value) => {
+    const canonical = toPublicError(value.code);
+    return canonical.code === value.code &&
+      canonical.message === value.message &&
+      canonical.retryable === value.retryable;
+  }, {
+    message: "error must be a canonical public error row",
   });
 
 export const safeDeviceIdShape = z.string().regex(DEVICE_ID_PATTERN);
@@ -186,7 +190,7 @@ const unavailableReasonShape = z.enum([
   "port_in_use",
   "port_permission_denied",
   "handshake_failed",
-  "incompatible_version",
+  "unsupported_version",
   "transport_closed",
 ]);
 const scanDeviceFailureShape = z.object({

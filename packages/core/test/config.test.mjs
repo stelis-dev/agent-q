@@ -203,7 +203,7 @@ test("setDeviceMetadata rejects unknown device and oversized label", async () =>
           deviceId: sampleDevice.deviceId,
           label: "x".repeat(65),
         }),
-      (error) => error instanceof ConfigError && error.code === "invalid_label",
+      (error) => error instanceof ConfigError && error.code === "invalid_params",
     );
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -246,11 +246,11 @@ test("setActiveDevice routes by purpose and rejects reserved or invalid purpose"
 
     await assert.rejects(
       () => store.setActiveDevice(sampleDevice.deviceId, "default"),
-      (error) => error instanceof ConfigError && error.code === "reserved_purpose",
+      (error) => error instanceof ConfigError && error.code === "invalid_params",
     );
     await assert.rejects(
       () => store.setActiveDevice(sampleDevice.deviceId, "has space"),
-      (error) => error instanceof ConfigError && error.code === "invalid_purpose",
+      (error) => error instanceof ConfigError && error.code === "invalid_params",
     );
   } finally {
     await rm(dir, { recursive: true, force: true });

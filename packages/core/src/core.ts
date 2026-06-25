@@ -1196,14 +1196,14 @@ export class AgentQCore {
   }): Promise<{ deviceId: string; record: DeviceRecord }> {
     if (input.purpose !== undefined && RESERVED_PURPOSES.has(input.purpose)) {
       throw new AgentQError(
-        "reserved_purpose",
+        "invalid_params",
         `purpose '${input.purpose}' is reserved. Omit purpose to use the default device.`,
         false,
       );
     }
     if (input.purpose !== undefined && !isValidPurpose(input.purpose)) {
       throw new AgentQError(
-        "invalid_purpose",
+        "invalid_params",
         "purpose must be 1-32 characters of [A-Za-z0-9_.-].",
         false,
       );
@@ -1352,7 +1352,7 @@ function validateClientName(value: unknown): string {
   }
   if (!isClientName(value)) {
     throw new AgentQError(
-      "invalid_client_name",
+      "invalid_params",
       "clientName must be 1-64 printable ASCII characters.",
       false,
     );

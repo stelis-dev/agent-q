@@ -140,8 +140,7 @@ const BROWSER_FIRMWARE_SESSION_INVALIDATED = Symbol("agent-q.browserFirmwareSess
 const RECOVERABLE_PROVIDER_SIGN_DELIVERY_CODES = new Set([
   "timeout",
   "transport_closed",
-  "protocol_error",
-  "invalid_json",
+  "invalid_response",
 ]);
 
 export class AgentQSuiBrowserProviderError extends Error {
@@ -1506,7 +1505,7 @@ function deadlineForProviderRequest(request: Pick<BrowserDeviceRequest, "method"
     case "ack_result":
       return INTERNAL_USB_DEADLINE_MS;
   }
-  throw new AgentQSuiBrowserProviderError("internal_error", "Provider request deadline is not defined.");
+  throw new AgentQSuiBrowserProviderError("unknown_error", "Provider request deadline is not defined.");
 }
 
 function makeConnectRequestInput(clientName: string): BrowserDeviceRequest {

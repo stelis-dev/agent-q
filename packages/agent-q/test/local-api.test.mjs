@@ -480,7 +480,7 @@ test("Local API rejects unsupported fields instead of silently ignoring them", a
     assert.equal(response.status, 400);
     assert.equal(response.body.ok, false);
     assert.equal(response.body.error.code, "invalid_params");
-    assert.equal(response.body.error.message, "The provided method parameters are invalid.");
+    assert.equal(response.body.error.message, "Device request payload is invalid.");
   });
 });
 
@@ -644,7 +644,7 @@ test("Local API rejects an explicit invalid deviceId instead of using the defaul
     assert.equal(response.status, 400);
     assert.equal(response.body.ok, false);
     assert.equal(response.body.error.code, "invalid_device_id");
-    assert.equal(response.body.error.message, "The provided deviceId is invalid.");
+    assert.equal(response.body.error.message, "Device id is invalid.");
   });
 });
 
@@ -693,7 +693,7 @@ test("Local API projects raw core errors through the public error policy", async
       assert.equal(response.status, 503);
       assert.equal(response.body.ok, false);
       assert.equal(response.body.error.code, "port_not_found");
-      assert.equal(response.body.error.message, "The device is not connected.");
+      assert.equal(response.body.error.message, "Requested device port is not connected.");
       assert.doesNotMatch(JSON.stringify(response.body), /secret/);
     },
   );

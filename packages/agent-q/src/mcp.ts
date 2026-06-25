@@ -626,11 +626,11 @@ function sanitizeIdentifyDevicesResult(raw: unknown): object {
 }
 
 // get_device_status cached results carry a Firmware-supplied diagnostic code.
-// It is a code, not a message: normalize unknown codes to `agent_q_error` and
+// It is a code, not a message: normalize unknown codes to `unknown_error` and
 // attach no message (unlike an error object).
 function sanitizeGetDeviceStatusResult(raw: unknown): object {
   // Normalize the Firmware diagnostic code BEFORE schema validation so an unknown
-  // or raw code becomes agent_q_error rather than failing the now allowlist-
+  // or raw code becomes unknown_error rather than failing the now allowlist-
   // constrained firmwareErrorCode. It is a code, not a message: no message is
   // attached (unlike an error object).
   let candidate = raw;

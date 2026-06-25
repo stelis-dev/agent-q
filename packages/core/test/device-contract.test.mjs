@@ -199,7 +199,7 @@ test("builds public errors only from DeviceErrorCode outcomes", () => {
   assert.deepEqual(makeUnknownDeviceError(), makeDeviceError("unknown_error"));
 
   assert.throws(
-    () => makeDeviceFailureResponse({ code: "unsupported_payload_size" }),
+    () => makeDeviceFailureResponse({ code: "not_a_device_error" }),
     { code: "invalid_response" },
   );
   assert.throws(

@@ -726,7 +726,7 @@ test("selectDevice rejects reserved purpose 'default'", async () => {
     const core = new AgentQCore(store, defaultDriver());
     await assert.rejects(
       () => core.selectDevice({ deviceId: device.deviceId, purpose: "default" }),
-      { code: "reserved_purpose" },
+      { code: "invalid_params" },
     );
   });
 });
@@ -1002,7 +1002,7 @@ test("connectDevice rejected does not store a session", async () => {
             version: 1,
             type: "connect_result",
             status: "rejected",
-            error: { code: "rejected", message: "Connection rejected." },
+            error: { code: "user_rejected", message: "Connection rejected." },
           };
         },
       }),
@@ -1010,7 +1010,7 @@ test("connectDevice rejected does not store a session", async () => {
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
-    await assert.rejects(() => core.connectDevice({}), { code: "rejected" });
+    await assert.rejects(() => core.connectDevice({}), { code: "user_rejected" });
     const listed = await core.listDevices();
     assert.equal(listed.devices[0].runtimeSession, null);
     // P1-C: the device answered the status handshake, so lastSeenAt is refreshed
@@ -1031,7 +1031,7 @@ test("connectDevice refreshes lastSeenAt on rejection", async () => {
             version: 1,
             type: "connect_result",
             status: "rejected",
-            error: { code: "rejected", message: "Connection rejected." },
+            error: { code: "user_rejected", message: "Connection rejected." },
           };
         },
       }),
@@ -1042,7 +1042,7 @@ test("connectDevice refreshes lastSeenAt on rejection", async () => {
     await core.selectDevice({ deviceId: device.deviceId });
 
     now = new Date("2026-05-28T01:00:00.000Z");
-    await assert.rejects(() => core.connectDevice({}), { code: "rejected" });
+    await assert.rejects(() => core.connectDevice({}), { code: "user_rejected" });
 
     const afterSeen = (await store.load()).devices[0].lastSeenAt;
     assert.notEqual(afterSeen, firstSeen);
@@ -1067,7 +1067,7 @@ test("getDeviceStatus rejects reserved purpose 'default'", async () => {
   await withStore(async (store) => {
     const core = new AgentQCore(store, defaultDriver());
     await core.scanDevices();
-    await assert.rejects(() => core.getDeviceStatus({ purpose: "default" }), { code: "reserved_purpose" });
+    await assert.rejects(() => core.getDeviceStatus({ purpose: "default" }), { code: "invalid_params" });
   });
 });
 
@@ -1891,13 +1891,13 @@ test("signTransaction uses the internal request deadline by default", async () =
   });
 });
 
-test("signTransaction propagates history_error without clearing the session", async () => {
+test("signTransaction propagates history_unavailable without clearing the session", async () => {
   await withStore(async (store) => {
     const core = new AgentQCore(
       store,
       defaultDriver({
         async signTransaction() {
-          throw new AgentQError("history_error", "Could not record policy signing approval.", false);
+          throw new AgentQError("history_unavailable", "Could not record policy signing approval.", false);
         },
       }),
     );
@@ -1912,7 +1912,7 @@ test("signTransaction propagates history_error without clearing the session", as
         network: "devnet",
         txBytes: CANONICAL_TX_BYTES_BASE64,
       }),
-      { code: "history_error" },
+      { code: "history_unavailable" },
     );
 
     const listed = await core.listDevices();

@@ -151,7 +151,7 @@ test("startup --request-connect keeps the server path alive when connect is reje
       },
       async connectDevice(input) {
         calls.push(["connect", input]);
-        throw new AgentQError("rejected", "raw rejection text must not leak", false);
+        throw new AgentQError("user_rejected", "raw rejection text must not leak", false);
       },
     },
     {},
@@ -159,7 +159,7 @@ test("startup --request-connect keeps the server path alive when connect is reje
   );
 
   assert.deepEqual(calls.map((call) => call[0]), ["scan", "select", "connect"]);
-  assert.match(diagnostics.join("\n"), /rejected/);
+  assert.match(diagnostics.join("\n"), /user_rejected/);
   assert.doesNotMatch(diagnostics.join("\n"), /raw rejection text/);
 });
 

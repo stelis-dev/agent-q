@@ -10,7 +10,7 @@ export class AgentQError extends Error {
   }
 }
 
-export function toAgentQError(error: unknown, fallbackCode = "agent_q_error"): AgentQError {
+export function toAgentQError(error: unknown, fallbackCode = "unknown_error"): AgentQError {
   if (error instanceof AgentQError) {
     return error;
   }

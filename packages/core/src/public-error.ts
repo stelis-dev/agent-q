@@ -1,6 +1,12 @@
-// Single source of truth (SoT) for Agent-Q's public error policy: the canonical,
-// client-safe { code, message, retryable } shown at any untrusted output boundary
-// such as MCP and the Admin HTTP API.
+import {
+  DEVICE_ERROR_ROWS,
+  deviceErrorRow,
+  isDeviceErrorCode,
+  type DeviceErrorCode,
+} from "./device-contract.js";
+
+// Projection of Agent-Q's device-contract error table for untrusted output
+// boundaries such as MCP and the Admin HTTP API.
 //
 // Contract: Agent-Q core (and the modules it calls) may throw a raw AgentQError
 // whose message carries OS, serial, or Firmware text that Agent-Q did not author.
@@ -8,81 +14,31 @@
 // boundary. Therefore every output adapter MUST project errors through this
 // module (toPublicError / normalizeErrorCode) before returning OR logging them,
 // so the raw message is dropped and only an allowlisted code maps to a fixed
-// message (any unknown code collapses to agent_q_error). This module imports
-// nothing else from Agent-Q, so every boundary can depend on it without pulling
-// in MCP.
+// message (any unknown code collapses to unknown_error).
 
-export const GENERIC_ERROR_CODE = "agent_q_error";
+export const GENERIC_ERROR_CODE = "unknown_error" satisfies DeviceErrorCode;
 
-// Canonical, client-safe messages keyed by error code. The raw error message can
-// carry OS serial, Firmware, or arbitrary Error text that is not authored by
-// Agent-Q, so it is never forwarded to an untrusted consumer. Any code outside
-// this allowlist is reported as the generic `agent_q_error`.
-export const PUBLIC_ERROR_MESSAGES: Record<string, string> = {
-  no_active_device: "No active device is configured.",
-  device_not_found: "The requested device is not known to Agent-Q.",
-  invalid_device_id: "The provided deviceId is invalid.",
-  invalid_device: "The device reported an unsafe identity.",
-  invalid_metadata: "No metadata field was provided to update.",
-  invalid_label: "The provided label is invalid.",
-  reserved_purpose: "That purpose name is reserved.",
-  invalid_purpose: "The provided purpose is invalid.",
-  invalid_client_name: "The provided client name is invalid.",
-  invalid_method: "The requested method is invalid.",
-  invalid_params: "The provided method parameters are invalid.",
-  invalid_id: "The request id is invalid.",
-  request_id_conflict: "The request id is already bound to a different request.",
-  invalid_json: "The device sent a malformed response.",
-  invalid_code: "The identification code is invalid.",
-  invalid_session: "The session is no longer valid.",
-  invalid_state: "The device is not in a valid state for this request.",
-  policy_error: "The device active policy is unavailable.",
-  history_error: "The device approval history is unavailable.",
-  unsupported_version: "The device firmware protocol version is not supported.",
-  unsupported_type: "The device does not support this request.",
-  unsupported_chain: "The requested chain is not supported.",
-  unsupported_method: "The requested method is not supported.",
-  unsupported_transaction: "Transaction shape is not supported.",
-  unsupported_payload_size: "The signing payload exceeds the current device adapter capacity.",
-  malformed_transaction: "Transaction bytes are malformed.",
-  incompatible_version: "The device firmware protocol version is not supported.",
-  protocol_error: "The device sent an unexpected response.",
-  timeout: "The device did not respond in time.",
-  busy: "The device is busy with another request.",
-  rejected: "The request was rejected on the device.",
-  ui_error: "The device could not display the required approval UI.",
-  auth_unavailable: "The device local authentication verifier is unavailable.",
-  rng_error: "The device secure random generator is unavailable.",
-  account_error: "The device account is unavailable or does not match the request.",
-  handshake_failed: "The device did not respond to a status handshake.",
-  port_not_found: "The device is not connected.",
-  port_in_use: "The device port is in use by another process.",
-  port_permission_denied: "Agent-Q does not have permission to access the device port.",
-  transport_closed: "The device connection was closed.",
-  local_server_unavailable: "Start the local Agent-Q server with `agent-q` before using this command.",
-  identification_code_exhausted: "Could not allocate a unique identification code.",
-  internal_output_error: "Agent-Q produced an unexpected internal result.",
-  agent_q_error: "Agent-Q request failed.",
-};
+export const PUBLIC_ERROR_MESSAGES = Object.fromEntries(
+  DEVICE_ERROR_ROWS.map((row) => [row.code, row.message]),
+) as Readonly<Record<DeviceErrorCode, string>>;
 
 export interface PublicError {
-  code: string;
+  code: DeviceErrorCode;
   message: string;
   retryable: boolean;
 }
 
-// Keep allowlisted codes, collapse everything else to `agent_q_error`. Used for
+// Keep allowlisted codes, collapse everything else to `unknown_error`. Used for
 // both error objects and diagnostic codes (e.g. firmwareErrorCode), so a device-
 // or OS-supplied code string can never reach a consumer verbatim.
-export function normalizeErrorCode(code: string): string {
-  return Object.prototype.hasOwnProperty.call(PUBLIC_ERROR_MESSAGES, code)
-    ? code
-    : GENERIC_ERROR_CODE;
+export function normalizeErrorCode(code: string): DeviceErrorCode {
+  return isDeviceErrorCode(code) ? code : GENERIC_ERROR_CODE;
 }
 
 // Canonical { code, message, retryable } from a raw code. Shared by every output
-// boundary so they all follow the same allowlist and never echo a raw message.
-export function toPublicError(code: string, retryable: boolean): PublicError {
+// boundary so they all follow the same table and never echo a raw message.
+export function toPublicError(code: string, _retryable?: boolean): PublicError {
   const normalized = normalizeErrorCode(code);
-  return { code: normalized, message: PUBLIC_ERROR_MESSAGES[normalized], retryable };
+  const row = deviceErrorRow(normalized);
+  return { code: row.code, message: row.message, retryable: row.retryable };
 }

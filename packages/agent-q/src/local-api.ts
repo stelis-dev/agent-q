@@ -296,7 +296,7 @@ async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new AgentQError("invalid_json", "Local API request body is not valid JSON.", false);
+    throw new AgentQError("invalid_request", "Local API request body is not valid JSON.", false);
   }
   if (!isRecord(parsed) || Array.isArray(parsed)) {
     throw new AgentQError("invalid_params", "Local API request body must be a JSON object.", false);
@@ -314,7 +314,7 @@ function deviceScopedInput(body: RequestBody): { deviceId?: string; purpose?: st
   }
   if (Object.prototype.hasOwnProperty.call(body, "purpose")) {
     if (typeof body.purpose !== "string" || !isValidPurpose(body.purpose)) {
-      throw new AgentQError("invalid_purpose", "Local API request purpose is invalid.", false);
+      throw new AgentQError("invalid_params", "Local API request purpose is invalid.", false);
     }
     input.purpose = body.purpose;
   }
@@ -819,7 +819,7 @@ function parsePolicyEditor() {
     return JSON.parse(el.policyEditor.value);
   } catch (error) {
     throw {
-      code: "invalid_json",
+      code: "invalid_request",
       message: error instanceof Error ? error.message : "Policy editor JSON is invalid.",
       retryable: false,
     };

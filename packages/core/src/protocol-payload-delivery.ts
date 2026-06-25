@@ -195,6 +195,7 @@ export function normalizePayloadTransferRequest(request: unknown): PayloadTransf
         value,
         ["id", "version", "type", "action", "sessionId", "totalBytes", "payloadDigest"],
         "payload_transfer begin request",
+        "invalid_request",
       );
       return makePayloadTransferBeginRequest(
         value.sessionId as string,
@@ -209,6 +210,7 @@ export function normalizePayloadTransferRequest(request: unknown): PayloadTransf
         value,
         ["id", "version", "type", "action", "sessionId", "transferId", "offsetBytes", "chunk"],
         "payload_transfer chunk request",
+        "invalid_request",
       );
       return makePayloadTransferChunkRequest(
         value.sessionId as string,
@@ -222,6 +224,7 @@ export function normalizePayloadTransferRequest(request: unknown): PayloadTransf
         value,
         ["id", "version", "type", "action", "sessionId", "transferId"],
         "payload_transfer finish request",
+        "invalid_request",
       );
       return makePayloadTransferFinishRequest(
         value.sessionId as string,
@@ -233,6 +236,7 @@ export function normalizePayloadTransferRequest(request: unknown): PayloadTransf
         value,
         ["id", "version", "type", "action", "sessionId", "transferId"],
         "payload_transfer abort request",
+        "invalid_request",
       );
       return makePayloadTransferAbortRequest(
         value.sessionId as string,
@@ -246,7 +250,7 @@ export function normalizePayloadTransferRequest(request: unknown): PayloadTransf
 
 export function sanitizePayloadTransferBeginResult(value: unknown): PayloadTransferBeginResult {
   const result = asRecord(value, "payload_transfer begin result");
-  requireOnlyKeys(result, ["transferId", "receivedBytes", "chunkMaxBytes"], "payload_transfer begin result");
+  requireOnlyKeys(result, ["transferId", "receivedBytes", "chunkMaxBytes"], "payload_transfer begin result", "invalid_response");
   return {
     transferId: validateTransferId(result.transferId, "invalid_response"),
     receivedBytes: validatePayloadSizeString(result.receivedBytes, "payload_transfer begin receivedBytes", "invalid_response"),
@@ -256,7 +260,7 @@ export function sanitizePayloadTransferBeginResult(value: unknown): PayloadTrans
 
 export function sanitizePayloadTransferChunkResult(value: unknown): PayloadTransferChunkResult {
   const result = asRecord(value, "payload_transfer chunk result");
-  requireOnlyKeys(result, ["receivedBytes"], "payload_transfer chunk result");
+  requireOnlyKeys(result, ["receivedBytes"], "payload_transfer chunk result", "invalid_response");
   return {
     receivedBytes: validatePayloadSizeString(result.receivedBytes, "payload_transfer chunk receivedBytes", "invalid_response"),
   };
@@ -264,7 +268,7 @@ export function sanitizePayloadTransferChunkResult(value: unknown): PayloadTrans
 
 export function sanitizePayloadTransferFinishResult(value: unknown): PayloadTransferFinishResult {
   const result = asRecord(value, "payload_transfer finish result");
-  requireOnlyKeys(result, ["payloadRef"], "payload_transfer finish result");
+  requireOnlyKeys(result, ["payloadRef"], "payload_transfer finish result", "invalid_response");
   return {
     payloadRef: validatePayloadRef(result.payloadRef, "invalid_response"),
   };
@@ -272,7 +276,7 @@ export function sanitizePayloadTransferFinishResult(value: unknown): PayloadTran
 
 export function sanitizePayloadTransferAbortResult(value: unknown): PayloadTransferAbortResult {
   const result = asRecord(value, "payload_transfer abort result");
-  requireOnlyKeys(result, [], "payload_transfer abort result");
+  requireOnlyKeys(result, [], "payload_transfer abort result", "invalid_response");
   return {};
 }
 

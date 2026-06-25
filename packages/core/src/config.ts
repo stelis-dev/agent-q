@@ -246,11 +246,11 @@ export class ConfigStore {
       throw new ConfigError("invalid_device_id", "deviceId is not a valid device identifier.");
     }
     if (!Object.prototype.hasOwnProperty.call(input, "label")) {
-      throw new ConfigError("invalid_metadata", "set_device_metadata requires at least one metadata field.");
+      throw new ConfigError("invalid_params", "set_device_metadata requires at least one metadata field.");
     }
     if (!isValidLabel(input.label)) {
       throw new ConfigError(
-        "invalid_label",
+        "invalid_params",
         `label must be null or a 1-${MAX_LABEL_LENGTH} character string.`,
       );
     }
@@ -277,13 +277,13 @@ export class ConfigStore {
     if (purpose !== undefined) {
       if (RESERVED_PURPOSES.has(purpose)) {
         throw new ConfigError(
-          "reserved_purpose",
+          "invalid_params",
           `purpose '${purpose}' is reserved. Omit purpose to set the default device.`,
         );
       }
       if (!isValidPurpose(purpose)) {
         throw new ConfigError(
-          "invalid_purpose",
+          "invalid_params",
           "purpose must be 1-32 characters of [A-Za-z0-9_.-].",
         );
       }
@@ -307,13 +307,13 @@ export class ConfigStore {
   async getActiveDevice(purpose?: string): Promise<DeviceRecord | undefined> {
     if (purpose !== undefined && RESERVED_PURPOSES.has(purpose)) {
       throw new ConfigError(
-        "reserved_purpose",
+        "invalid_params",
         `purpose '${purpose}' is reserved. Omit purpose to read the default device.`,
       );
     }
     if (purpose !== undefined && !isValidPurpose(purpose)) {
       throw new ConfigError(
-        "invalid_purpose",
+        "invalid_params",
         "purpose must be 1-32 characters of [A-Za-z0-9_.-].",
       );
     }

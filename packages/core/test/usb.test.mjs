@@ -182,7 +182,7 @@ test("rejects oversized protocol response lines before parsing", () => {
   assert.throws(
     () => consumeDeviceResponseLineChunk("", `${"x".repeat(MAX_PROTOCOL_RESPONSE_LINE_BYTES + 1)}\n`),
     {
-      code: "protocol_error",
+      code: "invalid_response",
     },
   );
 });

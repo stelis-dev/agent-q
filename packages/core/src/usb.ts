@@ -70,7 +70,7 @@ export type UnavailableReason =
   | "port_in_use"
   | "port_permission_denied"
   | "handshake_failed"
-  | "incompatible_version"
+  | "unsupported_version"
   | "transport_closed";
 
 export interface PortInfo {
@@ -161,8 +161,7 @@ let serialPortFactory: SerialPortFactory = defaultSerialPortFactory;
 const RECOVERABLE_SIGN_DELIVERY_CODES = new Set([
   "timeout",
   "transport_closed",
-  "protocol_error",
-  "invalid_json",
+  "invalid_response",
   "handshake_failed",
 ]);
 
@@ -382,10 +381,10 @@ export function validateInternalDeadlineMs(value: unknown): number {
     return INTERNAL_USB_DEADLINE_MS;
   }
   if (!Number.isInteger(value) || typeof value !== "number" || value <= 0) {
-    throw new AgentQError("agent_q_error", "Internal USB deadline is invalid.", false);
+    throw new AgentQError("unknown_error", "Internal USB deadline is invalid.", false);
   }
   if (value > INTERNAL_USB_DEADLINE_MS) {
-    throw new AgentQError("agent_q_error", "Internal USB deadline is invalid.", false);
+    throw new AgentQError("unknown_error", "Internal USB deadline is invalid.", false);
   }
   return value;
 }
@@ -804,16 +803,16 @@ export function mapErrorToUnavailableReason(error: unknown): UnavailableReason {
     if (isUnavailableReason(error.code)) {
       return error.code;
     }
-    if (error.code === "unsupported_version" || error.code === "incompatible_version") {
-      return "incompatible_version";
+    if (error.code === "unsupported_version") {
+      return "unsupported_version";
     }
     if (error.code === "timeout") {
       return "timeout";
     }
   }
   if (error instanceof ProtocolError) {
-    if (error.code === "unsupported_version" || error.code === "incompatible_version") {
-      return "incompatible_version";
+    if (error.code === "unsupported_version") {
+      return "unsupported_version";
     }
     return "handshake_failed";
   }
@@ -847,14 +846,14 @@ async function requestDeviceOverSerial<TResponse>(
 
 function validateIdentificationCodeInput(code: string): string {
   if (!IDENTIFICATION_CODE_PATTERN.test(code)) {
-    throw new ProtocolError("invalid_code", "Invalid identification code.");
+    throw new ProtocolError("invalid_params", "Invalid identification code.");
   }
   return code;
 }
 
 function validateClientNameInput(clientName: string): string {
   if (!isClientName(clientName)) {
-    throw new ProtocolError("invalid_client_name", "clientName must be 1-64 printable ASCII characters.");
+    throw new ProtocolError("invalid_params", "clientName must be 1-64 printable ASCII characters.");
   }
   return clientName;
 }
@@ -1599,7 +1598,7 @@ function isUnavailableReason(value: string): value is UnavailableReason {
     value === "port_in_use" ||
     value === "port_permission_denied" ||
     value === "handshake_failed" ||
-    value === "incompatible_version" ||
+    value === "unsupported_version" ||
     value === "transport_closed"
   );
 }

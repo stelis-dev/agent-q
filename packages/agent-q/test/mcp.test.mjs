@@ -366,7 +366,7 @@ test("exported output schema rejects raw error text and unknown firmware codes",
     connected: false,
     error: {
       code: "handshake_failed",
-      message: "The device did not respond to a status handshake.",
+      message: "Device status or identification handshake failed.",
       retryable: true,
     },
   };
@@ -819,7 +819,7 @@ test("get_capabilities dispatch returns Firmware-authored signing capability", a
   }, core);
 });
 
-test("get_capabilities MCP output schema rejects legacy split signing capability", () => {
+test("get_capabilities MCP output schema rejects unsupported signing fields", () => {
   const parsed = hostToolDefinitions.getCapabilities.outputSchema.safeParse({
     source: "live",
     deviceId: "device-1",
@@ -836,8 +836,9 @@ test("get_capabilities MCP output schema rejects legacy split signing capability
       },
     ],
     signing: {
-      user: [{ chain: "sui", method: "sign_transaction" }],
-      policy: [{ chain: "sui", method: "sign_transaction" }],
+      authorization: "policy",
+      methods: [{ chain: "sui", method: "sign_transaction" }],
+      extra: [{ chain: "sui", method: "sign_transaction" }],
     },
   });
 
@@ -1626,12 +1627,12 @@ test("error path canonicalizes message and code; raw text never reaches the clie
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.error.code, "handshake_failed");
     assert.equal(result.structuredContent.error.retryable, true);
-    assert.equal(result.structuredContent.error.message, "The device did not respond to a status handshake.");
+    assert.equal(result.structuredContent.error.message, "Device status or identification handshake failed.");
     assertNoLeakMarkers(result, "connect_device(error)");
   }, throwingCore);
 });
 
-test("unknown error codes collapse to a generic agent_q_error", async () => {
+test("unknown error codes collapse to generic unknown_error", async () => {
   const throwingCore = {
     ...noOpCore,
     async connectDevice() {
@@ -1641,7 +1642,7 @@ test("unknown error codes collapse to a generic agent_q_error", async () => {
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "connect_device", arguments: {} });
     assert.equal(result.isError, true);
-    assert.equal(result.structuredContent.error.code, "agent_q_error");
+    assert.equal(result.structuredContent.error.code, "unknown_error");
     assert.equal(result.structuredContent.error.message, "Agent-Q request failed.");
     assertNoLeakMarkers(result, "connect_device(unknown-code)");
   }, throwingCore);
@@ -1904,13 +1905,13 @@ test("identify_devices nested per-device errors are canonicalized (no raw messag
     const failure = result.structuredContent.devices[0];
     // Known code preserved, message replaced with the canonical public string.
     assert.equal(failure.error.code, "handshake_failed");
-    assert.equal(failure.error.message, "The device did not respond to a status handshake.");
+    assert.equal(failure.error.message, "Device status or identification handshake failed.");
     assert.equal(failure.error.retryable, true);
     assertNoLeakMarkers(result, "identify_devices(nested error)");
   }, core);
 });
 
-test("identify_devices unknown nested error code collapses to agent_q_error", async () => {
+test("identify_devices unknown nested error code collapses to unknown_error", async () => {
   const core = {
     ...noOpCore,
     async identifyDevices() {
@@ -1920,7 +1921,7 @@ test("identify_devices unknown nested error code collapses to agent_q_error", as
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "identify_devices", arguments: {} });
     const failure = result.structuredContent.devices[0];
-    assert.equal(failure.error.code, "agent_q_error");
+    assert.equal(failure.error.code, "unknown_error");
     assert.equal(failure.error.message, "Agent-Q request failed.");
     assertNoLeakMarkers(result, "identify_devices(unknown nested code)");
   }, core);
@@ -1958,7 +1959,7 @@ test("get_device_status cached firmwareErrorCode: unknown code is normalized, no
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "get_device_status", arguments: {} });
     assert.equal(result.structuredContent.source, "cached");
-    assert.equal(result.structuredContent.firmwareErrorCode, "agent_q_error");
+    assert.equal(result.structuredContent.firmwareErrorCode, "unknown_error");
     // It is a code, not an error object: no message field is fabricated for it.
     assert.equal("message" in result.structuredContent, false);
     assertNoLeakMarkers(result, "get_device_status(unknown firmwareErrorCode)");
