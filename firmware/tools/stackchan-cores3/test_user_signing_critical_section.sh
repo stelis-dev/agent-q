@@ -59,6 +59,9 @@ int failures = 0;
 int g_digest_calls = 0;
 int g_signing_calls = 0;
 bool g_signing_status_ok = true;
+size_t g_signature_size_override = 0;
+bool g_response_ready = true;
+int g_response_ready_calls = 0;
 std::vector<uint8_t> g_last_signed_payload;
 
 agent_q::SuiAccountDerivationResult g_account_result =
@@ -270,6 +273,9 @@ void reset_state()
     g_digest_calls = 0;
     g_signing_calls = 0;
     g_signing_status_ok = true;
+    g_signature_size_override = 0;
+    g_response_ready = true;
+    g_response_ready_calls = 0;
     g_last_signed_payload.clear();
     g_account_result = agent_q::SuiAccountDerivationResult::ok;
     snprintf(
@@ -397,6 +403,21 @@ bool output_has_no_message_bytes(
     return true;
 }
 
+bool response_ready(
+    const agent_q::AgentQUserSigningFlowCoreSnapshot& snapshot,
+    const agent_q::AgentQUserSigningOutput& output,
+    void*)
+{
+    ++g_response_ready_calls;
+    if (!snapshot.active ||
+        snapshot.stage != agent_q::AgentQUserSigningStage::signing_critical_section ||
+        output.signing_route == agent_q::AgentQSigningRoute::unsupported ||
+        output.signature_size == 0) {
+        return false;
+    }
+    return g_response_ready;
+}
+
 }  // namespace
 
 namespace agent_q {
@@ -498,6 +519,9 @@ SuiSigningStatus sign_sui_transaction_from_active_identity(
         memset(signature_out, 0xA5, kSuiEd25519SignatureBytes);
         signature_out[0] = kAgentQSuiSignatureSchemeFlagEd25519;
         *signature_size_out = kSuiEd25519SignatureBytes;
+        if (g_signature_size_override != 0) {
+            *signature_size_out = g_signature_size_override;
+        }
     }
     return SuiSigningStatus::ok;
 }
@@ -533,6 +557,9 @@ SuiSigningStatus sign_sui_personal_message_from_active_identity(
     }
     if (signature_size_out != nullptr) {
         *signature_size_out = kSuiEd25519SignatureBytes;
+        if (g_signature_size_override != 0) {
+            *signature_size_out = g_signature_size_override;
+        }
     }
     return SuiSigningStatus::ok;
 }
@@ -570,7 +597,7 @@ int main()
     reset_state();
     poison_output(output);
     aq::AgentQUserSigningHandoffReport report =
-        aq::user_signing_execute_critical_section(&output);
+        aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
     expect(report.result == aq::AgentQUserSigningHandoffResult::inactive,
            "inactive flow cannot sign");
     expect(g_signing_calls == 0, "inactive flow does not call signing service");
@@ -578,7 +605,7 @@ int main()
 
     reset_state();
     enter_critical_section("req_null_output");
-    report = aq::user_signing_execute_critical_section(nullptr);
+    report = aq::user_signing_execute_critical_section(nullptr, response_ready, nullptr);
     expect(report.result == aq::AgentQUserSigningHandoffResult::invalid_output,
            "null output is rejected");
     expect(g_signing_calls == 0, "null output does not call signing service");
@@ -596,7 +623,7 @@ int main()
     reset_state();
     begin_reviewing_request("req_wrong_stage");
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
     expect(report.result == aq::AgentQUserSigningHandoffResult::wrong_stage,
            "reviewing flow cannot sign");
     expect(g_signing_calls == 0, "wrong stage does not call signing service");
@@ -609,7 +636,7 @@ int main()
     enter_critical_section("req_success");
     const std::vector<uint8_t> expected_payload = valid_payload();
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
     expect(report.result == aq::AgentQUserSigningHandoffResult::ok,
            "critical section signs successfully");
     expect(report.flow_result == aq::AgentQUserSigningTransitionResult::ok,
@@ -617,6 +644,7 @@ int main()
     expect(report.signing_status == aq::SuiSigningStatus::ok,
            "signing service result is reported");
     expect(g_signing_calls == 1, "signing service called once");
+    expect(g_response_ready_calls == 1, "response readiness checked before signed terminal");
     expect(g_last_signed_payload == expected_payload,
            "signing service receives exact request payload");
     expect(output_matches_stub_signature(output),
@@ -640,7 +668,7 @@ int main()
     enter_personal_message_critical_section("req_personal_success");
     const std::vector<uint8_t> expected_message = valid_message();
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
     expect(report.result == aq::AgentQUserSigningHandoffResult::ok,
            "personal-message critical section signs successfully");
     expect(report.flow_result == aq::AgentQUserSigningTransitionResult::ok,
@@ -648,6 +676,8 @@ int main()
     expect(report.signing_status == aq::SuiSigningStatus::ok,
            "personal-message signing service result is reported");
     expect(g_signing_calls == 1, "personal-message signing service called once");
+    expect(g_response_ready_calls == 1,
+           "personal-message response readiness checked before signed terminal");
     expect(g_last_signed_payload == expected_message,
            "personal-message signing service receives exact message bytes");
     expect(output_matches_stub_signature(output),
@@ -664,10 +694,30 @@ int main()
            "personal-message signing records signed terminal");
 
     reset_state();
+    enter_critical_section("req_response_unavailable");
+    g_response_ready = false;
+    poison_output(output);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
+    expect(report.result == aq::AgentQUserSigningHandoffResult::response_unavailable,
+           "response readiness failure is reported");
+    expect(report.flow_result == aq::AgentQUserSigningTransitionResult::ok,
+           "response readiness failure terminalizes flow as failed");
+    expect(report.signing_status == aq::SuiSigningStatus::ok,
+           "response readiness failure preserves signing service result");
+    expect(g_signing_calls == 1, "response readiness failure signs once");
+    expect(g_response_ready_calls == 1,
+           "response readiness failure checks output once");
+    snapshot = aq::user_signing_flow_snapshot();
+    expect(snapshot.stage == aq::AgentQUserSigningStage::terminal &&
+               snapshot.terminal_result == aq::AgentQUserSigningTerminalResult::signing_failed,
+           "response readiness failure does not record signed terminal");
+    expect(output_is_wiped(output), "response readiness failure wipes output");
+
+    reset_state();
     enter_critical_section("req_failure");
     g_signing_status_ok = false;
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
     expect(report.result == aq::AgentQUserSigningHandoffResult::signing_failed,
            "signing service failure is reported");
     expect(report.flow_result == aq::AgentQUserSigningTransitionResult::ok,
@@ -682,6 +732,24 @@ int main()
     expect(output_is_wiped(output), "signing service failure wipes output");
 
     reset_state();
+    enter_critical_section("req_signature_too_large");
+    g_signature_size_override = aq::kSuiSignatureEnvelopeMaxBytes + 1;
+    poison_output(output);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
+    expect(report.result == aq::AgentQUserSigningHandoffResult::signing_failed,
+           "oversized signature output is reported");
+    expect(report.flow_result == aq::AgentQUserSigningTransitionResult::ok,
+           "oversized signature output terminalizes as failure");
+    expect(report.signing_status == aq::SuiSigningStatus::signature_output_too_small,
+           "oversized signature cause is reported");
+    expect(g_signing_calls == 1, "oversized signature path calls signing service once");
+    snapshot = aq::user_signing_flow_snapshot();
+    expect(snapshot.stage == aq::AgentQUserSigningStage::terminal &&
+               snapshot.terminal_result == aq::AgentQUserSigningTerminalResult::signing_failed,
+           "oversized signature does not record signed terminal");
+    expect(output_is_wiped(output), "oversized signature wipes output");
+
+    reset_state();
     enter_critical_section("req_missing_payload");
     uint8_t consumed_payload[agent_q::kAgentQSuiSignTransactionTxBytesMaxBytes] = {};
     size_t consumed_size = 0;
@@ -691,7 +759,7 @@ int main()
                &consumed_size) == aq::AgentQUserSigningTransitionResult::ok,
            "test setup consumes payload");
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
     expect(report.result == aq::AgentQUserSigningHandoffResult::payload_unavailable,
            "missing critical payload is reported");
     expect(g_signing_calls == 0, "missing payload does not call signing service");
@@ -705,7 +773,7 @@ int main()
     enter_critical_section("req_session_loss");
     aq::session_clear();
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
     expect(report.result == aq::AgentQUserSigningHandoffResult::ok,
            "critical signing is not downgraded by session loss");
     expect(output_matches_stub_signature(output),
@@ -719,6 +787,11 @@ int main()
                    aq::AgentQUserSigningHandoffResult::payload_unavailable),
                "payload_unavailable") == 0,
            "result names include payload_unavailable");
+    expect(strcmp(
+               aq::user_signing_handoff_result_name(
+                   aq::AgentQUserSigningHandoffResult::response_unavailable),
+               "response_unavailable") == 0,
+           "result names include response_unavailable");
     expect(strcmp(
                aq::user_signing_handoff_result_name(
                    aq::AgentQUserSigningHandoffResult::invalid_output),

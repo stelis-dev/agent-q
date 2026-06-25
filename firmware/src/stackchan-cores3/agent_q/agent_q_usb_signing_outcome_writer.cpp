@@ -29,6 +29,12 @@ void clear_heap_buffer(char* buffer, size_t size)
     }
 }
 
+bool signing_response_fits(const JsonDocument& response)
+{
+    const size_t measured_len = measureJson(response);
+    return measured_len != 0 && measured_len < kSigningResponseMaxSize;
+}
+
 const char* user_terminal_device_error_code(AgentQUserSigningTerminalResult result)
 {
     switch (result) {
@@ -56,14 +62,20 @@ bool buffer_signing_response_for_retry(
     if (session_id == nullptr || session_id[0] == '\0') {
         return false;
     }
-    char* serialized_response = static_cast<char*>(malloc(kSigningResponseMaxSize));
+    const size_t measured_len = measureJson(response);
+    if (!signing_response_fits(response)) {
+        return false;
+    }
+    const size_t serialized_capacity = measured_len + 1;
+    char* serialized_response = static_cast<char*>(malloc(serialized_capacity));
     if (serialized_response == nullptr) {
         return false;
     }
+    memset(serialized_response, 0, serialized_capacity);
     const size_t serialized_len =
-        serializeJson(response, serialized_response, kSigningResponseMaxSize);
+        serializeJson(response, serialized_response, serialized_capacity);
     bool stored = false;
-    if (serialized_len != 0 && serialized_len < kSigningResponseMaxSize) {
+    if (serialized_len == measured_len) {
         const SigningResponseStoreOutcome outcome = signing_response_store(
             session_id,
             request_id,
@@ -72,10 +84,9 @@ bool buffer_signing_response_for_retry(
             serialized_response,
             serialized_len);
         stored = outcome == SigningResponseStoreOutcome::stored ||
-                 outcome == SigningResponseStoreOutcome::duplicate ||
-                 outcome == SigningResponseStoreOutcome::conflict;
+                 outcome == SigningResponseStoreOutcome::duplicate;
     }
-    clear_heap_buffer(serialized_response, kSigningResponseMaxSize);
+    clear_heap_buffer(serialized_response, serialized_capacity);
     free(serialized_response);
     return stored;
 }
@@ -86,14 +97,15 @@ bool buffer_and_write_response(
     const uint8_t* request_identity,
     JsonDocument& response)
 {
-    buffer_signing_response_for_retry(session_id, request_id, request_identity, response);
+    if (!buffer_signing_response_for_retry(session_id, request_id, request_identity, response)) {
+        return false;
+    }
     return usb_response_write_json(response);
 }
 
-bool write_signed_signing_response(
+bool prepare_signed_signing_response(
+    JsonDocument& response,
     const char* id,
-    const char* session_id,
-    const uint8_t* request_identity,
     const char* authorization,
     AgentQSigningRoute signing_route,
     const uint8_t* signature,
@@ -169,8 +181,34 @@ bool write_signed_signing_response(
         result["messageBytes"] = message_base64;
     }
 
-    JsonDocument response;
+    response.clear();
     if (!usb_response_prepare_success_result(response, id, method, result)) {
+        return false;
+    }
+    return true;
+}
+
+bool write_signed_signing_response(
+    const char* id,
+    const char* session_id,
+    const uint8_t* request_identity,
+    const char* authorization,
+    AgentQSigningRoute signing_route,
+    const uint8_t* signature,
+    size_t signature_size,
+    const uint8_t* message_bytes,
+    size_t message_bytes_size)
+{
+    JsonDocument response;
+    if (!prepare_signed_signing_response(
+            response,
+            id,
+            authorization,
+            signing_route,
+            signature,
+            signature_size,
+            message_bytes,
+            message_bytes_size)) {
         return false;
     }
     return buffer_and_write_response(session_id, id, request_identity, response);
@@ -234,6 +272,31 @@ bool usb_signing_outcome_write_user_signed(
         signing_output.signature_size,
         signing_output.message_bytes_size > 0 ? signing_output.message_bytes : nullptr,
         signing_output.message_bytes_size);
+}
+
+bool usb_signing_outcome_user_signed_response_fits(
+    const char* id,
+    const char* authorization,
+    const AgentQUserSigningFlowCoreSnapshot& snapshot,
+    const AgentQUserSigningOutput& signing_output)
+{
+    if (snapshot.signing_route == AgentQSigningRoute::unsupported ||
+        signing_output.signing_route != snapshot.signing_route) {
+        return false;
+    }
+    JsonDocument response;
+    if (!prepare_signed_signing_response(
+            response,
+            id,
+            authorization,
+            snapshot.signing_route,
+            signing_output.signature,
+            signing_output.signature_size,
+            signing_output.message_bytes_size > 0 ? signing_output.message_bytes : nullptr,
+            signing_output.message_bytes_size)) {
+        return false;
+    }
+    return signing_response_fits(response);
 }
 
 bool usb_signing_outcome_write_user_terminal(

@@ -331,6 +331,11 @@ int main()
         output.message_bytes[0] = 'h';
         output.message_bytes[1] = 'i';
         output.message_bytes_size = 2;
+        assert(agent_q::usb_signing_outcome_user_signed_response_fits(
+            "req-user-signed",
+            "user",
+            snapshot,
+            output));
         assert(agent_q::usb_signing_outcome_write_user_signed(
             "req-user-signed",
             "session-a",
@@ -374,6 +379,105 @@ int main()
         JsonDocument stored = stored_json("session-a", "req-user-zklogin-personal-message");
         assert(stored["success"] == true);
         assert(strcmp(stored["result"]["messageBytes"], "aGk=") == 0);
+    }
+
+    {
+        reset_capture();
+        agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
+        snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        memcpy(snapshot.request_identity, identity, sizeof(identity));
+        agent_q::AgentQUserSigningOutput output = {};
+        output.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        fill_zklogin_signature(output.signature, sizeof(output.signature));
+        output.signature_size = sizeof(output.signature);
+        for (size_t index = 0; index < agent_q::kAgentQSuiSignPersonalMessageMaxBytes; ++index) {
+            output.message_bytes[index] = static_cast<uint8_t>('A' + (index % 26));
+        }
+        output.message_bytes_size = agent_q::kAgentQSuiSignPersonalMessageMaxBytes;
+        assert(agent_q::usb_signing_outcome_user_signed_response_fits(
+            "req-user-max-personal-message",
+            "user",
+            snapshot,
+            output));
+        assert(agent_q::usb_signing_outcome_write_user_signed(
+            "req-user-max-personal-message",
+            "session-a",
+            "user",
+            snapshot,
+            output));
+        assert(g_json_writes == 1);
+        assert(g_last_json.size() < agent_q::kSigningResponseMaxSize);
+        JsonDocument response = parse_json(g_last_json);
+        assert(response["success"] == true);
+        assert(strcmp(response["method"], "sign_personal_message") == 0);
+        const char* message_bytes = response["result"]["messageBytes"];
+        assert(message_bytes != nullptr);
+        assert(strlen(message_bytes) == agent_q::kAgentQSuiSignPersonalMessageMaxBase64Size);
+        JsonDocument stored = stored_json("session-a", "req-user-max-personal-message");
+        assert(stored["success"] == true);
+        assert(strcmp(stored["method"], "sign_personal_message") == 0);
+        assert(strcmp(stored["result"]["messageBytes"], message_bytes) == 0);
+    }
+
+    {
+        reset_capture();
+        agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
+        snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        memcpy(snapshot.request_identity, identity, sizeof(identity));
+        agent_q::AgentQUserSigningOutput output = {};
+        output.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        fill_native_signature(output.signature, sizeof(output.signature));
+        output.signature_size = agent_q::kSuiEd25519SignatureBytes;
+        output.message_bytes[0] = 'h';
+        output.message_bytes[1] = 'i';
+        output.message_bytes_size = 2;
+        std::string oversized_id(agent_q::kSigningResponseMaxSize, 'r');
+        assert(!agent_q::usb_signing_outcome_user_signed_response_fits(
+            oversized_id.c_str(),
+            "user",
+            snapshot,
+            output));
+        assert(!agent_q::usb_signing_outcome_write_user_signed(
+            oversized_id.c_str(),
+            "session-too-large",
+            "user",
+            snapshot,
+            output));
+        assert(g_json_writes == 0);
+    }
+
+    {
+        uint8_t conflicting_identity[agent_q::kAgentQSignRequestIdentitySize] = {};
+        conflicting_identity[0] = 0xB2;
+        const char existing_response[] =
+            "{\"id\":\"req-conflict\",\"version\":1,\"success\":true,"
+            "\"method\":\"sign_personal_message\",\"result\":{}}";
+        assert(agent_q::signing_response_store(
+            "session-conflict",
+            "req-conflict",
+            conflicting_identity,
+            sizeof(conflicting_identity),
+            existing_response,
+            strlen(existing_response)) ==
+            agent_q::SigningResponseStoreOutcome::stored);
+        reset_capture();
+        agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
+        snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        memcpy(snapshot.request_identity, identity, sizeof(identity));
+        agent_q::AgentQUserSigningOutput output = {};
+        output.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        fill_native_signature(output.signature, sizeof(output.signature));
+        output.signature_size = agent_q::kSuiEd25519SignatureBytes;
+        output.message_bytes[0] = 'h';
+        output.message_bytes[1] = 'i';
+        output.message_bytes_size = 2;
+        assert(!agent_q::usb_signing_outcome_write_user_signed(
+            "req-conflict",
+            "session-conflict",
+            "user",
+            snapshot,
+            output));
+        assert(g_json_writes == 0);
     }
 
     {

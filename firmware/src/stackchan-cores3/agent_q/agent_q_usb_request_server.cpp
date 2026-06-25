@@ -894,11 +894,39 @@ void finish_user_signing_terminal(
         kAgentQResultDisplayMs);
 }
 
+struct UserSigningOutputReadyContext {
+    const char* request_id = nullptr;
+};
+
+bool user_signing_signed_response_fits(
+    const agent_q::AgentQUserSigningFlowCoreSnapshot& snapshot,
+    const agent_q::AgentQUserSigningOutput& signing_output,
+    void* context)
+{
+    const UserSigningOutputReadyContext* ready_context =
+        static_cast<const UserSigningOutputReadyContext*>(context);
+    if (ready_context == nullptr ||
+        ready_context->request_id == nullptr ||
+        ready_context->request_id[0] == '\0' ||
+        strcmp(ready_context->request_id, snapshot.request_id) != 0) {
+        return false;
+    }
+    return agent_q::usb_signing_outcome_user_signed_response_fits(
+        ready_context->request_id,
+        "user",
+        snapshot,
+        signing_output);
+}
+
 void execute_user_signing_critical_section_and_finish(const char* request_id)
 {
     agent_q::AgentQUserSigningOutput signing_output = {};
+    UserSigningOutputReadyContext ready_context{request_id};
     const agent_q::AgentQUserSigningHandoffReport signing_report =
-        agent_q::user_signing_execute_critical_section(&signing_output);
+        agent_q::user_signing_execute_critical_section(
+            &signing_output,
+            user_signing_signed_response_fits,
+            &ready_context);
     if (signing_report.result != agent_q::AgentQUserSigningHandoffResult::ok) {
         ESP_LOGW(kTag,
                  "user_signing signing failed: id=%s handoff=%s signing=%s",

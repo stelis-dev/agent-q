@@ -16,6 +16,12 @@ bool usb_signing_outcome_write_user_signed(
     const AgentQUserSigningFlowCoreSnapshot& snapshot,
     const AgentQUserSigningOutput& signing_output);
 
+bool usb_signing_outcome_user_signed_response_fits(
+    const char* id,
+    const char* authorization,
+    const AgentQUserSigningFlowCoreSnapshot& snapshot,
+    const AgentQUserSigningOutput& signing_output);
+
 bool usb_signing_outcome_write_user_terminal(
     const char* id,
     const char* session_id,

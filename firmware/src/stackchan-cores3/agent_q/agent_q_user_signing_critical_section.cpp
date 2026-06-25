@@ -101,9 +101,11 @@ void user_signing_output_wipe(
 
 AgentQUserSigningHandoffReport
 user_signing_execute_critical_section(
-    AgentQUserSigningOutput* output)
+    AgentQUserSigningOutput* output,
+    AgentQUserSigningOutputReadyFn output_ready,
+    void* context)
 {
-    if (output == nullptr) {
+    if (output == nullptr || output_ready == nullptr) {
         return make_report(
             AgentQUserSigningHandoffResult::invalid_output,
             AgentQUserSigningTransitionResult::invalid_argument,
@@ -177,9 +179,31 @@ user_signing_execute_critical_section(
             SuiSigningStatus::signature_output_too_small);
     }
 
+    memcpy(output->signature, signature, signature_size);
+    output->signature_size = signature_size;
+    output->signing_route = route;
+    if (route == AgentQSigningRoute::sui_sign_personal_message) {
+        memcpy(output->message_bytes, payload, payload_size);
+        output->message_bytes_size = payload_size;
+    }
+
+    if (!output_ready(snapshot, *output, context)) {
+        user_signing_output_wipe(output);
+        wipe_sensitive_buffer(payload, payload_size);
+        free(payload);
+        wipe_sensitive_buffer(signature, sizeof(signature));
+        const AgentQUserSigningTransitionResult failed_terminal_result =
+            user_signing_flow_record_signing_failed();
+        return make_report(
+            AgentQUserSigningHandoffResult::response_unavailable,
+            failed_terminal_result,
+            signing_status);
+    }
+
     const AgentQUserSigningTransitionResult terminal_result =
         user_signing_flow_complete_signed();
     if (terminal_result != AgentQUserSigningTransitionResult::ok) {
+        user_signing_output_wipe(output);
         wipe_sensitive_buffer(payload, payload_size);
         free(payload);
         wipe_sensitive_buffer(signature, sizeof(signature));
@@ -187,13 +211,6 @@ user_signing_execute_critical_section(
             AgentQUserSigningHandoffResult::terminal_error,
             terminal_result,
             signing_status);
-    }
-    memcpy(output->signature, signature, signature_size);
-    output->signature_size = signature_size;
-    output->signing_route = route;
-    if (route == AgentQSigningRoute::sui_sign_personal_message) {
-        memcpy(output->message_bytes, payload, payload_size);
-        output->message_bytes_size = payload_size;
     }
     wipe_sensitive_buffer(signature, sizeof(signature));
     wipe_sensitive_buffer(payload, payload_size);
@@ -220,6 +237,8 @@ const char* user_signing_handoff_result_name(
             return "payload_unavailable";
         case AgentQUserSigningHandoffResult::output_too_small:
             return "output_too_small";
+        case AgentQUserSigningHandoffResult::response_unavailable:
+            return "response_unavailable";
         case AgentQUserSigningHandoffResult::signing_failed:
             return "signing_failed";
         case AgentQUserSigningHandoffResult::terminal_error:
